@@ -98,7 +98,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
     let s = request.snapshot;
     let snapshot = Snapshot {
         html: s.html,
-        frame_client_attribute: None,
+        frames: Default::default(),
         base_url: s.base_url,
         sheets: s.sheets,
         width: s.width,

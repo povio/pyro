@@ -28,6 +28,27 @@ pub enum StyleThreading {
     Sequential,
 }
 
+/// pyro: one frame document of the render snapshot's frame table ([`DocumentConfig::frames`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameContent {
+    /// Its markup.
+    pub html: String,
+    /// Its URL, which its relative URLs resolve against.
+    pub url: String,
+    /// Its viewport's scroll position.
+    pub scroll: (f64, f64),
+    /// The frame (frame id and loader id) its requests are made for.
+    pub client: String,
+    /// Its own frames' documents.
+    pub frames: FrameTable,
+}
+
+/// pyro: frame documents by the index a frame element's `data-pyro-frame` names.
+pub type FrameTable = Arc<std::collections::HashMap<String, FrameContent>>;
+
+/// pyro: the attribute a frame element names its frame table entry in: `"<index>:<version>"`.
+pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
+
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
 pub struct DocumentConfig {
     /// The initial `Viewport`
@@ -37,9 +58,10 @@ pub struct DocumentConfig {
     /// pyro: the id of the frame this is the document of (a frame document of the render
     /// snapshot): its requests made with other than the defaults name it as their client.
     pub frame_client: Option<String>,
-    /// pyro: the name of the attribute a frame element carries its frame document's client
-    /// identity in (the render snapshot's, unknown to page content); `None`: none is read.
-    pub frame_client_attribute: Option<String>,
+    /// pyro: the frame table of the render snapshot: the documents its frame elements show, by
+    /// the index their `data-pyro-frame` attribute names. A frame element loads only the entry
+    /// it names (content, URL, client), never content from its own attributes.
+    pub frames: FrameTable,
     /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
     ///
     /// The list is used as given, so replacing it removes the default sheet unless it is
@@ -104,7 +126,7 @@ impl Default for DocumentConfig {
             viewport: None,
             base_url: None,
             frame_client: None,
-            frame_client_attribute: None,
+            frames: FrameTable::default(),
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
             net_provider: None,
             navigation_provider: None,

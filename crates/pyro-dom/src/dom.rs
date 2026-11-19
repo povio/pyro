@@ -1192,6 +1192,17 @@ impl Dom {
         scope.contains(&self.n(i).owner_doc)
     }
 
+    /// pyro: the frame table of the render snapshot: each frame element's document by the index
+    /// its [`crate::snapshot::FRAME_ATTRIBUTE`] names (the renderer looks the document up here;
+    /// markup holds no frame content or client).
+    pub fn frame_table(&self) -> Vec<(String, FrameDocument)> {
+        self.frame_documents
+            .iter()
+            .filter(|(i, _)| self.slot_live(**i))
+            .map(|(i, d)| (crate::snapshot::render_key(self.id_of(*i)).to_string(), d.clone()))
+            .collect()
+    }
+
     /// [`Dom::set_frame_documents`] for one iframe (`None`: it paints none).
     pub fn set_frame_document(&mut self, iframe: NodeId, document: Option<FrameDocument>) {
         let Ok(i) = self.check(iframe) else { return };
@@ -4486,6 +4497,25 @@ pub struct FrameDocument {
     /// pyro: the frame's id (CDP frame id): the client the renderer's requests for the document
     /// name, so they go out as that frame's, with its origin (opaque in a sandboxed frame).
     pub client: String,
+    /// pyro: the frame table of this document's own frames ([`Dom::frame_table`] of its DOM), by
+    /// the index its markup names them with.
+    pub frames: Vec<(String, FrameDocument)>,
+}
+
+impl FrameDocument {
+    /// pyro: changes when what the renderer loads for the frame does (not its scroll position).
+    pub fn version(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        self.html.hash(&mut h);
+        self.url.hash(&mut h);
+        self.client.hash(&mut h);
+        for (index, frame) in &self.frames {
+            index.hash(&mut h);
+            frame.version().hash(&mut h);
+        }
+        h.finish()
+    }
 }
 
 /// The policy token a `<meta name=referrer content>` value names: a

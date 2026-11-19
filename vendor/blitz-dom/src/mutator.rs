@@ -576,6 +576,7 @@ impl DocumentMutator<'_> {
             || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
             || (tag, attr) == tag_and_attr!("object", "srcdoc")
             || (tag, attr) == tag_and_attr!("embed", "srcdoc")
+            || (matches!(&**tag, "iframe" | "frame" | "object" | "embed") && &**attr == crate::FRAME_ATTRIBUTE)
         {
             self.load_iframe(node_id);
         }
@@ -736,7 +737,14 @@ impl DocumentMutator<'_> {
         } else if (tag, attr) == tag_and_attr!("link", "href") || (tag, attr) == tag_and_attr!("link", "rel") {
             // pyro: without its `rel` too (as a `rel` without `stylesheet`: `load_linked_stylesheet`).
             self.unload_stylesheet(node_id);
-        } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
+        } else if matches!(&**tag, "object" | "embed") && &**attr == crate::FRAME_ATTRIBUTE {
+            // pyro: the snapshot no longer gives it a frame document: its image or fallback again.
+            self.remove_sub_document(node_id);
+            self.load_image(node_id);
+        } else if ((tag, attr) == tag_and_attr!("iframe", "srcdoc")
+            || (matches!(&**tag, "iframe" | "frame") && &**attr == crate::FRAME_ATTRIBUTE))
+            && node_is_in_document
+        {
             // Fall back to loading from the `src` attribute (if any)
             self.load_iframe(node_id);
         } else if (tag, attr) == tag_and_attr!("object", "srcdoc") || (tag, attr) == tag_and_attr!("embed", "srcdoc") {
@@ -1674,7 +1682,7 @@ impl<'doc> DocumentMutator<'doc> {
                 // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does, or the frame
                 // document the render snapshot gives it (`srcdoc`) as an iframe does (plugins are
                 // not done).
-                "embed" if element.attr(local_name!("srcdoc")).is_some() => {
+                "embed" if element.attr(local_name!("srcdoc")).is_some() || element.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some() => {
                     self.eager_op_queue.push(SpecialOp::LoadIframe(node_id))
                 }
                 "embed" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -1684,7 +1692,7 @@ impl<'doc> DocumentMutator<'doc> {
                 "object" => {
                     // pyro: an `<object>` the render snapshot gives a frame document (`srcdoc`)
                     // shows it as an iframe does.
-                    if element.attr(local_name!("srcdoc")).is_some() {
+                    if element.attr(local_name!("srcdoc")).is_some() || element.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some() {
                         self.eager_op_queue.push(SpecialOp::LoadIframe(node_id));
                     } else {
                         self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
@@ -2058,6 +2066,19 @@ impl<'doc> DocumentMutator<'doc> {
             return;
         }
 
+        let node = &self.doc.nodes[target_id];
+        let Some(element) = node.element_data() else {
+            return;
+        };
+
+        // pyro: a frame element of the render snapshot shows its frame table entry's document, or
+        // none when the table has no such entry; its own attributes never give it one.
+        if self.doc.names_frame(target_id) {
+            if let Some(frame) = self.doc.frame_entry(target_id) {
+                self.doc.load_frame_document(target_id, &frame);
+            }
+            return;
+        }
         let node = &self.doc.nodes[target_id];
         let Some(element) = node.element_data() else {
             return;

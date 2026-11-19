@@ -329,18 +329,16 @@ impl BaseDocument {
                 .is_some_and(|value| value.eq_ignore_ascii_case("no") || value.eq_ignore_ascii_case("noscroll"));
             // pyro: the frame document's animations (by its client), sampled into it.
             let frame_animations = self.frame_animations.clone();
-            // (Its client in the attribute the snapshot names, `DocumentConfig::frame_client_attribute`.)
-            let frame_effects = self
-                .frame_client_attribute
-                .as_deref()
-                .and_then(|name| node.attr(markup5ever::LocalName::from(name)))
-                .and_then(|client| frame_animations.get(client).cloned());
-            let frame_scroll = node
-                .attr(markup5ever::LocalName::from("data-pyro-frame-scroll"))
-                .and_then(|value| {
-                    let mut parts = value.split(' ').map(|part| part.parse::<f64>().ok().filter(|v| v.is_finite()));
-                    Some((parts.next()??, parts.next()??))
-                });
+            // (Its client and scroll position from its frame table entry, `DocumentConfig::frames`.)
+            let frames = self.frames.clone();
+            let entry = node
+                .attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))
+                .and_then(|value| value.split(':').next())
+                .and_then(|index| frames.get(index));
+            let frame_effects = entry.and_then(|frame| frame_animations.get(&frame.client).cloned());
+            let frame_scroll = entry
+                .map(|frame| frame.scroll)
+                .filter(|&(x, y)| x.is_finite() && y.is_finite() && (x, y) != (0.0, 0.0));
             if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
                 if sub_doc.frame_no_scrollbars != no_scrollbars {
                     sub_doc.frame_no_scrollbars = no_scrollbars;

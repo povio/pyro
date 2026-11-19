@@ -428,30 +428,62 @@ fn render_tree_keeps_event_handler_attributes_markup_drops() {
     assert!(render(&dom.borrow(), d).contains("<p id=\"p\" title=\"t\">x</p>"));
 }
 
-/// A frame's snapshot attributes (`data-pyro-frame-client`, `-url`, `-scroll`) are the
-/// snapshot's own: the page's copy of one is left out, so it can neither name another frame's
-/// document as the client of the renderer's requests (the parser keeps the first of duplicate
-/// attributes, and the page's came first) nor stand in when the frame has no document.
+fn frame(html: &str, client: &str) -> FrameDocument {
+    FrameDocument { html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Vec::new() }
+}
+
+/// Every attribute the renderer reads from the engine is the engine's: a page attribute whose
+/// serialised name is one (`srcdoc`, `data-pyro-frame`, the `data-pyro-` family), in any case or
+/// namespace (`setAttributeNS`), is not written, in markup or in a keyed tree, and the engine's
+/// come first. A frame carries only the index of its frame table entry: its document and client
+/// are never in the markup. A page's namespaced `srcdoc` on an iframe of its own, written first
+/// with its namespace dropped, made the renderer show page content under a genuine child frame's
+/// client (security review cycles 1-3, HIGH 1).
 #[test]
-fn a_pages_own_frame_attributes_are_left_out() {
+fn page_attributes_never_stand_in_for_the_engines() {
     let (dom, d) = doc(
-        "<iframe id=f data-pyro-frame-client='OTHER#doc' data-pyro-frame-url='http://evil.test/'></iframe>\
-         <iframe id=g data-pyro-frame-client='OTHER#doc'></iframe>",
+        "<iframe id=f data-pyro-frame-client='OTHER#doc' data-pyro-frame-url='http://evil.test/' data-pyro-frame='9:0'></iframe>\
+         <iframe id=g data-pyro-frame-client='OTHER#doc'></iframe><div id=x data-pyro-key=1 DATA-PYRO-RENDER-CLIP></div>",
     );
-    let f = find(&dom.borrow(), d, "#f");
-    dom.borrow_mut().set_frame_document(
-        f,
-        Some(FrameDocument {
-            html: "<p>x</p>".into(),
-            url: "http://test/frame".into(),
-            scroll: (0.0, 0.0),
-            client: "F#L".into(),
-        }),
-    );
+    let (f, g) = (find(&dom.borrow(), d, "#f"), find(&dom.borrow(), d, "#g"));
+    {
+        let mut dom = dom.borrow_mut();
+        for el in [f, g] {
+            dom.set_attribute_ns(el, Some("http://evil.test/ns"), "srcdoc", "<p>EVILNS</p>").unwrap();
+            dom.set_attribute_ns(el, Some("http://evil.test/ns"), "e:srcdoc", "<p>EVILPREFIX</p>").unwrap();
+            dom.set_attribute_ns(el, None, "SRCDOC", "<p>EVILCASE</p>").unwrap();
+            dom.set_attribute_ns(el, Some("http://evil.test/ns"), "DATA-PYRO-FRAME", "1:0").unwrap();
+        }
+        dom.set_frame_document(f, Some(frame("<p>GENUINE</p>", "F#L")));
+    }
+    let key = |id: NodeId| pyro_dom::snapshot::render_key(id).to_string();
     let html = render(&dom.borrow(), d);
-    assert!(!html.contains("OTHER"), "{html}");
-    assert!(!html.contains("evil.test"), "{html}");
-    assert!(html.contains(&format!("{}=\"F#L\"", pyro_dom::snapshot::frame_client_attribute())), "{html}");
+    for leaked in ["OTHER", "evil.test", "EVIL", "GENUINE", "F#L", "srcdoc", "data-pyro-key", "DATA-PYRO", "9:0"] {
+        assert!(!html.contains(leaked), "{leaked}: {html}");
+    }
+    let version = dom.borrow().frame_table()[0].1.version();
+    assert!(html.contains(&format!("<iframe id=\"f\" data-pyro-frame=\"{}:{version:016x}\"", key(f))) || html.contains(&format!("data-pyro-frame=\"{}:{version:016x}\"", key(f))), "{html}");
+    assert_eq!(html.matches("data-pyro-frame=").count(), 1, "only the engine's, on the frame with a document: {html}");
+    // The keyed tree: the same attributes, the engine's first.
+    let tree = dom
+        .borrow()
+        .render_tree(d, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
+    for node in &tree.nodes {
+        if let pyro_dom::snapshot::RenderNodeKind::Element { attrs, .. } = &node.kind {
+            for (name, value) in attrs {
+                let local = name.local.to_string().to_ascii_lowercase();
+                assert!(local != "srcdoc" && !value.contains("EVIL") && !value.contains("OTHER"), "{name:?}={value}");
+                if local.starts_with("data-pyro-") {
+                    assert!(name.ns == markup5ever::ns!() && node.key == pyro_dom::snapshot::render_key(f), "{name:?}");
+                }
+            }
+        }
+    }
+    // The table holds the document under that index.
+    let table = dom.borrow().frame_table();
+    assert_eq!(table.len(), 1);
+    assert_eq!((table[0].0.as_str(), table[0].1.client.as_str(), table[0].1.html.as_str()), (key(f).as_str(), "F#L", "<p>GENUINE</p>"));
 }
 
 /// The frame documents a page sets cover its own documents only: a store shared by pages (a popup
@@ -462,14 +494,15 @@ fn frame_documents_are_replaced_per_page() {
     let (dom, opener) = doc("<iframe id=f></iframe>");
     let popup = parse_document(&dom, "http://test/popup", "<p>popup</p>");
     let f = find(&dom.borrow(), opener, "#f");
-    let document = FrameDocument { html: "<p>inner</p>".into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: "F#L".into() };
+    let document = frame("<p>inner</p>", "F#L");
+    let has = |dom: &Dom| dom.frame_table().iter().any(|(_, d)| d.html.contains("inner"));
     dom.borrow_mut().set_frame_documents(&[opener], vec![(f, document)]);
-    assert!(render(&dom.borrow(), opener).contains("inner"));
+    assert!(has(&dom.borrow()));
     // The popup refreshes its own frames (it has none).
     dom.borrow_mut().set_frame_documents(&[popup], Vec::new());
     dom.borrow_mut().set_frame_content_heights(&[popup], &[]);
-    assert!(render(&dom.borrow(), opener).contains("inner"), "the opener's iframe keeps its document");
+    assert!(has(&dom.borrow()), "the opener's iframe keeps its document");
     // The opener refreshing its own set without the frame does drop it.
     dom.borrow_mut().set_frame_documents(&[opener], Vec::new());
-    assert!(!render(&dom.borrow(), opener).contains("inner"));
+    assert!(!has(&dom.borrow()));
 }

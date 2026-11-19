@@ -707,8 +707,15 @@ impl Page {
             let (snapshot, animations) = page_dom.render_snapshot_frame(&base_url);
             sheets.extend(snapshot.sheets);
             let base = if base_url.is_empty() { url } else { base_url };
-            let document =
-                pyro_dom::FrameDocument { html: snapshot.html, url: base, scroll: (snapshot.scroll_x, snapshot.scroll_y), client };
+            // pyro: with its own frames' table (set before, deeper first), which its markup names.
+            let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table()).unwrap_or_default();
+            let document = pyro_dom::FrameDocument {
+                html: snapshot.html,
+                url: base,
+                scroll: (snapshot.scroll_x, snapshot.scroll_y),
+                client,
+                frames,
+            };
             if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
                 dom.set_frame_document(owner, Some(document.clone()));
             }

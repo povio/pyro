@@ -434,8 +434,8 @@ pub struct BaseDocument {
     pub(crate) subdocument_depth: usize,
     /// pyro: the id of the frame this is the document of (`DocumentConfig::frame_client`).
     pub(crate) frame_client: Option<String>,
-    /// pyro: `DocumentConfig::frame_client_attribute`, which the frame documents it makes read too.
-    pub(crate) frame_client_attribute: Option<String>,
+    /// pyro: `DocumentConfig::frames`: the documents its frame elements show.
+    pub(crate) frames: crate::FrameTable,
 
     // Events
     pub(crate) tx: Sender<DocumentEvent>,
@@ -890,7 +890,7 @@ impl BaseDocument {
             incremental_layout: config.incremental.unwrap_or(true),
             subdocument_depth: config.subdocument_depth,
             frame_client: config.frame_client.clone(),
-            frame_client_attribute: config.frame_client_attribute.clone(),
+            frames: config.frames.clone(),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),

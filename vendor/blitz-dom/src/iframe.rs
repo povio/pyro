@@ -53,18 +53,15 @@ impl BaseDocument {
         node_id: NodeId,
         base_url: Option<String>,
         abort_signal: AbortSignal,
+        frame: Option<&crate::FrameContent>,
     ) -> DocumentConfig {
-        // pyro: the frame a render snapshot's frame document is of, from the attribute named by the
-        // snapshot (`DocumentConfig::frame_client_attribute`, a name page content cannot know); no
-        // other attribute names a frame.
-        let frame_client = self.frame_client_attribute.as_deref().and_then(|name| {
-            self.get_node(node_id).and_then(|node| node.attr(markup5ever::LocalName::from(name))).map(str::to_owned)
-        });
+        // pyro: a render snapshot's frame document is its frame table entry's: the frame it is of
+        // (its client) and its own frames come from there, never from an attribute.
         DocumentConfig {
             viewport: None,
             base_url,
-            frame_client,
-            frame_client_attribute: self.frame_client_attribute.clone(),
+            frame_client: frame.map(|frame| frame.client.clone()),
+            frames: frame.map(|frame| frame.frames.clone()).unwrap_or_default(),
             ua_stylesheets: self.ua_stylesheets.clone(),
             net_provider: Some(self.net_provider.clone()),
             navigation_provider: Some(Arc::new(IframeNavigationProvider {
@@ -120,11 +117,40 @@ impl BaseDocument {
         base_url: Option<String>,
         abort_signal: AbortSignal,
     ) {
-        let config = self.iframe_document_config(node_id, base_url, abort_signal);
+        let config = self.iframe_document_config(node_id, base_url, abort_signal, None);
         let sub_doc = self
             .html_parser_provider
             .clone()
             .parse_document(html, config);
+        self.set_sub_document(node_id, sub_doc);
+        self.shell_provider.request_redraw();
+    }
+
+    /// pyro: the render snapshot's frame table now (`DocumentConfig::frames`): a frame element
+    /// whose `data-pyro-frame` changes loads its new entry from it.
+    pub fn set_frame_table(&mut self, frames: crate::FrameTable) {
+        self.frames = frames;
+    }
+
+    /// pyro: the frame table entry the frame element `node_id` names (`data-pyro-frame`), if any.
+    pub(crate) fn frame_entry(&self, node_id: NodeId) -> Option<crate::FrameContent> {
+        let value = self.get_node(node_id)?.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))?;
+        let index = value.split(':').next()?;
+        self.frames.get(index).cloned()
+    }
+
+    /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that
+    /// entry's document or none, never its own attributes').
+    pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
+        self.get_node(node_id).is_some_and(|node| node.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some())
+    }
+
+    /// pyro: attach the frame table entry `frame` as `node_id`'s sub-document: its markup at its
+    /// URL, made for its client, with its own frame table.
+    pub(crate) fn load_frame_document(&mut self, node_id: NodeId, frame: &crate::FrameContent) {
+        let signal = self.new_iframe_generation(node_id, None);
+        let config = self.iframe_document_config(node_id, Some(frame.url.clone()), signal, Some(frame));
+        let sub_doc = self.html_parser_provider.clone().parse_document(&frame.html, config);
         self.set_sub_document(node_id, sub_doc);
         self.shell_provider.request_redraw();
     }
@@ -134,12 +160,7 @@ impl BaseDocument {
     /// document's base URL.
     pub(crate) fn load_iframe_srcdoc(&mut self, node_id: NodeId, srcdoc: &str) {
         let signal = self.new_iframe_generation(node_id, None);
-        // pyro: a frame document from the render snapshot names its own URL.
-        let frame_url = self
-            .get_node(node_id)
-            .and_then(|node| node.attr(markup5ever::LocalName::from("data-pyro-frame-url")))
-            .map(str::to_owned);
-        let base_url = Some(frame_url.unwrap_or_else(|| self.url.to_string()));
+        let base_url = Some(self.url.to_string());
         self.attach_iframe_document(node_id, srcdoc, base_url, signal);
     }
 

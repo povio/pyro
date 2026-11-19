@@ -189,9 +189,9 @@ pub struct Snapshot {
     /// attributes, `<style>` text from the style engine (CSSOM edits
     /// included), no scripts.
     pub html: String,
-    /// pyro: the name of the attribute the snapshot's frame elements carry their frame
-    /// document's client in (`pyro_dom::snapshot::frame_client_attribute`); `None`: none.
-    pub frame_client_attribute: Option<String>,
+    /// pyro: the frame table: the documents the snapshot's frame elements show, by the index
+    /// their `data-pyro-frame` names (`pyro_layout::frame_table`). Markup holds no frame content or client.
+    pub frames: blitz_dom::FrameTable,
     /// Document URL; relative URLs resolve against it.
     pub base_url: String,
     /// Texts of `<link rel=stylesheet>` sheets by absolute URL, served to
@@ -296,6 +296,7 @@ pub struct TextSelection {
 }
 
 pub use blitz_dom::animation;
+pub use blitz_dom::{FrameContent, FrameTable};
 
 /// The animated values of a persistent document's elements at one moment,
 /// by element key (`blitz_dom::animation`): elements left out have none.
@@ -1160,7 +1161,7 @@ impl Renderer {
             line_height_quirk: snap.quirks_mode || snap.limited_quirks_mode,
             content_language: snap.content_language.clone(),
             html_parser_provider: Some(Arc::new(SvgImageParser)),
-            frame_client_attribute: snap.frame_client_attribute.clone(),
+            frames: snap.frames.clone(),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation
@@ -1194,6 +1195,7 @@ impl Renderer {
                     m.doc.set_media_type(media_type(snap.print));
                     m.viewport = key;
                 }
+                m.doc.set_frame_table(snap.frames.clone());
                 match m.apply(&live.tree, &snap.sheets) {
                     Ok(mutations) => return MirrorStats { rebuilt: None, mutations, pages: self.mirrors.len() as u32 },
                     Err(reason) => Some(reason),
@@ -1582,6 +1584,14 @@ impl Renderer {
     /// (nothing applied) when the page has no document at this viewport or
     /// the delta does not fit it: sync the whole tree instead. The returned
     /// [`Timings::layout`] is measured only while [`profiling`] is on.
+    /// pyro: `page`'s frame table now ([`Snapshot::frames`]), for a [`Renderer::sync_delta`]
+    /// that follows.
+    pub fn set_frame_table(&mut self, page: u64, frames: blitz_dom::FrameTable) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.doc.set_frame_table(frames);
+        }
+    }
+
     pub fn sync_delta(
         &mut self,
         page: u64,

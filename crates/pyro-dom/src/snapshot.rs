@@ -10,8 +10,10 @@
 //!   (the style engine holds the live text, CSSOM edits included);
 //! - a `<script>` is written without its text; `<noscript>` (scripting is on), `<template>`, comments and
 //!   processing instructions are left out, and so is an `<iframe>`'s `src`
-//!   (a frame shows the document [`Dom::set_frame_documents`] gave it as its
-//!   `srcdoc`, else nothing); HTML markup leaves out event handler
+//!   (a frame shows the document [`Dom::set_frame_documents`] gave it, which the
+//!   renderer takes from the frame table, [`Dom::frame_table`], by the index the frame's
+//!   [`FRAME_ATTRIBUTE`] names; else nothing); a page attribute that would collide with
+//!   one the engine writes is left out ([`ENGINE_ATTRIBUTES`]); HTML markup leaves out event handler
 //!   (`on*`) attributes, which keyed trees keep (`content: attr(onclick)`);
 //! - the tree is the flat tree: a shadow host is serialized with its shadow
 //!   tree in place of its children (marked with the [`STATE_NS`]
@@ -27,24 +29,39 @@
 //! - one element can be marked with an attribute (the clip target).
 
 
-/// pyro: the name of the attribute a frame element of the render snapshot carries its frame
-/// document's client identity in: `data-pyro-frame-client-` and 128 random bits drawn once per
-/// process. Page content cannot know it (it never sees the snapshot), so no attribute it writes,
-/// by markup, `setAttributeNS` or a sheet's text, can name a frame; the renderer reads this one
-/// name only.
-pub fn frame_client_attribute() -> &'static str {
-    static NAME: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        use std::hash::{BuildHasher, Hasher};
-        let mut bits = [0u64; 2];
-        for (i, part) in bits.iter_mut().enumerate() {
-            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-            hasher.write_usize(i);
-            hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
-            *part = hasher.finish();
-        }
-        format!("data-pyro-frame-client-{:016x}{:016x}", bits[0], bits[1])
-    });
-    &NAME
+/// pyro: the attributes the snapshot itself writes and the renderer reads (beyond the state
+/// namespace and the [`ENGINE_ATTRIBUTE_PREFIX`] family). A page attribute whose serialised name
+/// (`prefix:local`, ASCII case-insensitively, in any namespace) is one of these, or one this
+/// element got from the engine, or starts with the prefix, is not written: page content can
+/// never stand in for an engine attribute, in markup or a keyed tree (security review cycle 3).
+pub const ENGINE_ATTRIBUTES: &[&str] = &["srcdoc", FRAME_ATTRIBUTE];
+
+/// pyro: the prefix of the snapshot's own attribute family (`data-pyro-key`, scroll offsets,
+/// frame URL and content height, the clip mark): page attributes with it are never written.
+pub const ENGINE_ATTRIBUTE_PREFIX: &str = "data-pyro-";
+
+/// pyro: the attribute a frame element carries its frame document in: `"<index>:<version>"`,
+/// the index naming the entry of the snapshot's frame table ([`Dom::frame_table`]: the
+/// document's markup, URL, scroll position, client and its own frames), the version changing
+/// with the entry's content. The document and its client never travel in markup.
+pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
+
+/// pyro: whether a page attribute may be written next to `engine` (the names, lowercase, of the
+/// attributes the engine gave the element): see [`ENGINE_ATTRIBUTES`]. On an HTML element only
+/// null-namespace attributes are its own (markup could not say another).
+fn page_attribute_allowed(name: &QualName, html_element: bool, engine: &[String]) -> bool {
+    if html_element && name.ns != ns!() {
+        return false;
+    }
+    let serialised = match &name.prefix {
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", name.local),
+        _ => name.local.to_string(),
+    }
+    .to_ascii_lowercase();
+    !(serialised.starts_with(ENGINE_ATTRIBUTE_PREFIX)
+        || name.local.to_ascii_lowercase().starts_with(ENGINE_ATTRIBUTE_PREFIX)
+        || ENGINE_ATTRIBUTES.iter().any(|e| *e == serialised || e.eq_ignore_ascii_case(&name.local))
+        || engine.iter().any(|e| *e == serialised))
 }
 
 use std::borrow::Cow;
@@ -534,11 +551,7 @@ impl Dom {
                                 ("input", "value" | "checked") => input_type.is_some(),
                                 ("option", "selected") => html,
                                 ("link", "href") => href.is_some(),
-                                ("iframe" | "frame", "src" | "srcdoc") => html,
-                                // pyro: the frame attributes are the snapshot's own (the frame
-                                // document's URL, scroll position and client identity): a page's
-                                // copy of one would come first and win.
-                                ("iframe" | "frame" | "object" | "embed", n) if n.starts_with("data-pyro-frame-") => html,
+                                ("iframe" | "frame", "src") => html,
                                 // An `<object>` showing a frame document: its `data` is not an image.
                                 ("object", "data" | "srcdoc") | ("embed", "src" | "srcdoc") => {
                                     html && self.frame_documents.contains_key(&n)
@@ -556,6 +569,9 @@ impl Dom {
                             valueless: false,
                         });
                     }
+                    // pyro: what follows is the engine's; the page's attributes above are
+                    // written after it, without any that would collide (`ENGINE_ATTRIBUTES`).
+                    let page_end = attrs.len();
                     let plain = |local: &str| Cow::Owned(QualName::new(None, ns!(), local.into()));
                     if let Some(href) = href {
                         attrs.push(RAttr { name: plain("href"), value: Cow::Owned(href), valueless: false });
@@ -586,25 +602,13 @@ impl Dom {
                     }
                     if html && matches!(local, "iframe" | "frame" | "object" | "embed") {
                         if let Some(frame) = self.frame_documents.get(&n) {
-                            // pyro: before `srcdoc`, which parses the document.
+                            // pyro: only the index of its entry in the frame table (and the
+                            // entry's version, so a new document loads again).
                             attrs.push(RAttr {
-                                name: plain(frame_client_attribute()),
-                                value: Cow::Borrowed(&frame.client),
+                                name: plain(FRAME_ATTRIBUTE),
+                                value: Cow::Owned(format!("{}:{:016x}", render_key(id), frame.version())),
                                 valueless: false,
                             });
-                            attrs.push(RAttr { name: plain("srcdoc"), value: Cow::Borrowed(&frame.html), valueless: false });
-                            attrs.push(RAttr {
-                                name: plain("data-pyro-frame-url"),
-                                value: Cow::Borrowed(&frame.url),
-                                valueless: false,
-                            });
-                            if frame.scroll != (0.0, 0.0) {
-                                attrs.push(RAttr {
-                                    name: plain("data-pyro-frame-scroll"),
-                                    value: Cow::Owned(format!("{} {}", frame.scroll.0, frame.scroll.1)),
-                                    valueless: false,
-                                });
-                            }
                         }
                     }
                     if html && local == "iframe" {
@@ -668,6 +672,20 @@ impl Dom {
                     if rendered_shadow || details_slots {
                         attrs.push(marker(SHADOW_HOST_ATTR));
                     }
+                    // pyro: the engine's attributes first, then the page's that collide with none.
+                    let page: Vec<RAttr<'_>> = attrs.drain(..page_end).collect();
+                    let mut engine: Vec<String> = attrs
+                        .iter()
+                        .map(|a| match &a.name.prefix {
+                            Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", a.name.local),
+                            _ => a.name.local.to_string(),
+                        })
+                        .map(|name| name.to_ascii_lowercase())
+                        .collect();
+                    if let Some((_, name)) = opts.mark {
+                        engine.push(name.to_ascii_lowercase());
+                    }
+                    attrs.extend(page.into_iter().filter(|a| page_attribute_allowed(&a.name, html, &engine)));
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);

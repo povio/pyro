@@ -183,6 +183,25 @@ type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool, pyro_render::InputCapabil
 /// A document's base URL as given, and parsed once when it is set: links
 /// resolve against the parsed form on every sync, while the snapshot keeps
 /// the original text (`Url` normalizes it).
+/// pyro: a DOM's frame table ([`pyro_dom::Dom::frame_table`]) as the renderer takes it.
+pub fn frame_table(entries: Vec<(String, pyro_dom::FrameDocument)>) -> pyro_render::FrameTable {
+    Arc::new(
+        entries
+            .into_iter()
+            .map(|(index, frame)| {
+                let content = pyro_render::FrameContent {
+                    html: frame.html,
+                    url: frame.url,
+                    scroll: frame.scroll,
+                    client: frame.client,
+                    frames: frame_table(frame.frames),
+                };
+                (index, content)
+            })
+            .collect(),
+    )
+}
+
 struct BaseUrl {
     text: String,
     parsed: Option<url::Url>,
@@ -406,6 +425,12 @@ impl BlitzGeometry {
         }
     }
 
+    /// pyro: the document the geometry renderer's responses are kept for (its loader's
+    /// timeline document, else the page's).
+    fn resource_document(&self) -> String {
+        self.loader.borrow().as_ref().and_then(|l| l.timeline_document()).unwrap_or_default()
+    }
+
     /// The document as a keyed node list for this page's Blitz document.
     fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
         let t = pyro_render::profiling::on().then(Instant::now);
@@ -425,7 +450,7 @@ impl BlitzGeometry {
         };
         let v = style.viewport();
         let snap = Snapshot {
-            frame_client_attribute: Some(pyro_dom::snapshot::frame_client_attribute().to_owned()),
+            frames: frame_table(dom.frame_table()),
             html: String::new(),
             base_url: base.text.clone(),
             sheets: sheets.into_inner(),
@@ -444,7 +469,8 @@ impl BlitzGeometry {
             },
             scroll_x: 0.0,
             scroll_y: 0.0,
-            resource_scope: format!("geometry-{}", self.page),
+            // pyro: one document's: a navigation's next document reuses none of its responses.
+            resource_scope: format!("geometry-{}-{}", self.page, self.resource_document()),
             live: Some(Live { page: self.page, tree, clip: None, interaction: None }),
             background: None,
             canvases: Vec::new(),
@@ -555,11 +581,14 @@ impl BlitzGeometry {
                 }
                 if let Some(delta) = delta {
                     let ops = convert_delta(delta);
+                    let frames = frame_table(dom.frame_table());
                     let dpr = v.device_scale_factor;
                     let timings = RENDERER.with(|r| {
                         let mut r = r.try_borrow_mut().ok()?;
                         let r = r.as_mut()?;
                         guarded(r, self.page, |r| {
+                            // pyro: the frame elements of the delta name entries of this table.
+                            r.set_frame_table(self.page, frames.clone());
                             r.sync_delta(
                                 self.page,
                                 &ops,

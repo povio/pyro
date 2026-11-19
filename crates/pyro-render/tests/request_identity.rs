@@ -176,30 +176,44 @@ fn a_changed_integrity_on_a_loaded_url_is_checked_again() {
     assert_eq!(pixel(&second, 10, 10), WHITE, "the old bytes never passed the new integrity check");
 }
 
-/// A frame document's request made with other than the defaults (here a mask image, in CORS
-/// mode) names the frame by its id (the render snapshot's `data-pyro-frame-client`), so the
-/// browser sends it as that frame's, with its origin (opaque in a sandboxed frame). It named the
-/// frame document's URL, which the browser looked up among the frames (a sandboxed frame at the
-/// top document's URL got the top document's origin). A frame document without an id names
-/// `""`, which no frame has, never nothing (the page).
+/// A frame element shows only the frame table entry its `data-pyro-frame` names, made for that
+/// entry's client (a nested frame for its own entry's), so the browser sends its requests as that
+/// frame's. Page attributes count for nothing: a `srcdoc` (any case) or a spoofed client next to
+/// a genuine index, or on a frame naming no entry, loads no page content under any client (the
+/// renderer read the client and the document from attributes; a page's namespaced `srcdoc`
+/// written first won: security review cycle 3, HIGH 1).
 #[test]
-fn a_frame_documents_request_names_its_frame_by_id() {
-    let mask = "<div style='width:10px;height:10px;background:green;mask-image:url(green.png)'></div>";
-    let srcdoc = |inner: &str| inner.replace('\'', "&#39;").replace('<', "&lt;").replace('>', "&gt;");
+fn a_frame_shows_only_its_table_entry_for_its_client() {
+    let mask = |path: &str| {
+        format!("<div style='width:10px;height:10px;background:green;mask-image:url({path})'></div>")
+    };
+    let attr = |inner: &str| inner.replace('\'', "&#39;").replace('<', "&lt;").replace('>', "&gt;");
     let recorder = Arc::new(Recorder::default());
     let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
-    // The snapshot's own attribute name (random per process in pyro-dom); a page's
-    // `data-pyro-frame-client`, whatever its case or namespace, is just another attribute.
-    let name = "data-pyro-frame-client-0123456789abcdef";
+    let nested = FrameContent {
+        html: mask("c/green.png"),
+        url: "http://test/".into(),
+        scroll: (0.0, 0.0),
+        client: "NEST#L".into(),
+        frames: Default::default(),
+    };
+    let first = FrameContent {
+        html: format!("{}<iframe data-pyro-frame='2:0' srcdoc='{}'></iframe>", mask("a/green.png"), attr(&mask("evil/nested.png"))),
+        url: "http://test/".into(),
+        scroll: (0.0, 0.0),
+        client: "F00D#L".into(),
+        frames: Arc::new([("2".to_owned(), nested)].into_iter().collect()),
+    };
     let snapshot = Snapshot {
         html: format!(
             "<!doctype html><body style='margin:0'>\
-             <iframe {name}=F00D#L data-pyro-frame-url='http://test/' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
-             <iframe data-pyro-frame-client='OTHER#L' DATA-PYRO-FRAME-CLIENT='OTHER#L' data-pyro-frame-url='http://test/' srcdoc='{1}' style='border:0;width:50px;height:20px'></iframe>",
-            srcdoc(&mask.replace("green.png", "a/green.png")),
-            srcdoc(&mask.replace("green.png", "b/green.png")),
+             <iframe data-pyro-frame='1:0' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-frame='9:0' data-pyro-frame-client='OTHER#L' srcdoc='{0}' SRCDOC='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe srcdoc='{1}' style='border:0;width:50px;height:20px'></iframe>",
+            attr(&mask("evil/unknown.png")),
+            attr(&mask("b/green.png")),
         ),
-        frame_client_attribute: Some(name.to_owned()),
+        frames: Arc::new([("1".to_owned(), first)].into_iter().collect()),
         base_url: "http://test/".into(),
         width: 200,
         height: 100,
@@ -209,9 +223,11 @@ fn a_frame_documents_request_names_its_frame_by_id() {
     Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
     let clients = recorder.1.lock().unwrap().clone();
     assert!(clients.iter().any(|(url, c)| url.ends_with("a/green.png") && c.as_deref() == Some("F00D#L")), "{clients:?}");
-    assert!(clients.iter().any(|(url, c)| url.ends_with("b/green.png") && c.as_deref() == Some("")), "{clients:?}");
+    assert!(clients.iter().any(|(url, c)| url.ends_with("c/green.png") && c.as_deref() == Some("NEST#L")), "{clients:?}");
+    assert!(!clients.iter().any(|(url, _)| url.contains("evil")), "no page content in a table frame: {clients:?}");
     assert!(!clients.iter().any(|(_, c)| c.as_deref().is_some_and(|c| c.contains("OTHER"))), "no spoofed client: {clients:?}");
-    assert!(!clients.iter().any(|(_, c)| c.is_none()), "no frame request goes out as the page's: {clients:?}");
+    // A frame of plain HTML (not from the snapshot) names no frame: never one of the table's.
+    assert!(clients.iter().any(|(url, c)| url.ends_with("b/green.png") && c.as_deref() == Some("")), "{clients:?}");
 }
 
 /// A `url()`'s request has the style sheet it was written in as its referrer, whatever its mode

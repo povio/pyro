@@ -487,9 +487,12 @@ impl EngineHost {
             .iter()
             .map(|(client, frame)| (client.clone(), Arc::new(pyro_layout::animation_frame(frame))))
             .collect();
+        // pyro: the frame table its frame elements name.
+        let table = dom.dom.borrow().frame_table();
+        let frames = pyro_layout::frame_table(table);
         Ok(Snapshot {
             html: String::new(),
-            frame_client_attribute: Some(pyro_dom::snapshot::frame_client_attribute().to_owned()),
+            frames,
             base_url,
             sheets: s.sheets,
             width: s.width,
