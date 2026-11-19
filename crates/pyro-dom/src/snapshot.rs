@@ -86,6 +86,10 @@ pub const DETAILS_CONTENT_ATTR: &str = "details-content";
 /// [`DETAILS_CONTENT_SLOT_KEY`] for its content slot (which generations never reach).
 pub const DETAILS_SUMMARY_SLOT_KEY: u64 = 1 << 61;
 pub const DETAILS_CONTENT_SLOT_KEY: u64 = 1 << 60;
+/// pyro: the render key flag of the synthetic assigned slot a shadow host's unassigned light
+/// `<style>` children are rendered in (with the host's render key): their sheets apply in the
+/// host's tree scope though no slot takes them (CSS Scoping; WPT css-cascade `scope-part`).
+pub const UNASSIGNED_STYLE_SLOT_KEY: u64 = 1 << 59;
 
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
@@ -705,6 +709,19 @@ impl Dom {
                         stack.push(Step::DetailsSlot(key | DETAILS_SUMMARY_SLOT_KEY, false, summary.into_iter().collect(), scope));
                     } else if rendered_shadow {
                         hosts.push((n, scope));
+                        // pyro: its light `<style>` children no slot takes still style its tree scope:
+                        // rendered after its shadow tree in a slot marked assigned (`<style>` boxes are
+                        // `display: none`).
+                        let unassigned: Vec<u32> = self
+                            .child_idx_iter(n)
+                            .filter(|&k| {
+                                self.n(k).element().is_some_and(|c| c.is_html() && &*c.name.local == "style")
+                                    && self.find_slot(k, false).is_none()
+                            })
+                            .collect();
+                        if !unassigned.is_empty() {
+                            stack.push(Step::DetailsSlot(render_key(id) | UNASSIGNED_STYLE_SLOT_KEY, false, unassigned, scope));
+                        }
                         self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
                     } else {
