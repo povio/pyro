@@ -2858,6 +2858,7 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
         ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
             || out_of_sync(&crate::layout::damage::border_image_sources(style), &el.border_images)
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
+            || out_of_sync(crate::layout::damage::shape_image(style), &el.shape_images)
             // pyro: an element whose `content` is one image shows it (`flush_content_image`).
             || {
                 use style::values::computed::{Content, ContentItem};

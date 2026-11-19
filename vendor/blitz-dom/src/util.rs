@@ -95,6 +95,8 @@ pub enum ImageLayerKind {
     BorderImage,
     /// pyro: `list-style-image`, a list of one image.
     ListStyle,
+    /// pyro: a `shape-outside` image, a list of one.
+    Shape,
 }
 
 impl ImageLayerKind {
@@ -104,6 +106,7 @@ impl ImageLayerKind {
             Self::Mask => ImageType::Mask(idx),
             Self::BorderImage => ImageType::BorderImage(idx),
             Self::ListStyle => ImageType::ListStyle(idx),
+            Self::Shape => ImageType::Shape(idx),
         }
     }
 }
@@ -117,6 +120,8 @@ pub enum ImageType {
     BorderImage(usize),
     /// pyro: `list-style-image`.
     ListStyle(usize),
+    /// pyro: `shape-outside`.
+    Shape(usize),
     /// pyro: an SVG document an element's `clip-path` or `filter` references an element of
     /// (`ElementData::reference_images`).
     Reference(usize),

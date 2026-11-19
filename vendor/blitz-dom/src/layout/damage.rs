@@ -1006,6 +1006,7 @@ impl BaseDocument {
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::ListStyle);
+            self.flush_image_layers_from_style(node_id, ImageLayerKind::Shape);
             self.flush_content_image(node_id);
             #[cfg(feature = "svg")]
             self.flush_svg_references_from_style(node_id);
@@ -1135,6 +1136,7 @@ impl BaseDocument {
                 std::slice::from_ref(&style.get_list().list_style_image),
                 &mut elem.list_style_images,
             ),
+            ImageLayerKind::Shape => (shape_image(&style), &mut elem.shape_images),
         };
 
         let len = style_images.len();
@@ -1198,6 +1200,14 @@ impl BaseDocument {
             // Element will always exist due to resize_with above
             elem_images[idx] = new_image;
         }
+    }
+}
+
+/// pyro: the image a float's `shape-outside` names (none or one).
+pub(crate) fn shape_image(style: &style::properties::ComputedValues) -> &[style::values::computed::Image] {
+    match &style.get_box().shape_outside {
+        style::values::computed::basic_shape::ShapeOutside::Image(image) => std::slice::from_ref(image),
+        _ => &[],
     }
 }
 

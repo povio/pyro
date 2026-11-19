@@ -2452,6 +2452,23 @@ impl BaseDocument {
                     #[cfg(feature = "svg")]
                     self.damage_inline_svg_root(node_id);
                 }
+                // pyro: a float's `shape-outside` image is its float area: the boxes around
+                // it are laid out again.
+                ImageType::Shape(idx) => {
+                    if let Some(Some(shape)) = node.element_data_mut().and_then(|el| el.shape_images.get_mut(idx)) {
+                        shape.status = Status::Ok;
+                        shape.image = image.clone();
+                    }
+                    node.clear_layout_cache();
+                    node.insert_damage(ALL_DAMAGE);
+                    let mut ancestor = node.layout_parent.get().or(node.parent);
+                    while let Some(id) = ancestor {
+                        let Some(parent) = self.nodes.get_mut(id) else { break };
+                        parent.clear_layout_cache();
+                        parent.insert_damage(ALL_DAMAGE);
+                        ancestor = parent.layout_parent.get().or(parent.parent);
+                    }
+                }
                 ImageType::Background(idx)
                 | ImageType::Mask(idx)
                 | ImageType::BorderImage(idx)
@@ -2462,7 +2479,7 @@ impl BaseDocument {
                             ImageType::Mask(_) => &mut el.mask_images,
                             ImageType::BorderImage(_) => &mut el.border_images,
                             ImageType::ListStyle(_) => &mut el.list_style_images,
-                            ImageType::Image | ImageType::Reference(_) => unreachable!(),
+                            ImageType::Image | ImageType::Reference(_) | ImageType::Shape(_) => unreachable!(),
                         };
                         images.get_mut(idx)
                     });

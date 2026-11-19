@@ -95,6 +95,8 @@ pub struct ElementData {
     pub reference_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the `list-style-image` image of a list item (a list of one), its marker once loaded.
     pub list_style_images: ThinVec<Option<ImageResourceData>>,
+    /// pyro: the `shape-outside` image of a float (a list of one), its float area once loaded.
+    pub shape_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the image this box shows in place of content and its pixels per CSS px: the URL
     /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
     /// whose own `content` is one image (it is laid out as an `<img>` of it).
@@ -401,6 +403,7 @@ impl std::fmt::Debug for ElementData {
             .field("mask_images", &self.mask_images)
             .field("border_images", &self.border_images)
             .field("list_style_images", &self.list_style_images)
+            .field("shape_images", &self.shape_images)
             .field("reference_images", &self.reference_images)
             .field("inline_layout_data", &self.inline_layout_data)
             .field("list_item_data", &self.list_item_data)
@@ -430,6 +433,7 @@ impl Clone for ElementData {
             mask_images: self.mask_images.clone(),
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
+            shape_images: self.shape_images.clone(),
             content_image: self.content_image.clone(),
             image_broken: self.image_broken,
             image_failed: self.image_failed,
@@ -565,6 +569,7 @@ impl ElementData {
             mask_images: ThinVec::new(),
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
+            shape_images: ThinVec::new(),
             content_image: None,
             image_broken: false,
             image_failed: false,
