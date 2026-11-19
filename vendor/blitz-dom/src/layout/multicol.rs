@@ -85,6 +85,10 @@ pub struct ColumnFragments {
     /// nested in another's columns (`LayoutPassState::nested_fragmentation`): the outer column
     /// height and how far down its column the box starts.
     pub nested: Option<(f32, f32)>,
+    /// pyro: so nested, its first row (not at the top of its outer column) cannot hold its first
+    /// column's content without breaking what is kept together or overflowing it: the outer
+    /// container breaks before it instead.
+    pub pushed: bool,
 }
 
 /// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -690,7 +694,13 @@ impl LayoutPassState<'_> {
             })
             .flatten()
             .filter(|&height| height >= 1.0);
+        // pyro: a balanced container fragments a nested one by its balanced column height, found
+        // again on each pass.
+        let balancing = spanning.is_none() && !vertical && multicol.height.is_none() && !fill_auto;
+        let fragments_nested = fragmentainer.is_some() || balancing;
         let mut pass = 0;
+        // pyro: the tops of nested containers to break before (`ColumnFragments::pushed`).
+        let mut pushed_nested: Vec<f32> = Vec::new();
         let (strip, mut breaks) = loop {
             let strip = if inline_root {
                 self.compute_inline_layout(dom_id, strip_inputs, None)
@@ -701,14 +711,21 @@ impl LayoutPassState<'_> {
             // `max-height` whatever the sizing mode: under either, the content's end is taken from
             // the laid-out content instead (empty space a `min-height` adds is no content to balance).
             let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-            let breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
+            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested);
+            if !pushed_nested.is_empty() {
+                breaks.forced.extend(pushed_nested.iter().copied().filter(|&y| y > breaks.start + EPSILON));
+                breaks.forced.sort_by(f32::total_cmp);
+                breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
+            }
             pass += 1;
-            if breaks.nested.is_empty() || pass > 3 {
+            if breaks.nested.is_empty() || pass > 5 {
                 break (strip, breaks);
             }
             // pyro: a multi-column container nested in these columns is fragmented by them: it is
             // told the column height and where in its column it starts, and the strip is laid out
             // again until that holds (a nested container's rows end where these columns do).
+            let fragmentainer =
+                fragmentainer.or_else(|| balancing.then(|| breaks.balance(count, limit)).filter(|&height| height >= 1.0));
             let columns = fragmentainer.map(|height| breaks.fill(height, MAX_COLUMNS).columns);
             let mut changed = false;
             for &(id, y) in &breaks.nested {
@@ -716,11 +733,23 @@ impl LayoutPassState<'_> {
                     let start = columns.iter().rev().find(|c| c.0 <= y + EPSILON).map_or(breaks.start, |c| c.0);
                     (height, (y - start).clamp(0.0, height))
                 });
-                let used = self.nodes[id]
-                    .element_data()
-                    .and_then(|e| e.layout_data.as_deref())
-                    .and_then(|l| l.columns.as_deref())
-                    .and_then(|c| c.nested);
+                let laid_out = self.nodes[id].element_data().and_then(|e| e.layout_data.as_deref()).and_then(|l| l.columns.as_deref());
+                let used = laid_out.and_then(|c| c.nested);
+                // (Before its top margin: the margin is truncated at the break.)
+                let margin_top = y - self.nodes[id].unrounded_layout().margin.top.max(0.0);
+                // (Not past `break-before: avoid`, which outweighs what the row breaks.)
+                let avoided = self.nodes[id].primary_styles().is_some_and(|style| {
+                    use style::values::computed::BreakBetween as B;
+                    matches!(style.get_box().break_before, B::Avoid | B::AvoidColumn)
+                });
+                if laid_out.is_some_and(|c| c.pushed)
+                    && !avoided
+                    && used.is_some()
+                    && !pushed_nested.iter().any(|&p| (p - margin_top).abs() <= EPSILON)
+                {
+                    pushed_nested.push(margin_top);
+                    changed = true;
+                }
                 self.nested_fragmentation.retain(|e| e.0 != id);
                 if let Some(wanted) = wanted {
                     self.nested_fragmentation.push((id, wanted));
@@ -784,6 +813,7 @@ impl LayoutPassState<'_> {
         // each outer column the box reaches: the first as tall as what is left of its outer
         // column, the others as tall as an outer column, each filled in turn; the row the content
         // ends in is balanced (unless `column-fill: auto`). A definite height ends the rows.
+        let mut pushed = false;
         if let Some((outer_height, offset)) = nested_ctx {
             let box_end = definite_height.map(|height| content_top + height);
             let first = outer_height - offset - content_top;
@@ -795,6 +825,10 @@ impl LayoutPassState<'_> {
                 let last_box_row = box_end.is_some_and(|end| top + available >= end - EPSILON);
                 let rest = Breaks { start, ..breaks.clone() };
                 let run = rest.fill(row_height, count + 1);
+                if placed.is_empty() && offset > EPSILON && first >= 1.0 {
+                    pushed = run.violations > 0
+                        || run.columns.iter().take(count).any(|&(a, b)| b - a > row_height + EPSILON);
+                }
                 if run.columns.len() <= count || last_box_row {
                     // (`column-fill: auto` without a definite height balances too.)
                     let height = if matches!(multicol.fill, ColumnFill::Balance) || !fill_auto {
@@ -1033,7 +1067,7 @@ impl LayoutPassState<'_> {
         // that position is shown: in its column (Chromium places it in the fragment its static
         // position falls in).
         let mut oof_candidates = strip.oof_candidates;
-        let columns = ColumnFragments { fragments, nested: nested_ctx };
+        let columns = ColumnFragments { fragments, nested: nested_ctx, pushed };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -1321,8 +1355,10 @@ impl BaseDocument {
     /// content: `start..end` its content (`start` its content box's top; `end` the strip's
     /// content end, or `None` to take it from the content: its last in-flow child's bottom
     /// margin edge, its floats' margin edges).
-    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>) -> Breaks {
-        let mut found = Found::default();
+    /// pyro: `nested_breakable`: the multi-column containers nested in the strip's flow are
+    /// fragmented by its columns (`Breaks::nested`), not monolithic.
+    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>, nested_breakable: bool) -> Breaks {
+        let mut found = Found { nested_breakable, ..Found::default() };
         let trims = self.nodes[container]
             .primary_styles()
             .map_or((false, false), |style| super::text_box::fragment_trims(&style));
@@ -1538,7 +1574,11 @@ impl BaseDocument {
                     found.loose.push(margin_box);
                 }
             }
-            if fragmentable(child, &style) {
+            let nested = is_multicol_style(&style) && !style.writing_mode.is_vertical();
+            if nested && found.nested_breakable && style.clone_float() == Float::None && fragmentable_but_multicol(child, &style) {
+                // pyro: fragmented by the columns (`Breaks::nested`): breakable through.
+                found.nested.push((child_id, child_top));
+            } else if fragmentable(child, &style) {
                 if style.get_box().break_inside != BreakWithin::Auto {
                     found.strict.push((child_top, child_bottom));
                 }
@@ -1557,7 +1597,7 @@ impl BaseDocument {
                 if held_whole(child, &style) {
                     found.whole.push((child_top, child_bottom));
                 }
-                if is_multicol_style(&style) && !style.writing_mode.is_vertical() {
+                if nested {
                     found.nested.push((child_id, child_top));
                 }
             }
@@ -1573,6 +1613,8 @@ struct Found {
     whole: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::nested`].
     nested: Vec<(crate::NodeId, f32)>,
+    /// pyro: see [`BaseDocument::multicol_breaks`].
+    nested_breakable: bool,
     loose: Vec<(f32, f32)>,
     gaps: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::trims`].
@@ -1588,9 +1630,19 @@ struct Found {
     flow_end: f32,
 }
 
+/// pyro: whether multi-column container `node` would be fragmentable if it were no multi-column
+/// container (see [`fragmentable`]).
+fn fragmentable_but_multicol(node: &crate::Node, style: &ComputedValues) -> bool {
+    fragmentable_as(node, style, true)
+}
+
 /// Whether a break may go through `node`'s box (a block container that is no scroll container,
 /// replaced element, form control or nested multi-column container); others are monolithic.
 fn fragmentable(node: &crate::Node, style: &ComputedValues) -> bool {
+    fragmentable_as(node, style, false)
+}
+
+fn fragmentable_as(node: &crate::Node, style: &ComputedValues, multicol_ok: bool) -> bool {
     let Some(element) = node.element_data() else {
         return false;
     };
@@ -1602,7 +1654,7 @@ fn fragmentable(node: &crate::Node, style: &ComputedValues) -> bool {
     }
     let box_style = style.get_box();
     let scrolls = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
-    if scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y) || is_multicol_style(style) {
+    if scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y) || (!multicol_ok && is_multicol_style(style)) {
         return false;
     }
     // pyro: a box of size containment is monolithic (CSS Contain 2 § 3.1).
@@ -1732,6 +1784,7 @@ mod tests {
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
             nested: None,
+            pushed: false,
             fragments: vec![
                 column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
                 column(100.0, f32::INFINITY, 120.0, 0.0, (120.0, -100.0)),
@@ -1754,6 +1807,7 @@ mod tests {
         // a third follows.
         let columns = ColumnFragments {
             nested: None,
+            pushed: false,
             fragments: vec![
                 column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
                 column(120.0, 220.0, 120.0, 0.0, (120.0, -120.0)),
@@ -1783,6 +1837,7 @@ mod tests {
         };
         let columns = ColumnFragments {
             nested: None,
+            pushed: false,
             fragments: vec![
                 column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
                 column(100.0, 200.0, 120.0, 0.0, (120.0, -100.0)),
