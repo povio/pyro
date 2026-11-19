@@ -718,6 +718,9 @@ pub struct BreakerState {
     /// pyro: lines wrap where their content passes this advance, when it is less than the
     /// line's max advance; the line keeps its max advance for alignment (`text-wrap: balance`).
     wrap_limit: f32,
+    /// pyro: what every line's room to wrap in is narrowed by, keeping its max advance for
+    /// alignment (`text-wrap: balance` beside floats, whose lines differ in width).
+    wrap_reduction: f32,
 
     /// The state of the current line
     line: LineState,
@@ -757,6 +760,7 @@ impl Default for BreakerState {
             line_max_advance: 0.0,
             line_max_height: f32::MAX,
             wrap_limit: f32::INFINITY,
+            wrap_reduction: 0.0,
             line: LineState::default(),
             contributed: Vec::new(),
             subtrees: SubtreeHistory::default(),
@@ -1057,6 +1061,13 @@ impl BreakerState {
     #[inline(always)]
     pub fn set_wrap_limit(&mut self, advance: f32) {
         self.wrap_limit = advance;
+    }
+
+    /// pyro: makes every line wrap where its content passes its max advance less `reduction`,
+    /// while it keeps its max advance for alignment. Zero by default.
+    #[inline(always)]
+    pub fn set_wrap_reduction(&mut self, reduction: f32) {
+        self.wrap_reduction = reduction;
     }
 
     /// Get the max-height of the current line
@@ -1740,7 +1751,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
         let max_advance = max_advance - line_indent;
         // pyro: what fits is also bounded by the wrap limit (`BreakerState::set_wrap_limit`).
-        let fit_advance = max_advance.min(self.state.wrap_limit - line_indent);
+        let fit_advance = max_advance.min(self.state.wrap_limit - line_indent) - self.state.wrap_reduction;
 
         // Iterate over remaining runs in the Layout
         let item_count = self.layout.data.items.len();

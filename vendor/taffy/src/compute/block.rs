@@ -87,6 +87,17 @@ pub struct FloatMark {
     right: usize,
 }
 
+/// pyro: the floats of a Block Formatting Context and a block's float state at one point.
+/// See [`BlockContext::float_snapshot`].
+#[cfg(feature = "float_layout")]
+#[derive(Debug, Clone)]
+pub struct FloatSnapshot {
+    float_context: FloatContext,
+    float_content_contribution: f32,
+    adjoining_floats: [bool; 2],
+    top_adjoining_floats: Option<[bool; 2]>,
+}
+
 /// Context for each individual Block within a Block Formatting Context
 ///
 /// Contains a mutable reference to the BlockFormattingContext + block-specific data
@@ -247,6 +258,27 @@ impl BlockContext<'_> {
     pub fn float_mark(&self) -> FloatMark {
         let float_context = &self.bfc.float_context;
         FloatMark { left: float_context.left_floats().len(), right: float_context.right_floats().len() }
+    }
+
+    /// pyro: the floats placed in this Block Formatting Context so far and this block's float
+    /// state, to lay content out again from this point (see [`Self::restore_floats`]).
+    #[cfg(feature = "float_layout")]
+    pub fn float_snapshot(&self) -> FloatSnapshot {
+        FloatSnapshot {
+            float_context: self.bfc.float_context.clone(),
+            float_content_contribution: self.float_content_contribution,
+            adjoining_floats: self.adjoining_floats,
+            top_adjoining_floats: self.top_adjoining_floats,
+        }
+    }
+
+    /// pyro: takes the floats back to a [`Self::float_snapshot`] of this block.
+    #[cfg(feature = "float_layout")]
+    pub fn restore_floats(&mut self, snapshot: &FloatSnapshot) {
+        self.bfc.float_context = snapshot.float_context.clone();
+        self.float_content_contribution = snapshot.float_content_contribution;
+        self.adjoining_floats = snapshot.adjoining_floats;
+        self.top_adjoining_floats = snapshot.top_adjoining_floats;
     }
 
     /// The id and position of each floated box placed since `mark` was taken: left floats in the
