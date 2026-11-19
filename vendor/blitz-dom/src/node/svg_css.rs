@@ -1152,8 +1152,25 @@ impl Writer<'_> {
             self.out.push_str(" />");
         } else {
             self.out.push('>');
+            // pyro: the root's pan and zoom by script (`currentTranslate`, `currentScale`; pyro-dom
+            // `SVG_PAN_ATTR`), applied to its content outside its own viewBox transform.
+            let pan = is_root
+                .then(|| {
+                    data.attrs.iter().find(|attr| &*attr.name.ns == crate::PYRO_STATE_NS && &*attr.name.local == "svg-pan")
+                })
+                .flatten()
+                .map(|attr| attr.value.to_string());
+            if let Some(pan) = &pan {
+                let parts: Vec<f64> = pan.split_ascii_whitespace().filter_map(|v| v.parse().ok()).collect();
+                if let [tx, ty, scale] = parts[..] {
+                    let _ = write!(self.out, "<g transform=\"translate({} {}) scale({})\">", num(tx), num(ty), num(scale));
+                }
+            }
             for &child_id in &node.children {
                 self.write_node(&node.tree()[child_id], nesting + 1);
+            }
+            if pan.is_some() {
+                self.out.push_str("</g>");
             }
             self.out.push_str("</");
             self.out.push_str(tag);

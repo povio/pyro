@@ -53,6 +53,9 @@ pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
 /// slot, so this is how the renderer finds its light-tree siblings (sibling combinators match in
 /// the node tree, not the flat tree).
 pub const LIGHT_INDEX_ATTR: &str = "light-index";
+/// Name ([`STATE_NS`]) of the attribute an `<svg>` panned or zoomed by script carries in render
+/// trees (`currentTranslate`, `currentScale`): `tx ty scale`.
+pub const SVG_PAN_ATTR: &str = "svg-pan";
 
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
@@ -543,6 +546,13 @@ impl Dom {
                     };
                     if slot_kids.as_ref().is_some_and(|(_, _, assigned)| *assigned) {
                         attrs.push(marker(ASSIGNED_SLOT_ATTR));
+                    }
+                    if let Some(&(tx, ty, scale)) = self.svg_pans.get(&n).filter(|_| e.name.ns == ns!(svg) && local == "svg") {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), SVG_PAN_ATTR.into())),
+                            value: Cow::Owned(format!("{tx} {ty} {scale}")),
+                            valueless: false,
+                        });
                     }
                     // A light child of a shadow host (rendered under the slot it is assigned to).
                     let parent = self.n(n).parent;

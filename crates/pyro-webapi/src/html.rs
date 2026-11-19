@@ -3632,6 +3632,25 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
     def.method("createSVGLength", 0, |s, n, _a| {
         Ok(collections::create_svg_length(s, n.id)?.value())
     });
+    // pyro: the user agent's pan and zoom (SVG 2 `currentTranslate`, `currentScale`), which the
+    // renderer applies to the `<svg>`'s content (pyro-dom `SVG_PAN_ATTR`).
+    def.getter("currentTranslate", |s, n| {
+        Ok(s.wrap::<collections::SvgCurrentTranslate>(collections::NodeHold::new(n.page(), n.id)?, None)?.value())
+    });
+    def.accessor(
+        "currentScale",
+        |s, n| Ok(s.number(n.page().dom.borrow().svg_pan(n.id).2 as f32 as f64)),
+        |_s, n, v| {
+            let scale = v.to_number()?;
+            if !scale.is_finite() {
+                return Err(JsError::Type("The provided float value is non-finite.".into()));
+            }
+            let mut dom = n.page().dom.borrow_mut();
+            let (tx, ty, _) = dom.svg_pan(n.id);
+            dom.set_svg_pan(n.id, (tx, ty, scale as f32 as f64));
+            Ok(())
+        },
+    );
 });
 // SVG 2 `<length>` attributes as `SVGAnimatedLength`s (`collections::SvgLengthAttr`: the attribute,
 // its initial value and the direction its percentages resolve in).

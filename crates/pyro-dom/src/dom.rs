@@ -241,6 +241,9 @@ pub struct Dom {
     /// The content height of the responsively embedded document each iframe shows (by slot), for the
     /// renderer (`set_frame_content_height`, snapshot `data-pyro-frame-content-height`).
     pub(crate) frame_content_heights: rustc_hash::FxHashMap<u32, f32>,
+    /// pyro: the user agent's pan and zoom of an `<svg>` (`SVGSVGElement.currentTranslate` and
+    /// `currentScale`): its translation and scale, when not the identity.
+    pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
@@ -335,6 +338,7 @@ impl Dom {
             removal_log: VecDeque::new(),
             journal: Vec::new(),
             frame_content_heights: Default::default(),
+            svg_pans: Default::default(),
             frame_documents: Default::default(),
             journal_floor: 0,
             style_snapshots: Default::default(),
@@ -1125,6 +1129,26 @@ impl Dom {
             Some(height) => self.frame_content_heights.insert(i, height),
             None => self.frame_content_heights.remove(&i),
         };
+        self.bump();
+        self.note(Change::State(i));
+    }
+
+    /// pyro: the pan and zoom (`currentTranslate` x and y, `currentScale`) of the `<svg>` `svg`.
+    pub fn svg_pan(&self, svg: NodeId) -> (f64, f64, f64) {
+        self.check(svg).ok().and_then(|i| self.svg_pans.get(&i).copied()).unwrap_or((0.0, 0.0, 1.0))
+    }
+
+    /// pyro: sets the pan and zoom of the `<svg>` `svg`, which its render tree carries.
+    pub fn set_svg_pan(&mut self, svg: NodeId, pan: (f64, f64, f64)) {
+        let Ok(i) = self.check(svg) else { return };
+        if self.svg_pans.get(&i).copied().unwrap_or((0.0, 0.0, 1.0)) == pan {
+            return;
+        }
+        if pan == (0.0, 0.0, 1.0) {
+            self.svg_pans.remove(&i);
+        } else {
+            self.svg_pans.insert(i, pan);
+        }
         self.bump();
         self.note(Change::State(i));
     }

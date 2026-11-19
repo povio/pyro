@@ -2124,6 +2124,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgAnimatedBoolean>();
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
+    engine.register::<SvgCurrentTranslate>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();
@@ -2150,5 +2151,31 @@ mod tests {
         assert_eq!(camel_to_data_attr("\u{37e}foo").as_deref(), Some("data-\u{37e}foo"));
         assert_eq!(camel_to_data_attr("a-b"), None);
         assert_eq!(camel_to_data_attr("a-\u{e9}").as_deref(), Some("data-a-\u{e9}"));
+    }
+}
+
+/// pyro: `SVGSVGElement.currentTranslate`: a point whose `x` and `y` are the `<svg>`'s pan (pyro-dom
+/// `Dom::svg_pan`), live.
+pub struct SvgCurrentTranslate;
+impl JsClass for SvgCurrentTranslate {
+    const NAME: &'static str = "SVGPoint";
+    type Data = NodeHold;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        fn set(t: &NodeHold, v: Value<'_>, axis: usize) -> JsResult<()> {
+            let value = v.to_number()?;
+            if !value.is_finite() {
+                return Err(JsError::Type("The provided float value is non-finite.".into()));
+            }
+            let mut dom = t.page.dom.borrow_mut();
+            let (mut tx, mut ty, scale) = dom.svg_pan(t.id);
+            if axis == 0 { tx = value as f32 as f64 } else { ty = value as f32 as f64 }
+            dom.set_svg_pan(t.id, (tx, ty, scale));
+            Ok(())
+        }
+        def.accessor("x", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).0)), |_s, t, v| set(t, v, 0));
+        def.accessor("y", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).1)), |_s, t, v| set(t, v, 1));
+        def.getter("w", |s, _t| Ok(s.number(1.0)));
+        def.getter("z", |s, _t| Ok(s.number(0.0)));
     }
 }
