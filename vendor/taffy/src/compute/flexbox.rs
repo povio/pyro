@@ -346,6 +346,40 @@ pub fn compute_flexbox_layout(
     let styled_based_known_dimensions =
         known_dimensions.or(min_max_definite_size.or(clamped_style_size).maybe_max(padding_border_sum));
 
+    // pyro: a container whose width is not known yet (it shrinks to fit) resolves its items'
+    // percentage padding and margins against zero while it finds its width, then lays them out
+    // against that width (cyclic percentages, css-sizing-3 § 5.2.1; WPT css-flexbox
+    // `percentage-padding-002`): it is laid out again at its width.
+    if run_mode == RunMode::PerformLayout
+        && styled_based_known_dimensions.width.is_none()
+        && tree.child_ids(node).any(|child| {
+            let style = tree.get_flexbox_child_style(child);
+            let padding = style.padding();
+            let margin = style.margin();
+            !style.position().is_out_of_flow()
+                && ([padding.left, padding.right, padding.top, padding.bottom]
+                    .iter()
+                    .any(|p| p.into_raw().uses_percentage())
+                    || [margin.left, margin.right, margin.top, margin.bottom]
+                        .iter()
+                        .any(|m| m.into_raw().uses_percentage()))
+        })
+    {
+        drop(style);
+        let width = compute_flexbox_layout(
+            tree,
+            node,
+            LayoutInput { run_mode: RunMode::ComputeSize, axis: RequestedAxis::Horizontal, ..inputs },
+        )
+        .size
+        .width;
+        return compute_flexbox_layout(
+            tree,
+            node,
+            LayoutInput { known_dimensions: Size { width: Some(width), ..known_dimensions }, ..inputs },
+        );
+    }
+
     // Short-circuit layout if the container's size is fully determined by the container's size and the run mode
     // is ComputeSize (and thus the container's size is all that we're interested in)
     if run_mode == RunMode::ComputeSize {
