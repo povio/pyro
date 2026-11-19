@@ -2109,7 +2109,19 @@ impl LayoutPassState<'_> {
             let inner = (width - margin.left - margin.right).max(0.0);
             // pyro: a caption with a `width` of its own is that wide, not stretched across the
             // table (as Chromium; WPT CSS2 `floats/floats-wrap-bfc-006`).
-            let own_width = {
+            // (Not an orthogonal caption's: its layout style is in its own axes, its `width`
+            // there its inline size, its physical `height`; WPT css-writing-modes
+            // `line-box-direction-vlr-018`, `block-flow-direction-vrl-019`.)
+            let orthogonal = {
+                let node = &self.nodes[caption];
+                let parent_vertical = node
+                    .layout_parent
+                    .get()
+                    .or(node.parent)
+                    .is_some_and(|parent| self.nodes[parent].writing_mode().is_vertical());
+                node.writing_mode().is_vertical() != parent_vertical
+            };
+            let own_width = (!orthogonal).then(|| {
                 use taffy::{MaybeMath as _, MaybeResolve as _};
                 let style = self.nodes[caption].layout_style();
                 let parent = Some(width);
@@ -2121,7 +2133,8 @@ impl LayoutPassState<'_> {
                     let max = style.max_size().width.maybe_resolve(parent, resolve_calc_value).maybe_add(adjust);
                     (w + adjust).maybe_min(max).maybe_max(min).max(pb)
                 })
-            };
+            })
+            .flatten();
             let caption_inputs = taffy::tree::LayoutInput {
                 run_mode: inputs.run_mode,
                 sizing_mode: taffy::SizingMode::InherentSize,
