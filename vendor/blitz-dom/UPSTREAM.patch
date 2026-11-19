@@ -21642,7 +21642,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3182 @@
+@@ -0,0 +1,3232 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -21961,6 +21961,10 @@ new file mode 100644
 +    /// pyro: the baselines of the strip's lines (its inline formatting contexts', not nested
 +    /// containers'), in tree order: the container's first baseline is the highest a column shows.
 +    baselines: Vec<f32>,
++    /// pyro: the boxes of `box-decoration-break: clone` (their border boxes' block ranges and
++    /// block-start border and padding): a column that starts inside one shows its block-start
++    /// border and padding again first, so its content is that much lower.
++    clones: Vec<(f32, f32, f32)>,
 +}
 +
 +/// pyro: the rows of a multi-column container with an explicit `column-height` and wrapping
@@ -23116,6 +23120,19 @@ new file mode 100644
 +                fragment.height = height;
 +            }
 +        }
++        // pyro: a column that starts inside a box of `box-decoration-break: clone` shows the box's
++        // block-start border and padding again first (`Breaks::clones`).
++        if !breaks.clones.is_empty() {
++            for fragment in fragments.iter_mut().filter(|f| !f.spanner) {
++                let repeated: f32 = breaks
++                    .clones
++                    .iter()
++                    .filter(|&&(top, bottom, _)| fragment.start > top + EPSILON && fragment.start < bottom - EPSILON)
++                    .map(|&(_, _, inset)| inset)
++                    .sum();
++                fragment.offset.y += repeated;
++            }
++        }
 +        // pyro: the columns' unsnapped left edges (`ColumnFragment::exact_x`).
 +        let pitch = column_width + gap;
 +        for fragment in &mut fragments {
@@ -24002,6 +24019,7 @@ new file mode 100644
 +            forced: found.forced,
 +            nested: found.nested,
 +            baselines: found.baselines,
++            clones: found.clones,
 +        }
 +    }
 +
@@ -24396,6 +24414,35 @@ new file mode 100644
 +                    found.loose.push(head);
 +                    found.whole.push(head);
 +                }
++                // pyro: a box of `box-decoration-break: clone` repeats its borders and padding in
++                // each fragment: one holds them with a pixel of its content at least, at either
++                // end (so a column of no height makes progress with each: WPT css-multicol
++                // `multicol-zero-height-003`), and a column starting inside it shows its
++                // block-start ones again first (`Breaks::clones`).
++                // (Only a box that holds its content: what overflows one, an out-of-flow box it
++                // contains included, is fragmented by the columns alone, over its repeated borders:
++                // WPT css-break `box-decoration-break-clone-005`, `-037`.)
++                let holds_content = layout.scrollable_overflow_rect.bottom() <= layout.size.height + EPSILON;
++                if style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone && holds_content {
++                    let top_inset = layout.border.top + layout.padding.top;
++                    let bottom_inset = layout.border.bottom + layout.padding.bottom;
++                    let content = (layout.size.height - top_inset - bottom_inset).max(0.0);
++                    let step = content.min(1.0);
++                    for range in [(child_top, child_top + top_inset + step), (child_bottom - bottom_inset - step, child_bottom)] {
++                        if range.1 > range.0 + EPSILON {
++                            found.strict.push(range);
++                            found.loose.push(range);
++                            found.whole.push(range);
++                        }
++                    }
++                    // (A box of `box-sizing: border-box` keeps its height across its fragments:
++                    // the repeated borders and padding take its content's room, not more: WPT
++                    // css-break `box-decoration-break-clone-007`.)
++                    let border_box = style.get_position().box_sizing == style::computed_values::box_sizing::T::BorderBox;
++                    if top_inset > EPSILON && !border_box {
++                        found.clones.push((child_top, child_bottom, top_inset));
++                    }
++                }
 +                // pyro: not into a column spanner: it is a row of its own, and what overflows it
 +                // is no content of the columns after it (WPT css-multicol
 +                // `spanner-fragmentation-005`).
@@ -24461,6 +24508,8 @@ new file mode 100644
 +    floats: Vec<(f32, f32)>,
 +    /// pyro: see [`Breaks::baselines`].
 +    baselines: Vec<f32>,
++    /// pyro: see [`Breaks::clones`].
++    clones: Vec<(f32, f32, f32)>,
 +    /// The furthest bottom of a box or line.
 +    bottom: f32,
 +    /// The furthest bottom margin edge of the container's children.
@@ -24671,6 +24720,7 @@ new file mode 100644
 +            forced: Vec::new(),
 +            nested: Vec::new(),
 +            baselines: Vec::new(),
++            clones: Vec::new(),
 +        }
 +    }
 +
