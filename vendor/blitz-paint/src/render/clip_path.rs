@@ -1354,9 +1354,19 @@ impl ElementCx<'_, '_> {
             // fragments in a group, in the user space of their border boxes' union (its bounding
             // box), the filter reading past them, and a graph's filter region painted whatever they
             // hold (WPT filter-effects `empty-element-with-filter-003`: an empty `<span>` filtered
-            // by a flood; `blur-text`). Not with a clip path or mask, painted below.
+            // by a flood; `blur-text`), under its clip path (a clip of what the filter made, as CSS
+            // Masking orders them). Not with a mask, painted below.
             #[cfg(feature = "svg")]
-            if alone && !has_mask && matches!(node.primary_styles().as_deref().map(|s| s.get_clip_path()), Some(StyloClipPath::None)) {
+            let box_layout = |rect: Rect, (border, padding): (taffy::Rect<f32>, taffy::Rect<f32>)| taffy::Layout {
+                size: taffy::Size {
+                    width: (rect.width() / self.scale) as f32,
+                    height: (rect.height() / self.scale) as f32,
+                },
+                border,
+                padding,
+                ..taffy::Layout::new()
+            };
+            if alone && !has_mask {
                 let bounds = fragments.iter().fold(first.border_box, |bounds, fragment| bounds.union(fragment.border_box));
                 let steps = node.primary_styles().and_then(|style| {
                     let size = ((bounds.width() / self.scale) as f32, (bounds.height() / self.scale) as f32);
@@ -1373,21 +1383,29 @@ impl ElementCx<'_, '_> {
                     }
                     let painter = self.context;
                     let viewport = Rect::new(0.0, 0.0, painter.width as f64, painter.height as f64);
-                    painter.paint_filter_steps(
-                        scene,
-                        group,
-                        super::EffectLayer {
-                            transform,
-                            visible: viewport,
-                            border_box: bounds,
-                            opacity,
-                            filter: None,
-                            backdrop_filter: None,
-                            backdrop_clip: None,
-                            steps: None,
-                        },
-                        steps,
-                    );
+                    // pyro: its clip path, against its first fragment's border box (as below).
+                    let first_transform = transform * Affine::translate(first.border_box.origin().to_vec2());
+                    let first_cx =
+                        self.context.element_cx(node, box_layout(first.border_box, first_edges), first_transform, None);
+                    let clip = first_cx.element_clip();
+                    let first_visible = visible - first.border_box.origin().to_vec2();
+                    with_element_clip(scene, clip.as_ref(), first_transform, self.scale, first_visible, |scene| {
+                        painter.paint_filter_steps(
+                            scene,
+                            group,
+                            super::EffectLayer {
+                                transform,
+                                visible: viewport,
+                                border_box: bounds,
+                                opacity,
+                                filter: None,
+                                backdrop_filter: None,
+                                backdrop_clip: None,
+                                steps: None,
+                            },
+                            steps,
+                        );
+                    });
                     continue;
                 }
             }
@@ -1395,15 +1413,6 @@ impl ElementCx<'_, '_> {
             if faded {
                 scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
             }
-            let box_layout = |rect: Rect, (border, padding): (taffy::Rect<f32>, taffy::Rect<f32>)| taffy::Layout {
-                size: taffy::Size {
-                    width: (rect.width() / self.scale) as f32,
-                    height: (rect.height() / self.scale) as f32,
-                },
-                border,
-                padding,
-                ..taffy::Layout::new()
-            };
 
             // The clip path, against the first fragment's border box.
             let first_transform = transform * Affine::translate(first.border_box.origin().to_vec2());

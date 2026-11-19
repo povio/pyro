@@ -125,6 +125,7 @@ mod svg_filter_primitives;
 mod svg_filters;
 mod svg_image_natural_size;
 mod svg_mask_layers;
+mod paint_review_r6;
 mod svg_reference_cycles;
 mod svg_viewport_clip;
 mod tab_stops;
