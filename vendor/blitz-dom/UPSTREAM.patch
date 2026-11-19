@@ -34697,7 +34697,7 @@ diff --git a/packages/blitz-dom/src/layout/table_fixup.rs b/packages/blitz-dom/s
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/table_fixup.rs
-@@ -0,0 +1,490 @@
+@@ -0,0 +1,493 @@
 +//! pyro: the anonymous table objects of CSS 2.1 §17.2.1 (css-tables-3 §3.3, "fixup").
 +//!
 +//! - Consecutive table parts whose parent box is not a table (cells, rows, row groups, columns,
@@ -34998,9 +34998,12 @@ new file mode 100644
 +/// pyro: the anonymous inline table a table part of an inline box is in
 +/// ([`wrap_inline_table_parts`]), and whether the part is its first.
 +pub(crate) fn inline_table_of(nodes: &crate::NodeTree, part: NodeId) -> Option<(NodeId, bool)> {
++    // (Constant time: the marker is set for the parts of the tables made now; a table made before is
++    // freed when its inline root is built again (its id no longer resolves), and a part moved since
++    // has another parent than the table, which is in the part's parent inline box.)
 +    let table = nodes[part].inline_table.get()?;
 +    let table_node = nodes.get(table)?;
-+    (is_anonymous_inline_table(table_node) && table_node.children.contains(&part))
++    (is_anonymous_inline_table(table_node) && table_node.parent.is_some() && table_node.parent == nodes[part].parent)
 +        .then(|| (table, table_node.children.first() == Some(&part)))
 +}
 +

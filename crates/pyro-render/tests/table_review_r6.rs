@@ -197,3 +197,17 @@ fn relative_float_percent_top_uses_a_definite_containing_block_height() {
     );
     assert_eq!(pixel(&img, 10, 60), GREEN);
 }
+
+/// Thousands of table rows inside an inline box are one anonymous inline table: building it (and the
+/// inline content around it) stays linear in the rows (review: a membership scan per row was
+/// quadratic).
+#[test]
+fn many_table_rows_in_an_inline_box_build_in_linear_time() {
+    let rows = "<span style='display:table-row'><span style='display:table-cell'>x</span></span>".repeat(4000);
+    let started = std::time::Instant::now();
+    let img = render(&format!(
+        "<div style='width:50px;height:50px;background:green'></div><span>{rows}</span>"
+    ));
+    assert_eq!(pixel(&img, 10, 10), GREEN);
+    assert!(started.elapsed() < std::time::Duration::from_secs(20), "took {:?}", started.elapsed());
+}

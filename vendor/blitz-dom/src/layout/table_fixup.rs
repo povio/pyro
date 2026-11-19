@@ -298,9 +298,12 @@ pub(crate) fn is_anonymous_inline_table(node: &Node) -> bool {
 /// pyro: the anonymous inline table a table part of an inline box is in
 /// ([`wrap_inline_table_parts`]), and whether the part is its first.
 pub(crate) fn inline_table_of(nodes: &crate::NodeTree, part: NodeId) -> Option<(NodeId, bool)> {
+    // (Constant time: the marker is set for the parts of the tables made now; a table made before is
+    // freed when its inline root is built again (its id no longer resolves), and a part moved since
+    // has another parent than the table, which is in the part's parent inline box.)
     let table = nodes[part].inline_table.get()?;
     let table_node = nodes.get(table)?;
-    (is_anonymous_inline_table(table_node) && table_node.children.contains(&part))
+    (is_anonymous_inline_table(table_node) && table_node.parent.is_some() && table_node.parent == nodes[part].parent)
         .then(|| (table, table_node.children.first() == Some(&part)))
 }
 
