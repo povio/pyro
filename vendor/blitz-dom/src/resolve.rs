@@ -1075,11 +1075,7 @@ impl BaseDocument {
                 let display = style.clone_display();
                 display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
             };
-            // (Classic scrollbars only, as the clip-margin contributions below: overlay mode keeps
-            // its results.)
-            let classic = self.nodes.classic_scrollbars;
-            let paint_only =
-                classic && contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
+            let paint_only = contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
             if contain.intersects(Contain::LAYOUT | Contain::PAINT) && !paint_only && !inline_flow {
                 return border_box;
             }
@@ -1091,7 +1087,7 @@ impl BaseDocument {
                 // pyro: an `overflow: clip` axis shows its overflow up to its overflow clip edge
                 // (`overflow-clip-margin`), which is part of what it contributes (Chrome:
                 // WPT css-overflow `overflow-clip-margin-002`).
-                let edge = (classic && (ox == Overflow::Clip || oy == Overflow::Clip)).then(|| {
+                let edge = (ox == Overflow::Clip || oy == Overflow::Clip).then(|| {
                     use style::values::generics::box_::OverflowClipMarginBox;
                     let layout = self.nodes[node_id].final_layout();
                     let clip_margin = &style.get_margin().overflow_clip_margin;

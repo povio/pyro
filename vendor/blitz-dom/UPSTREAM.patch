@@ -46731,7 +46731,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +715,533 @@
+@@ -231,28 +715,529 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -47103,11 +47103,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                let display = style.clone_display();
 +                display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
 +            };
-+            // (Classic scrollbars only, as the clip-margin contributions below: overlay mode keeps
-+            // its results.)
-+            let classic = self.nodes.classic_scrollbars;
-+            let paint_only =
-+                classic && contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
++            let paint_only = contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
 +            if contain.intersects(Contain::LAYOUT | Contain::PAINT) && !paint_only && !inline_flow {
 +                return border_box;
 +            }
@@ -47119,7 +47115,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                // pyro: an `overflow: clip` axis shows its overflow up to its overflow clip edge
 +                // (`overflow-clip-margin`), which is part of what it contributes (Chrome:
 +                // WPT css-overflow `overflow-clip-margin-002`).
-+                let edge = (classic && (ox == Overflow::Clip || oy == Overflow::Clip)).then(|| {
++                let edge = (ox == Overflow::Clip || oy == Overflow::Clip).then(|| {
 +                    use style::values::generics::box_::OverflowClipMarginBox;
 +                    let layout = self.nodes[node_id].final_layout();
 +                    let clip_margin = &style.get_margin().overflow_clip_margin;
@@ -47273,7 +47269,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -264,6 +1253,43 @@
+@@ -264,6 +1249,43 @@
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
@@ -47317,7 +47313,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +1303,35 @@
+@@ -277,20 +1299,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -47360,7 +47356,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +1341,33 @@
+@@ -300,16 +1337,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -47398,7 +47394,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -320,10 +1378,45 @@
+@@ -320,10 +1374,45 @@
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              }
  
@@ -47444,7 +47440,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +1451,32 @@
+@@ -358,6 +1447,32 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -47477,7 +47473,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +1486,9 @@
+@@ -367,9 +1482,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -47490,7 +47486,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +1505,14 @@
+@@ -386,7 +1501,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -47506,7 +47502,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +1521,13 @@
+@@ -395,18 +1517,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -47526,7 +47522,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +1540,7 @@
+@@ -419,10 +1536,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -47538,7 +47534,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,6 +1548,33 @@
+@@ -430,6 +1544,33 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -47572,7 +47568,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1582,1104 @@
+@@ -437,32 +1578,1104 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
