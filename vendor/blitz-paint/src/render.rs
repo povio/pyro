@@ -2297,14 +2297,16 @@ fn escapes_clip_of(tree: &blitz_dom::NodeTree, node_id: NodeId, child_id: NodeId
     true
 }
 
-/// pyro: whether `node` (a stacking context) paints any z-ordered box (negative `z-index`,
+/// pyro: whether `node` (a clipping box) paints any z-ordered box (negative `z-index`,
 /// positioned level or above) whose containing block lies outside it ([`escapes_clip_of`]).
 fn has_clip_escapes(tree: &blitz_dom::NodeTree, node: &Node) -> bool {
-    let Some(sc) = &node.stacking_context else { return false };
-    sc.pos_z_hoisted_children()
-        .chain(sc.neg_z_hoisted_children())
-        .any(|child| escapes_clip_of(tree, node.id, child.node_id))
-        || node
+    // pyro: a clipping box that is no stacking context too: a box escaping its clip paints among
+    // its positioned children (blitz-dom `restore_out_of_flow_stacking_owners`, `clip_owner_of`).
+    node.stacking_context.as_ref().is_some_and(|sc| {
+        sc.pos_z_hoisted_children()
+            .chain(sc.neg_z_hoisted_children())
+            .any(|child| escapes_clip_of(tree, node.id, child.node_id))
+    }) || node
             .paint_children
             .borrow()
             .as_ref()

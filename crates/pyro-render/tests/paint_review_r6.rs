@@ -168,3 +168,24 @@ fn a_huge_svg_image_is_rasterized_for_a_canvas_within_the_limit() {
     let px = &pixmap.data_as_u8_slice()[i..i + 4];
     assert_eq!(px, &[0, 128, 0, 255], "the image fills its pixels");
 }
+
+/// A fixed box inside an `overflow: hidden` box that is no stacking context escapes its clip
+/// (its containing block is the viewport) yet keeps its tree-order place among the positioned
+/// boxes there: a later translucent white box over it covers it, as in Chromium. It was hoisted to
+/// the root and painted over everything in the clipping box.
+#[test]
+fn a_fixed_box_escaping_a_clip_keeps_its_place_among_positioned_boxes() {
+    let img = render(
+        "<style>div{position:absolute;width:200px;height:200px}</style>\
+         <div style='overflow:hidden;top:110px;left:10px'><div style='background:green'>\
+         <div style='position:fixed;background:#f008;top:150px;left:50px'></div>\
+         <div style='background:#fff8;top:90px;left:90px'></div></div></div>",
+    );
+    // Over all three: the white box over the red box over green.
+    let [r, g, b] = pixel(&img, 150, 250);
+    let close = |a: u8, e: u8| a.abs_diff(e) <= 2;
+    assert!(close(r, 199) && close(g, 164) && close(b, 136), "white over red over green: {:?}", [r, g, b]);
+    // Past the clipping box the fixed box still shows (red over the page's white).
+    let [r, g, b] = pixel(&img, 230, 295);
+    assert!(r > 240 && g < 140 && b < 140, "the fixed box past the clip: {:?}", [r, g, b]);
+}

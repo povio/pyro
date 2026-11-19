@@ -367,13 +367,28 @@ impl BaseDocument {
         // clips with the CSS `clip` property, which clips all its descendants (CSS Masking 1 § 5.1),
         // a fixed one whose containing block lies outside it too: such a descendant paints in it
         // (WPT css-masking `clip-fixed-pos-transform-descendant-001`).
+        // pyro: and the nearest that clips its overflow (an `overflow` other than `visible`, as the
+        // painter clips it), whose clip applies to a descendant only when it is in the descendant's
+        // containing-block chain (Chromium): such a descendant paints in it, among its positioned
+        // children, its clip escaped (WPT filter-effects `backdrop-filter-fixed-clip`).
         let clip_owner_of = |doc: &Self, mut node: Option<NodeId>| {
             while let Some(id) = node {
                 let n = &doc.nodes[id];
                 if n.stacking_context.is_some() { return None; }
                 if n.primary_styles().is_some_and(|style| {
-                    matches!(style.clone_position(), Position::Absolute | Position::Fixed)
-                        && matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_))
+                    (matches!(style.clone_position(), Position::Absolute | Position::Fixed)
+                        && matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_)))
+                        // (Not one the user scrolls, `scroll` or `auto`: a box escaping it would be
+                        // painted in its scrolled space, which a fixed box under a scrolled window
+                        // is not;
+                        // WPT css-position `position-sticky-escape-scroller-002`.)
+                        || (!matches!(style.get_box().overflow_x, style::values::computed::Overflow::Visible)
+                            || !matches!(style.get_box().overflow_y, style::values::computed::Overflow::Visible))
+                            && !matches!(style.get_box().overflow_x, style::values::computed::Overflow::Scroll | style::values::computed::Overflow::Auto)
+                            && !matches!(style.get_box().overflow_y, style::values::computed::Overflow::Scroll | style::values::computed::Overflow::Auto)
+                            && !n.is_root_element()
+                            && !doc.body_overflow_goes_to_viewport(id)
+                            && n.element_data().is_some_and(|e| e.image_data().is_none() && e.sub_doc_data().is_none())
                 }) {
                     return Some(id);
                 }
@@ -381,6 +396,25 @@ impl BaseDocument {
             }
             None
         };
+        // pyro: the positioned boxes of normal paint level (and stacking contexts of z-index 0 or
+        // auto) a clip owner `owner` holds deeper than its own paint children, nested in its other
+        // boxes but in no stacking context of their own: once a box escaping `owner`'s clip paints
+        // among `owner`'s positioned children, these go there too, in tree order, so the escaping
+        // box keeps its place among them (CSS 2.1 Appendix E: they are all of one positioned level).
+        fn nested_positioned(doc: &BaseDocument, owner: NodeId, id: NodeId, out: &mut Vec<NodeId>) {
+            let children = doc.nodes[id].paint_children.borrow().clone().unwrap_or_default();
+            for child in children {
+                let node = &doc.nodes[child];
+                let positioned = node.primary_styles().is_some_and(|s| s.clone_position() != Position::Static);
+                let context = node.stacking_context.is_some();
+                if id != owner && (positioned || context) && node.z_index() == 0 {
+                    out.push(child);
+                }
+                if !context {
+                    nested_positioned(doc, owner, child, out);
+                }
+            }
+        }
         // Whether `ancestor` is `id` or one of its containing blocks.
         let contains = |doc: &Self, ancestor: NodeId, mut id: Option<NodeId>| {
             while let Some(current) = id {
@@ -390,6 +424,7 @@ impl BaseDocument {
             false
         };
         self.oof_hoisted.retain(|id| self.nodes.get(*id).is_some_and(|n| n.oof_containing_block.get().is_some()));
+        let mut clip_owners: Vec<NodeId> = Vec::new();
         let mut moves: Vec<_> = self.oof_hoisted.iter().filter_map(|&id| {
             let node = &self.nodes[id];
             if !node.flags.is_in_document() { return None; }
@@ -399,11 +434,24 @@ impl BaseDocument {
                 && let Some(owner) = clip_owner_of(self, box_parent)
                 && !contains(self, owner, Some(cb))
             {
+                if !clip_owners.contains(&owner) {
+                    clip_owners.push(owner);
+                }
                 return Some((id, owner));
             }
             let target = context_of(self, box_parent);
             (target != context_of(self, Some(cb))).then_some((id, target))
         }).collect();
+        // The positioned boxes nested in the clip owners that took an escaping box join it there.
+        for &owner in &clip_owners {
+            let mut nested = Vec::new();
+            nested_positioned(self, owner, owner, &mut nested);
+            for id in nested {
+                if !moves.iter().any(|(moved, _)| *moved == id) {
+                    moves.push((id, owner));
+                }
+            }
+        }
         if moves.is_empty() { return; }
         // In node slot order, as when every node was scanned (equal z-indices
         // paint in insertion order).

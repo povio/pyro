@@ -2743,7 +2743,25 @@ impl Node {
             && y >= (overflow.y0 / scale) as f32
             && y <= (overflow.y1 / scale) as f32;
 
-        if !matches_self && !matches_content && !matches_hoisted_content && !matches_overflow {
+        // pyro: a paint child that escapes this box's clip (its containing block lies outside this
+        // box: `restore_out_of_flow_stacking_owners`) may lie anywhere: it is hit wherever it is.
+        let escaping_children = || {
+            self.paint_children.borrow().iter().flatten().any(|&id| {
+                let Some(child) = self.tree().get(id) else { return false };
+                if !child.taffy_position().is_out_of_flow() {
+                    return false;
+                }
+                let mut cb = child.containing_block();
+                while let Some(c) = cb {
+                    if c == self.id {
+                        return false;
+                    }
+                    cb = self.tree().get(c).and_then(|n| n.containing_block());
+                }
+                true
+            })
+        };
+        if !matches_self && !matches_content && !matches_hoisted_content && !matches_overflow && !escaping_children() {
             return None;
         }
 
