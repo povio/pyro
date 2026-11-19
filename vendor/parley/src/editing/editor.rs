@@ -114,6 +114,28 @@ where
     alignment: Alignment,
     base_direction: BaseDirection,
     generation: Generation,
+    /// pyro: the buffer as it is displayed (`text-transform`), see [`Self::set_display_text`].
+    display: Option<DisplayText<T>>,
+}
+
+/// pyro: the editor's text as displayed: its buffer when it was made, the displayed text, the
+/// byte offsets of each buffer character's start (and the end) in both, and its layout.
+#[derive(Clone, Debug)]
+struct DisplayText<T: Brush> {
+    source: String,
+    map: Vec<(usize, usize)>,
+    layout: Layout<T>,
+}
+
+impl<T: Brush> DisplayText<T> {
+    /// The displayed offset of the buffer's byte offset `index` (the start of the character it is in).
+    fn display_index(&self, index: usize) -> usize {
+        match self.map.binary_search_by_key(&index, |&(buffer, _)| buffer) {
+            Ok(i) => self.map[i].1,
+            Err(0) => 0,
+            Err(i) => self.map[i - 1].1,
+        }
+    }
 }
 
 impl<T> PlainEditor<T>
@@ -140,6 +162,7 @@ where
             // will choose to use that as their initial value, but will probably need
             // to redraw if they haven't already.
             generation: Generation(1),
+            display: None,
         }
     }
 }
@@ -830,7 +853,18 @@ where
     pub fn selection_geometry(&self) -> Vec<(BoundingBox, usize)> {
         // We do not check `self.show_cursor` here, as the IME handling code collapses the
         // selection to a caret in that case.
+        if let Some(display) = self.current_display() {
+            return self.display_selection(display).geometry(&display.layout);
+        }
         self.selection.geometry(&self.layout)
+    }
+
+    /// pyro: the selection in the displayed text.
+    fn display_selection(&self, display: &DisplayText<T>) -> Selection {
+        let cursor = |cursor: Cursor| {
+            Cursor::from_byte_index(&display.layout, display.display_index(cursor.index()), cursor.affinity())
+        };
+        Selection::new(cursor(self.selection.anchor()), cursor(self.selection.focus()))
     }
 
     /// Invoke a callback with each rectangle representing the selected portions of text, and the
@@ -855,6 +889,11 @@ where
     /// There is not always a caret. For example, the IME may have indicated the caret should be
     /// hidden.
     pub fn cursor_geometry(&self, size: f32) -> Option<BoundingBox> {
+        if let Some(display) = self.current_display() {
+            return self
+                .show_cursor
+                .then(|| self.display_selection(display).focus().geometry(&display.layout, size));
+        }
         self.show_cursor
             .then(|| self.selection.focus().geometry(&self.layout, size))
     }
@@ -1073,9 +1112,40 @@ where
     pub fn try_layout(&self) -> Option<&Layout<T>> {
         if self.layout_dirty {
             None
+        } else if let Some(display) = self.current_display() {
+            Some(&display.layout)
         } else {
             Some(&self.layout)
         }
+    }
+
+    /// pyro: the buffer as it is displayed (a `text-transform`: `display` is the text shown, `map`
+    /// the byte offsets of each buffer character's start and the end, in the buffer and in
+    /// `display`), laid out as the buffer is. While the buffer is the one it was made from, the
+    /// layout, selection and caret geometry are the displayed text's; editing and hit testing stay
+    /// the buffer's. `None` shows the buffer.
+    pub fn set_display_text(
+        &mut self,
+        display: Option<(String, Vec<(usize, usize)>)>,
+        font_cx: &mut FontContext,
+        layout_cx: &mut LayoutContext<T>,
+    ) {
+        self.display = display.map(|(text, map)| {
+            let mut builder = layout_cx.ranged_builder(font_cx, &text, self.scale, self.quantize);
+            builder.set_base_direction(self.base_direction);
+            for prop in self.default_style.inner().values() {
+                builder.push_default(prop.to_owned());
+            }
+            let mut layout = builder.build(&text);
+            layout.break_all_lines(self.width);
+            layout.align(self.alignment, AlignmentOptions::default());
+            DisplayText { source: self.buffer.clone(), map, layout }
+        });
+    }
+
+    /// pyro: the displayed text, while it is the buffer's.
+    fn current_display(&self) -> Option<&DisplayText<T>> {
+        self.display.as_ref().filter(|display| display.source == self.buffer && self.compose.is_none())
     }
 
     /// Update the layout if it is dirty.

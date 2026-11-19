@@ -223,6 +223,40 @@ impl TextTransformer {
     }
 }
 
+/// pyro: a text control's value as `text-transform` displays it, with the byte offsets of each
+/// character's start (and the end) in the value and in the displayed text
+/// (`PlainEditor::set_display_text`); `None` when it displays the value as it is. Each character is
+/// mapped on its own (`ß` -> `SS`), but `capitalize`, which needs its word: that is mapped as a
+/// whole, and only when it keeps the character count.
+pub(crate) fn display_text(value: &str, style: &ComputedValues) -> Option<(String, Vec<(usize, usize)>)> {
+    let transform = CaseTransform::from_style(style);
+    if transform.text_transform.is_empty() {
+        return None;
+    }
+    let mut transformer = TextTransformer::default();
+    let mut map = Vec::with_capacity(value.len() + 1);
+    let display = if transform.text_transform.case() == TextTransformCase::Capitalize {
+        let whole = transformer.transform_alone(value, &transform);
+        if whole.chars().count() != value.chars().count() {
+            return None;
+        }
+        for ((buffer, _), (shown, _)) in value.char_indices().zip(whole.char_indices()) {
+            map.push((buffer, shown));
+        }
+        whole
+    } else {
+        let mut display = String::with_capacity(value.len());
+        let mut piece = [0u8; 4];
+        for (buffer, c) in value.char_indices() {
+            map.push((buffer, display.len()));
+            display.push_str(&transformer.transform_alone(c.encode_utf8(&mut piece), &transform));
+        }
+        display
+    };
+    map.push((value.len(), display.len()));
+    (display != value).then_some((display, map))
+}
+
 /// Maps single-character text nodes to mathematical italic characters.
 /// <https://w3c.github.io/mathml-core/#italic-mappings>
 fn math_auto(text: &str, output: &mut OutputSink<'_>) {

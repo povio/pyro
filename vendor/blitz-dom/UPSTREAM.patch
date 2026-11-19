@@ -19767,7 +19767,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,9 +1223,12 @@
+@@ -308,87 +1223,256 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -19779,12 +19779,26 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          let scale = doc.viewport.scale();
 +                        let classic = doc.nodes.classic_scrollbars;
                          let node = &mut doc.nodes[dom_node_id(node_id)];
++                        let style = node.primary_styles().map(|style| style::servo_arc::Arc::clone(&*style));
                          if let Some(input) = node
                              .data
-@@ -322,73 +1240,233 @@
-                                 &mut doc.font_ctx.lock().unwrap(),
-                                 &mut doc.layout_ctx,
-                             );
+                             .downcast_element_mut()
+                             .and_then(|el| el.text_input_data_mut())
+                         {
+                             input.editor.set_width(Some(content_width * scale));
+-                            input.editor.refresh_layout(
+-                                &mut doc.font_ctx.lock().unwrap(),
+-                                &mut doc.layout_ctx,
+-                            );
++                            let mut font_ctx = doc.font_ctx.lock().unwrap();
++                            input.editor.refresh_layout(&mut font_ctx, &mut doc.layout_ctx);
++                            // pyro: its value shown in its `text-transform` (WPT css-text
++                            // `text-transform-upperlower-108`).
++                            let display = style.as_deref().and_then(|style| {
++                                crate::layout::text_transform::display_text(input.editor.raw_text(), style)
++                            });
++                            input.editor.set_display_text(display, &mut font_ctx, &mut doc.layout_ctx);
++                            drop(font_ctx);
 +                            // pyro: the placeholder wraps at the same width.
 +                            if let Some(placeholder) = input.placeholder.as_deref_mut() {
 +                                placeholder.break_lines(Some(content_width * scale));
@@ -20054,7 +20068,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1485,50 @@
+@@ -407,39 +1491,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -20126,7 +20140,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1561,90 @@
+@@ -472,6 +1567,90 @@
                          _ => unreachable!(),
                      };
  
@@ -20217,7 +20231,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,124 +1661,564 @@
+@@ -488,124 +1667,564 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -20868,7 +20882,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl TraversePartialTree for LayoutPassState<'_> {
-@@ -667,7 +2280,11 @@
+@@ -667,7 +2286,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20881,7 +20895,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2292,20 @@
+@@ -675,6 +2298,20 @@
      }
  
      #[inline(always)]
@@ -20902,7 +20916,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2329,54 @@
+@@ -698,17 +2335,54 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -20915,9 +20929,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  if node.oof_containing_block.get() == Some(containing_block) {
                      node.oof_containing_block.set(None);
 +                    self.doc.oof_hoisted.remove(&hoisted_id);
-+                }
-+            }
-+        }
+                 }
+             }
+         }
+-        hoisted.clear();
 +        let mut list = hoisted;
 +        list.clear();
 +        *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
@@ -20945,12 +20960,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                        return between;
 +                    }
 +                    up = self.nodes[m].layout_parent.get();
-                 }
++                }
 +                return false;
-             }
++            }
 +            at = self.nodes[node].parent;
-         }
--        hoisted.clear();
++        }
 +        false
 +    }
 +
@@ -20959,7 +20973,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2389,7 @@
+@@ -721,6 +2395,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -20967,7 +20981,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2401,149 @@
+@@ -732,6 +2407,149 @@
      }
  }
  
@@ -21117,7 +21131,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2551,12 @@
+@@ -739,10 +2557,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -21134,7 +21148,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2566,11 @@
+@@ -752,9 +2572,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -21149,7 +21163,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2598,233 @@
+@@ -782,16 +2604,233 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -21387,7 +21401,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2877,30 @@
+@@ -844,6 +2883,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -21418,7 +21432,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2909,19 @@
+@@ -852,7 +2915,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -21439,7 +21453,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2937,30 @@
+@@ -868,6 +2943,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -21470,7 +21484,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3065,201 @@
+@@ -972,3 +3071,201 @@
          })
      }
  }
@@ -35381,6 +35395,47 @@ diff --git a/packages/blitz-dom/src/layout/text_transform.rs b/packages/blitz-do
      fn transform_nonempty<'a, B: Brush>(
          &'a mut self,
          text: &'a str,
+@@ -202,6 +223,40 @@
+     }
+ }
+ 
++/// pyro: a text control's value as `text-transform` displays it, with the byte offsets of each
++/// character's start (and the end) in the value and in the displayed text
++/// (`PlainEditor::set_display_text`); `None` when it displays the value as it is. Each character is
++/// mapped on its own (`ß` -> `SS`), but `capitalize`, which needs its word: that is mapped as a
++/// whole, and only when it keeps the character count.
++pub(crate) fn display_text(value: &str, style: &ComputedValues) -> Option<(String, Vec<(usize, usize)>)> {
++    let transform = CaseTransform::from_style(style);
++    if transform.text_transform.is_empty() {
++        return None;
++    }
++    let mut transformer = TextTransformer::default();
++    let mut map = Vec::with_capacity(value.len() + 1);
++    let display = if transform.text_transform.case() == TextTransformCase::Capitalize {
++        let whole = transformer.transform_alone(value, &transform);
++        if whole.chars().count() != value.chars().count() {
++            return None;
++        }
++        for ((buffer, _), (shown, _)) in value.char_indices().zip(whole.char_indices()) {
++            map.push((buffer, shown));
++        }
++        whole
++    } else {
++        let mut display = String::with_capacity(value.len());
++        let mut piece = [0u8; 4];
++        for (buffer, c) in value.char_indices() {
++            map.push((buffer, display.len()));
++            display.push_str(&transformer.transform_alone(c.encode_utf8(&mut piece), &transform));
++        }
++        display
++    };
++    map.push((value.len(), display.len()));
++    (display != value).then_some((display, map))
++}
++
+ /// Maps single-character text nodes to mathematical italic characters.
+ /// <https://w3c.github.io/mathml-core/#italic-mappings>
+ fn math_auto(text: &str, output: &mut OutputSink<'_>) {
 diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/src/layout/writing_mode.rs
 --- a/packages/blitz-dom/src/layout/writing_mode.rs
 +++ b/packages/blitz-dom/src/layout/writing_mode.rs

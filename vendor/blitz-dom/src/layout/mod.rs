@@ -1230,16 +1230,22 @@ impl LayoutPassState<'_> {
                         let scale = doc.viewport.scale();
                         let classic = doc.nodes.classic_scrollbars;
                         let node = &mut doc.nodes[dom_node_id(node_id)];
+                        let style = node.primary_styles().map(|style| style::servo_arc::Arc::clone(&*style));
                         if let Some(input) = node
                             .data
                             .downcast_element_mut()
                             .and_then(|el| el.text_input_data_mut())
                         {
                             input.editor.set_width(Some(content_width * scale));
-                            input.editor.refresh_layout(
-                                &mut doc.font_ctx.lock().unwrap(),
-                                &mut doc.layout_ctx,
-                            );
+                            let mut font_ctx = doc.font_ctx.lock().unwrap();
+                            input.editor.refresh_layout(&mut font_ctx, &mut doc.layout_ctx);
+                            // pyro: its value shown in its `text-transform` (WPT css-text
+                            // `text-transform-upperlower-108`).
+                            let display = style.as_deref().and_then(|style| {
+                                crate::layout::text_transform::display_text(input.editor.raw_text(), style)
+                            });
+                            input.editor.set_display_text(display, &mut font_ctx, &mut doc.layout_ctx);
+                            drop(font_ctx);
                             // pyro: the placeholder wraps at the same width.
                             if let Some(placeholder) = input.placeholder.as_deref_mut() {
                                 placeholder.break_lines(Some(content_width * scale));
