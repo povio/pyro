@@ -8653,7 +8653,7 @@ index bb954acf..818412f0 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..3c3d3bff 100644
+index 2c6179a4..210520e7 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -8935,7 +8935,7 @@ index 2c6179a4..3c3d3bff 100644
  
      let layout = Layout {
          order: candidate.order,
-@@ -801,7 +956,22 @@ pub(crate) fn perform_oof_layout(
+@@ -801,7 +956,24 @@ pub(crate) fn perform_oof_layout(
      #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
      hoisted: &mut Vec<NodeId>,
      unclaimed: &mut OofCandidates,
@@ -8945,12 +8945,14 @@ index 2c6179a4..3c3d3bff 100644
 +    // ancestors claim (css-position-4 § 3.2): only the root pass lays it out.
 +    fn claimed(
 +        tree: &impl LayoutContainingBlock,
++        node_id: NodeId,
 +        claims: ContainingBlockClaims,
 +        initial_containing_block: bool,
 +        candidate: &OofCandidate,
 +    ) -> bool {
 +        candidate.containing_block.is_some()
 +            || (claims.for_position(candidate.position)
++                && (initial_containing_block || !tree.containing_block_passes_over(node_id, candidate.node))
 +                && (initial_containing_block
 +                    || candidate.position != crate::Position::Fixed
 +                    || !tree.static_position_is_containing_block(candidate.node)))
@@ -8958,17 +8960,17 @@ index 2c6179a4..3c3d3bff 100644
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
      let mut absolute_overflow_rect = Rect::ZERO;
      #[cfg(feature = "content_size")]
-@@ -828,7 +998,8 @@ pub(crate) fn perform_oof_layout(
+@@ -828,7 +1000,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
 -        if claims.for_position(candidate.position) {
 +        // pyro: a candidate with a containing block of its own is laid out here.
-+        if claimed(&*tree, claims, initial_containing_block, candidate) {
++        if claimed(&*tree, node_id, claims, initial_containing_block, candidate) {
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1022,21 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1024,21 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -9001,12 +9003,12 @@ index 2c6179a4..3c3d3bff 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1046,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1048,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {
 -                if claims.for_position(surfaced_candidate.position) {
-+                if claimed(&*tree, claims, initial_containing_block, surfaced_candidate) {
++                if claimed(&*tree, node_id, claims, initial_containing_block, surfaced_candidate) {
                      worklist.push(*surfaced_candidate);
                  } else {
                      unclaimed.push(*surfaced_candidate);
@@ -9741,7 +9743,7 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..280d5d0a 100644
+index 7d4adf22..1e64c37e 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
@@ -9760,7 +9762,7 @@ index 7d4adf22..280d5d0a 100644
  }
  
  /// Extends [`LayoutPartialTree`] with the operations needed by the out-of-flow positioning pass
-@@ -239,6 +248,16 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
+@@ -239,6 +248,25 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
      /// implementing paint/hit-testing traversals.
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]);
  
@@ -9774,10 +9776,19 @@ index 7d4adf22..280d5d0a 100644
 +        false
 +    }
 +
++    /// pyro: whether `container`, a containing block by its style, is not that of out-of-flow box
++    /// `candidate` all the same (a column spanner between them: the spanner's row is no part of
++    /// the container's fragments).
++    #[inline(always)]
++    fn containing_block_passes_over(&self, container: NodeId, candidate: NodeId) -> bool {
++        let _ = (container, candidate);
++        false
++    }
++
      /// Read back the detailed layout information most recently recorded for `node_id`
      /// (as stored by [`LayoutGridContainer::set_detailed_grid_info`]).
      ///
-@@ -290,6 +309,16 @@ pub trait RoundTree: TraverseTree {
+@@ -290,6 +318,16 @@ pub trait RoundTree: TraverseTree {
      /// Get the nth out-of-flow box whose containing block is `node_id`
      /// (as recorded by [`LayoutContainingBlock::add_hoisted_children`])
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId;
@@ -9794,7 +9805,7 @@ index 7d4adf22..280d5d0a 100644
  }
  
  /// Trait used by the `print_tree` method which prints a debug representation
-@@ -344,6 +373,76 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -344,6 +382,76 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
  
@@ -9871,7 +9882,7 @@ index 7d4adf22..280d5d0a 100644
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -351,6 +450,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -351,6 +459,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      fn set_detailed_grid_info(&mut self, _node_id: NodeId, _detailed_grid_info: DetailedGridInfo<Self::CustomIdent>) {
          debug_log!("LayoutGridContainer::set_detailed_grid_info called");
      }
@@ -9894,7 +9905,7 @@ index 7d4adf22..280d5d0a 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +488,132 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +497,132 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  

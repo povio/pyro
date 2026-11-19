@@ -2309,6 +2309,34 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 
     /// pyro: an element in the top layer (a modal dialog, a showing popover) has the initial
     /// containing block as its static-position rectangle.
+    fn containing_block_passes_over(&self, container: NodeId, candidate: NodeId) -> bool {
+        // pyro: a positioned box between a column spanner and its multi-column container is no
+        // containing block of the spanner's out-of-flow descendants (`layout::multicol`).
+        let container = dom_node_id(container);
+        let mut at = self.nodes[dom_node_id(candidate)].parent;
+        while let Some(node) = at {
+            if node == container {
+                return false;
+            }
+            if self.nodes[node].primary_styles().is_some_and(|s| s.get_column().column_span == style::values::computed::ColumnSpan::All) {
+                // The multi-column container it spans, and whether `container` is between them.
+                let mut up = self.nodes[node].layout_parent.get();
+                let mut between = false;
+                while let Some(m) = up {
+                    if m == container {
+                        between = true;
+                    } else if self.doc.is_column_spanner_of(m, node) && multicol::is_multicol_node(&self.nodes[m]) {
+                        return between;
+                    }
+                    up = self.nodes[m].layout_parent.get();
+                }
+                return false;
+            }
+            at = self.nodes[node].parent;
+        }
+        false
+    }
+
     fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
         self.doc.is_in_top_layer(dom_node_id(node_id))
     }

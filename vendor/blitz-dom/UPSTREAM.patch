@@ -19190,8 +19190,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                    taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
 +                                return ChildLayout::Done(output);
 +                            }
-+                        }
-+                    }
+                         }
+                     }
+-                    return output;
 +                    return ChildLayout::Done(output);
 +                }
 +
@@ -19250,9 +19251,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                ..inputs
 +                            };
 +                            output = compute_leaf_layout(wider, &style, resolve_calc_value, |_known_size, _available_space| content);
-                         }
-                     }
--                    return output;
++                        }
++                    }
 +                    // pyro: layout containment leaves it no baseline (css-contain-2 § 3.2; WPT
 +                    // css-contain `contain-layout-suppress-baseline-002`).
 +                    if let Some(line) = select_line.filter(|_| !style.contain().suppresses_baseline()) {
@@ -19761,9 +19761,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          }
 -                        compute_flexbox_layout(self, node_id, inputs)
 +                        ChildLayout::Flex
-                     }
--                    Display::Grid => compute_grid_layout(self, node_id, inputs),
--                    Display::None => taffy::LayoutOutput::HIDDEN,
++                    }
 +                    Display::Grid => ChildLayout::Grid,
 +                    Display::None => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
 +                }
@@ -19898,7 +19896,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    taffy::BoxSizing::ContentBox => {
 +                        own + style.padding.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
 +                            + style.border.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
-+                    }
+                     }
+-                    Display::Grid => compute_grid_layout(self, node_id, inputs),
+-                    Display::None => taffy::LayoutOutput::HIDDEN,
 +                })
 +            };
 +            // An inflexible item of a column flex container has its definite flex basis as its height: the
@@ -20268,7 +20268,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2291,26 @@
+@@ -698,17 +2291,54 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -20292,12 +20292,40 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +
 +    /// pyro: an element in the top layer (a modal dialog, a showing popover) has the initial
 +    /// containing block as its static-position rectangle.
++    fn containing_block_passes_over(&self, container: NodeId, candidate: NodeId) -> bool {
++        // pyro: a positioned box between a column spanner and its multi-column container is no
++        // containing block of the spanner's out-of-flow descendants (`layout::multicol`).
++        let container = dom_node_id(container);
++        let mut at = self.nodes[dom_node_id(candidate)].parent;
++        while let Some(node) = at {
++            if node == container {
++                return false;
++            }
++            if self.nodes[node].primary_styles().is_some_and(|s| s.get_column().column_span == style::values::computed::ColumnSpan::All) {
++                // The multi-column container it spans, and whether `container` is between them.
++                let mut up = self.nodes[node].layout_parent.get();
++                let mut between = false;
++                while let Some(m) = up {
++                    if m == container {
++                        between = true;
++                    } else if self.doc.is_column_spanner_of(m, node) && multicol::is_multicol_node(&self.nodes[m]) {
++                        return between;
++                    }
++                    up = self.nodes[m].layout_parent.get();
++                }
++                return false;
++            }
++            at = self.nodes[node].parent;
++        }
++        false
++    }
++
 +    fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
 +        self.doc.is_in_top_layer(dom_node_id(node_id))
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2323,7 @@
+@@ -721,6 +2351,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -20305,7 +20333,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2335,122 @@
+@@ -732,6 +2363,122 @@
      }
  }
  
@@ -20428,7 +20456,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2458,12 @@
+@@ -739,10 +2486,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -20445,7 +20473,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2473,11 @@
+@@ -752,9 +2501,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -20460,7 +20488,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2505,205 @@
+@@ -782,16 +2533,205 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -20670,7 +20698,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2756,30 @@
+@@ -844,6 +2784,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -20701,7 +20729,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2788,19 @@
+@@ -852,7 +2816,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20722,7 +20750,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2816,30 @@
+@@ -868,6 +2844,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -20753,7 +20781,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2944,201 @@
+@@ -972,3 +2972,201 @@
          })
      }
  }

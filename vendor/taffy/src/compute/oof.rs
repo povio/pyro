@@ -962,12 +962,14 @@ pub(crate) fn perform_oof_layout(
     // ancestors claim (css-position-4 § 3.2): only the root pass lays it out.
     fn claimed(
         tree: &impl LayoutContainingBlock,
+        node_id: NodeId,
         claims: ContainingBlockClaims,
         initial_containing_block: bool,
         candidate: &OofCandidate,
     ) -> bool {
         candidate.containing_block.is_some()
             || (claims.for_position(candidate.position)
+                && (initial_containing_block || !tree.containing_block_passes_over(node_id, candidate.node))
                 && (initial_containing_block
                     || candidate.position != crate::Position::Fixed
                     || !tree.static_position_is_containing_block(candidate.node)))
@@ -999,7 +1001,7 @@ pub(crate) fn perform_oof_layout(
     let mut worklist: Vec<OofCandidate> = Vec::new();
     for candidate in candidates {
         // pyro: a candidate with a containing block of its own is laid out here.
-        if claimed(&*tree, claims, initial_containing_block, candidate) {
+        if claimed(&*tree, node_id, claims, initial_containing_block, candidate) {
             worklist.push(*candidate);
         } else {
             unclaimed.push(*candidate);
@@ -1046,7 +1048,7 @@ pub(crate) fn perform_oof_layout(
         if !surfaced.is_empty() {
             surfaced.translate(location);
             for surfaced_candidate in surfaced.iter() {
-                if claimed(&*tree, claims, initial_containing_block, surfaced_candidate) {
+                if claimed(&*tree, node_id, claims, initial_containing_block, surfaced_candidate) {
                     worklist.push(*surfaced_candidate);
                 } else {
                     unclaimed.push(*surfaced_candidate);

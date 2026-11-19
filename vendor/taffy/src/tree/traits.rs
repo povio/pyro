@@ -258,6 +258,15 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
         false
     }
 
+    /// pyro: whether `container`, a containing block by its style, is not that of out-of-flow box
+    /// `candidate` all the same (a column spanner between them: the spanner's row is no part of
+    /// the container's fragments).
+    #[inline(always)]
+    fn containing_block_passes_over(&self, container: NodeId, candidate: NodeId) -> bool {
+        let _ = (container, candidate);
+        false
+    }
+
     /// Read back the detailed layout information most recently recorded for `node_id`
     /// (as stored by [`LayoutGridContainer::set_detailed_grid_info`]).
     ///
