@@ -21,7 +21,7 @@ critical CSS subresources, alternate stylesheet selection, and browser-native HT
 `cssRules` parses the sheet's text on first access and reparses when the text changes: style rules, `@media`/`@supports` groups and other known at-rules, with invalid rules dropped as browsers do. Style matching does not use this parse. Missing: `CSSStyleRule.style`, the `media` and `disabled` CSSOM APIs, and a real `CSSRuleList` (`cssRules` is a live array). The loader
 honors the disabled HTML attribute at resource boundaries; it does not claim a complete disabled IDL API.
 
-Href/rel/type/disabled changes and removal are inspected using the final DOM state of a task. Replacing,
+Href/rel/type/disabled changes and removal are inspected using the final DOM state of a task. One exception: a link whose `rel` lost its `stylesheet` token since its sheet was requested (`ResourceReason::Unlinked`) and has it back by then is a new stylesheet link, fetched and firing `load` again even for the same URL. Between the two writes the link styles nothing: the style engine and the render document leave out the sheet of a link without the token as they read the DOM, before the loader hears of it. Replacing,
 removing or navigating away from a link drops its cancellation handle. NetLoader sends a native cancel;
 custom loaders may opt into `ResourceLoader::fetch_cancellable` or leave transport cancellation unsupported.
 A late completion checks document and resource generations, and only holds a weak PageDom reference.

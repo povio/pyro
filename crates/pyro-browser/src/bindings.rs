@@ -662,6 +662,16 @@ impl Browser {
             return;
         }
         let events = host.dom.borrow_mut().take_resource_events();
+        // Links whose `rel` lost `stylesheet` since the last drain: one that has it back is a new
+        // stylesheet link (`ResourceReason::Unlinked`).
+        let unlinked: std::collections::HashSet<pyro_dom::NodeId> = events
+            .iter()
+            .filter(|event| {
+                event.kind == pyro_dom::script::ResourceKind::Stylesheet
+                    && event.reason == pyro_dom::script::ResourceReason::Unlinked
+            })
+            .map(|event| event.node)
+            .collect();
         let mut stylesheet_nodes = std::collections::HashSet::new();
         let mut image_nodes = std::collections::HashSet::new();
         let mut preload_nodes = std::collections::HashSet::new();
@@ -676,7 +686,7 @@ impl Browser {
             let Some(bindings) = host.page_dom(target) else { continue };
             if event.kind == pyro_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
-                    self.stylesheet_event(target, event.node);
+                    self.stylesheet_event(target, event.node, unlinked.contains(&event.node));
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Img {
                 if image_nodes.insert(event.node) {

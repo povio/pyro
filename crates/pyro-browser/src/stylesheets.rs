@@ -116,7 +116,9 @@ fn remove_sheet(page: &PageDom, node: NodeId) {
 }
 
 impl Browser {
-    pub(crate) fn stylesheet_event(&mut self, page: FrameKey, node: NodeId) {
+    /// `restart`: the link stopped being a stylesheet link since its sheet was requested (its
+    /// `rel` lost `stylesheet`), so what it links now is requested again even if it is the same.
+    pub(crate) fn stylesheet_event(&mut self, page: FrameKey, node: NodeId, restart: bool) {
         let Some(state) = self.doc(page) else { return };
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
         let loader = state.main_frame.loader_id.clone();
@@ -153,11 +155,12 @@ impl Browser {
             self.queue_stylesheets_changed(page, loader);
             return;
         };
-        if state
-            .stylesheets
-            .entries
-            .get(&node)
-            .is_some_and(|s| s.url == url && s.crossorigin == crossorigin && s.integrity == integrity)
+        if !restart
+            && state
+                .stylesheets
+                .entries
+                .get(&node)
+                .is_some_and(|s| s.url == url && s.crossorigin == crossorigin && s.integrity == integrity)
         {
             return;
         }

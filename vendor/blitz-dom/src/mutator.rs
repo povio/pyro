@@ -729,7 +729,8 @@ impl DocumentMutator<'_> {
             element.set_checkbox_input_checked(false);
         } else if (tag, attr) == tag_and_attr!("canvas", "src") {
             self.recompute_is_animating = true;
-        } else if (tag, attr) == tag_and_attr!("link", "href") {
+        } else if (tag, attr) == tag_and_attr!("link", "href") || (tag, attr) == tag_and_attr!("link", "rel") {
+            // pyro: without its `rel` too (as a `rel` without `stylesheet`: `load_linked_stylesheet`).
             self.unload_stylesheet(node_id);
         } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
             // Fall back to loading from the `src` attribute (if any)
@@ -1810,13 +1811,18 @@ impl<'doc> DocumentMutator<'doc> {
         let rel_attr = node.attr(local_name!("rel"));
         let href_attr = node.attr(local_name!("href"));
 
+        // pyro: a link that is no stylesheet link any more (its `rel` lost the `stylesheet` token,
+        // or it has no `href`) stops styling: its sheet goes (HTML: the link no longer creates an
+        // external resource link; WPT html/semantics/document-metadata `link-rel-attribute`).
         let (Some(rels), Some(href)) = (rel_attr, href_attr) else {
+            self.unload_stylesheet(target_id);
             return;
         };
         if !rels
             .split_ascii_whitespace()
             .any(|rel| rel.eq_ignore_ascii_case("stylesheet"))
         {
+            self.unload_stylesheet(target_id);
             return;
         }
 

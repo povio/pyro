@@ -170,6 +170,40 @@ fn integrity_matching_stylesheets_apply_and_opaque_ones_are_blocked() {
     assert_eq!(eval(&thread, page, "getComputedStyle(document.documentElement).display"), "none");
 }
 
+/// A link whose `rel` loses `stylesheet` stops styling at once (computed style and the render
+/// document), also when the token is back before the task ends; with it back the link is a new
+/// stylesheet link: fetched and `load` fired again. Removing `rel` drops the sheet too.
+/// WPT html/semantics/document-metadata `the-link-element/link-rel-attribute`.
+#[test]
+fn a_link_whose_rel_drops_stylesheet_stops_styling_and_loads_again_with_it_back() {
+    let (mut thread, page, loader) = setup("<link id=theme rel=stylesheet href=/theme.css><p id=p>x</p>");
+    loader.insert("http://site.test/theme.css", "text/css", "#p { color: rgb(0, 128, 0) }", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let color = "getComputedStyle(document.getElementById('p')).color";
+    assert_eq!(eval(&thread, page, color), "rgb(0, 128, 0)");
+    let fetches = |loader: &StaticLoader| loader.log.borrow().iter().filter(|u| u.ends_with("/theme.css")).count();
+    assert_eq!(fetches(&loader), 1);
+    // Both writes in one task: the read between them sees the link without its sheet.
+    let between = format!(
+        "var theme = document.getElementById('theme'); theme.setAttribute('rel', 'no-stylesheet'); var off = {color}; theme.setAttribute('rel', 'stylesheet'); off"
+    );
+    assert_eq!(eval(&thread, page, &between), "rgb(0, 0, 0)");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "events.filter(x => x === 'theme:load').length"), "2");
+    assert_eq!(fetches(&loader), 2);
+    assert_eq!(eval(&thread, page, color), "rgb(0, 128, 0)");
+    // Writing the same `rel` again changes nothing.
+    eval(&thread, page, "theme.setAttribute('rel', 'stylesheet'); 'ok'");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "events.filter(x => x === 'theme:load').length"), "2");
+    assert_eq!(fetches(&loader), 2);
+    assert_eq!(eval(&thread, page, &format!("theme.removeAttribute('rel'); {color}")), "rgb(0, 0, 0)");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, color), "rgb(0, 0, 0)");
+    assert_eq!(thread.browser.page(page).unwrap().stylesheet_usage(), (0, 0));
+}
+
 #[test]
 fn base_href_resolves_stylesheet_urls() {
     let (mut thread, page, loader) = setup("<base href='/assets/'><link id=theme rel=stylesheet href=theme.css>");

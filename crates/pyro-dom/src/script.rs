@@ -95,6 +95,11 @@ pub enum ResourceReason {
     /// restarts the request (a relevant mutation).
     SourceChanged,
     Removed,
+    /// An HTML `<link>`'s `rel` lost its `stylesheet` token: the link no longer creates an
+    /// external resource link and its sheet goes. If the token is back by the time the loader
+    /// looks (several writes in one task), the link is a new stylesheet link: it is fetched and
+    /// fires `load` again, where an unchanged link keeps its sheet.
+    Unlinked,
     ChildrenChanged,
 }
 
@@ -371,7 +376,7 @@ impl Dom {
         } else if local == "rel" {
             // rel removed "stylesheet": the old sheet must go.
             if self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("link")) {
-                self.push_resource(idx, ResourceKind::Stylesheet, ResourceReason::Removed);
+                self.push_resource(idx, ResourceKind::Stylesheet, ResourceReason::Unlinked);
             }
         }
     }

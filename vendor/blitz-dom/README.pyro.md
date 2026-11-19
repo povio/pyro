@@ -2840,3 +2840,11 @@ sheet takes the new media list and is inserted again, without a new fetch (WPT h
   handling (which knows only button/input/select/textarea and their own attribute). Options, optgroups, fieldsets
   and the controls a disabled fieldset or optgroup disables now match as in HTML. WPT css/selectors
   `has-with-pseudo-class`.
+
+## A link that is no stylesheet link any more
+
+`src/mutator.rs` (`load_linked_stylesheet`, `clear_attribute_impl`), `src/document.rs` (`Resource::Css`): setting a
+`<link>`'s `rel` to a value without `stylesheet`, or removing `rel`, unloads its sheet (upstream unloaded it only when
+`href` was removed, so the sheet kept styling: WPT html/semantics/document-metadata `the-link-element/link-rel-attribute`),
+and a sheet whose fetch completes after that is dropped. With the token back the sheet is fetched again, as before.
+Test: `crates/pyro-browser/tests/stylesheets.rs` (`a_link_whose_rel_drops_stylesheet_...`).
