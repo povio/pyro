@@ -1156,6 +1156,10 @@ fn fragmentable(node: &crate::Node, style: &ComputedValues) -> bool {
     if scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y) || is_multicol_style(style) {
         return false;
     }
+    // pyro: a box of size containment is monolithic (CSS Contain 2 § 3.1).
+    if box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE) {
+        return false;
+    }
     matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
 }
 

@@ -17731,7 +17731,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,1310 @@
+@@ -0,0 +1,1314 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -18888,6 +18888,10 @@ new file mode 100644
 +    let box_style = style.get_box();
 +    let scrolls = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
 +    if scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y) || is_multicol_style(style) {
++        return false;
++    }
++    // pyro: a box of size containment is monolithic (CSS Contain 2 § 3.1).
++    if box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE) {
 +        return false;
 +    }
 +    matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
