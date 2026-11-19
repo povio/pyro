@@ -10889,3 +10889,54 @@ fn run_reports_requests_that_finish_after_it_ended() {
     assert!(r.get("error").is_none(), "{r}");
     assert!(late(&r).is_empty(), "reported once: {r}");
 }
+
+/// DevTools evaluation is exempt from the page's Trusted Types eval/Function
+/// checks, as Chrome exempts it from CSP: on a `require-trusted-types-for
+/// 'script'` page the page's own `eval` is refused, while `Runtime.evaluate`,
+/// `Runtime.callFunctionOn` and `Pyro.run` compile (a driver's `page.evaluate`
+/// goes through them). Before, the driver's code was refused and the
+/// Playwright WPT runner never read the results of the enforcing pages.
+#[test]
+fn devtools_evaluation_is_exempt_from_trusted_types() {
+    if !pyro_js::compile_strings_hooks_available() {
+        eprintln!("skipped: JavaScriptCore without patch 0035");
+        return;
+    }
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"></head>
+<body><script>try { eval("1"); window.pageEval = "ran"; } catch (e) { window.pageEval = e.name; }</script>"#,
+    );
+    let r = h.page("Runtime.evaluate", json!({"expression": "window.pageEval", "returnByValue": true}));
+    assert_eq!(r["result"]["result"]["value"], "EvalError", "the page's own eval is refused: {r}");
+
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "eval('6 * 7') + new Function('return 1')()", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], 43, "Runtime.evaluate: {r}");
+
+    let global = h.page("Runtime.evaluate", json!({"expression": "globalThis"}));
+    let global = global["result"]["result"]["objectId"].as_str().unwrap().to_owned();
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration": "function() { return eval('2 + 2'); }", "objectId": global, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], 4, "Runtime.callFunctionOn: {r}");
+
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [{"eval": {"expression": "eval('5')", "as": "a"}},
+            {"eval": {"expression": "(x) => new Function('return ' + x)()", "call": true, "arg": 7, "as": "b"}}]}),
+    );
+    assert_eq!(r["result"]["reads"], json!({"a": 5, "b": 7}), "Pyro.run: {r}");
+
+    // The exemption ends with the call: page code still refuses afterwards.
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "new Promise(r => setTimeout(() => { try { eval('1'); r('ran'); } catch (e) { r(e.name); } }, 0))",
+            "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "EvalError", "a timer the call scheduled is page code: {r}");
+}

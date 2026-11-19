@@ -542,7 +542,9 @@ impl EngineHost {
             user_activation(&scope);
         }
         let eval = crate::perf::span("js.eval");
-        let evaluated = scope.eval(&p.expression, None, 1);
+        // DevTools evaluation is exempt from the page's Trusted Types eval/Function checks, as
+        // Chrome exempts it from CSP: a driver's own code compiles on enforcing pages too.
+        let evaluated = scope.compile_exempt(|| scope.eval(&p.expression, None, 1));
         drop(eval);
         match evaluated {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
@@ -587,7 +589,7 @@ impl EngineHost {
             args.push(&scope, value);
         }
         let call = crate::perf::span("js.call_function");
-        let called = scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args);
+        let called = scope.compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args));
         drop(call);
         match called {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),

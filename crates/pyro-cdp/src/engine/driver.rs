@@ -5997,7 +5997,8 @@ impl EngineHost {
         let api = trace.map(|context| context.span("eval_api"));
         let value = {
             let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
-            match scope.eval(src, Some("pyro-run"), 1) {
+            // The driver's code is exempt from the page's Trusted Types eval checks.
+            match scope.compile_exempt(|| scope.eval(src, Some("pyro-run"), 1)) {
                 Ok(v) if super::runtime::is_thenable(v) => {
                     let settled: Settlement = Rc::new(RefCell::new(None));
                     let (ok, err) = (settled.clone(), settled.clone());
@@ -6042,7 +6043,9 @@ impl EngineHost {
         let value = {
             let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
             let threw = |scope: &pyro_js::Scope<'_>, e: pyro_js::JsError| self.script_error(scope, e);
-            let f = scope.eval(&format!("({src}\n)"), Some("pyro-run"), 1).map_err(|e| threw(&scope, e))?;
+            let f = scope
+                .compile_exempt(|| scope.eval(&format!("({src}\n)"), Some("pyro-run"), 1))
+                .map_err(|e| threw(&scope, e))?;
             let Some(f) = f.as_object().filter(|f| f.is_function()) else {
                 return Err(CdpError::invalid_params("eval: the expression is not a function"));
             };
@@ -6065,7 +6068,7 @@ impl EngineHost {
                 None => scope.undefined(),
             };
             args.push(&scope, arg);
-            let v = f.call_rooted(None, &args).map_err(|e| threw(&scope, e))?;
+            let v = scope.compile_exempt(|| f.call_rooted(None, &args)).map_err(|e| threw(&scope, e))?;
             if super::runtime::is_thenable(v) {
                 let settled: Settlement = Rc::new(RefCell::new(None));
                 let (ok, err) = (settled.clone(), settled.clone());
