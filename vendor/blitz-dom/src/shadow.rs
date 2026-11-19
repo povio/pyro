@@ -36,6 +36,9 @@ pub const SHADOW_HOST_ATTR: &str = "shadow-host";
 /// Name (in [`crate::PYRO_STATE_NS`]) of the marker attribute of a slot whose children are the
 /// nodes assigned to it.
 pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
+/// pyro: the attribute (in [`crate::PYRO_STATE_NS`]) a light child element of a shadow host
+/// carries: its index among the host's element children (pyro-dom `LIGHT_INDEX_ATTR`).
+pub const LIGHT_INDEX_ATTR: &str = "light-index";
 
 /// The styles of a shadow root: the sheets of its tree's `<style>` and `<link>` elements, in
 /// node order, and Stylo's cascade data of them.
@@ -129,6 +132,55 @@ impl Node {
                 None => child.is_text_node() && found(child),
             }
         })
+    }
+
+    /// pyro: an assigned node's light-tree sibling element `offset` places away (-1 the previous,
+    /// 1 the next): found by its index among its host's element children (`LIGHT_INDEX_ATTR`)
+    /// among the nodes assigned to the host's slots. `None` for a node that is not assigned (its
+    /// flat-tree siblings are its tree's), `Some(None)` when there is no such sibling assigned.
+    pub fn light_sibling_element(&self, offset: i64) -> Option<Option<&Node>> {
+        self.assigned_slot_id()?;
+        let index_of = |node: &Node| -> Option<i64> {
+            node.element_data()?
+                .attrs
+                .iter()
+                .find(|attr| &*attr.name.ns == crate::PYRO_STATE_NS && &*attr.name.local == LIGHT_INDEX_ATTR)
+                .and_then(|attr| attr.value.parse().ok())
+        };
+        let index = index_of(self)?;
+        // The flat-tree neighbour in the same slot, when it is the light-tree one (assigned nodes
+        // keep their tree order in a slot): no walk.
+        let mut step = 1;
+        loop {
+            let neighbour = if offset < 0 { self.backward(step) } else { self.forward(step) };
+            let Some(neighbour) = neighbour else { break };
+            if neighbour.is_element() {
+                if index_of(neighbour) == Some(index + offset.signum()) {
+                    return Some(Some(neighbour));
+                }
+                break;
+            }
+            step += 1;
+        }
+        let host = self.dom_parent_element()?;
+        // The host's assigned nodes, by their index (the host's flat subtree, its slots').
+        let mut found: Option<(i64, &Node)> = None;
+        let mut stack: Vec<NodeId> = host.children.iter().copied().collect();
+        while let Some(id) = stack.pop() {
+            let node = self.with(id);
+            if node.assigned_slot_id().is_some() && node.dom_parent_element().is_some_and(|p| p.id == host.id) {
+                if let Some(other) = index_of(node) {
+                    let wanted = if offset < 0 { other < index } else { other > index };
+                    let closer = found.is_none_or(|(best, _)| if offset < 0 { other > best } else { other < best });
+                    if wanted && closer {
+                        found = Some((other, node));
+                    }
+                }
+                continue;
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        Some(found.map(|(_, node)| node))
     }
 
     /// The cascade data of the shadow root of this host.

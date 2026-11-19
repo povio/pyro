@@ -731,6 +731,10 @@ impl selectors::Element for BlitzNode<'_> {
     // These methods are implemented naively since we only threaded real nodes and not fake nodes
     // we should try and use `find` instead of this foward/backward stuff since its ugly and slow
     fn prev_sibling_element(&self) -> Option<Self> {
+        // pyro: an assigned node's siblings are its light tree's (`light_sibling_element`).
+        if let Some(sibling) = self.light_sibling_element(-1) {
+            return sibling;
+        }
         let mut n = 1;
         while let Some(node) = self.backward(n) {
             if node.is_element() {
@@ -743,6 +747,9 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn next_sibling_element(&self) -> Option<Self> {
+        if let Some(sibling) = self.light_sibling_element(1) {
+            return sibling;
+        }
         let mut n = 1;
         while let Some(node) = self.forward(n) {
             if node.is_element() {

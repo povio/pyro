@@ -48,6 +48,11 @@ pub const SHADOW_HOST_ATTR: &str = "shadow-host";
 /// render trees when nodes are assigned to it: its render children are those
 /// (light children of its host), not its own.
 pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
+/// Name ([`STATE_NS`]) of the attribute a light child element of a shadow host carries in render
+/// trees: its index among the host's element children. An assigned node's render parent is its
+/// slot, so this is how the renderer finds its light-tree siblings (sibling combinators match in
+/// the node tree, not the flat tree).
+pub const LIGHT_INDEX_ATTR: &str = "light-index";
 
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
@@ -538,6 +543,18 @@ impl Dom {
                     };
                     if slot_kids.as_ref().is_some_and(|(_, _, assigned)| *assigned) {
                         attrs.push(marker(ASSIGNED_SLOT_ATTR));
+                    }
+                    // A light child of a shadow host (rendered under the slot it is assigned to).
+                    let parent = self.n(n).parent;
+                    if parent != NIL
+                        && self.n(parent).element().is_some_and(|p| p.shadow_root != NIL && !self.has_ua_shadow_idx(p.shadow_root))
+                    {
+                        let index = self.child_idx_iter(parent).take_while(|&c| c != n).filter(|&c| self.n(c).is_element()).count();
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), LIGHT_INDEX_ATTR.into())),
+                            value: Cow::Owned(index.to_string()),
+                            valueless: false,
+                        });
                     }
                     // A user-agent shadow root (`<use>` instance) renders as if absent.
                     let rendered_shadow = e.shadow_root != NIL && !self.has_ua_shadow_idx(e.shadow_root);
