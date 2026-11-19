@@ -14,7 +14,7 @@ use blitz_dom::CopyStyleGetters as _;
 use blitz_dom::node::TextBrush;
 use blitz_dom::{BaseDocument, CaretPosition, NodeId};
 use kurbo::{Affine, Rect};
-use parley::{Affinity, Cursor, Layout, Line};
+use parley::{Affinity, Cursor, Layout};
 use peniko::Fill;
 use style::values::computed::{CaretShape, ColorOrAuto};
 
@@ -122,15 +122,15 @@ fn is_mark(c: char) -> bool {
 /// The width of a bar caret (CSS px).
 const BAR_WIDTH: f64 = 1.0;
 
-/// Paints `caret` in a horizontal inline layout (device px), each line placed by
-/// `line_transform`, in a content box `content_width` CSS px wide. `scale`: device px per CSS px.
+/// Paints `caret` in an inline layout (device px; a vertical one's lines are turned by their
+/// transform), each line (by index) placed by `line_transform`, in a content box `content_width` CSS px wide. `scale`: device px per CSS px.
 /// A block caret at the end of a line stays in the content box (it shows where the line
 /// overflows, as Chromium's does).
-pub(crate) fn draw_text_caret<'a>(
+pub(crate) fn draw_text_caret(
     scene: &mut impl PaintScene,
     caret: &CaretPaint,
-    layout: &'a Layout<TextBrush>,
-    line_transform: impl Fn(&Line<'a, TextBrush>) -> Affine,
+    layout: &Layout<TextBrush>,
+    line_transform: impl Fn(usize) -> Affine,
     content_width: f64,
     scale: f64,
 ) {
@@ -138,10 +138,11 @@ pub(crate) fn draw_text_caret<'a>(
     let geometry = cursor.geometry(layout, (BAR_WIDTH * scale) as f32);
     let line = layout
         .lines()
-        .find(|line| line.text_range().contains(&caret.byte))
-        .or_else(|| layout.lines().last());
-    let Some(line) = line else { return };
-    let transform = line_transform(&line);
+        .enumerate()
+        .find(|(_, line)| line.text_range().contains(&caret.byte))
+        .or_else(|| layout.lines().enumerate().last());
+    let Some((index, line)) = line else { return };
+    let transform = line_transform(index);
     // The character after the caret, when there is one on its line.
     let next = parley::Cluster::from_byte_index(layout, caret.byte)
         .filter(|cluster| !cluster.is_hard_line_break() && line.text_range().contains(&caret.byte));
@@ -176,20 +177,32 @@ pub(crate) fn draw_text_caret<'a>(
 }
 
 /// Paints `caret` in an empty element whose content box starts at `transform`'s origin and is
-/// `content_width` CSS px wide, its line indented by `indent` CSS px.
+/// `content_width` CSS px wide, at `x` CSS px in it (where its line's `text-indent` and
+/// `text-align` put the line's start), kept in the content box.
 pub(crate) fn draw_empty_caret(
     scene: &mut impl PaintScene,
     caret: &CaretPaint,
     transform: Affine,
     content_width: f64,
-    indent: f64,
+    x: f64,
     scale: f64,
 ) {
     let height = caret.line_height * scale;
-    let start = if caret.rtl { (content_width - indent) * scale } else { indent * scale };
-    let span = |width: f64| match caret.rtl {
-        true => (start - width, start),
-        false => (start, start + width),
+    let start = x * scale;
+    let limit = content_width * scale;
+    // (Kept in the content box: a caret at its end edge is drawn inside it.)
+    let span = |width: f64| {
+        let (x0, x1) = match caret.rtl {
+            true => (start - width, start),
+            false => (start, start + width),
+        };
+        if x1 > limit && width <= limit {
+            (limit - width, limit)
+        } else if x0 < 0.0 && width <= limit {
+            (0.0, width)
+        } else {
+            (x0, x1)
+        }
     };
     let rect = match caret.shape {
         CaretShape::Block => {

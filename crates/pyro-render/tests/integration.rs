@@ -103,6 +103,7 @@ mod render;
 mod sampled_animations;
 mod scroll_markers;
 mod selection_highlight;
+mod caret_paint;
 mod style_scoping_round4;
 mod shadow_scoping;
 mod size_containment;

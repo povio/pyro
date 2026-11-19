@@ -3543,9 +3543,9 @@ impl ElementCx<'_, '_> {
                     - layout.border.right
                     - layout.padding.left
                     - layout.padding.right) as f64;
-                crate::caret::draw_text_caret(scene, caret, &text_layout.layout, |line| match tops {
-                    Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
-                    None => transform,
+                crate::caret::draw_text_caret(scene, caret, &text_layout.layout, |index| match (tops, text_layout.layout.get(index)) {
+                    (Some(tops), Some(line)) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+                    _ => transform,
                 }, content_width, self.scale);
             }
             // (A box listed in the paint tree paints its own outline with its entry.)
@@ -3581,8 +3581,22 @@ impl ElementCx<'_, '_> {
                 true => 0.0,
                 false => text_indent.length.resolve(style::values::computed::Length::new(content_width as f32)).px() as f64,
             };
+            // pyro: and where its `text-align` puts the empty line's start.
+            let x = {
+                use style::values::specified::text::TextAlignKeyword as A;
+                let rtl = caret.rtl;
+                let align = self.style.clone_text_align();
+                let (left, right) = (indent, content_width - indent);
+                match align {
+                    A::Center | A::MozCenter => content_width / 2.0,
+                    A::Left | A::MozLeft => left,
+                    A::Right | A::MozRight => right,
+                    A::End => if rtl { left } else { right },
+                    A::Start | A::Justify => if rtl { right } else { left },
+                }
+            };
             let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
-            crate::caret::draw_empty_caret(scene, caret, transform, content_width, indent, self.scale);
+            crate::caret::draw_empty_caret(scene, caret, transform, content_width, x, self.scale);
         }
     }
 
@@ -3631,7 +3645,19 @@ impl ElementCx<'_, '_> {
         only_pass: Option<NodeId>,
     ) {
         let line_transform = self.vertical_line_transform(text_layout, pos, block_lr);
-        self.draw_turned_lines(scene, text_layout, line_transform, pos, only_pass);
+        self.draw_turned_lines(scene, text_layout, &line_transform, pos, only_pass);
+        // pyro: the caret in this text (`caret`), over its turned lines.
+        if only_pass.is_none()
+            && let Some(caret) = self.context.caret.as_ref().filter(|caret| caret.node == self.node.id && !caret.empty)
+        {
+            let layout = self.node.final_layout();
+            let inline_size = (layout.size.height
+                - layout.border.top
+                - layout.border.bottom
+                - layout.padding.top
+                - layout.padding.bottom) as f64;
+            crate::caret::draw_text_caret(scene, caret, &text_layout.layout, &line_transform, inline_size, self.scale);
+        }
     }
 
     /// pyro: the transform from the layout space of each line (by index) of this vertical inline
@@ -4146,6 +4172,8 @@ impl ElementCx<'_, '_> {
                 draw_text_context.line_tops = None;
             }
 
+            // pyro: the text a block caret covers, in `caret-color`'s second colour, and the block.
+            let mut caret_text: Option<(Color, Rect)> = None;
             if self.node.is_focussed() {
                 // Render selection/caret
                 // pyro: in the control's `::selection` colours (`control_selection_colors`).
@@ -4163,10 +4191,14 @@ impl ElementCx<'_, '_> {
                 }
                 if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
                     let color = self.style.get_inherited_text().color;
-                    // pyro: a `caret-shape: block` caret covers the character after it (or is the
-                    // width of `0`), in a translucent text colour for `auto` (`caret.rs`).
-                    let block = self.style.get_inherited_ui().caret_shape
-                        == style::values::computed::CaretShape::Block;
+                    // pyro: the caret in its `caret-shape` (`caret.rs`): a block covers the
+                    // character after it (or is the width of `0`), towards the character's side
+                    // in right-to-left text, in a translucent text colour for `auto`, the text
+                    // under it in `caret-color`'s second colour; an underscore is a line under
+                    // that character.
+                    use style::values::computed::CaretShape;
+                    let shape = self.style.get_inherited_ui().caret_shape;
+                    let block = shape == CaretShape::Block;
                     let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
                         ColorOrAuto::Auto if block => {
                             let color = color.as_srgb_color();
@@ -4176,18 +4208,38 @@ impl ElementCx<'_, '_> {
                         ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color).as_srgb_color(),
                     };
                     let mut rect = convert_rect(&cursor);
-                    if block && input_data.editor.raw_selection().is_collapsed() {
+                    if matches!(shape, CaretShape::Block | CaretShape::Underscore)
+                        && input_data.editor.raw_selection().is_collapsed()
+                    {
                         let index = input_data.editor.raw_selection().focus().index();
-                        let width = input_data
+                        let cluster = input_data
                             .editor
                             .try_layout()
                             .and_then(|layout| parley::Cluster::from_byte_index(layout, index))
-                            .filter(|cluster| !cluster.is_hard_line_break())
-                            .map_or_else(
-                                || self.context.dom.zero_advance(self.node.id) as f64 * self.scale,
-                                |cluster| cluster.advance() as f64,
-                            );
-                        rect = Rect::new(rect.x0, rect.y0, rect.x0 + width, rect.y1);
+                            .filter(|cluster| !cluster.is_hard_line_break());
+                        let width = cluster.as_ref().map_or_else(
+                            || self.context.dom.zero_advance(self.node.id) as f64 * self.scale,
+                            |cluster| cluster.advance() as f64,
+                        );
+                        let rtl = cluster.as_ref().map_or_else(
+                            || self.style.clone_direction() == style::computed_values::direction::T::Rtl,
+                            |cluster| cluster.is_rtl(),
+                        );
+                        // (The bar's left edge is the caret position.)
+                        let x = rect.x0;
+                        let (x0, x1) = if rtl { (x - width, x) } else { (x, x + width) };
+                        rect = match shape {
+                            CaretShape::Block => Rect::new(x0, rect.y0, x1, rect.y1),
+                            _ => {
+                                let thickness = ((self.context.dom.zero_advance(self.node.id) as f64 / 5.0).max(1.0)) * self.scale;
+                                Rect::new(x0, rect.y1 - thickness, x1, rect.y1)
+                            }
+                        };
+                        if block
+                            && let ColorOrAuto::Color(text) = &self.style.get_inherited_ui().caret_color.1
+                        {
+                            caret_text = Some((text.resolve_to_absolute(&color).as_srgb_color(), rect));
+                        }
                     }
 
                     scene.fill(Fill::NonZero, transform, caret_color, None, &rect);
@@ -4294,6 +4346,22 @@ impl ElementCx<'_, '_> {
                     inside.extend(rect.path_elements(0.1));
                 }
                 scene.push_clip_layer(Fill::NonZero, transform, &inside);
+                crate::text::stroke_text(
+                    scene,
+                    layout.lines(),
+                    self.context.dom,
+                    transform,
+                    TextPaintOptions { scale: self.scale, brush_override: Some(color), shadows: false },
+                    self.node.id,
+                    None,
+                    &mut draw_text_context,
+                    None,
+                    None,
+                );
+                scene.pop_layer();
+            }
+            if let Some((color, rect)) = caret_text {
+                scene.push_clip_layer(Fill::NonZero, transform, &rect);
                 crate::text::stroke_text(
                     scene,
                     layout.lines(),
