@@ -521,6 +521,8 @@ fn parsed_attr<T>(n: &NodeData, attr: &str, parse: fn(&str) -> Option<T>) -> JsR
 /// `img.width` (`width`) or `img.height`: see the accessors.
 fn img_dimension(n: &NodeData, width: bool) -> JsResult<f64> {
     let page = n.page();
+    // pyro: a source in the list of available images has its size at once (`image_complete`).
+    page.image_complete(n.id);
     let connected = page.dom.borrow().is_connected(n.id).unwrap_or(false);
     if connected {
         crate::animation_events::layout_flush(page, n.id);
@@ -2062,8 +2064,9 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     // Natural size from the loaded file's header (no pixel decoding); 0
     // while loading, for broken images and for unparsed formats.
     // `unsigned long`: a density-corrected size below 1 px reads 0.
-    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(w, _)| w.trunc()))));
-    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
+    // pyro: a source in the list of available images is adopted first (`image_complete`).
+    def.getter("naturalWidth", |s, n| Ok(s.number({ n.page().image_complete(n.id); n.page().dom.borrow() }.reported_natural_size(n.id).map_or(0.0, |(w, _)| w.trunc()))));
+    def.getter("naturalHeight", |s, n| Ok(s.number({ n.page().image_complete(n.id); n.page().dom.borrow() }.reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
         let viewport = n.page().viewport();

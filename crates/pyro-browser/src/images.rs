@@ -330,6 +330,54 @@ impl Browser {
                 let _ = url;
                 return;
             }
+            // pyro: an image in the list of available images (HTML "update the image data" step
+            // 7): completely available without a fetch; `load` fires in a task.
+            Source::Url(url) if density == 1.0 && bindings.available_image(&url, request_state.0).is_some() => {
+                let image = bindings.available_image(&url, request_state.0).expect("available");
+                let generation = {
+                    let mut guard = self.doc_mut(page).expect("page");
+                    let images = &mut guard.images;
+                    images.generation += 1;
+                    let generation = images.generation;
+                    images.entries.insert(
+                        node,
+                        Image {
+                            _node: None,
+                            url: url.clone(),
+                            src: raw_src.clone().unwrap_or_default(),
+                            density,
+                            generation,
+                            pending: false,
+                            blocks_load: false,
+                            cancel: None,
+                            request_state: request_state.clone(),
+                            outcome: Some(true),
+                        },
+                    );
+                    generation
+                };
+                let _ = generation;
+                bindings.set_image_state(node, Some(raw_src.as_deref().unwrap_or("")), false);
+                {
+                    let mut dom = bindings.dom.borrow_mut();
+                    dom.set_natural_size(node, image.natural);
+                    dom.set_reported_natural_size(node, image.reported);
+                }
+                bindings.image_loaded(node, raw_src.as_deref().unwrap_or(""), true);
+                if let Some((bytes, clean)) = image.bytes {
+                    if request_state.0 != 0 || bindings.wants_image_bytes() {
+                        bindings.set_image_bytes(node, (*bytes).clone(), clean);
+                    }
+                }
+                let weak = Rc::downgrade(&bindings);
+                self.scheduler().post(TaskSource::DomManipulation, move |_b| {
+                    if let Some(bindings) = weak.upgrade() {
+                        bindings.settle_image_decodes(node);
+                        pyro_webapi::lifecycle::resource_loaded(&bindings, node, true);
+                    }
+                });
+                return;
+            }
             Source::Url(url) => url,
             Source::None | Source::Invalid => {
                 let invalid = matches!(source, Source::Invalid);
@@ -454,6 +502,8 @@ impl Browser {
         }
         image.pending = false;
         let src = image.src.clone();
+        let request_url = image.url.clone();
+        let cors_state = image.request_state.0;
         let density = image.density;
         // A CORS request (`crossorigin`): its response passed the CORS check, so its pixels may
         // be read back, which is what the attribute is for (the bytes are kept for a canvas
@@ -497,10 +547,24 @@ impl Browser {
             dom.set_reported_natural_size(node, reported);
         }
         bindings.image_loaded(node, &src, decodable);
+        // pyro: a successful load goes into the list of available images (HTML "update the image
+        // data"), its bytes with it for a canvas the script makes later.
+        let raster = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES);
+        let clean = raster.as_ref().is_some_and(|r| cors || self.image_origin_clean(page, &r.url));
+        if outcome.is_some() && density == 1.0 {
+            bindings.remember_available_image(
+                &request_url,
+                cors_state,
+                pyro_webapi::AvailableImage {
+                    natural,
+                    reported,
+                    bytes: raster.as_ref().map(|r| (Rc::new(r.body.clone()), clean)),
+                },
+            );
+        }
         // Canvas drawing decodes the pixels from the bytes, when the
         // document may draw images (it has a canvas or used canvas APIs).
-        if let Some(r) = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES && (cors || bindings.wants_image_bytes())) {
-            let clean = cors || self.image_origin_clean(page, &r.url);
+        if let Some(r) = raster.filter(|_| cors || bindings.wants_image_bytes()) {
             bindings.set_image_bytes(node, r.body, clean);
         }
         if let Some(mut state) = self.doc_mut(page) {

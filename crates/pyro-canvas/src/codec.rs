@@ -12,6 +12,12 @@ const MAX_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 /// `None` for anything else, a corrupt image or one larger than a canvas may
 /// be (decoding stops at the header).
 pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
+    decode_oriented(bytes, false)
+}
+
+/// [`decode`], the pixels turned as the image's EXIF orientation says when `oriented` (an
+/// `<img>` drawn as `image-orientation: from-image` shows it, or an opaque one).
+pub fn decode_oriented(bytes: &[u8], oriented: bool) -> Option<Pixmap> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(crate::MAX_SIDE);
@@ -26,7 +32,17 @@ pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(MAX_DECODE_BYTES);
     reader.limits(limits);
-    let rgba = reader.decode().ok()?.into_rgba8();
+    let image = if oriented {
+        use image::ImageDecoder;
+        let mut decoder = reader.into_decoder().ok()?;
+        let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+        let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+        image.apply_orientation(orientation);
+        image
+    } else {
+        reader.decode().ok()?
+    };
+    let rgba = image.into_rgba8();
     let (w, h) = rgba.dimensions();
     crate::pixmap_from_straight(rgba.into_raw(), w, h)
 }

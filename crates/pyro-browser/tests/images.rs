@@ -158,12 +158,20 @@ fn images_that_are_not_connected_load_and_delay_window_load() {
     thread.browser.engine.collect_garbage_now();
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "detached.join('|')"), "gc");
-    // Inserting a loaded image does not request it again.
-    eval(&thread, page, "const again = new Image(); again.src = '/slow.png'; globalThis.again = again; 1");
+    // An image whose URL is in the list of available images is not requested again (HTML
+    // "update the image data" step 7): complete at once, and `load` fires; nor is it when inserted.
+    eval(
+        &thread,
+        page,
+        "const again = new Image(); again.onload = () => detached.push('again'); again.src = '/slow.png'; \
+         globalThis.again = again; globalThis.againComplete = again.complete + ':' + again.naturalWidth; 1",
+    );
     settle(&mut thread);
+    assert_eq!(eval(&thread, page, "againComplete"), "true:4");
     eval(&thread, page, "document.body.append(again); 1");
     settle(&mut thread);
-    assert_eq!(loader.log.borrow().iter().filter(|u| u.ends_with("/slow.png")).count(), 2);
+    assert_eq!(loader.log.borrow().iter().filter(|u| u.ends_with("/slow.png")).count(), 1);
+    assert!(eval(&thread, page, "detached.join('|')").ends_with("again"));
 }
 
 #[test]

@@ -25,6 +25,23 @@ pub const MAX_IMAGE_BYTES_KEPT: usize = 64 * 1024 * 1024;
 /// decoded past it are decoded again on each use.
 pub const MAX_IMAGE_DECODED_KEPT: usize = 256 * 1024 * 1024;
 
+/// pyro: most entries of a document's list of available images ([`PageDom::remember_available_image`]).
+const MAX_AVAILABLE_IMAGES: usize = 64;
+/// pyro: most encoded bytes the list of available images keeps for canvas use.
+const MAX_AVAILABLE_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// pyro: what a completed image request gave (HTML "list of available images"): an `<img>` that
+/// asks for the same URL in the same CORS mode has it at once.
+#[derive(Clone)]
+pub struct AvailableImage {
+    /// The natural size (a raster image's, or an SVG's with natural dimensions).
+    pub natural: Option<(f64, f64)>,
+    /// The size an SVG reports when it has no natural size of its own.
+    pub reported: Option<(f64, f64)>,
+    /// A raster image's encoded bytes and whether its pixels may be read back.
+    pub bytes: Option<(std::rc::Rc<Vec<u8>>, bool)>,
+}
+
 /// A loaded `<img>`'s encoded bytes ([`PageDom::set_image_bytes`]).
 struct ImageBytes {
     bytes: Vec<u8>,
@@ -32,6 +49,8 @@ struct ImageBytes {
     /// The decoded pixels once a canvas used them (`Some(None)`: they do
     /// not decode).
     decoded: Option<Option<pyro_canvas::Bitmap>>,
+    /// pyro: `decoded` was turned as the image's EXIF orientation says.
+    decoded_oriented: bool,
 }
 
 impl ImageBytes {
@@ -238,6 +257,9 @@ pub struct PageDom {
     /// current load is for, whether it is still loading, and whether the
     /// finished load is decodable (`decode()` resolves).
     pub(crate) images: RefCell<FxHashMap<NodeId, (String, bool, bool)>>,
+    /// pyro: HTML's list of available images, by (absolute URL, CORS state: 0 none, 1 anonymous,
+    /// 2 use-credentials), oldest first.
+    available_images: RefCell<Vec<((String, u8), AvailableImage)>>,
     /// `images` size at which entries of collected elements are dropped.
     images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
@@ -838,6 +860,7 @@ impl PageDom {
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
+            available_images: RefCell::new(Vec::new()),
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
             image_bytes: RefCell::new(FxHashMap::default()),
@@ -2319,6 +2342,77 @@ impl PageDom {
         }
     }
 
+    /// pyro: adds what the completed request for `url` in CORS state `cors` gave to the list of
+    /// available images (HTML "update the image data": a successful load), replacing an older
+    /// entry for it. The bytes are kept within a budget of their own.
+    pub fn remember_available_image(&self, url: &str, cors: u8, image: AvailableImage) {
+        let mut list = self.available_images.borrow_mut();
+        list.retain(|(key, _)| !(key.0 == url && key.1 == cors));
+        list.push(((url.to_owned(), cors), image));
+        if list.len() > MAX_AVAILABLE_IMAGES {
+            list.remove(0);
+        }
+        // Over the byte budget: the oldest entries keep their sizes, not their bytes.
+        let mut total = 0;
+        for (_, entry) in list.iter_mut().rev() {
+            if let Some((bytes, _)) = &entry.bytes {
+                total += bytes.len();
+                if total > MAX_AVAILABLE_IMAGE_BYTES {
+                    entry.bytes = None;
+                }
+            }
+        }
+    }
+
+    /// pyro: the list of available images' entry for `url` in CORS state `cors`.
+    pub fn available_image(&self, url: &str, cors: u8) -> Option<AvailableImage> {
+        let list = self.available_images.borrow();
+        list.iter().rev().find(|(key, _)| key.0 == url && key.1 == cors).map(|(_, image)| image.clone())
+    }
+
+    /// pyro: HTML "update the image data" step 7, done when the image's state is asked for before
+    /// the embedder saw its new source: an `<img>` whose `src` (no `srcset`, not in a `<picture>`)
+    /// is in the list of available images is completely available at once, with its natural
+    /// size and (for a canvas) its bytes. Whether it was.
+    pub(crate) fn adopt_available_image(&self, el: NodeId) -> bool {
+        let (src, url, cors) = {
+            let dom = self.dom.borrow();
+            let Ok(Some(src)) = dom.get_attribute(el, "src") else { return false };
+            if src.trim().is_empty() || dom.get_attribute(el, "srcset").ok().flatten().is_some() {
+                return false;
+            }
+            let in_picture = dom
+                .parent(el)
+                .ok()
+                .flatten()
+                .and_then(|p| dom.element(p).ok().map(|e| e.is_html() && &*e.name.local == "picture"))
+                .unwrap_or(false);
+            if in_picture {
+                return false;
+            }
+            let cors = match dom.get_attribute(el, "crossorigin").ok().flatten() {
+                None => 0,
+                Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+                Some(_) => 1,
+            };
+            (src.to_owned(), crate::html::resolve_url(&dom, el, src.trim()), cors)
+        };
+        if self.images.borrow().get(&el).is_some_and(|(loading, _, _)| *loading == src) {
+            return false;
+        }
+        let Some(image) = self.available_image(&url, cors) else { return false };
+        self.set_image_state(el, Some(&src), false);
+        {
+            let mut dom = self.dom.borrow_mut();
+            dom.set_natural_size(el, image.natural);
+            dom.set_reported_natural_size(el, image.reported);
+        }
+        if let Some((bytes, clean)) = image.bytes {
+            self.set_image_bytes(el, (*bytes).clone(), clean);
+        }
+        true
+    }
+
     /// Whether loaded images' bytes should be kept for canvas use
     /// ([`PageDom::set_image_bytes`]): the document has a `<canvas>`, or a
     /// canvas API was used. A flag test for pages without canvases.
@@ -2358,7 +2452,7 @@ impl PageDom {
         }
         let (encoded, decoded) = self.image_bytes_kept.get();
         self.image_bytes_kept.set((encoded + bytes.len(), decoded));
-        if let Some(old) = map.insert(el, ImageBytes { bytes, clean, decoded: None }) {
+        if let Some(old) = map.insert(el, ImageBytes { bytes, clean, decoded: None, decoded_oriented: false }) {
             self.uncount_image_bytes(&old);
         }
     }
@@ -2390,13 +2484,25 @@ impl PageDom {
     /// decoded images fit [`MAX_IMAGE_DECODED_KEPT`]. `None`: no bytes were
     /// kept, they do not decode (SVG included), or the process has no room
     /// for the pixels.
-    pub(crate) fn image_pixmap(&self, el: NodeId) -> Option<(pyro_canvas::Bitmap, bool)> {
+    /// pyro: with `from_image`, or for an opaque (not clean) image, the pixels turned as its EXIF
+    /// orientation says (CSS Images 3 § 5.1: `image-orientation: none` is ignored for an opaque
+    /// image).
+    pub(crate) fn image_pixmap(&self, el: NodeId, from_image: bool) -> Option<(pyro_canvas::Bitmap, bool)> {
         let mut map = self.image_bytes.borrow_mut();
         let entry = map.get_mut(&el)?;
+        let oriented = from_image || !entry.clean;
         if let Some(decoded) = &entry.decoded {
-            return decoded.clone().map(|b| (b, entry.clean));
+            if entry.decoded_oriented == oriented {
+                return decoded.clone().map(|b| (b, entry.clean));
+            }
+            // The other orientation: decoded again in place of it.
+            let (encoded, kept) = self.image_bytes_kept.get();
+            let old = decoded.as_ref().map_or(0, |b| b.byte_len());
+            self.image_bytes_kept.set((encoded, kept.saturating_sub(old)));
+            entry.decoded = None;
         }
-        let Some(pixmap) = pyro_canvas::codec::decode(&entry.bytes) else {
+        entry.decoded_oriented = oriented;
+        let Some(pixmap) = pyro_canvas::codec::decode_oriented(&entry.bytes, oriented) else {
             entry.decoded = Some(None);
             return None;
         };
@@ -2415,12 +2521,14 @@ impl PageDom {
     pub(crate) fn image_complete(&self, el: NodeId) -> bool {
         let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
         let Some(src) = src else { return true };
-        match self.images.borrow().get(&el) {
-            Some((loading, pending, _)) if *loading == src => !pending,
-
+        let complete = match self.images.borrow().get(&el) {
+            Some((loading, pending, _)) if *loading == src => Some(!pending),
             // Empty or unresolvable sources are complete (broken).
-            _ => src.trim().is_empty(),
-        }
+            _ if src.trim().is_empty() => Some(true),
+            _ => None,
+        };
+        // pyro: a source the embedder has not seen yet: complete when it is an available image.
+        complete.unwrap_or_else(|| self.adopt_available_image(el))
     }
     pub(crate) fn hovered(&self) -> Option<NodeId> {
         self.hovered.get().filter(|&h| self.dom.borrow().is_alive(h))

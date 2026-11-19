@@ -622,7 +622,13 @@ fn image_source(
                         "The HTMLImageElement provided is in the 'broken' state.",
                     ));
                 }
-                Ok(source_page.image_pixmap(n.id).map(|(pixmap, clean)| ImageHandle {
+                // pyro: drawn as the image element's `image-orientation` shows it (Blink; the
+                // source of the preference is not specified, w3c/csswg-drafts#4666).
+                let from_image = {
+                    let dom = source_page.dom.borrow();
+                    source_page.layout.borrow().computed_style_value(&dom, n.id, "image-orientation") != "none"
+                };
+                Ok(source_page.image_pixmap(n.id, from_image).map(|(pixmap, clean)| ImageHandle {
                     width: u32::from(pixmap.width()),
                     height: u32::from(pixmap.height()),
                     pixmap: Some(pixmap),
@@ -665,8 +671,37 @@ fn image_source(
                 let pixmap = pyro_canvas::pixmap_from_straight((*frame.rgba).clone(), frame.width, frame.height)?;
                 Some(ImageHandle { pixmap: Bitmap::new(pixmap), width: frame.width, height: frame.height, clean })
             })),
-            // No SVG images.
-            "image" => Ok(None),
+            // pyro: an SVG `<image>`: the image of its `href` from the list of available images
+            // (nothing while it is not loaded), shown as the element's `image-orientation` says
+            // (an opaque image as its EXIF orientation says).
+            "image" => {
+                let (url, cors, from_image) = {
+                    let dom = source_page.dom.borrow();
+                    let href = dom
+                        .get_attribute(n.id, "href")
+                        .ok()
+                        .flatten()
+                        .or_else(|| dom.get_attribute_ns(n.id, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
+                        .map(str::to_owned);
+                    let Some(href) = href.filter(|h| !h.trim().is_empty()) else { return Ok(None) };
+                    let cors = match dom.get_attribute(n.id, "crossorigin").ok().flatten() {
+                        None => 0,
+                        Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+                        Some(_) => 1,
+                    };
+                    let from_image =
+                        source_page.layout.borrow().computed_style_value(&dom, n.id, "image-orientation") != "none";
+                    (crate::html::resolve_url(&dom, n.id, href.trim()), cors, from_image)
+                };
+                let Some(image) = source_page.available_image(&url, cors) else { return Ok(None) };
+                let Some((bytes, clean)) = image.bytes else { return Ok(None) };
+                let oriented = from_image || !clean;
+                let Some(pixmap) = pyro_canvas::codec::decode_oriented(&bytes, oriented).and_then(Bitmap::new) else {
+                    return Ok(None);
+                };
+                let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+                Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean }))
+            }
             _ => Err(not_source()),
         };
     }
@@ -708,8 +743,40 @@ fn image_source(
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
             Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean: true }))
         }
+        // pyro: a CSSImageValue: the image of its `url()` from the list of available images
+        // (nothing while it is not loaded), shown as its EXIF orientation says.
+        4 => {
+            let text = desc.get_index(1)?.to_string()?;
+            let Some(url) = css_url_of(&text) else { return Ok(None) };
+            let Some(image) = page.available_image(&url, 0) else { return Ok(None) };
+            let Some((bytes, clean)) = image.bytes else { return Ok(None) };
+            let Some(pixmap) = pyro_canvas::codec::decode_oriented(&bytes, true).and_then(Bitmap::new) else {
+                return Ok(None);
+            };
+            let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+            Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean }))
+        }
         _ => Err(not_source()),
     }
+}
+
+/// pyro: the URL of a computed `url("...")` (a CSSImageValue's text), unescaped.
+fn css_url_of(text: &str) -> Option<String> {
+    let inner = text.trim().strip_prefix("url(")?.strip_suffix(')')?.trim();
+    let unquoted = match inner.chars().next()? {
+        q @ ('"' | '\'') => inner.strip_prefix(q)?.strip_suffix(q)?,
+        _ => inner,
+    };
+    let mut out = String::with_capacity(unquoted.len());
+    let mut chars = unquoted.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            out.extend(chars.next());
+        } else {
+            out.push(c);
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// `createImageBitmap` (canvas2d.js): `[handle, width, height]` of the
