@@ -519,6 +519,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
+    /// pyro: whether a block-level child clears every float before it whatever its `clear` (a
+    /// column spanner: the floats before it are in the row of columns it ends).
+    fn block_child_clears_floats(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
+    }
+
     /// pyro: whether a block-level child is laid out in a writing mode orthogonal to this
     /// container's: it contributes no baseline set to it (css-align-3 §9.1).
     fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {

@@ -1375,7 +1375,8 @@ fn generate_item_list(
                 #[cfg(feature = "float_layout")]
                 float,
                 #[cfg(feature = "float_layout")]
-                clear: child_style.clear(),
+                // pyro: see `LayoutBlockContainer::block_child_clears_floats`.
+                clear: if tree.block_child_clears_floats(child_node_id) { Clear::Both } else { child_style.clear() },
                 size_style: child_style.size(),
                 // pyro: a height the aspect ratio gives is the item's own layout's to settle
                 // (its content can make it taller): it is not handed down as known.

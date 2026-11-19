@@ -2426,6 +2426,12 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             || self.is_current_column_spanner(dom_node_id(child_node_id))
     }
 
+    fn block_child_clears_floats(&self, child_node_id: NodeId) -> bool {
+        // pyro: a column spanner comes after the floats before it: they are in the row of columns
+        // it ends (Chromium; WPT css-multicol `spanner-in-child-after-parallel-flow-*`).
+        self.is_current_column_spanner(dom_node_id(child_node_id))
+    }
+
     fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
         #[cfg(feature = "writing-mode")]
         {

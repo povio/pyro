@@ -187,3 +187,15 @@ fn a_box_in_a_nested_row_is_where_it_is_painted() {
     assert_eq!(rects(&p, "m"), vec![[200.0, 50.0, 100.0, 10.0], [300.0, 0.0, 100.0, 10.0]]);
     assert_eq!(p.layout.element_from_point(&p.dom, 310.0, 5.0), Some(p.id("m")));
 }
+
+/// pyro: a column spanner comes after the floats before it (they are in the row of columns it
+/// ends), as in Chromium.
+#[test]
+fn a_spanner_comes_after_the_floats_before_it() {
+    let p = page(
+        "<!doctype html><body style='margin:0'>\
+         <div style='columns:2;width:100px;column-gap:0;orphans:1;widows:1'>\
+         <div style='float:left;width:50px;height:180px'></div><div><div id=s style='column-span:all;height:10px'></div></div></div>",
+    );
+    assert_eq!(rect(&p, "s"), [0.0, 90.0, 100.0, 10.0]);
+}

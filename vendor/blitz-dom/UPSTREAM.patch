@@ -19027,7 +19027,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            };
 +            let caption_output = self.compute_child_layout(taffy_node_id(caption), caption_inputs);
 +            laid_out.push((caption, above, margin, caption_output));
-+        }
+         }
 +        let extent = |above: bool| -> f32 {
 +            laid_out
 +                .iter()
@@ -19096,7 +19096,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                self.set_unrounded_layout(taffy_node_id(*caption), &layout);
 +            }
 +            *context.grid_box.borrow_mut() = Some((top, grid_height));
-         }
++        }
 +        output.size.height = top + grid_height + bottom;
 +        output.baselines.first = output.baselines.first.map(|baseline| baseline + top);
 +        output.baselines.last = output.baselines.last.map(|baseline| baseline + top);
@@ -19344,7 +19344,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2388,144 @@
+@@ -782,16 +2388,150 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -19384,6 +19384,12 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
 +            // container, not its column (its lines are not broken at the column's width).
 +            || self.is_current_column_spanner(dom_node_id(child_node_id))
++    }
++
++    fn block_child_clears_floats(&self, child_node_id: NodeId) -> bool {
++        // pyro: a column spanner comes after the floats before it: they are in the row of columns
++        // it ends (Chromium; WPT css-multicol `spanner-in-child-after-parallel-flow-*`).
++        self.is_current_column_spanner(dom_node_id(child_node_id))
 +    }
 +
 +    fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
@@ -19493,7 +19499,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2578,30 @@
+@@ -844,6 +2584,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -19524,7 +19530,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2610,19 @@
+@@ -852,7 +2616,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19545,7 +19551,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2638,30 @@
+@@ -868,6 +2644,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -19576,7 +19582,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2766,192 @@
+@@ -972,3 +2772,192 @@
          })
      }
  }
