@@ -103,27 +103,10 @@ impl LocalFiles {
             && options.integrity.is_none()
             && options.referrer.is_none()
             && options.referrer_policy.is_none();
-        let key = if *options == SubresourceOptions::default() {
-            url.as_str().to_owned()
-        } else if plain_cors {
-            format!("cors-anonymous {}", url.as_str())
-        } else {
-            format!(
-                "cors={:?} integrity={:?} referrer-policy={:?} referrer={:?} {}",
-                options.crossorigin,
-                options.integrity,
-                options.referrer_policy,
-                options.referrer,
-                url.as_str()
-            )
-        };
         // pyro: a body loaded with other than the defaults (a CORS response passed for this
         // document's origin) is this document's alone: the frames sharing the bodies do not reuse
-        // it without their own check.
-        let key = match loader.document().filter(|_| *options != SubresourceOptions::default()) {
-            Some(document) => format!("document={document} {key}"),
-            None => key,
-        };
+        // it without their own check (`SubresourceOptions::body_key`).
+        let key = options.body_key(url.as_str(), loader.document().as_deref());
         if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
             return None;
         }

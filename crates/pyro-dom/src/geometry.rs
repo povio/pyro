@@ -174,6 +174,34 @@ pub struct SubresourceOptions {
     pub referrer_policy: Option<String>,
 }
 
+impl SubresourceOptions {
+    /// pyro: the key of the body of `url` fetched with these options for `document` (a loader
+    /// id) in [`SubresourceBodies`]: the URL for a request with the defaults (shared by the
+    /// documents of an identity), else the options too, and the document (a CORS response passed
+    /// for one document's origin is not another's).
+    pub fn body_key(&self, url: &str, document: Option<&str>) -> String {
+        if *self == SubresourceOptions::default() {
+            return url.to_owned();
+        }
+        let plain_cors = self.crossorigin.as_deref() == Some("anonymous")
+            && self.integrity.is_none()
+            && self.referrer.is_none()
+            && self.referrer_policy.is_none();
+        let key = if plain_cors {
+            format!("cors-anonymous {url}")
+        } else {
+            format!(
+                "cors={:?} integrity={:?} referrer-policy={:?} referrer={:?} {url}",
+                self.crossorigin, self.integrity, self.referrer_policy, self.referrer
+            )
+        };
+        match document {
+            Some(document) => format!("document={document} {key}"),
+            None => key,
+        }
+    }
+}
+
 /// How a document's geometry source reaches the network for what it lays the
 /// document out with (images, fonts, imported sheets): the embedder's loader
 /// for that document ([`crate::layout::Layout::set_subresource_loader`]), which
@@ -245,6 +273,9 @@ pub struct SubresourceBodies {
     /// pyro: the URL after redirects of a body's response, by the URL asked for, where they
     /// differ (a sheet resolves its URLs against it).
     finals: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// pyro: the URLs whose no-cors response's tainting was opaque (a redirect chain through
+    /// another origin), so a body reused from here keeps it.
+    opaque: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl SubresourceBodies {
@@ -278,6 +309,21 @@ impl SubresourceBodies {
         } else {
             finals.insert(url.to_owned(), final_url.to_owned());
         }
+    }
+
+    /// pyro: the no-cors response for `url` was opaque (or not).
+    pub fn set_opaque(&self, url: &str, opaque: bool) {
+        let mut set = self.opaque.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if opaque {
+            set.insert(url.to_owned());
+        } else {
+            set.remove(url);
+        }
+    }
+
+    /// pyro: whether the no-cors response for `url` was opaque.
+    pub fn is_opaque(&self, url: &str) -> bool {
+        self.opaque.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains(url)
     }
 
     /// pyro: the URL after redirects of the response for `url` (`url` itself unless redirected).

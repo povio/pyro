@@ -237,10 +237,37 @@ impl PageFetcher {
         let page = self.page;
         // A CORS fetch without other options is an image's (`shape-outside`, `mask-image`).
         let kind = if pyro_render::is_plain_cors(options) { ResourceKind::Image } else { kind_of(&url) };
+        // pyro: the key of the same request in the document's layout bodies (its own fetch of the
+        // image, made by its layout, `SubresourceOptions::body_key`).
+        let layout = pyro_dom::layout::SubresourceOptions {
+            crossorigin: options.cors.map(|credentials| match credentials {
+                pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
+                pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
+            }),
+            integrity: options.integrity.clone(),
+            referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
+            referrer_policy: options.referrer_policy.clone(),
+        };
+        let cors = options.cors.is_some();
         let mut options = subresource_options(options);
         options.client.get_or_insert_with(|| self.client.clone());
+        let document = options.client.as_deref().and_then(|c| c.split_once('#')).map(|(_, loader)| loader.to_owned());
+        let key = layout.body_key(&url, document.as_deref().filter(|_| layout != Default::default()));
         // A closed loop drops `done`: the render stops waiting at its deadline.
         let _ = self.handle.post(move |b| {
+            // pyro: an image the document's own layout has fetched (its load waited for it) is used
+            // as it is, with its tainting, as Chrome paints what the document loaded.
+            if kind == ResourceKind::Image {
+                let bodies = b.layout_bodies(page);
+                if let Some(bodies) = bodies {
+                    let body = bodies.lock().get(&key).filter(|body| !body.is_empty()).cloned();
+                    if let Some(body) = body {
+                        let opaque = !cors && bodies.is_opaque(&url);
+                        done(Ok(pyro_render::Fetched { body: body.to_vec(), url: bodies.final_url(&url), opaque }));
+                        return;
+                    }
+                }
+            }
             // An imported sheet without a charset of its own decodes as the document.
             let environment = b.document_encoding(page);
             b.fetch_subresource_options(

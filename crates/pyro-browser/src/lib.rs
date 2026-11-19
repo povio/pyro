@@ -1378,6 +1378,7 @@ impl Browser {
                 // pyro: the layouts resolve a sheet's URLs against its URL after redirects.
                 if let (Ok(r), Some(p)) = (result.as_ref(), b.page(frame.page)) {
                     p.frames.layout_bodies.set_final_url(&asked, &r.url);
+                    p.frames.layout_bodies.set_opaque(&asked, r.opaque);
                 }
                 done(result.and_then(|r| {
                     // pyro: a response that fails its integrity check (`integrity()`) is an error.
@@ -1391,6 +1392,12 @@ impl Browser {
                 }))
             }),
         );
+    }
+
+    /// pyro: the sub-resource bodies `page`'s documents' layouts fetched (their own fetches of
+    /// CSS images, imported sheets and fonts), which a renderer of the page uses as they are.
+    pub fn layout_bodies(&self, page: PageId) -> Option<std::sync::Arc<pyro_dom::layout::SubresourceBodies>> {
+        self.page(page).map(|p| p.frames.layout_bodies.clone())
     }
 
     /// pyro: the `Referrer-Policy` the style sheet at `sheet` of `frame`'s document was served
