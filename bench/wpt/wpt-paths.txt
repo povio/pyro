@@ -22,6 +22,18 @@ html/semantics/embedded-content/the-iframe-element/
 html/semantics/forms/
 html/webappapis/
 html/semantics/scripting-1/
+html/syntax/
+selection/
+streams/
+user-timing/
+webidl/
+FileAPI/
+fetch/api/request/
+fetch/api/response/
+fetch/api/headers/
+fetch/api/abort/
+fetch/api/body/
+# css/css-variables/ and css/css-conditional/ (also feature directories) are checked out with the layout directories below.
 # css/cssom/ and css/css-cascade/ (also feature directories) are checked out with the layout directories below.
 intersection-observer/
 workers/
@@ -96,6 +108,10 @@ html/resources/
 service-workers/service-worker/resources/
 # html/webappapis/atob/base64.any.js:
 fetch/data-urls/resources/base64.json
+# Pages of the round 4 sweep's directories (selection/, streams/, webidl/) load:
+IndexedDB/resources/support.js
+editing/include/editor-test-utils.js
+editing/include/tests.js
 # scroll-animations/scroll-timelines/scroll-timeline-snapshotting.html, custom-elements/form-associated/form-disabled-callback.html:
 css/css-scroll-snap/support/
 html/semantics/forms/form-submission-0/resources/

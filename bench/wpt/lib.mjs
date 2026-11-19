@@ -22,8 +22,12 @@ export const PAINT_DIRS = [
 // out (TESTHARNESS_SKIP). html/semantics/embedded-content/the-embed-element (14 pages) and the-iframe-element (117):
 // nested browsing contexts of <iframe>, <object> and <embed> (lane F3a). html/webappapis: 312 pages without wptserve
 // (timers, atob, structured clone, event handlers, microtasks, document.open/write); html/semantics/scripting-1: 401
-// pages (script elements: types, execution order, modules, templates).
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1'];
+// pages (script elements: types, execution order, modules, templates). Round 4 sweep (S3), pages without wptserve or
+// testdriver: html/syntax 272 (the HTML parser and serializer), selection 97 (Selection API), streams 84, user-timing
+// 36, webidl 44, FileAPI 61, fetch/api request/response/headers/abort/body 68 (fetch/api/basic is a default
+// directory; cors, policies and redirect need wptserve), css/css-variables 63 and css/css-conditional 220
+// (testharness pages; their reftests run in LAYOUT_DIRS too).
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1', 'html/syntax', 'selection', 'streams', 'user-timing', 'webidl', 'FileAPI', 'fetch/api/request', 'fetch/api/response', 'fetch/api/headers', 'fetch/api/abort', 'fetch/api/body', 'css/css-variables', 'css/css-conditional'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
@@ -183,6 +187,13 @@ const NAVIGATION_API_SKIP = [
 TESTHARNESS_SKIP.push(...NAVIGATION_API_SKIP);
 //   html/semantics/embedded-content/the-iframe-element/: waits for a sandboxed frame's video to fire `play` (autoplay).
 TESTHARNESS_SKIP.push({ path: 'html/semantics/embedded-content/the-iframe-element/sandbox_002.htm', why: 'needs media playback (autoplay play event)' });
+// Round 4 sweep (S3): pages of the directories it added that hang or time out with the static server.
+TESTHARNESS_SKIP.push(
+  ...['html/syntax/parsing/custom-element-reparenting-shadow-cycle.html', 'html/syntax/parsing/custom-element-reparenting-template-cycle.html']
+    .map((path) => ({ path, why: 'hangs: a custom element the parser reparents into its own shadow or template cycle (lane F3a)' })),
+  { path: 'FileAPI/url/url-in-tags-revoke.window.js', why: 'times out: a revoked blob: URL an <iframe> loads never fires load or error' },
+  { path: 'streams/transferable/deserialize-error.window.js', why: 'times out: a transferred stream whose chunk fails to deserialize never errors' },
+);
 
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
