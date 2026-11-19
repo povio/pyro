@@ -86,6 +86,8 @@ impl ElementCx<'_, '_> {
                 .context
                 .column_pass_container
                 .replace((!fragment.spanner && vertical.is_none()).then_some(self.node.id));
+            let outer_spanner_row =
+                self.context.spanner_row_container.replace((fragment.spanner && vertical.is_none()).then_some(self.node.id));
             let transform = base.pre_translate(offset);
             // The column's part of what is visible, for culling its content; a column out of
             // sight is not painted (`Rect::intersect` never gives a negative size: overlap it is).
@@ -110,6 +112,7 @@ impl ElementCx<'_, '_> {
             self.draw_children(scene, transform, if single { clip_rect } else { column_clip });
             self.context.layer_manager.maybe_pop_layer(scene, pushed);
             self.context.column_pass_container.set(outer_column_pass);
+            self.context.spanner_row_container.set(outer_spanner_row);
             // pyro: a box broken at the column's end fills the rest of the column (its fragment
             // is as tall as the column: Chromium; WPT css-multicol `multicol-fill-balance-041`).
             // (Not in the rows of an explicit `column-height`, where Chromium keeps a broken box

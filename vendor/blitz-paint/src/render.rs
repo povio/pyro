@@ -200,6 +200,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: while a multi-column container paints one of its columns (not a spanner's row): the
     /// container, whose spanners that pass leaves out (they are painted in their own rows).
     pub(crate) column_pass_container: std::cell::Cell<Option<NodeId>>,
+    /// pyro: while a multi-column container paints a spanner's row: the container, whose boxes
+    /// that carry the spanner do not paint their own box there (the row is no part of them).
+    pub(crate) spanner_row_container: std::cell::Cell<Option<NodeId>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -316,6 +319,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
             column_pass_container: std::cell::Cell::new(None),
+            spanner_row_container: std::cell::Cell::new(None),
             paint_clip: std::cell::Cell::new(Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)),
             backgrounds: true,
             fractional_text_x: false,
@@ -1353,7 +1357,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: a split inline's fragments are painted by its pieces' lines (`inline_box_fragments`).
         let paints_own_box = !node.is_inline_with_only_block_children()
             && !node.is_split_inline()
-            && !hides_empty_cell(self.dom.as_ref(), node);
+            && !hides_empty_cell(self.dom.as_ref(), node)
+            && !self
+                .spanner_row_container
+                .get()
+                .is_some_and(|container| self.dom.as_ref().carries_spanners_of(container, node_id));
 
         // pyro: `opacity` and `filter` apply to everything the element paints, as one group
         // (Chromium's effect node): its outset box-shadow, its box, its content and descendants

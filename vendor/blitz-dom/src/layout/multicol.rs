@@ -1112,7 +1112,7 @@ impl LayoutPassState<'_> {
                             width: content_width,
                             top,
                             height: end - start,
-                            offset: Point { x: -indent, y: snap(top - start) },
+                            offset: Point { x: pb.left - indent, y: snap(top - start) },
                             spanner: true,
                             extended: 0.0,
                         });
@@ -1205,7 +1205,7 @@ impl LayoutPassState<'_> {
                     height: end - start,
                     // pyro: a spanner below a child of the container is as far in as that box
                     // (its padding, border and margin): its row starts at the container's edge.
-                    offset: Point { x: -indent, y: snap(row_top - start) },
+                    offset: Point { x: pb.left - indent, y: snap(row_top - start) },
                     spanner: true,
                     extended: 0.0,
                 });
@@ -1544,6 +1544,24 @@ impl Node {
 }
 
 impl BaseDocument {
+    /// pyro: whether box `id` carries spanners of multi-column container `container` (it is below
+    /// it through boxes that carry spanners, and carries them itself): a spanner's row is no part
+    /// of its box (its background and borders are not painted there).
+    pub fn carries_spanners_of(&self, container: crate::NodeId, id: crate::NodeId) -> bool {
+        if id == container || !self.carries_spanners(id) || !self.spans_columns_of(container, id) {
+            return false;
+        }
+        // (Not the spanner itself, nor a box inside one: those are the row's content.)
+        let mut at = Some(id);
+        while let Some(node) = at.filter(|&n| n != container) {
+            if self.nodes[node].primary_styles().is_some_and(|style| is_spanner_style(&style)) {
+                return false;
+            }
+            at = self.nodes[node].layout_parent.get();
+        }
+        true
+    }
+
     /// pyro: whether `id` is a column spanner of multi-column container `container` (painted in
     /// its own row, not in a column).
     pub fn is_column_spanner_of(&self, container: crate::NodeId, id: crate::NodeId) -> bool {
@@ -1665,7 +1683,7 @@ impl BaseDocument {
     }
 
     /// The strip ranges of `container`'s column spanners, their margins included, in order, and
-    /// how far each spanner's parent is from the container's left edge.
+    /// where each spanner's margin box starts (the container's coordinates).
     fn column_spanner_ranges(&self, container: crate::NodeId) -> Vec<(f32, f32, f32)> {
         let mut ranges: Vec<(f32, f32, f32)> = Vec::new();
         for (id, offset) in self.column_spanners_of(container) {
@@ -1674,7 +1692,8 @@ impl BaseDocument {
             let start = y - layout.margin.top.max(0.0);
             let end = y + layout.size.height + layout.margin.bottom.max(0.0);
             let start = ranges.last().map_or(start, |&(_, previous, _)| start.max(previous));
-            ranges.push((start, end.max(start), offset.x));
+            // (Where its margin box starts in the strip, inside the boxes that carry it.)
+            ranges.push((start, end.max(start), offset.x + layout.location.x - layout.margin.left));
         }
         ranges
     }
