@@ -160,3 +160,39 @@ xml/xslt/xslt-type-confusion.xsl
 media/2x2-green.mp4
 media/white.mp4
 media/white.webm
+notifications/resources/helpers.js
+webmcp/resources/helpers.js
+webtransport/handlers/echo-request-headers.py
+webtransport/resources/webtransport-test-helpers.sub.js
+# WPT's own server (wptserve.mjs: reftests and crashtests run under it, with testdriver): the `wpt` entry point, the
+# command manifests it reads at start, the server and the libraries tools/localpaths.py puts on its path that it
+# imports (5 MB; the whole of tools/ is 89 MB, most of it hpack's test data). Its Python needs
+# tools/serve/requirements.txt: fetch-wpt.sh --venv.
+wpt
+docs/commands.json
+tools/__init__.py
+tools/localpaths.py
+tools/ci/commands.json
+tools/ci/github/commands.json
+tools/docker/commands.json
+tools/lint/commands.json
+tools/web_features/commands.json
+tools/serve/
+tools/wptserve/
+tools/wpt/
+tools/certs/
+tools/manifest/
+tools/metadata/
+tools/gitignore/
+tools/third_party/atomicwrites/
+tools/third_party/attrs/src/
+tools/third_party/html5lib/html5lib/
+tools/third_party/six/
+tools/third_party/webencodings/
+tools/third_party/h2/src/
+tools/third_party/hpack/src/
+tools/third_party/hyperframe/src/
+tools/third_party/pywebsocket3/pywebsocket3/
+tools/third_party/zipp/
+tools/third_party/packaging/
+tools/third_party/certifi/

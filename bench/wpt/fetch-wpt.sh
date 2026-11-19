@@ -50,7 +50,9 @@ make_venv() {
   [ -n "$venv" ] || return 0
   v="$dir/.git/pyro-venv"
   req="$dir/tools/serve/requirements.txt"
-  if [ -f "$v/.pyro-req" ] && cmp -s "$req" "$v/.pyro-req"; then return 0; fi
+  # Kept when it was made from these requirements and still runs: a venv restored from a CI cache that another
+  # machine saved points at that machine's interpreter, which may not be here.
+  if [ -f "$v/.pyro-req" ] && cmp -s "$req" "$v/.pyro-req" && "$v/bin/python" -c 'import cryptography' 2>/dev/null; then return 0; fi
   rm -rf "$v"
   "${WPT_PYTHON:-python3}" -m venv "$v"
   "$v/bin/pip" install -q --disable-pip-version-check -r "$req"
