@@ -979,6 +979,39 @@ fn iframe_load_order_and_removal_events_follow_chrome() {
     );
 }
 
+/// A document's removal events fire once: removing inner frame B from frame A, whose `pagehide`
+/// listener then removes A from the top document, does not give B a second `pagehide` from A's
+/// removal (B's document is already unloading); A gets its own once.
+#[test]
+fn nested_removal_fires_pagehide_once_per_document() {
+    let (addr, server) = serve_html(1, "<!doctype html><body>top");
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    server.join().unwrap();
+    let log = eval_await_main(
+        &mut h,
+        r#"(async () => {
+          const log = [];
+          const a = document.createElement('iframe');
+          a.srcdoc = "<iframe srcdoc='<p>b'></iframe>";
+          document.body.appendChild(a);
+          await new Promise((r) => setTimeout(r, 400));
+          const aw = a.contentWindow, bw = aw.frames[0];
+          aw.addEventListener('pagehide', () => log.push('A:pagehide'));
+          bw.addEventListener('pagehide', () => { log.push('B:pagehide'); a.remove(); log.push('A removed'); });
+          aw.document.querySelector('iframe').remove();
+          log.push('B removed');
+          await new Promise((r) => setTimeout(r, 50));
+          return log;
+        })()"#,
+    );
+    assert_eq!(log, json!(["B:pagehide", "A:pagehide", "A removed", "B removed"]));
+}
+
 /// Moving an iframe reloads it (a new frame navigates), except when it is moved from its own
 /// document's window `load` listener: then, as in Chrome, the new frame stays on its initial
 /// about:blank, fires no `load` and does not hold its parent's load, so a load listener that moves

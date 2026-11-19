@@ -140,7 +140,9 @@ pub fn removed(page: &Rc<PageDom>, fire_unload: bool) {
 }
 
 fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
-    if page.is_disposed() || page.is_hidden() {
+    // Once per document, marked before any listener runs: one that removes an ancestor frame unloads
+    // that frame's documents, this one among them, which must not get its events again.
+    if page.is_disposed() || page.is_hidden() || !page.start_unloading() {
         return;
     }
     let window = page.window_target().filter(|_| !page.scripting_disabled());

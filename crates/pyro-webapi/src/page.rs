@@ -239,6 +239,10 @@ pub struct PageDom {
     /// HTML "visibility state" of the document is "hidden": set as it is
     /// unloaded (`lifecycle::unload`).
     hidden: Cell<bool>,
+    /// The document's unload events (`pagehide` ...) have started: set before the first is
+    /// dispatched, so a listener whose actions unload it again (removing an ancestor frame) does
+    /// not run them twice.
+    unloading: Cell<bool>,
     /// Navigation Timing of the document, recorded as the lifecycle steps
     /// run (`lifecycle`).
     timing: Cell<DocumentTiming>,
@@ -876,6 +880,7 @@ impl PageDom {
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             hidden: Cell::new(false),
+            unloading: Cell::new(false),
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -2342,6 +2347,10 @@ impl PageDom {
     }
     pub(crate) fn set_hidden(&self, hidden: bool) {
         self.hidden.set(hidden);
+    }
+    /// Marks the document as unloading; false when it already was.
+    pub(crate) fn start_unloading(&self) -> bool {
+        !self.unloading.replace(true)
     }
 
     /// The document's Navigation Timing marks so far.
