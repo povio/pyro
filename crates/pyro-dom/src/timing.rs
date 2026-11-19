@@ -671,9 +671,10 @@ impl TimingRules {
         };
         if let Some(names) = lists.get(Longhand::AnimationName) {
             for (i, name) in names.iter().enumerate() {
-                if name == "none" || !self.has_keyframes(name) {
+                if name == "none" || !self.has_keyframes(keyframes_name(name)) {
                     continue;
                 }
+                let name = &keyframes_name(name).to_owned();
                 let easing = lists.item(Longhand::AnimationTimingFunction, i);
                 out.animations.push(AnimationTiming {
                     name: name.clone(),
@@ -768,6 +769,7 @@ fn shown(longhand: Longhand, item: &str) -> String {
             Some(ms) => format!("{}s", crate::computed::fmt_num(ms / 1000.0)),
             None => item.to_owned(),
         },
+        Longhand::AnimationName if item == QUOTED_NONE => item.to_owned(),
         Longhand::AnimationName if item != "none" && !is_ident(item) => {
             let mut out = String::new();
             let _ = cssparser::serialize_string(item, &mut out);
@@ -775,6 +777,15 @@ fn shown(longhand: Longhand, item: &str) -> String {
         }
         _ => item.to_owned(),
     }
+}
+
+/// An `animation-name` item that is the string "none" (`animation-name: "none"`, naming
+/// `@keyframes "none"`), told apart from the keyword `none` in the timing lists.
+const QUOTED_NONE: &str = "\"none\"";
+
+/// The `@keyframes` name an `animation-name` item names.
+fn keyframes_name(item: &str) -> &str {
+    if item == QUOTED_NONE { "none" } else { item }
 }
 
 /// Whether `text` is one CSS identifier (and not a word the shorthand would read otherwise).
@@ -1226,8 +1237,16 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
                 _ => Value::Initial,
             },
             PropertyDeclaration::WithVariables(_) => Value::Initial,
+            // (The string "none" names `@keyframes "none"`: kept apart from the keyword, `QUOTED_NONE`.)
             PropertyDeclaration::AnimationName(list) => Value::List(
-                list.0.iter().map(|n| n.as_atom().map_or_else(|| "none".to_owned(), |a| a.to_string())).collect(),
+                list.0
+                    .iter()
+                    .map(|n| match n.as_atom() {
+                        None => "none".to_owned(),
+                        Some(a) if &**a == "none" => QUOTED_NONE.to_owned(),
+                        Some(a) => a.to_string(),
+                    })
+                    .collect(),
             ),
             PropertyDeclaration::AnimationTimingFunction(list) => Value::List(list.0.iter().map(easing_text).collect()),
             PropertyDeclaration::TransitionTimingFunction(list) => {
