@@ -189,3 +189,29 @@ fn a_fixed_box_escaping_a_clip_keeps_its_place_among_positioned_boxes() {
     let [r, g, b] = pixel(&img, 230, 295);
     assert!(r > 240 && g < 140 && b < 140, "the fixed box past the clip: {:?}", [r, g, b]);
 }
+
+/// Positioned boxes whose containing block lies outside an `overflow: hidden` box (no stacking
+/// context) escape its clip inside an opacity group between them, as Chromium clips by the
+/// containing-block chain: the group's own content stays clipped, the boxes reach past it, and the
+/// opacity still applies to all of it as one group. They were clipped with the group.
+#[test]
+fn boxes_escape_a_clip_inside_an_opacity_group_they_belong_to() {
+    let img = render(
+        "<div style='overflow:hidden;width:250px;height:250px;will-change:transform'>\
+         <div style='overflow:hidden;width:300px;height:300px;transform:translateX(0)'>\
+         <div style='overflow:hidden;width:200px;height:200px'>\
+         <div style='width:300px;height:300px;background:red;opacity:0.5'>\
+         <div style='width:400px;height:400px;background:yellow'>\
+         <div style='position:absolute;width:400px;height:100px;background:blue'></div>\
+         <div style='position:fixed;width:100px;height:400px;background:green'></div>\
+         </div></div></div></div></div>",
+    );
+    // Past the 200px clip, inside the 250px one: the blue and green boxes at half opacity.
+    let [r, g, b] = pixel(&img, 225, 50);
+    assert!(r.abs_diff(127) <= 2 && g.abs_diff(127) <= 2 && b.abs_diff(255) <= 2, "blue past the inner clip: {:?}", [r, g, b]);
+    let [r, g, b] = pixel(&img, 50, 225);
+    assert!(r.abs_diff(127) <= 2 && g.abs_diff(191) <= 2 && b.abs_diff(127) <= 2, "green past the inner clip: {:?}", [r, g, b]);
+    // The group's own content stays in the inner clip: nothing yellow past it.
+    let [r, g, b] = pixel(&img, 225, 150);
+    assert!(r > 250 && g > 250 && b > 250, "no yellow past the inner clip: {:?}", [r, g, b]);
+}

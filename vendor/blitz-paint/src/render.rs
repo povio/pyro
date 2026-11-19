@@ -238,6 +238,17 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// out-of-flow boxes of its context whose containing block lies outside it are left for
     /// after the clip (`ElementCx::escapes_own_clip`).
     pub(crate) clip_escapes_of: std::cell::Cell<Option<NodeId>>,
+    /// pyro: a clipping box that is no stacking context painting its children each in its clip
+    /// (`ElementCx::clip_transfer_child`), and the child that takes the clip over instead: (the
+    /// box, the child, the clip in device space). The clip is the box's; boxes it does not contain
+    /// escape it inside the child's effect group (Chromium clips by the containing-block chain).
+    /// (Also the box's own culling rect, uncut by its clip, which the child's effect group takes.)
+    pub(crate) handed_clips: RefCell<Option<(NodeId, NodeId, kurbo::BezPath, Rect)>>,
+    /// pyro: the clip handed to the element about to paint: (its owner, the clip in device space).
+    pub(crate) handed_clip: RefCell<Option<(NodeId, kurbo::BezPath)>>,
+    /// pyro: the element painting under a handed clip and the clip's owner, against whose
+    /// containing-block chain its boxes escape (`ElementCx::escapes_own_clip`).
+    pub(crate) escape_owner: std::cell::Cell<Option<(NodeId, NodeId)>>,
     /// pyro: the element whose negative `z-index` children are painted before its clip, each in
     /// it unless it escapes it (`ElementCx::escapes_own_clip`).
     pub(crate) neg_z_outside_clip_of: std::cell::Cell<Option<NodeId>>,
@@ -349,6 +360,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             flow_phase: std::cell::Cell::new(FlowPhase::All),
             deferred_outlines: std::cell::Cell::new(false),
             clip_escapes_of: std::cell::Cell::new(None),
+            handed_clips: RefCell::new(None),
+            handed_clip: RefCell::new(None),
+            escape_owner: std::cell::Cell::new(None),
             neg_z_outside_clip_of: std::cell::Cell::new(None),
             positioned_after_outline_of: std::cell::Cell::new(None),
             three_d: Default::default(),
@@ -1613,6 +1627,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             clip_rect,
         } = *element;
         let unscrolled_transform = cx.transform;
+        // pyro: a clip handed over by an ancestor that clips (`BlitzDomPainter::handed_clips`): it
+        // cuts this element's own box and its content, inside its effect group, except the boxes
+        // its owner does not contain.
+        let handed = self.handed_clip.borrow_mut().take();
+        let outer_escape_owner = self.escape_owner.get();
+        if let Some((owner, device_clip)) = &handed {
+            self.escape_owner.set(Some((node.id, *owner)));
+            scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, device_clip);
+        }
 
         if paints_own_box {
             // pyro: the root element paints the canvas background, under its own shadow, in
@@ -1665,12 +1688,25 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if !hidden {
             cx.stroke_devtools(scene);
         }
+        if handed.is_some() {
+            scene.pop_layer();
+        }
 
-        let clip = if is_text_input {
-            &cx.frame.text_input_clip_path()
-        } else {
-            &cx.overflow_clip_path(&cx.style)
-        };
+        let own_clip = if is_text_input { cx.frame.text_input_clip_path() } else { cx.overflow_clip_path(&cx.style) };
+        // (A handed clip, in this element's space; the element clips nothing itself then.)
+        let handed_local = handed.as_ref().map(|(_, device_clip)| cx.transform.inverse() * device_clip.clone());
+        let should_clip = should_clip || handed.is_some();
+        let clip = handed_local.as_ref().unwrap_or(&own_clip);
+        // pyro: a clipping box that is no stacking context whose child holds boxes it does not
+        // contain clips its children each (a clip layer split is the same clip) and hands the
+        // child its clip (`ElementCx::clip_transfer_child`).
+        let transfer = (should_clip && handed.is_none() && !is_text_input && !node.flags.is_inline_root())
+            .then(|| cx.clip_transfer_child())
+            .flatten();
+        let outer_handed_clips = transfer.map(|child| {
+            self.handed_clips.replace(Some((node.id, child, cx.transform * clip.clone(), clip_rect)))
+        });
+        let should_clip = should_clip && transfer.is_none();
 
         // pyro: the out-of-flow boxes of this clipping stacking context whose containing block
         // lies outside it are not clipped by it: they are painted after its clip, in its
@@ -1812,10 +1848,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         self.positioned_after_outline_of.set(outer_defers);
         self.neg_z_outside_clip_of.set(outer_neg);
         cx.transform = unscrolled_transform;
+        // pyro: the deferred positioned children (below) are drawn each in the clip already.
+        if let Some(outer) = outer_handed_clips {
+            *self.handed_clips.borrow_mut() = outer;
+        }
         // pyro: the borders of a collapsed table with positioned parts, after its last positioned
         // cell (`table_borders_deferred`).
         cx.draw_deferred_table_borders(scene);
         if hidden {
+            self.escape_owner.set(outer_escape_owner);
             return;
         }
         if borders_after_cells {
@@ -1839,6 +1880,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let transform = self.scrolled_transform(node, cx.transform);
             cx.draw_positioned_after_outline(scene, transform, should_clip, clip, clip_rect, child_clip_rect);
         }
+        self.escape_owner.set(outer_escape_owner);
     }
 
     /// pyro: the layer of an element's opacity and filters around the `group` it painted. The
@@ -2300,17 +2342,23 @@ fn escapes_clip_of(tree: &blitz_dom::NodeTree, node_id: NodeId, child_id: NodeId
 /// pyro: whether `node` (a clipping box) paints any z-ordered box (negative `z-index`,
 /// positioned level or above) whose containing block lies outside it ([`escapes_clip_of`]).
 fn has_clip_escapes(tree: &blitz_dom::NodeTree, node: &Node) -> bool {
+    has_clip_escapes_of(tree, node, node.id)
+}
+
+/// pyro: [`has_clip_escapes`] for the clip of `owner` (`node` itself, or the box that handed it its
+/// clip: `BlitzDomPainter::handed_clips`).
+fn has_clip_escapes_of(tree: &blitz_dom::NodeTree, node: &Node, owner: NodeId) -> bool {
     // pyro: a clipping box that is no stacking context too: a box escaping its clip paints among
     // its positioned children (blitz-dom `restore_out_of_flow_stacking_owners`, `clip_owner_of`).
     node.stacking_context.as_ref().is_some_and(|sc| {
         sc.pos_z_hoisted_children()
             .chain(sc.neg_z_hoisted_children())
-            .any(|child| escapes_clip_of(tree, node.id, child.node_id))
+            .any(|child| escapes_clip_of(tree, owner, child.node_id))
     }) || node
             .paint_children
             .borrow()
             .as_ref()
-            .is_some_and(|children| children.iter().any(|&id| escapes_clip_of(tree, node.id, id)))
+            .is_some_and(|children| children.iter().any(|&id| escapes_clip_of(tree, owner, id)))
 }
 
 /// pyro: the culling rect of a child painted in its parent's clip (`clipped`: `inner`, the
@@ -5438,12 +5486,46 @@ impl ElementCx<'_, '_> {
 
     /// pyro: see [`escapes_clip_of`].
     fn escapes_own_clip(&self, child_id: NodeId) -> bool {
-        escapes_clip_of(self.context.dom.as_ref().tree(), self.node.id, child_id)
+        escapes_clip_of(self.context.dom.as_ref().tree(), self.clip_owner(), child_id)
     }
 
     /// pyro: see [`has_clip_escapes`].
     fn has_clip_escapes(&self) -> bool {
-        has_clip_escapes(self.context.dom.as_ref().tree(), self.node)
+        has_clip_escapes_of(self.context.dom.as_ref().tree(), self.node, self.clip_owner())
+    }
+
+    /// pyro: the box whose clip this element applies: itself, or the box that handed it its clip
+    /// (`BlitzDomPainter::escape_owner`).
+    fn clip_owner(&self) -> NodeId {
+        match self.context.escape_owner.get() {
+            Some((node, owner)) if node == self.node.id => owner,
+            _ => self.node.id,
+        }
+    }
+
+    /// pyro: the paint child of this clipping box that takes its clip over
+    /// (`BlitzDomPainter::handed_clips`): a stacking context that does not clip itself and holds
+    /// boxes this box does not contain (their containing block lies outside it): they must escape
+    /// this box's clip inside the child's effect group, which a clip layer around the child would
+    /// hold them in (WPT css-color `clip-opacity-out-of-flow`).
+    fn clip_transfer_child(&self) -> Option<NodeId> {
+        let tree = self.context.dom.as_ref().tree();
+        let children = self.node.paint_children.borrow().clone().unwrap_or_default();
+        children.into_iter().find(|&id| {
+            let child = &tree[id];
+            let Some(sc) = &child.stacking_context else { return false };
+            if child.primary_styles().is_none_or(|style| self.context.should_clip_node(child, &style)) {
+                return false;
+            }
+            sc.pos_z_hoisted_children()
+                .chain(sc.neg_z_hoisted_children())
+                .any(|c| escapes_clip_of(tree, self.node.id, c.node_id))
+                || child
+                    .paint_children
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|c| c.iter().any(|&id| escapes_clip_of(tree, self.node.id, id)))
+        })
     }
 
     /// pyro: whether `child_id`, one of this element's `paint_children`, paints at the positioned
@@ -5659,6 +5741,37 @@ impl ElementCx<'_, '_> {
 
     /// Paints `child_id`, one of this node's `paint_children`.
     fn draw_paint_child(
+        &self,
+        scene: &mut impl PaintScene,
+        child_id: NodeId,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        // pyro: this element clips its children each (`BlitzDomPainter::handed_clips`): the child
+        // that takes its clip over gets it, the others are drawn in it.
+        let per_child = self
+            .context
+            .handed_clips
+            .borrow()
+            .clone()
+            .filter(|(parent, _, _, _)| *parent == self.node.id);
+        if let Some((_, transfer, device_clip, outer_rect)) = per_child {
+            if child_id == transfer {
+                *self.context.handed_clip.borrow_mut() = Some((self.node.id, device_clip));
+                self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, outer_rect);
+                // (Not left for another element when this one painted nothing.)
+                self.context.handed_clip.borrow_mut().take();
+            } else {
+                scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &device_clip);
+                self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, clip_rect);
+                scene.pop_layer();
+            }
+            return;
+        }
+        self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, clip_rect);
+    }
+
+    fn draw_paint_child_unclipped(
         &self,
         scene: &mut impl PaintScene,
         child_id: NodeId,
