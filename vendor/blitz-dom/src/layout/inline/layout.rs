@@ -223,6 +223,47 @@ struct PendingFloat {
     clear: Clear,
 }
 
+impl LayoutPassState<'_> {
+    /// pyro: how many lines the line clamp of an ancestor of `node_id` (in its block formatting
+    /// context) leaves to it: the clamp's count less the lines laid out before it; `None` without
+    /// one (or one without a count, `line-clamp: auto`).
+    fn clamp_lines_left(&self, node_id: NodeId) -> Option<usize> {
+        fn lines_in(nodes: &crate::NodeTree, id: NodeId, depth: u32) -> usize {
+            let node = &nodes[id];
+            if let Some(text) = node.data.downcast_element().and_then(|el| el.inline_layout_data.as_deref()) {
+                return text.counted_lines as usize;
+            }
+            if depth > 32 {
+                return 0;
+            }
+            node.layout_children.borrow().iter().flatten().map(|&c| lines_in(nodes, c, depth + 1)).sum()
+        }
+        let mut used = 0usize;
+        let mut child = node_id;
+        for _ in 0..64 {
+            let parent = self.nodes[child].layout_parent.get()?;
+            let node = &self.nodes[parent];
+            if !node.is_anonymous() && node.taffy_display() != taffy::Display::Block {
+                return None;
+            }
+            if let Some(children) = node.layout_children.borrow().as_ref() {
+                for &sibling in children.iter().take_while(|&&c| c != child) {
+                    if !self.nodes[sibling].is_out_of_flow() {
+                        used += lines_in(&self.nodes, sibling, 0);
+                    }
+                }
+            }
+            if let Some(spec) = self.line_clamp_of(parent) {
+                // (`line-clamp: auto` balances first and clamps after, as Chromium does: WPT
+                // css-overflow `line-clamp-balance-007`, `-010`.)
+                return (spec.lines != u32::MAX).then(|| (spec.lines as usize).saturating_sub(used));
+            }
+            child = parent;
+        }
+        None
+    }
+}
+
 /// pyro: the advance at which the lines of a `text-wrap-style: balance` block wrap: the least
 /// one that breaks `layout` into as many lines as `max_advance` does. `None` when there is
 /// nothing to balance (one line) or too much (more than Blink's six lines).
@@ -1603,12 +1644,16 @@ impl LayoutPassState<'_> {
                             && matches!(s.slow_clone_max_height(), style::values::computed::MaxSize::None)
                     });
                 // Lines that `line-clamp` would cut off are left as they are.
+                // pyro: and so are those an ancestor's line clamp cuts: only the lines it leaves
+                // this block balance (WPT css-overflow `line-clamp/line-clamp-balance-002`).
+                let ancestor_left = self.clamp_lines_left(node_id);
                 let balance_clamp = || {
                     self.nodes[node_id]
                         .primary_styles()
                         .and_then(|s| s.slow_clone_line_clamp().max_lines.lines_value().map(|lines| lines.0))
                         .filter(|&lines| lines > 0)
                         .map_or(usize::MAX, |lines| lines as usize)
+                        .min(ancestor_left.unwrap_or(usize::MAX))
                 };
                 let balance_limit = (balance_wanted && !floats_involved)
                     .then(|| balanced_wrap_limit(&mut inline_layout.layout, max_advance, scale, balance_clamp()))
