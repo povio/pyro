@@ -242,6 +242,32 @@ impl BaseDocument {
         for fo in self.foreign_object_roots() {
             self.resolve_transforms(fo, resolve_all, ContainingTransform::default());
         }
+        // pyro: classic scrollbars (`stylo_taffy::scrollbars`): an `overflow: auto` box's or the
+        // viewport's scrollbar shows when its scrollable overflow (with transforms and
+        // `overflow-clip-margin`, as resolved here) passes its scrollport, and stops showing when
+        // it no longer does with the scrollbar. A change lays the document out again (as Chrome
+        // does), a few times at most.
+        // Only a layout checks them, and the relayout a change makes may remove scrollbars but
+        // add none (Blink's `kForbidAddingAutoBars` while `in_overflow_relayout_`).
+        if stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic
+            && std::mem::take(&mut self.layout_ran)
+        {
+            for pass in 0..3 {
+                let may_add = pass == 0;
+                let boxes_changed = self.update_auto_scrollbars(may_add);
+                let viewport_changed = self.update_viewport_scrollbars(may_add);
+                if !boxes_changed && !viewport_changed {
+                    break;
+                }
+                self.last_layout_space = None;
+                self.resolve_layout();
+                self.resolve_transforms(root_node_id, false, ContainingTransform::default());
+                for fo in self.foreign_object_roots() {
+                    self.resolve_transforms(fo, false, ContainingTransform::default());
+                }
+            }
+            self.layout_ran = false;
+        }
         #[cfg(feature = "svg")]
         self.update_svg_image_documents();
         timer.record_time("transform");
@@ -925,22 +951,57 @@ impl BaseDocument {
             // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
             // css-contain `contain-layout-ink-overflow-*`.
             use style::values::specified::box_::Contain;
-            if style.get_box().slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
-                && !{
-                    use style::values::specified::box_::{DisplayInside, DisplayOutside};
-                    let display = style.clone_display();
-                    display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
-                }
-            {
+            let contain = style.get_box().slow_clone_contain();
+            // pyro: paint containment alone clips as `overflow: clip` does, at its
+            // `overflow-clip-margin` (below; WPT css-overflow `overflow-clip-margin-005`).
+            let inline_flow = {
+                use style::values::specified::box_::{DisplayInside, DisplayOutside};
+                let display = style.clone_display();
+                display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
+            };
+            let paint_only = contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
+            if contain.intersects(Contain::LAYOUT | Contain::PAINT) && !paint_only && !inline_flow {
                 return border_box;
             }
-            let (x, y) = (style.clone_overflow_x() != Overflow::Visible, style.clone_overflow_y() != Overflow::Visible);
+            let (ox, oy) = (style.clone_overflow_x(), style.clone_overflow_y());
+            let as_clip = |o: Overflow| if paint_only && o == Overflow::Visible { Overflow::Clip } else { o };
+            let (ox, oy) = (as_clip(ox), as_clip(oy));
+            let (x, y) = (ox != Overflow::Visible, oy != Overflow::Visible);
             if (x || y) && !self.body_overflow_goes_to_viewport(node_id) {
+                // pyro: an `overflow: clip` axis shows its overflow up to its overflow clip edge
+                // (`overflow-clip-margin`), which is part of what it contributes (Chrome:
+                // WPT css-overflow `overflow-clip-margin-002`).
+                let edge = (ox == Overflow::Clip || oy == Overflow::Clip).then(|| {
+                    use style::values::generics::box_::OverflowClipMarginBox;
+                    let layout = self.nodes[node_id].final_layout();
+                    let clip_margin = &style.get_margin().overflow_clip_margin;
+                    let (b, p) = (layout.border, layout.padding);
+                    let inset = match clip_margin.visual_box {
+                        OverflowClipMarginBox::BorderBox => taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 },
+                        OverflowClipMarginBox::PaddingBox => b,
+                        OverflowClipMarginBox::ContentBox => b + p,
+                    };
+                    let m = clip_margin.offset.px();
+                    Rect::new(
+                        (inset.left - m) as f64 * scale,
+                        (inset.top - m) as f64 * scale,
+                        (size.width - inset.right + m) as f64 * scale,
+                        (size.height - inset.bottom + m) as f64 * scale,
+                    )
+                });
                 if x {
-                    (out.x0, out.x1) = (border_box.x0, border_box.x1);
+                    let (x0, x1) = match edge.filter(|_| ox == Overflow::Clip) {
+                        Some(edge) => (overflow.x0.max(edge.x0).min(border_box.x0), overflow.x1.min(edge.x1).max(border_box.x1)),
+                        None => (border_box.x0, border_box.x1),
+                    };
+                    (out.x0, out.x1) = (x0, x1);
                 }
                 if y {
-                    (out.y0, out.y1) = (border_box.y0, border_box.y1);
+                    let (y0, y1) = match edge.filter(|_| oy == Overflow::Clip) {
+                        Some(edge) => (overflow.y0.max(edge.y0).min(border_box.y0), overflow.y1.min(edge.y1).max(border_box.y1)),
+                        None => (border_box.y0, border_box.y1),
+                    };
+                    (out.y0, out.y1) = (y0, y1);
                 }
             }
         }
@@ -1421,6 +1482,7 @@ impl BaseDocument {
             return;
         }
         self.last_layout_space = Some(available_space);
+        self.layout_ran = true;
         phase_profile::laid_out();
         self.mark_viewport_body();
 
@@ -1484,15 +1546,8 @@ impl BaseDocument {
             state.physicalise_and_round_layout(root_element_id);
             #[cfg(not(feature = "writing-mode"))]
             taffy::round_layout(&mut state, root_element_id);
-            if !classic || passes >= 4 {
-                break state;
-            }
-            drop(state);
-            let boxes_changed = self.update_auto_scrollbars();
-            let viewport_changed = self.update_viewport_scrollbars();
-            if !boxes_changed && !viewport_changed {
-                break LayoutPassState::new(self);
-            }
+            let _ = passes;
+            break state;
         };
         // The foreign objects' fallback viewport, in the root's axes as before.
         #[cfg(feature = "writing-mode")]
@@ -1582,19 +1637,25 @@ impl BaseDocument {
     /// pyro: classic scrollbars: after a layout pass, the viewport's `overflow: auto` scrollbars show
     /// when the document overflows its scrollport (and stop showing when it no longer does with
     /// them). Whether the gutters changed (the document is laid out again).
-    fn update_viewport_scrollbars(&mut self) -> bool {
+    fn update_viewport_scrollbars(&mut self, may_add: bool) -> bool {
         let Some(root) = self.try_root_element() else { return false };
         let size = self.stylist.device().au_viewport_size();
         let (width, height) = (size.width.to_f32_px(), size.height.to_f32_px());
         let port = self.viewport_scrollbars.scrollport(width, height);
         let layout = root.final_layout();
-        // The document's extent: the root's margin box and its scrollable overflow.
-        let overflow = layout.scrollable_overflow_rect.rect();
-        let right = (layout.location.x + layout.size.width + layout.margin.right)
-            .max(layout.location.x + overflow.right) as f64;
-        let bottom = (layout.location.y + layout.size.height + layout.margin.bottom)
-            .max(layout.location.y + overflow.bottom) as f64;
-        let shown = taffy::Point { x: right > port.x1 + 0.5, y: bottom > port.y1 + 0.5 };
+        // The document's extent: the root's margin box and its scrollable overflow (resolved,
+        // device px).
+        let scale = self.viewport.scale_f64();
+        let overflow = root.scrollable_overflow().scale_from_origin(1.0 / scale);
+        let right = ((layout.location.x + layout.size.width + layout.margin.right) as f64)
+            .max(layout.location.x as f64 + overflow.x1);
+        let bottom = ((layout.location.y + layout.size.height + layout.margin.bottom) as f64)
+            .max(layout.location.y as f64 + overflow.y1);
+        let had = self.viewport_scrollbars.shown;
+        let shown = taffy::Point {
+            x: right > port.x1 + 0.5 && (may_add || had.x),
+            y: bottom > port.y1 + 0.5 && (may_add || had.y),
+        };
         let root_id = root.id;
         let next = self.viewport_scrollbars_for(shown);
         let changed = next.gutters != self.viewport_scrollbars.gutters;
@@ -1609,9 +1670,10 @@ impl BaseDocument {
     /// shows its scrollbar (`NodeFlags::AUTO_SCROLLBAR_X`/`_Y`), which takes a gutter; one whose content
     /// no longer overflows with it stops showing it. A box whose scrollbars changed is laid out again
     /// with its ancestors. Whether any changed.
-    fn update_auto_scrollbars(&mut self) -> bool {
+    fn update_auto_scrollbars(&mut self, may_add: bool) -> bool {
         use style::values::computed::Overflow;
         use style::values::computed::ui::ScrollbarWidth;
+        let scale = self.viewport.scale_f64();
         let mut changed = Vec::new();
         for (id, node) in self.nodes.iter() {
             let had = node.flags & (NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
@@ -1631,13 +1693,33 @@ impl BaseDocument {
                 && node.is_element();
             let mut want = NodeFlags::empty();
             if eligible {
+                // The scrollport (the padding box less the gutters) against the resolved
+                // scrollable overflow, which starts at it (`resolve_transforms`), device px.
                 let layout = node.final_layout();
-                if x == Overflow::Auto && layout.scroll_width() > 0.5 {
+                let o = *node.scrollable_overflow();
+                let g = node.classic_scrollbars().map(|bars| bars.gutters);
+                let gap = |f: fn(&taffy::Rect<f32>) -> f32| g.as_ref().map_or(0.0, f) as f64;
+                let b = layout.border;
+                let port = kurbo::Rect::new(
+                    (b.left as f64 + gap(|g| g.left)) * scale,
+                    (b.top as f64 + gap(|g| g.top)) * scale,
+                    ((layout.size.width - b.right) as f64 - gap(|g| g.right)) * scale,
+                    ((layout.size.height - b.bottom) as f64 - gap(|g| g.bottom)) * scale,
+                );
+                let slack = 0.5 * scale;
+                // Only the end of the scroll origin's axis is reachable (the start in a reversed one).
+                let reversed = layout.scrollable_overflow_rect.is_reversed();
+                let past_x = if reversed.x { o.x0 < port.x0 - slack } else { o.x1 > port.x1 + slack };
+                let past_y = if reversed.y { o.y0 < port.y0 - slack } else { o.y1 > port.y1 + slack };
+                if x == Overflow::Auto && past_x {
                     want |= NodeFlags::AUTO_SCROLLBAR_X;
                 }
-                if y == Overflow::Auto && layout.scroll_height() > 0.5 {
+                if y == Overflow::Auto && past_y {
                     want |= NodeFlags::AUTO_SCROLLBAR_Y;
                 }
+            }
+            if !may_add {
+                want &= had;
             }
             if want != had {
                 changed.push((id, want));
@@ -1649,6 +1731,8 @@ impl BaseDocument {
             node.flags.insert(want);
             let mut current = Some(id);
             while let Some(id) = current {
+                // (A table measures a changed cell again: its column widths.)
+                self.note_changed_table_cell(id, true);
                 let node = &mut self.nodes[id];
                 node.clear_layout_cache();
                 current = node.parent;

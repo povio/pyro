@@ -324,7 +324,7 @@ impl BaseDocument {
     /// Notes `node_id` in its table if it is a table cell: to transform and visit in the paint
     /// tree again, and, when its damage reaches `layout`, as a changed cell to measure and lay
     /// out again.
-    fn note_changed_table_cell(&self, node_id: NodeId, layout: bool) {
+    pub(crate) fn note_changed_table_cell(&self, node_id: NodeId, layout: bool) {
         let node = &self.nodes[node_id];
         let index = node.layout_data().table_cell_index;
         if index == u32::MAX {

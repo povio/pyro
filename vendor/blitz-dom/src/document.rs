@@ -399,6 +399,9 @@ pub struct BaseDocument {
     /// edges, CSS px), which the initial containing block is smaller by, and which of its scrollbars
     /// show (x: the horizontal one). All zero with overlay scrollbars.
     pub viewport_scrollbars: ViewportScrollbars,
+    /// pyro: whether `resolve_layout` laid the document out since `resolve` last checked the
+    /// classic `overflow: auto` scrollbars.
+    pub(crate) layout_ran: bool,
     /// See [`BaseDocument::set_layout_size`].
     layout_size: Option<(f32, f32)>,
     /// See [`BaseDocument::set_layout_size`].
@@ -846,6 +849,7 @@ impl BaseDocument {
             meta_nodes: Default::default(),
             last_layout_space: None,
             viewport_scrollbars: ViewportScrollbars::default(),
+            layout_ran: false,
             layout_size: None,
             layout_available: None,
             flags: DocumentFlags::empty(),

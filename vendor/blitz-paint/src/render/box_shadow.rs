@@ -217,6 +217,25 @@ impl ElementCx<'_, '_> {
             let wrapper = super::create_css_rect(style, self.node.final_layout(), self.scale);
             return overflow_clip_path(&wrapper, style, self.scale);
         }
+        // pyro: classic scrollbars: a scroll container's content is cut to its scrollport, the
+        // padding box less the scrollbar gutters (Chrome: WPT css-overflow
+        // `overflow-scroll-resize-visibility-hidden`). A rounded padding box keeps its shape.
+        if let Some(bars) = self.node.classic_scrollbars() {
+            use kurbo::Shape as _;
+            use style::values::computed::Overflow;
+            let b = style.get_box();
+            let scrolls = |o: Overflow| matches!(o, Overflow::Hidden | Overflow::Scroll | Overflow::Auto);
+            let r = self.frame.border_radii;
+            let square = [r.top_left, r.top_right, r.bottom_right, r.bottom_left].iter().all(|v| v.x <= 0.0 && v.y <= 0.0);
+            if square && scrolls(b.overflow_x) && scrolls(b.overflow_y) {
+                let (g, s) = (bars.gutters, self.scale);
+                let p = self.frame.padding_box;
+                let x0 = p.x0 + g.left as f64 * s;
+                let y0 = p.y0 + g.top as f64 * s;
+                return kurbo::Rect::new(x0, y0, (p.x1 - g.right as f64 * s).max(x0), (p.y1 - g.bottom as f64 * s).max(y0))
+                    .to_path(0.1);
+            }
+        }
         overflow_clip_path(&self.frame, style, self.scale)
     }
 

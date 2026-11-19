@@ -2154,6 +2154,9 @@ impl Node {
             if el.name.local == local_name!("input") {
                 flags |= stylo_taffy::StyleFlags::IS_INPUT;
             }
+            if el.name.local == local_name!("frameset") {
+                flags |= stylo_taffy::StyleFlags::NO_SCROLLBARS;
+            }
             if let Some(inline_layout) = el.inline_layout_data.as_deref() {
                 flags |= inline_layout.span_cb_flags;
             }

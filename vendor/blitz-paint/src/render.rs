@@ -484,6 +484,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     ) {
         let s = self.scale;
         let thickness = bars.thickness as f64 * s;
+        let Some(root) = self.root_element_id.and_then(|id| self.dom.get_node(id)) else { return };
+        let colors = ClassicScrollbarColors::of(root);
         // The document's extent (CSS px): the root's margin box and its scrollable overflow.
         let (doc_width, doc_height) = self.root_element_id.and_then(|id| self.dom.get_node(id)).map_or((0.0, 0.0), |root| {
             let l = root.final_layout();
@@ -499,16 +501,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if bars.shown.y {
             let track = Rect::new(port.x1, port.y0, port.x1 + thickness, port.y1);
             let content = (doc_height - port_origin.1).max(port_h);
-            paint_classic_scrollbar(scene, Affine::IDENTITY, track, true, port_h, content, scroll.y, s);
+            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, true, port_h, content, scroll.y, s);
         }
         if bars.shown.x {
             let track = Rect::new(port.x0, port.y1, port.x1, port.y1 + thickness);
             let content = (doc_width - port_origin.0).max(port_w);
-            paint_classic_scrollbar(scene, Affine::IDENTITY, track, false, port_w, content, scroll.x, s);
+            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, false, port_w, content, scroll.x, s);
         }
         if bars.shown.x && bars.shown.y {
             let corner = Rect::new(port.x1, port.y1, port.x1 + thickness, port.y1 + thickness);
-            scene.fill(Fill::NonZero, Affine::IDENTITY, CLASSIC_SCROLLBAR_CORNER, None, &corner);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, colors.corner, None, &corner);
         }
     }
 
@@ -2742,6 +2744,11 @@ impl ElementCx<'_, '_> {
         if !bars.shown.x && !bars.shown.y {
             return;
         }
+        // A box that is not visible paints no scrollbars (Chrome).
+        if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
+            return;
+        }
+        let colors = ClassicScrollbarColors::of(self.node);
         let layout = self.node.final_layout();
         let s = self.scale;
         let g = bars.gutters;
@@ -2760,7 +2767,7 @@ impl ElementCx<'_, '_> {
             let width = if bars.vertical_on_left { g.left } else { g.right } as f64;
             let x0 = if bars.vertical_on_left { px0 } else { px1 - width };
             let track = Rect::new(x0, py0, x0 + width, py1 - bottom_bar);
-            paint_classic_scrollbar(scene, self.transform, track.scale_from_origin(s), true, client.1, scroll.1, offset.y, s);
+            paint_classic_scrollbar(scene, colors, self.transform, track.scale_from_origin(s), true, client.1, scroll.1, offset.y, s);
         }
         if bars.shown.x {
             let height = g.bottom as f64;
@@ -2770,12 +2777,12 @@ impl ElementCx<'_, '_> {
                 (0.0, 0.0)
             };
             let track = Rect::new(px0 + left, py1 - height, px1 - right, py1);
-            paint_classic_scrollbar(scene, self.transform, track.scale_from_origin(s), false, client.0, scroll.0, offset.x, s);
+            paint_classic_scrollbar(scene, colors, self.transform, track.scale_from_origin(s), false, client.0, scroll.0, offset.x, s);
             if bars.shown.y {
                 // The corner between the two.
                 let x0 = if bars.vertical_on_left { px0 } else { px1 - right };
                 let corner = Rect::new(x0, py1 - height, x0 + left.max(right), py1).scale_from_origin(s);
-                scene.fill(Fill::NonZero, self.transform, CLASSIC_SCROLLBAR_CORNER, None, &corner);
+                scene.fill(Fill::NonZero, self.transform, colors.corner, None, &corner);
             }
         }
     }
@@ -6948,6 +6955,33 @@ fn tree_precedes(doc: &BaseDocument, a: NodeId, b: NodeId) -> bool {
     matches!((index(ca[common]), index(cb[common])), (Some(x), Some(y)) if x < y)
 }
 
+/// pyro: a classic scrollbar's colours: Chrome's defaults, or `scrollbar-color`'s (the arrows
+/// in the thumb colour, the corner in the track colour).
+#[derive(Clone, Copy)]
+pub(crate) struct ClassicScrollbarColors {
+    track: Color,
+    thumb: Color,
+    arrow: Color,
+    corner: Color,
+}
+
+impl ClassicScrollbarColors {
+    pub(crate) fn of(node: &Node) -> Self {
+        match node.scrollbar_color() {
+            blitz_dom::node::ScrollbarColor::Auto => Self {
+                track: CLASSIC_SCROLLBAR_TRACK,
+                thumb: CLASSIC_SCROLLBAR_THUMB,
+                arrow: CLASSIC_SCROLLBAR_ARROW,
+                corner: CLASSIC_SCROLLBAR_CORNER,
+            },
+            blitz_dom::node::ScrollbarColor::Colors { thumb, track } => {
+                let (thumb, track) = (thumb.as_srgb_color(), track.as_srgb_color());
+                Self { track, thumb, arrow: thumb, corner: track }
+            }
+        }
+    }
+}
+
 /// pyro: classic scrollbar colours (Chrome's on Linux: `NativeThemeBase`).
 const CLASSIC_SCROLLBAR_TRACK: Color = Color::from_rgba8(0xf1, 0xf1, 0xf1, 0xff);
 const CLASSIC_SCROLLBAR_THUMB: Color = Color::from_rgba8(0xc1, 0xc1, 0xc1, 0xff);
@@ -6961,6 +6995,7 @@ const CLASSIC_SCROLLBAR_CORNER: Color = Color::from_rgba8(0xdc, 0xdc, 0xdc, 0xff
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_classic_scrollbar(
     scene: &mut impl PaintScene,
+    colors: ClassicScrollbarColors,
     transform: Affine,
     track: Rect,
     vertical: bool,
@@ -6972,7 +7007,7 @@ pub(crate) fn paint_classic_scrollbar(
     if track.width() <= 0.0 || track.height() <= 0.0 {
         return;
     }
-    scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_TRACK, None, &track);
+    scene.fill(Fill::NonZero, transform, colors.track, None, &track);
     let (thickness, length) = if vertical { (track.width(), track.height()) } else { (track.height(), track.width()) };
     // The buttons are as long as the bar is thick, while two of them fit.
     let button = if length >= 2.0 * thickness { thickness } else { 0.0 };
@@ -6996,7 +7031,7 @@ pub(crate) fn paint_classic_scrollbar(
                 arrow.line_to((cx - dir * r * 0.4, cy + r));
             }
             arrow.close_path();
-            scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_ARROW, None, &arrow);
+            scene.fill(Fill::NonZero, transform, colors.arrow, None, &arrow);
         }
     }
     let room = length - 2.0 * button;
@@ -7014,5 +7049,5 @@ pub(crate) fn paint_classic_scrollbar(
     } else {
         Rect::new(track.x0 + start, track.y0 + inset, track.x0 + start + thumb_len, track.y1 - inset)
     };
-    scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_THUMB, None, &thumb);
+    scene.fill(Fill::NonZero, transform, colors.thumb, None, &thumb);
 }

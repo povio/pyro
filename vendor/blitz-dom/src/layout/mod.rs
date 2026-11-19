@@ -1151,6 +1151,19 @@ impl LayoutPassState<'_> {
                             })
                         })
                         .flatten();
+                    // pyro: classic scrollbars: a textarea's natural width has room for its
+                    // vertical scrollbar whether or not it shows (Blink's
+                    // `TextAreaIntrinsicInlineSize`), less a gutter its layout reserves already.
+                    let scrollbar_room = {
+                        let style = node.layout_style();
+                        let thickness = taffy::CoreStyle::scrollbar_width(&style);
+                        let scrolls = node.primary_styles().is_some_and(|s| {
+                            use style::values::computed::Overflow;
+                            let o = if s.writing_mode.is_vertical() { s.clone_overflow_x() } else { s.clone_overflow_y() };
+                            matches!(o, Overflow::Auto | Overflow::Scroll)
+                        });
+                        if scrolls { (thickness - taffy::CoreStyle::scrollbar_gutter_size(&style).width).max(0.0) } else { 0.0 }
+                    };
                     let output = compute_leaf_layout(
                         inputs,
                         &node.layout_style(),
@@ -1177,6 +1190,7 @@ impl LayoutPassState<'_> {
                                     0.0
                                 } else {
                                     cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
+                                        + scrollbar_room
                                 },
                                 height: resolved_line_height.unwrap_or(16.0) * rows,
                             }
@@ -1192,7 +1206,9 @@ impl LayoutPassState<'_> {
                                     .border()
                                     .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                         };
-                        let content_width = (output.size.width - pb.horizontal_axis_sum()).max(0.0);
+                        // pyro: less its inline-axis scrollbar gutters (classic scrollbars).
+                        let gutter = taffy::CoreStyle::scrollbar_gutter_size(&node.layout_style()).width;
+                        let content_width = (output.size.width - pb.horizontal_axis_sum() - gutter).max(0.0);
                         let doc = &mut *self.doc;
                         let scale = doc.viewport.scale();
                         let node = &mut doc.nodes[dom_node_id(node_id)];
@@ -1213,11 +1229,16 @@ impl LayoutPassState<'_> {
                             // pyro: lines that do not wrap (`white-space: nowrap`, `wrap=off`)
                             // are the control's scrollable overflow: it scrolls to them.
                             let text_width = input.editor.try_layout().map_or(0.0, |layout| layout.width() / scale);
-                            if text_width > content_width {
+                            // pyro: and lines below its content box (Chrome scrolls a textarea
+                            // to them: a classic `overflow: auto` scrollbar shows).
+                            let text_height = input.editor.try_layout().map_or(0.0, |layout| layout.height() / scale);
+                            let content_height = (output.size.height - pb.vertical_axis_sum()).max(0.0);
+                            if text_width > content_width || text_height > content_height + 0.5 {
                                 let mut output = output;
                                 let overflow = output.scrollable_overflow_rect;
                                 let mut rect = overflow.rect();
                                 rect.right = rect.right.max(pb.left + text_width + pb.right);
+                                rect.bottom = rect.bottom.max(pb.top + text_height + pb.bottom);
                                 output.scrollable_overflow_rect =
                                     taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
                                 return ChildLayout::Done(output);

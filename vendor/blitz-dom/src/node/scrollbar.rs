@@ -74,7 +74,7 @@ impl Node {
             return None;
         }
         let el = self.element_data()?;
-        if el.name.local == crate::local_name!("input") {
+        if el.name.local == crate::local_name!("input") || el.name.local == crate::local_name!("frameset") {
             return None;
         }
         let style = self.primary_styles()?;
@@ -106,7 +106,7 @@ impl Node {
         Some(ClassicScrollbars {
             gutters,
             shown: taffy::Point { x: shows(overflow.x, auto_shows.x), y: shows(overflow.y, auto_shows.y) },
-            vertical_on_left: inputs.rtl && !inputs.vertical && gutters.right == 0.0,
+            vertical_on_left: inputs.rtl && !inputs.vertical,
         })
     }
 

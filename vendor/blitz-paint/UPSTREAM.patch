@@ -5734,7 +5734,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -288,13 +473,382 @@
+@@ -288,13 +473,384 @@
          }
      }
  
@@ -5749,6 +5749,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    ) {
 +        let s = self.scale;
 +        let thickness = bars.thickness as f64 * s;
++        let Some(root) = self.root_element_id.and_then(|id| self.dom.get_node(id)) else { return };
++        let colors = ClassicScrollbarColors::of(root);
 +        // The document's extent (CSS px): the root's margin box and its scrollable overflow.
 +        let (doc_width, doc_height) = self.root_element_id.and_then(|id| self.dom.get_node(id)).map_or((0.0, 0.0), |root| {
 +            let l = root.final_layout();
@@ -5764,16 +5766,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        if bars.shown.y {
 +            let track = Rect::new(port.x1, port.y0, port.x1 + thickness, port.y1);
 +            let content = (doc_height - port_origin.1).max(port_h);
-+            paint_classic_scrollbar(scene, Affine::IDENTITY, track, true, port_h, content, scroll.y, s);
++            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, true, port_h, content, scroll.y, s);
 +        }
 +        if bars.shown.x {
 +            let track = Rect::new(port.x0, port.y1, port.x1, port.y1 + thickness);
 +            let content = (doc_width - port_origin.0).max(port_w);
-+            paint_classic_scrollbar(scene, Affine::IDENTITY, track, false, port_w, content, scroll.x, s);
++            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, false, port_w, content, scroll.x, s);
 +        }
 +        if bars.shown.x && bars.shown.y {
 +            let corner = Rect::new(port.x1, port.y1, port.x1 + thickness, port.y1 + thickness);
-+            scene.fill(Fill::NonZero, Affine::IDENTITY, CLASSIC_SCROLLBAR_CORNER, None, &corner);
++            scene.fill(Fill::NonZero, Affine::IDENTITY, colors.corner, None, &corner);
 +        }
 +    }
 +
@@ -6118,7 +6120,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
          transform.then_translate(Vec2 {
              x: -node.scroll_offset().x * self.scale,
-@@ -309,16 +863,32 @@
+@@ -309,16 +865,32 @@
              let is_internal_table_box_other_than_cell = display.outside()
                  == DisplayOutside::InternalTable
                  && display.inside() != DisplayInside::TableCell;
@@ -6155,7 +6157,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -328,6 +898,10 @@
+@@ -328,6 +900,10 @@
          transform: Affine,
          root: bool,
      ) {
@@ -6166,7 +6168,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let node = &self.dom.as_ref().tree()[node_id];
          if matches!(node.taffy_display(), taffy::Display::None) || (!root && node.is_out_of_flow())
          {
-@@ -345,7 +919,7 @@
+@@ -345,7 +921,7 @@
          let clip = if cx.text_input.is_some() {
              cx.frame.text_input_clip_path()
          } else {
@@ -6175,7 +6177,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let pushed = self.layer_manager.maybe_push_layer(
              scene,
-@@ -368,18 +942,46 @@
+@@ -368,18 +944,46 @@
                      + layout.block_offset as f64;
                  let text_transform =
                      transform * Affine::translate((x * self.scale, y * self.scale));
@@ -6226,7 +6228,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              }
          }
          if let Some(children) = &*node.layout_children.borrow() {
-@@ -412,13 +1014,47 @@
+@@ -412,13 +1016,47 @@
          parent_style_transform: Affine,
          clip_rect: Rect,
      ) {
@@ -6274,7 +6276,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -430,18 +1066,40 @@
+@@ -430,18 +1068,40 @@
              return;
          }
  
@@ -6318,7 +6320,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let should_clip = self.should_clip_node(node, &styles);
          let is_text_input = node
              .element_data()
-@@ -482,10 +1140,67 @@
+@@ -482,10 +1142,67 @@
          // Cull elements that fall entirely outside the current clip rectangle. In addition to
          // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
          // also culls elements scrolled out of view inside a clipping/scrolling container.
@@ -6390,7 +6392,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          {
              return;
          }
-@@ -508,10 +1223,20 @@
+@@ -508,10 +1225,20 @@
          }
  
          // Optimise zero-area (/very small area) clips by not rendering at all
@@ -6412,7 +6414,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              return;
          }
  
-@@ -528,23 +1253,130 @@
+@@ -528,23 +1255,130 @@
          // rectangle passed to descendants to the visible (clipped) region so that content
          // scrolled out of view is culled rather than drawn and clipped away. The box used
          // here matches the clip applied to the content below.
@@ -6551,7 +6553,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
          // the element's rendering (including outlines and shadows), so it is the outermost layer.
-@@ -552,6 +1384,44 @@
+@@ -552,6 +1386,44 @@
          if css_clip_rect.is_some_and(|rect| rect.is_zero_area()) {
              return;
          }
@@ -6596,7 +6598,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
              scene,
              css_clip_rect.is_some(),
-@@ -566,40 +1436,107 @@
+@@ -566,40 +1438,107 @@
          // Use the viewport in scene coordinates so outlines, shadows and overflowing
          // descendants are not clipped to the element's border box.
          let blend = convert_blend_mode(effects.mix_blend_mode);
@@ -6724,7 +6726,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,110 +1545,458 @@
+@@ -608,110 +1547,458 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -6836,6 +6838,23 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                        } else {
 -                            &cx.frame.padding_box_path()
 -                        };
+-
+-                        // Clip layer if box requires clipping. Opacity set to 1.0
+-                        self.layer_manager.maybe_with_layer(
+-                            scene,
+-                            should_clip,
+-                            BlendMode::default(),
+-                            1.0, // opacity
+-                            cx.transform,
+-                            clip,
+-                            None,
+-                            None,
+-                            |scene| {
+-                                // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
+-                                let content_position = Point {
+-                                    x: content_position.x - node.scroll_offset().x,
+-                                    y: content_position.y - node.scroll_offset().y,
+-                                };
 +        if paints_own_box {
 +            // pyro: the root element paints the canvas background, under its own shadow, in
 +            // place of its background; the body whose background that is paints none.
@@ -6888,28 +6907,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            cx.stroke_devtools(scene);
 +        }
  
--                        // Clip layer if box requires clipping. Opacity set to 1.0
--                        self.layer_manager.maybe_with_layer(
--                            scene,
--                            should_clip,
--                            BlendMode::default(),
--                            1.0, // opacity
--                            cx.transform,
--                            clip,
--                            None,
--                            None,
--                            |scene| {
--                                // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
--                                let content_position = Point {
--                                    x: content_position.x - node.scroll_offset().x,
--                                    y: content_position.y - node.scroll_offset().y,
--                                };
-+        let clip = if is_text_input {
-+            &cx.frame.text_input_clip_path()
-+        } else {
-+            &cx.overflow_clip_path(&cx.style)
-+        };
- 
 -                                cx.transform = self.scrolled_transform(node, cx.transform);
 -                                cx.draw_image(scene);
 -                                #[cfg(feature = "svg")]
@@ -6923,6 +6920,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                                cx.draw_marker(scene, content_position);
 -                                cx.draw_children(scene, cx.transform, child_clip_rect);
 -                            },
+-                        );
++        let clip = if is_text_input {
++            &cx.frame.text_input_clip_path()
++        } else {
++            &cx.overflow_clip_path(&cx.style)
++        };
+ 
+-                        // Overlay scrollbars, drawn unscrolled above the
+-                        // clipped content.
+-                        #[cfg(feature = "scrollbars")]
+-                        {
+-                            cx.transform = unscrolled_transform;
+-                            cx.draw_scrollbars(scene);
+-                        }
+-                    },
+-                );
 +        // pyro: the out-of-flow boxes of this clipping stacking context whose containing block
 +        // lies outside it are not clipped by it: they are painted after its clip, in its
 +        // scrolled space (Chromium clips a box by its containing-block chain; WPT css-position
@@ -6974,7 +6987,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    x: content_position.x - node.scroll_offset().x,
 +                    y: content_position.y - node.scroll_offset().y,
 +                };
-+
+ 
+-                // Apply the CSS `mask` (if any) to the content drawn above
+-                cx.transform = unscrolled_transform;
+-                cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
 +                cx.transform = self.scrolled_transform(node, cx.transform);
 +                // pyro: an `<svg>` paints whatever its own visibility: what in it is visible
 +                // (`visibility: visible` on a child, a filter's region) is (usvg drops the hidden
@@ -7041,7 +7057,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                            cx.transform,
 +                            child_clip_rect,
 +                            content_position,
-                         );
++                        );
 +                        return;
 +                    }
 +                    // pyro: the stacking contexts with a negative z-index go under the box's own
@@ -7057,7 +7073,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        cx.draw_inline_boxes_over_atomics(scene, content_position);
 +                    }
 +                }
-+            },
+             },
 +        );
 +        self.clip_escapes_of.set(outer_escapes);
 +        self.positioned_after_outline_of.set(outer_defers);
@@ -7072,27 +7088,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        if borders_after_cells {
 +            cx.draw_table_borders(scene);
 +        }
- 
--                        // Overlay scrollbars, drawn unscrolled above the
--                        // clipped content.
--                        #[cfg(feature = "scrollbars")]
--                        {
--                            cx.transform = unscrolled_transform;
--                            cx.draw_scrollbars(scene);
--                        }
--                    },
--                );
++
 +        // Overlay scrollbars, drawn unscrolled above the
 +        // clipped content.
 +        #[cfg(feature = "scrollbars")]
 +        cx.draw_scrollbars(scene);
 +        // pyro: classic scrollbars (`blitz_dom::ScrollbarMode::Classic`) in their gutters.
 +        cx.draw_classic_scrollbars(scene);
- 
--                // Apply the CSS `mask` (if any) to the content drawn above
--                cx.transform = unscrolled_transform;
--                cx.maybe_pop_css_mask_layer(scene, mask_layer_pushed);
--            },
++
 +        // pyro: and those of a table's rows and row groups, which paint no box.
 +        cx.draw_table_part_outlines(scene);
 +        // The outline goes over the box and its contents (Chromium paints it
@@ -7276,7 +7279,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn render_node(
-@@ -722,11 +2007,19 @@
+@@ -722,11 +2009,19 @@
          clip_rect: Rect,
      ) {
          let node = &self.dom.as_ref().tree()[node_id];
@@ -7298,7 +7301,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -738,6 +2031,62 @@
+@@ -738,6 +2033,62 @@
          }
      }
  
@@ -7361,7 +7364,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn element_cx(
          &'dom self,
          node: &'dom Node,
-@@ -759,10 +2108,42 @@
+@@ -759,10 +2110,42 @@
          // todo: maybe cache this so we don't need to constantly be figuring it out
          // It is quite a bit of math to calculate during render/traverse
          // Also! we can cache the bezpaths themselves, saving us a bunch of work
@@ -7406,7 +7409,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          ElementCx {
              context: self,
              frame,
-@@ -781,7 +2162,70 @@
+@@ -781,7 +2164,70 @@
              devtools: self.dom.devtools(),
              custom_widget_scene,
          }
@@ -7477,7 +7480,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  }
  
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
-@@ -818,6 +2262,77 @@
+@@ -818,6 +2264,77 @@
      }
  }
  
@@ -7555,7 +7558,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,44 +2351,467 @@
+@@ -836,44 +2353,472 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -7729,8 +7732,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -        let opacity = self.context.dom.scrollbar_opacity(node_id);
 -        if opacity == 0.0 {
 -            return;
--        }
--
 +/// pyro: how line `index` of the inline root `node` ends short, if it does: the line a line
 +/// clamp ends at (`TextLayout::clamp`) always ends with "…"; any other line that overflows the
 +/// content box ends with the `text-overflow` ellipsis (`TextLayout::ellipsis`).
@@ -7983,6 +7984,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        if !bars.shown.x && !bars.shown.y {
 +            return;
 +        }
++        // A box that is not visible paints no scrollbars (Chrome).
++        if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
++            return;
++        }
++        let colors = ClassicScrollbarColors::of(self.node);
 +        let layout = self.node.final_layout();
 +        let s = self.scale;
 +        let g = bars.gutters;
@@ -8001,8 +8007,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let width = if bars.vertical_on_left { g.left } else { g.right } as f64;
 +            let x0 = if bars.vertical_on_left { px0 } else { px1 - width };
 +            let track = Rect::new(x0, py0, x0 + width, py1 - bottom_bar);
-+            paint_classic_scrollbar(scene, self.transform, track.scale_from_origin(s), true, client.1, scroll.1, offset.y, s);
-+        }
++            paint_classic_scrollbar(scene, colors, self.transform, track.scale_from_origin(s), true, client.1, scroll.1, offset.y, s);
+         }
 +        if bars.shown.x {
 +            let height = g.bottom as f64;
 +            let (left, right) = if bars.shown.y {
@@ -8011,16 +8017,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                (0.0, 0.0)
 +            };
 +            let track = Rect::new(px0 + left, py1 - height, px1 - right, py1);
-+            paint_classic_scrollbar(scene, self.transform, track.scale_from_origin(s), false, client.0, scroll.0, offset.x, s);
++            paint_classic_scrollbar(scene, colors, self.transform, track.scale_from_origin(s), false, client.0, scroll.0, offset.x, s);
 +            if bars.shown.y {
 +                // The corner between the two.
 +                let x0 = if bars.vertical_on_left { px0 } else { px1 - right };
 +                let corner = Rect::new(x0, py1 - height, x0 + left.max(right), py1).scale_from_origin(s);
-+                scene.fill(Fill::NonZero, self.transform, CLASSIC_SCROLLBAR_CORNER, None, &corner);
++                scene.fill(Fill::NonZero, self.transform, colors.corner, None, &corner);
 +            }
 +        }
 +    }
-+
+ 
 +    /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
 +    /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
 +    /// which scroll only programmatically). Thumbs appear on scroll and fade
@@ -8056,7 +8062,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Default thumb palette for the used color scheme; thumbs paint as
          // fill plus a thin contrast stroke so they read over same-colored
          // content.
-@@ -967,8 +2905,636 @@
+@@ -967,8 +2912,636 @@
          }
      }
  
@@ -8693,7 +8699,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let text_layout = self.element
                  .inline_layout_data
                  .as_ref()
-@@ -976,6 +3542,11 @@
+@@ -976,6 +3549,11 @@
                      panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                  });
  
@@ -8705,7 +8711,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              // Text keeps its unrounded position; only box edges are snapped to whole pixels.
              let subpixel_offset = text_layout.content_box_subpixel_offset;
              let pos = Point {
-@@ -984,242 +3555,2468 @@
+@@ -984,61 +3562,922 @@
              };
              let transform =
                  self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
@@ -8780,122 +8786,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -            let pos = Point {
 -                x: pos.x + subpixel_offset.x as f64,
 -                y: pos.y + subpixel_offset.y as f64 + y_offset,
--            };
--
--            // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
--            // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
--            // inputs scroll vertically.
--            let scroll_offset = input_data.scroll_offset as f64 * self.scale;
--            let (scroll_x, scroll_y) = if input_data.is_multiline {
--                (0.0, scroll_offset)
--            } else {
--                (scroll_offset, 0.0)
--            };
--
--            let transform = self.transform
--                * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
--
--            if self.node.is_focussed() {
--                // Render selection/caret
--                for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
--                    scene.fill(
--                        Fill::NonZero,
--                        transform,
--                        SELECTION_COLOR,
--                        None,
--                        &convert_rect(rect),
--                    );
--                }
--                if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
--                    let color = self.style.get_inherited_text().color;
--                    let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
--                        ColorOrAuto::Auto => color,
--                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
--                    };
--
--                    scene.fill(
--                        Fill::NonZero,
--                        transform,
--                        caret_color.as_srgb_color(),
--                        None,
--                        &convert_rect(&cursor),
--                    );
--                };
--            }
--
--            // Render text
--            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
--            crate::text::stroke_text(
--                scene,
--                input_data.editor.try_layout().unwrap().lines(),
--                self.context.dom,
--                transform,
--                TextPaintOptions {
--                    scale: self.scale,
--                    brush_override: None,
--                },
--                self.node.id,
--                &mut draw_text_context,
--            );
--        }
--    }
--
--    fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
--        if let Some(ListItemLayout {
--            marker,
--            position: ListItemLayoutPosition::Outside(layout),
--            content_box_subpixel_offset,
--        }) = self.list_item
--        {
--            // Right align and pad the bullet when rendering outside
--            let x_padding = match marker {
--                Marker::Char(_) => 8.0,
--                Marker::String(_) => 0.0,
--            };
--            // Outside markers are placed outside the list item's border box
--            // (`pos` is the origin of its content box)
--            let item_layout = self.node.final_layout();
--            let x_offset = -(layout.full_width() / layout.scale()
--                + x_padding
--                + item_layout.padding.left
--                + item_layout.border.left);
--
--            // Align the marker with the baseline of the first line of text in the list item
--            let y_offset = if let Some((text_layout, first_text_line)) = &self
--                .element
--                .inline_layout_data
--                .as_ref()
--                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
--            {
--                (first_text_line.metrics().baseline
--                    - layout.lines().next().unwrap().metrics().baseline)
--                    / layout.scale()
--                    + text_layout.block_offset
--            } else {
--                0.0
--            };
--
--            let pos = Point {
--                x: pos.x + (content_box_subpixel_offset.x + x_offset) as f64,
--                y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
--            };
--
--            let transform =
--                self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
--
--            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
--            crate::text::stroke_text(
--                scene,
--                layout.lines(),
--                self.context.dom,
--                transform,
--                TextPaintOptions {
--                    scale: self.scale,
--                    brush_override: None,
--                },
--                self.node.id,
--                &mut draw_text_context,
--            );
 +                    shadows: true,
 +                };
 +                for (index, line) in text_layout.layout.lines().enumerate() {
@@ -9157,12 +9047,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    A::End => if rtl { left } else { right },
 +                    A::Start | A::Justify | A::JustifyAll => if rtl { right } else { left },
 +                }
-+            };
+             };
 +            let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
 +            crate::caret::draw_empty_caret(scene, caret, transform, content_width, x, self.scale);
 +        }
 +    }
-+
+ 
 +    /// What moves this inline root's text from its box's whole-pixel x to its layout-unit x (device px).
 +    fn fractional_text_x_of_node(&self) -> f64 {
 +        self.text_placement(0.0).0
@@ -9779,22 +9669,22 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                y: content_origin.y + y_offset,
 +            };
 +
-+            // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
-+            // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
-+            // inputs scroll vertically.
+             // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
+             // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
+             // inputs scroll vertically.
+-            let scroll_offset = input_data.scroll_offset as f64 * self.scale;
 +            // pyro: only in a focused control, which follows its caret; an unfocused one shows
 +            // its text where the element's own scroll offset (`scrollLeft`, applied with its
 +            // content) puts it, as Chromium: both moved its text twice (WPT css-overflow
 +            // `scrollable-overflow-input-001`: 80px for `scrollLeft` 40).
 +            let scroll_offset = if self.node.is_focussed() { input_data.scroll_offset as f64 * self.scale } else { 0.0 };
-+            let (scroll_x, scroll_y) = if input_data.is_multiline {
-+                (0.0, scroll_offset)
-+            } else {
-+                (scroll_offset, 0.0)
-+            };
-+
-+            let transform = self.transform
-+                * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
+             let (scroll_x, scroll_y) = if input_data.is_multiline {
+                 (0.0, scroll_offset)
+             } else {
+@@ -1047,179 +4486,1544 @@
+ 
+             let transform = self.transform
+                 * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
 +            // pyro: each line's top at the whole CSS pixel Chromium paints it at. A single line
 +            // takes its selection and caret along; in a textarea they stay where the layout has them.
 +            let tops = self.text_placement(y_offset - scroll_y / self.scale).1;
@@ -9806,7 +9696,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
 +                None => (transform, tops),
 +            };
-+
+ 
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -9856,32 +9746,85 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +
 +            // pyro: the text a block caret covers, in `caret-color`'s second colour, and the block.
 +            let mut caret_text: Option<(Color, Rect)> = None;
-+            if self.node.is_focussed() {
-+                // Render selection/caret
+             if self.node.is_focussed() {
+                 // Render selection/caret
 +                // pyro: in the control's `::selection` colours (`control_selection_colors`).
 +                let text_color = self.style.get_inherited_text().color.as_srgb_color();
 +                let (selection_background, _) =
 +                    crate::highlight::control_selection_colors(self.context.dom, self.node.id, text_color);
-+                for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-+                    scene.fill(
-+                        Fill::NonZero,
-+                        transform,
+                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
+                     scene.fill(
+                         Fill::NonZero,
+                         transform,
+-                        SELECTION_COLOR,
 +                        selection_background,
-+                        None,
-+                        &convert_rect(rect),
-+                    );
-+                }
-+                if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
+                         None,
+                         &convert_rect(rect),
+                     );
+                 }
+                 if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
+-                    let color = self.style.get_inherited_text().color;
+-                    let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
+-                        ColorOrAuto::Auto => color,
+-                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
+-                    };
+-
+-                    scene.fill(
+-                        Fill::NonZero,
+-                        transform,
+-                        caret_color.as_srgb_color(),
+-                        None,
+-                        &convert_rect(&cursor),
+-                    );
 +                    let (rect, caret_color, text) = self.control_caret(input_data, &cursor);
 +                    if let Some(text) = text {
 +                        caret_text = Some((text, rect));
 +                    }
 +                    scene.fill(Fill::NonZero, transform, caret_color, None, &rect);
-+                };
-+            }
-+
-+            // Render text
-+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+                 };
+             }
+ 
+             // Render text
+             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
+-                scene,
+-                input_data.editor.try_layout().unwrap().lines(),
+-                self.context.dom,
+-                transform,
+-                TextPaintOptions {
+-                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
+-        }
+-    }
+-
+-    fn draw_marker(&self, scene: &mut impl PaintScene, pos: Point) {
+-        if let Some(ListItemLayout {
+-            marker,
+-            position: ListItemLayoutPosition::Outside(layout),
+-            content_box_subpixel_offset,
+-        }) = self.list_item
+-        {
+-            // Right align and pad the bullet when rendering outside
+-            let x_padding = match marker {
+-                Marker::Char(_) => 8.0,
+-                Marker::String(_) => 0.0,
+-            };
+-            // Outside markers are placed outside the list item's border box
+-            // (`pos` is the origin of its content box)
+-            let item_layout = self.node.final_layout();
+-            let x_offset = -(layout.full_width() / layout.scale()
+-                + x_padding
+-                + item_layout.padding.left
+-                + item_layout.border.left);
+-
+-            // Align the marker with the baseline of the first line of text in the list item
+-            let y_offset = if let Some((text_layout, first_text_line)) = &self
+-                .element
+-                .inline_layout_data
 +            draw_text_context.line_tops = tops;
 +            let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
 +            let layout = input_data.editor.try_layout().unwrap();
@@ -9890,7 +9833,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // with the ellipsis (a focused control shows its text clipped, to edit it).
 +            let ellipsis = input_data
 +                .ellipsis
-+                .as_ref()
+                 .as_ref()
+-                .and_then(|text_layout| Some((text_layout, text_layout.layout.lines().next()?)))
+-            {
+-                (first_text_line.metrics().baseline
+-                    - layout.lines().next().unwrap().metrics().baseline)
+-                    / layout.scale()
+-                    + text_layout.block_offset
 +                .filter(|_| {
 +                    let scroll = self.node.scroll_offset();
 +                    !self.node.is_focussed() && input_data.scroll_offset == 0.0 && scroll.x == 0.0 && scroll.y == 0.0
@@ -10094,7 +10043,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let rtl = !self.style.writing_mode.is_bidi_ltr();
 +            let x_offset = if rtl {
 +                item_layout.size.width - item_layout.padding.left - item_layout.border.left + x_padding
-+            } else {
+             } else {
 +                -(layout.full_width() / layout.scale()
 +                    + x_padding
 +                    + item_layout.padding.left
@@ -10138,7 +10087,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    / layout.scale()
 +                    + text_layout.block_offset
 +            } else {
-+                0.0
+                 0.0
 +            };
 +
 +            let pos = Point {
@@ -11016,7 +10965,29 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                FlowPhase::All
 +            } else {
 +                continue;
-+            };
+             };
+-
+-            let pos = Point {
+-                x: pos.x + (content_box_subpixel_offset.x + x_offset) as f64,
+-                y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
+-            };
+-
+-            let transform =
+-                self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+-
+-            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+-            crate::text::stroke_text(
+-                scene,
+-                layout.lines(),
+-                self.context.dom,
+-                transform,
+-                TextPaintOptions {
+-                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
 +            self.context.flow_phase.set(child_phase);
 +            self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
 +            self.context.flow_phase.set(FlowPhase::All);
@@ -11203,32 +11174,33 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            if root == Some(self.node.id) {
 +                self.context.inline_pass_entries.borrow_mut().insert(child.node_id, (self.node.id, self.transform, pos));
 +            }
-         }
-     }
- 
--    fn draw_children(
++        }
++    }
++
 +    fn draw_neg_z_children(
-         &self,
-         scene: &mut impl PaintScene,
-         parent_style_transform: Affine,
-         clip_rect: Rect,
-     ) {
--        // Negative z_index hoisted nodes
++        &self,
++        scene: &mut impl PaintScene,
++        parent_style_transform: Affine,
++        clip_rect: Rect,
++    ) {
 +        // (pyro: before the clip when some escape it: `neg_z_outside_clip_of`.)
 +        if self.context.neg_z_outside_clip_of.get() == Some(self.node.id) {
 +            return;
 +        }
 +        if let Some(hoisted) = &self.node.stacking_context {
 +            self.draw_hoisted_children(scene, hoisted.neg_z_hoisted_children(), parent_style_transform, clip_rect);
-+        }
-+    }
+         }
+     }
  
+-    fn draw_children(
 +    fn draw_pos_z_children(
-+        &self,
-+        scene: &mut impl PaintScene,
-+        parent_style_transform: Affine,
-+        clip_rect: Rect,
-+    ) {
+         &self,
+         scene: &mut impl PaintScene,
+         parent_style_transform: Affine,
+         clip_rect: Rect,
+     ) {
+-        // Negative z_index hoisted nodes
+-
 +        // Positive z_index hoisted nodes
 +        // (pyro: after the outline when it defers them: `defers_positioned`.)
 +        if self.context.positioned_after_outline_of.get() == Some(self.node.id) {
@@ -11391,7 +11363,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6026,50 @@
+@@ -1229,9 +6033,50 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -11444,7 +11416,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6091,20 @@
+@@ -1253,9 +6098,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -11468,7 +11440,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6115,209 @@
+@@ -1266,26 +6122,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -11680,7 +11652,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +6325,38 @@
+@@ -1293,15 +6332,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -11720,7 +11692,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +6367,108 @@
+@@ -1312,7 +6374,108 @@
          );
      }
  
@@ -11829,7 +11801,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +6485,22 @@
+@@ -1329,9 +6492,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -11855,7 +11827,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +6516,28 @@
+@@ -1347,10 +6523,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -11884,7 +11856,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +6545,23 @@
+@@ -1358,8 +6552,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -11909,7 +11881,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +6585,27 @@
+@@ -1383,22 +6592,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -11946,7 +11918,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +6634,32 @@
+@@ -1427,6 +6641,32 @@
      }
  }
  
@@ -11979,7 +11951,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +6671,13 @@
+@@ -1438,6 +6678,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -11993,7 +11965,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +6697,322 @@
+@@ -1457,12 +6704,350 @@
          }
      };
      let s_border = style.get_border();
@@ -12253,6 +12225,33 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    matches!((index(ca[common]), index(cb[common])), (Some(x), Some(y)) if x < y)
 +}
 +
++/// pyro: a classic scrollbar's colours: Chrome's defaults, or `scrollbar-color`'s (the arrows
++/// in the thumb colour, the corner in the track colour).
++#[derive(Clone, Copy)]
++pub(crate) struct ClassicScrollbarColors {
++    track: Color,
++    thumb: Color,
++    arrow: Color,
++    corner: Color,
++}
++
++impl ClassicScrollbarColors {
++    pub(crate) fn of(node: &Node) -> Self {
++        match node.scrollbar_color() {
++            blitz_dom::node::ScrollbarColor::Auto => Self {
++                track: CLASSIC_SCROLLBAR_TRACK,
++                thumb: CLASSIC_SCROLLBAR_THUMB,
++                arrow: CLASSIC_SCROLLBAR_ARROW,
++                corner: CLASSIC_SCROLLBAR_CORNER,
++            },
++            blitz_dom::node::ScrollbarColor::Colors { thumb, track } => {
++                let (thumb, track) = (thumb.as_srgb_color(), track.as_srgb_color());
++                Self { track, thumb, arrow: thumb, corner: track }
++            }
++        }
++    }
++}
++
 +/// pyro: classic scrollbar colours (Chrome's on Linux: `NativeThemeBase`).
 +const CLASSIC_SCROLLBAR_TRACK: Color = Color::from_rgba8(0xf1, 0xf1, 0xf1, 0xff);
 +const CLASSIC_SCROLLBAR_THUMB: Color = Color::from_rgba8(0xc1, 0xc1, 0xc1, 0xff);
@@ -12266,6 +12265,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +#[allow(clippy::too_many_arguments)]
 +pub(crate) fn paint_classic_scrollbar(
 +    scene: &mut impl PaintScene,
++    colors: ClassicScrollbarColors,
 +    transform: Affine,
 +    track: Rect,
 +    vertical: bool,
@@ -12277,7 +12277,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    if track.width() <= 0.0 || track.height() <= 0.0 {
 +        return;
 +    }
-+    scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_TRACK, None, &track);
++    scene.fill(Fill::NonZero, transform, colors.track, None, &track);
 +    let (thickness, length) = if vertical { (track.width(), track.height()) } else { (track.height(), track.width()) };
 +    // The buttons are as long as the bar is thick, while two of them fit.
 +    let button = if length >= 2.0 * thickness { thickness } else { 0.0 };
@@ -12301,7 +12301,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                arrow.line_to((cx - dir * r * 0.4, cy + r));
 +            }
 +            arrow.close_path();
-+            scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_ARROW, None, &arrow);
++            scene.fill(Fill::NonZero, transform, colors.arrow, None, &arrow);
 +        }
 +    }
 +    let room = length - 2.0 * button;
@@ -12319,7 +12319,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    } else {
 +        Rect::new(track.x0 + start, track.y0 + inset, track.x0 + start + thumb_len, track.y1 - inset)
 +    };
-+    scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_THUMB, None, &thumb);
++    scene.fill(Fill::NonZero, transform, colors.thumb, None, &thumb);
 +}
 diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-paint/src/render/background.rs
 --- a/packages/blitz-paint/src/render/background.rs
@@ -17382,7 +17382,7 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-paint/src/render/box_shadow.rs
 --- a/packages/blitz-paint/src/render/box_shadow.rs
 +++ b/packages/blitz-paint/src/render/box_shadow.rs
-@@ -1,17 +1,368 @@
+@@ -1,17 +1,387 @@
  use super::ElementCx;
  use crate::color::{Color, ToColorColor as _};
 +use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
@@ -17603,6 +17603,25 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +            let wrapper = super::create_css_rect(style, self.node.final_layout(), self.scale);
 +            return overflow_clip_path(&wrapper, style, self.scale);
 +        }
++        // pyro: classic scrollbars: a scroll container's content is cut to its scrollport, the
++        // padding box less the scrollbar gutters (Chrome: WPT css-overflow
++        // `overflow-scroll-resize-visibility-hidden`). A rounded padding box keeps its shape.
++        if let Some(bars) = self.node.classic_scrollbars() {
++            use kurbo::Shape as _;
++            use style::values::computed::Overflow;
++            let b = style.get_box();
++            let scrolls = |o: Overflow| matches!(o, Overflow::Hidden | Overflow::Scroll | Overflow::Auto);
++            let r = self.frame.border_radii;
++            let square = [r.top_left, r.top_right, r.bottom_right, r.bottom_left].iter().all(|v| v.x <= 0.0 && v.y <= 0.0);
++            if square && scrolls(b.overflow_x) && scrolls(b.overflow_y) {
++                let (g, s) = (bars.gutters, self.scale);
++                let p = self.frame.padding_box;
++                let x0 = p.x0 + g.left as f64 * s;
++                let y0 = p.y0 + g.top as f64 * s;
++                return kurbo::Rect::new(x0, y0, (p.x1 - g.right as f64 * s).max(x0), (p.y1 - g.bottom as f64 * s).max(y0))
++                    .to_path(0.1);
++            }
++        }
 +        overflow_clip_path(&self.frame, style, self.scale)
 +    }
 +
@@ -17752,7 +17771,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          let current_color = self.style.clone_color();
          let opacity = self.style.get_effects().opacity;
-@@ -21,7 +372,11 @@
+@@ -21,7 +391,11 @@
              .background_color
              .resolve_to_absolute(&current_color)
              .as_srgb_color();
@@ -17765,7 +17784,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
          let needs_clip = opacity < 1.0 || !bg_is_opaque;
  
          let max_shadow_rect = box_shadow.iter().fold(Rect::ZERO, |prev, shadow| {
-@@ -76,12 +431,51 @@
+@@ -76,12 +450,51 @@
                              continue;
                          }
  
@@ -17821,7 +17840,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
                      }
                  }
              },
-@@ -95,8 +489,13 @@
+@@ -95,8 +508,13 @@
          if !has_inset_shadow {
              return;
          }
@@ -17835,7 +17854,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          for shadow in box_shadow.iter().filter(|s| s.inset) {
              let shadow_color = shadow
-@@ -104,17 +503,40 @@
+@@ -104,17 +522,40 @@
                  .color
                  .resolve_to_absolute(&current_color)
                  .as_srgb_color();
@@ -17883,7 +17902,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
              scene.push_layer(
                  Fill::NonZero,
                  Mix::Normal,
-@@ -141,19 +563,35 @@
+@@ -141,19 +582,35 @@
                  None,
                  None,
              );

@@ -77,7 +77,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  input {
      display: inline-block;
  }
-@@ -59,25 +74,102 @@
+@@ -59,25 +74,104 @@
      display: none !important;
  }
  
@@ -177,6 +177,8 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: 2px;
 -    background-color: white;
 +    background-color: Field;
++    /* pyro: Blink's StyleAdjuster: a textarea's `overflow: visible` is `auto`. */
++    overflow: auto;
 +}
 +
 +/* Chromium's `font: -webkit-small-control`: form controls default to 13.333px. */
@@ -188,7 +190,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +178,49 @@
+@@ -86,10 +180,49 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -238,7 +240,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -121,17 +252,38 @@
+@@ -121,17 +254,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -279,7 +281,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +302,42 @@
+@@ -150,6 +304,42 @@
      background-color: transparent;
  }
  
@@ -322,7 +324,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +357,40 @@
+@@ -169,8 +359,40 @@
      padding-inline-end: 2px;
  }
  
@@ -364,7 +366,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +469,16 @@
+@@ -249,15 +471,16 @@
      unicode-bidi: isolate;
  }
  
@@ -386,7 +388,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +790,19 @@
+@@ -569,6 +792,19 @@
      text-align: center;
  }
  
@@ -406,7 +408,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,10 +1072,42 @@
+@@ -838,10 +1074,42 @@
      border-radius: 0 ! important;
  }
  
@@ -449,7 +451,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1117,18 @@
+@@ -851,8 +1119,18 @@
      user-select: none;
  }
  
@@ -468,7 +470,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1162,15 @@
+@@ -886,14 +1164,15 @@
      display: none;
  }
  
@@ -487,7 +489,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -996,7 +1273,9 @@
+@@ -996,7 +1275,9 @@
      display: none;
  }
  
@@ -498,7 +500,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1407,48 @@
+@@ -1128,37 +1409,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -2336,7 +2338,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  pub struct BaseDocument {
      /// ID of the document
      id: usize,
-@@ -290,10 +377,32 @@
+@@ -290,10 +377,35 @@
      pub(crate) viewport: Viewport,
      /// CSS media type used to evaluate `@media` rules.
      pub(crate) media_type: MediaType,
@@ -2362,6 +2364,9 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// edges, CSS px), which the initial containing block is smaller by, and which of its scrollbars
 +    /// show (x: the horizontal one). All zero with overlay scrollbars.
 +    pub viewport_scrollbars: ViewportScrollbars,
++    /// pyro: whether `resolve_layout` laid the document out since `resolve` last checked the
++    /// classic `overflow: auto` scrollbars.
++    pub(crate) layout_ran: bool,
 +    /// See [`BaseDocument::set_layout_size`].
 +    layout_size: Option<(f32, f32)>,
 +    /// See [`BaseDocument::set_layout_size`].
@@ -2369,7 +2374,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Document-wide work for the next [`resolve`](Self::resolve).
      pub(crate) flags: DocumentFlags,
      /// Strategy for Stylo's style traversal during `resolve`.
-@@ -305,6 +414,8 @@
+@@ -305,6 +417,8 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub(crate) subdocument_depth: usize,
@@ -2378,7 +2383,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      // Events
      pub(crate) tx: Sender<DocumentEvent>,
-@@ -337,6 +448,10 @@
+@@ -337,6 +451,10 @@
      pub(crate) thread_font_contexts: ThreadLocal<RefCell<Box<FontContext>>>,
      /// A Parley layout context
      pub(crate) layout_ctx: parley::LayoutContext<TextBrush>,
@@ -2389,7 +2394,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// The real (non-anonymous) node which is currently hovered (if any).
      /// This is never a layout-generated (anonymous) node, so it remains valid
-@@ -354,6 +469,9 @@
+@@ -354,6 +472,9 @@
      pub(crate) focus_node_id: Option<NodeId>,
      /// The node which is currently active (if any)
      pub(crate) active_node_id: Option<NodeId>,
@@ -2399,7 +2404,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The node which recieved a mousedown event (if any)
      pub(crate) mousedown_node_id: Option<NodeId>,
      /// The last time a mousedown was made (for double-click detection)
-@@ -378,6 +496,8 @@
+@@ -378,6 +499,8 @@
      // TODO: collapse animating state into a bitflags
      /// Whether there are active CSS animations/transitions (so we should re-render every frame)
      pub(crate) has_active_animations: bool,
@@ -2408,7 +2413,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
      pub(crate) has_canvas: bool,
      /// Whether there are subdocuments that are animating (so we should re-render every frame)
-@@ -389,6 +509,12 @@
+@@ -389,6 +512,12 @@
      pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
      /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
      pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
@@ -2421,7 +2426,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
      /// added, replaced or removed), so that CSSOM wrappers can detect that
      /// their cached rule data is stale.
-@@ -404,6 +530,64 @@
+@@ -404,6 +533,64 @@
      pub(crate) has_changes: bool,
      /// Set of changed nodes for updating the accessibility tree
      pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
@@ -2486,7 +2491,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// Nodes that contain custom widgets
      #[cfg(feature = "custom-widget")]
-@@ -426,6 +610,92 @@
+@@ -426,6 +613,92 @@
      /// the style traversal and by pseudo-element box construction).
      pub(crate) pending_style_image_nodes: Vec<NodeId>,
  
@@ -2579,7 +2584,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
      // keyed by request id
      pub(crate) pending_critical_resources: HashSet<usize>,
-@@ -485,6 +755,13 @@
+@@ -485,6 +758,13 @@
          static ID_GENERATOR: AtomicUsize = AtomicUsize::new(1);
  
          let id = ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
@@ -2593,7 +2598,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          let font_ctx = config
              .font_ctx
-@@ -514,17 +791,24 @@
+@@ -514,17 +794,24 @@
  
          let viewport = config.viewport.unwrap_or_default();
          let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -2621,7 +2626,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          let net_provider = config
              .net_provider
-@@ -555,19 +839,35 @@
+@@ -555,19 +842,36 @@
              nodes_to_id,
              viewport,
              media_type,
@@ -2632,6 +2637,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +            meta_nodes: Default::default(),
 +            last_layout_space: None,
 +            viewport_scrollbars: ViewportScrollbars::default(),
++            layout_ran: false,
 +            layout_size: None,
 +            layout_available: None,
              flags: DocumentFlags::empty(),
@@ -2658,7 +2664,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
              hover_node_id: None,
              hover_hit_node_id: None,
-@@ -575,8 +875,10 @@
+@@ -575,8 +879,10 @@
              last_client_pointer_position: None,
              focus_node_id: None,
              active_node_id: None,
@@ -2669,7 +2675,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              subdoc_is_animating: false,
              has_canvas: false,
              sub_document_nodes: HashSet::new(),
-@@ -589,9 +891,54 @@
+@@ -589,9 +895,54 @@
  
              has_changes: false,
              deferred_construction_nodes: Vec::new(),
@@ -2724,7 +2730,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              pending_critical_resources: HashSet::new(),
              controls_to_form: HashMap::new(),
              net_provider,
-@@ -686,6 +1033,7 @@
+@@ -686,6 +1037,7 @@
      /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
      pub fn set_base_url(&mut self, url: &str) {
          self.url = DocumentUrl::from(Url::parse(url).unwrap());
@@ -2732,7 +2738,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      }
  
      /// The base url used for resolving linked resources (stylesheets, images, fonts, etc)
-@@ -732,6 +1080,22 @@
+@@ -732,6 +1084,22 @@
          self.nodes.get(node_id)
      }
  
@@ -2755,7 +2761,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn get_node_mut(&mut self, node_id: NodeId) -> Option<&mut Node> {
          self.nodes.get_mut(node_id)
      }
-@@ -741,6 +1105,12 @@
+@@ -741,6 +1109,12 @@
              .or(self.try_root_element().map(|el| el.id))
      }
  
@@ -2768,7 +2774,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
          DocumentMutator::new(self)
      }
-@@ -991,9 +1361,89 @@
+@@ -991,9 +1365,89 @@
      /// it so that stale NodeIds are never dereferenced after the slot is freed.
      pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
          self.clear_interaction_state_for_removed_node(node_id);
@@ -2858,7 +2864,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The nearest element ancestor of `node_id` that is still in the
      /// document. Used to retarget hover/active state when the node they
      /// reference is removed. Tolerates already-removed ancestors (subtree
-@@ -1105,14 +1555,50 @@
+@@ -1105,14 +1559,50 @@
          if let Some(node) = &mut node {
              on_drop(node_id);
              if let Some(before) = node.before() {
@@ -2912,7 +2918,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
  
              // Anonymous blocks live only in the slab, so deallocate the ones this
-@@ -1136,12 +1622,93 @@
+@@ -1136,12 +1626,93 @@
          // Free any anonymous blocks that this block owns before removing it.
          let nested = std::mem::take(&mut self.nodes[anon_id].anonymous_blocks);
          for nested_id in nested {
@@ -3007,7 +3013,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
      /// (i.e. whether the accessibility tree is out of date)
      pub fn has_changes(&self) -> bool {
-@@ -1198,7 +1765,7 @@
+@@ -1198,7 +1769,7 @@
              let mut node = doc.remove_node_from_tree(node_id);
              if let Some(node) = &mut node {
                  for &child in &node.children {
@@ -3016,7 +3022,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
                  for &anon_id in &node.anonymous_blocks {
                      doc.deallocate_anonymous_block(anon_id);
-@@ -1256,6 +1823,7 @@
+@@ -1256,6 +1827,7 @@
                                      guard: self.guard.clone(),
                                      net_provider: self.net_provider.clone(),
                                      abort_signal: self.abort_signal.clone(),
@@ -3024,7 +3030,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                                  },
                              ),
                          );
-@@ -1266,12 +1834,101 @@
+@@ -1266,12 +1838,101 @@
      }
  
      pub fn process_style_element(&mut self, target_id: NodeId) {
@@ -3128,7 +3134,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn remove_user_agent_stylesheet(&mut self, sheet: &UserAgentStylesheet) {
          if self.useragent_stylesheets().any(|s| *s == sheet.0) {
              self.stylist
-@@ -1284,6 +1941,41 @@
+@@ -1284,6 +1945,41 @@
          &self.url
      }
  
@@ -3170,7 +3176,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Iterate over the author stylesheets (from `<style>` and `<link>` nodes)
      /// currently associated with this document
      pub fn author_stylesheets(&self) -> impl Iterator<Item = &DocumentStyleSheet> {
-@@ -1305,11 +1997,55 @@
+@@ -1305,11 +2001,55 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -3228,7 +3234,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.guard.clone(),
              Some(&StylesheetLoader {
                  tx: self.tx.clone(),
-@@ -1318,22 +2054,46 @@
+@@ -1318,22 +2058,46 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.abort_signal.clone(),
                  import_depth: 0,
@@ -3279,7 +3285,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
          self.stylesheet_generation += 1;
  
-@@ -1351,6 +2111,7 @@
+@@ -1351,6 +2115,7 @@
              &self.shell_provider,
              &self.guard.read(),
              self.abort_signal.as_ref(),
@@ -3287,7 +3293,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          );
  
          // Store data on element
-@@ -1396,6 +2157,138 @@
+@@ -1396,6 +2161,138 @@
          }
      }
  
@@ -3426,7 +3432,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1409,6 +2302,28 @@
+@@ -1409,6 +2306,28 @@
              Err(err) => {
                  if let Some(url) = res.resolved_url.as_ref() {
                      let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
@@ -3455,7 +3461,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      #[cfg(feature = "tracing")]
                      tracing::warn!(
                          url = url.as_str(),
-@@ -1429,9 +2344,31 @@
+@@ -1429,9 +2348,31 @@
          };
  
          match resource {
@@ -3489,7 +3495,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1441,9 +2378,11 @@
+@@ -1441,9 +2382,11 @@
                  self.stylist
                      .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
              }
@@ -3503,7 +3509,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  let Some(url) = res.resolved_url.as_ref() else {
                      return;
-@@ -1453,6 +2392,8 @@
+@@ -1453,6 +2396,8 @@
              }
              #[cfg(feature = "svg")]
              Resource::Svg(_kind, svg) => {
@@ -3512,7 +3518,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  // Create the ImageData and cache it
                  let image = ImageData::Svg(svg);
  
-@@ -1469,18 +2410,28 @@
+@@ -1469,18 +2414,28 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -3542,7 +3548,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1489,6 +2440,12 @@
+@@ -1489,6 +2444,12 @@
                  global_font_ctx
                      .collection
                      .register_fonts(font.clone(), Some(info_override));
@@ -3555,7 +3561,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  #[cfg(feature = "parallel-construct")]
                  {
-@@ -1513,6 +2470,49 @@
+@@ -1513,6 +2474,49 @@
          }
      }
  
@@ -3605,7 +3611,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Cache a loaded image and apply it to all nodes waiting on it
      /// (`<img>` elements, `background-image` layers and `mask-image` layers).
      fn apply_loaded_image(&mut self, url: &str, image: ImageData) {
-@@ -1541,25 +2541,92 @@
+@@ -1541,25 +2545,92 @@
                      if element.custom_widget_data().is_some() {
                          continue;
                      }
@@ -3700,7 +3706,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
              }
          }
-@@ -1580,7 +2647,75 @@
+@@ -1580,7 +2651,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -3776,7 +3782,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +2835,24 @@
+@@ -1700,14 +2839,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -3804,7 +3810,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +2863,7 @@
+@@ -1718,7 +2867,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -3813,7 +3819,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +2898,7 @@
+@@ -1753,7 +2902,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -3822,7 +3828,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1813,9 +2958,36 @@
+@@ -1813,9 +2962,36 @@
          Some(id)
      }
  
@@ -3859,7 +3865,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              let shell_provider = self.shell_provider.clone();
              self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                  node.blur(shell_provider)
-@@ -1853,17 +3025,25 @@
+@@ -1853,17 +3029,25 @@
  
          // Remove focus from the old node
          if let Some(id) = self.focus_node_id {
@@ -3886,7 +3892,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
          let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
-@@ -1895,6 +3075,38 @@
+@@ -1895,6 +3079,38 @@
          true
      }
  
@@ -3925,7 +3931,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +3203,12 @@
+@@ -1991,10 +3207,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -3939,7 +3945,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +3292,54 @@
+@@ -2078,6 +3296,54 @@
          true
      }
  
@@ -3994,7 +4000,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +3409,153 @@
+@@ -2147,12 +3413,153 @@
          self.mousedown_node_id
      }
  
@@ -4148,7 +4154,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +3591,12 @@
+@@ -2188,6 +3595,12 @@
          self.viewport.clone()
      }
  
@@ -4161,7 +4167,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3657,89 @@
+@@ -2248,6 +3661,89 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4251,7 +4257,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3756,12 @@
+@@ -2264,12 +3760,12 @@
              return;
          }
  
@@ -4269,7 +4275,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2317,6 +3809,15 @@
+@@ -2317,6 +3813,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -4285,7 +4291,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +3961,19 @@
+@@ -2460,10 +3965,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4305,7 +4311,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4130,35 @@
+@@ -2620,6 +4134,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4341,7 +4347,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4182,22 @@
+@@ -2643,12 +4186,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4369,7 +4375,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4226,7 @@
+@@ -2677,7 +4230,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4378,7 +4384,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4384,10 @@
+@@ -2835,6 +4388,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4389,7 +4395,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5335,7 @@
+@@ -3782,6 +5339,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4397,7 +4403,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5358,52 @@
+@@ -3804,6 +5362,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4450,7 +4456,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5446,121 @@
+@@ -3846,3 +5450,121 @@
          assert!(doc.has_changes());
      }
  }
@@ -9675,7 +9681,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +    /// Notes `node_id` in its table if it is a table cell: to transform and visit in the paint
 +    /// tree again, and, when its damage reaches `layout`, as a changed cell to measure and lay
 +    /// out again.
-+    fn note_changed_table_cell(&self, node_id: NodeId, layout: bool) {
++    pub(crate) fn note_changed_table_cell(&self, node_id: NodeId, layout: bool) {
 +        let node = &self.nodes[node_id];
 +        let index = node.layout_data().table_cell_index;
 +        if index == u32::MAX {
@@ -19042,7 +19048,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -287,15 +1139,47 @@
+@@ -287,15 +1139,61 @@
                          .attr(local_name!("cols"))
                          .and_then(|val| val.parse::<f32>().ok());
  
@@ -19058,6 +19064,19 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                            })
 +                        })
 +                        .flatten();
++                    // pyro: classic scrollbars: a textarea's natural width has room for its
++                    // vertical scrollbar whether or not it shows (Blink's
++                    // `TextAreaIntrinsicInlineSize`), less a gutter its layout reserves already.
++                    let scrollbar_room = {
++                        let style = node.layout_style();
++                        let thickness = taffy::CoreStyle::scrollbar_width(&style);
++                        let scrolls = node.primary_styles().is_some_and(|s| {
++                            use style::values::computed::Overflow;
++                            let o = if s.writing_mode.is_vertical() { s.clone_overflow_x() } else { s.clone_overflow_y() };
++                            matches!(o, Overflow::Auto | Overflow::Scroll)
++                        });
++                        if scrolls { (thickness - taffy::CoreStyle::scrollbar_gutter_size(&style).width).max(0.0) } else { 0.0 }
++                    };
                      let output = compute_leaf_layout(
                          inputs,
                          &node.layout_style(),
@@ -19089,13 +19108,25 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                    0.0
 +                                } else {
 +                                    cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
++                                        + scrollbar_room
 +                                },
 +                                height: resolved_line_height.unwrap_or(16.0) * rows,
 +                            }
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -322,73 +1206,223 @@
+@@ -308,7 +1206,9 @@
+                                     .border()
+                                     .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
+                         };
+-                        let content_width = (output.size.width - pb.horizontal_axis_sum()).max(0.0);
++                        // pyro: less its inline-axis scrollbar gutters (classic scrollbars).
++                        let gutter = taffy::CoreStyle::scrollbar_gutter_size(&node.layout_style()).width;
++                        let content_width = (output.size.width - pb.horizontal_axis_sum() - gutter).max(0.0);
+                         let doc = &mut *self.doc;
+                         let scale = doc.viewport.scale();
+                         let node = &mut doc.nodes[dom_node_id(node_id)];
+@@ -322,73 +1222,228 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -19106,18 +19137,22 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                            // pyro: lines that do not wrap (`white-space: nowrap`, `wrap=off`)
 +                            // are the control's scrollable overflow: it scrolls to them.
 +                            let text_width = input.editor.try_layout().map_or(0.0, |layout| layout.width() / scale);
-+                            if text_width > content_width {
++                            // pyro: and lines below its content box (Chrome scrolls a textarea
++                            // to them: a classic `overflow: auto` scrollbar shows).
++                            let text_height = input.editor.try_layout().map_or(0.0, |layout| layout.height() / scale);
++                            let content_height = (output.size.height - pb.vertical_axis_sum()).max(0.0);
++                            if text_width > content_width || text_height > content_height + 0.5 {
 +                                let mut output = output;
 +                                let overflow = output.scrollable_overflow_rect;
 +                                let mut rect = overflow.rect();
 +                                rect.right = rect.right.max(pb.left + text_width + pb.right);
++                                rect.bottom = rect.bottom.max(pb.top + text_height + pb.bottom);
 +                                output.scrollable_overflow_rect =
 +                                    taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
 +                                return ChildLayout::Done(output);
 +                            }
-                         }
-                     }
--                    return output;
++                        }
++                    }
 +                    return ChildLayout::Done(output);
 +                }
 +
@@ -19176,8 +19211,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                ..inputs
 +                            };
 +                            output = compute_leaf_layout(wider, &style, resolve_calc_value, |_known_size, _available_space| content);
-+                        }
-+                    }
+                         }
+                     }
+-                    return output;
 +                    // pyro: layout containment leaves it no baseline (css-contain-2 § 3.2; WPT
 +                    // css-contain `contain-layout-suppress-baseline-002`).
 +                    if let Some(line) = select_line.filter(|_| !style.contain().suppresses_baseline()) {
@@ -19358,7 +19394,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1441,50 @@
+@@ -407,39 +1462,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -19430,7 +19466,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1517,90 @@
+@@ -472,6 +1538,90 @@
                          _ => unreachable!(),
                      };
  
@@ -19521,7 +19557,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1617,551 @@
+@@ -488,126 +1638,551 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -20159,7 +20195,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2221,11 @@
+@@ -667,7 +2242,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20172,7 +20208,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2233,20 @@
+@@ -675,6 +2254,20 @@
      }
  
      #[inline(always)]
@@ -20193,7 +20229,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2270,26 @@
+@@ -698,17 +2291,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -20222,7 +20258,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2302,7 @@
+@@ -721,6 +2323,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -20230,7 +20266,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2314,122 @@
+@@ -732,6 +2335,122 @@
      }
  }
  
@@ -20353,7 +20389,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2437,12 @@
+@@ -739,10 +2458,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -20370,7 +20406,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2452,11 @@
+@@ -752,9 +2473,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -20385,7 +20421,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2484,205 @@
+@@ -782,16 +2505,205 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -20595,7 +20631,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2735,30 @@
+@@ -844,6 +2756,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -20626,7 +20662,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2767,19 @@
+@@ -852,7 +2788,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20647,7 +20683,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2795,30 @@
+@@ -868,6 +2816,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -20678,7 +20714,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2923,201 @@
+@@ -972,3 +2944,201 @@
          })
      }
  }
@@ -38756,7 +38792,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1175,23 +2147,126 @@
+@@ -1175,23 +2147,129 @@
              if el.is_button_input() {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
              }
@@ -38766,6 +38802,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            // pyro
 +            if el.name.local == local_name!("input") {
 +                flags |= stylo_taffy::StyleFlags::IS_INPUT;
++            }
++            if el.name.local == local_name!("frameset") {
++                flags |= stylo_taffy::StyleFlags::NO_SCROLLBARS;
 +            }
              if let Some(inline_layout) = el.inline_layout_data.as_deref() {
                  flags |= inline_layout.span_cb_flags;
@@ -38885,7 +38924,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,6 +2309,19 @@
+@@ -1234,6 +2312,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -38905,7 +38944,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2378,7 @@
+@@ -1290,7 +2381,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -38914,7 +38953,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2415,47 @@
+@@ -1327,8 +2418,47 @@
              .unwrap_or(0)
      }
  
@@ -38963,7 +39002,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1358,10 +2485,37 @@
+@@ -1358,10 +2488,37 @@
              return true;
          }
  
@@ -39001,7 +39040,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2523,48 @@
+@@ -1369,7 +2526,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -39051,7 +39090,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2592,14 @@
+@@ -1397,12 +2595,14 @@
              return true;
          }
  
@@ -39072,7 +39111,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1435,6 +2632,16 @@
+@@ -1435,6 +2635,16 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -39089,7 +39128,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2707,15 @@
+@@ -1500,11 +2710,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -39105,7 +39144,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2744,7 @@
+@@ -1533,6 +2747,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -39113,7 +39152,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2771,7 @@
+@@ -1559,7 +2774,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -39122,7 +39161,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2786,18 @@
+@@ -1574,12 +2789,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -39143,7 +39182,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2808,7 @@
+@@ -1590,7 +2811,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -39152,7 +39191,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2823,7 @@
+@@ -1605,7 +2826,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -39161,7 +39200,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2934,7 @@
+@@ -1716,7 +2937,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -39170,7 +39209,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2959,13 @@
+@@ -1741,8 +2962,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -39185,7 +39224,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3041,28 @@
+@@ -1818,8 +3044,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -39216,7 +39255,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3120,36 @@
+@@ -1877,11 +3123,36 @@
                  }
              }
  
@@ -39291,7 +39330,7 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
 +            return None;
 +        }
 +        let el = self.element_data()?;
-+        if el.name.local == crate::local_name!("input") {
++        if el.name.local == crate::local_name!("input") || el.name.local == crate::local_name!("frameset") {
 +            return None;
 +        }
 +        let style = self.primary_styles()?;
@@ -39323,7 +39362,7 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
 +        Some(ClassicScrollbars {
 +            gutters,
 +            shown: taffy::Point { x: shows(overflow.x, auto_shows.x), y: shows(overflow.y, auto_shows.y) },
-+            vertical_on_left: inputs.rtl && !inputs.vertical && gutters.right == 0.0,
++            vertical_on_left: inputs.rtl && !inputs.vertical,
 +        })
 +    }
 +
@@ -43774,7 +43813,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              #[cfg(feature = "tracing")]
              tracing::warn!("No DOM - not resolving");
              return;
-@@ -63,74 +123,149 @@
+@@ -63,74 +123,175 @@
              return;
          }
  
@@ -43930,6 +43969,32 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        for fo in self.foreign_object_roots() {
 +            self.resolve_transforms(fo, resolve_all, ContainingTransform::default());
 +        }
++        // pyro: classic scrollbars (`stylo_taffy::scrollbars`): an `overflow: auto` box's or the
++        // viewport's scrollbar shows when its scrollable overflow (with transforms and
++        // `overflow-clip-margin`, as resolved here) passes its scrollport, and stops showing when
++        // it no longer does with the scrollbar. A change lays the document out again (as Chrome
++        // does), a few times at most.
++        // Only a layout checks them, and the relayout a change makes may remove scrollbars but
++        // add none (Blink's `kForbidAddingAutoBars` while `in_overflow_relayout_`).
++        if stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic
++            && std::mem::take(&mut self.layout_ran)
++        {
++            for pass in 0..3 {
++                let may_add = pass == 0;
++                let boxes_changed = self.update_auto_scrollbars(may_add);
++                let viewport_changed = self.update_viewport_scrollbars(may_add);
++                if !boxes_changed && !viewport_changed {
++                    break;
++                }
++                self.last_layout_space = None;
++                self.resolve_layout();
++                self.resolve_transforms(root_node_id, false, ContainingTransform::default());
++                for fo in self.foreign_object_roots() {
++                    self.resolve_transforms(fo, false, ContainingTransform::default());
++                }
++            }
++            self.layout_ran = false;
++        }
 +        #[cfg(feature = "svg")]
 +        self.update_svg_image_documents();
          timer.record_time("transform");
@@ -43962,7 +44027,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          // Re-resolve the hover node from the pointer position against the fresh
          // layout. This must run *after* the damage/dirty flags are cleared
-@@ -144,7 +279,21 @@
+@@ -144,7 +305,21 @@
          let mut subdoc_is_animating = false;
          for &node_id in &self.sub_document_nodes {
              let node = &mut self.nodes[node_id];
@@ -43985,7 +44050,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
                  // Set viewport
                  // viewport_mut handles change detection. So we just unconditionally set the values;
-@@ -154,57 +303,288 @@
+@@ -154,57 +329,288 @@
                  sub_viewport.color_scheme = self.viewport.color_scheme;
  
                  let viewport_scale = self.viewport.scale();
@@ -44299,7 +44364,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              for &child_id in children {
                  // Out-of-flow children are laid out relative to their containing
                  // block, not their DOM parent: they are visited (and their overflow
-@@ -212,18 +592,49 @@
+@@ -212,18 +618,49 @@
                  if self.nodes[child_id].is_out_of_flow() {
                      continue;
                  }
@@ -44355,7 +44420,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +642,425 @@
+@@ -231,28 +668,460 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -44419,7 +44484,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
 +        placement((scaled_x, scaled_y), transform.as_ref())(contribution)
 +    }
-+
+ 
+-        let full = if let Some(t) = transform {
+-            Affine::translate((scaled_x, scaled_y)) * t
 +    /// pyro: an in-flow child's border box in its scroll container (device px), grown on each
 +    /// side by the container's `padding` and the child's margin there (not below zero), the
 +    /// child's part of the container's scrollable overflow with the end padding after it. Its
@@ -44446,9 +44513,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            .primary_styles()
 +            .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed)
 +    }
- 
--        let full = if let Some(t) = transform {
--            Affine::translate((scaled_x, scaled_y)) * t
++
 +    /// pyro: the box of the lines of `node_id`'s inline formatting
 +    /// context or text control (its own coordinates, device px; a scroll
 +    /// container's end padding added after them), and whether they reach
@@ -44649,22 +44714,57 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
 +            // css-contain `contain-layout-ink-overflow-*`.
 +            use style::values::specified::box_::Contain;
-+            if style.get_box().slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
-+                && !{
-+                    use style::values::specified::box_::{DisplayInside, DisplayOutside};
-+                    let display = style.clone_display();
-+                    display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
-+                }
-+            {
++            let contain = style.get_box().slow_clone_contain();
++            // pyro: paint containment alone clips as `overflow: clip` does, at its
++            // `overflow-clip-margin` (below; WPT css-overflow `overflow-clip-margin-005`).
++            let inline_flow = {
++                use style::values::specified::box_::{DisplayInside, DisplayOutside};
++                let display = style.clone_display();
++                display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
++            };
++            let paint_only = contain.contains(Contain::PAINT) && !contain.contains(Contain::LAYOUT) && !inline_flow;
++            if contain.intersects(Contain::LAYOUT | Contain::PAINT) && !paint_only && !inline_flow {
 +                return border_box;
 +            }
-+            let (x, y) = (style.clone_overflow_x() != Overflow::Visible, style.clone_overflow_y() != Overflow::Visible);
++            let (ox, oy) = (style.clone_overflow_x(), style.clone_overflow_y());
++            let as_clip = |o: Overflow| if paint_only && o == Overflow::Visible { Overflow::Clip } else { o };
++            let (ox, oy) = (as_clip(ox), as_clip(oy));
++            let (x, y) = (ox != Overflow::Visible, oy != Overflow::Visible);
 +            if (x || y) && !self.body_overflow_goes_to_viewport(node_id) {
++                // pyro: an `overflow: clip` axis shows its overflow up to its overflow clip edge
++                // (`overflow-clip-margin`), which is part of what it contributes (Chrome:
++                // WPT css-overflow `overflow-clip-margin-002`).
++                let edge = (ox == Overflow::Clip || oy == Overflow::Clip).then(|| {
++                    use style::values::generics::box_::OverflowClipMarginBox;
++                    let layout = self.nodes[node_id].final_layout();
++                    let clip_margin = &style.get_margin().overflow_clip_margin;
++                    let (b, p) = (layout.border, layout.padding);
++                    let inset = match clip_margin.visual_box {
++                        OverflowClipMarginBox::BorderBox => taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 },
++                        OverflowClipMarginBox::PaddingBox => b,
++                        OverflowClipMarginBox::ContentBox => b + p,
++                    };
++                    let m = clip_margin.offset.px();
++                    Rect::new(
++                        (inset.left - m) as f64 * scale,
++                        (inset.top - m) as f64 * scale,
++                        (size.width - inset.right + m) as f64 * scale,
++                        (size.height - inset.bottom + m) as f64 * scale,
++                    )
++                });
 +                if x {
-+                    (out.x0, out.x1) = (border_box.x0, border_box.x1);
++                    let (x0, x1) = match edge.filter(|_| ox == Overflow::Clip) {
++                        Some(edge) => (overflow.x0.max(edge.x0).min(border_box.x0), overflow.x1.min(edge.x1).max(border_box.x1)),
++                        None => (border_box.x0, border_box.x1),
++                    };
++                    (out.x0, out.x1) = (x0, x1);
 +                }
 +                if y {
-+                    (out.y0, out.y1) = (border_box.y0, border_box.y1);
++                    let (y0, y1) = match edge.filter(|_| oy == Overflow::Clip) {
++                        Some(edge) => (overflow.y0.max(edge.y0).min(border_box.y0), overflow.y1.min(edge.y1).max(border_box.y1)),
++                        None => (border_box.y0, border_box.y1),
++                    };
++                    (out.y0, out.y1) = (y0, y1);
 +                }
 +            }
 +        }
@@ -44789,7 +44889,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -264,6 +1072,43 @@
+@@ -264,6 +1133,43 @@
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
@@ -44833,7 +44933,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +1122,35 @@
+@@ -277,20 +1183,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -44876,7 +44976,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +1160,33 @@
+@@ -300,16 +1221,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -44914,7 +45014,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -320,10 +1197,45 @@
+@@ -320,10 +1258,45 @@
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              }
  
@@ -44960,7 +45060,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +1270,32 @@
+@@ -358,6 +1331,32 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -44993,7 +45093,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +1305,9 @@
+@@ -367,9 +1366,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -45006,7 +45106,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +1324,14 @@
+@@ -386,7 +1385,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -45022,7 +45122,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +1340,13 @@
+@@ -395,18 +1401,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -45042,7 +45142,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +1359,7 @@
+@@ -419,10 +1420,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -45054,7 +45154,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,6 +1367,33 @@
+@@ -430,6 +1428,33 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -45088,7 +45188,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1401,978 @@
+@@ -437,32 +1462,1001 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -45113,6 +45213,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            return;
 +        }
 +        self.last_layout_space = Some(available_space);
++        self.layout_ran = true;
 +        phase_profile::laid_out();
 +        self.mark_viewport_body();
  
@@ -45179,20 +45280,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                    layout.location.x += gutters.left;
 +                    layout.location.y += gutters.top;
 +                });
-+            }
+             }
 +            #[cfg(feature = "writing-mode")]
 +            state.physicalise_and_round_layout(root_element_id);
 +            #[cfg(not(feature = "writing-mode"))]
 +            taffy::round_layout(&mut state, root_element_id);
-+            if !classic || passes >= 4 {
-+                break state;
-+            }
-+            drop(state);
-+            let boxes_changed = self.update_auto_scrollbars();
-+            let viewport_changed = self.update_viewport_scrollbars();
-+            if !boxes_changed && !viewport_changed {
-+                break LayoutPassState::new(self);
-             }
++            let _ = passes;
++            break state;
          };
 -        taffy::compute_root_layout(&mut state, root_element_id, available_space);
 +        // The foreign objects' fallback viewport, in the root's axes as before.
@@ -45286,19 +45380,25 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    /// pyro: classic scrollbars: after a layout pass, the viewport's `overflow: auto` scrollbars show
 +    /// when the document overflows its scrollport (and stop showing when it no longer does with
 +    /// them). Whether the gutters changed (the document is laid out again).
-+    fn update_viewport_scrollbars(&mut self) -> bool {
++    fn update_viewport_scrollbars(&mut self, may_add: bool) -> bool {
 +        let Some(root) = self.try_root_element() else { return false };
 +        let size = self.stylist.device().au_viewport_size();
 +        let (width, height) = (size.width.to_f32_px(), size.height.to_f32_px());
 +        let port = self.viewport_scrollbars.scrollport(width, height);
 +        let layout = root.final_layout();
-+        // The document's extent: the root's margin box and its scrollable overflow.
-+        let overflow = layout.scrollable_overflow_rect.rect();
-+        let right = (layout.location.x + layout.size.width + layout.margin.right)
-+            .max(layout.location.x + overflow.right) as f64;
-+        let bottom = (layout.location.y + layout.size.height + layout.margin.bottom)
-+            .max(layout.location.y + overflow.bottom) as f64;
-+        let shown = taffy::Point { x: right > port.x1 + 0.5, y: bottom > port.y1 + 0.5 };
++        // The document's extent: the root's margin box and its scrollable overflow (resolved,
++        // device px).
++        let scale = self.viewport.scale_f64();
++        let overflow = root.scrollable_overflow().scale_from_origin(1.0 / scale);
++        let right = ((layout.location.x + layout.size.width + layout.margin.right) as f64)
++            .max(layout.location.x as f64 + overflow.x1);
++        let bottom = ((layout.location.y + layout.size.height + layout.margin.bottom) as f64)
++            .max(layout.location.y as f64 + overflow.y1);
++        let had = self.viewport_scrollbars.shown;
++        let shown = taffy::Point {
++            x: right > port.x1 + 0.5 && (may_add || had.x),
++            y: bottom > port.y1 + 0.5 && (may_add || had.y),
++        };
 +        let root_id = root.id;
 +        let next = self.viewport_scrollbars_for(shown);
 +        let changed = next.gutters != self.viewport_scrollbars.gutters;
@@ -45313,9 +45413,10 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    /// shows its scrollbar (`NodeFlags::AUTO_SCROLLBAR_X`/`_Y`), which takes a gutter; one whose content
 +    /// no longer overflows with it stops showing it. A box whose scrollbars changed is laid out again
 +    /// with its ancestors. Whether any changed.
-+    fn update_auto_scrollbars(&mut self) -> bool {
++    fn update_auto_scrollbars(&mut self, may_add: bool) -> bool {
 +        use style::values::computed::Overflow;
 +        use style::values::computed::ui::ScrollbarWidth;
++        let scale = self.viewport.scale_f64();
 +        let mut changed = Vec::new();
 +        for (id, node) in self.nodes.iter() {
 +            let had = node.flags & (NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
@@ -45335,13 +45436,33 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                && node.is_element();
 +            let mut want = NodeFlags::empty();
 +            if eligible {
++                // The scrollport (the padding box less the gutters) against the resolved
++                // scrollable overflow, which starts at it (`resolve_transforms`), device px.
 +                let layout = node.final_layout();
-+                if x == Overflow::Auto && layout.scroll_width() > 0.5 {
++                let o = *node.scrollable_overflow();
++                let g = node.classic_scrollbars().map(|bars| bars.gutters);
++                let gap = |f: fn(&taffy::Rect<f32>) -> f32| g.as_ref().map_or(0.0, f) as f64;
++                let b = layout.border;
++                let port = kurbo::Rect::new(
++                    (b.left as f64 + gap(|g| g.left)) * scale,
++                    (b.top as f64 + gap(|g| g.top)) * scale,
++                    ((layout.size.width - b.right) as f64 - gap(|g| g.right)) * scale,
++                    ((layout.size.height - b.bottom) as f64 - gap(|g| g.bottom)) * scale,
++                );
++                let slack = 0.5 * scale;
++                // Only the end of the scroll origin's axis is reachable (the start in a reversed one).
++                let reversed = layout.scrollable_overflow_rect.is_reversed();
++                let past_x = if reversed.x { o.x0 < port.x0 - slack } else { o.x1 > port.x1 + slack };
++                let past_y = if reversed.y { o.y0 < port.y0 - slack } else { o.y1 > port.y1 + slack };
++                if x == Overflow::Auto && past_x {
 +                    want |= NodeFlags::AUTO_SCROLLBAR_X;
 +                }
-+                if y == Overflow::Auto && layout.scroll_height() > 0.5 {
++                if y == Overflow::Auto && past_y {
 +                    want |= NodeFlags::AUTO_SCROLLBAR_Y;
 +                }
++            }
++            if !may_add {
++                want &= had;
 +            }
 +            if want != had {
 +                changed.push((id, want));
@@ -45353,6 +45474,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            node.flags.insert(want);
 +            let mut current = Some(id);
 +            while let Some(id) = current {
++                // (A table measures a changed cell again: its column widths.)
++                self.note_changed_table_cell(id, true);
 +                let node = &mut self.nodes[id];
 +                node.clear_layout_cache();
 +                current = node.parent;

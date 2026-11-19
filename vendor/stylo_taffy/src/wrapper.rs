@@ -61,6 +61,8 @@ bitflags! {
         /// pyro: the node is the root element, whose `overflow` and `scrollbar-gutter` are the
         /// viewport's: its own box takes no scrollbar gutters.
         const IS_ROOT = 1 << 13;
+        /// pyro: the node never has scrollbars (a `<frameset>`: no scroll container in Chrome).
+        const NO_SCROLLBARS = 1 << 14;
     }
 }
 
@@ -285,7 +287,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     fn scrollbar_gutter(&self) -> taffy::Rect<f32> {
         let zero = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
         if crate::scrollbars::scrollbar_mode() == crate::scrollbars::ScrollbarMode::Overlay
-            || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT)
+            || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT | StyleFlags::NO_SCROLLBARS)
         {
             return zero;
         }
