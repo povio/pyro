@@ -2793,3 +2793,4 @@ attribute is its sheet's media list, so a sheet whose media do not match the dev
 text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style>`'s `media` processes its sheet again
 (WPT css/cssom `medialist-dynamic-001`). Covered by `a_style_element_media_attribute_limits_its_sheet` in
 `crates/pyro-render/tests/render.rs`.
+- Lane F1, `document.rs` `init_stylo_prefs`: `layout.css.text-wrap-style.pretty.enabled` (`text-wrap: pretty` lays out as `auto`); pyro-dom sets it, `motion-path-url` and `text-wrap-style.balance` as well, for declarations script parses before the engine starts.

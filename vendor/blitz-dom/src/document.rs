@@ -110,6 +110,9 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.hyphens.enabled", true);
         // pyro: `text-wrap-style: balance` (blitz-dom balances the lines of such a block).
         style_config::set_pref!("layout.css.text-wrap-style.balance.enabled", true);
+        // pyro: `text-wrap-style: pretty` (laid out as `auto`, as CSS Text 4 allows). Chrome
+        // rejects `white-space-collapse: preserve-spaces`, which stays off.
+        style_config::set_pref!("layout.css.text-wrap-style.pretty.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
