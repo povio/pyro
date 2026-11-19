@@ -321,9 +321,11 @@ fn close_stack_until(
         let Some(top) = top.filter(|&t| Some(t) != endpoint) else { return };
         let _ = hide_popover(page, top, focus_previous, fire_events, false, None);
         if page.dom.borrow().popover_stack(stack).last() == Some(&top) {
-            // An event handler kept it showing: take it out regardless,
-            // rather than loop.
-            let _ = page.dom.borrow_mut().set_popover_showing(top, false);
+            // An event handler kept it showing (or it is not a showing popover hide_popover
+            // acts on: a node from another document, one left on the stack): take it out
+            // regardless, rather than loop (a page must never spin the browser; WPT
+            // `content-visibility-with-popover-top-layer-*` hung other pages' runs).
+            page.dom.borrow_mut().drop_popover(top);
             remove_watcher(page, top);
         }
     }

@@ -1,0 +1,48 @@
+name: CI configuration
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/actionlint.yaml
+      - scripts/ci/**
+      - bench/wpt/fetch-wpt.sh
+      - bench/wpt/prepare-ci-wpt.sh
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/actionlint.yaml
+      - scripts/ci/**
+      - bench/wpt/fetch-wpt.sh
+      - bench/wpt/prepare-ci-wpt.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-config-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - name: Build-plan and WPT checkout tests
+        # Python venv creation can exceed Bun's default five-second per-test limit.
+        run: bun test --timeout 30000 scripts/ci/*.test.mjs
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+      - name: Check workflow contracts and embedded shell
+        # SC2016 flags intentional literal JavaScript template strings in existing bun/node snippets.
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore SC2016

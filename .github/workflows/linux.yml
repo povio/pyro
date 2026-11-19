@@ -1,28 +1,19 @@
 name: Linux
 
-# Checks the Linux build outside a release: the patched JavaScriptCore
-# (cached), the browser, and the client's tests against it.
-
+# Automatic Linux validation is part of WPT, sharing its JSC producers.
+# Keep this entry point for standalone diagnostics.
 on:
-  pull_request:
-    paths:
-      - .github/workflows/linux.yml
-      - .github/workflows/linux-build.yml
-      - scripts/linux/**
-      - scripts/release/bundle-icu-linux.sh
-      - scripts/jsc/**
-      - crates/pyro-jsc-sys/**
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  jsc:
-    uses: ./.github/workflows/jsc.yml
-
   build:
-    needs: jsc
-    uses: ./.github/workflows/linux-build.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    uses: ./.github/workflows/linux-platform.yml
     with:
-      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      arch: ${{ matrix.arch }}

@@ -1,37 +1,18 @@
 name: Patched JavaScriptCore
 
-# Builds the patched JavaScriptCore the fork variant (macOS) and the Linux
-# builds link into the browser (scripts/jsc/build.sh: one static archive,
-# lib/libJavaScriptCore.a) and keeps each platform's build in the Actions cache,
-# keyed by the WebKit revision and the patches. A cold build takes about 7 minutes; `main`
-# rebuilds whenever the inputs change: caches saved on the default branch are
+# Builds the macOS patched JavaScriptCore the fork variant
+# links into the browser (scripts/jsc/build.sh: one static archive,
+# lib/libJavaScriptCore.a) and keeps the build in the Actions cache,
+# keyed by the WebKit revision and the patches. WPT calls it on main when needed: caches saved on the default branch are
 # the ones release tags can restore. Release tags call this workflow and get
 # the cached build, or build it themselves on a miss.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - crates/pyro-jsc-sys/webkit/**
-      - scripts/jsc/archive.sh
-      - scripts/jsc/build.sh
-      - scripts/jsc/cache-key.sh
-      - scripts/linux/setup.sh
-      - .github/workflows/jsc.yml
-  # A change to the patches shows on its pull request whether they still build.
-  pull_request:
-    paths:
-      - crates/pyro-jsc-sys/webkit/**
-      - scripts/jsc/archive.sh
-      - scripts/jsc/build.sh
-      - scripts/jsc/cache-key.sh
-      - scripts/linux/setup.sh
-      - .github/workflows/jsc.yml
   workflow_dispatch:
   workflow_call:
     outputs:
       dir:
-        description: Directory name of the build under ~/Library/Caches/pyro/jsc (macOS) or ~/.cache/pyro/jsc (Linux)
+        description: Directory name of the macOS build under jsc/
         value: ${{ jobs.jsc.outputs.dir }}
 
 permissions:
@@ -47,6 +28,10 @@ jobs:
       # That Mac has a stray macOS 27.0 SDK next to the 26.6 Command Line Tools,
       # whose linker cannot read it (ld: tapi error: malformed file). Use the 26.5 SDK.
       SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+      # Registrations on one Mac can share HOME. Keep mutable source/build/output trees job-local.
+      PYRO_JSC_CACHE: ${{ github.workspace }}/jsc
+      PYRO_WEBKIT_SRC: ${{ github.workspace }}/target/jsc-src
+      PYRO_JSC_BUILD: ${{ github.workspace }}/target/jsc-build
     outputs:
       dir: ${{ steps.key.outputs.dir }}
     steps:
@@ -62,8 +47,8 @@ jobs:
           PATH: /usr/bin:/bin:/usr/sbin:/sbin
         id: cache
         with:
-          path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-static-macos-arm64-${{ steps.key.outputs.dir }}
+          path: jsc/${{ steps.key.outputs.dir }}
+          key: patched-jsc-static-macos-arm64-v2-${{ steps.key.outputs.dir }}
       - name: Build patched JavaScriptCore
         if: steps.cache.outputs.cache-hit != 'true'
         env:
@@ -78,13 +63,13 @@ jobs:
           PATH: /usr/bin:/bin:/usr/sbin:/sbin
         if: steps.cache.outputs.cache-hit != 'true'
         with:
-          path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-static-macos-arm64-${{ steps.key.outputs.dir }}
+          path: jsc/${{ steps.key.outputs.dir }}
+          key: patched-jsc-static-macos-arm64-v2-${{ steps.key.outputs.dir }}
       - name: Check the build
         env:
           DIR: ${{ steps.key.outputs.dir }}
         run: |
-          lib="$HOME/Library/Caches/pyro/jsc/$DIR/lib/libJavaScriptCore.a"
+          lib="$GITHUB_WORKSPACE/jsc/$DIR/lib/libJavaScriptCore.a"
           lipo -archs "$lib" | grep -qx arm64
           # A fork-support entry point (patch 0002): this is the patched library. The archive's
           # other pieces: the JIT subtarget's objects, WTF and bmalloc (scripts/jsc/archive.sh).
@@ -95,64 +80,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: patched-jsc
-          path: ~/Library/Caches/pyro/jsc/${{ steps.key.outputs.dir }}
+          path: jsc/${{ steps.key.outputs.dir }}
           if-no-files-found: error
           retention-days: 7
-
-  # The same patched build for Linux: artifacts patched-jsc-linux-x64 and
-  # patched-jsc-linux-arm64, under ~/.cache/pyro/jsc/<dir>.
-  linux:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            arch: x64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 360
-    steps:
-      - uses: actions/checkout@v6
-      - name: Cache key
-        id: key
-        run: |
-          rev="$(tr -d '[:space:]' < crates/pyro-jsc-sys/webkit/REVISION)"
-          patches="$(cat crates/pyro-jsc-sys/webkit/patches/*.patch | sha256sum | cut -c1-12)"
-          echo "dir=${rev:0:12}-$patches" >> "$GITHUB_OUTPUT"
-          echo "setup=$(sha256sum scripts/linux/setup.sh | cut -c1-8)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v4
-        id: cache
-        with:
-          path: ~/.cache/pyro/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-static-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
-      - name: Build patched JavaScriptCore
-        if: steps.cache.outputs.cache-hit != 'true'
-        env:
-          # 4 CPUs and 16 GB on the hosted runners; about 3 GB per job.
-          JOBS: '4'
-          CC: clang
-          CXX: clang++
-        run: |
-          scripts/linux/setup.sh
-          scripts/jsc/build.sh
-      - uses: actions/cache/save@v4
-        if: steps.cache.outputs.cache-hit != 'true'
-        with:
-          path: ~/.cache/pyro/jsc/${{ steps.key.outputs.dir }}
-          key: patched-jsc-static-linux-${{ matrix.arch }}-${{ steps.key.outputs.dir }}-${{ steps.key.outputs.setup }}
-      - name: Check the build
-        env:
-          DIR: ${{ steps.key.outputs.dir }}
-        run: |
-          lib="$HOME/.cache/pyro/jsc/$DIR/lib/libJavaScriptCore.a"
-          # A fork-support entry point (patch 0002), and the archive's other pieces: the JIT subtarget, WTF and bmalloc.
-          nm --defined-only "$lib" 2>/dev/null > symbols.txt || true
-          for symbol in JSPrepareForFork _ZN3JSC3DFG4Plan11notifyReadyEv _ZN3WTF10initializeEv _ZN8Gigacage14ensureGigacageEv; do
-            grep -q " T $symbol\$" symbols.txt || { echo "libJavaScriptCore.a does not define $symbol" >&2; exit 1; }
-          done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: patched-jsc-linux-${{ matrix.arch }}
-          path: ~/.cache/pyro/jsc/${{ steps.key.outputs.dir }}
-          if-no-files-found: error

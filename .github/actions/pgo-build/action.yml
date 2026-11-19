@@ -1,6 +1,6 @@
 name: PGO build (macOS arm64)
 description: >-
-  The release browser built by scripts/pgo/build.sh with PYRO_PGO_LLVM and PYRO_PGO_LTO=1:
+  The release browser built by scripts/pgo with PYRO_PGO_LLVM and PYRO_PGO_LTO=1:
   Rust and JavaScriptCore optimized by one training run (bench/scripts/cdp-perf.mjs, serve and
   serve --fork), the JavaScriptCore archive as ThinLTO bitcode. Output:
   target/aarch64-apple-darwin/release-pgo/pyro.
@@ -14,6 +14,9 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Report available build space
+      shell: bash
+      run: df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
     - name: Rust with llvm-tools (llvm-profdata of rustc's LLVM)
       shell: bash
       run: |
@@ -31,17 +34,16 @@ runs:
     - uses: actions/cache@v4
       id: llvm
       with:
-        path: ~/llvm-pgo
-        # Per runner: actions/cache stores ~ paths relative to the workspace, so an archive saved
-        # by a runner whose work directory sits at another depth restores somewhere else.
-        key: llvm-pgo-macos-arm64-${{ env.LLVM_VERSION }}-${{ runner.name }}
+        # Workspace paths restore at the same depth on every runner and avoid concurrent HOME writes.
+        path: .ci/llvm-pgo
+        key: llvm-pgo-macos-arm64-v2-${{ env.LLVM_VERSION }}
     - name: LLVM release of rustc's major version
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         # Checked by file, not by cache hit (see the cache key above).
-        if [ -x ~/llvm-pgo/bin/clang ]; then ~/llvm-pgo/bin/clang --version; exit 0; fi
+        if [ -x "$GITHUB_WORKSPACE/.ci/llvm-pgo/bin/clang" ]; then "$GITHUB_WORKSPACE/.ci/llvm-pgo/bin/clang" --version; exit 0; fi
         # rustc's exact LLVM version, else the newest release of its major version (common.sh
         # checks the major version only).
         tag="llvmorg-$LLVM_VERSION"
@@ -52,13 +54,13 @@ runs:
         v="${tag#llvmorg-}"
         name="LLVM-$v-macOS-ARM64"
         echo "LLVM release $v"
-        mkdir -p ~/llvm-pgo
+        mkdir -p "$GITHUB_WORKSPACE/.ci/llvm-pgo"
         curl -fsSL "https://github.com/llvm/llvm-project/releases/download/$tag/$name.tar.xz" \
-          | tar -xJ -C ~/llvm-pgo --strip-components 1 \
+          | tar -xJ -C "$GITHUB_WORKSPACE/.ci/llvm-pgo" --strip-components 1 \
             "$name/bin/clang" "$name/bin/clang++" "$name/bin/clang-$LLVM_MAJOR" \
             "$name/bin/llvm-ar" "$name/bin/llvm-ranlib" "$name/bin/llvm-libtool-darwin" \
             "$name/lib/libLTO.dylib" "$name/lib/clang"
-        ~/llvm-pgo/bin/clang --version
+        "$GITHUB_WORKSPACE/.ci/llvm-pgo/bin/clang" --version
     - name: Instrumented JavaScriptCore cache key
       id: jsc
       shell: bash
@@ -76,10 +78,9 @@ runs:
         JOBS: '2'
         PYRO_PGO_LTO: '1'
       run: |
-        export PYRO_PGO_LLVM="$HOME/llvm-pgo"
         # shellcheck disable=SC2086
-        scripts/pgo/build.sh $CARGO_ARGS
-        df -h .
+        exec bash .github/actions/pgo-build/build.sh $CARGO_ARGS
     - name: Free the PGO build directories
+      if: always()
       shell: bash
-      run: rm -rf target/pgo/webkit-build-* target/pgo/profraw
+      run: bash .github/actions/pgo-build/build.sh --cleanup
