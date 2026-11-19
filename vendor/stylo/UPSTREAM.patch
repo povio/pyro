@@ -4890,6 +4890,34 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut slotted_rules) = self.slotted_rules {
              slotted_rules.clear();
          }
+diff -ruN a/substitution/attr.rs b/substitution/attr.rs
+--- a/substitution/attr.rs	2026-11-11 19:55:57
++++ b/substitution/attr.rs	2026-11-19 23:28:55
+@@ -131,6 +131,12 @@
+         if let Ok(ns) =
+             input.try_parse(|input| ParsedNamespace::parse(&context.namespaces.prefixes, input))
+         {
++            // pyro: Chromium takes no namespace prefix in `attr()`: `attr(x|href)` is invalid
++            // (`@supports (content: attr(x|href))` is false; WPT css-conditional
++            // `at-supports-namespace-001` as Chrome renders it).
++            if cfg!(feature = "servo") {
++                return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++            }
+             namespace = ns;
+             let prev = input.state();
+             let is_ident = matches!(input.next_including_whitespace(), Ok(Token::Ident(_)));
+@@ -188,6 +194,11 @@
+         context: &mut SubstitutionParserContext,
+     ) -> Result<Self, ParseError> {
+         let arg = SubstitutionArgument::try_parse(input, context, Delimiter::Comma)?;
++        // pyro: arguments that do not match `<attr-name> <attr-type>?` make the declaration
++        // invalid when it is parsed, as in Chromium (`@supports` reads them so).
++        if cfg!(feature = "servo") && matches!(arg, SubstitutionArgument::Invalid) {
++            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++        }
+         let namespaces = match arg {
+             SubstitutionArgument::Unparsed(..) => {
+                 Some(context.parser_context.namespaces.prefixes.clone())
 diff -ruN a/traversal.rs b/traversal.rs
 --- a/traversal.rs	2026-11-11 19:55:57
 +++ b/traversal.rs	2026-11-17 23:56:40

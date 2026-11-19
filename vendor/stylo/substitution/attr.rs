@@ -131,6 +131,12 @@ impl Parse for AttrName {
         if let Ok(ns) =
             input.try_parse(|input| ParsedNamespace::parse(&context.namespaces.prefixes, input))
         {
+            // pyro: Chromium takes no namespace prefix in `attr()`: `attr(x|href)` is invalid
+            // (`@supports (content: attr(x|href))` is false; WPT css-conditional
+            // `at-supports-namespace-001` as Chrome renders it).
+            if cfg!(feature = "servo") {
+                return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+            }
             namespace = ns;
             let prev = input.state();
             let is_ident = matches!(input.next_including_whitespace(), Ok(Token::Ident(_)));
@@ -188,6 +194,11 @@ impl AttrFunction {
         context: &mut SubstitutionParserContext,
     ) -> Result<Self, ParseError> {
         let arg = SubstitutionArgument::try_parse(input, context, Delimiter::Comma)?;
+        // pyro: arguments that do not match `<attr-name> <attr-type>?` make the declaration
+        // invalid when it is parsed, as in Chromium (`@supports` reads them so).
+        if cfg!(feature = "servo") && matches!(arg, SubstitutionArgument::Invalid) {
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+        }
         let namespaces = match arg {
             SubstitutionArgument::Unparsed(..) => {
                 Some(context.parser_context.namespaces.prefixes.clone())
