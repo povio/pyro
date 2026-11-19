@@ -1193,6 +1193,11 @@ fn collect_layout_children_with_wrap(
                 let content_changed = doc.nodes[container_node_id]
                     .damage()
                     .is_none_or(|damage| damage.contains(INLINE_CONTENT));
+                // pyro: table parts in its inline boxes are wrapped in anonymous inline tables made
+                // anew (`table_fixup::wrap_inline_table_parts`): a kept layout would name the old ones.
+                let made_inline_tables =
+                    super::table_fixup::wrap_inline_table_parts(doc, container_node_id, &mut out.anonymous_blocks);
+                let content_changed = content_changed || made_inline_tables;
                 match previous_inline_layout {
                     Some(layout) if !content_changed => {
                         #[cfg(debug_assertions)]
@@ -2250,7 +2255,16 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                     }
                     // Inline box
                     (_, _) => {
-                        layout_children.push(node_id);
+                        // pyro: a table part in an inline box is in an anonymous inline table, a box
+                        // of the inline content once, at its first part (`table_fixup`).
+                        match (display.outside() == DisplayOutside::InternalTable)
+                            .then(|| super::table_fixup::inline_table_of(nodes, node_id))
+                            .flatten()
+                        {
+                            Some((table, true)) => layout_children.push(table),
+                            Some((_, false)) => {}
+                            None => layout_children.push(node_id),
+                        }
                         // pyro: a table part in an inline box (`table_fixup`).
                         if display.outside() == DisplayOutside::InternalTable {
                             if let Some(parent) = nodes[node_id].parent {

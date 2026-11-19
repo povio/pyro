@@ -407,6 +407,9 @@ pub struct Node {
     /// is a box of the current layout when it equals `layout_parent` (which
     /// inline content of an inline root also has, without being listed).
     pub layout_child_of: Cell<Option<NodeId>>,
+    /// pyro: the anonymous inline table a table part of an inline box is wrapped in
+    /// (`layout::table_fixup::wrap_inline_table_parts`); read with `inline_table_of`, which checks it.
+    pub inline_table: Cell<Option<NodeId>>,
     /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
     /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
     /// `Layout.location` of these boxes is relative to this node's border box.
@@ -756,6 +759,7 @@ impl Node {
             children: ThinVec::new(),
             layout_parent: Cell::new(None),
             layout_child_of: Cell::new(None),
+            inline_table: Cell::new(None),
             oof_containing_block: Cell::new(None),
             layout_children: RefCell::new(None),
             hoisted_children: RefCell::new(ThinVec::new()),

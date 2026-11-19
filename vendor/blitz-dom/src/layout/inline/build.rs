@@ -1512,6 +1512,16 @@ fn build_inline_layout_with(
                     }
                     // Inline box
                     (_, _) => {
+                        // pyro: a table part in an inline box is in an anonymous inline table: the
+                        // table is the box, at its first part (`table_fixup::wrap_inline_table_parts`).
+                        let (node_id, node) = match (display.outside() == style::values::specified::box_::DisplayOutside::InternalTable)
+                            .then(|| crate::layout::table_fixup::inline_table_of(nodes, node_id))
+                            .flatten()
+                        {
+                            Some((table, true)) => (table, &nodes[table]),
+                            Some((_, false)) => return,
+                            None => (node_id, node),
+                        };
                         // pyro: CSS Text 4 `white-space-trim` around an atomic inline.
                         let trim = node.primary_styles().map_or(WhiteSpaceTrim::NONE, |s| s.get_text().white_space_trim);
                         if box_kind == InlineBoxKind::InFlow && trim.contains(WhiteSpaceTrim::DISCARD_BEFORE) {
