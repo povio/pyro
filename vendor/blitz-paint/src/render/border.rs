@@ -1178,33 +1178,72 @@ impl ElementCx<'_, '_> {
 
     /// The winning borders of a table without uniform ones, centered on the grid lines. Segments of one
     /// width and color are drawn as one rectangle, so that they have no seams.
+    ///
+    /// pyro: worked out in the grid's own space (Taffy's axes: x along the rows, y across them; the
+    /// edges are indexed by the grid's rows and columns, in their order) and mapped to the table's
+    /// box as each rectangle is filled (`CollapsedEdges::grid_to_physical`), so a table in a
+    /// vertical writing mode or with `direction: rtl` draws the same rules where its tracks are.
     fn draw_collapsed_edges(
         &self,
         scene: &mut impl PaintScene,
         edges: &blitz_dom::CollapsedEdges,
         grid_info: &taffy::DetailedGridInfo<style::Atom>,
     ) {
-        let cols = PhysicalTracks::from_tracks(&grid_info.columns);
-        let rows = PhysicalTracks::from_tracks(&grid_info.rows);
-        let xs: Vec<f64> = line_positions(&cols);
+        // The grid lines in the grid's order: line `i` is the side of track `i` that faces track
+        // `i - 1` (its right in Taffy's axes when the tracks run from the right).
+        let lines = |tracks: &[taffy::Line<f32>]| -> Vec<f64> {
+            let reversed = tracks.first().zip(tracks.last()).is_some_and(|(first, last)| first.start > last.start);
+            // (The side of a track that faces the one before it, and its other side.)
+            let sides = |track: &taffy::Line<f32>| {
+                let (lo, hi) = (track.start.min(track.end) as f64, track.start.max(track.end) as f64);
+                if reversed { (hi, lo) } else { (lo, hi) }
+            };
+            let mut lines: Vec<f64> = tracks.iter().map(|track| sides(track).0).collect();
+            if let Some(last) = tracks.last() {
+                lines.push(sides(last).1);
+            }
+            lines
+        };
+        let xs = lines(&grid_info.columns.positions);
         // pyro: the grid sits below the captions above it.
         let SpecialElementData::TableRoot(table) = &self.element.special_data else { return };
         let grid_top = table.grid_box.borrow().map_or(0.0, |(top, _)| top as f64);
-        let ys: Vec<f64> = line_positions(&rows).into_iter().map(|y| y + grid_top).collect();
+        let ys: Vec<f64> = lines(&grid_info.rows.positions).into_iter().map(|y| y + grid_top).collect();
         if xs.len() != edges.columns + 1 || ys.len() != edges.rows + 1 {
             return;
         }
         let position = self.context.dom.physical_unrounded_geometry(self.node.id).0;
         let (ax, ay) = (position.x as f64, position.y as f64);
+        let table_width = self.frame.border_box.width() / self.scale;
         // A rule is snapped to whole pixels of the page, as Chromium paints it: it starts at its centered
-        // position, rounded, and is its width wide.
-        let snap_x = |x: f64| (ax + x).round() - ax.round();
-        let snap_y = |y: f64| (ay + y).round() - ay.round();
+        // position, rounded, and is its width wide. `snap_x` and `snap_y` take where a rule `w` wide
+        // starts on the grid's x and y axes and give where it starts once its physical start is
+        // rounded (the grid's x axis is the page's y in a vertical writing mode, and its y axis runs
+        // from the table's right in `vertical-rl`).
+        let transposed = edges.is_transposed();
+        let (_, _, far, _) = edges.grid_to_physical((0.0, 0.0, 0.0, 0.0), table_width);
+        let block_reversed = transposed && far != 0.0;
+        let snap = |origin: f64, at: f64| (origin + at).round() - origin.round();
+        let snap_x = |x: f64, _w: f64| snap(if transposed { ay } else { ax }, x);
+        let snap_y = |y: f64, w: f64| {
+            if block_reversed {
+                table_width - w - snap(ax, table_width - y - w)
+            } else {
+                snap(if transposed { ax } else { ay }, y)
+            }
+        };
         let mut fill = |x0: f64, y0: f64, x1: f64, y1: f64, color: style::color::AbsoluteColor| {
+            let (x0, y0, x1, y1) = edges.grid_to_physical((x0, y0, x1, y1), table_width);
             let shape = Rect::new(x0, y0, x1, y1).scale_from_origin(self.scale);
             scene.fill(Fill::NonZero, self.transform, color.as_srgb_color(), None, &shape);
         };
-        // A rule starts and ends on the outer sides of the rules across it.
+        // A rule along a grid line from the line at `from` to the one at `to`, `a` and `b` the widths
+        // of the rules across it there: it starts and ends on their outer sides (whichever way the
+        // tracks run).
+        let span = |snap: &dyn Fn(f64, f64) -> f64, from: f64, a: f64, to: f64, b: f64| -> (f64, f64) {
+            let (lo, lo_w, hi, hi_w) = if from <= to { (from, a, to, b) } else { (to, b, from, a) };
+            (snap(lo - lo_w / 2.0, lo_w), snap(hi - hi_w / 2.0, hi_w) + hi_w)
+        };
         for line in 0..=edges.rows {
             let mut c = 0;
             while c < edges.columns {
@@ -1220,10 +1259,8 @@ impl ElementCx<'_, '_> {
                         let down = (line < edges.rows).then(|| edges.vertical_at(line, col).width).unwrap_or(0.0);
                         up.max(down) as f64
                     };
-                    let (a, b) = (across(c), across(end));
-                    let x0 = snap_x(xs[c] - a / 2.0);
-                    let x1 = snap_x(xs[end] - b / 2.0) + b;
-                    let y0 = snap_y(ys[line] - width / 2.0);
+                    let (x0, x1) = span(&snap_x, xs[c], across(c), xs[end], across(end));
+                    let y0 = snap_y(ys[line] - width / 2.0, width);
                     // pyro: a `double` rule is two lines a third of its width each.
                     let third = (width / 3.0).round();
                     if edge.is_double() && third >= 1.0 {
@@ -1246,22 +1283,23 @@ impl ElementCx<'_, '_> {
                 }
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
-                    let x0 = snap_x(xs[line] - width / 2.0);
+                    let x0 = snap_x(xs[line] - width / 2.0, width);
+                    let (y0, y1) = span(&snap_y, ys[r], 0.0, ys[end], 0.0);
                     let third = (width / 3.0).round();
                     if edge.is_double() && third >= 1.0 {
-                        fill(x0, snap_y(ys[r]), x0 + third, snap_y(ys[end]), edge.color);
-                        fill(x0 + width - third, snap_y(ys[r]), x0 + width, snap_y(ys[end]), edge.color);
+                        fill(x0, y0, x0 + third, y1, edge.color);
+                        fill(x0 + width - third, y0, x0 + width, y1, edge.color);
                     } else {
-                        fill(x0, snap_y(ys[r]), x0 + width, snap_y(ys[end]), edge.color);
+                        fill(x0, y0, x0 + width, y1, edge.color);
                     }
                 }
                 r = end;
             }
         }
         // pyro: where rules cross, the square they share is the colour of the edge that wins there
-        // (the widest, then by style; among equals the first of the row line's rule on the left, the
-        // column line's above, the row line's on the right and the column line's below: the top and
-        // left ones win, as among the borders of cells).
+        // (the widest, then by style; among equals the first of the row line's rule before the
+        // crossing, the column line's before it, the row line's after and the column line's after:
+        // the row-start and column-start ones win, as among the borders of cells).
         for hl in 0..=edges.rows {
             for vl in 0..=edges.columns {
                 let left = vl.checked_sub(1).map(|c| *edges.horizontal_at(hl, c));
@@ -1285,8 +1323,8 @@ impl ElementCx<'_, '_> {
                 let Some(winner) = meeting.reduce(|best, edge| if edge.outranks(&best) { edge } else { best }) else {
                     continue;
                 };
-                let x0 = snap_x(xs[vl] - v / 2.0);
-                let y0 = snap_y(ys[hl] - h / 2.0);
+                let x0 = snap_x(xs[vl] - v / 2.0, v);
+                let y0 = snap_y(ys[hl] - h / 2.0, h);
                 fill(x0, y0, x0 + v, y0 + h, winner.color);
             }
         }
@@ -1426,11 +1464,3 @@ fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool
     a.width == b.width && a.color == b.color && a.is_double() == b.is_double()
 }
 
-/// The grid lines around `tracks`, in physical order.
-fn line_positions(tracks: &PhysicalTracks<'_>) -> Vec<f64> {
-    let mut lines: Vec<f64> = tracks.iter().map(|track| track.start as f64).collect();
-    if let Some(last) = tracks.iter().last() {
-        lines.push(last.end as f64);
-    }
-    lines
-}

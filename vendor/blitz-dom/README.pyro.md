@@ -573,6 +573,25 @@ rules: each cell keeps half of the borders around it (`LayoutData::collapsed_bor
 `LayoutStyles::cell`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/pyro-render/tests/table_collapsed_borders.rs`.
 
+Round 5, tables in vertical writing modes and `direction: rtl` (`CollapsedEdges::sides`, `taffy_rect`, `physical_sides`,
+`grid_to_physical`): the edges are indexed by the grid's own rows and columns (row 0 the first row, column 0 the first
+column, whichever way the writing mode and direction run them), and `sides` names the physical border of a box that
+faces the row-start, column-end, row-end and column-start side of its grid area. Conflict resolution, the cells' half
+borders and the table's own border are then the same code in every writing mode: `offer_box` reads a box's physical
+borders through `sides`, `apply_collapsed_borders` and `collapsed_table_border` hand the widths back in Taffy's axes
+(the grid's) and as physical sides (`Node::set_collapsed_border`, the cell's own style). A vertical table always keeps
+its edges (`edges_in_use`): the uniform-gutter shortcut reads the first cell's physical borders and is painted as such.
+Before, collapsed borders were resolved in horizontal tables only (a vertical table had none: its cells stacked on one
+another, WPT css-writing-modes `border-conflict-element-v*`), and an `rtl` table offered a cell's left border to its
+column-start line (its right). blitz-paint's `draw_collapsed_edges` works in the grid's space and maps each rectangle
+to the table's box. Captions of a vertical table are laid out too (`lay_out_table_captions` runs in the table's axes:
+`caption-side: top` is its block-start side; WPT `caption-side-v*`). `auto_column_widths`: a table narrower than its
+columns' min-content widths takes them also when a spanning cell's max-content width is wider than its columns' (its
+min-content width fits); it was left to the grid, which kept the table's `width` (WPT `row-progression-v*`, and the
+same table in a horizontal writing mode). `collect_table_cells`: an absolutely positioned child of a row group keeps
+its construction damage (the group's children had it removed before the out-of-flow check, so the box was never built:
+WPT css-contain `contain-paint-015`..`017`). Tests: `crates/pyro-render/tests/vertical_tables.rs`.
+
 `src/layout/table.rs`: the table places its cells once, as it is built (`place_cells`, stored as
 `TableContext::placement`), and hands the areas to the grid through taffy's `LayoutGridContainer::track_counts`
 and `resolved_placement` (see `vendor/taffy/README.pyro.md`). It runs the grid's `row dense`
@@ -1385,7 +1404,7 @@ Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
   fixed up. A table, row group or row whose children are all proper ones (or white space, hidden or out of flow)
   and that has no pseudo-element boxes is built from its children as they are, as before (no allocation, one
   style read per child). Tables in a vertical writing mode keep the former construction (their stray children are
-  left out).
+  left out; round 5 lays out their captions, see "Collapsed tables without uniform borders").
 - `src/layout/table.rs` (`offer_box`): a box without borders offers none to the collapsed borders (most rows,
   groups and columns); the cells' grid areas are worked out once for the collapsed borders and their cells.
 - `src/layout/mod.rs` (`lay_out_table_captions`, `table_captions_min_width`), `src/layout/table.rs`

@@ -46,6 +46,10 @@ from the root of an upstream checkout at that commit) is the whole diff.
 
 - `src/render/border.rs`: `draw_collapsed_edges` paints the winning borders of a collapsed table without uniform ones,
   snapped to whole pixels of the page as Chromium does. Cells and tables in it draw no border of their own.
+  Round 5: it works in the grid's own space (Taffy's axes, the grid lines in the order of the grid's rows and columns)
+  and maps each rectangle to the table's box (`CollapsedEdges::grid_to_physical`), snapping the physical start of each
+  rule, so a table in a vertical writing mode or with `direction: rtl` draws its rules where its tracks are
+  (blitz-dom README, "Collapsed tables without uniform borders").
 
 - `src/render.rs` (`paint_top_layer`, `paint_backdrop`): the document's top layer (blitz-dom's
   `top_layer_nodes`) is skipped in tree order and painted after the root element, bottom first, each element over

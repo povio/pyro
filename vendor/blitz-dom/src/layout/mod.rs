@@ -1784,6 +1784,7 @@ impl LayoutPassState<'_> {
     /// and below its grid, each a block as wide as the grid less its margins: the table's box is
     /// then its wrapper box, the grid (`output`, laid out) moved down by the captions above it, as
     /// its cells (whose positions the grid set). Returns the height of the captions above.
+    /// (In the table's axes: above is its block-start side, the left of a `vertical-lr` table.)
     #[inline(never)]
     fn lay_out_table_captions(
         &mut self,

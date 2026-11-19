@@ -16838,7 +16838,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1379,540 @@
+@@ -488,126 +1379,541 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -17333,6 +17333,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// and below its grid, each a block as wide as the grid less its margins: the table's box is
 +    /// then its wrapper box, the grid (`output`, laid out) moved down by the captions above it, as
 +    /// its cells (whose positions the grid set). Returns the height of the captions above.
++    /// (In the table's axes: above is its block-start side, the left of a `vertical-lr` table.)
 +    #[inline(never)]
 +    fn lay_out_table_captions(
 +        &mut self,
@@ -17465,7 +17466,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +1972,11 @@
+@@ -667,7 +1973,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -17478,7 +17479,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +2007,26 @@
+@@ -698,17 +2008,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -17507,7 +17508,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2039,7 @@
+@@ -721,6 +2040,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -17515,7 +17516,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2051,122 @@
+@@ -732,6 +2052,122 @@
      }
  }
  
@@ -17638,7 +17639,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2174,12 @@
+@@ -739,10 +2175,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -17655,7 +17656,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2189,11 @@
+@@ -752,9 +2190,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -17670,7 +17671,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2221,113 @@
+@@ -782,16 +2222,113 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -17788,7 +17789,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2380,30 @@
+@@ -844,6 +2381,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -17819,7 +17820,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2412,19 @@
+@@ -852,7 +2413,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -17840,7 +17841,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2440,30 @@
+@@ -868,6 +2441,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -17871,7 +17872,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2568,93 @@
+@@ -972,3 +2569,93 @@
          })
      }
  }
@@ -22705,7 +22706,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  use stylo_taffy::CopyStyleGetters;
  
  use atomic_refcell::AtomicRefCell;
-@@ -27,13 +26,490 @@
+@@ -27,13 +26,496 @@
  
  use crate::BaseDocument;
  use crate::layout::LayoutPassState;
@@ -22863,11 +22864,17 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            .collect();
 +        drop(widths);
 +        // A spanning cell wider than the columns it spans: leave it to the grid.
++        // pyro: but for one whose max-content width alone is (its min-content width fits) in a
++        // table narrower than its columns' min-content widths: the columns are then as wide as
++        // those, whatever the max-content widths are (the grid would keep the table's `width`
++        // and let the cells overflow it).
++        let sum_min = min.iter().sum::<f32>();
++        let at_min = inner < sum_min && !shrink;
 +        for (column, span, lo, hi) in spanning {
 +            let end = (column + span).min(n);
 +            let spacing = gap * (end.saturating_sub(column + 1)) as f32;
 +            let sum = |w: &[f32]| w[column.min(end)..end].iter().sum::<f32>() + spacing;
-+            if lo > sum(&min) + 0.01 || hi > sum(&max) + 0.01 {
++            if lo > sum(&min) + 0.01 || (hi > sum(&max) + 0.01 && !at_min) {
 +                return None;
 +            }
 +        }
@@ -23196,7 +23203,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  // Deliberately not `Clone`: `style` may hold raw pointers into `calc_values`.
-@@ -44,23 +520,754 @@
+@@ -44,23 +526,819 @@
      /// Absolutely positioned descendants of the table's row groups and rows (and of the
      /// table itself). They take no part in the table grid.
      pub oof_children: Vec<(NodeId, taffy::Position)>,
@@ -23566,10 +23573,24 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +}
 +
 +/// The collapsed borders of a table's grid lines, in the order of `css-tables-3` conflict resolution.
++///
++/// pyro: the segments are indexed by the grid's rows and columns in their own order (row 0 is the
++/// first row and column 0 the first column, whichever way the table's writing mode and direction
++/// run them), and `sides` says which physical border of a box faces each side of its grid area.
++/// So conflict resolution, the half borders of the cells and the table's own border are the same
++/// in every writing mode; only the two ends translate: `offer_box` reads a box's physical borders
++/// through `sides`, and `taffy_rect`/`physical_sides` hand the result back in Taffy's axes (the
++/// grid's) and as physical sides (a cell's own style). Paint maps the grid's space to the table's
++/// box with `grid_to_physical`.
 +#[derive(Debug, Clone)]
 +pub struct CollapsedEdges {
 +    pub rows: usize,
 +    pub columns: usize,
++    /// The physical side (0 top, 1 right, 2 bottom, 3 left) of a box that faces the row-start,
++    /// column-end, row-end and column-start side of its grid area.
++    sides: [u8; 4],
++    /// The table's writing mode (the one its grid runs in).
++    wm: WritingMode,
 +    /// `rows * (columns + 1)`: the segment of each row on each column line.
 +    pub vertical: Vec<CollapsedEdge>,
 +    /// `(rows + 1) * columns`: the segment of each column on each row line.
@@ -23584,9 +23605,58 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        &self.horizontal[line * self.columns + column]
 +    }
 +
-+    fn new(rows: usize, columns: usize) -> Self {
++    fn new(rows: usize, columns: usize, wm: WritingMode) -> Self {
++        use stylo_taffy::WritingModeExt as _;
 +        let none = CollapsedEdge::NONE;
-+        Self { rows, columns, vertical: vec![none; rows * (columns + 1)], horizontal: vec![none; (rows + 1) * columns] }
++        // Taffy's top and bottom are the grid's row-start and row-end sides; its left is the
++        // column-start side unless the columns run from its right (`direction`).
++        let taffy = wm.logical_rect(taffy::Rect { top: 0u8, right: 1, bottom: 2, left: 3 });
++        let (column_start, column_end) = match wm.direction() {
++            taffy::Direction::Ltr => (taffy.left, taffy.right),
++            taffy::Direction::Rtl => (taffy.right, taffy.left),
++        };
++        Self {
++            rows,
++            columns,
++            sides: [taffy.top, column_end, taffy.bottom, column_start],
++            wm,
++            vertical: vec![none; rows * (columns + 1)],
++            horizontal: vec![none; (rows + 1) * columns],
++        }
++    }
++
++    /// The physical widths (top, right, bottom, left) of the widths on the row-start, column-end,
++    /// row-end and column-start sides of a grid area.
++    fn physical_sides(&self, grid: [f32; 4]) -> [f32; 4] {
++        let mut physical = [0.0; 4];
++        for (side, width) in self.sides.iter().zip(grid) {
++            physical[*side as usize] = width;
++        }
++        physical
++    }
++
++    /// The same widths in Taffy's axes, as the grid and its items have their borders.
++    fn taffy_rect(&self, grid: [f32; 4]) -> taffy::Rect<f32> {
++        use stylo_taffy::WritingModeExt as _;
++        let [top, right, bottom, left] = self.physical_sides(grid);
++        self.wm.logical_rect(taffy::Rect { top, right, bottom, left })
++    }
++
++    /// Whether the grid's axes are not the physical ones (a table in a vertical writing mode).
++    pub fn is_transposed(&self) -> bool {
++        self.wm.is_vertical()
++    }
++
++    /// A rectangle of the grid's space (Taffy's axes: x along the rows, y across them, from the
++    /// table's border box) in the physical space of the table's border box, `width` wide.
++    pub fn grid_to_physical(&self, (x0, y0, x1, y1): (f64, f64, f64, f64), width: f64) -> (f64, f64, f64, f64) {
++        if !self.wm.is_vertical() {
++            (x0, y0, x1, y1)
++        } else if self.wm.is_vertical_lr() {
++            (y0, x0, y1, x1)
++        } else {
++            (width - y1, x0, width - y0, x1)
++        }
 +    }
 +
 +    /// Uniform: every vertical segment one width, every horizontal one width, one color.
@@ -23684,8 +23754,9 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    rows: &[TableRow],
 +    table_columns: &[TableColumn],
 +    columns: usize,
++    wm: WritingMode,
 +) -> CollapsedEdges {
-+    let mut edges = CollapsedEdges::new(rows.len(), columns);
++    let mut edges = CollapsedEdges::new(rows.len(), columns, wm);
 +    let all = EdgeRange { lines: 0..rows.len() + 1, rows: 0..rows.len() };
 +    for (cell, &(r0, c0, r1, c1)) in cells.iter().zip(areas) {
 +        if r0 < r1 && c0 < c1 {
@@ -23759,7 +23830,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    }
 +    let color = styles.clone_color();
 +    let ncols = edges.columns;
-+    for (line, side) in [(r0, 0), (r1, 2)] {
++    let [row_start, column_end, row_end, column_start] = edges.sides.map(usize::from);
++    for (line, side) in [(r0, row_start), (r1, row_end)] {
 +        if range.lines.contains(&line) {
 +            for c in c0..c1 {
 +                offer_edge(&mut edges.horizontal[line * ncols + c], border, side, &color, priority);
@@ -23767,8 +23839,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        }
 +    }
 +    for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
-+        offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, 3, &color, priority);
-+        offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, 1, &color, priority);
++        offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, column_start, &color, priority);
++        offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, column_end, &color, priority);
 +    }
 +}
 +
@@ -23951,7 +24023,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  #[derive(Debug, Clone)]
  pub struct TableCell {
      // kind: TableItemKind,
-@@ -69,6 +1276,33 @@
+@@ -69,6 +1347,33 @@
      pub row: u16,
      /// Index of the column the cell originates in
      pub column: u16,
@@ -23985,7 +24057,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      style: taffy::Style<Atom>,
  }
  
-@@ -101,13 +1335,21 @@
+@@ -101,13 +1406,21 @@
          self.col
      }
  
@@ -24008,7 +24080,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          }
          self.col = end;
          self.num_columns = self.num_columns.max(end);
-@@ -133,6 +1375,13 @@
+@@ -133,6 +1446,13 @@
      /// specified length `height`. Such rows do not receive excess table height when there
      /// are unconstrained rows to receive it instead.
      pub is_constrained: bool,
@@ -24022,7 +24094,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  /// The used width of one border side: border widths are not adjusted for
-@@ -156,8 +1405,37 @@
+@@ -156,8 +1476,37 @@
  }
  
  /// Convert a table part's style into the table's writing mode
@@ -24062,7 +24134,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  fn side_width(width: app_units::Au, style: BorderStyle) -> f32 {
-@@ -200,10 +1478,48 @@
+@@ -200,10 +1549,48 @@
      dim.into()
  }
  
@@ -24115,7 +24187,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let mut cells: Vec<TableCell> = Vec::new();
      let mut oof_children: Vec<(NodeId, taffy::Position)> = Vec::new();
      let mut rows: Vec<TableRow> = Vec::new();
-@@ -211,15 +1527,28 @@
+@@ -211,15 +1598,28 @@
      let mut cursor = ColumnCursor::default();
  
      let wm = table_wm(doc, table_root_node_id);
@@ -24130,11 +24202,11 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    let children =
 +        super::table_fixup::fixup_children(doc, table_root_node_id, Level::Table, wm.is_vertical(), &mut anonymous)
 +            .unwrap_or_else(|| doc.nodes[table_root_node_id].children.to_vec());
-+    // (Captions are laid out in horizontal tables only: `lay_out_table_captions`.)
++    // (Laid out in the table's axes, on its block-start and block-end sides: `lay_out_table_captions`.)
 +    let captions: Vec<NodeId> = children
 +        .iter()
 +        .copied()
-+        .filter(|&id| !wm.is_vertical() && super::table_fixup::kind(doc, id) == Kind::Caption)
++        .filter(|&id| super::table_fixup::kind(doc, id) == Kind::Caption)
 +        .collect();
 +    let root_node = &mut doc.nodes[table_root_node_id];
  
@@ -24147,7 +24219,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      style.item_is_table = true;
      // Use `dense` row-flow so that each cell scans the row from its
      // leftmost column for the first free track. Without `dense`,
-@@ -246,32 +1575,48 @@
+@@ -246,32 +1646,48 @@
      for child_id in children.iter().copied() {
          collect_columns(doc, child_id, wm, &mut columns, &mut column_sizes);
      }
@@ -24208,7 +24280,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  continue;
              }
              collect_table_cells(
-@@ -288,9 +1633,22 @@
+@@ -288,9 +1704,22 @@
                  &mut column_sizes,
                  &mut first_cell_border,
                  &mut percent_columns,
@@ -24231,14 +24303,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      let remaining_column = if is_fixed {
          style_helpers::minmax(style_helpers::length(0.0), style_helpers::fr(1.0))
      } else {
-@@ -306,8 +1664,63 @@
-         column_sizes.pop();
-         columns.pop();
+@@ -308,6 +1737,61 @@
      }
--    let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
--    column_sizes.resize(num_columns as usize, remaining_column);
-+    let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
-+    column_sizes.resize(num_columns as usize, remaining_column);
+     let num_columns = cursor.num_columns.max(column_sizes.len() as u16);
+     column_sizes.resize(num_columns as usize, remaining_column);
 +    // pyro: the collapsed borders, resolved before the columns get their widths: in the fixed
 +    // table layout algorithm a first-row cell's `width` gives its column a border box with half
 +    // of the collapsed borders beside it (CSS 2.1 §17.6.2, as Chromium).
@@ -24251,9 +24319,9 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        )
 +    });
 +    let mut early_areas = None;
-+    let early_edges = (border_collapse == BorderCollapse::Collapse && !wm.is_vertical()).then(|| {
++    let early_edges = (border_collapse == BorderCollapse::Collapse).then(|| {
 +        let areas = early_areas.insert(cell_areas(&cells, rows.len(), num_columns as usize));
-+        resolve_collapsed_edges(doc, table_root_node_id, &cells, areas, &rows, &columns, num_columns as usize)
++        resolve_collapsed_edges(doc, table_root_node_id, &cells, areas, &rows, &columns, num_columns as usize, wm)
 +    });
 +    if is_fixed {
 +        if let Some(edges) = early_edges.as_ref().filter(|edges| edges_in_use(edges, first_gap)) {
@@ -24297,7 +24365,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      if is_fixed {
          // In the fixed table layout algorithm, percentage column widths resolve against
          // the table's content width minus the horizontal border-spacing between columns,
-@@ -343,36 +1756,59 @@
+@@ -343,36 +1827,59 @@
                  *column = percent_track(percent, extra);
              }
          }
@@ -24379,7 +24447,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              let padding = style.padding.resolve_or_zero(None, resolve_calc_value);
              style.padding = taffy::Rect {
                  left: style_helpers::length(padding.left + spacing_x),
-@@ -380,6 +1816,32 @@
+@@ -380,6 +1887,32 @@
                  top: style_helpers::length(padding.top + spacing_y),
                  bottom: style_helpers::length(padding.bottom + spacing_y),
              };
@@ -24412,7 +24480,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              taffy::Size {
                  width: style_helpers::length(spacing_x),
                  height: style_helpers::length(spacing_y),
-@@ -409,30 +1871,952 @@
+@@ -409,30 +1942,965 @@
              top: style.gap.height,
              bottom: style.gap.height,
          };
@@ -24477,8 +24545,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +                style.max_size.height = style_helpers::length(v);
 +            }
 +        }
-+    }
-+
+     }
+ 
 +    // pyro: a fixed table is never narrower than its columns' widths and the spacing between
 +    // them (CSS 2.1 §17.5.2.1: the greater of its `width` and that sum).
 +    if is_fixed && style.min_size.width.into_raw().tag() != taffy::CompactLength::PERCENT_TAG {
@@ -24513,12 +24581,14 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        }
 +    }
 +    let placement = place_cells(&cells);
-+    let layout_children = cells
-+        .iter()
-+        .map(|cell| cell.node_id)
-+        .chain(oof_children.iter().map(|(node_id, _)| *node_id))
+     let layout_children = cells
+         .iter()
+         .map(|cell| cell.node_id)
+         .chain(oof_children.iter().map(|(node_id, _)| *node_id))
 +        .chain(captions.iter().copied())
-+        .collect();
+         .collect();
+-    let root_node = &mut doc.nodes[table_root_node_id];
+-    root_node.children = children;
 +    crate::resolve::phase_profile::table_built();
 +    // pyro: a table with anonymous boxes, generated cells or rows (pseudo-elements), captions, or
 +    // that is anonymous itself is built again on any change: `update_rows` collects rows from
@@ -24594,20 +24664,28 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +
 +/// Whether a collapsed table's borders are cells' and the table's own (not one uniform grid of
 +/// gutters as wide as the first cell's borders).
++///
++/// pyro: always in a vertical writing mode (the gutters are the first cell's physical borders, and
++/// are painted as such).
 +fn edges_in_use(edges: &CollapsedEdges, gap: (f32, f32)) -> bool {
++    if edges.is_transposed() {
++        return !edges.is_empty() || gap != (0.0, 0.0);
++    }
 +    !edges.is_empty() && edges.uniform() != Some(gap) || (edges.is_empty() && gap != (0.0, 0.0))
 +}
 +
 +/// The table's border: half of the widest collapsed border on each of its sides.
 +fn collapsed_table_border(edges: &CollapsedEdges) -> taffy::Rect<taffy::LengthPercentage> {
-+    let half_max = |it: &mut dyn Iterator<Item = f32>| style_helpers::length(it.fold(0.0f32, f32::max) / 2.0);
++    let half_max = |it: &mut dyn Iterator<Item = f32>| it.fold(0.0f32, f32::max) / 2.0;
 +    let (r, c) = (edges.rows, edges.columns);
-+    taffy::Rect {
-+        left: half_max(&mut (0..r).map(|i| edges.vertical_at(i, 0).width)),
-+        right: half_max(&mut (0..r).map(|i| edges.vertical_at(i, c).width)),
-+        top: half_max(&mut (0..c).map(|i| edges.horizontal_at(0, i).width)),
-+        bottom: half_max(&mut (0..c).map(|i| edges.horizontal_at(r, i).width)),
-+    }
++    edges
++        .taffy_rect([
++            half_max(&mut (0..c).map(|i| edges.horizontal_at(0, i).width)),
++            half_max(&mut (0..r).map(|i| edges.vertical_at(i, c).width)),
++            half_max(&mut (0..c).map(|i| edges.horizontal_at(r, i).width)),
++            half_max(&mut (0..r).map(|i| edges.vertical_at(i, 0).width)),
++        ])
++        .map(style_helpers::length)
 +}
 +
 +/// Gives `cell` (in grid `area`) half of the collapsed borders around it, adding them to its
@@ -24624,10 +24702,15 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        doc.nodes[cell.node_id].set_collapsed_border(None);
 +        return false;
 +    }
-+    let top = (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0;
-+    let bottom = (c0..c1).map(|i| edges.horizontal_at(r1, i).width).fold(0.0, f32::max) / 2.0;
-+    let left = (r0..r1).map(|i| edges.vertical_at(i, c0).width).fold(0.0, f32::max) / 2.0;
-+    let right = (r0..r1).map(|i| edges.vertical_at(i, c1).width).fold(0.0, f32::max) / 2.0;
++    // (On the row-start, column-end, row-end and column-start sides of the area.)
++    let grid = [
++        (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0,
++        (r0..r1).map(|i| edges.vertical_at(i, c1).width).fold(0.0, f32::max) / 2.0,
++        (c0..c1).map(|i| edges.horizontal_at(r1, i).width).fold(0.0, f32::max) / 2.0,
++        (r0..r1).map(|i| edges.vertical_at(i, c0).width).fold(0.0, f32::max) / 2.0,
++    ];
++    // In Taffy's axes, as the cell's sizes are.
++    let taffy::Rect { top, right, bottom, left } = edges.taffy_rect(grid);
 +    let border = taffy::Rect {
 +        left: style_helpers::length(left),
 +        right: style_helpers::length(right),
@@ -24649,7 +24732,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    cell.style.border = border;
 +    cell.min_height = min_height;
 +    cell.min_width = min_width;
-+    doc.nodes[cell.node_id].set_collapsed_border(Some([top, right, bottom, left]));
++    doc.nodes[cell.node_id].set_collapsed_border(Some(edges.physical_sides(grid)));
 +    changed
 +}
 +
@@ -25233,30 +25316,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        for at in ca..cb.min(first_moved) {
 +            doc.nodes[ctx.cells[at].node_id].layout_data_mut().table_cell_index = at as u32;
 +        }
-     }
- 
--    let layout_children = cells
--        .iter()
--        .map(|cell| cell.node_id)
--        .chain(oof_children.iter().map(|(node_id, _)| *node_id))
--        .collect();
--    let root_node = &mut doc.nodes[table_root_node_id];
--    root_node.children = children;
--
--    (
--        TableContext {
--            style,
--            cells,
--            oof_children,
--            rows,
--            columns,
--            computed_grid_info: AtomicRefCell::new(None),
--            border_collapse,
--            border_style: first_cell_border,
--            calc_values,
--        },
--        layout_children,
--    )
++    }
++
 +    // A cell's minimum width from its column's (auto tables; see `build_table_context`).
 +    if !ctx.is_fixed {
 +        for span in &spans {
@@ -25367,7 +25428,21 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    }
 +    Some(boxes_changed)
 +}
-+
+ 
+-    (
+-        TableContext {
+-            style,
+-            cells,
+-            oof_children,
+-            rows,
+-            columns,
+-            computed_grid_info: AtomicRefCell::new(None),
+-            border_collapse,
+-            border_style: first_cell_border,
+-            calc_values,
+-        },
+-        layout_children,
+-    )
 +/// The indices in `cells` of the cells of `rows`.
 +fn cell_range(cells: &[TableCell], rows: Range<usize>) -> (usize, usize) {
 +    let start = cells.partition_point(|cell| (cell.row as usize) < rows.start);
@@ -25387,7 +25462,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  /// Collect `<col>` elements (and `display: table-column` elements) along with their
-@@ -464,50 +2848,236 @@
+@@ -464,50 +2932,236 @@
              for column in &mut columns[first_column..] {
                  column.group.get_or_insert(node_id);
              }
@@ -25664,7 +25739,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -526,10 +3096,12 @@
+@@ -526,10 +3180,12 @@
      columns: &mut Vec<TrackSizingFunction>,
      first_cell_border: &mut Option<ServoArc<Border>>,
      percent_columns: &mut Vec<(u16, f32, f32)>,
@@ -25678,7 +25753,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          return;
      }
  
-@@ -548,6 +3120,8 @@
+@@ -548,6 +3204,8 @@
      // block rather than as part of the table grid.
      let position = node.primary_styles().unwrap().clone_position();
      if position.is_absolutely_positioned() {
@@ -25687,7 +25762,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          oof_children.push((node_id, stylo_taffy::convert::position(position)));
          return;
      }
-@@ -557,9 +3131,18 @@
+@@ -557,11 +3215,27 @@
          | DisplayInside::TableHeaderGroup
          | DisplayInside::TableFooterGroup
          | DisplayInside::Contents => {
@@ -25695,6 +25770,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              let first_row = rows.len();
 -            let children = std::mem::take(&mut doc.nodes[node_id].children);
 -            for child_id in children.iter().copied() {
+-                doc.nodes[child_id]
+-                    .remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
 +            if display.inside() != DisplayInside::Contents {
 +                cursor.end_group();
 +            }
@@ -25705,10 +25782,19 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            let own =
 +                if fixed.is_none() { std::mem::take(&mut doc.nodes[node_id].children) } else { Default::default() };
 +            for child_id in fixed.as_deref().unwrap_or(&own[..]).iter().copied() {
-                 doc.nodes[child_id]
-                     .remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
++                // pyro: not an absolutely positioned child's: it is a box of its own (the table's
++                // `oof_children`), whose content is still to be built (it was never laid out: WPT
++                // css-contain `contain-paint-015`).
++                let out_of_flow = doc.nodes[child_id]
++                    .primary_styles()
++                    .is_some_and(|style| style.clone_position().is_absolutely_positioned());
++                if !out_of_flow {
++                    doc.nodes[child_id].remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
++                }
                  collect_table_cells(
-@@ -576,10 +3159,14 @@
+                     doc,
+                     child_id,
+@@ -576,10 +3250,14 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -25724,7 +25810,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  for row in &mut rows[first_row..] {
                      row.group.get_or_insert(node_id);
                  }
-@@ -590,19 +3177,32 @@
+@@ -590,19 +3268,32 @@
              *row += 1;
              cursor.start_row();
  
@@ -25762,7 +25848,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  collect_table_cells(
                      doc,
                      child_id,
-@@ -617,24 +3217,71 @@
+@@ -617,24 +3308,71 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -25841,7 +25927,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  
              // In the collapsed borders model the borders are laid out as gutters between
              // the cells (see the table's `gap`) rather than as part of the cells
-@@ -653,34 +3300,35 @@
+@@ -653,34 +3391,35 @@
                  style.min_size.width = style_helpers::length(0.0);
              }
  
@@ -25897,7 +25983,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                              // Resolved in `build_table_context` once the column count is known
                              percent_columns.push((col, style.size.width.value(), extra));
                              style_helpers::percent(style.size.width.value())
-@@ -726,11 +3374,80 @@
+@@ -726,11 +3465,80 @@
                  }
              }
  
@@ -25978,7 +26064,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  style,
              });
  
-@@ -740,7 +3457,9 @@
+@@ -740,7 +3548,9 @@
          | DisplayInside::FlowRoot
          | DisplayInside::Flex
          | DisplayInside::Grid
@@ -25989,7 +26075,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
              // Probably a table caption: ignore
              // println!(
-@@ -801,7 +3520,7 @@
+@@ -801,7 +3611,7 @@
      type CustomIdent = Atom;
  
      fn get_core_container_style(&self, _node_id: taffy::NodeId) -> &taffy::Style<Atom> {
@@ -25998,7 +26084,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -809,7 +3528,9 @@
+@@ -809,7 +3619,9 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
@@ -26009,7 +26095,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          self.doc.set_unrounded_layout(node_id, layout)
      }
  
-@@ -818,9 +3539,84 @@
+@@ -818,9 +3630,84 @@
          node_id: taffy::NodeId,
          inputs: taffy::tree::LayoutInput,
      ) -> taffy::LayoutOutput {
@@ -26096,7 +26182,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -843,6 +3639,117 @@
+@@ -843,6 +3730,117 @@
          &self.ctx.cells[usize::from(child_node_id)].style
      }
  
@@ -26214,7 +26300,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn set_detailed_grid_info(
          &mut self,
          _node_id: taffy::NodeId,
-@@ -851,3 +3758,496 @@
+@@ -851,3 +3849,496 @@
          *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
      }
  }
@@ -26715,7 +26801,7 @@ diff --git a/packages/blitz-dom/src/layout/table_fixup.rs b/packages/blitz-dom/s
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/table_fixup.rs
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,396 @@
 +//! pyro: the anonymous table objects of CSS 2.1 §17.2.1 (css-tables-3 §3.3, "fixup").
 +//!
 +//! - Consecutive table parts whose parent box is not a table (cells, rows, row groups, columns,
@@ -26884,7 +26970,10 @@ new file mode 100644
 +/// generating no box, which the table build passes over).
 +///
 +/// A table in a vertical writing mode is built as before the fixup (`None`): its children that are
-+/// not its proper children are left out (its captions and anonymous boxes are not laid out in its axes).
++/// not its proper children are left out. (Its captions are laid out; the anonymous boxes wait for
++/// `text-combine-upright` on text that is no element's: WPT css-writing-modes
++/// `text-combine-upright-inherit-all-002` has such text in a table without rows, and lays it out
++/// sideways once the table is fixed up.)
 +pub(crate) fn fixup_children(
 +    doc: &mut BaseDocument,
 +    parent: NodeId,

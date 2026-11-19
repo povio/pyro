@@ -180,11 +180,17 @@ impl TableTreeWrapper<'_, '_> {
             .collect();
         drop(widths);
         // A spanning cell wider than the columns it spans: leave it to the grid.
+        // pyro: but for one whose max-content width alone is (its min-content width fits) in a
+        // table narrower than its columns' min-content widths: the columns are then as wide as
+        // those, whatever the max-content widths are (the grid would keep the table's `width`
+        // and let the cells overflow it).
+        let sum_min = min.iter().sum::<f32>();
+        let at_min = inner < sum_min && !shrink;
         for (column, span, lo, hi) in spanning {
             let end = (column + span).min(n);
             let spacing = gap * (end.saturating_sub(column + 1)) as f32;
             let sum = |w: &[f32]| w[column.min(end)..end].iter().sum::<f32>() + spacing;
-            if lo > sum(&min) + 0.01 || hi > sum(&max) + 0.01 {
+            if lo > sum(&min) + 0.01 || (hi > sum(&max) + 0.01 && !at_min) {
                 return None;
             }
         }
@@ -886,10 +892,24 @@ impl CollapsedEdge {
 }
 
 /// The collapsed borders of a table's grid lines, in the order of `css-tables-3` conflict resolution.
+///
+/// pyro: the segments are indexed by the grid's rows and columns in their own order (row 0 is the
+/// first row and column 0 the first column, whichever way the table's writing mode and direction
+/// run them), and `sides` says which physical border of a box faces each side of its grid area.
+/// So conflict resolution, the half borders of the cells and the table's own border are the same
+/// in every writing mode; only the two ends translate: `offer_box` reads a box's physical borders
+/// through `sides`, and `taffy_rect`/`physical_sides` hand the result back in Taffy's axes (the
+/// grid's) and as physical sides (a cell's own style). Paint maps the grid's space to the table's
+/// box with `grid_to_physical`.
 #[derive(Debug, Clone)]
 pub struct CollapsedEdges {
     pub rows: usize,
     pub columns: usize,
+    /// The physical side (0 top, 1 right, 2 bottom, 3 left) of a box that faces the row-start,
+    /// column-end, row-end and column-start side of its grid area.
+    sides: [u8; 4],
+    /// The table's writing mode (the one its grid runs in).
+    wm: WritingMode,
     /// `rows * (columns + 1)`: the segment of each row on each column line.
     pub vertical: Vec<CollapsedEdge>,
     /// `(rows + 1) * columns`: the segment of each column on each row line.
@@ -904,9 +924,58 @@ impl CollapsedEdges {
         &self.horizontal[line * self.columns + column]
     }
 
-    fn new(rows: usize, columns: usize) -> Self {
+    fn new(rows: usize, columns: usize, wm: WritingMode) -> Self {
+        use stylo_taffy::WritingModeExt as _;
         let none = CollapsedEdge::NONE;
-        Self { rows, columns, vertical: vec![none; rows * (columns + 1)], horizontal: vec![none; (rows + 1) * columns] }
+        // Taffy's top and bottom are the grid's row-start and row-end sides; its left is the
+        // column-start side unless the columns run from its right (`direction`).
+        let taffy = wm.logical_rect(taffy::Rect { top: 0u8, right: 1, bottom: 2, left: 3 });
+        let (column_start, column_end) = match wm.direction() {
+            taffy::Direction::Ltr => (taffy.left, taffy.right),
+            taffy::Direction::Rtl => (taffy.right, taffy.left),
+        };
+        Self {
+            rows,
+            columns,
+            sides: [taffy.top, column_end, taffy.bottom, column_start],
+            wm,
+            vertical: vec![none; rows * (columns + 1)],
+            horizontal: vec![none; (rows + 1) * columns],
+        }
+    }
+
+    /// The physical widths (top, right, bottom, left) of the widths on the row-start, column-end,
+    /// row-end and column-start sides of a grid area.
+    fn physical_sides(&self, grid: [f32; 4]) -> [f32; 4] {
+        let mut physical = [0.0; 4];
+        for (side, width) in self.sides.iter().zip(grid) {
+            physical[*side as usize] = width;
+        }
+        physical
+    }
+
+    /// The same widths in Taffy's axes, as the grid and its items have their borders.
+    fn taffy_rect(&self, grid: [f32; 4]) -> taffy::Rect<f32> {
+        use stylo_taffy::WritingModeExt as _;
+        let [top, right, bottom, left] = self.physical_sides(grid);
+        self.wm.logical_rect(taffy::Rect { top, right, bottom, left })
+    }
+
+    /// Whether the grid's axes are not the physical ones (a table in a vertical writing mode).
+    pub fn is_transposed(&self) -> bool {
+        self.wm.is_vertical()
+    }
+
+    /// A rectangle of the grid's space (Taffy's axes: x along the rows, y across them, from the
+    /// table's border box) in the physical space of the table's border box, `width` wide.
+    pub fn grid_to_physical(&self, (x0, y0, x1, y1): (f64, f64, f64, f64), width: f64) -> (f64, f64, f64, f64) {
+        if !self.wm.is_vertical() {
+            (x0, y0, x1, y1)
+        } else if self.wm.is_vertical_lr() {
+            (y0, x0, y1, x1)
+        } else {
+            (width - y1, x0, width - y0, x1)
+        }
     }
 
     /// Uniform: every vertical segment one width, every horizontal one width, one color.
@@ -1004,8 +1073,9 @@ fn resolve_collapsed_edges(
     rows: &[TableRow],
     table_columns: &[TableColumn],
     columns: usize,
+    wm: WritingMode,
 ) -> CollapsedEdges {
-    let mut edges = CollapsedEdges::new(rows.len(), columns);
+    let mut edges = CollapsedEdges::new(rows.len(), columns, wm);
     let all = EdgeRange { lines: 0..rows.len() + 1, rows: 0..rows.len() };
     for (cell, &(r0, c0, r1, c1)) in cells.iter().zip(areas) {
         if r0 < r1 && c0 < c1 {
@@ -1079,7 +1149,8 @@ fn offer_box(
     }
     let color = styles.clone_color();
     let ncols = edges.columns;
-    for (line, side) in [(r0, 0), (r1, 2)] {
+    let [row_start, column_end, row_end, column_start] = edges.sides.map(usize::from);
+    for (line, side) in [(r0, row_start), (r1, row_end)] {
         if range.lines.contains(&line) {
             for c in c0..c1 {
                 offer_edge(&mut edges.horizontal[line * ncols + c], border, side, &color, priority);
@@ -1087,8 +1158,8 @@ fn offer_box(
         }
     }
     for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
-        offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, 3, &color, priority);
-        offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, 1, &color, priority);
+        offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, column_start, &color, priority);
+        offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, column_end, &color, priority);
     }
 }
 
@@ -1536,11 +1607,11 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     let children =
         super::table_fixup::fixup_children(doc, table_root_node_id, Level::Table, wm.is_vertical(), &mut anonymous)
             .unwrap_or_else(|| doc.nodes[table_root_node_id].children.to_vec());
-    // (Captions are laid out in horizontal tables only: `lay_out_table_captions`.)
+    // (Laid out in the table's axes, on its block-start and block-end sides: `lay_out_table_captions`.)
     let captions: Vec<NodeId> = children
         .iter()
         .copied()
-        .filter(|&id| !wm.is_vertical() && super::table_fixup::kind(doc, id) == Kind::Caption)
+        .filter(|&id| super::table_fixup::kind(doc, id) == Kind::Caption)
         .collect();
     let root_node = &mut doc.nodes[table_root_node_id];
 
@@ -1678,9 +1749,9 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
         )
     });
     let mut early_areas = None;
-    let early_edges = (border_collapse == BorderCollapse::Collapse && !wm.is_vertical()).then(|| {
+    let early_edges = (border_collapse == BorderCollapse::Collapse).then(|| {
         let areas = early_areas.insert(cell_areas(&cells, rows.len(), num_columns as usize));
-        resolve_collapsed_edges(doc, table_root_node_id, &cells, areas, &rows, &columns, num_columns as usize)
+        resolve_collapsed_edges(doc, table_root_node_id, &cells, areas, &rows, &columns, num_columns as usize, wm)
     });
     if is_fixed {
         if let Some(edges) = early_edges.as_ref().filter(|edges| edges_in_use(edges, first_gap)) {
@@ -2049,20 +2120,28 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
 
 /// Whether a collapsed table's borders are cells' and the table's own (not one uniform grid of
 /// gutters as wide as the first cell's borders).
+///
+/// pyro: always in a vertical writing mode (the gutters are the first cell's physical borders, and
+/// are painted as such).
 fn edges_in_use(edges: &CollapsedEdges, gap: (f32, f32)) -> bool {
+    if edges.is_transposed() {
+        return !edges.is_empty() || gap != (0.0, 0.0);
+    }
     !edges.is_empty() && edges.uniform() != Some(gap) || (edges.is_empty() && gap != (0.0, 0.0))
 }
 
 /// The table's border: half of the widest collapsed border on each of its sides.
 fn collapsed_table_border(edges: &CollapsedEdges) -> taffy::Rect<taffy::LengthPercentage> {
-    let half_max = |it: &mut dyn Iterator<Item = f32>| style_helpers::length(it.fold(0.0f32, f32::max) / 2.0);
+    let half_max = |it: &mut dyn Iterator<Item = f32>| it.fold(0.0f32, f32::max) / 2.0;
     let (r, c) = (edges.rows, edges.columns);
-    taffy::Rect {
-        left: half_max(&mut (0..r).map(|i| edges.vertical_at(i, 0).width)),
-        right: half_max(&mut (0..r).map(|i| edges.vertical_at(i, c).width)),
-        top: half_max(&mut (0..c).map(|i| edges.horizontal_at(0, i).width)),
-        bottom: half_max(&mut (0..c).map(|i| edges.horizontal_at(r, i).width)),
-    }
+    edges
+        .taffy_rect([
+            half_max(&mut (0..c).map(|i| edges.horizontal_at(0, i).width)),
+            half_max(&mut (0..r).map(|i| edges.vertical_at(i, c).width)),
+            half_max(&mut (0..c).map(|i| edges.horizontal_at(r, i).width)),
+            half_max(&mut (0..r).map(|i| edges.vertical_at(i, 0).width)),
+        ])
+        .map(style_helpers::length)
 }
 
 /// Gives `cell` (in grid `area`) half of the collapsed borders around it, adding them to its
@@ -2079,10 +2158,15 @@ fn apply_collapsed_borders(
         doc.nodes[cell.node_id].set_collapsed_border(None);
         return false;
     }
-    let top = (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0;
-    let bottom = (c0..c1).map(|i| edges.horizontal_at(r1, i).width).fold(0.0, f32::max) / 2.0;
-    let left = (r0..r1).map(|i| edges.vertical_at(i, c0).width).fold(0.0, f32::max) / 2.0;
-    let right = (r0..r1).map(|i| edges.vertical_at(i, c1).width).fold(0.0, f32::max) / 2.0;
+    // (On the row-start, column-end, row-end and column-start sides of the area.)
+    let grid = [
+        (c0..c1).map(|i| edges.horizontal_at(r0, i).width).fold(0.0, f32::max) / 2.0,
+        (r0..r1).map(|i| edges.vertical_at(i, c1).width).fold(0.0, f32::max) / 2.0,
+        (c0..c1).map(|i| edges.horizontal_at(r1, i).width).fold(0.0, f32::max) / 2.0,
+        (r0..r1).map(|i| edges.vertical_at(i, c0).width).fold(0.0, f32::max) / 2.0,
+    ];
+    // In Taffy's axes, as the cell's sizes are.
+    let taffy::Rect { top, right, bottom, left } = edges.taffy_rect(grid);
     let border = taffy::Rect {
         left: style_helpers::length(left),
         right: style_helpers::length(right),
@@ -2104,7 +2188,7 @@ fn apply_collapsed_borders(
     cell.style.border = border;
     cell.min_height = min_height;
     cell.min_width = min_width;
-    doc.nodes[cell.node_id].set_collapsed_border(Some([top, right, bottom, left]));
+    doc.nodes[cell.node_id].set_collapsed_border(Some(edges.physical_sides(grid)));
     changed
 }
 
@@ -3143,8 +3227,15 @@ fn collect_table_cells(
             let own =
                 if fixed.is_none() { std::mem::take(&mut doc.nodes[node_id].children) } else { Default::default() };
             for child_id in fixed.as_deref().unwrap_or(&own[..]).iter().copied() {
-                doc.nodes[child_id]
-                    .remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                // pyro: not an absolutely positioned child's: it is a box of its own (the table's
+                // `oof_children`), whose content is still to be built (it was never laid out: WPT
+                // css-contain `contain-paint-015`).
+                let out_of_flow = doc.nodes[child_id]
+                    .primary_styles()
+                    .is_some_and(|style| style.clone_position().is_absolutely_positioned());
+                if !out_of_flow {
+                    doc.nodes[child_id].remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                }
                 collect_table_cells(
                     doc,
                     child_id,

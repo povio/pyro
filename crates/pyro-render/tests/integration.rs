@@ -163,3 +163,4 @@ mod multicol_column_height;
 mod outline_offset_clamp;
 mod viewport_overflow;
 mod vertical_lines_and_controls;
+mod vertical_tables;
