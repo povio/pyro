@@ -858,6 +858,14 @@ impl LayoutPassState<'_> {
             Some(_) => self.doc.column_spanner_leads(dom_id),
             None => Vec::new(),
         };
+        // pyro: how far each spanner's negative top margin pulls its row up over the row before
+        // it (that row still ends where its content does: Chromium; WPT css-multicol
+        // `multicol-span-all-children-height-010`).
+        let spanner_lifts: Vec<f32> = match spanning {
+            Some(_) => self.doc.column_spanners_of(dom_id).into_iter().map(|(id, _)| (-self.nodes[id].unrounded_layout().margin.top).max(0.0)).collect(),
+            None => Vec::new(),
+        };
+        let lift = |part: usize| spanner_lifts.get(part).copied().unwrap_or(0.0);
         // pyro: the outer fragmentation this container is nested in (see `fragmentainer`).
         let nested_ctx = (spanners.is_empty() && multicol.height.is_none() && !vertical)
             .then(|| self.nested_fragmentation.get(&dom_id).copied())
@@ -1063,7 +1071,7 @@ impl LayoutPassState<'_> {
                 row_top += rest;
                 break;
             }
-            let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
+            let run_end = spanners.get(part).map_or(breaks.end, |s| s.0 + lift(part));
             if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
                 // (The part `run_start..run_end` of the strip: no copy of the breaks per part.)
                 let run = Part { breaks: &breaks, start: run_start, end: run_end };
@@ -1128,7 +1136,7 @@ impl LayoutPassState<'_> {
                     row_top = last_top + last_height;
                     if let Some(&(start, end, indent)) = spanners.get(part) {
                         let (start, end) = (snap(start), snap(end));
-                        let top = rows.spanner_top(row_top, end - start);
+                        let top = rows.spanner_top(row_top, end - start) - lift(part);
                         fragments.push(ColumnFragment {
                             start,
                             end,
@@ -1220,6 +1228,7 @@ impl LayoutPassState<'_> {
                 if let Some(rows) = slotted {
                     row_top = rows.spanner_top(row_top, end - start);
                 }
+                row_top -= lift(part);
                 fragments.push(ColumnFragment {
                     start,
                     end,
@@ -1449,11 +1458,13 @@ impl LayoutPassState<'_> {
         for (id, parent_offset) in self.doc.column_spanners_of(container) {
             let before = self.doc.content_bottom_before(container, id);
             let layout = *self.nodes[id].unrounded_layout();
-            let current_top = parent_offset.y + layout.location.y - layout.margin.top.max(0.0);
+            // (A negative top margin pulls it back up over that content: Chromium; WPT
+            // css-multicol `multicol-span-all-children-height-010`.)
+            let current_top = parent_offset.y + layout.location.y - layout.margin.top;
             let existing = self.spanner_floors.get(&id).copied();
             // The least top of its border box in its parent's coordinates.
             let wanted = (before > current_top + 0.5 || existing.is_some())
-                .then(|| before + layout.margin.top.max(0.0) - parent_offset.y)
+                .then(|| before + layout.margin.top - parent_offset.y)
                 .filter(|&floor| floor > layout.location.y - 0.5 || existing.is_some());
             let same = match (existing, wanted) {
                 (None, None) => true,
