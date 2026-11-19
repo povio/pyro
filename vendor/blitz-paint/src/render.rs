@@ -6395,8 +6395,27 @@ fn create_css_rect_with_corners(style: &ComputedValues, layout: &Layout, scale: 
                 .flags
                 .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
     };
+    // pyro: a menu list of native appearance (the UA sheet's `-moz-default-appearance: menulist`;
+    // not `menulist-button`, drawn with its own CSS border, nor `none`), no author or user border or
+    // background, has Chromium's themed field's 2px corners (WPT css-ui
+    // `appearance-menulist-button-002`: menulist-button is not an alias of auto).
+    let native_menulist = {
+        use style::computed_values::appearance::T as Appearance;
+        let box_style = style.get_box();
+        *box_style.get__moz_default_appearance() == Appearance::Menulist
+            && !matches!(*box_style.get_appearance(), Appearance::None | Appearance::MenulistButton)
+            && !style
+                .flags
+                .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
+    };
     let native = |radius: Vec2| {
-        if native_button && radius == Vec2::ZERO && !border_shape { Vec2::new(scale, scale) } else { radius }
+        if native_button && radius == Vec2::ZERO && !border_shape {
+            Vec2::new(scale, scale)
+        } else if native_menulist && radius == Vec2::ZERO && !border_shape {
+            Vec2::new(2.0 * scale, 2.0 * scale)
+        } else {
+            radius
+        }
     };
     let kept = |keep: bool, radius: Vec2| if keep { native(radius) } else { Vec2::ZERO };
     let border_radii = NonUniformRoundedRectRadii {

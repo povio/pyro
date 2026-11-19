@@ -147,14 +147,18 @@ meter {
 
 /* Chromium's UA sheet: text inputs are 2px-inset-bordered with 1px 2px
    padding (a 40x30 input's box is 48x36), textareas 1px solid with 2px. */
+/* pyro: and of native appearance (Chromium's html.css: `appearance: auto`), which blitz-paint
+   draws as Chromium's themed field (`native_textfield`); `appearance: none` shows this border. */
 input {
     border: 2px inset #767676;
     padding-block: 1px;
     padding-inline: 2px;
     background-color: Field;
+    appearance: auto;
 }
 
 textarea {
+    appearance: auto;
     border: 1px solid #999;
     padding: 2px;
     background-color: Field;
@@ -181,6 +185,15 @@ select {
     box-sizing: border-box;
     border: 1px solid #767676;
     line-height: normal !important;
+    /* pyro: blitz-paint rounds a native menu list's corners (not of `appearance: none` or
+       `menulist-button`, which is painted with its CSS border). */
+    -moz-default-appearance: menulist;
+}
+
+/* pyro: a list box is no menu list (`menulist-button` is an alias of `auto` on it). */
+select[multiple],
+select[size]:not([size="0"]):not([size="1"]) {
+    -moz-default-appearance: listbox;
 }
 
 /* Chromium: `select:-internal-list-box { vertical-align: text-bottom }`. */

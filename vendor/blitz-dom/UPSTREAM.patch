@@ -77,7 +77,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  input {
      display: inline-block;
  }
-@@ -59,25 +74,98 @@
+@@ -59,25 +74,102 @@
      display: none !important;
  }
  
@@ -160,15 +160,19 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +
 +/* Chromium's UA sheet: text inputs are 2px-inset-bordered with 1px 2px
 +   padding (a 40x30 input's box is 48x36), textareas 1px solid with 2px. */
++/* pyro: and of native appearance (Chromium's html.css: `appearance: auto`), which blitz-paint
++   draws as Chromium's themed field (`native_textfield`); `appearance: none` shows this border. */
 +input {
 +    border: 2px inset #767676;
 +    padding-block: 1px;
 +    padding-inline: 2px;
 +    background-color: Field;
++    appearance: auto;
  }
  
 -input,
  textarea {
++    appearance: auto;
      border: 1px solid #999;
      padding: 2px;
 -    background-color: white;
@@ -184,7 +188,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +174,40 @@
+@@ -86,10 +178,49 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -195,6 +199,15 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    box-sizing: border-box;
 +    border: 1px solid #767676;
 +    line-height: normal !important;
++    /* pyro: blitz-paint rounds a native menu list's corners (not of `appearance: none` or
++       `menulist-button`, which is painted with its CSS border). */
++    -moz-default-appearance: menulist;
++}
++
++/* pyro: a list box is no menu list (`menulist-button` is an alias of `auto` on it). */
++select[multiple],
++select[size]:not([size="0"]):not([size="1"]) {
++    -moz-default-appearance: listbox;
 +}
 +
 +/* Chromium: `select:-internal-list-box { vertical-align: text-bottom }`. */
@@ -225,7 +238,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -121,17 +239,38 @@
+@@ -121,17 +252,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -266,7 +279,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +289,42 @@
+@@ -150,6 +302,42 @@
      background-color: transparent;
  }
  
@@ -309,7 +322,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +344,40 @@
+@@ -169,8 +357,40 @@
      padding-inline-end: 2px;
  }
  
@@ -351,7 +364,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +456,16 @@
+@@ -249,15 +469,16 @@
      unicode-bidi: isolate;
  }
  
@@ -373,7 +386,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +777,19 @@
+@@ -569,6 +790,19 @@
      text-align: center;
  }
  
@@ -393,7 +406,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,10 +1059,42 @@
+@@ -838,10 +1072,42 @@
      border-radius: 0 ! important;
  }
  
@@ -436,7 +449,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1104,18 @@
+@@ -851,8 +1117,18 @@
      user-select: none;
  }
  
@@ -455,7 +468,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1149,15 @@
+@@ -886,14 +1162,15 @@
      display: none;
  }
  
@@ -474,7 +487,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -996,7 +1260,9 @@
+@@ -996,7 +1273,9 @@
      display: none;
  }
  
@@ -485,7 +498,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1394,42 @@
+@@ -1128,37 +1407,42 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

@@ -512,6 +512,21 @@ impl ElementCx<'_, '_> {
         if self.draw_border_image(scene) {
             return;
         }
+        // pyro: a text field of native appearance (`native_textfield`): Chromium's themed field, a
+        // 1px border round the box with 2px corners (`NativeThemeBase::PaintTextField`), in place of
+        // the UA sheet's 2px inset border, which `appearance: none` shows (WPT css-ui
+        // `appearance-invalidate-author-styling-001`).
+        if self.native_textfield() {
+            let bb = self.frame.border_box;
+            let s = self.scale;
+            let outer = kurbo::RoundedRect::from_rect(bb, 2.0 * s);
+            let inner = kurbo::RoundedRect::from_rect(bb.inset(-s), s);
+            let mut ring = outer.to_path(0.1);
+            ring.extend(inner.to_path(0.1));
+            let color = if self.dark_color_scheme() { Color::from_rgb8(133, 133, 133) } else { Color::from_rgb8(118, 118, 118) };
+            scene.fill(Fill::EvenOdd, self.transform, color, None, &ring);
+            return;
+        }
 
         let style = &*self.style;
         let border = style.get_border();
@@ -1428,6 +1443,35 @@ impl ElementCx<'_, '_> {
                 fill(x0, y0, x0 + v, y0 + h, winner.color);
             }
         }
+    }
+
+    /// pyro: whether this is a text field of native appearance: a textarea or a text-like input
+    /// (text, search, url, tel, email, password, number) whose `appearance` is not `none` and whose
+    /// border and background no author or user rule sets (css-ui-4's appearance-disabling
+    /// properties), with the UA sheet's border.
+    pub(crate) fn native_textfield(&self) -> bool {
+        use style::computed_values::appearance::T as Appearance;
+        let name = &self.element.name.local;
+        let text_like = if *name == blitz_dom::local_name!("textarea") {
+            true
+        } else if *name == blitz_dom::local_name!("input") {
+            let ty = self.element.attr(blitz_dom::local_name!("type")).unwrap_or("text").trim().to_ascii_lowercase();
+            matches!(ty.as_str(), "text" | "search" | "url" | "tel" | "email" | "password" | "number" | "")
+                || !matches!(
+                    ty.as_str(),
+                    "checkbox" | "radio" | "range" | "color" | "file" | "hidden" | "image" | "button" | "submit"
+                        | "reset" | "date" | "datetime-local" | "month" | "week" | "time"
+                )
+        } else {
+            false
+        };
+        text_like
+            && *self.style.get_box().get_appearance() != Appearance::None
+            && !self
+                .style
+                .flags
+                .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
+            && self.frame.border_width.x0 > 0.0
     }
 
     /// The outline's style, colour and width (device px), and how far its
