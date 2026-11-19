@@ -1016,6 +1016,14 @@ pub(crate) fn layout_flush(page: &Rc<PageDom>, el: NodeId) {
 /// restyle replaces ([`pyro_dom::style::StyleEngine::take_style_changes`]).
 /// Set before every style sync, so that the first sync after a transition
 /// listener appeared records its changes.
+/// pyro: style changes are tracked before a layout outside the animation frames (the load gate's,
+/// `PageDom::css_images_delay_load`) applies them: the transitions they start are not lost.
+pub(crate) fn track_before_layout(page: &PageDom) {
+    if let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) {
+        track_style_changes(&page.animation_events, &dom, layout.style());
+    }
+}
+
 fn track_style_changes(state: &State, dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine) {
     if state.transitions_tracked(dom, style) {
         style.set_track_style_changes(true);

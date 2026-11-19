@@ -1510,6 +1510,8 @@ impl PageDom {
             None => {
                 let now = std::time::Instant::now();
                 self.load_layout_since.set(Some(now));
+                // (Style changes the scripts made start their transitions: tracked first.)
+                crate::animation_events::track_before_layout(self);
                 if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
                     layout.synced_geometry_source(&dom);
                 }
