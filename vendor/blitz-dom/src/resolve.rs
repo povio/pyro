@@ -366,14 +366,15 @@ impl BaseDocument {
                 }
                 sub_doc.frame_animations = frame_animations.clone();
                 sub_doc.sample_frame_animations(frame_effects.as_deref().map(|v| v.as_slice()));
+                // pyro: its scroll timelines read the frame's scroll position as given (its viewport
+                // clamps it until laid out): its resolve places them at it, styling and laying out
+                // again within that one resolve (`resample_scroll_driven`), each frame resolved once.
+                if let Some((x, y)) = frame_scroll {
+                    sub_doc.set_timeline_scroll(std::collections::HashMap::new(), (x, y));
+                }
                 sub_doc.resolve(current_time_for_animations);
                 if let Some((x, y)) = frame_scroll {
                     sub_doc.set_viewport_scroll(crate::Point { x, y });
-                }
-                // pyro: its scroll-driven animations at the scroll position and layout now (they
-                // are placed after its layout: styled again with them).
-                if sub_doc.has_scroll_driven_animations() {
-                    sub_doc.resolve(current_time_for_animations);
                 }
 
                 subdoc_is_animating |= sub_doc.is_animating();
