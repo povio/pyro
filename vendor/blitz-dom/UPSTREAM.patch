@@ -17765,7 +17765,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +319,513 @@
+@@ -191,13 +319,520 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -18073,23 +18073,28 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// and its height follows from it. A truncating `display: block` line with `contain:
 +    /// inline-size` in a column flex container (Tailwind's `[contain:inline-size]`, Danex's list
 +    /// cells) gives the container none of its width, as in Chrome. `None`: no inline-size
-+    /// containment applies (as for `size_contained_size`), and replaced elements and vertical
-+    /// writing modes are left as they were.
++    /// containment applies (as for `size_contained_size`), replaced elements are left as they
++    /// were, and so is a box laid out in another writing mode than its own. (In a vertical writing
++    /// mode the logical width is its inline size, `contain-intrinsic-height`.)
 +    #[inline(never)]
 +    fn inline_size_contained_width(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<f32> {
 +        use style::values::generics::box_::ContainIntrinsicSize;
 +        use style::values::specified::box_::{DisplayInside, DisplayOutside};
-+        #[cfg(feature = "writing-mode")]
-+        if self.layout_wm.is_vertical() {
-+            return None;
-+        }
 +        let node = &self.nodes[dom_node_id(node_id)];
 +        if node.data.downcast_element().is_some_and(replaced::is_replaced) {
 +            return None;
 +        }
 +        let content_width = {
 +            let styles = node.primary_styles()?;
-+            if styles.writing_mode.is_vertical() {
++            // pyro: a vertical box laid out in its own writing mode too, whose inline size (this
++            // logical width) is its physical height (WPT css-contain `contain-inline-size-intrinsic`).
++            let vertical = styles.writing_mode.is_vertical();
++            #[cfg(feature = "writing-mode")]
++            if self.layout_wm.is_vertical() != vertical {
++                return None;
++            }
++            #[cfg(not(feature = "writing-mode"))]
++            if vertical {
 +                return None;
 +            }
 +            let display = styles.clone_display();
@@ -18101,7 +18106,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            if !contained {
 +                return None;
 +            }
-+            match &styles.get_position().contain_intrinsic_width {
++            let position = styles.get_position();
++            let inline = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
++            match inline {
 +                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
 +                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
 +            }
@@ -18281,7 +18288,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +845,188 @@
+@@ -217,13 +852,188 @@
          }
      }
  
@@ -18470,7 +18477,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1042,43 @@
+@@ -239,8 +1049,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -18515,7 +18522,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1093,7 @@
+@@ -255,7 +1100,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -18524,7 +18531,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -287,15 +1125,47 @@
+@@ -287,15 +1132,47 @@
                          .attr(local_name!("cols"))
                          .and_then(|val| val.parse::<f32>().ok());
  
@@ -18577,7 +18584,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -322,73 +1192,202 @@
+@@ -322,73 +1199,202 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -18819,7 +18826,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1406,50 @@
+@@ -407,39 +1413,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -18891,7 +18898,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1482,90 @@
+@@ -472,6 +1489,90 @@
                          _ => unreachable!(),
                      };
  
@@ -18982,7 +18989,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1582,551 @@
+@@ -488,126 +1589,551 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -19620,7 +19627,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2186,11 @@
+@@ -667,7 +2193,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19633,7 +19640,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2198,15 @@
+@@ -675,6 +2205,15 @@
      }
  
      #[inline(always)]
@@ -19649,7 +19656,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2230,26 @@
+@@ -698,17 +2237,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -19678,7 +19685,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2262,7 @@
+@@ -721,6 +2269,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -19686,7 +19693,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2274,122 @@
+@@ -732,6 +2281,122 @@
      }
  }
  
@@ -19809,7 +19816,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2397,12 @@
+@@ -739,10 +2404,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -19826,7 +19833,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2412,11 @@
+@@ -752,9 +2419,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -19841,7 +19848,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2444,186 @@
+@@ -782,16 +2451,186 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -20032,7 +20039,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2676,30 @@
+@@ -844,6 +2683,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -20063,7 +20070,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2708,19 @@
+@@ -852,7 +2715,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20084,7 +20091,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2736,30 @@
+@@ -868,6 +2743,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -20115,7 +20122,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2864,192 @@
+@@ -972,3 +2871,192 @@
          })
      }
  }

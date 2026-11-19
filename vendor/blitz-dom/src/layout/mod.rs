@@ -621,23 +621,28 @@ impl LayoutPassState<'_> {
     /// and its height follows from it. A truncating `display: block` line with `contain:
     /// inline-size` in a column flex container (Tailwind's `[contain:inline-size]`, Danex's list
     /// cells) gives the container none of its width, as in Chrome. `None`: no inline-size
-    /// containment applies (as for `size_contained_size`), and replaced elements and vertical
-    /// writing modes are left as they were.
+    /// containment applies (as for `size_contained_size`), replaced elements are left as they
+    /// were, and so is a box laid out in another writing mode than its own. (In a vertical writing
+    /// mode the logical width is its inline size, `contain-intrinsic-height`.)
     #[inline(never)]
     fn inline_size_contained_width(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<f32> {
         use style::values::generics::box_::ContainIntrinsicSize;
         use style::values::specified::box_::{DisplayInside, DisplayOutside};
-        #[cfg(feature = "writing-mode")]
-        if self.layout_wm.is_vertical() {
-            return None;
-        }
         let node = &self.nodes[dom_node_id(node_id)];
         if node.data.downcast_element().is_some_and(replaced::is_replaced) {
             return None;
         }
         let content_width = {
             let styles = node.primary_styles()?;
-            if styles.writing_mode.is_vertical() {
+            // pyro: a vertical box laid out in its own writing mode too, whose inline size (this
+            // logical width) is its physical height (WPT css-contain `contain-inline-size-intrinsic`).
+            let vertical = styles.writing_mode.is_vertical();
+            #[cfg(feature = "writing-mode")]
+            if self.layout_wm.is_vertical() != vertical {
+                return None;
+            }
+            #[cfg(not(feature = "writing-mode"))]
+            if vertical {
                 return None;
             }
             let display = styles.clone_display();
@@ -649,7 +654,9 @@ impl LayoutPassState<'_> {
             if !contained {
                 return None;
             }
-            match &styles.get_position().contain_intrinsic_width {
+            let position = styles.get_position();
+            let inline = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
+            match inline {
                 ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
                 ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
             }
