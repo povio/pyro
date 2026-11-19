@@ -1118,7 +1118,10 @@
       a.autoAlign = false;
       a.pending = null;
       settle(a.ready, a.self, false);
-      updateFinished(a, false, false);
+      // (The aligned start time places it as a seek would: past its end it holds the time the
+      // timeline gives, not the one it had; Chromium, WPT scroll-animations
+      // `view-timelines/range-boundary`.)
+      updateFinished(a, true, false);
       return;
     }
     if (a.holdTime !== null) {
@@ -1367,6 +1370,9 @@
   // The effect is current or in effect: getAnimations() lists it.
   function isRelevant(a) {
     if (!a.effect || playStateOf(a) === 'idle' || a.replaceState === 'removed') return false;
+    // (On a progress-based timeline it is current while not idle: the timeline moves either way
+    // as the page scrolls; Web Animations 2, Chromium.)
+    if (progressBased(a)) return true;
     const c = computedTimingOf(a.effect);
     if (c.activeTime !== null) return true;
     const rate = a.rate;
