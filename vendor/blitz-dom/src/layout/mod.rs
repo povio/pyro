@@ -2092,11 +2092,26 @@ impl LayoutPassState<'_> {
                 .margin()
                 .resolve_or_zero(Some(width), resolve_calc_value);
             let inner = (width - margin.left - margin.right).max(0.0);
+            // pyro: a caption with a `width` of its own is that wide, not stretched across the
+            // table (as Chromium; WPT CSS2 `floats/floats-wrap-bfc-006`).
+            let own_width = {
+                use taffy::{MaybeMath as _, MaybeResolve as _};
+                let style = self.nodes[caption].layout_style();
+                let parent = Some(width);
+                let pb = style.padding().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum()
+                    + style.border().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum();
+                let adjust = if style.box_sizing() == taffy::BoxSizing::ContentBox { pb } else { 0.0 };
+                style.size().width.maybe_resolve(parent, resolve_calc_value).map(|w| {
+                    let min = style.min_size().width.maybe_resolve(parent, resolve_calc_value).maybe_add(adjust);
+                    let max = style.max_size().width.maybe_resolve(parent, resolve_calc_value).maybe_add(adjust);
+                    (w + adjust).maybe_min(max).maybe_max(min).max(pb)
+                })
+            };
             let caption_inputs = taffy::tree::LayoutInput {
                 run_mode: inputs.run_mode,
                 sizing_mode: taffy::SizingMode::InherentSize,
                 axis: taffy::RequestedAxis::Both,
-                known_dimensions: taffy::Size { width: Some(inner), height: None },
+                known_dimensions: taffy::Size { width: Some(own_width.unwrap_or(inner)), height: None },
                 known_dimensions_are_definite: taffy::Size { width: true, height: true },
                 parent_size: taffy::Size { width: Some(width), height: None },
                 available_space: taffy::Size {
