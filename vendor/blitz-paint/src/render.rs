@@ -5444,6 +5444,23 @@ impl ElementCx<'_, '_> {
         let clip_rect = Rect::new(-1e9, -1e9, 1e9, 1e9);
         let pb = (layout.padding + layout.border).map(f64::from);
         let content_position = Point { x: pb.left * scale, y: pb.top * scale };
+        // pyro: its `backdrop-filter`, over its box (the capture and the draw markers
+        // `render_element` pushes; anyrender_vello_cpu `backdrop`): WPT filter-effects
+        // `backdrop-filter-svg-foreignObject`.
+        let backdrop = convert_filters(
+            &cx.style.get_effects().backdrop_filter.0,
+            scale,
+            &cx.style.clone_color(),
+            self.context.dom,
+        )
+        .map(Arc::new);
+        if let Some(backdrop) = backdrop {
+            let border_box = Rect::new(0.0, 0.0, width * scale, height * scale).to_path(0.1);
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, transform, &border_box, None, Some(backdrop.clone()));
+            scene.pop_layer();
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, &border_box, None, Some(backdrop));
+            scene.pop_layer();
+        }
         if cx.style.get_inherited_box().visibility == StyloVisibility::Visible {
             cx.draw_background(scene);
             cx.draw_border(scene);
