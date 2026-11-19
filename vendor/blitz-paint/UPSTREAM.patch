@@ -7319,7 +7319,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,292 +2190,2425 @@
+@@ -836,209 +2190,2077 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -9565,11 +9565,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              let (scroll_x, scroll_y) = if input_data.is_multiline {
                  (0.0, scroll_offset)
              } else {
-                 (scroll_offset, 0.0)
-             };
-+
-+            let transform = self.transform
-+                * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
+@@ -1047,81 +4269,346 @@
+ 
+             let transform = self.transform
+                 * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
 +            // pyro: each line's top at the whole CSS pixel Chromium paints it at. A single line
 +            // takes its selection and caret along; in a textarea they stay where the layout has them.
 +            let tops = self.text_placement(y_offset - scroll_y / self.scale).1;
@@ -9581,7 +9580,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Some(shift) => (transform * Affine::translate((0.0, shift)), None),
 +                None => (transform, tops),
 +            };
-+
+ 
+-            if self.node.is_focussed() {
+-                // Render selection/caret
+-                for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
+-                    scene.fill(
+-                        Fill::NonZero,
 +            // pyro: an empty input shows its placeholder, its lines placed as the
 +            // value's (a single line centred in the content box), under the caret.
 +            if let Some(placeholder) = input_data.shown_placeholder() {
@@ -9613,7 +9617,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        scene,
 +                        std::iter::once(line),
 +                        self.context.dom,
-+                        transform,
+                         transform,
+-                        SELECTION_COLOR,
 +                        TextPaintOptions {
 +                            scale: self.scale,
 +                            brush_override: Some(placeholder.color.as_srgb_color()),
@@ -9622,48 +9627,41 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        self.node.id,
 +                        Some(&placeholder.text),
 +                        &mut draw_text_context,
-+                        None,
-+                        None,
-+                    );
-+                }
-+                draw_text_context.line_tops = None;
-+            }
- 
--            let transform = self.transform
--                * Affine::translate((pos.x * self.scale - scroll_x, pos.y * self.scale - scroll_y));
--
-+            // pyro: the text a block caret covers, in `caret-color`'s second colour, and the block.
-+            let mut caret_text: Option<(Color, Rect)> = None;
-             if self.node.is_focussed() {
-                 // Render selection/caret
-+                // pyro: in the control's `::selection` colours (`control_selection_colors`).
-+                let text_color = self.style.get_inherited_text().color.as_srgb_color();
-+                let (selection_background, _) =
-+                    crate::highlight::control_selection_colors(self.context.dom, self.node.id, text_color);
-                 for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
-                     scene.fill(
-                         Fill::NonZero,
-                         transform,
--                        SELECTION_COLOR,
-+                        selection_background,
                          None,
-                         &convert_rect(rect),
+-                        &convert_rect(rect),
++                        None,
                      );
                  }
-                 if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
+-                if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
 -                    let color = self.style.get_inherited_text().color;
 -                    let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
 -                        ColorOrAuto::Auto => color,
 -                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
 -                    };
 -
--                    scene.fill(
--                        Fill::NonZero,
--                        transform,
++                draw_text_context.line_tops = None;
++            }
++
++            // pyro: the text a block caret covers, in `caret-color`'s second colour, and the block.
++            let mut caret_text: Option<(Color, Rect)> = None;
++            if self.node.is_focussed() {
++                // Render selection/caret
++                // pyro: in the control's `::selection` colours (`control_selection_colors`).
++                let text_color = self.style.get_inherited_text().color.as_srgb_color();
++                let (selection_background, _) =
++                    crate::highlight::control_selection_colors(self.context.dom, self.node.id, text_color);
++                for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
+                     scene.fill(
+                         Fill::NonZero,
+                         transform,
 -                        caret_color.as_srgb_color(),
--                        None,
++                        selection_background,
+                         None,
 -                        &convert_rect(&cursor),
--                    );
++                        &convert_rect(rect),
+                     );
++                }
++                if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
 +                    let (rect, caret_color, text) = self.control_caret(input_data, &cursor);
 +                    if let Some(text) = text {
 +                        caret_text = Some((text, rect));
@@ -9959,7 +9957,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
              };
  
-@@ -1145,93 +4632,1091 @@
+@@ -1145,93 +4632,1104 @@
                  TextPaintOptions {
                      scale: self.scale,
                      brush_override: None,
@@ -10641,7 +10639,20 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let tree = self.context.dom.as_ref().tree();
 +            for &child_id in children {
 +                if self.paint_level(&tree[child_id]) == 2 {
++                    // pyro: a float painted here (positioned, a stacking context) is clipped as
++                    // the others are (WPT css-overflow `line-clamp-with-floats-008`, `-009`).
++                    let clip = clamp_clip.filter(|_| {
++                        tree[child_id]
++                            .primary_styles()
++                            .is_some_and(|style| style.clone_float() != style::computed_values::float::T::None)
++                    });
++                    if let Some(rect) = &clip {
++                        scene.push_clip_layer(Fill::NonZero, self.transform, rect);
++                    }
 +                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
++                    if clip.is_some() {
++                        scene.pop_layer();
++                    }
 +                }
 +            }
 +        }
@@ -11104,7 +11115,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +5738,20 @@
+@@ -1253,9 +5751,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -11128,7 +11139,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +5762,209 @@
+@@ -1266,26 +5775,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -11340,7 +11351,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +5972,38 @@
+@@ -1293,15 +5985,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -11380,7 +11391,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +6014,108 @@
+@@ -1312,7 +6027,108 @@
          );
      }
  
@@ -11489,7 +11500,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +6132,22 @@
+@@ -1329,9 +6145,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -11515,7 +11526,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +6163,28 @@
+@@ -1347,10 +6176,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -11544,7 +11555,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +6192,23 @@
+@@ -1358,8 +6205,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -11569,7 +11580,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +6232,27 @@
+@@ -1383,22 +6245,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -11606,7 +11617,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +6281,14 @@
+@@ -1427,6 +6294,14 @@
      }
  }
  
@@ -11621,7 +11632,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +6300,13 @@
+@@ -1438,6 +6313,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -11635,7 +11646,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +6326,234 @@
+@@ -1457,12 +6339,234 @@
          }
      };
      let s_border = style.get_border();

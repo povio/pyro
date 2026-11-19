@@ -5310,7 +5310,20 @@ impl ElementCx<'_, '_> {
             let tree = self.context.dom.as_ref().tree();
             for &child_id in children {
                 if self.paint_level(&tree[child_id]) == 2 {
+                    // pyro: a float painted here (positioned, a stacking context) is clipped as
+                    // the others are (WPT css-overflow `line-clamp-with-floats-008`, `-009`).
+                    let clip = clamp_clip.filter(|_| {
+                        tree[child_id]
+                            .primary_styles()
+                            .is_some_and(|style| style.clone_float() != style::computed_values::float::T::None)
+                    });
+                    if let Some(rect) = &clip {
+                        scene.push_clip_layer(Fill::NonZero, self.transform, rect);
+                    }
                     self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                    if clip.is_some() {
+                        scene.pop_layer();
+                    }
                 }
             }
         }

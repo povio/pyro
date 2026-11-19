@@ -23221,7 +23221,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                                  self.scratch
                                      .keyed_children
                                      .push(((2, paint_order.1), entry.node_id));
-@@ -369,15 +688,39 @@
+@@ -369,15 +688,51 @@
                  while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                      && anchor == index
                  {
@@ -23256,14 +23256,26 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                self.order_inline_span_entries(node_id, keyed_base);
 +            }
              self.scratch.keyed_children[keyed_base..].sort_by_key(|&(paint_order, _)| paint_order);
-+            let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), _)| level == 1);
++            // pyro: a `line-clamp` container paints a positioned float in phases too, to clip it
++            // (`is_paint_layer_root`; WPT css-overflow `line-clamp-with-floats-008`).
++            let clamps = self.nodes[node_id].primary_styles().is_some_and(|style| {
++                let clamp = &style.get_box().line_clamp;
++                !clamp.webkit_legacy && !clamp.max_lines.is_none()
++            });
++            let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), id)| {
++                level == 1
++                    || (clamps
++                        && self.nodes[id]
++                            .primary_styles()
++                            .is_some_and(|style| style.clone_float() != style::computed_values::float::T::None))
++            });
 +            self.nodes[node_id].flags.set(NodeFlags::HAS_FLOAT_PAINT_CHILDREN, has_floats);
 +            let lifts_floats = entries.iter().any(|entry| entry.is_float);
 +            self.nodes[node_id].flags.set(NodeFlags::LIFTS_FLOATS, lifts_floats);
  
              let mut paint_children = self.nodes[node_id]
                  .paint_children
-@@ -392,9 +735,14 @@
+@@ -392,9 +747,14 @@
                      .map(|(_, id)| id),
              );
  
@@ -23278,7 +23290,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          }
  
          let node = &mut self.nodes[node_id];
-@@ -408,6 +756,229 @@
+@@ -408,6 +768,229 @@
          }
      }
  
@@ -23508,7 +23520,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The layout child of `node_id` whose subtree contains `id`, following
      /// `layout_parent`.
      fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
-@@ -426,15 +997,20 @@
+@@ -426,15 +1009,20 @@
      /// the enclosing stacking context like any other z-indexed positioned
      /// child, the rest join `paint_children` at the same paint level as other
      /// positioned boxes (the caller's stable sort keeps tree order).
@@ -23530,7 +23542,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  true => None,
                  false => Some(entries),
              },
-@@ -443,11 +1019,112 @@
+@@ -443,11 +1031,112 @@
          let z_index = self.nodes[child_id].z_index();
          if z_index != 0 {
              entries.push(HoistedPaintChild::new(child_id, z_index));
@@ -23643,7 +23655,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1148,166 @@
+@@ -471,22 +1160,169 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -23651,6 +23663,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            // (`layout::multicol`).
 +            || self.column_fragments().is_some()
 +            || self.vertical_column_fragments().is_some()
++            // pyro: a `line-clamp` container clips its floats, the positioned ones too (CSS
++            // Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-008`).
++            || (!box_style.line_clamp.webkit_legacy && !box_style.line_clamp.max_lines.is_none())
      }
  
 -    /// Whether this is a `position: relative` or `sticky` box.
@@ -23817,7 +23832,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1317,21 @@
+@@ -496,6 +1332,21 @@
      }
  }
  
@@ -23839,7 +23854,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1375,143 @@
+@@ -539,3 +1390,143 @@
          )
      }
  }

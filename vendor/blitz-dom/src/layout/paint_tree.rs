@@ -717,7 +717,19 @@ impl BaseDocument {
                 self.order_inline_span_entries(node_id, keyed_base);
             }
             self.scratch.keyed_children[keyed_base..].sort_by_key(|&(paint_order, _)| paint_order);
-            let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), _)| level == 1);
+            // pyro: a `line-clamp` container paints a positioned float in phases too, to clip it
+            // (`is_paint_layer_root`; WPT css-overflow `line-clamp-with-floats-008`).
+            let clamps = self.nodes[node_id].primary_styles().is_some_and(|style| {
+                let clamp = &style.get_box().line_clamp;
+                !clamp.webkit_legacy && !clamp.max_lines.is_none()
+            });
+            let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), id)| {
+                level == 1
+                    || (clamps
+                        && self.nodes[id]
+                            .primary_styles()
+                            .is_some_and(|style| style.clone_float() != style::computed_values::float::T::None))
+            });
             self.nodes[node_id].flags.set(NodeFlags::HAS_FLOAT_PAINT_CHILDREN, has_floats);
             let lifts_floats = entries.iter().any(|entry| entry.is_float);
             self.nodes[node_id].flags.set(NodeFlags::LIFTS_FLOATS, lifts_floats);
@@ -1152,6 +1164,9 @@ impl Node {
             // (`layout::multicol`).
             || self.column_fragments().is_some()
             || self.vertical_column_fragments().is_some()
+            // pyro: a `line-clamp` container clips its floats, the positioned ones too (CSS
+            // Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-008`).
+            || (!box_style.line_clamp.webkit_legacy && !box_style.line_clamp.max_lines.is_none())
     }
 
     /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
