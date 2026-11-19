@@ -169,6 +169,9 @@ pub struct Resource {
     pub partial: Option<pyro_webapi::Partial>,
     /// The response said `X-Content-Type-Options: nosniff`: a style sheet must be `text/css`.
     pub nosniff: bool,
+    /// pyro: the response's tainting is "opaque" (Fetch): a no-cors request that reached another
+    /// origin at any hop of its redirect chain, even one that ended back at its own origin.
+    pub opaque: bool,
 }
 
 impl Resource {
@@ -434,6 +437,7 @@ impl ResourceLoader for NetLoader {
                 timing: report.filter(|_| document).map(Box::new),
                 partial: None,
                 nosniff: false,
+                opaque: false,
             };
             browser.scheduler().post(TaskSource::Networking, move |b| {
                 b.report_resource_delivery(
@@ -507,6 +511,7 @@ impl ResourceLoader for NetLoader {
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
                     nosniff: false,
+                    opaque: h.kind == pyro_net::ResponseKind::Opaque,
                 };
                 let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Ok(resource)));
                 // Stop the transfer: a live stream never ends.
@@ -534,6 +539,7 @@ impl ResourceLoader for NetLoader {
                     Some(h) => Ok(Resource {
                         timing: timing(&h),
                         partial: None,
+                        opaque: h.kind == pyro_net::ResponseKind::Opaque,
                         nosniff: h
                             .headers
                             .get("x-content-type-options")
@@ -800,6 +806,7 @@ impl ResourceLoader for StaticLoader {
                         timing: None,
                         partial,
                         nosniff: false,
+                        opaque: false,
                     })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
@@ -1071,10 +1078,14 @@ pub(crate) fn integrity_error(
     document_origin: &str,
 ) -> Option<String> {
     let integrity = integrity.filter(|v| !pyro_webapi::sri::is_empty(v))?;
-    let opaque = !cors && {
-        let origin = origin_of(&resource.url);
-        origin != "null" && origin != document_origin
-    };
+    // pyro: the response's own tainting (a no-cors redirect chain through another origin is
+    // opaque though it ends at this one), else the final URL's origin for a loader that does
+    // not report it.
+    let opaque = resource.opaque
+        || (!cors && {
+            let origin = origin_of(&resource.url);
+            origin != "null" && origin != document_origin
+        });
     if opaque {
         return Some(format!(
             "Subresource Integrity: The resource '{}' has an integrity attribute, but the resource requires the \
@@ -1347,6 +1358,7 @@ impl Browser {
             timing: None,
             partial: None,
                 nosniff: false,
+            opaque: false,
         };
         if let Err(e) =
             self.begin_document_with(page, &document, loader_id.clone(), resource, history, Some(unreachable))
@@ -2851,6 +2863,35 @@ fn disposition_filename(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod disposition_tests {
+    /// Subresource Integrity refuses an opaque response (a no-cors request whose redirect chain
+    /// went through another origin) though it ends at the document's own origin and its digest
+    /// matches: opacity was read off the final URL.
+    #[test]
+    fn integrity_refuses_an_opaque_response_that_ends_at_the_documents_origin() {
+        let body = b"body".to_vec();
+        let integrity = pyro_webapi::sri::sha256_expression(&body);
+        use super::{integrity_error, Resource};
+        let resource = |opaque| Resource {
+            url: "http://site.test/a.js".into(),
+            status: 200,
+            mime: "text/javascript".into(),
+            charset: None,
+            body: body.clone(),
+            content_disposition: None,
+            header_csp: None,
+            refresh: None,
+            content_language: None,
+            referrer_policy: None,
+            sent_referrer: None,
+            timing: None,
+            partial: None,
+            nosniff: false,
+            opaque,
+        };
+        assert!(integrity_error(&resource(false), Some(&integrity), false, "http://site.test").is_none());
+        assert!(integrity_error(&resource(true), Some(&integrity), false, "http://site.test").is_some());
+    }
+
     use super::{disposition_filename, is_attachment, suggested_filename};
 
     #[test]

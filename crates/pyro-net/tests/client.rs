@@ -83,6 +83,19 @@ fn start_server() -> Server {
                         hv("origin")
                     ));
                     match (method.as_str(), path.as_str()) {
+                        // pyro: away to another origin and back to this one.
+                        (_, "/away") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://localhost:{port}/back"))],
+                            b"",
+                        ),
+                        (_, "/back") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://127.0.0.1:{port}/plain"))],
+                            b"",
+                        ),
                         (_, "/auth-start") => respond(
                             &mut stream,
                             "302 Found",
@@ -585,6 +598,25 @@ fn regression_authorization_stripped_on_cross_origin_redirect() {
     let (_, _, b, e) = collect(&c, r);
     assert_eq!(e, None);
     assert!(b.is_empty(), "redirect leaked {}", String::from_utf8_lossy(&b));
+}
+/// Fetch "response tainting": a no-cors request that went to another origin is opaque from
+/// then on, even when its redirect chain ends back at its own origin (so Subresource Integrity
+/// refuses it, and a canvas is tainted by it). The final hop's origin alone decided.
+#[test]
+fn a_no_cors_redirect_chain_through_another_origin_is_opaque() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let mut r = Request::get(url(&s, "/away"), Destination::Image);
+    r.origin = Some(url(&s, "/").origin().ascii_serialization());
+    let (kinds, head, _, e) = collect(&c, r);
+    assert_eq!(e, None, "{kinds:?}");
+    let head = head.expect("a response");
+    assert_eq!(head.url.host_str(), Some("127.0.0.1"), "back at its own origin");
+    assert_eq!(head.kind, ResponseKind::Opaque, "{kinds:?}");
+    // Without the detour it is basic.
+    let mut r = Request::get(url(&s, "/plain"), Destination::Image);
+    r.origin = Some(url(&s, "/").origin().ascii_serialization());
+    assert_eq!(collect(&c, r).1.expect("a response").kind, ResponseKind::Basic);
 }
 #[test]
 fn regression_data_body_cap() {

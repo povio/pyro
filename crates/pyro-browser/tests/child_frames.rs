@@ -272,7 +272,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             sent_referrer: None,
             timing: None,
             partial: None,
-                nosniff: false,
+                nosniff: false, opaque: false,
         }),
     );
     settle(&mut t);

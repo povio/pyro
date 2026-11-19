@@ -1858,6 +1858,9 @@ impl Io {
         let mut site = FetchSite::None;
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
+        // pyro: Fetch "response tainting" of a no-cors request: "opaque" from the first hop to
+        // another origin on, a later same-origin hop included (a redirect back does not clear it).
+        let mut no_cors_opaque = false;
         let mut unconditional = false; // a 304 no longer matched its entry: refetch without validators
         let mut pause_response: Option<RequestInfo> = None; // set by `PauseResponse`: the final hop's response is paused
 
@@ -1889,6 +1892,9 @@ impl Io {
             let same_origin = req.origin.is_none()
                 || (!tainted && origin_url.as_ref().is_some_and(|o| cors::same_origin(o, &req.url)));
             let cors_cross = self.shared.config.enforce_cors && req.mode == RequestMode::Cors && !same_origin;
+            no_cors_opaque |= req.mode == RequestMode::NoCors && !same_origin;
+            // Same-origin as far as the response's tainting goes (`no_cors_opaque`).
+            let basic_tainting = same_origin && !no_cors_opaque;
             site = site.max(hop_site(&req, origin_url.as_ref()));
             // The first hop of a request its caller's thread paused comes
             // with its headers built, its start published and its decision.
@@ -2051,7 +2057,7 @@ impl Io {
                     crate::cache::Lookup::Hit(cached) => {
                         // A stored response passes the TAO check a network one would.
                         crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
-                        let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                        let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                         return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                     }
                     crate::cache::Lookup::Revalidate(cached) if !unconditional => {
@@ -2075,7 +2081,7 @@ impl Io {
                 let lookup = store.with(|c| c.lookup(&url, &headers, credentialed, cache_mode, request_time));
                 if let crate::cache::Lookup::Hit(cached) = lookup {
                     crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
-                    let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                    let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                     return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                 }
             }
@@ -2218,7 +2224,7 @@ impl Io {
                     );
                     match updated {
                         Some(updated) => {
-                            let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                            let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                             return self.serve_cached(id, &req, sink, &url, updated, hop, false, 0);
                         }
                         None => {
@@ -2306,7 +2312,7 @@ impl Io {
                 cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                     .map_err(NetError::Cors)?;
                 ResponseKind::Cors
-            } else if req.mode == RequestMode::NoCors && !same_origin {
+            } else if req.mode == RequestMode::NoCors && !basic_tainting {
                 ResponseKind::Opaque
             } else {
                 ResponseKind::Basic
