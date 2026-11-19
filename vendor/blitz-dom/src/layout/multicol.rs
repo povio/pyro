@@ -81,6 +81,10 @@ pub struct ColumnFragments {
     /// In order: the first shows the strip from its start, the last to its end. Columns of one
     /// row share their `top`; a column spanner is a row of its own.
     pub fragments: Vec<ColumnFragment>,
+    /// pyro: the outer fragmentation this container was laid out in, as a multi-column container
+    /// nested in another's columns (`LayoutPassState::nested_fragmentation`): the outer column
+    /// height and how far down its column the box starts.
+    pub nested: Option<(f32, f32)>,
 }
 
 /// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -210,6 +214,9 @@ struct Breaks {
     trims: Vec<(f32, f32, f32, f32)>,
     /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
     forced: Vec<f32>,
+    /// pyro: the multi-column containers in the strip's flow (no other break context between
+    /// them and the container) and their tops.
+    nested: Vec<(crate::NodeId, f32)>,
 }
 
 /// pyro: the rows of a multi-column container with an explicit `column-height` and wrapping
@@ -662,32 +669,7 @@ impl LayoutPassState<'_> {
         let spanning = (!inline_root).then(|| (dom_id, content_width)).filter(|_| self.doc.has_column_spanners(dom_id));
         let outer_spanners = std::mem::replace(&mut self.column_spanners, spanning);
         let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height.map(|height| (dom_id, height)));
-        let strip = if inline_root {
-            self.compute_inline_layout(dom_id, strip_inputs, None)
-        } else {
-            compute_block_layout(self, node_id, strip_inputs, None)
-        };
-        self.multicol_percent_height = outer_percent_height;
-        self.column_spanners = outer_spanners;
-        if inputs.run_mode == RunMode::ComputeSize {
-            // The strip wrote its boxes' layouts at this width: a cached final layout of the
-            // container at another width would leave them there.
-            use taffy::CacheTree as _;
-            self.cache_clear(node_id);
-        }
         let content_top = pb.top;
-        // Taffy's block algorithm clamps the strip by the container's `min-height` and
-        // `max-height` whatever the sizing mode: under either, the content's end is taken from
-        // the laid-out content instead (empty space a `min-height` adds is no content to balance).
-        let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-        let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
-        breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
-        // The strip's parts: runs of columns, and the spanners between them (strip ranges).
-        let spanners = match spanning {
-            Some(_) => self.doc.column_spanner_ranges(dom_id),
-            None => Vec::new(),
-        };
-
         // The column height.
         let definite_height = inputs
             .known_dimensions
@@ -697,6 +679,89 @@ impl LayoutPassState<'_> {
         let limit = definite_height.or(max_size.height.map(|h| (h - pb_sum.height).max(0.0)));
         let fill_auto = matches!((multicol.fill, definite_height), (ColumnFill::Auto, Some(_)))
             && (size.height.is_some() || inputs.known_dimensions.height.is_some());
+        let vertical = self.nodes[dom_id].primary_styles().is_some_and(|style| style.writing_mode.is_vertical());
+        // pyro: the columns' height when it is known before the content is: what a multi-column
+        // container nested in them is fragmented by (`nested_fragmentation`).
+        let fragmentainer = (spanning.is_none() && !vertical)
+            .then(|| match multicol.height {
+                Some(height) if !multicol.wrap => Some(height),
+                Some(_) => None,
+                None => definite_height.filter(|_| fill_auto),
+            })
+            .flatten()
+            .filter(|&height| height >= 1.0);
+        let mut pass = 0;
+        let (strip, mut breaks) = loop {
+            let strip = if inline_root {
+                self.compute_inline_layout(dom_id, strip_inputs, None)
+            } else {
+                compute_block_layout(self, node_id, strip_inputs, None)
+            };
+            // Taffy's block algorithm clamps the strip by the container's `min-height` and
+            // `max-height` whatever the sizing mode: under either, the content's end is taken from
+            // the laid-out content instead (empty space a `min-height` adds is no content to balance).
+            let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
+            let breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
+            pass += 1;
+            if breaks.nested.is_empty() || pass > 3 {
+                break (strip, breaks);
+            }
+            // pyro: a multi-column container nested in these columns is fragmented by them: it is
+            // told the column height and where in its column it starts, and the strip is laid out
+            // again until that holds (a nested container's rows end where these columns do).
+            let columns = fragmentainer.map(|height| breaks.fill(height, MAX_COLUMNS).columns);
+            let mut changed = false;
+            for &(id, y) in &breaks.nested {
+                let wanted = fragmentainer.zip(columns.as_ref()).map(|(height, columns)| {
+                    let start = columns.iter().rev().find(|c| c.0 <= y + EPSILON).map_or(breaks.start, |c| c.0);
+                    (height, (y - start).clamp(0.0, height))
+                });
+                let used = self.nodes[id]
+                    .element_data()
+                    .and_then(|e| e.layout_data.as_deref())
+                    .and_then(|l| l.columns.as_deref())
+                    .and_then(|c| c.nested);
+                self.nested_fragmentation.retain(|e| e.0 != id);
+                if let Some(wanted) = wanted {
+                    self.nested_fragmentation.push((id, wanted));
+                }
+                let same = match (used, wanted) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => (a.0 - b.0).abs() <= EPSILON && (a.1 - b.1).abs() <= EPSILON,
+                    _ => false,
+                };
+                if !same {
+                    changed = true;
+                    use taffy::CacheTree as _;
+                    let mut at = Some(id);
+                    while let Some(node) = at.filter(|&n| n != dom_id) {
+                        self.cache_clear(crate::taffy_node_id(node));
+                        at = self.nodes[node].layout_parent.get();
+                    }
+                }
+            }
+            if !changed {
+                break (strip, breaks);
+            }
+        };
+        self.multicol_percent_height = outer_percent_height;
+        self.column_spanners = outer_spanners;
+        if inputs.run_mode == RunMode::ComputeSize {
+            // The strip wrote its boxes' layouts at this width: a cached final layout of the
+            // container at another width would leave them there.
+            use taffy::CacheTree as _;
+            self.cache_clear(node_id);
+        }
+        breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
+        // The strip's parts: runs of columns, and the spanners between them (strip ranges).
+        let spanners = match spanning {
+            Some(_) => self.doc.column_spanner_ranges(dom_id),
+            None => Vec::new(),
+        };
+        // pyro: the outer fragmentation this container is nested in (see `fragmentainer`).
+        let nested_ctx = (spanners.is_empty() && multicol.height.is_none() && !vertical)
+            .then(|| self.nested_fragmentation.iter().find(|e| e.0 == dom_id).map(|e| e.1))
+            .flatten();
 
         // The fragments, row by row: as many columns as each run of content needs, past the
         // container's end if it must.
@@ -715,7 +780,64 @@ impl LayoutPassState<'_> {
             let height = height.max(0.0);
             RowSlots { origin: content_top, height, stride: height + multicol.row_gap(definite_height) }
         });
+        // pyro: nested in another container's columns (`nested_ctx`), the columns make a row in
+        // each outer column the box reaches: the first as tall as what is left of its outer
+        // column, the others as tall as an outer column, each filled in turn; the row the content
+        // ends in is balanced (unless `column-fill: auto`). A definite height ends the rows.
+        if let Some((outer_height, offset)) = nested_ctx {
+            let box_end = definite_height.map(|height| content_top + height);
+            let first = outer_height - offset - content_top;
+            let (mut top, mut available) = if first >= 1.0 { (content_top, first) } else { (content_top, outer_height) };
+            let mut start = breaks.start;
+            let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
+            for _ in 0..MAX_COLUMNS {
+                let row_height = box_end.map_or(available, |end| available.min(end - top).max(1.0));
+                let last_box_row = box_end.is_some_and(|end| top + available >= end - EPSILON);
+                let rest = Breaks { start, ..breaks.clone() };
+                let run = rest.fill(row_height, count + 1);
+                if run.columns.len() <= count || last_box_row {
+                    // (`column-fill: auto` without a definite height balances too.)
+                    let height = if matches!(multicol.fill, ColumnFill::Balance) || !fill_auto {
+                        rest.balance(count, Some(row_height)).min(row_height)
+                    } else {
+                        row_height
+                    };
+                    let columns = rest.fill(height, MAX_COLUMNS).columns;
+                    let shown = if box_end.is_some() { row_height } else { height };
+                    placed.extend(columns.into_iter().map(|(a, b)| (a, b, top, shown)));
+                    row_top = top + shown;
+                    break;
+                }
+                placed.extend(run.columns.iter().take(count).map(|&(a, b)| (a, b, top, row_height)));
+                start = run.columns[count].0;
+                top += row_height;
+                available = outer_height;
+                row_top = top;
+            }
+            let mut index = 0;
+            let mut previous_top = f32::NAN;
+            for (start, end, row, height) in placed {
+                index = if row == previous_top { index + 1 } else { 0 };
+                previous_top = row;
+                let x = column_x(index);
+                let start = snap(start);
+                // (Not snapped: the rows meet the outer columns' breaks exactly.)
+                fragments.push(ColumnFragment {
+                    start,
+                    end: snap(end),
+                    x,
+                    width: column_width,
+                    top: row,
+                    height,
+                    offset: Point { x: x - pb.left, y: row - start },
+                    spanner: false,
+                });
+            }
+        }
         for part in 0..=spanners.len() {
+            if nested_ctx.is_some() {
+                break;
+            }
             let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
             if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
                 let run = Breaks { start: run_start, end: run_end, ..breaks.clone() };
@@ -911,8 +1033,7 @@ impl LayoutPassState<'_> {
         // that position is shown: in its column (Chromium places it in the fragment its static
         // position falls in).
         let mut oof_candidates = strip.oof_candidates;
-        let columns = ColumnFragments { fragments };
-        let vertical = self.nodes[dom_id].primary_styles().is_some_and(|style| style.writing_mode.is_vertical());
+        let columns = ColumnFragments { fragments, nested: nested_ctx };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -1231,6 +1352,7 @@ impl BaseDocument {
             gaps: found.gaps,
             trims: found.trims,
             forced: found.forced,
+            nested: found.nested,
         }
     }
 
@@ -1435,6 +1557,9 @@ impl BaseDocument {
                 if held_whole(child, &style) {
                     found.whole.push((child_top, child_bottom));
                 }
+                if is_multicol_style(&style) && !style.writing_mode.is_vertical() {
+                    found.nested.push((child_id, child_top));
+                }
             }
         }
     }
@@ -1446,6 +1571,8 @@ struct Found {
     strict: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::whole`].
     whole: Vec<(f32, f32)>,
+    /// pyro: see [`Breaks::nested`].
+    nested: Vec<(crate::NodeId, f32)>,
     loose: Vec<(f32, f32)>,
     gaps: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::trims`].
@@ -1522,6 +1649,7 @@ mod tests {
             gaps: Vec::new(),
             trims: Vec::new(),
             forced: Vec::new(),
+            nested: Vec::new(),
         }
     }
 
@@ -1603,6 +1731,7 @@ mod tests {
     #[test]
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
+            nested: None,
             fragments: vec![
                 column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
                 column(100.0, f32::INFINITY, 120.0, 0.0, (120.0, -100.0)),
@@ -1624,6 +1753,7 @@ mod tests {
         // The first column ends at 100 where a margin starts, the second starts past it at 120;
         // a third follows.
         let columns = ColumnFragments {
+            nested: None,
             fragments: vec![
                 column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
                 column(120.0, 220.0, 120.0, 0.0, (120.0, -120.0)),
@@ -1652,6 +1782,7 @@ mod tests {
             spanner: true,
         };
         let columns = ColumnFragments {
+            nested: None,
             fragments: vec![
                 column(f32::NEG_INFINITY, 100.0, 0.0, 0.0, (0.0, 0.0)),
                 column(100.0, 200.0, 120.0, 0.0, (120.0, -100.0)),

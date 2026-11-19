@@ -143,6 +143,9 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: multi-column containers nested in another's columns and the outer column height and
+    /// their offset down their outer column (`layout::multicol`).
+    pub(crate) nested_fragmentation: Vec<(crate::NodeId, (f32, f32))>,
     /// pyro: a table cell being laid out and the border-box height its children's percentage
     /// heights resolve against: its own length `height` (`table::TableTreeWrapper::definite_height`).
     pub(crate) cell_percent_height: Option<(crate::NodeId, f32)>,
@@ -194,6 +197,7 @@ impl<'doc> LayoutPassState<'doc> {
             column_spanners: None,
             calc_size_results: Vec::new(),
             multicol_percent_height: None,
+            nested_fragmentation: Vec::new(),
             cell_percent_height: None,
             restricted_cell: None,
             stale_lines: Vec::new(),
