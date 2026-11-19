@@ -2573,7 +2573,9 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
 
             // A block container's first baseline is the first baseline of its first in-flow child
             // that has one. The child's relative offset does not affect it.
-            if first_baseline.is_none() {
+            // pyro: an orthogonal child contributes no baseline set (css-align-3 §9.1).
+            let orthogonal = tree.block_child_is_orthogonal(item.node_id);
+            if first_baseline.is_none() && !orthogonal {
                 let child_baseline =
                     child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                 first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
@@ -2590,7 +2592,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             // tables sits on its bottom margin edge whatever their rows hold; WPT
             // `position-relative-table-*`).
             // A block container gives its own: none when it holds no line box (but tables).
-            let child_last_baseline = if item.is_table {
+            let child_last_baseline = if item.is_table || orthogonal {
                 None
             } else if item.overflow.y.is_scroll_container() && item.is_block_container {
                 // (A flex or grid scroll container gives its contents' baseline, as Blink: WPT

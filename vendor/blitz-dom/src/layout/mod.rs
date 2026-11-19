@@ -2348,6 +2348,18 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             || self.establishes_writing_mode_root(child_node_id)
     }
 
+    fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
+        #[cfg(feature = "writing-mode")]
+        {
+            self.layout_wm_of(dom_node_id(child_node_id)).is_vertical() != self.layout_wm.is_vertical()
+        }
+        #[cfg(not(feature = "writing-mode"))]
+        {
+            let _ = child_node_id;
+            false
+        }
+    }
+
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
         let node = self.node_from_id(node_id);
         node.is_split_inline() || node.is_inline_with_only_block_children() || self.quirks_skips_for_percent_height(node)

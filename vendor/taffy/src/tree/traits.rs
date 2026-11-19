@@ -510,6 +510,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
+    /// pyro: whether a block-level child is laid out in a writing mode orthogonal to this
+    /// container's: it contributes no baseline set to it (css-align-3 §9.1).
+    fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
+    }
+
     /// pyro: whether percentage heights of the container's children resolve against the height
     /// of the container's own containing block: the container is no containing block itself (an
     /// inline box split around block-level content, laid out as a block box; CSS 2.1 § 10.1:
