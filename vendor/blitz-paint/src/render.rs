@@ -2501,7 +2501,10 @@ fn truncate_line(
     // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
     // clamp's) keeps all of its atoms when the ellipsis fits after them.
     if forced {
-        let (start, end) = (metrics.offset, metrics.offset + metrics.advance);
+        // pyro: the line's items start at its `inline_min_coord`, past a float before it (WPT
+        // css-overflow `line-clamp-with-floats-005`).
+        let line_start = metrics.inline_min_coord + metrics.offset;
+        let (start, end) = (line_start, line_start + metrics.advance);
         if !rtl && end - metrics.hanging_advance + ellipsis_width <= width + epsilon {
             let cut = crate::text::TextCut { edge: f32::INFINITY, keep_left: true, split: None };
             return Some((cut, end - metrics.hanging_advance));
