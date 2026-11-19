@@ -64,15 +64,15 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +   (`a[href]` above). A `::scroll-button()` takes the rules for `button`. */
 +::scroll-marker-group {
 +    display: block;
-+}
-+
+ }
+ 
 +::scroll-marker,
 +::column::scroll-marker {
 +    color: rgb(0, 0, 238);
 +    text-decoration: underline;
 +    cursor: pointer;
- }
- 
++}
++
 +/* https://html.spec.whatwg.org/#bidi-rendering */
  input {
      display: inline-block;
@@ -184,7 +184,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +174,32 @@
+@@ -86,10 +174,40 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -214,10 +214,18 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    overflow-wrap: break-word;
 +}
 +
++/* pyro: https://html.spec.whatwg.org/multipage/rendering.html#the-textarea-element-2: a
++   textarea with wrap=off does not wrap its lines (WPT css-overflow
++   text-overflow-string-in-textarea-multiline). */
++textarea[wrap="off" i] {
++    overflow-wrap: normal;
++    text-wrap-mode: nowrap;
++}
++
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -121,17 +231,38 @@
+@@ -121,17 +239,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -258,7 +266,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +281,42 @@
+@@ -150,6 +289,42 @@
      background-color: transparent;
  }
  
@@ -301,7 +309,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +336,40 @@
+@@ -169,8 +344,40 @@
      padding-inline-end: 2px;
  }
  
@@ -343,7 +351,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +448,16 @@
+@@ -249,15 +456,16 @@
      unicode-bidi: isolate;
  }
  
@@ -365,7 +373,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +769,19 @@
+@@ -569,6 +777,19 @@
      text-align: center;
  }
  
@@ -385,7 +393,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,10 +1051,42 @@
+@@ -838,10 +1059,42 @@
      border-radius: 0 ! important;
  }
  
@@ -428,7 +436,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1096,18 @@
+@@ -851,8 +1104,18 @@
      user-select: none;
  }
  
@@ -447,7 +455,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1141,15 @@
+@@ -886,14 +1149,15 @@
      display: none;
  }
  
@@ -466,7 +474,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -1128,37 +1384,42 @@
+@@ -1128,37 +1392,42 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

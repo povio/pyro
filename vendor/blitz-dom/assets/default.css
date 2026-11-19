@@ -200,6 +200,14 @@ textarea {
     overflow-wrap: break-word;
 }
 
+/* pyro: https://html.spec.whatwg.org/multipage/rendering.html#the-textarea-element-2: a
+   textarea with wrap=off does not wrap its lines (WPT css-overflow
+   text-overflow-string-in-textarea-multiline). */
+textarea[wrap="off" i] {
+    overflow-wrap: normal;
+    text-wrap-mode: nowrap;
+}
+
 /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
 input,
 button,
