@@ -2809,3 +2809,9 @@ text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style
 sheet takes the new media list and is inserted again, without a new fetch (WPT html/semantics
 `the-link-element/stylesheet-media-change-no-fetch`). Covered by `a_style_element_media_attribute_limits_its_sheet` in
 `crates/pyro-render/tests/render.rs` and `crates/pyro-render/tests/link_media.rs`.
+- Lane S2, `has_invalidation.rs` `AttributeChange::before`: an attribute change of an element no `:has()` search
+  visited still runs the relative selector invalidation when the sheets have a `:has()` (or the element is in a shadow
+  tree): a complex selector inside the argument can reach it from the searched subtree (`.a:has(.c:is(.b .c))` with
+  `.b` above the anchor, or `.p + .b ~ .d .c` with `.b` a sibling of one of its ancestors), and Stylo's dependency
+  lookup decides, as in Gecko. WPT css/selectors `is-pseudo-containing-complex-in-has` +42,
+  `not-pseudo-containing-complex-in-has` +40.

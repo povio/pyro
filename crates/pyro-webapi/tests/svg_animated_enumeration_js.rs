@@ -485,3 +485,26 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
     env.until("globalThis.fsOut !== undefined");
     assert_eq!(env.eval("fsOut"), "TypeError|TypeError");
 }
+
+/// A class change on an element above a `:has()` anchor restyles the anchor when a complex selector
+/// inside the argument reaches it (WPT css/selectors is-pseudo-containing-complex-in-has).
+#[test]
+fn has_invalidation_reaches_ancestors_of_the_anchor() {
+    let env = Env::new("http://has.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              document.head.insertAdjacentHTML("beforeend", "<style>div { color: grey } .red:has(#descendant:is(.a .b)) { color: red }</style>");
+              document.body.innerHTML = '<div id="parent"><div id="scope" class="red"><div><div id="descendant" class="b"></div></div></div></div>';
+              const scope = document.getElementById("scope");
+              const out = [getComputedStyle(scope).color];
+              document.getElementById("parent").classList.add("a");
+              out.push(getComputedStyle(scope).color);
+              document.getElementById("parent").classList.remove("a");
+              out.push(getComputedStyle(scope).color);
+              return out.join("|");
+            })()"##
+        ),
+        "rgb(128, 128, 128)|rgb(255, 0, 0)|rgb(128, 128, 128)"
+    );
+}

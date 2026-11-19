@@ -19,8 +19,9 @@
 //! (`RESTYLE_SELF`, plus the descendants or siblings it names).
 //!
 //! Cost when nothing depends on the change: one selector-flags test on the
-//! element (no `:has()` search ever visited it: always the case on a page
-//! without `:has()`), then a flag test on the relative selector map
+//! element (no `:has()` search ever visited it), and for an attribute change
+//! of such an element one flag test per origin (no `:has()` in the sheets:
+//! always the case on a page without `:has()`), then a flag test on the relative selector map
 //! ([`BaseDocument::relative_state_dependency`]) or one hash lookup per
 //! changed attribute name, id or class.
 
@@ -161,11 +162,19 @@ fn names_of(node: &Node, kind: AttrKind) -> SmallVec<[Atom; 4]> {
 
 impl AttributeChange {
     /// `node_id`'s state before its attribute `name` changes; `None` when no
-    /// `:has()` can depend on the element (no `:has()` search visited it,
-    /// always the case on a page without `:has()`).
+    /// `:has()` can depend on the element (always the case on a page without
+    /// `:has()`).
+    ///
+    /// pyro: an element no `:has()` search visited still matters when a
+    /// complex selector inside the argument reaches it from the searched
+    /// subtree (`.a:has(.c:is(.b .c))` with `.b` above the anchor, or a sibling
+    /// of one): Stylo's dependency lookup decides, as in Gecko.
     pub(crate) fn before(doc: &BaseDocument, node_id: NodeId, name: &QualName) -> Option<Self> {
         let node = doc.nodes.get(node_id)?;
-        if !searched(node) || !node.flags.is_in_document() {
+        if !node.flags.is_in_document() {
+            return None;
+        }
+        if !searched(node) && !(doc.relative_selectors_used() || node.containing_shadow_host_id().is_some()) {
             return None;
         }
         let kind = if name.ns == ns!() && name.local == local_name!("id") {
@@ -230,6 +239,12 @@ fn anchor_invalidated(element: &Node, result: &InvalidationResult) {
 }
 
 impl BaseDocument {
+    /// pyro: whether the document's sheets have any `:has()` (a flag test per
+    /// origin).
+    pub(crate) fn relative_selectors_used(&self) -> bool {
+        self.stylist.iter_origins().any(|(data, _)| data.relative_invalidation_map_attributes().used)
+    }
+
     /// Whether some `:has()` argument depends on any of the `state` bits: a
     /// flag test per origin's relative selector map.
     pub fn relative_state_dependency(&self, state: ElementState) -> bool {
