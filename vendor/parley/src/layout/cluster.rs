@@ -217,6 +217,11 @@ impl<'a, B: Brush> Cluster<'a, B> {
         self.first_character().flags.is_word_boundary()
     }
 
+    /// pyro: whether the line may break before this cluster (a soft wrap opportunity).
+    pub fn is_soft_wrap_opportunity(&self) -> bool {
+        self.first_character().flags.is_soft_wrap_opportunity()
+    }
+
     /// Returns `true` if the cluster is a soft line break.
     pub fn is_soft_line_break(&self) -> bool {
         self.is_end_of_line()

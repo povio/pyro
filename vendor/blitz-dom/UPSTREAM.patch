@@ -14807,7 +14807,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,333 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -14941,6 +14941,18 @@ new file mode 100644
 +        // pyro: the standard `line-clamp` discards what follows the clamp line (`continue:
 +        // discard`): later blocks' lines are not painted either.
 +        let discards = self.nodes[root].primary_styles().is_some_and(|style| !style.get_box().line_clamp.webkit_legacy);
++        // pyro: and its `block-ellipsis` (the legacy clamp's is always "…").
++        let ellipsis_text: String = match self.nodes[root].primary_styles() {
++            Some(style) if discards => {
++                use style::values::generics::box_::BlockEllipsis;
++                match &style.get_box().line_clamp.block_ellipsis {
++                    BlockEllipsis::Ellipsis => "\u{2026}".to_owned(),
++                    BlockEllipsis::NoEllipsis => String::new(),
++                    BlockEllipsis::String(text) => text.to_string(),
++                }
++            }
++            _ => "\u{2026}".to_owned(),
++        };
 +        let mut discarded: Vec<NodeId> = Vec::new();
 +        let mut count = 0u32;
 +        // The block holding the clamp line, how many of its lines stay, and the line's bottom.
@@ -15034,12 +15046,12 @@ new file mode 100644
 +            stack[first..].reverse();
 +        }
 +        let (id, kept, bottom) = clamp_line.filter(|_| clamped)?;
-+        self.set_clamp(id, kept);
++        self.set_clamp(id, kept, discards, &ellipsis_text);
 +        for id in discarded {
 +            if let Some(text_layout) =
 +                self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
 +            {
-+                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default() });
++                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), at_soft_wraps: discards });
 +            }
 +        }
 +        Some((bottom, id))
@@ -15096,7 +15108,7 @@ new file mode 100644
 +    }
 +
 +    /// Marks the block `id` as ending at its line `kept` with an ellipsis, shaped in its style.
-+    fn set_clamp(&mut self, id: NodeId, kept: u32) {
++    fn set_clamp(&mut self, id: NodeId, kept: u32, at_soft_wraps: bool, text: &str) {
 +        let scale = self.doc.viewport.scale();
 +        let doc = &mut *self.doc;
 +        let node = &doc.nodes[id];
@@ -15111,18 +15123,21 @@ new file mode 100644
 +            .downcast_element()
 +            .and_then(|el| el.inline_layout_data.as_ref())
 +            .is_some_and(|text_layout| text_layout.layout.is_rtl());
-+        let ellipsis = {
++        // (`no-ellipsis`: none at all; an empty text would still shape a line.)
++        let ellipsis = if text.is_empty() {
++            Box::default()
++        } else {
 +            let mut font_ctx = doc.font_ctx.lock().unwrap();
 +            let mut builder = doc.layout_ctx.tree_builder(&mut font_ctx, scale, true, &parley_style);
 +            builder.set_base_direction(if rtl { parley::BaseDirection::Rtl } else { parley::BaseDirection::Ltr });
-+            builder.push_text("\u{2026}");
++            builder.push_text(text);
 +            let mut layout = builder.build().0;
 +            layout.break_all_lines(None);
 +            Box::new(layout)
 +        };
 +        drop(style);
 +        if let Some(text_layout) = doc.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut()) {
-+            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis });
++            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, at_soft_wraps });
 +        }
 +    }
 +}
@@ -36807,7 +36822,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
  
  use crate::util::ACTION_MOD;
  
-@@ -21,10 +21,17 @@
+@@ -21,10 +21,21 @@
      }
  }
  
@@ -36817,6 +36832,10 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
 +    pub lines: u32,
 +    /// "…" shaped in the root's style.
 +    pub ellipsis: Box<parley::layout::Layout<TextBrush>>,
++    /// pyro: the standard `line-clamp` (not `-webkit-line-clamp`): the ellipsis goes after the
++    /// last soft wrap opportunity of the line that leaves room for it (CSS Overflow 4
++    /// `block-ellipsis`), not after the last atom that fits.
++    pub at_soft_wraps: bool,
 +}
 +
  #[derive(Clone, Default)]
@@ -36826,7 +36845,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      pub layout: parley::layout::Layout<TextBrush>,
      /// Block-axis offset (in CSS px) of the line boxes from the top of the container's content
      /// box, as applied by `align-content`.
-@@ -33,10 +40,202 @@
+@@ -33,10 +44,202 @@
      /// containing block (as `SPAN_*_CB` flags). The inline root claims those boxes in its place.
      /// Set by each `RunMode::PerformLayout` run of inline layout.
      pub span_cb_flags: stylo_taffy::StyleFlags,
@@ -37029,7 +37048,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
  }
  
  impl TextLayout {
-@@ -44,10 +243,73 @@
+@@ -44,10 +247,73 @@
          Default::default()
      }
  
@@ -37107,7 +37126,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      }
  }
  
-@@ -80,6 +342,76 @@
+@@ -80,6 +346,76 @@
      /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
      /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
      pub content_box_subpixel_offset: taffy::Point<f32>,
@@ -37184,7 +37203,7 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
  }
  
  // FIXME: Implement Clone for PlainEditor
-@@ -97,9 +429,18 @@
+@@ -97,9 +433,18 @@
              is_multiline,
              scroll_offset: 0.0,
              content_box_subpixel_offset: taffy::Point::ZERO,

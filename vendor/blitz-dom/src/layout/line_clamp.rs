@@ -131,6 +131,18 @@ impl LayoutPassState<'_> {
         // pyro: the standard `line-clamp` discards what follows the clamp line (`continue:
         // discard`): later blocks' lines are not painted either.
         let discards = self.nodes[root].primary_styles().is_some_and(|style| !style.get_box().line_clamp.webkit_legacy);
+        // pyro: and its `block-ellipsis` (the legacy clamp's is always "…").
+        let ellipsis_text: String = match self.nodes[root].primary_styles() {
+            Some(style) if discards => {
+                use style::values::generics::box_::BlockEllipsis;
+                match &style.get_box().line_clamp.block_ellipsis {
+                    BlockEllipsis::Ellipsis => "\u{2026}".to_owned(),
+                    BlockEllipsis::NoEllipsis => String::new(),
+                    BlockEllipsis::String(text) => text.to_string(),
+                }
+            }
+            _ => "\u{2026}".to_owned(),
+        };
         let mut discarded: Vec<NodeId> = Vec::new();
         let mut count = 0u32;
         // The block holding the clamp line, how many of its lines stay, and the line's bottom.
@@ -224,12 +236,12 @@ impl LayoutPassState<'_> {
             stack[first..].reverse();
         }
         let (id, kept, bottom) = clamp_line.filter(|_| clamped)?;
-        self.set_clamp(id, kept);
+        self.set_clamp(id, kept, discards, &ellipsis_text);
         for id in discarded {
             if let Some(text_layout) =
                 self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
             {
-                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default() });
+                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), at_soft_wraps: discards });
             }
         }
         Some((bottom, id))
@@ -286,7 +298,7 @@ impl LayoutPassState<'_> {
     }
 
     /// Marks the block `id` as ending at its line `kept` with an ellipsis, shaped in its style.
-    fn set_clamp(&mut self, id: NodeId, kept: u32) {
+    fn set_clamp(&mut self, id: NodeId, kept: u32, at_soft_wraps: bool, text: &str) {
         let scale = self.doc.viewport.scale();
         let doc = &mut *self.doc;
         let node = &doc.nodes[id];
@@ -301,18 +313,21 @@ impl LayoutPassState<'_> {
             .downcast_element()
             .and_then(|el| el.inline_layout_data.as_ref())
             .is_some_and(|text_layout| text_layout.layout.is_rtl());
-        let ellipsis = {
+        // (`no-ellipsis`: none at all; an empty text would still shape a line.)
+        let ellipsis = if text.is_empty() {
+            Box::default()
+        } else {
             let mut font_ctx = doc.font_ctx.lock().unwrap();
             let mut builder = doc.layout_ctx.tree_builder(&mut font_ctx, scale, true, &parley_style);
             builder.set_base_direction(if rtl { parley::BaseDirection::Rtl } else { parley::BaseDirection::Ltr });
-            builder.push_text("\u{2026}");
+            builder.push_text(text);
             let mut layout = builder.build().0;
             layout.break_all_lines(None);
             Box::new(layout)
         };
         drop(style);
         if let Some(text_layout) = doc.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut()) {
-            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis });
+            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, at_soft_wraps });
         }
     }
 }

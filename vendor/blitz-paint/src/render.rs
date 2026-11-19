@@ -2243,12 +2243,77 @@ fn line_truncation_at<'a>(
     // pyro: the line's paragraph's direction (`unicode-bidi: plaintext`: WPT css-overflow
     // `line-clamp-with-text-overflow-string-009`).
     let rtl = line.is_rtl();
-    let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
+    let clamp = text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize);
+    let (ellipsis, text, forced) = match clamp {
         Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
         None => (text_layout.ellipsis.as_deref()?, text_layout.ellipsis_text.as_str(), false),
     };
+    // pyro: a standard line clamp's ellipsis after the last soft wrap opportunity that leaves
+    // room for it (CSS Overflow 4 `block-ellipsis`; WPT css-overflow `block-ellipsis-001`).
+    if clamp.is_some_and(|clamp| clamp.at_soft_wraps)
+        && !rtl
+        && let Some((cut, x)) = truncate_line_at_soft_wrap(line, ellipsis, width, scale)
+    {
+        return Some(LineTruncation { cut, x, ellipsis, text });
+    }
     let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced)?;
     Some(LineTruncation { cut, x, ellipsis, text })
+}
+
+/// pyro: a left-to-right line that ends with a standard line clamp's ellipsis: the line keeps
+/// what precedes its last soft wrap opportunity that leaves room for the ellipsis (less the
+/// spaces before it), and nothing when none does: a word too long to fit beside the ellipsis is
+/// displaced by it. `None` when the whole line fits beside the ellipsis (the cut of
+/// [`truncate_line`] keeps it all).
+fn truncate_line_at_soft_wrap(
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
+    width: f32,
+    scale: f32,
+) -> Option<(crate::text::TextCut, f32)> {
+    let epsilon = scale / 64.0;
+    let metrics = line.metrics();
+    // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
+    let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
+    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
+    if metrics.offset + metrics.advance - metrics.hanging_advance + ellipsis_width <= width + epsilon {
+        return None;
+    }
+    // (Atomic inline boxes on the line: not cut at soft wraps.)
+    if line.items().any(|item| matches!(item, parley::PositionedLayoutItem::InlineBox(_))) {
+        return None;
+    }
+    let mut runs: Vec<_> = line
+        .items()
+        .filter_map(|item| match item {
+            parley::PositionedLayoutItem::GlyphRun(run) => Some(run),
+            parley::PositionedLayoutItem::InlineBox(_) => None,
+        })
+        .collect();
+    runs.sort_by(|a, b| a.offset().total_cmp(&b.offset()));
+    let mut content_end = metrics.offset;
+    // The last break that fits: its byte offset and where the content before it ends.
+    let mut best: Option<(usize, f32)> = None;
+    let mut first = true;
+    for run in &runs {
+        let mut x = run.offset();
+        for cluster in run.run().visual_clusters() {
+            if !first && cluster.is_soft_wrap_opportunity() && content_end + ellipsis_width <= width + epsilon {
+                best = Some((cluster.text_range().start, content_end));
+            }
+            first = false;
+            x += cluster.advance();
+            if !cluster.is_space_or_nbsp() && !cluster.is_hard_line_break() && cluster.advance() > 0.0 {
+                content_end = x;
+            }
+        }
+    }
+    // (The whole line fits beside it once its trailing spaces and break hang.)
+    if content_end + ellipsis_width <= width + epsilon {
+        return None;
+    }
+    let (split, end) = best.unwrap_or((line.text_range().start, metrics.offset));
+    Some((crate::text::TextCut { edge: f32::INFINITY, keep_left: true, split: Some(split) }, end))
 }
 
 /// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
@@ -2267,7 +2332,8 @@ fn truncate_line(
 ) -> Option<(crate::text::TextCut, f32)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
-    let ellipsis_width = ellipsis.full_width();
+    // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
+    let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
     // pyro: the line's own edges where floats shorten it (Blink truncates at the line box's end).
     let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
     let start = metrics.inline_min_coord.clamp(0.0, width);

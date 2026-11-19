@@ -27,6 +27,10 @@ pub struct LineClamp {
     pub lines: u32,
     /// "…" shaped in the root's style.
     pub ellipsis: Box<parley::layout::Layout<TextBrush>>,
+    /// pyro: the standard `line-clamp` (not `-webkit-line-clamp`): the ellipsis goes after the
+    /// last soft wrap opportunity of the line that leaves room for it (CSS Overflow 4
+    /// `block-ellipsis`), not after the last atom that fits.
+    pub at_soft_wraps: bool,
 }
 
 #[derive(Clone, Default)]
