@@ -385,3 +385,25 @@ fn relevant_mutations_restart_the_request() {
     assert_eq!(step(&mut thread, "a.crossOrigin = 'foo';"), "");
     assert_eq!(step(&mut thread, "a.sizes = '10px';"), "");
 }
+
+/// `sizes="auto"` of a lazy image is its laid-out width; a lazy image that is not rendered
+/// selects (its `auto` entry skipped) without fetching until it is rendered, or until it stops
+/// being lazy (then the source selected while deferred is fetched).
+#[test]
+fn sizes_auto_and_deferred_lazy_images() {
+    let (mut thread, page, loader) = setup(
+        "<img id=a loading=lazy sizes=auto style='width:10px' srcset='/s.png 50w, /l.png 51w'>\
+         <img id=b loading=lazy sizes='auto, 500px' style='display:none;width:10px' srcset='/s.png?b 50w, /l.png?b 500w'>",
+    );
+    for url in ["s.png", "l.png", "s.png?b", "l.png?b"] {
+        loader.insert_bytes(&format!("http://site.test/{url}"), "image/png", &png(3, 2), Duration::ZERO);
+    }
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let fetched = |loader: &StaticLoader, needle: &str| loader.log.borrow().iter().any(|u| u.ends_with(needle));
+    assert_eq!(eval(&thread, page, "document.getElementById('a').currentSrc"), "http://site.test/s.png");
+    assert!(!fetched(&loader, "?b"), "a display:none lazy image is not fetched");
+    eval(&thread, page, "document.getElementById('b').loading = 'eager'; 1");
+    settle(&mut thread);
+    assert!(fetched(&loader, "l.png?b"), "eager fetches the source selected while deferred (auto skipped: 500px)");
+}

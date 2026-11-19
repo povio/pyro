@@ -96,6 +96,13 @@ fn image_request_state(dom: &pyro_dom::Dom, node: NodeId) -> (u8, String) {
 #[derive(Default)]
 pub(crate) struct Images {
     entries: HashMap<NodeId, Image>,
+    /// Lazy images whose source was selected while they were not being rendered (detached, or
+    /// `display: none`): their fetch waits (HTML: they never intersect the viewport) until they
+    /// are rendered, or until `loading` stops being lazy, which fetches the source selected then.
+    deferred: HashMap<NodeId, Option<pyro_dom::picture::Candidate>>,
+    /// Each lazy image's last `sizes="auto"` width while it was rendered: what `auto` stays when
+    /// it stops being rendered.
+    auto_widths: HashMap<NodeId, f64>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -184,7 +191,73 @@ impl Browser {
         // A `<picture>` parent's matching `<source>` provides the image
         // instead of `src` (a `<source>` or the `<img>` moving in or out of
         // the picture is a relevant mutation: the DOM queues this event).
-        let candidate = bindings.dom.borrow().picture_candidate(node, &bindings.viewport());
+        // A lazy image's concrete width, for `sizes="auto"` (laid out, else its `width`
+        // attribute, else the default object size's 300 px).
+        drop(state);
+        let (lazy, rendered_width, attr_width, auto_css_width) = {
+            let dom = bindings.dom.borrow();
+            let lazy = dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+            let connected = dom.is_connected(node).unwrap_or(false);
+            let rendered = if connected && lazy { bindings.layout().rendered_content_size(&dom, node) } else { None };
+            // `object-fit: cover` (sizes-auto 2d, tentative): the width the image is drawn at,
+            // max(width, height x ratio), the ratio from `h` descriptors, else the dimension
+            // attributes.
+            let rendered = rendered.map(|(w, h)| {
+                let cover = bindings.layout().style().computed_value(&dom, node, "object-fit").is_some_and(|v| v == "cover");
+                let ratio = || {
+                    let from_h = dom.get_attribute(node, "srcset").ok().flatten().and_then(|srcset| {
+                        srcset.split(',').find_map(|c| {
+                            let mut parts = c.split_ascii_whitespace().skip(1);
+                            let (mut w, mut h) = (None, None);
+                            for d in parts.by_ref() {
+                                if let Some(v) = d.strip_suffix('w') { w = v.parse::<f64>().ok(); }
+                                if let Some(v) = d.strip_suffix('h') { h = v.parse::<f64>().ok(); }
+                            }
+                            w.zip(h).filter(|(_, h)| *h > 0.0).map(|(w, h)| w / h)
+                        })
+                    });
+                    let attr = |n: &str| dom.get_attribute(node, n).ok().flatten().and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0);
+                    from_h.or_else(|| attr("width").zip(attr("height")).map(|(w, h)| w / h))
+                };
+                if cover { ratio().map_or(w, |r| w.max(h * r)) } else { w }
+            });
+            let attr = dom.get_attribute(node, "width").ok().flatten().and_then(|w| w.trim().parse::<f64>().ok());
+            let auto_css = attr.is_none()
+                && bindings.layout().style().computed_value(&dom, node, "width").is_none_or(|w| w == "auto")
+                && dom.natural_size(node).is_none();
+            (lazy, rendered, attr, auto_css)
+        };
+        // A lazy image's concrete width, for `sizes="auto"`: laid out (the default object size's
+        // 300 px while its width is `auto` and no image gave a natural width). Not rendered: its
+        // last width while rendered, else none (the `auto` entry is skipped).
+        let _ = attr_width;
+        let auto_width = if !lazy {
+            None
+        } else if let Some(w) = rendered_width {
+            let w = if auto_css_width { 300.0 } else { w };
+            if let Some(mut p) = self.doc_mut(page) {
+                p.images.auto_widths.insert(node, w);
+            }
+            Some(w)
+        } else {
+            self.doc(page).and_then(|p| p.images.auto_widths.get(&node).copied())
+        };
+        let deferred_now = lazy && rendered_width.is_none();
+        let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
+        let candidate = match stored {
+            // `loading` stopped being lazy: the source selected while deferred is fetched.
+            Some(selected) if !lazy && !restart => selected,
+            _ => bindings.dom.borrow().picture_candidate_auto(node, &bindings.viewport(), auto_width),
+        };
+        if deferred_now {
+            // Not rendered and lazy: select now, fetch once rendered (or eager).
+            bindings.dom.borrow_mut().set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
+            if let Some(mut p) = self.doc_mut(page) {
+                p.images.deferred.insert(node, candidate);
+            }
+            return;
+        }
+        let Some(state) = self.doc(page) else { return };
         let density = candidate.as_ref().map_or(1.0, |c| c.density);
         let picture_source = candidate.map(|c| c.url);
         // The renderer draws the selected source (its snapshot's `src`).
@@ -456,6 +529,34 @@ impl Browser {
         };
         drop(state);
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false);
+    }
+
+    /// The deferred lazy images of `page` that are rendered now run their steps again (select
+    /// with their layout, then fetch).
+    pub(crate) fn fetch_rendered_images(&mut self, page: FrameKey) {
+        let Some(state) = self.doc(page) else { return };
+        if state.images.deferred.is_empty() {
+            return;
+        }
+        let nodes: Vec<NodeId> = state.images.deferred.keys().copied().collect();
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        drop(state);
+        for node in nodes {
+            let rendered = {
+                let dom = bindings.dom.borrow();
+                if !dom.is_alive(node) {
+                    drop(dom);
+                    if let Some(mut p) = self.doc_mut(page) {
+                        p.images.deferred.remove(&node);
+                    }
+                    continue;
+                }
+                dom.is_connected(node).unwrap_or(false) && bindings.layout().rendered_content_size(&dom, node).is_some()
+            };
+            if rendered {
+                self.image_event_with(page, node, false);
+            }
+        }
     }
 
     /// Remembers the `<object>`/`<embed>` `node`, not fetched while not being rendered.

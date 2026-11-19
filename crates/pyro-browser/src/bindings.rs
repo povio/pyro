@@ -641,6 +641,7 @@ impl Browser {
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
         host.connect_rendered_objects();
         self.fetch_rendered_objects(&host);
+        self.fetch_rendered_images(page);
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();

@@ -89,12 +89,22 @@ impl Dom {
     /// [`Dom::picture_source`] with the candidate's pixel density (the image's natural size is
     /// its pixel size divided by it).
     pub fn picture_candidate(&self, img: NodeId, viewport: &Viewport) -> Option<Candidate> {
+        self.picture_candidate_auto(img, viewport, None)
+    }
+
+    /// [`Dom::picture_candidate`] where `sizes="auto"` of a lazy-loaded `<img>` (HTML: the first
+    /// entry `auto`) is `auto_width`, the image's concrete width in CSS px; `None` leaves the
+    /// `auto` entry out, as for an image that is not lazy.
+    pub fn picture_candidate_auto(&self, img: NodeId, viewport: &Viewport, auto_width: Option<f64>) -> Option<Candidate> {
         let i = self.check(img).ok()?;
+        let lazy = self.n(i).element().and_then(|e| e.attr_local(&markup5ever::local_name!("loading"))).is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+        let auto = auto_width.filter(|_| lazy);
+        let source_size = |sizes: Option<&str>, viewport: &Viewport| source_size_auto(sizes, viewport, auto);
         let parent = self.n(i).parent;
         let html =
             |idx: u32, local: &str| self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == local);
         if parent == NIL || !html(parent, "picture") {
-            return self.own_srcset_source(i, viewport);
+            return self.own_srcset_source(i, viewport, auto);
         }
         let mut child = self.n(parent).first_child;
         while child != NIL && child != i {
@@ -121,16 +131,16 @@ impl Dom {
             }
             child = self.n(child).next;
         }
-        self.own_srcset_source(i, viewport)
+        self.own_srcset_source(i, viewport, auto)
     }
 
     /// The candidate the `<img>`'s own `srcset` selects; its `src` counts as
     /// a 1x candidate when the set has no 1x one and no width descriptors.
-    fn own_srcset_source(&self, img: u32, viewport: &Viewport) -> Option<Candidate> {
+    fn own_srcset_source(&self, img: u32, viewport: &Viewport, auto: Option<f64>) -> Option<Candidate> {
         let e = self.n(img).element()?;
         let srcset = e.attr_local(&markup5ever::local_name!("srcset"))?;
         let mut candidates =
-            parse_srcset(srcset, source_size(e.attr_local(&markup5ever::local_name!("sizes")), viewport));
+            parse_srcset(srcset, source_size_auto(e.attr_local(&markup5ever::local_name!("sizes")), viewport, auto));
         let has_width = srcset_has_width_descriptor(srcset);
         if let Some(src) = e.attr_local(&markup5ever::local_name!("src")).filter(|src| !src.is_empty()) {
             if !has_width && !candidates.iter().any(|c| c.density == 1.0) {
@@ -157,6 +167,21 @@ fn srcset_has_width_descriptor(srcset: &str) -> bool {
 /// that match nothing; no media types). The first entry whose condition matches gives the size,
 /// else the entry without one, else `100vw`. Font-relative units use the initial font (Stylo's
 /// fallback metrics: `ex` and `ch` are 0.5em).
+/// [`source_size`] with HTML's `auto`: a first entry `auto` is `auto` (the lazy image's concrete
+/// width) when given, else left out.
+pub fn source_size_auto(sizes: Option<&str>, viewport: &Viewport, auto: Option<f64>) -> f64 {
+    let Some(sizes) = sizes else { return source_size(None, viewport) };
+    let entries = split_top_level_commas(sizes);
+    if entries.first().is_some_and(|first| first.trim().eq_ignore_ascii_case("auto")) {
+        if let Some(width) = auto {
+            return width.max(0.0);
+        }
+        let rest = entries[1..].join(",");
+        return source_size(if rest.trim().is_empty() { None } else { Some(&rest) }, viewport);
+    }
+    source_size(Some(sizes), viewport)
+}
+
 pub fn source_size(sizes: Option<&str>, viewport: &Viewport) -> f64 {
     use style::context::QuirksMode;
     use style::servo_arc::Arc;

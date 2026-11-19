@@ -336,7 +336,7 @@ impl Dom {
         // An `<img>`'s CORS settings and referrer policy are relevant mutations too (HTML "update
         // the image data" restarts with them).
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled" | "data")
-            || (matches!(local, "crossorigin" | "referrerpolicy")
+            || (matches!(local, "crossorigin" | "referrerpolicy" | "loading")
                 && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img")));
         if !relevant {
             return;
@@ -346,10 +346,12 @@ impl Dom {
             // it is connected (`new Image()`, a tree built before insertion).
             // The loader drops events of a document without a browsing
             // context (template contents, createHTMLDocument).
-            if matches!(local, "src" | "srcset")
+            if matches!(local, "src" | "srcset" | "loading")
                 && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img"))
             {
-                self.push_resource(idx, ResourceKind::Img, ResourceReason::SourceChanged);
+                let reason =
+                    if local == "loading" { ResourceReason::AttrChanged } else { ResourceReason::SourceChanged };
+                self.push_resource(idx, ResourceKind::Img, reason);
             }
             return;
         }

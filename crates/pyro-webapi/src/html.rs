@@ -1878,8 +1878,11 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     def.getter("currentSrc", |s, n| {
         let viewport = n.page().viewport();
         let dom = n.page().dom.borrow();
-        // A `<picture>` parent's matching `<source>` is the selected source.
-        let picture = dom.picture_source(n.id, &viewport);
+        // The source the loader selected for the current request (a lazy image's `sizes=auto`
+        // needs its layout), else a `<picture>` parent's matching `<source>`.
+        let lazy = dom.get_attribute(n.id, "loading").js()?.is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+        let stored = if lazy { dom.image_source(n.id).map(str::to_owned) } else { None };
+        let picture = stored.or_else(|| dom.picture_source(n.id, &viewport));
         let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
         Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
     });
