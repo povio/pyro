@@ -3173,7 +3173,10 @@ impl ElementCx<'_, '_> {
         };
         // pyro: relatively positioned elements move their fragments.
         let relative = dom.inline_root_has_relative_spans(root);
-        let mut order: Vec<usize> = (0..fragments.len()).collect();
+        // pyro: the fragments on the lines a line clamp discarded are not painted; the boxes they
+        // continue keep their sides as they were (WPT css-overflow `line-clamp/block-ellipsis-004`).
+        let kept_lines = text_layout.clamp.as_ref().map_or(usize::MAX, |clamp| clamp.lines as usize);
+        let mut order: Vec<usize> = (0..fragments.len()).filter(|&index| fragments[index].line < kept_lines).collect();
         order.sort_by_key(|&index| (fragments[index].line, fragments[index].depth));
 
         // The boxes are where the text is.
