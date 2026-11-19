@@ -1034,6 +1034,19 @@ impl LayoutPassState<'_> {
                 run_start = end;
             }
         }
+        // pyro: one row of columns in a box of a definite height: the column boxes (and their
+        // rules) are as tall as its content box, however short balancing made the content
+        // (Chromium; WPT css-multicol `multicol-rule-nested-balancing-001`).
+        if let Some(height) = definite_height
+            && spanners.is_empty()
+            && nested_ctx.is_none()
+            && multicol.height.is_none()
+            && !multicol.wrap
+        {
+            for fragment in &mut fragments {
+                fragment.height = fragment.height.max(height);
+            }
+        }
         // The first shows what lies above the strip, the last what lies below.
         if let Some(first) = fragments.first_mut() {
             first.start = f32::NEG_INFINITY;
