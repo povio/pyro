@@ -1734,7 +1734,12 @@ impl LayoutPassState<'_> {
         let replaced = node.element_data().is_some_and(super::replaced::is_replaced);
         // (Nor a replaced element: its `auto` width is its own, Chromium; WPT css-multicol
         // `replaced-content-spanner-auto-width`.)
-        if ls.size().width.is_auto() && !node.flags.is_table_root() && !replaced {
+        // (Nor one of an orthogonal writing mode: its width is its block size, from its content;
+        // WPT css-multicol `orthogonal-writing-mode-spanner`.)
+        let orthogonal = self.nodes[container]
+            .primary_styles()
+            .is_some_and(|outer| outer.writing_mode.is_vertical() != style.writing_mode.is_vertical());
+        if ls.size().width.is_auto() && !node.flags.is_table_root() && !replaced && !orthogonal {
             inputs.known_dimensions.width = Some((width - margin.left - margin.right).max(0.0));
         }
         inputs
