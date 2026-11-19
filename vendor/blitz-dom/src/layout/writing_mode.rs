@@ -306,11 +306,43 @@ impl LayoutPassState<'_> {
                 };
                 let max_content = measure(self, AvailableSpace::MaxContent);
                 let min_content = measure(self, AvailableSpace::MinContent);
+                let mut width = available.min(max_content).max(min_content);
+                // pyro: an inline size the preferred aspect ratio gives from the block size is no
+                // smaller than the content's min-content size when `min-inline-size` is `auto`
+                // (the automatic minimum size, css-sizing-4 § 5.1; WPT css-sizing
+                // `aspect-ratio/block-aspect-ratio-017`).
+                let style = self.nodes[dom_node_id(node_id)].layout_style();
+                let overflow = taffy::CoreStyle::overflow(&style);
+                if taffy::CoreStyle::aspect_ratio(&style).is_some()
+                    && inputs.known_dimensions.height.is_some()
+                    && taffy::CoreStyle::min_size(&style).width.is_auto()
+                    && !overflow.x.is_scroll_container()
+                    && !overflow.y.is_scroll_container()
+                {
+                    let max_width = taffy::CoreStyle::max_size(&style).width;
+                    drop(style);
+                    let content_inputs = LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        sizing_mode: taffy::SizingMode::ContentSize,
+                        axis: taffy::RequestedAxis::Horizontal,
+                        known_dimensions: Size::NONE,
+                        available_space: Size {
+                            width: AvailableSpace::MinContent,
+                            height: inputs.available_space.height,
+                        },
+                        ..inputs
+                    };
+                    let content =
+                        self.compute_child_layout_in_current_wm(node_id, content_inputs, None).size.width;
+                    use taffy::MaybeMath as _;
+                    let content = content
+                        .maybe_min(max_width.maybe_resolve(inputs.parent_size.width, resolve_calc_value));
+                    width = width.max(content);
+                }
                 // pyro: then clamped by its own `max-` and `min-` inline sizes (§7.3.1).
-                let fit = available.min(max_content).max(min_content);
-                let fit = own_inline.max.map_or(fit, |max| fit.min(max));
-                let fit = own_inline.min.map_or(fit, |min| fit.max(min));
-                inputs.known_dimensions.width = Some(fit);
+                let width = own_inline.max.map_or(width, |max| width.min(max));
+                let width = own_inline.min.map_or(width, |min| width.max(min));
+                inputs.known_dimensions.width = Some(width);
                 inputs.known_dimensions_are_definite.width = true;
             }
         }
