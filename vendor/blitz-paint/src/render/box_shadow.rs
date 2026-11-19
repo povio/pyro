@@ -212,8 +212,18 @@ impl ElementCx<'_, '_> {
         // alone; Chromium's table fragment holds its captions; WPT css-contain
         // `contain-paint-table-002`).
         // (Only with captions: a grid as tall as the wrapper keeps its own frame, the collapsed
-        // borders it was laid out with.)
+        // borders it was laid out with. And only for paint containment: `overflow` on a table
+        // applies to the table box, the grid, not the wrapper (CSS 2 § 11.1.1; WPT
+        // css21-errata `s-11-1-1b-001`).)
+        let visible = {
+            use style::values::computed::Overflow;
+            let b = style.get_box();
+            b.overflow_x == Overflow::Visible && b.overflow_y == Overflow::Visible
+        };
+        let contains_paint = style.get_box().contain.contains(style::values::computed::Contain::PAINT);
         if let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data
+            && visible
+            && contains_paint
             && table.grid_box.borrow().is_some_and(|(top, height)| {
                 top != 0.0 || (height - self.node.final_layout().size.height).abs() > 0.01
             })
