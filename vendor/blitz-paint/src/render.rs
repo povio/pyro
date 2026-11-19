@@ -3441,8 +3441,14 @@ impl ElementCx<'_, '_> {
                 - layout.border.right
                 - layout.padding.left
                 - layout.padding.right) as f64;
+            // (Its line, the first, starts after the `text-indent`: none when `hanging`.)
+            let text_indent = &self.style.get_inherited_text().text_indent;
+            let indent = match text_indent.hanging {
+                true => 0.0,
+                false => text_indent.length.resolve(style::values::computed::Length::new(content_width as f32)).px() as f64,
+            };
             let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
-            crate::caret::draw_empty_caret(scene, caret, transform, content_width, self.scale);
+            crate::caret::draw_empty_caret(scene, caret, transform, content_width, indent, self.scale);
         }
     }
 

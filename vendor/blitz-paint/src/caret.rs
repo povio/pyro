@@ -176,16 +176,17 @@ pub(crate) fn draw_text_caret<'a>(
 }
 
 /// Paints `caret` in an empty element whose content box starts at `transform`'s origin and is
-/// `content_width` CSS px wide.
+/// `content_width` CSS px wide, its line indented by `indent` CSS px.
 pub(crate) fn draw_empty_caret(
     scene: &mut impl PaintScene,
     caret: &CaretPaint,
     transform: Affine,
     content_width: f64,
+    indent: f64,
     scale: f64,
 ) {
     let height = caret.line_height * scale;
-    let start = if caret.rtl { content_width * scale } else { 0.0 };
+    let start = if caret.rtl { (content_width - indent) * scale } else { indent * scale };
     let span = |width: f64| match caret.rtl {
         true => (start - width, start),
         false => (start, start + width),
