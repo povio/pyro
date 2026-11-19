@@ -1348,7 +1348,22 @@ impl Renderer {
         blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
         doc.set_dom_selection(None);
         doc.set_dom_highlights(Vec::new());
-        scene.append_scene(page, transform);
+        // pyro: a backdrop filter's output takes the place of its backdrop where the page painted
+        // nothing (anyrender_vello_cpu `draw_backdrop`, a source copy): the page goes in a layer
+        // over the canvas's base colour, which it cannot clear, as Chromium's base background lies
+        // under the page (WPT filter-effects `backdrop-filter-svg-displacement`). Only then: a
+        // layer over the whole frame costs every frame.
+        let backdrops = page.commands.iter().any(|command| {
+            matches!(command, anyrender::recording::RenderCommand::PushLayer(layer) if layer.backdrop_filter.is_some())
+        });
+        if backdrops {
+            let frame = Rect::new(0.0, 0.0, w as f64, h as f64);
+            scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), 1.0, Affine::IDENTITY, &frame, None, None);
+            scene.append_scene(page, transform);
+            scene.pop_layer();
+        } else {
+            scene.append_scene(page, transform);
+        }
         let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
         timings.scene = t.elapsed();
         Ok(Painted { scene, opaque: a == 255, hash, width: w, height: h, timings })
