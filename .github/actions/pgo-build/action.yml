@@ -1,6 +1,6 @@
 name: PGO build (macOS arm64)
 description: >-
-  The release browser built by scripts/pgo/build.sh with PYRO_PGO_LLVM and PYRO_PGO_LTO=1:
+  The release browser built by scripts/pgo with PYRO_PGO_LLVM and PYRO_PGO_LTO=1:
   Rust and JavaScriptCore optimized by one training run (bench/scripts/cdp-perf.mjs, serve and
   serve --fork), the JavaScriptCore archive as ThinLTO bitcode. Output:
   target/aarch64-apple-darwin/release-pgo/pyro.
@@ -14,6 +14,9 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Report available build space
+      shell: bash
+      run: df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
     - name: Rust with llvm-tools (llvm-profdata of rustc's LLVM)
       shell: bash
       run: |
@@ -75,12 +78,9 @@ runs:
         JOBS: '2'
         PYRO_PGO_LTO: '1'
       run: |
-        export PYRO_PGO_LLVM="$GITHUB_WORKSPACE/.ci/llvm-pgo"
-        # PGO and plain JSC jobs may run concurrently on registrations sharing HOME.
-        export PYRO_WEBKIT_SRC="$GITHUB_WORKSPACE/target/pgo/webkit-src"
         # shellcheck disable=SC2086
-        scripts/pgo/build.sh $CARGO_ARGS
-        df -h .
+        exec bash .github/actions/pgo-build/build.sh $CARGO_ARGS
     - name: Free the PGO build directories
+      if: always()
       shell: bash
-      run: rm -rf target/pgo/webkit-build-* target/pgo/profraw
+      run: bash .github/actions/pgo-build/build.sh --cleanup
