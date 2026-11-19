@@ -36,6 +36,9 @@ impl ElementCx<'_, '_> {
         let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
         let scale = self.scale;
         let single = columns.fragments.len() == 1;
+        // pyro: the out-of-flow boxes the container is the containing block of are placed against
+        // it, not in a column: painted once, after the columns (`multicol_skips`).
+        let outer_pass = self.context.multicol_pass.replace(Some((self.node.id, false)));
         for fragment in &columns.fragments {
             let (start, end) = (fragment.start as f64, fragment.end as f64);
             let (offset, range) = match vertical {
@@ -92,6 +95,9 @@ impl ElementCx<'_, '_> {
             self.context.layer_manager.maybe_pop_layer(scene, pushed);
         }
         self.transform = base;
+        self.context.multicol_pass.set(Some((self.node.id, true)));
+        self.draw_children(scene, base, clip_rect);
+        self.context.multicol_pass.set(outer_pass);
         true
     }
 

@@ -5114,7 +5114,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A short-lived struct which holds a bunch of parameters for rendering a scene so
  /// that we don't have to pass them down as parameters
  pub struct BlitzDomPainter<'dom, 'a> {
-@@ -124,16 +149,61 @@
+@@ -124,16 +149,66 @@
      pub(crate) initial_y: f64,
      /// The id of the document's root element (cached to avoid re-resolving it for every element)
      pub(crate) root_element_id: Option<NodeId>,
@@ -5151,6 +5151,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// (its inline root, the root's transform, the root's content position), painted in the positioned
 +    /// layer in tree order (CSS 2.1 Appendix E step 8; `draw_inline_pass_entry`).
 +    pub(crate) inline_pass_entries: RefCell<HashMap<NodeId, (NodeId, Affine, Point)>>,
++    /// pyro: while a multi-column container paints its children (`ElementCx::draw_columns`): the
++    /// container, and whether only its unfragmented children are painted (`true`: the pass after
++    /// the columns) or all but them (`false`: each column). Its unfragmented children are the
++    /// out-of-flow boxes it is the containing block of, placed against it, not in a column.
++    pub(crate) multicol_pass: std::cell::Cell<Option<(NodeId, bool)>>,
 +    /// Paint background colors and images (false: printing without them).
 +    pub backgrounds: bool,
 +    /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -5176,7 +5181,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
      // Pre-computed `Scene`s for each CustomWidget
      pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
-@@ -156,8 +226,26 @@
+@@ -156,8 +231,26 @@
              .map(|(node_id, start, end)| (node_id, (start, end)))
              .collect();
  
@@ -5203,7 +5208,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          Self {
              dom,
-@@ -167,13 +255,33 @@
+@@ -167,13 +260,34 @@
              initial_x,
              initial_y,
              root_element_id,
@@ -5226,6 +5231,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            highlight_layers,
 +            highlight_ranges,
 +            inline_pass_entries: RefCell::new(HashMap::new()),
++            multicol_pass: std::cell::Cell::new(None),
 +            backgrounds: true,
 +            fractional_text_x: false,
 +            composite_3d: false,
@@ -5237,7 +5243,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              custom_widget_scenes,
          }
      }
-@@ -198,46 +306,22 @@
+@@ -198,46 +312,22 @@
              return;
          };
          let root_id = root_element.id;
@@ -5299,7 +5305,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
  
          // The root clip rectangle is the viewport (in screen coordinates, with the
-@@ -255,6 +339,10 @@
+@@ -255,6 +345,10 @@
              viewport_clip_rect,
          );
  
@@ -5310,14 +5316,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -284,17 +372,350 @@
-                     self.initial_x,
-                     self.initial_y,
-                 );
-+            }
-+        }
-+    }
-+
+@@ -288,13 +382,346 @@
+         }
+     }
+ 
 +    /// pyro: the canvas, in scene space: the viewport, or the root element's box where that is
 +    /// larger.
 +    fn canvas_rect(&self) -> Rect {
@@ -5485,7 +5487,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            let ancestor = &tree[id];
 +            if ancestor.is_split_inline() || ancestor.is_inline_with_only_block_children() {
 +                break;
-             }
++            }
 +            let Some(style) = ancestor.primary_styles() else { break };
 +            if !style.clone_display().is_inline_flow() {
 +                break;
@@ -5495,10 +5497,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                filtered = Some((*style).clone());
 +            }
 +            parent = ancestor.parent;
-         }
++        }
 +        (opacity, filtered)
-     }
- 
++    }
++
      fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
          let location = node.final_layout().location;
 +        // pyro: a `position: sticky` box is painted where its scroll container holds it
@@ -5662,7 +5664,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
          transform.then_translate(Vec2 {
              x: -node.scroll_offset().x * self.scale,
-@@ -312,13 +733,26 @@
+@@ -312,13 +739,26 @@
              !display.is_inline_flow() && !is_internal_table_box_other_than_cell
          };
          let element = node.element_data();
@@ -5692,7 +5694,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -328,6 +762,10 @@
+@@ -328,6 +768,10 @@
          transform: Affine,
          root: bool,
      ) {
@@ -5703,7 +5705,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let node = &self.dom.as_ref().tree()[node_id];
          if matches!(node.taffy_display(), taffy::Display::None) || (!root && node.is_out_of_flow())
          {
-@@ -345,7 +783,7 @@
+@@ -345,7 +789,7 @@
          let clip = if cx.text_input.is_some() {
              cx.frame.text_input_clip_path()
          } else {
@@ -5712,7 +5714,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let pushed = self.layer_manager.maybe_push_layer(
              scene,
-@@ -368,18 +806,46 @@
+@@ -368,18 +812,46 @@
                      + layout.block_offset as f64;
                  let text_transform =
                      transform * Affine::translate((x * self.scale, y * self.scale));
@@ -5763,7 +5765,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              }
          }
          if let Some(children) = &*node.layout_children.borrow() {
-@@ -413,12 +879,29 @@
+@@ -413,12 +885,29 @@
          clip_rect: Rect,
      ) {
          let node = &self.dom.as_ref().tree()[node_id];
@@ -5793,7 +5795,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -430,18 +913,40 @@
+@@ -430,18 +919,40 @@
              return;
          }
  
@@ -5837,7 +5839,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let should_clip = self.should_clip_node(node, &styles);
          let is_text_input = node
              .element_data()
-@@ -482,10 +987,66 @@
+@@ -482,10 +993,66 @@
          // Cull elements that fall entirely outside the current clip rectangle. In addition to
          // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
          // also culls elements scrolled out of view inside a clipping/scrolling container.
@@ -5908,7 +5910,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          {
              return;
          }
-@@ -508,10 +1069,18 @@
+@@ -508,10 +1075,18 @@
          }
  
          // Optimise zero-area (/very small area) clips by not rendering at all
@@ -5928,7 +5930,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              return;
          }
  
-@@ -528,29 +1097,107 @@
+@@ -528,23 +1103,64 @@
          // rectangle passed to descendants to the visible (clipped) region so that content
          // scrolled out of view is culled rather than drawn and clipped away. The box used
          // here matches the clip applied to the content below.
@@ -6001,10 +6003,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
          // the element's rendering (including outlines and shadows), so it is the outermost layer.
-         let css_clip_rect = cx.css_clip_rect();
+@@ -552,6 +1168,43 @@
          if css_clip_rect.is_some_and(|rect| rect.is_zero_area()) {
              return;
-+        }
+         }
 +
 +        // pyro: a `url()` naming an SVG filter graph (one that is no colour chain) is the backdrop
 +        // filter as that graph, in the element's user space (CSS px from its border box's corner),
@@ -6041,10 +6043,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        if let (Some(backdrop), Some((clip, space))) = (&backdrop_filter, &backdrop_clip) {
 +            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, cx.transform * *space, clip, None, Some(backdrop.clone()));
 +            scene.pop_layer();
-         }
++        }
          let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
              scene,
-@@ -566,40 +1213,102 @@
+             css_clip_rect.is_some(),
+@@ -566,40 +1219,102 @@
          // Use the viewport in scene coordinates so outlines, shadows and overflowing
          // descendants are not clipped to the element's border box.
          let blend = convert_blend_mode(effects.mix_blend_mode);
@@ -6167,7 +6170,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,125 +1317,402 @@
+@@ -608,125 +1323,402 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -6318,6 +6321,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        element: &ElementPaint<'_>,
      ) {
 -        let node = &self.dom.as_ref().tree()[node_id];
+-
+-        match &node.data {
+-            NodeData::Element(_) | NodeData::AnonymousBlock(_) => {
+-                self.render_element(scene, node_id, parent_style_transform, clip_rect)
+-            }
 +        let ElementPaint {
 +            node,
 +            paints_own_box,
@@ -6328,10 +6336,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            child_clip_rect,
 +        } = *element;
 +        let unscrolled_transform = cx.transform;
- 
--        match &node.data {
--            NodeData::Element(_) | NodeData::AnonymousBlock(_) => {
--                self.render_element(scene, node_id, parent_style_transform, clip_rect)
++
 +        if paints_own_box {
 +            // pyro: the root element paints the canvas background, under its own shadow, in
 +            // place of its background; the body whose background that is paints none.
@@ -6638,7 +6643,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    None,
 +                ),
 +                FilterStep::Graph(graph) => graph.push_layer(scene, transform * user),
-             }
++            }
 +        }
 +        scene.append_scene(group, Affine::IDENTITY);
 +        for _ in &steps {
@@ -6671,7 +6676,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -738,6 +1724,62 @@
+@@ -738,6 +1730,62 @@
          }
      }
  
@@ -6734,7 +6739,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn element_cx(
          &'dom self,
          node: &'dom Node,
-@@ -759,10 +1801,42 @@
+@@ -759,10 +1807,42 @@
          // todo: maybe cache this so we don't need to constantly be figuring it out
          // It is quite a bit of math to calculate during render/traverse
          // Also! we can cache the bezpaths themselves, saving us a bunch of work
@@ -6779,7 +6784,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          ElementCx {
              context: self,
              frame,
-@@ -784,6 +1858,59 @@
+@@ -784,6 +1864,59 @@
      }
  }
  
@@ -6839,7 +6844,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
      match image_rendering {
          ImageRendering::Auto => peniko::ImageQuality::Medium,
-@@ -818,6 +1945,39 @@
+@@ -818,6 +1951,39 @@
      }
  }
  
@@ -6879,7 +6884,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,12 +1996,284 @@
+@@ -836,12 +2002,284 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -7165,7 +7170,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,271 +2399,2387 @@
+@@ -967,271 +2405,2426 @@
          }
      }
  
@@ -7210,23 +7215,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -            };
 -            let transform =
 -                self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
-+        struct Fragment {
-+            node: NodeId,
-+            /// How many inline elements of the root the fragment's is in, itself included.
-+            depth: usize,
-+            line: usize,
-+            x0: f32,
-+            x1: f32,
-+            top: f32,
-+            bottom: f32,
-+            /// pyro: the (visual) index of the last item it holds.
-+            last_item: usize,
-+            /// pyro: the top of its line box (where the text of the line above ends).
-+            line_top: f32,
-+            /// pyro: its element's style on the first line (`BaseDocument::first_line_style`).
-+            style: Option<style::servo_arc::Arc<ComputedValues>>,
-+        }
- 
+-
 -            // Render inline element backgrounds (e.g. `<span style="background: ...">`)
 -            // behind the text and selection highlight.
 -            crate::text::draw_inline_backgrounds(
@@ -7262,15 +7251,23 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                self.node.id,
 -                &mut draw_text_context,
 -            );
-+        let styles = layout.styles();
-+        // pyro: a root of text alone has no inline box, but for its `::first-line` box.
-+        if styles.len() < 2 && text_layout.first_line.is_none() {
-+            return painted_fragments;
++        struct Fragment {
++            node: NodeId,
++            /// How many inline elements of the root the fragment's is in, itself included.
++            depth: usize,
++            line: usize,
++            x0: f32,
++            x1: f32,
++            top: f32,
++            bottom: f32,
++            /// pyro: the (visual) index of the last item it holds.
++            last_item: usize,
++            /// pyro: the top of its line box (where the text of the line above ends).
++            line_top: f32,
++            /// pyro: its element's style on the first line (`BaseDocument::first_line_style`).
++            style: Option<style::servo_arc::Arc<ComputedValues>>,
          }
 -    }
-+        let dom = self.context.dom;
-+        let root = self.node.id;
-+        let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px();
  
 -    fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
 -        // Render the text in text inputs
@@ -7283,7 +7280,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                x: pos.x + subpixel_offset.x as f64,
 -                y: pos.y + subpixel_offset.y as f64 + y_offset,
 -            };
--
++        let styles = layout.styles();
++        // pyro: a root of text alone has no inline box, but for its `::first-line` box.
++        if styles.len() < 2 && text_layout.first_line.is_none() {
++            return painted_fragments;
++        }
++        let dom = self.context.dom;
++        let root = self.node.id;
++        let length = |v: &LengthPercentage| v.resolve(Length::new(0.0)).px();
+ 
 -            // Apply the scroll offset (stored in CSS pixels, scaled here to device pixels) so
 -            // that the caret stays visible. Single-line inputs scroll horizontally; multi-line
 -            // inputs scroll vertically.
@@ -7404,16 +7409,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                Marker::Char(_) => 8.0,
 -                Marker::String(_) => 0.0,
 -            };
--            // Outside markers are placed outside the list item's border box
--            // (`pos` is the origin of its content box)
--            let item_layout = self.node.final_layout();
--            let x_offset = -(layout.full_width() / layout.scale()
--                + x_padding
--                + item_layout.padding.left
--                + item_layout.border.left);
--
--            // Align the marker with the baseline of the first line of text in the list item
--            let y_offset = if let Some((text_layout, first_text_line)) = &self
 +        let mut fragments: Vec<Fragment> = Vec::new();
 +        let rtl_layout = layout.is_rtl();
 +        // pyro: the first line's content is in the `::first-line` box (blitz-dom
@@ -8844,9 +8839,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                Marker::Char(_) => 8.0,
 +                Marker::String(_) | Marker::Image { .. } => 0.0,
 +            };
-+            // Outside markers are placed outside the list item's border box
-+            // (`pos` is the origin of its content box)
-+            let item_layout = self.node.final_layout();
+             // Outside markers are placed outside the list item's border box
+             // (`pos` is the origin of its content box)
+             let item_layout = self.node.final_layout();
+-            let x_offset = -(layout.full_width() / layout.scale()
+-                + x_padding
+-                + item_layout.padding.left
+-                + item_layout.border.left);
 +            // pyro: after its right edge in a right-to-left item.
 +            let rtl = !self.style.writing_mode.is_bidi_ltr();
 +            let x_offset = if rtl {
@@ -8857,8 +8856,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    + item_layout.padding.left
 +                    + item_layout.border.left)
 +            };
-+
-+            // Align the marker with the baseline of the first line of text in the list item
+ 
+             // Align the marker with the baseline of the first line of text in the list item
+-            let y_offset = if let Some((text_layout, first_text_line)) = &self
 +            if let Marker::Char(symbol @ ('•' | '◦' | '▪')) = marker {
 +                self.draw_marker_symbol(scene, pos, *symbol, layout);
 +                return;
@@ -9169,6 +9169,39 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
 +    }
 +
++    /// pyro: whether `child_id` is left out of this pass of a multi-column container's children
++    /// (`PaintContext::multicol_pass`).
++    fn multicol_skips(&self, child_id: NodeId) -> bool {
++        let Some((container, only_unfragmented)) = self.context.multicol_pass.get() else {
++            return false;
++        };
++        if container != self.node.id {
++            return false;
++        }
++        let tree = self.context.dom.as_ref().tree();
++        let child = &tree[child_id];
++        // Its containing block is the container itself, not a positioned (or transformed,
++        // contained) inline or box between them, which is fragmented with the columns.
++        let mut unfragmented = child.is_out_of_flow() && child.containing_block() == Some(container);
++        let mut ancestor = child.parent;
++        while unfragmented && let Some(id) = ancestor.filter(|&id| id != container) {
++            let node = &tree[id];
++            if let Some(style) = node.primary_styles() {
++                let box_style = style.get_box();
++                if box_style.position != style::computed_values::position::T::Static
++                    || !box_style.transform.0.is_empty()
++                    || box_style.slow_clone_contain().intersects(
++                        style::values::specified::box_::Contain::LAYOUT | style::values::specified::box_::Contain::PAINT,
++                    )
++                {
++                    unfragmented = false;
++                }
++            }
++            ancestor = node.parent;
++        }
++        unfragmented != only_unfragmented
++    }
++
 +    /// Paints `child_id`, one of this node's `paint_children`.
 +    fn draw_paint_child(
 +        &self,
@@ -9183,6 +9216,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // transformed ancestor scrolls with it like any out-of-flow box.
 +        // pyro: so does one lifted here from a containing block that is no
 +        // layer root (a `backdrop-filter` box): it is placed by its offset.
++        if self.multicol_skips(child_id) {
++            return;
++        }
 +        let child = &self.context.dom.as_ref().tree()[child_id];
 +        // pyro: an atomic inline box in a positioned inline box this inline root left to its paint-tree
 +        // entry paints there, with the box's content (`draw_inline_pass_entry`).
@@ -9506,6 +9542,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // The clip layers open, outermost first: node, transform, whether the layer was pushed.
 +        let mut open: Vec<(NodeId, Affine, bool)> = Vec::new();
 +        for hoisted_child in children {
++            if self.multicol_skips(hoisted_child.node_id) {
++                continue;
++            }
 +            let position = hoisted_child.position(self.node.tree(), self.node.id);
 +            // pyro: moved with a sticky inline containing block (not memoised: it changes on scroll).
 +            let sticky = self.node.tree()[hoisted_child.node_id].inline_sticky_containing_block_offset();
@@ -9771,7 +9810,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +4801,20 @@
+@@ -1253,9 +4846,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -9795,7 +9834,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +4825,192 @@
+@@ -1266,26 +4870,192 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -9990,7 +10029,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +5018,27 @@
+@@ -1293,15 +5063,27 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -10019,7 +10058,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +5049,97 @@
+@@ -1312,7 +5094,97 @@
          );
      }
  
@@ -10117,7 +10156,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +5156,22 @@
+@@ -1329,9 +5201,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -10143,7 +10182,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +5187,28 @@
+@@ -1347,10 +5232,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -10172,7 +10211,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +5216,23 @@
+@@ -1358,8 +5261,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -10197,7 +10236,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +5256,27 @@
+@@ -1383,22 +5301,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -10234,7 +10273,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +5305,14 @@
+@@ -1427,6 +5350,14 @@
      }
  }
  
@@ -10249,7 +10288,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +5324,13 @@
+@@ -1438,6 +5369,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -10263,7 +10302,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +5350,209 @@
+@@ -1457,12 +5395,209 @@
          }
      };
      let s_border = style.get_border();
@@ -17678,7 +17717,7 @@ diff --git a/packages/blitz-paint/src/render/multicol.rs b/packages/blitz-paint/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/multicol.rs
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,177 @@
 +//! pyro: multi-column containers (blitz-dom `layout/multicol.rs`).
 +//!
 +//! A multi-column container's content is laid out in one strip a column wide; each column shows
@@ -17717,6 +17756,9 @@ new file mode 100644
 +        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
 +        let scale = self.scale;
 +        let single = columns.fragments.len() == 1;
++        // pyro: the out-of-flow boxes the container is the containing block of are placed against
++        // it, not in a column: painted once, after the columns (`multicol_skips`).
++        let outer_pass = self.context.multicol_pass.replace(Some((self.node.id, false)));
 +        for fragment in &columns.fragments {
 +            let (start, end) = (fragment.start as f64, fragment.end as f64);
 +            let (offset, range) = match vertical {
@@ -17773,6 +17815,9 @@ new file mode 100644
 +            self.context.layer_manager.maybe_pop_layer(scene, pushed);
 +        }
 +        self.transform = base;
++        self.context.multicol_pass.set(Some((self.node.id, true)));
++        self.draw_children(scene, base, clip_rect);
++        self.context.multicol_pass.set(outer_pass);
 +        true
 +    }
 +

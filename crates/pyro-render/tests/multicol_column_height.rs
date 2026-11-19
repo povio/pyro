@@ -88,3 +88,29 @@ fn without_a_column_height_nothing_changes() {
     assert_eq!(height("columns:2;gap:0"), 50.0);
     assert_eq!(height("column-wrap:wrap"), 100.0);
 }
+
+/// The red and green channels of a pixel of the page.
+fn rg_at(body: &str, x: usize, y: usize) -> (u8, u8) {
+    let snap = Snapshot {
+        html: format!("<!doctype html><style>body{{margin:0}}</style>{body}"),
+        base_url: "http://test/".into(),
+        width: 200,
+        height: 200,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let (img, _, _) = Renderer::new().render(&snap, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let i = (y * img.width as usize + x) * 4;
+    (img.data[i], img.data[i + 1])
+}
+
+#[test]
+fn an_abspos_box_of_a_multicol_container_is_placed_against_it_not_in_a_column() {
+    // Two 50px-tall columns: an abspos box at the container's (10, 60) lies past the first
+    // column's range; painted in a column it was moved to the second (60, 10). It stays at its place.
+    let body = "<div style='position:relative;columns:2;gap:0;width:100px;column-fill:auto;height:50px'>\
+                <div style='height:100px'></div>\
+                <div style='position:absolute;left:10px;top:60px;width:20px;height:20px;background:#f00'></div></div>";
+    assert_eq!(rg_at(body, 20, 70), (255, 0), "the box at its place");
+    assert_eq!(rg_at(body, 70, 20), (255, 255), "not in the second column");
+}

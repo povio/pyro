@@ -182,6 +182,11 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// (its inline root, the root's transform, the root's content position), painted in the positioned
     /// layer in tree order (CSS 2.1 Appendix E step 8; `draw_inline_pass_entry`).
     pub(crate) inline_pass_entries: RefCell<HashMap<NodeId, (NodeId, Affine, Point)>>,
+    /// pyro: while a multi-column container paints its children (`ElementCx::draw_columns`): the
+    /// container, and whether only its unfragmented children are painted (`true`: the pass after
+    /// the columns) or all but them (`false`: each column). Its unfragmented children are the
+    /// out-of-flow boxes it is the containing block of, placed against it, not in a column.
+    pub(crate) multicol_pass: std::cell::Cell<Option<(NodeId, bool)>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -274,6 +279,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             highlight_layers,
             highlight_ranges,
             inline_pass_entries: RefCell::new(HashMap::new()),
+            multicol_pass: std::cell::Cell::new(None),
             backgrounds: true,
             fractional_text_x: false,
             composite_3d: false,
@@ -4258,6 +4264,39 @@ impl ElementCx<'_, '_> {
         self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
     }
 
+    /// pyro: whether `child_id` is left out of this pass of a multi-column container's children
+    /// (`PaintContext::multicol_pass`).
+    fn multicol_skips(&self, child_id: NodeId) -> bool {
+        let Some((container, only_unfragmented)) = self.context.multicol_pass.get() else {
+            return false;
+        };
+        if container != self.node.id {
+            return false;
+        }
+        let tree = self.context.dom.as_ref().tree();
+        let child = &tree[child_id];
+        // Its containing block is the container itself, not a positioned (or transformed,
+        // contained) inline or box between them, which is fragmented with the columns.
+        let mut unfragmented = child.is_out_of_flow() && child.containing_block() == Some(container);
+        let mut ancestor = child.parent;
+        while unfragmented && let Some(id) = ancestor.filter(|&id| id != container) {
+            let node = &tree[id];
+            if let Some(style) = node.primary_styles() {
+                let box_style = style.get_box();
+                if box_style.position != style::computed_values::position::T::Static
+                    || !box_style.transform.0.is_empty()
+                    || box_style.slow_clone_contain().intersects(
+                        style::values::specified::box_::Contain::LAYOUT | style::values::specified::box_::Contain::PAINT,
+                    )
+                {
+                    unfragmented = false;
+                }
+            }
+            ancestor = node.parent;
+        }
+        unfragmented != only_unfragmented
+    }
+
     /// Paints `child_id`, one of this node's `paint_children`.
     fn draw_paint_child(
         &self,
@@ -4272,6 +4311,9 @@ impl ElementCx<'_, '_> {
         // transformed ancestor scrolls with it like any out-of-flow box.
         // pyro: so does one lifted here from a containing block that is no
         // layer root (a `backdrop-filter` box): it is placed by its offset.
+        if self.multicol_skips(child_id) {
+            return;
+        }
         let child = &self.context.dom.as_ref().tree()[child_id];
         // pyro: an atomic inline box in a positioned inline box this inline root left to its paint-tree
         // entry paints there, with the box's content (`draw_inline_pass_entry`).
@@ -4562,6 +4604,9 @@ impl ElementCx<'_, '_> {
         // The clip layers open, outermost first: node, transform, whether the layer was pushed.
         let mut open: Vec<(NodeId, Affine, bool)> = Vec::new();
         for hoisted_child in children {
+            if self.multicol_skips(hoisted_child.node_id) {
+                continue;
+            }
             let position = hoisted_child.position(self.node.tree(), self.node.id);
             // pyro: moved with a sticky inline containing block (not memoised: it changes on scroll).
             let sticky = self.node.tree()[hoisted_child.node_id].inline_sticky_containing_block_offset();

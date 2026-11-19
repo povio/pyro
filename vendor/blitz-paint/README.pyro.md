@@ -1130,3 +1130,9 @@ painted as CSS 2.1 Appendix E paints a line in tree order: the line's text befor
 in the text, wherever it is on the line), then the box, then the rest, so its background covers that text and its
 own text covers its background (WPT CSS2 `css1/c5504-imrgn-l-005`). As `reaches_back` (outer shadows) does, with the
 text split by position, not by the box's edge. Covered by `crates/pyro-render/tests/inline_negative_margin_order.rs`.
+- Round 4 lane S4, `render/multicol.rs` `draw_columns` + `render.rs` `multicol_skips` (`PaintContext::multicol_pass`):
+  the out-of-flow boxes a multi-column container is the containing block of (no positioned, transformed or contained
+  inline or box between them, which would be theirs and is fragmented) are placed against it, not in a column:
+  each column's pass leaves them out and they are painted once after the columns, in the container's own space
+  (before, each column painted them, moved by its offset and cut at its range). WPT css-multicol `column-height-002`,
+  `-021`, and abspos-in-multicol pages. `pyro-render/tests/multicol_column_height.rs`.
