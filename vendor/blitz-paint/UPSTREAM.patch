@@ -18600,7 +18600,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
      /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
      /// elements; `auto` components resolve to the corresponding border box edge.
-@@ -41,435 +149,1467 @@
+@@ -41,435 +149,1490 @@
          Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
      }
  
@@ -18623,7 +18623,14 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
              ClipPath::Shape(basic_shape, geometry_box) => {
 -                let reference_box = self.resolve_geometry_box(geometry_box);
 -                self.basic_shape_to_path(basic_shape, reference_box)
-+                let reference = self.unrounded_size(self.reference_box(geometry_box));
++                // pyro: grown to the box as laid out only for a shape with percentages, which
++                // resolve against it: lengths alone (`inset(2px)`) stay on the painted box's edges.
++                let reference = self.reference_box(geometry_box);
++                let reference = if shape_has_percentage(basic_shape) {
++                    self.unrounded_size(reference)
++                } else {
++                    reference
++                };
 +                if !(reference.width() >= 0.0 && reference.height() >= 0.0) {
 +                    return Some(ElementClip::Nothing);
 +                }
@@ -18748,7 +18755,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            margin.bottom as f64,
 +        )
 +    }
-+
+ 
 +    /// The edges of a `<geometry-box>` with its rounded corners (CSS Shapes' box shapes), in CSS
 +    /// px: the border radii for the border box, the inner radii for the padding and content boxes,
 +    /// and for the margin box the radii grown by the margins as `box-shadow`'s spread grows them
@@ -18819,7 +18826,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        };
 +        rounded_rect(rect, radii)
 +    }
- 
++
 +    /// pyro: `path` (CSS px) with its curves flattened to within 0.02 device px, as Skia draws
 +    /// them and as shaped corners are drawn (`corner-shape`): vello_cpu's own flattening (to
 +    /// 0.25px) moved their antialiased pixels by up to a quarter of their range. Used for
@@ -19564,22 +19571,10 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      }
  
 -    Some(bez)
--}
 +    pub(in crate::render) fn to_affine(ts: usvg::Transform) -> Affine {
 +        Affine::new([ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty].map(f64::from))
 +    }
- 
--/// Resolve a CommandEndPoint to an absolute Point.
--/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur`.
--fn resolve_endpoint<N>(
--    endpoint: &CommandEndPoint<GenericPosition<N, N>, N>,
--    cur: Point,
--    resolve_x: impl Fn(&N) -> f64,
--    resolve_y: impl Fn(&N) -> f64,
--) -> Point {
--    match endpoint {
--        CommandEndPoint::ToPosition(pos) => {
--            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
++
 +    fn to_bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
 +        use usvg::tiny_skia_path::PathSegment;
 +        let point = |p: usvg::tiny_skia_path::Point| kurbo::Point::new(p.x as f64, p.y as f64);
@@ -19592,29 +19587,21 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                PathSegment::CubicTo(p1, p2, p3) => out.curve_to(point(p1), point(p2), point(p3)),
 +                PathSegment::Close => out.close_path(),
 +            }
-         }
--        CommandEndPoint::ByCoordinate(coord) => {
--            Point::new(cur.x + resolve_x(&coord.x), cur.y + resolve_y(&coord.y))
--        }
++        }
 +        out
-     }
++    }
  }
  
--/// Resolve a ControlPoint to an absolute Point.
--/// - `Absolute`: uses the position directly.
--/// - `Relative`: the coordinate pair is offset from a base point determined by `ControlReference`:
--///   - `Start` (default): relative to the command's starting point (`cur`).
--///   - `End`: relative to the command's end point (`end`).
--///   - `Origin`: relative to the reference box origin (0,0 in path coordinates).
--fn resolve_control_point<N>(
--    control_point: &ControlPoint<GenericPosition<N, N>, N>,
+-/// Resolve a CommandEndPoint to an absolute Point.
+-/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur`.
+-fn resolve_endpoint<N>(
+-    endpoint: &CommandEndPoint<GenericPosition<N, N>, N>,
 -    cur: Point,
--    end: Point,
 -    resolve_x: impl Fn(&N) -> f64,
 -    resolve_y: impl Fn(&N) -> f64,
 -) -> Point {
--    match control_point {
--        ControlPoint::Absolute(pos) => {
+-    match endpoint {
+-        CommandEndPoint::ToPosition(pos) => {
 -            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
 +#[cfg(feature = "svg")]
 +impl ElementCx<'_, '_> {
@@ -19689,44 +19676,34 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                transform: user,
 +            }),
          }
--        ControlPoint::Relative(rel) => {
--            let base = match rel.reference {
--                ControlReference::Start => cur,
--                ControlReference::End => end,
--                ControlReference::Origin => Point::ZERO,
--            };
--            Point::new(
--                base.x + resolve_x(&rel.coord.x),
--                base.y + resolve_y(&rel.coord.y),
--            )
+-        CommandEndPoint::ByCoordinate(coord) => {
+-            Point::new(cur.x + resolve_x(&coord.x), cur.y + resolve_y(&coord.y))
 -        }
      }
  }
  
--/// Reflect a previous control point around the current point.
--/// If there is no previous control point (previous command wasn't the matching curve type),
--/// returns the current point itself.
--fn reflect_point(last_control: Option<Point>, cur: Point) -> Point {
--    match last_control {
--        Some(ctrl) => Point::new(2.0 * cur.x - ctrl.x, 2.0 * cur.y - ctrl.y),
--        None => cur,
--    }
+-/// Resolve a ControlPoint to an absolute Point.
+-/// - `Absolute`: uses the position directly.
+-/// - `Relative`: the coordinate pair is offset from a base point determined by `ControlReference`:
+-///   - `Start` (default): relative to the command's starting point (`cur`).
+-///   - `End`: relative to the command's end point (`end`).
+-///   - `Origin`: relative to the reference box origin (0,0 in path coordinates).
+-fn resolve_control_point<N>(
+-    control_point: &ControlPoint<GenericPosition<N, N>, N>,
+-    cur: Point,
+-    end: Point,
+-    resolve_x: impl Fn(&N) -> f64,
+-    resolve_y: impl Fn(&N) -> f64,
+-) -> Point {
+-    match control_point {
+-        ControlPoint::Absolute(pos) => {
+-            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
 +thread_local! {
 +    /// pyro: set while an inline layout is painted for its inline elements' clip paths and masks
 +    /// ([`ElementCx::draw_inline_effects`]), whose passes paint it plainly.
 +    static INLINE_EFFECTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
- }
- 
--/// Resolve an AxisEndPoint to an absolute value.
--/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur_val`.
--fn resolve_axis_endpoint<N>(
--    endpoint: &AxisEndPoint<N, N>,
--    cur_val: f64,
--    resolve: impl Fn(&N) -> f64,
--) -> f64 {
--    match endpoint {
--        AxisEndPoint::ToPosition(pos) => resolve(pos),
--        AxisEndPoint::ByCoordinate(val) => cur_val + resolve(val),
++}
++
 +/// pyro: an inline element's piece on one line, in an inline layout's space (device px, with the
 +/// text's placement shifts).
 +#[derive(Clone, Copy)]
@@ -19753,7 +19730,12 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +
 +        if INLINE_EFFECTS.get() {
 +            return false;
-+        }
+         }
+-        ControlPoint::Relative(rel) => {
+-            let base = match rel.reference {
+-                ControlReference::Start => cur,
+-                ControlReference::End => end,
+-                ControlReference::Origin => Point::ZERO,
 +        // pyro: a vertical layout's lines each have their transform (`vertical_line_transform`):
 +        // the fragments are placed in this element's space through them.
 +        let vertical = self.node.vertical_block_axis();
@@ -20069,7 +20051,11 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        for ((&effect, fragments), pieces) in effects.iter().zip(&fragments).zip(&pieces) {
 +            let (Some(node), Some(first)) = (dom.get_node(effect), fragments.first()) else {
 +                continue;
-+            };
+             };
+-            Point::new(
+-                base.x + resolve_x(&rel.coord.x),
+-                base.y + resolve_y(&rel.coord.y),
+-            )
 +            let Some(style) = node.primary_styles() else {
 +                continue;
 +            };
@@ -20271,12 +20257,19 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            if faded {
 +                scene.pop_layer();
 +            }
-+        }
+         }
 +        INLINE_EFFECTS.set(false);
 +        true
      }
  }
-+
+ 
+-/// Reflect a previous control point around the current point.
+-/// If there is no previous control point (previous command wasn't the matching curve type),
+-/// returns the current point itself.
+-fn reflect_point(last_control: Option<Point>, cur: Point) -> Point {
+-    match last_control {
+-        Some(ctrl) => Point::new(2.0 * cur.x - ctrl.x, 2.0 * cur.y - ctrl.y),
+-        None => cur,
 +/// pyro: the filter an inline element (not atomic) with style `style` paints its fragments through:
 +/// one that moves nothing out of them (colour functions and colour-matrix SVG filters), else
 +/// `None` (left unpainted, as before).
@@ -20288,11 +20281,21 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +    let list = &style.get_effects().filter.0;
 +    if list.is_empty() {
 +        return None;
-+    }
+     }
 +    let filter = crate::filters::convert_filters(list, scale, &style.clone_color(), dom)?;
 +    (crate::layers::filter_reach(&filter, Affine::IDENTITY) == Rect::ZERO).then(|| std::sync::Arc::new(filter))
-+}
-+
+ }
+ 
+-/// Resolve an AxisEndPoint to an absolute value.
+-/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur_val`.
+-fn resolve_axis_endpoint<N>(
+-    endpoint: &AxisEndPoint<N, N>,
+-    cur_val: f64,
+-    resolve: impl Fn(&N) -> f64,
+-) -> f64 {
+-    match endpoint {
+-        AxisEndPoint::ToPosition(pos) => resolve(pos),
+-        AxisEndPoint::ByCoordinate(val) => cur_val + resolve(val),
 +/// pyro: the `filter` list of the inline element `node` (of style `style`) as the layers
 +/// `paint_filter_steps` paints when [`inline_filter`] cannot: an SVG filter graph (`url()` of a
 +/// `<filter>` that is no colour chain, `filters::filter_steps`), or functions that move or spread
@@ -20309,7 +20312,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +    let list = &style.get_effects().filter.0;
 +    if list.is_empty() {
 +        return None;
-+    }
+     }
 +    let current_color = style.clone_color();
 +    let references = node.element_data().map_or(&[][..], |element| &element.reference_images[..]);
 +    if let Some(steps) = crate::filters::filter_steps(list, scale, &current_color, dom, size, references, false) {
@@ -20318,7 +20321,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +    let filter = crate::filters::convert_filters(list, scale, &current_color, dom)?;
 +    (crate::layers::filter_reach(&filter, Affine::IDENTITY) != Rect::ZERO)
 +        .then(|| vec![crate::filters::FilterStep::Chain(std::sync::Arc::new(filter))])
-+}
+ }
 +
 +/// pyro: whether [`layered_filter`] has layers for the inline element `node`.
 +fn has_layered_filter(dom: &blitz_dom::BaseDocument, node: &blitz_dom::Node, style: &style::properties::ComputedValues) -> bool {
@@ -20402,6 +20405,22 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        ancestor = node.parent;
 +    }
 +    true
++}
++
++/// pyro: whether a basic shape may resolve a percentage against its reference box: an `inset()`
++/// of lengths alone does not; the other shapes are taken to.
++fn shape_has_percentage(shape: &BasicShape) -> bool {
++    match shape {
++        GenericBasicShape::Rect(inset) => {
++            let r = &inset.rect;
++            let round = &inset.round;
++            [&r.0, &r.1, &r.2, &r.3].iter().any(|lp| lp.has_percentage())
++                || [&round.top_left, &round.top_right, &round.bottom_right, &round.bottom_left]
++                    .iter()
++                    .any(|corner| corner.0.width.0.has_percentage() || corner.0.height.0.has_percentage())
++        }
++        _ => true,
++    }
 +}
 diff --git a/packages/blitz-paint/src/render/form_controls.rs b/packages/blitz-paint/src/render/form_controls.rs
 --- a/packages/blitz-paint/src/render/form_controls.rs

@@ -159,7 +159,14 @@ impl ElementCx<'_, '_> {
             #[cfg(not(feature = "svg"))]
             ClipPath::Url(_) => None,
             ClipPath::Shape(basic_shape, geometry_box) => {
-                let reference = self.unrounded_size(self.reference_box(geometry_box));
+                // pyro: grown to the box as laid out only for a shape with percentages, which
+                // resolve against it: lengths alone (`inset(2px)`) stay on the painted box's edges.
+                let reference = self.reference_box(geometry_box);
+                let reference = if shape_has_percentage(basic_shape) {
+                    self.unrounded_size(reference)
+                } else {
+                    reference
+                };
                 if !(reference.width() >= 0.0 && reference.height() >= 0.0) {
                     return Some(ElementClip::Nothing);
                 }
@@ -1612,4 +1619,20 @@ fn paints_alone(dom: &blitz_dom::BaseDocument, root: blitz_dom::NodeId, id: blit
         ancestor = node.parent;
     }
     true
+}
+
+/// pyro: whether a basic shape may resolve a percentage against its reference box: an `inset()`
+/// of lengths alone does not; the other shapes are taken to.
+fn shape_has_percentage(shape: &BasicShape) -> bool {
+    match shape {
+        GenericBasicShape::Rect(inset) => {
+            let r = &inset.rect;
+            let round = &inset.round;
+            [&r.0, &r.1, &r.2, &r.3].iter().any(|lp| lp.has_percentage())
+                || [&round.top_left, &round.top_right, &round.bottom_right, &round.bottom_left]
+                    .iter()
+                    .any(|corner| corner.0.width.0.has_percentage() || corner.0.height.0.has_percentage())
+        }
+        _ => true,
+    }
 }
