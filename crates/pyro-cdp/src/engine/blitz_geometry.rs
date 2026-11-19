@@ -20,7 +20,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use pyro_dom::layout::{SubresourceBodies, SubresourceKind, SubresourceLoader};
+use pyro_dom::layout::{SubresourceBodies, SubresourceKind, SubresourceLoader, SubresourceOptions};
 use pyro_render::Fetcher;
 
 pub(crate) use pyro_layout::{set_fork_template, take_stats};
@@ -90,13 +90,33 @@ impl LocalFiles {
     /// the background (into the cache) and answers `None` now: a layout
     /// never waits for the network (a request held by interception needs
     /// this thread), and the identity's next documents get the body at once.
-    /// With `cors`, fetched in CORS mode ("anonymous") and cached apart.
-    fn network(&self, url: &pyro_net::Url, cors: bool) -> Option<Vec<u8>> {
+    /// With `options` other than the defaults (CORS mode, integrity, referrer: a CSS `url()`'s
+    /// request URL modifiers), fetched as they say and cached apart.
+    fn network(&self, url: &pyro_net::Url, options: &SubresourceOptions) -> Option<Vec<u8>> {
         // No network of its own: nothing goes out, never through another
         // context's client.
         let loader = self.loader.as_ref()?;
         let bodies = loader.bodies().clone();
-        let key = if cors { format!("cors-anonymous {}", url.as_str()) } else { url.as_str().to_owned() };
+        let cors = options.crossorigin.is_some();
+        let plain_cors = cors
+            && options.crossorigin.as_deref() == Some("anonymous")
+            && options.integrity.is_none()
+            && options.referrer.is_none()
+            && options.referrer_policy.is_none();
+        let key = if *options == SubresourceOptions::default() {
+            url.as_str().to_owned()
+        } else if plain_cors {
+            format!("cors-anonymous {}", url.as_str())
+        } else {
+            format!(
+                "cors={:?} integrity={:?} referrer-policy={:?} referrer={:?} {}",
+                options.crossorigin,
+                options.integrity,
+                options.referrer_policy,
+                options.referrer,
+                url.as_str()
+            )
+        };
         if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
             return None;
         }
@@ -119,7 +139,7 @@ impl LocalFiles {
         IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let fetch = InFlight { bodies, failed: self.failed.clone(), key };
         let path = url.path().to_ascii_lowercase();
-        let kind = if cors {
+        let kind = if plain_cors {
             SubresourceKind::CorsImage
         } else if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
             loader.font_asked(url.as_str());
@@ -129,9 +149,10 @@ impl LocalFiles {
         } else {
             SubresourceKind::Image
         };
-        loader.load(
+        loader.load_with(
             url.as_str().to_owned(),
             kind,
+            options,
             Box::new(move |result| match result {
                 Ok(body) if !body.is_empty() => {
                     fetch.bodies.lock().insert(fetch.key.clone(), Arc::new(body));
@@ -156,18 +177,38 @@ impl LocalFiles {
 
 impl Fetcher for LocalFiles {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        self.load(url, false, done)
+        self.load(url, &SubresourceOptions::default(), done)
+    }
+
+    /// pyro: as the screenshot's fetcher does, so layout queries and screenshots agree.
+    fn fetch_with(
+        &self,
+        url: String,
+        options: &pyro_render::FetchOptions,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        let options = SubresourceOptions {
+            crossorigin: options.cors.map(|credentials| match credentials {
+                pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
+                pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
+            }),
+            integrity: options.integrity.clone(),
+            referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
+            referrer_policy: options.referrer_policy.clone(),
+        };
+        self.load(url, &options, done)
     }
 
     /// `data:` and `file:` URLs and `serve --static` roots are this process's own; the network's
     /// responses pass the CORS check or fail.
     fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        self.load(url, true, done)
+        let options = SubresourceOptions { crossorigin: Some("anonymous".to_owned()), ..Default::default() };
+        self.load(url, &options, done)
     }
 }
 
 impl LocalFiles {
-    fn load(&self, url: String, cors: bool, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+    fn load(&self, url: String, options: &SubresourceOptions, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let body = (|| {
             // A data: URL (as serialized by the url crate) holds its body.
             if url.starts_with("data:") {
@@ -181,12 +222,15 @@ impl LocalFiles {
                     Some(hit) => Some(hit.file.body.to_vec()),
                     None => match self.statics.resolve(&u, false) {
                         Some(hit) => std::fs::read(hit.path).ok(),
-                        None if matches!(u.scheme(), "http" | "https") => self.network(&u, cors),
+                        // The loader checks a network response's integrity.
+                        None if matches!(u.scheme(), "http" | "https") => return self.network(&u, options),
                         None => None,
                     },
                 },
             }
         })();
+        // pyro: a local body with integrity metadata (`integrity()`) is used only when it matches.
+        let body = body.filter(|body| options.integrity.as_deref().is_none_or(|i| pyro_webapi::sri::matches(i, body)));
         done(body.ok_or_else(|| format!("{url}: not a local resource")));
     }
 }

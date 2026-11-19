@@ -157,6 +157,20 @@ pub enum SubresourceKind {
     Style,
 }
 
+/// pyro: what a sub-resource request of a geometry source carries beyond its URL, as a CSS
+/// `url()`'s request URL modifiers ask (CSS Values 5 § 4.5.4); the defaults are a sub-resource's.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubresourceOptions {
+    /// `anonymous` or `use-credentials`: the request's mode is "cors", with those credentials.
+    pub crossorigin: Option<String>,
+    /// Integrity metadata: a response whose body matches none of it fails.
+    pub integrity: Option<String>,
+    /// The request's referrer (the style sheet a `url()` was written in); `None`: the document.
+    pub referrer: Option<String>,
+    /// The request's referrer policy keyword; `None`: the document's.
+    pub referrer_policy: Option<String>,
+}
+
 /// How a document's geometry source reaches the network for what it lays the
 /// document out with (images, fonts, imported sheets): the embedder's loader
 /// for that document ([`crate::layout::Layout::set_subresource_loader`]), which
@@ -169,6 +183,25 @@ pub trait SubresourceLoader: Send + Sync {
     /// or why there is none, on any thread. A loader that can no longer send
     /// the request (its document is gone) drops `done` without calling it.
     fn load(&self, url: String, kind: SubresourceKind, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>);
+    /// pyro: [`Self::load`] made as `options` say (a CSS `url()`'s request URL modifiers): a
+    /// response that fails the CORS check or the integrity check is an error. A loader that
+    /// cannot honour them makes a CORS fetch when the mode is "cors" and fails one with
+    /// integrity metadata (the default).
+    fn load_with(
+        &self,
+        url: String,
+        kind: SubresourceKind,
+        options: &SubresourceOptions,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        if options.integrity.is_some() {
+            done(Err(format!("{url}: no integrity check")));
+        } else if options.crossorigin.is_some() {
+            self.load(url, SubresourceKind::CorsImage, done);
+        } else {
+            self.load(url, kind, done);
+        }
+    }
     /// The bodies loaded for the documents that go out with this one's
     /// network identity, which they reuse ([`SubresourceBodies`]).
     fn bodies(&self) -> &std::sync::Arc<SubresourceBodies>;

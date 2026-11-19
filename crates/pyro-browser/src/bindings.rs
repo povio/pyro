@@ -38,9 +38,37 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
             pyro_dom::layout::SubresourceKind::Font => crate::ResourceKind::Font,
             pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
         };
+        let options = crate::SubresourceOptions { crossorigin: cors.then(|| "anonymous".to_owned()), ..Default::default() };
         let (frame, loader) = (self.frame, self.loader.clone());
         // A closed loop drops `done`: its document is gone with the browser.
-        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, cors, done));
+        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, options, done));
+    }
+
+    /// pyro: as the screenshot's requests are made (a CSS `url()`'s request URL modifiers), so
+    /// layout queries and screenshots agree.
+    fn load_with(
+        &self,
+        url: String,
+        kind: pyro_dom::layout::SubresourceKind,
+        options: &pyro_dom::layout::SubresourceOptions,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        let kind = match kind {
+            pyro_dom::layout::SubresourceKind::Image | pyro_dom::layout::SubresourceKind::CorsImage => {
+                crate::ResourceKind::Image
+            }
+            pyro_dom::layout::SubresourceKind::Font => crate::ResourceKind::Font,
+            pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
+        };
+        let options = crate::SubresourceOptions {
+            crossorigin: options.crossorigin.clone(),
+            integrity: options.integrity.clone(),
+            referrer: options.referrer.clone(),
+            referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
+            client: None,
+        };
+        let (frame, loader) = (self.frame, self.loader.clone());
+        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, options, done));
     }
 
     fn bodies(&self) -> &Arc<pyro_dom::layout::SubresourceBodies> {

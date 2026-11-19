@@ -1312,16 +1312,21 @@ impl Browser {
         loader: &LoaderId,
         url: String,
         kind: ResourceKind,
-        cors: bool,
+        options: SubresourceOptions,
         done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
     ) {
-        let request = {
+        let (request, origin) = {
             let Some(state) = self.doc(frame) else { return };
             if state.main_frame.loader_id != *loader {
                 return;
             }
-            subresource_request(&state.main_frame, frame.page, url, kind, cors)
+            (
+                subresource_request_with(&state.main_frame, frame.page, url, kind, &options),
+                state.main_frame.origin.clone(),
+            )
         };
+        let cors = options.crossorigin.is_some();
+        let integrity = options.integrity;
         let Some(resource_loader) = self.loader_for(frame) else {
             done(Err("no resource loader".into()));
             return;
@@ -1331,9 +1336,15 @@ impl Browser {
             self,
             request,
             Box::new(move |_, result| {
-                done(result.and_then(|r| match r.status {
-                    200..=299 => Ok(r.render_body(environment.as_slice())),
-                    status => Err(format!("HTTP {status}")),
+                done(result.and_then(|r| {
+                    // pyro: a response that fails its integrity check (`integrity()`) is an error.
+                    if let Some(message) = loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
+                        return Err(message);
+                    }
+                    match r.status {
+                        200..=299 => Ok(r.render_body(environment.as_slice())),
+                        status => Err(format!("HTTP {status}")),
+                    }
                 }))
             }),
         );
