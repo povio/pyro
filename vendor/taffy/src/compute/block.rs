@@ -1593,7 +1593,10 @@ fn determine_content_based_container_width(
                 (Some(cap), AvailableSpace::Definite(available)) => {
                     width.min(cap.max(available)).maybe_max(item.min_size.width)
                 }
-                _ => width,
+                // pyro: its `min-width` as resolved here (a percentage in `calc()` against zero:
+                // `calc(160px + 0%)` is 160px; css-sizing-3 § 5.2.1c), which its own layout, where
+                // the percentage has no basis, drops (WPT css-sizing `intrinsic-percent-non-replaced-001`)
+                _ => width.maybe_max(item.min_size.width),
             }
         });
         // pyro: keyword `min-width`/`max-width` bound an automatic width's contribution too
