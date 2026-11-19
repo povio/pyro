@@ -1895,7 +1895,12 @@ impl LayoutPassState<'_> {
             .map(|s| {
                 (
                     stylo_to_parley::text_align(s.clone_text_align()),
-                    stylo_to_parley::text_align_last(s.clone_text_align_last()),
+                    // pyro: `text-align: justify-all` justifies the last line too (unless
+                    // `text-align-last` says otherwise).
+                    stylo_to_parley::text_align_last(s.clone_text_align_last()).or(
+                        (s.clone_text_align() == style::values::specified::TextAlignKeyword::JustifyAll)
+                            .then_some(parley::Alignment::Justify),
+                    ),
                 )
             })
             .unwrap_or((parley::layout::Alignment::Start, None));

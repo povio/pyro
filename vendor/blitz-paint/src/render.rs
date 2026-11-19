@@ -3615,7 +3615,7 @@ impl ElementCx<'_, '_> {
                     A::Left | A::MozLeft => left,
                     A::Right | A::MozRight => right,
                     A::End => if rtl { left } else { right },
-                    A::Start | A::Justify => if rtl { right } else { left },
+                    A::Start | A::Justify | A::JustifyAll => if rtl { right } else { left },
                 }
             };
             let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));

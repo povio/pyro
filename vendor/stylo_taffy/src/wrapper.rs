@@ -495,7 +495,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyl
         let (start, end) = if taffy::CoreStyle::direction(self).is_rtl() { (End, Start) } else { (Start, End) };
         let (left, right) = if self.layout_wm().line_left_is_bottom() { (End, Start) } else { (Start, End) };
         match self.style.clone_text_align() {
-            stylo::TextAlign::Start | stylo::TextAlign::Justify => start,
+            stylo::TextAlign::Start | stylo::TextAlign::Justify | stylo::TextAlign::JustifyAll => start,
             stylo::TextAlign::End => end,
             stylo::TextAlign::Left | stylo::TextAlign::MozLeft => left,
             stylo::TextAlign::Right | stylo::TextAlign::MozRight => right,

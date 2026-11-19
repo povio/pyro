@@ -522,7 +522,7 @@ pub(crate) fn text_align(input: stylo::TextAlignKeyword) -> parley::Alignment {
         stylo::TextAlignKeyword::Left => parley::Alignment::Left,
         stylo::TextAlignKeyword::Right => parley::Alignment::Right,
         stylo::TextAlignKeyword::Center => parley::Alignment::Center,
-        stylo::TextAlignKeyword::Justify => parley::Alignment::Justify,
+        stylo::TextAlignKeyword::Justify | stylo::TextAlignKeyword::JustifyAll => parley::Alignment::Justify,
         stylo::TextAlignKeyword::End => parley::Alignment::End,
         stylo::TextAlignKeyword::MozCenter => parley::Alignment::Center,
         stylo::TextAlignKeyword::MozLeft => parley::Alignment::Left,

@@ -532,6 +532,8 @@ pub enum TextAlignKeyword {
     Center,
     Justify,
     End,
+    /// pyro: `justify-all` (CSS Text 3): `justify` with the last line justified too.
+    JustifyAll,
     #[parse(aliases = "-webkit-center")]
     MozCenter,
     #[parse(aliases = "-webkit-left")]

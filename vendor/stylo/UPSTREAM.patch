@@ -7441,7 +7441,7 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
  /// https://drafts.csswg.org/css-images/#propdef-object-fit
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-19 18:38:15
++++ b/values/specified/text.rs	2026-11-19 19:31:24
 @@ -25,6 +25,23 @@
  use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
  use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
@@ -7494,7 +7494,16 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      }
  }
  
-@@ -824,6 +856,10 @@
+@@ -500,6 +532,8 @@
+     Center,
+     Justify,
+     End,
++    /// pyro: `justify-all` (CSS Text 3): `justify` with the last line justified too.
++    JustifyAll,
+     #[parse(aliases = "-webkit-center")]
+     MozCenter,
+     #[parse(aliases = "-webkit-left")]
+@@ -824,6 +858,10 @@
          self.remove(Self::RIGHT); // Right is the default
          true
      }
@@ -7505,7 +7514,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-@@ -858,6 +894,14 @@
+@@ -858,6 +896,14 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
      BreakWord,
@@ -7520,13 +7529,10 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1330,9 +1374,228 @@
-         /// Auto-spacing may replace an existing U+0020 space with custom space.
-         const REPLACE = 1 << 6;
-         */
-+    }
-+}
-+
+@@ -1333,6 +1379,225 @@
+     }
+ }
+ 
 +/// pyro: the `white-space-trim` property: which collapsible white space at a box's edges is
 +/// discarded.
 +///
@@ -7560,9 +7566,9 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +        const DISCARD_AFTER = 1 << 1;
 +        /// The collapsible white space at the start and end of the box's content.
 +        const DISCARD_INNER = 1 << 2;
-     }
- }
- 
++    }
++}
++
 +/// pyro: the `word-space-transform` property: what word separators zero width spaces and `<wbr>`
 +/// become.
 +///
