@@ -2561,9 +2561,14 @@ impl Layout {
     /// (its scroll offsets then run from 0 to negative values).
     fn viewport_x_reversed(&self, dom: &Dom) -> bool {
         use style::properties::longhands::writing_mode::computed_value::T as WritingMode;
-        // The layout engine's answer when it has the document (blitz-dom
-        // `viewport_scrolls_leftward`, which its scroll timelines use too); the same rule here.
-        if let Some(leftward) = self.synced_geometry_source(dom).and_then(|s| s.viewport_scrolls_leftward()) {
+        // The layout engine's answer when its document is in sync (blitz-dom
+        // `viewport_scrolls_leftward`, which its scroll timelines use too), never laying out for it
+        // (a scroll to the origin lays nothing out); else the same rule from the styles here.
+        let in_sync = self
+            .external
+            .as_ref()
+            .filter(|s| s.active() && !s.stale() && self.external_synced.get() == Some(self.sync_key(dom)));
+        if let Some(leftward) = in_sync.and_then(|s| s.viewport_scrolls_leftward()) {
             return leftward;
         }
         let Some(root) = dom.document_element(self.document()).ok().flatten() else { return false };
@@ -2609,8 +2614,12 @@ impl Layout {
             let (l, t) = self.snap_scroll(dom, None, current, left.map(i64::from), top.map(i64::from));
             (l.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32), t.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32))
         };
-        // (Only an offset off the origin needs the range: one at the origin lands there.)
-        let (rx, ry) = if left.is_some_and(|l| l != 0) || top.is_some_and(|t| t > 0) {
+        // (Only an offset past the origin, in the direction the viewport scrolls, needs the range,
+        // which needs a layout: one at or before the origin lands there, so `scrollTo(0, 0)` lays
+        // nothing out.)
+        let leftward = left.is_some_and(|l| l != 0) && self.viewport_x_reversed(dom);
+        let past = |l: i32| if leftward { l < 0 } else { l > 0 };
+        let (rx, ry) = if left.is_some_and(past) || top.is_some_and(|t| t > 0) {
             self.viewport_scroll_range(dom)
         } else {
             ((0, 0), (0, 0))
