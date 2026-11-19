@@ -11048,3 +11048,66 @@ fn an_opener_adding_a_style_sheet_to_its_popup_loads_it() {
     );
     assert_eq!(r["result"]["result"]["value"], json!(["load", "rgb(1, 2, 3)"]), "{r}");
 }
+
+/// A server answering a few paths (a thread that stops once the test ends): `/` an empty page,
+/// `/worklet.js` a redirect to `/final/worklet.js`, a module that imports `./dep.js` and checks its
+/// own URL, and `/final/dep.js`, which registers a painter.
+fn serve_worklet_modules() -> std::net::SocketAddr {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let line = String::from_utf8_lossy(&request).lines().next().unwrap_or("").to_owned();
+            let path = line.split_whitespace().nth(1).unwrap_or("/").to_owned();
+            let (status, ty, body, location) = match path.as_str() {
+                "/worklet.js" => ("302 Found", "text/plain", String::new(), Some("/final/worklet.js")),
+                "/final/worklet.js" => (
+                    "200 OK",
+                    "text/javascript",
+                    "import './dep.js'; if (!import.meta.url.endsWith('/final/worklet.js')) throw new Error('evaluated at ' + import.meta.url);".to_owned(),
+                    None,
+                ),
+                "/final/dep.js" => ("200 OK", "text/javascript", "registerPaint('dep', class { paint() {} });".to_owned(), None),
+                _ => ("200 OK", "text/html", "<!doctype html><p>page</p>".to_owned(), None),
+            };
+            let location = location.map(|l| format!("Location: {l}\r\n")).unwrap_or_default();
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nAccess-Control-Allow-Origin: *\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    address
+}
+
+/// CSS.paintWorklet.addModule() loads the module's static imports (as the page's module scripts load
+/// theirs) and evaluates the module under its response URL, after redirects: `import.meta.url` and
+/// relative imports follow it.
+#[test]
+fn paint_worklet_modules_load_their_imports_at_the_final_url() {
+    let addr = serve_worklet_modules();
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"CSS.paintWorklet.addModule('/worklet.js').then(() => 'loaded', (e) => 'rejected: ' + e)"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!("loaded"), "{r}");
+}

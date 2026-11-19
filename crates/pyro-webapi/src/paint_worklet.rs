@@ -98,6 +98,9 @@ fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str) -> J
                 let ws = realm.scope()?;
                 ws.eval(PRELUDE, Some("pyro://internal/paint-worklet-global.js"), 1)?;
             }
+            // Module dependencies load as the page's do ("fetch a worklet script graph" with the
+            // document's fetch client): the calling realm's module fetcher.
+            realm.set_module_fetcher(s.realm().module_fetcher());
             *slot = Some(Rc::new(realm));
         }
         slot.as_ref().expect("worklet realm").clone()

@@ -39,13 +39,15 @@
         }
         // "fetch a worklet script graph": a failed fetch (network error, not ok) rejects with AbortError.
         const aborted = () => new DOMExceptionC('Unable to load a worklet\'s module.', 'AbortError');
+        // Evaluated under the response's URL (after redirects), which import.meta.url and the module's
+        // relative imports use.
         return fetchC(url, { credentials, mode: 'cors' }).then(
           (response) => {
             if (!response.ok) throw aborted();
-            return response.text();
+            return response.text().then((source) => [source, response.url || url]);
           },
           () => { throw aborted(); },
-        ).then((source) => native.evaluate(source, url));
+        ).then(([source, finalUrl]) => native.evaluate(source, finalUrl));
       } catch (e) {
         return reject(e);
       }
