@@ -289,6 +289,9 @@ impl Mirror {
                 self.scrolled.push(id);
             }
         }
+        // pyro: the active scroll markers follow the scroll positions (a group that scrolls keeps
+        // its active marker in view), without waiting for a layout.
+        self.doc.update_scroll_marker_states();
     }
 
     /// Gives the document the current scroll targets in `targets` (by key; `u64::MAX`: the

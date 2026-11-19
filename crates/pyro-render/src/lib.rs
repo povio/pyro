@@ -914,6 +914,12 @@ impl Renderer {
     /// the elements whose values changed at its next resolve.
     /// The page's scroll offsets for its scroll-driven animations (`BaseDocument::set_timeline_scroll`),
     /// applied at its next sync or render.
+    /// pyro: whether the page's document has scroll markers or buttons (their states follow the
+    /// scroll offsets).
+    pub fn uses_scroll_markers(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_markers())
+    }
+
     pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
         // A document that exists takes them now: the animated values of the next sync are computed
         // (from its scroll timelines) before that sync applies anything.
@@ -1650,6 +1656,14 @@ impl Renderer {
     /// the last call (while tracked), by render key, with the styles before
     /// and after (`BaseDocument::take_style_changes`); elements no longer
     /// mirrored are left out.
+    /// pyro: the keys of the elements whose scroll marker group scrolled to keep its active marker
+    /// in view since the last call (blitz-dom `BaseDocument::take_scroll_group_moves`).
+    pub fn take_scroll_group_moves(&mut self, page: u64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
+        let moves = m.doc.take_scroll_group_moves();
+        moves.into_iter().filter_map(|id| m.key_of(id)).collect()
+    }
+
     pub fn take_style_changes(
         &mut self,
         page: u64,

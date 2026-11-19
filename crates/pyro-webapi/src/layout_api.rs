@@ -251,6 +251,21 @@ pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     }
 }
 
+/// pyro: queues `scroll` and `scrollend` at the originating element of each scroll marker group
+/// that scrolled to keep its active marker in view, after the scroll that moved the marker
+/// (Chromium scrolls the group smoothly; WPT css-overflow
+/// `scroll-marker-group-keeps-active-in-view`).
+fn deliver_scroll_group_moves(page: &Rc<PageDom>) {
+    let moves = match (page.dom.try_borrow(), page.try_layout()) {
+        (Ok(dom), Some(layout)) => layout.style().take_scroll_group_moves(&dom),
+        _ => Vec::new(),
+    };
+    for owner in moves {
+        let p = page.clone();
+        page.post_delayed_task(std::time::Duration::from_millis(20), Box::new(move || queue_scroll(&p, Some(owner), true)));
+    }
+}
+
 fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &str) {
     if p.is_disposed() || p.document() != doc {
         return;
@@ -263,6 +278,14 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
             };
             if connected {
                 crate::input::fire_simple(p, el, kind, false, false);
+                // (A scroll can move the active scroll marker: the layout engine follows it.)
+                if kind == "scrollend" {
+                    if let Some(layout) = p.try_layout() {
+                        layout.push_scroll();
+                    }
+                    crate::animation_events::layout_flush(p, el);
+                    deliver_scroll_group_moves(p);
+                }
             }
         }
         None => {
@@ -275,6 +298,10 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
 /// fires their `scroll` events: `now` (a rendering update) dispatches them
 /// at once, otherwise (a script read) at the next frame like other scrolls.
 pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
+    // pyro: a scroll marker group that scrolled to keep its active marker in view: its scroll
+    // events go to its originating element, after the scroll that moved the marker (Chromium
+    // scrolls the group smoothly; WPT css-overflow `scroll-marker-group-keeps-active-in-view`).
+    deliver_scroll_group_moves(page);
     if !page.layout.borrow().has_scroll_offsets() {
         return;
     }

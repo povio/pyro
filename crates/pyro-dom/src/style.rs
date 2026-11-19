@@ -1112,6 +1112,19 @@ impl StyleEngine {
     /// replaced since the last call (while tracked), with the style before
     /// and after: a transition's before-change and after-change styles.
     /// Elements gone from `dom` are left out.
+    /// pyro: the elements whose `::scroll-marker-group` scrolled to keep its active marker in view
+    /// since the last call ([`crate::geometry::GeometrySource::take_scroll_group_moves`]).
+    pub fn take_scroll_group_moves(&self, dom: &Dom) -> Vec<NodeId> {
+        let external = self.external.borrow();
+        let Some((source, _)) = &*external else { return Vec::new() };
+        source
+            .take_scroll_group_moves()
+            .into_iter()
+            .filter_map(|key| crate::geometry::node_of(dom, key))
+            .filter(|&el| self.owns(dom, el).is_some())
+            .collect()
+    }
+
     pub fn take_style_changes(
         &self,
         dom: &Dom,

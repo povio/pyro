@@ -153,6 +153,7 @@ pub fn install_with(fetchers: FetcherFactory) {
             undisplayed: Default::default(),
             sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
+            scroll_stale: Default::default(),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
             fetcher: RefCell::new(fetchers(None)),
             loader: RefCell::new(None),
@@ -203,6 +204,9 @@ pub struct BlitzGeometry {
     synced: std::cell::Cell<Option<SyncedAt>>,
     /// [`BlitzGeometry::arrivals`] when its document was built.
     resources: std::cell::Cell<u64>,
+    /// pyro: scroll offsets were told ([`GeometrySource::set_scroll`]) to a document that uses
+    /// scroll markers, which follow them: it syncs again (`stale`).
+    scroll_stale: std::cell::Cell<bool>,
     /// Each style sheet's owner, whether it is a `<style>`, and its text's
     /// revision (`StyleEngine::sheet_revision`), as last synced (see
     /// [`BlitzGeometry::changed_style_sheets`]).
@@ -617,6 +621,7 @@ impl BlitzGeometry {
     }
 
     fn sync_inner(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
+        self.scroll_stale.set(false);
         let resources = self.arrivals();
         let rebuild = self.resources.replace(resources) != resources;
         if rebuild {
@@ -748,7 +753,7 @@ impl GeometrySource for BlitzGeometry {
     }
 
     fn stale(&self) -> bool {
-        self.resources.get() != self.arrivals()
+        self.resources.get() != self.arrivals() || self.scroll_stale.get()
     }
 
     fn fonts_pending(&self) -> bool {
@@ -787,7 +792,11 @@ impl GeometrySource for BlitzGeometry {
     fn set_scroll(&self, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
-                r.get_or_insert_with(Renderer::new).set_timeline_scroll(self.page, elements, viewport);
+                let r = r.get_or_insert_with(Renderer::new);
+                r.set_timeline_scroll(self.page, elements, viewport);
+                if r.uses_scroll_markers(self.page) {
+                    self.scroll_stale.set(true);
+                }
             }
         });
     }
@@ -943,6 +952,17 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }
 
+    fn take_scroll_group_moves(&self) -> Vec<u64> {
+        RENDERER.with(|r| {
+            r.try_borrow_mut()
+                .ok()
+                .as_deref_mut()
+                .and_then(Option::as_mut)
+                .map(|r| r.take_scroll_group_moves(self.page))
+                .unwrap_or_default()
+        })
+    }
+
     fn take_style_changes(
         &self,
     ) -> Vec<(u64, u8, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
@@ -1077,6 +1097,7 @@ mod tests {
             undisplayed: Default::default(),
             sheets: Default::default(),
             resources: Default::default(),
+            scroll_stale: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
             fetcher: RefCell::new(std::sync::Arc::new(NoFetch)),
             loader: RefCell::new(None),

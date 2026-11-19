@@ -361,6 +361,11 @@ pub trait GeometrySource {
     fn element_displayed(&self, _key: u64) -> Option<bool> {
         None
     }
+    /// pyro: the keys of the elements whose `::scroll-marker-group` scrolled to keep its active
+    /// marker in view since the last call.
+    fn take_scroll_group_moves(&self) -> Vec<u64> {
+        Vec::new()
+    }
     /// The elements whose style was replaced since the last call, by key,
     /// with the style before and after (and 1 or 2 for a change of its `::before` or `::after`, 0
     /// of its own); recorded while the engine's

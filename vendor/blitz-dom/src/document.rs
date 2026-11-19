@@ -539,6 +539,10 @@ pub struct BaseDocument {
     /// finds an element's entry, so one restyled twice keeps its first old and
     /// its last new style.
     pub(crate) style_changes: Vec<StyleChange>,
+    /// pyro: the originating elements of the scroll marker groups that scrolled to keep their
+    /// active marker in view since the last [`Self::take_scroll_group_moves`]: the page fires
+    /// `scroll` and `scrollend` at them (`layout::scroll_markers`).
+    pub(crate) scroll_group_moves: Vec<NodeId>,
     /// pyro: the page's scroll offsets for scroll-driven animations (`scroll_timeline`): its
     /// scrolled elements' and the viewport's. Layout queries do not move the nodes' own scroll
     /// offsets (a capture does), so scroll timelines read the page's here.
@@ -871,6 +875,7 @@ impl BaseDocument {
             oof_hoisted: HashSet::new(),
             sticky_nodes: HashSet::new(),
             style_changes: Vec::new(),
+            scroll_group_moves: Vec::new(),
             timeline_scroll: Default::default(),
             style_change_index: HashMap::new(),
             track_style_changes: false,
@@ -2093,6 +2098,11 @@ impl BaseDocument {
     /// pyro: the page's scroll offsets that scroll-driven animations follow (`timeline_scroll`).
     pub fn set_timeline_scroll(&mut self, elements: std::collections::HashMap<NodeId, (f64, f64)>, viewport: (f64, f64)) {
         self.timeline_scroll = Some((elements, viewport));
+    }
+
+    /// pyro: see [`Self::scroll_group_moves`].
+    pub fn take_scroll_group_moves(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.scroll_group_moves)
     }
 
     pub fn take_style_changes(&mut self) -> Vec<StyleChange> {

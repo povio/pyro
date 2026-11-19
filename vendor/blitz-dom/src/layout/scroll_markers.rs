@@ -859,6 +859,90 @@ impl BaseDocument {
 }
 
 impl BaseDocument {
+    /// pyro: scrolls the marker group `group`, when it is a scroll container, to bring `marker` (one
+    /// of its markers) into view on each axis it scrolls: to the marker's snap position where the
+    /// group snaps that axis and the marker has a `scroll-snap-align`, else by the least distance.
+    /// Whether the group's scroll offset changed.
+    fn scroll_group_to_marker(&mut self, group: NodeId, marker: NodeId) -> bool {
+        use style::values::computed::BorderStyle;
+        use style_traits::ToCss as _;
+        let Some(style) = self.nodes[group].primary_styles() else { return false };
+        if !is_scroll_container(&style) {
+            return false;
+        }
+        let b = style.get_border();
+        let side = |w: app_units::Au, s: BorderStyle| if s.none_or_hidden() { 0.0 } else { w.to_f64_px() };
+        let borders = [
+            (side(b.border_left_width.0, b.border_left_style), side(b.border_right_width.0, b.border_right_style)),
+            (side(b.border_top_width.0, b.border_top_style), side(b.border_bottom_width.0, b.border_bottom_style)),
+        ];
+        let snap = style.get_box().scroll_snap_type.to_css_string();
+        let scrolls = [
+            style.get_box().overflow_x != Overflow::Visible && style.get_box().overflow_x != Overflow::Clip,
+            style.get_box().overflow_y != Overflow::Visible && style.get_box().overflow_y != Overflow::Clip,
+        ];
+        drop(style);
+        let align = self.nodes[marker]
+            .primary_styles()
+            .map(|style| style.get_box().scroll_snap_align.to_css_string())
+            .unwrap_or_default();
+        let mut parts = align.split_whitespace();
+        let block_align = parts.next().unwrap_or("none").to_owned();
+        let inline_align = parts.next().map(str::to_owned).unwrap_or_else(|| block_align.clone());
+        let mut words = snap.split_whitespace();
+        let snap_axis = words.next().unwrap_or("none").to_owned();
+        let layout = *self.nodes[group].final_layout();
+        let marker_layout = *self.nodes[marker].final_layout();
+        let content_end = |horizontal: bool| {
+            self.nodes[group]
+                .layout_children
+                .borrow()
+                .iter()
+                .flatten()
+                .map(|&child| {
+                    let l = self.nodes[child].final_layout();
+                    if horizontal { l.location.x + l.size.width + l.margin.right } else { l.location.y + l.size.height + l.margin.bottom }
+                })
+                .fold(0.0f32, f32::max) as f64
+        };
+        let mut offset = *self.nodes[group].scroll_offset();
+        for (axis, horizontal) in [(0usize, true), (1usize, false)] {
+            if !scrolls[axis] {
+                continue;
+            }
+            let (start_border, end_border) = borders[axis];
+            let (size, location, extent, padding_start, padding_end) = if horizontal {
+                (layout.size.width, marker_layout.location.x, marker_layout.size.width, layout.padding.left, layout.padding.right)
+            } else {
+                (layout.size.height, marker_layout.location.y, marker_layout.size.height, layout.padding.top, layout.padding.bottom)
+            };
+            let client = size as f64 - start_border - end_border;
+            let max = (content_end(horizontal) - start_border + padding_end as f64 - client).max(0.0);
+            let (lo, hi) = (location as f64 - start_border, location as f64 - start_border + extent as f64);
+            let current = if horizontal { offset.x } else { offset.y };
+            let snaps = match snap_axis.as_str() {
+                "both" => true,
+                "x" | "inline" => horizontal,
+                "y" | "block" => !horizontal,
+                _ => false,
+            };
+            let keyword = if horizontal { inline_align.as_str() } else { block_align.as_str() };
+            let target = match (snaps, keyword) {
+                (true, "start") => lo,
+                (true, "end") => hi - client,
+                (true, "center") => (lo + hi) / 2.0 - client / 2.0,
+                _ if lo - (padding_start as f64) < current => lo - padding_start as f64,
+                _ if hi + (padding_end as f64) > current + client => hi + padding_end as f64 - client,
+                _ => current,
+            };
+            let target = target.clamp(0.0, max);
+            if horizontal { offset.x = target } else { offset.y = target }
+        }
+        let moved = *self.nodes[group].scroll_offset() != offset;
+        *self.nodes[group].scroll_offset_mut() = offset;
+        moved
+    }
+
     /// pyro: the snap positions of `scroller` on one axis when its `scroll-snap-type` snaps that
     /// axis mandatorily (`None` otherwise): `scroll-snap-align` of the boxes laid out in it, in
     /// its padding box (scroll-padding and scroll-margin left out).
@@ -1034,7 +1118,16 @@ impl BaseDocument {
             true => crate::scrolling::ScrollTarget::Viewport,
             false => crate::scrolling::ScrollTarget::Node(scroller),
         };
-        let (offset, min, max) = self.scroll_state(target, true);
+        let (mut offset, min, max) = self.scroll_state(target, true);
+        // pyro: the page's scroll offset (layout syncs leave the node's own as the last capture set
+        // it; `set_timeline_scroll`), so the active marker follows script scrolls between captures.
+        if let Some((elements, viewport)) = &self.timeline_scroll {
+            let (x, y) = match target {
+                crate::scrolling::ScrollTarget::Viewport => *viewport,
+                _ => elements.get(&scroller).copied().unwrap_or((offset.x, offset.y)),
+            };
+            offset = crate::Point { x, y };
+        }
         let port = self.scrollport_size(scroller);
         let mut cands: Vec<Target> = candidates.to_vec();
         for axis in [axis_of(wm.block_start_physical_side()), axis_of(wm.inline_start_physical_side())] {
@@ -1205,6 +1298,22 @@ impl BaseDocument {
     /// pyro: after layout, sets `:target-current` on the active marker of each group and the
     /// `:enabled`/`:disabled` state of each scroll button, which depend on scroll positions.
     /// Whether a state changed (styles were computed again, or elements wait for a restyle).
+    /// pyro: after scroll offsets changed outside a layout (the page told new ones), on documents
+    /// that use scroll markers: the next resolve picks the active markers again
+    /// ([`Self::update_target_current`], which restyles what depends on them).
+    /// pyro: whether the document has scroll pseudo-elements (markers, groups, buttons).
+    pub fn uses_scroll_markers(&self) -> bool {
+        !self.scroll_pseudo_owners.is_empty()
+    }
+
+    pub fn update_scroll_marker_states(&mut self) {
+        if !self.scroll_pseudo_owners.is_empty() {
+            if let Some(root) = self.try_root_element().map(|root| root.id) {
+                self.nodes[root].mark_damaged();
+            }
+        }
+    }
+
     pub(crate) fn update_target_current(&mut self) -> bool {
         use style_dom::ElementState;
         use style::selector_parser::{TARGET_AFTER, TARGET_BEFORE, TARGET_CURRENT};
@@ -1237,7 +1346,8 @@ impl BaseDocument {
             let markers: Vec<NodeId> = self.nodes[group].children.iter().copied().collect();
             let targets: Vec<Option<Target>> = markers.iter().map(|&marker| self.marker_target(marker)).collect();
             let active = self.select_active_target(&targets);
-            for (index, marker) in markers.into_iter().enumerate() {
+            let mut active_changed = false;
+            for (index, &marker) in markers.iter().enumerate() {
                 let Some(data) = self.nodes.get_mut(marker).and_then(|node| node.element_data_mut()) else { continue };
                 let state = target_states(index, active);
                 if data.element_state & TARGET_STATES != state {
@@ -1247,6 +1357,16 @@ impl BaseDocument {
                         self.set_scroll_pseudo_style(marker, style);
                     }
                     changed = true;
+                    active_changed |= index == active.unwrap_or(usize::MAX);
+                }
+            }
+            // pyro: a group that scrolls keeps its active marker in view (CSS Overflow 5 § 3.1.5,
+            // as Chromium: aligned as the marker snaps in a snapping group, else the nearest
+            // edge; WPT css-overflow `scroll-marker-group-snap-aligns-to-active`).
+            if active_changed && let Some(active) = active {
+                let moved = self.scroll_group_to_marker(group, markers[active]);
+                if moved {
+                    self.scroll_group_moves.push(owner);
                 }
             }
         }
