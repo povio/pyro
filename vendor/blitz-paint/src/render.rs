@@ -2557,6 +2557,11 @@ fn line_truncation_at<'a>(
     // `line-clamp-with-text-overflow-string-009`).
     let rtl = line.is_rtl();
     let clamp = text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize);
+    // pyro: `block-ellipsis: no-ellipsis` leaves the clamp line whole: nothing makes room on it
+    // (Chromium; WPT css-overflow `line-clamp/block-ellipsis-023`).
+    if clamp.is_some_and(|clamp| clamp.ellipsis.lines().next().is_none()) {
+        return None;
+    }
     let (ellipsis, text, forced) = match clamp {
         Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
         None => (text_layout.ellipsis.as_deref()?, text_layout.ellipsis_text.as_str(), false),
