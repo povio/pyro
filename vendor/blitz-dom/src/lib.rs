@@ -58,6 +58,8 @@ mod layout;
 pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 pub use layout::multicol::{ColumnFragment, ColumnFragments};
 pub use layout::inline::span_edge_margins;
+#[cfg(feature = "svg")]
+pub use layout::shape_outside::{SvgRasterizer, set_svg_rasterizer};
 mod mutator;
 mod query_selector;
 mod resolve;
