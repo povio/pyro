@@ -855,8 +855,11 @@ fn parse_declarations_at(
     )
 }
 
-/// One keyframe's declarations: animatable longhands (not `display`), physical
-/// for the base style's writing mode.
+/// One keyframe's declarations: animatable longhands, physical for the base style's writing
+/// mode. pyro: `display` too (css-display-4 § 2.1: it animates discretely, a `none` end only at
+/// that end; Stylo's `Animate for Display`): a transition of `display` to `none` with
+/// `allow-discrete` keeps the box shown until it ends (WPT css-position
+/// `overlay/overlay-transition-dialog`).
 fn keyframe_block(
     block: &PropertyDeclarationBlock,
     base: &ComputedValues,
@@ -864,7 +867,7 @@ fn keyframe_block(
     let mut out = PropertyDeclarationBlock::new();
     for declaration in block.normal_declaration_iter() {
         if let PropertyDeclarationId::Longhand(id) = declaration.id() {
-            if id == LonghandId::Display || !id.is_animatable() {
+            if id != LonghandId::Display && !id.is_animatable() {
                 continue;
             }
         }
