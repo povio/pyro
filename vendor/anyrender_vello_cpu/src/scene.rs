@@ -13,6 +13,25 @@ use crate::image_cache::{ImageCache, ImageCacheConfig};
 
 const DEFAULT_TOLERANCE: f64 = 0.1;
 
+/// pyro: how finely a curved fill or clip is flattened (device px) before vello_cpu, which flattens
+/// at a quarter pixel in device space: one shape described with other curve segments (a circle as
+/// `r="25"` scaled by 2 and as `r="5000"` by 0.01, which usvg cuts into different arcs; an SVG
+/// `<circle>` and a `border-radius: 50%` box) came out up to 50 levels apart at its edge. Flattened
+/// this finely, each is the curve.
+const FINE: f64 = 0.02;
+
+/// pyro: `path` under `transform` for vello_cpu: a path with curves in device space, flattened to
+/// [`FINE`], with the identity left to apply; a path of lines only as it is, under `transform`.
+fn device_path(path: BezPath, transform: Affine) -> (BezPath, Affine) {
+    use kurbo::PathEl;
+    if !path.elements().iter().any(|el| matches!(el, PathEl::QuadTo(..) | PathEl::CurveTo(..))) {
+        return (path, transform);
+    }
+    let mut out = BezPath::new();
+    kurbo::flatten(transform * path, FINE, |el| out.push(el));
+    (out, Affine::IDENTITY)
+}
+
 pub struct VelloCpuScenePainter {
     pub(crate) render_ctx: vello_cpu::RenderContext,
     pub(crate) resources: vello_cpu::Resources,
@@ -143,10 +162,11 @@ impl PaintScene for VelloCpuScenePainter {
     ) {
         // pyro: a layer's filter is applied by `append_scene` (see `crate::filters`); a layer
         // pushed here directly is drawn unfiltered, as vello_cpu cannot filter on worker threads.
+        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform);
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx.push_layer(
-            Some(&clip.into_path(DEFAULT_TOLERANCE)),
+            Some(&clip),
             Some(blend.into()),
             Some(alpha),
             None,
@@ -156,10 +176,10 @@ impl PaintScene for VelloCpuScenePainter {
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
+        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform);
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_fill_rule(fill);
-        self.render_ctx
-            .push_clip_layer(&clip.into_path(DEFAULT_TOLERANCE));
+        self.render_ctx.push_clip_layer(&clip);
         self.clip_paths.push(Pushed::Layer);
     }
 
@@ -179,6 +199,21 @@ impl PaintScene for VelloCpuScenePainter {
         brush_transform: Option<Affine>,
         shape: &impl Shape,
     ) {
+        // pyro: expanded here as vello_cpu would (in the path's space, the pen sheared by the
+        // transform), at a tolerance of [`FINE`] device px, and filled as a fill is (`device_path`):
+        // a stroked circle and a filled ring of the same curve are then one shape.
+        let [a, b, c, d, _, _] = transform.as_coeffs();
+        let scale = (a * a + b * b).sqrt().max((c * c + d * d).sqrt());
+        if scale.is_finite() && scale > 1e-9 {
+            let outline = kurbo::stroke(
+                shape.path_elements(DEFAULT_TOLERANCE),
+                style,
+                &kurbo::StrokeOpts::default(),
+                FINE / scale,
+            );
+            self.fill(Fill::NonZero, transform, paint, brush_transform, &outline);
+            return;
+        }
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_stroke(style.clone());
         let paint = self.convert_paint(paint.into());
@@ -197,14 +232,15 @@ impl PaintScene for VelloCpuScenePainter {
         brush_transform: Option<Affine>,
         shape: &impl Shape,
     ) {
-        self.render_ctx.set_transform(transform);
+        let (path, path_transform) = device_path(shape.into_path(DEFAULT_TOLERANCE), transform);
+        self.render_ctx.set_transform(path_transform);
         self.render_ctx.set_fill_rule(style);
         let paint = self.convert_paint(paint.into());
         self.render_ctx.set_paint(paint);
-        self.render_ctx
-            .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
-        self.render_ctx
-            .fill_path(&shape.into_path(DEFAULT_TOLERANCE));
+        // (The paint stays where it was: through `transform`, then the brush transform.)
+        let brush = path_transform.inverse() * transform * brush_transform.unwrap_or(Affine::IDENTITY);
+        self.render_ctx.set_paint_transform(brush);
+        self.render_ctx.fill_path(&path);
     }
 
     fn draw_glyphs<'a, 's: 'a>(

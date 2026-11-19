@@ -17603,10 +17603,10 @@ new file mode 100644
 +use crate::color::{Color, ToColorColor as _};
 +use crate::kurbo_css::contoured::{boolean, flatten_with, polygons_path};
 +
-+/// How finely shape outlines are flattened, and their strokes expanded (device px): as vello_cpu
-+/// strokes and fills curves (`vello_common::flatten::TOL`), so that an edge worked out here (the
++/// How finely shape outlines are flattened, and their strokes expanded (device px): as the scene
++/// strokes and fills curves (anyrender_vello_cpu `FINE`), so that an edge worked out here (the
 +/// inner edge of a stroke, which clips the overflow) falls where the drawn stroke's does.
-+const TOLERANCE: f64 = 0.25;
++const TOLERANCE: f64 = 0.02;
 +
 +fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
 +    flatten_with(path, TOLERANCE)

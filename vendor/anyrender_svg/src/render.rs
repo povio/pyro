@@ -1106,11 +1106,11 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
     // A mask of up to a megapixel is rendered at twice that and averaged down:
     // vello flattens curves to a quarter pixel, which an image of the mask keeps
     // (two descriptions of one circle came out up to 39 levels apart at its edge).
-    let ss: u32 = if width as u64 * height as u64 <= 1 << 20 {
-        2
-    } else {
-        1
-    };
+    // pyro: at the scene's resolution: with curves flattened finely (anyrender_vello_cpu
+    // `device_path`) a mask's shapes cover each pixel as the same shapes drawn directly do (WPT
+    // css-masking `mask-image-3i`: a circle in a mask against a `<circle>`, 52 levels apart
+    // averaged at twice the resolution).
+    let ss: u32 = 1;
     // Scene space to the raster's pixels.
     let to_raster = Affine::scale(scale * ss as f64) * Affine::translate((-rect.x0, -rect.y0));
     let mask_rect = mask.rect();
