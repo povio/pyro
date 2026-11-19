@@ -4139,6 +4139,33 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
  
                  let (layer, supports) =
                      ImportRule::parse_layer_and_supports(input, &mut self.context);
+diff -ruN a/stylesheets/scope_rule.rs b/stylesheets/scope_rule.rs
+--- a/stylesheets/scope_rule.rs	2026-11-11 19:55:57
++++ b/stylesheets/scope_rule.rs	2026-11-19 19:56:04
+@@ -302,8 +302,22 @@
+     let mut result = vec![];
+     let mut parent = Some(element);
+     let mut proximity = 0usize;
++    // pyro: once a link is passed on the way up, the elements above it match `:visited` as
++    // unvisited (Selectors 4 § 12.2, as for a selector's own ancestors: WPT css-cascade
++    // `scope-visited`, a visited link in a visited link).
++    let mut past_link = false;
+     while let Some(p) = parent {
+-        if target.check(p, ceiling, scope_subject_map, context) {
++        let matches = if past_link {
++            context.with_visited_handling_mode(selectors::matching::VisitedHandlingMode::AllLinksUnvisited, |context| {
++                target.check(p, ceiling, scope_subject_map, context)
++            })
++        } else {
++            target.check(p, ceiling, scope_subject_map, context)
++        };
++        if p.is_link() {
++            past_link = true;
++        }
++        if matches {
+             result.push(ScopeRootCandidate {
+                 root: p.opaque(),
+                 proximity: ScopeProximity::new(proximity),
 diff -ruN a/stylesheets/stylesheet.rs b/stylesheets/stylesheet.rs
 --- a/stylesheets/stylesheet.rs	2026-11-11 19:55:57
 +++ b/stylesheets/stylesheet.rs	2026-11-19 19:38:22
