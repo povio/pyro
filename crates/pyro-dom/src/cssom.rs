@@ -342,6 +342,31 @@ pub fn stylesheet_utf8_bytes(text: &str) -> Vec<u8> {
 /// matter (the sheet is fetched whatever they say). Reads no further than
 /// the first other rule, so a sheet without imports costs a token or two.
 pub fn leading_imports(text: &str) -> Vec<String> {
+    leading_import_requests(text).into_iter().map(|import| import.url).collect()
+}
+
+/// pyro: an `@import`'s URL (as written) and the request URL modifiers of its `url()` (CSS
+/// Values 5 § 4.5.4), which its fetch honours.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportRequest {
+    pub url: String,
+    /// `cross-origin()`: `anonymous` or `use-credentials`.
+    pub cross_origin: Option<String>,
+    /// `integrity()`: the integrity metadata.
+    pub integrity: Option<String>,
+    /// `referrer-policy()`: the policy keyword.
+    pub referrer_policy: Option<String>,
+}
+
+impl ImportRequest {
+    /// Whether the import's request is made with other than the defaults.
+    pub fn is_modified(&self) -> bool {
+        self.cross_origin.is_some() || self.integrity.is_some() || self.referrer_policy.is_some()
+    }
+}
+
+/// [`leading_imports`] with each import's request URL modifiers.
+pub fn leading_import_requests(text: &str) -> Vec<ImportRequest> {
     let mut p = Parser::new(text);
     let mut urls = Vec::new();
     loop {
@@ -367,13 +392,39 @@ pub fn leading_imports(text: &str) -> Vec<String> {
 
 /// The rest of an `@import` rule: its URL, unless the rule is invalid (no
 /// URL, or a block) or its `supports()` condition fails.
-fn import_prelude(p: &mut Parser<'_>) -> Option<String> {
+fn import_prelude(p: &mut Parser<'_>) -> Option<ImportRequest> {
     let url = match p.next().cloned() {
         // The rule's end (its block is skipped by the next read).
         Err(_) | Ok(Token::Semicolon | Token::CurlyBracketBlock) => return None,
-        Ok(Token::UnquotedUrl(url) | Token::QuotedString(url)) => Some(url.to_string()),
+        Ok(Token::UnquotedUrl(url) | Token::QuotedString(url)) => Some(ImportRequest { url: url.to_string(), ..Default::default() }),
+        // pyro: `url(<string> <request-url-modifier>*)`; an invalid modifier makes the rule invalid.
         Ok(Token::Function(name)) if name.eq_ignore_ascii_case("url") => {
-            let url: Result<String, ParseError<()>> = p.parse_nested_block(|n| Ok(n.expect_string()?.to_string()));
+            let url: Result<ImportRequest, ParseError<()>> = p.parse_nested_block(|n| {
+                let mut import = ImportRequest { url: n.expect_string()?.to_string(), ..Default::default() };
+                while !n.is_exhausted() {
+                    let name = n.expect_function()?.clone();
+                    let value: String = n.parse_nested_block(|v| {
+                        let value = match v.next()?.clone() {
+                            Token::Ident(i) | Token::QuotedString(i) => i.to_string(),
+                            _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(()) }),
+                        };
+                        Ok(value)
+                    })?;
+                    let slot = if name.eq_ignore_ascii_case("cross-origin") {
+                        &mut import.cross_origin
+                    } else if name.eq_ignore_ascii_case("integrity") {
+                        &mut import.integrity
+                    } else if name.eq_ignore_ascii_case("referrer-policy") {
+                        &mut import.referrer_policy
+                    } else {
+                        return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(()) });
+                    };
+                    if slot.replace(value).is_some() {
+                        return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(()) });
+                    }
+                }
+                Ok(import)
+            });
             url.ok()
         }
         _ => None,
@@ -408,6 +459,32 @@ fn statement_ends(p: &mut Parser<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An `@import` whose `url()` has request URL modifiers is an import (CSS Values 5 § 4.5.4),
+    /// with them: the scanner dropped it, so CSSOM never had its sheet. An unknown or repeated
+    /// modifier makes the rule invalid.
+    #[test]
+    fn imports_keep_their_request_url_modifiers() {
+        let imports = leading_import_requests(
+            "@import url(\"a.css\" cross-origin(anonymous) integrity(\"sha256-x\") referrer-policy(no-referrer));\
+             @import url(\"b.css\" bogus(x));\
+             @import url(\"c.css\" integrity(\"x\") integrity(\"y\"));\
+             @import \"d.css\";",
+        );
+        assert_eq!(
+            imports,
+            vec![
+                ImportRequest {
+                    url: "a.css".into(),
+                    cross_origin: Some("anonymous".into()),
+                    integrity: Some("sha256-x".into()),
+                    referrer_policy: Some("no-referrer".into()),
+                },
+                ImportRequest { url: "d.css".into(), ..Default::default() },
+            ]
+        );
+        assert_eq!(leading_imports("@import url(\"a.css\" cross-origin(anonymous));"), vec!["a.css".to_owned()]);
+    }
 
     fn style(selector: &str, block: &str) -> ParsedRule {
         ParsedRule::Style { selector: selector.into(), block: block.into() }

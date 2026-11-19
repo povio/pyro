@@ -188,6 +188,17 @@ impl Fetcher for PageFetcher {
         self.load(url, true, done)
     }
 
+    /// pyro: with the response's URL after redirects, against which an imported sheet resolves
+    /// its URLs.
+    fn fetch_final(
+        &self,
+        url: String,
+        options: &pyro_render::FetchOptions,
+        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+    ) {
+        self.load_final(url, options, done)
+    }
+
     fn fetch_with(
         &self,
         url: String,
@@ -208,6 +219,43 @@ impl Fetcher for PageFetcher {
                     done(result.and_then(|r| {
                         if (200..300).contains(&r.status) {
                             Ok(r.render_body(environment.as_slice()))
+                        } else {
+                            Err(format!("HTTP {}", r.status))
+                        }
+                    }))
+                }),
+            );
+        });
+    }
+}
+
+impl PageFetcher {
+    /// pyro: `url` fetched as `options` say, `done` getting the body of a 2xx response and the
+    /// response's URL after redirects.
+    fn load_final(
+        &self,
+        url: String,
+        options: &pyro_render::FetchOptions,
+        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+    ) {
+        let page = self.page;
+        // A CORS fetch without other options is an image's (`shape-outside`, `mask-image`).
+        let kind = if pyro_render::is_plain_cors(options) { ResourceKind::Image } else { kind_of(&url) };
+        let options = subresource_options(options);
+        // A closed loop drops `done`: the render stops waiting at its deadline.
+        let _ = self.handle.post(move |b| {
+            // An imported sheet without a charset of its own decodes as the document.
+            let environment = b.document_encoding(page);
+            b.fetch_subresource_options(
+                page,
+                url,
+                kind,
+                options,
+                Box::new(move |_, result| {
+                    done(result.and_then(|r| {
+                        if (200..300).contains(&r.status) {
+                            let final_url = r.url.clone();
+                            Ok((r.render_body(environment.as_slice()), final_url))
                         } else {
                             Err(format!("HTTP {}", r.status))
                         }

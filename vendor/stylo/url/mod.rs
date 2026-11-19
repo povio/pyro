@@ -159,8 +159,8 @@ impl ReferrerPolicyModifier {
 }
 
 /// pyro: the request URL modifiers of a `url()` (CSS Values 5 § 4.5.4), each at most once, and
-/// the URL of the style sheet the `url()` was written in, the referrer of its request (Fetch:
-/// a style sheet's subresources are requested with the sheet as their client's referrer).
+/// the URL of the style sheet the `url()` was written in, the referrer of its request when that
+/// is in CORS mode (CSS Values 4 "fetch a style resource" step 6; the fetch decides).
 #[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
 pub struct RequestUrlModifiers {
     /// `cross-origin()`

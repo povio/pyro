@@ -35080,7 +35080,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  use std::sync::atomic::Ordering as Ao;
  use std::{
      io::Cursor,
-@@ -36,6 +37,59 @@
+@@ -36,6 +37,61 @@
      req
  }
  
@@ -35098,20 +35098,22 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +
 +/// pyro: what a `url()`'s request URL modifiers ask of its request (CSS Values 5 § 4.5.4):
 +/// `cross-origin()` its mode and credentials, `integrity()` its integrity metadata,
-+/// `referrer-policy()` its referrer policy; with any of them, the style sheet the `url()` was
-+/// written in is its referrer.
++/// `referrer-policy()` its referrer policy. The style sheet the `url()` was written in is the
++/// referrer only of a request in CORS mode (CSS Values 4 "fetch a style resource" step 6);
++/// otherwise the referrer is the client, the document.
 +pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) -> blitz_traits::net::FetchOptions {
 +    use blitz_traits::net::{CorsCredentials, FetchOptions};
 +    use style::url::CrossOriginModifier;
 +    let Some(modifiers) = modifiers else { return FetchOptions::default() };
++    let cors = modifiers.cross_origin.map(|mode| match mode {
++        CrossOriginModifier::Anonymous => CorsCredentials::SameOrigin,
++        CrossOriginModifier::UseCredentials => CorsCredentials::Include,
++    });
 +    FetchOptions {
-+        cors: modifiers.cross_origin.map(|mode| match mode {
-+            CrossOriginModifier::Anonymous => CorsCredentials::SameOrigin,
-+            CrossOriginModifier::UseCredentials => CorsCredentials::Include,
-+        }),
++        cors,
 +        integrity: modifiers.integrity.clone(),
 +        referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
-+        referrer: modifiers.referrer.as_ref().map(|url| (**url).clone()),
++        referrer: cors.and(modifiers.referrer.as_ref()).map(|url| (**url).clone()),
 +        client: None,
 +    }
 +}
@@ -35140,7 +35142,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Carries `@font-face` descriptors from CSS parsing through to font
  /// registration so `parley::Collection::register_fonts` can alias the bytes
  /// under the `font-family` declared in CSS rather than whatever family name
-@@ -52,16 +106,44 @@
+@@ -52,16 +108,44 @@
      /// parses this as a range; we record the lower bound, which equals the
      /// upper bound in the common single-value case.
      pub weight: Option<f32>,
@@ -35187,7 +35189,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// Stylesheet loaded for an `@import` rule, to be attached to the rule on the document thread
      ImportedCss(ServoArc<Locked<ImportRule>>, ServoArc<Stylesheet>),
      Font(Bytes, FontFaceOverrides),
-@@ -140,6 +222,8 @@
+@@ -140,6 +224,8 @@
      pub guard: SharedRwLock,
      pub net_provider: Arc<dyn NetProvider>,
      pub abort_signal: Option<AbortSignal>,
@@ -35196,7 +35198,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  
  impl NetHandler for ResourceHandler<StylesheetHandler> {
-@@ -166,6 +250,7 @@
+@@ -166,6 +252,7 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.data.abort_signal.clone(),
                  import_depth: 0,
@@ -35204,7 +35206,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }),
              None, // error_reporter
              QuirksMode::NoQuirks,
-@@ -173,11 +258,22 @@
+@@ -173,11 +260,22 @@
  
          self.respond(
              resolved_url,
@@ -35228,7 +35230,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Maximum depth of nested `@import` rules. Imports nested deeper than this
  /// are refused, preventing unbounded recursion (e.g. a stylesheet whose
  /// resolved `@import` URL yields another stylesheet importing in turn, with
-@@ -194,6 +290,9 @@
+@@ -194,6 +292,9 @@
      /// Depth of `@import` nesting for the stylesheet this loader is parsing
      /// (0 for a top-level stylesheet)
      pub(crate) import_depth: usize,
@@ -35238,7 +35240,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  impl ServoStylesheetLoader for StylesheetLoader {
      fn request_stylesheet(
-@@ -224,10 +323,17 @@
+@@ -224,10 +325,17 @@
          };
  
          let url = import.url.url().unwrap().clone();
@@ -35257,7 +35259,35 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              ResourceHandler::boxed(
                  self.tx.clone(),
                  self.doc_id,
-@@ -288,6 +394,7 @@
+@@ -262,12 +370,26 @@
+ 
+ impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
+     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
++        let base = self.data.url.clone();
++        self.parse_at(resolved_url, base, bytes)
++    }
++
++    /// pyro: an imported sheet's URLs (its own imports and `url()`s, and the referrer they are
++    /// sent with) resolve against its URL after redirects, not the URL the `@import` named.
++    fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
++        let base = Url::parse(&final_url).map(ServoArc::new).unwrap_or_else(|_| self.data.url.clone());
++        self.parse_at(resolved_url, base, bytes)
++    }
++}
++
++impl ResourceHandler<NestedStylesheetHandler> {
++    fn parse_at(self: Box<Self>, resolved_url: String, base: ServoArc<Url>, bytes: Bytes) {
+         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
+         // let escaped_css = html_escape::decode_html_entities(css);
+ 
+         let sheet = ServoArc::new(Stylesheet::from_bytes(
+             &bytes,
+-            UrlExtraData(self.data.url.clone()),
++            UrlExtraData(base),
+             None,
+             None,
+             Origin::Author,
+@@ -288,6 +410,7 @@
              &self.shell_provider,
              &self.data.lock.read(),
              self.data.loader.abort_signal.as_ref(),
@@ -35265,7 +35295,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          );
  
          let import_rule = self.data.import_rule.clone();
-@@ -387,6 +494,7 @@
+@@ -387,6 +510,7 @@
      shell_provider: &Arc<dyn ShellProvider>,
      read_guard: &SharedRwLockReadGuard,
      abort_signal: Option<&AbortSignal>,
@@ -35273,7 +35303,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  ) {
      fetch_font_face_rules(
          sheet.contents(read_guard).rules(read_guard).iter(),
-@@ -397,6 +505,7 @@
+@@ -397,6 +521,7 @@
          shell_provider,
          read_guard,
          abort_signal,
@@ -35281,7 +35311,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      )
  }
  
-@@ -409,10 +518,45 @@
+@@ -409,10 +534,45 @@
      node_id: Option<NodeId>,
      network_provider: &Arc<dyn NetProvider>,
      shell_provider: &Arc<dyn ShellProvider>,
@@ -35329,7 +35359,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +565,70 @@
+@@ -421,13 +581,70 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
@@ -35402,7 +35432,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -450,6 +651,11 @@
+@@ -450,6 +667,11 @@
          })
  }
  
@@ -35414,7 +35444,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +674,11 @@
+@@ -468,6 +690,11 @@
              return None;
          };
  
@@ -35426,7 +35456,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +775,10 @@
+@@ -564,7 +791,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -35438,7 +35468,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +799,136 @@
+@@ -585,37 +815,136 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -35590,7 +35620,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +937,46 @@
+@@ -624,12 +953,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -35640,7 +35670,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +996,62 @@
+@@ -649,6 +1012,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -35703,7 +35733,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1203,11 @@
+@@ -800,3 +1219,11 @@
          );
      }
  }

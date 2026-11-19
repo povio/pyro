@@ -51,20 +51,22 @@ pub fn is_cors_request(request: &Request) -> bool {
 
 /// pyro: what a `url()`'s request URL modifiers ask of its request (CSS Values 5 § 4.5.4):
 /// `cross-origin()` its mode and credentials, `integrity()` its integrity metadata,
-/// `referrer-policy()` its referrer policy; with any of them, the style sheet the `url()` was
-/// written in is its referrer.
+/// `referrer-policy()` its referrer policy. The style sheet the `url()` was written in is the
+/// referrer only of a request in CORS mode (CSS Values 4 "fetch a style resource" step 6);
+/// otherwise the referrer is the client, the document.
 pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) -> blitz_traits::net::FetchOptions {
     use blitz_traits::net::{CorsCredentials, FetchOptions};
     use style::url::CrossOriginModifier;
     let Some(modifiers) = modifiers else { return FetchOptions::default() };
+    let cors = modifiers.cross_origin.map(|mode| match mode {
+        CrossOriginModifier::Anonymous => CorsCredentials::SameOrigin,
+        CrossOriginModifier::UseCredentials => CorsCredentials::Include,
+    });
     FetchOptions {
-        cors: modifiers.cross_origin.map(|mode| match mode {
-            CrossOriginModifier::Anonymous => CorsCredentials::SameOrigin,
-            CrossOriginModifier::UseCredentials => CorsCredentials::Include,
-        }),
+        cors,
         integrity: modifiers.integrity.clone(),
         referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
-        referrer: modifiers.referrer.as_ref().map(|url| (**url).clone()),
+        referrer: cors.and(modifiers.referrer.as_ref()).map(|url| (**url).clone()),
         client: None,
     }
 }
@@ -368,12 +370,26 @@ struct NestedStylesheetHandler {
 
 impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        let base = self.data.url.clone();
+        self.parse_at(resolved_url, base, bytes)
+    }
+
+    /// pyro: an imported sheet's URLs (its own imports and `url()`s, and the referrer they are
+    /// sent with) resolve against its URL after redirects, not the URL the `@import` named.
+    fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
+        let base = Url::parse(&final_url).map(ServoArc::new).unwrap_or_else(|_| self.data.url.clone());
+        self.parse_at(resolved_url, base, bytes)
+    }
+}
+
+impl ResourceHandler<NestedStylesheetHandler> {
+    fn parse_at(self: Box<Self>, resolved_url: String, base: ServoArc<Url>, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 
         let sheet = ServoArc::new(Stylesheet::from_bytes(
             &bytes,
-            UrlExtraData(self.data.url.clone()),
+            UrlExtraData(base),
             None,
             None,
             Origin::Author,

@@ -10,7 +10,11 @@ use pyro_render::*;
 /// redirected to another origin that grants no CORS permission does; a fetch with integrity
 /// metadata fails (no digest matches). Records each request as (URL, how it was made).
 #[derive(Default)]
-struct Recorder(Mutex<Vec<(String, &'static str)>>, Mutex<Vec<(String, Option<String>)>>);
+struct Recorder(
+    Mutex<Vec<(String, &'static str)>>,
+    Mutex<Vec<(String, Option<String>)>>,
+    Mutex<Vec<(String, Option<String>)>>,
+);
 
 fn green() -> Vec<u8> {
     encode_png(&RgbaImage { width: 20, height: 20, data: [0, 128, 0, 255].repeat(400) })
@@ -31,6 +35,7 @@ impl Fetcher for Shared {
     }
     fn fetch_with(&self, url: String, options: &FetchOptions, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         self.0 .1.lock().unwrap().push((url.clone(), options.client.clone()));
+        self.0 .2.lock().unwrap().push((url.clone(), options.referrer.as_ref().map(|u| u.to_string())));
         let how = match (options.cors.is_some(), options.integrity.is_some()) {
             (_, true) => "integrity",
             (true, false) => "cors",
@@ -202,4 +207,76 @@ fn a_frame_documents_request_names_its_frame_by_id() {
     assert!(clients.iter().any(|(url, c)| url.ends_with("a/green.png") && c.as_deref() == Some("F00D")), "{clients:?}");
     assert!(clients.iter().any(|(url, c)| url.ends_with("b/green.png") && c.as_deref() == Some("")), "{clients:?}");
     assert!(!clients.iter().any(|(_, c)| c.is_none()), "no frame request goes out as the page's: {clients:?}");
+}
+
+/// The style sheet is the referrer of a `url()`'s request only in CORS mode (CSS Values 4 "fetch
+/// a style resource" step 6); otherwise the referrer is the client (the document), whatever its
+/// `referrer-policy()`. With any modifier the sheet was sent, so a no-cors image with
+/// `referrer-policy(unsafe-url)` could send a cross-origin sheet's path and query.
+#[test]
+fn the_style_sheet_is_the_referrer_of_a_cors_request_only() {
+    let recorder = Arc::new(Recorder::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><style>\
+               #a { width: 10px; height: 10px; background-image: url(\"a.png\" referrer-policy(unsafe-url)) }\
+               #b { width: 10px; height: 10px; background-image: url(\"b.png\" cross-origin(anonymous)) }\
+               </style><div id=a></div><div id=b></div>"
+            .into(),
+        base_url: "http://test/doc.html".into(),
+        width: 100,
+        height: 50,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let referrers = recorder.2.lock().unwrap().clone();
+    let of = |name: &str| referrers.iter().find(|(url, _)| url.ends_with(name)).map(|(_, r)| r.clone());
+    assert_eq!(of("a.png"), Some(None), "no-cors: the document is the referrer: {referrers:?}");
+    assert_eq!(of("b.png"), Some(Some("http://test/doc.html".to_owned())), "cors: the sheet: {referrers:?}");
+}
+
+/// Serves `a.css` as redirected to `http://elsewhere.test/dir/a.css`, whose body imports
+/// `b.css`; records every URL asked for.
+#[derive(Default)]
+struct Redirecting(Mutex<Vec<String>>);
+struct RedirectingFetcher(Arc<Redirecting>);
+impl Fetcher for RedirectingFetcher {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.0 .0.lock().unwrap().push(url);
+        done(Ok(Vec::new()));
+    }
+    fn fetch_final(
+        &self,
+        url: String,
+        _options: &FetchOptions,
+        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+    ) {
+        self.0 .0.lock().unwrap().push(url.clone());
+        if url.ends_with("/a.css") {
+            done(Ok((b"@import \"b.css\";".to_vec(), "http://elsewhere.test/dir/a.css".into())));
+        } else {
+            done(Ok((Vec::new(), url)));
+        }
+    }
+}
+
+/// An imported sheet that was redirected resolves its own `@import`s (and `url()`s) against its
+/// URL after redirects, not the URL the `@import` named.
+#[test]
+fn a_redirected_import_resolves_against_its_final_url() {
+    let log = Arc::new(Redirecting::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(RedirectingFetcher(log.clone()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><style>@import \"a.css\";</style><p>x".into(),
+        base_url: "http://test/".into(),
+        width: 100,
+        height: 50,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let asked = log.0.lock().unwrap().clone();
+    assert!(asked.iter().any(|u| u == "http://elsewhere.test/dir/b.css"), "{asked:?}");
+    assert!(!asked.iter().any(|u| u == "http://test/b.css"), "{asked:?}");
 }

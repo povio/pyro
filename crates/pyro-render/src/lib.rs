@@ -58,7 +58,7 @@ pub use hash::scene_hash;
 pub use hit::{HitProbe, HitVisit};
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use blitz_traits::net::{CorsCredentials, FetchOptions};
-pub use net::Fetcher;
+pub use net::{is_plain_cors, Fetcher};
 
 /// Whether the diagnostic timers run (`Pyro.geometryStats`,
 /// `Performance.getMetrics` durations): off until a client asks for them, so

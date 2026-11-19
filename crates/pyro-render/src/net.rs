@@ -44,6 +44,35 @@ pub trait Fetcher: Send + Sync + 'static {
             self.fetch(url, done);
         }
     }
+    /// pyro: [`Self::fetch`], [`Self::fetch_cors`] or [`Self::fetch_with`] as `options` say,
+    /// `done` also getting the response's URL after redirects (a style sheet resolves its URLs
+    /// against it). A fetcher that does not know it reports `url` (the default).
+    fn fetch_final(
+        &self,
+        url: String,
+        options: &blitz_traits::net::FetchOptions,
+        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+    ) {
+        let asked = url.clone();
+        let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> = Box::new(move |r| done(r.map(|b| (b, asked))));
+        if options.is_default() {
+            self.fetch(url, done);
+        } else if is_plain_cors(options) {
+            self.fetch_cors(url, done);
+        } else {
+            self.fetch_with(url, options, done);
+        }
+    }
+}
+
+/// pyro: whether `options` ask only for a CORS fetch with credentials to the same origin
+/// ([`Fetcher::fetch_cors`]).
+pub fn is_plain_cors(options: &blitz_traits::net::FetchOptions) -> bool {
+    *options
+        == blitz_traits::net::FetchOptions {
+            cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
+            ..Default::default()
+        }
 }
 
 type Cache = Arc<Mutex<HashMap<String, Bytes>>>;
@@ -66,7 +95,8 @@ impl ResourceCache {
     }
 }
 
-type Delivery = (Box<dyn NetHandler>, String, Bytes);
+/// A handler, the URL asked for, the response's URL after redirects, and the body.
+type Delivery = (Box<dyn NetHandler>, String, String, Bytes);
 
 pub(crate) fn new_cache() -> Cache {
     Cache::default()
@@ -78,6 +108,8 @@ struct Provider {
     fetcher: Mutex<Arc<dyn Fetcher>>,
     sheets: Mutex<HashMap<String, String>>,
     cache: Cache,
+    /// pyro: the URL after redirects of a cached response that was redirected, by cache key.
+    finals: Arc<Mutex<HashMap<String, String>>>,
     tx: Sender<Delivery>,
     outstanding: Arc<AtomicUsize>,
 }
@@ -108,39 +140,37 @@ impl NetProvider for Provider {
                 .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&url).cloned()))
         };
         if let Some(bytes) = ready {
-            let _ = self.tx.send((handler, url, bytes));
+            let final_url = self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| url.clone());
+            let _ = self.tx.send((handler, url, final_url, bytes));
             return;
         }
         let tx = self.tx.clone();
         let cache = self.cache.clone();
+        let finals = self.finals.clone();
         let fetcher = self.fetcher.lock().map(|f| f.clone());
         let Ok(fetcher) = fetcher else { return };
-        let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> = Box::new(move |result| {
-            let bytes = match result {
-                Ok(body) => {
+        let done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send> = Box::new(move |result| {
+            let (bytes, final_url) = match result {
+                Ok((body, final_url)) => {
                     let bytes = Bytes::from(body);
                     if !inline {
+                        if final_url != url {
+                            if let Ok(mut f) = finals.lock() {
+                                f.insert(key.clone(), final_url.clone());
+                            }
+                        }
                         if let Ok(mut c) = cache.lock() {
                             c.insert(key, bytes.clone());
                         }
                     }
-                    bytes
+                    (bytes, final_url)
                 }
                 // Empty bytes: Blitz's handlers treat it as a failed load.
-                Err(_) => Bytes::new(),
+                Err(_) => (Bytes::new(), url.clone()),
             };
-            let _ = tx.send((handler, url, bytes));
+            let _ = tx.send((handler, url, final_url, bytes));
         });
-        if plain {
-            fetcher.fetch(request.url.to_string(), done);
-        } else if options == (blitz_traits::net::FetchOptions {
-            cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
-            ..Default::default()
-        }) {
-            fetcher.fetch_cors(request.url.to_string(), done);
-        } else {
-            fetcher.fetch_with(request.url.to_string(), &options, done);
-        }
+        fetcher.fetch_final(request.url.to_string(), &options, done);
     }
 }
 
@@ -167,6 +197,7 @@ impl Bridge {
             fetcher: Mutex::new(fetcher),
             sheets: Mutex::new(snap.sheets.clone()),
             cache,
+            finals: Arc::default(),
             tx,
             outstanding: outstanding.clone(),
         });
@@ -220,8 +251,8 @@ impl Bridge {
                 };
                 waited += t.elapsed();
                 match next {
-                    Ok((handler, url, bytes)) => {
-                        handler.bytes(url, bytes);
+                    Ok((handler, url, final_url, bytes)) => {
+                        handler.bytes_at(url, final_url, bytes);
                         self.outstanding.fetch_sub(1, Ordering::AcqRel);
                     }
                     Err(RecvTimeoutError::Timeout) if first_layout.is_some() && Instant::now() < deadline => {
@@ -302,8 +333,8 @@ mod cors_tests {
         let mut cors = Request::get(url.parse().unwrap());
         blitz_dom::net::mark_cors(&mut cors);
         provider.fetch(0, cors, Box::new(Sink(got.clone())));
-        while let Ok((handler, url, bytes)) = bridge.rx.try_recv() {
-            handler.bytes(url, bytes);
+        while let Ok((handler, url, final_url, bytes)) = bridge.rx.try_recv() {
+            handler.bytes_at(url, final_url, bytes);
         }
         assert_eq!(*recorder.0.lock().unwrap(), vec![(url.to_string(), false), (url.to_string(), true)]);
         assert_eq!(*got.lock().unwrap(), vec![Bytes::from_static(b"no-cors"), Bytes::new()]);

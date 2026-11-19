@@ -4757,7 +4757,7 @@ diff -ruN a/traversal.rs b/traversal.rs
              let cascade_inputs = ElementCascadeInputs::new_from_element_data(data);
 diff -ruN a/url/mod.rs b/url/mod.rs
 --- a/url/mod.rs	2026-11-11 19:55:57
-+++ b/url/mod.rs	2026-11-19 17:18:25
++++ b/url/mod.rs	2026-11-19 19:49:46
 @@ -4,10 +4,12 @@
  
  //! Common handling for the specified value CSS url() values.
@@ -4877,8 +4877,8 @@ diff -ruN a/url/mod.rs b/url/mod.rs
 +}
 +
 +/// pyro: the request URL modifiers of a `url()` (CSS Values 5 § 4.5.4), each at most once, and
-+/// the URL of the style sheet the `url()` was written in, the referrer of its request (Fetch:
-+/// a style sheet's subresources are requested with the sheet as their client's referrer).
++/// the URL of the style sheet the `url()` was written in, the referrer of its request when that
++/// is in CORS mode (CSS Values 4 "fetch a style resource" step 6; the fetch decides).
 +#[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
 +pub struct RequestUrlModifiers {
 +    /// `cross-origin()`

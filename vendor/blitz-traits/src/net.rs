@@ -36,6 +36,15 @@ pub trait NetHandler: Send + Sync + 'static {
 
     /// Called when fetching fails, including HTTP error statuses and cancellation.
     fn error(self: Box<Self>, _url: String, _error: String) {}
+
+    /// pyro: [`Self::bytes`] for a response whose URL after redirects is `final_url`;
+    /// `resolved_url` stays the URL asked for, which the document keys its loads by. A handler
+    /// that resolves URLs in the body (a style sheet's `@import`s and `url()`s) resolves them
+    /// against `final_url` (the default ignores it).
+    fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
+        let _ = final_url;
+        self.bytes(resolved_url, bytes)
+    }
 }
 
 /// A callback which gets called every time a network request completes
