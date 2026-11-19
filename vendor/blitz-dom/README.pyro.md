@@ -2815,3 +2815,9 @@ sheet takes the new media list and is inserted again, without a new fetch (WPT h
   `.b` above the anchor, or `.p + .b ~ .d .c` with `.b` a sibling of one of its ancestors), and Stylo's dependency
   lookup decides, as in Gecko. WPT css/selectors `is-pseudo-containing-complex-in-has` +42,
   `not-pseudo-containing-complex-in-has` +40.
+- Lane S2, `:enabled`/`:disabled` from pyro-dom: `has_invalidation.rs` `pyro_state_bits` reads `enabled` and
+  `disabled` state tokens; `node/element.rs` `sync_lp_attribute_state` takes both bits from the tokens when they say
+  either, and `mutator.rs` leaves an element with pyro-dom's state tokens out of Blitz's own `disabled` attribute
+  handling (which knows only button/input/select/textarea and their own attribute). Options, optgroups, fieldsets
+  and the controls a disabled fieldset or optgroup disables now match as in HTML. WPT css/selectors
+  `has-with-pseudo-class`.

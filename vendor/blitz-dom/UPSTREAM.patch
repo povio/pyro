@@ -4881,7 +4881,7 @@ diff --git a/packages/blitz-dom/src/has_invalidation.rs b/packages/blitz-dom/src
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/has_invalidation.rs
-@@ -0,0 +1,341 @@
+@@ -0,0 +1,344 @@
 +//! pyro: `:has()` invalidation through Stylo's relative selector
 +//! invalidation, as Gecko runs it on every state and attribute change.
 +//!
@@ -4970,6 +4970,9 @@ new file mode 100644
 +            "out-of-range" => ElementState::OUTOFRANGE,
 +            "user-valid" => ElementState::USER_VALID,
 +            "user-invalid" => ElementState::USER_INVALID,
++            // pyro: `:enabled`/`:disabled` (see `sync_lp_attribute_state`).
++            "enabled" => ElementState::ENABLED,
++            "disabled" => ElementState::DISABLED,
 +            "undefined" => {
 +                undefined = true;
 +                ElementState::empty()
@@ -28220,7 +28223,17 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.id = Some(Atom::from(value))
          }
  
-@@ -440,7 +546,22 @@
+@@ -415,7 +521,8 @@
+             return;
+         }
+ 
+-        if *attr == local_name!("disabled") && element.can_be_disabled() {
++        // pyro: an element with pyro-dom's state tokens gets `:enabled`/`:disabled` from them.
++        if *attr == local_name!("disabled") && element.can_be_disabled() && !element.has_pyro_state() {
+             node.disable();
+             return;
+         }
+@@ -440,7 +547,22 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
@@ -28244,7 +28257,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -450,17 +571,64 @@
+@@ -450,17 +572,64 @@
              self.load_linked_stylesheet(node_id);
          } else if (tag, attr) == tag_and_attr!("iframe", "src")
              || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
@@ -28309,7 +28322,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -483,6 +651,9 @@
+@@ -483,6 +652,9 @@
          if !had_attr {
              return;
          }
@@ -28319,7 +28332,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -503,7 +674,7 @@
+@@ -503,7 +675,7 @@
                  .attribute_changed(&name.local, old_value, None);
          }
  
@@ -28328,7 +28341,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.id = None;
          }
  
-@@ -522,6 +693,9 @@
+@@ -522,6 +694,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -28338,7 +28351,16 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -559,6 +733,13 @@
+@@ -542,7 +717,7 @@
+         let tag = &element.name.local;
+         let attr = &name.local;
+ 
+-        if *attr == local_name!("disabled") && element.can_be_disabled() {
++        if *attr == local_name!("disabled") && element.can_be_disabled() && !element.has_pyro_state() {
+             node.enable();
+             return;
+         }
+@@ -559,6 +734,13 @@
          } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
              // Fall back to loading from the `src` attribute (if any)
              self.load_iframe(node_id);
@@ -28352,7 +28374,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
      }
  
-@@ -602,11 +783,14 @@
+@@ -602,11 +784,14 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -28367,7 +28389,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = &mut self.doc.nodes[node_id];
  
-@@ -614,11 +798,12 @@
+@@ -614,11 +799,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -28382,7 +28404,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,8 +824,12 @@
+@@ -639,8 +825,12 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
@@ -28395,7 +28417,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
          self.mutations_occurred |= node_is_in_document;
-@@ -648,13 +837,14 @@
+@@ -648,13 +838,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -28412,7 +28434,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +858,19 @@
+@@ -668,13 +859,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
@@ -28433,7 +28455,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +893,64 @@
+@@ -697,6 +894,64 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -28498,7 +28520,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -727,6 +981,8 @@
+@@ -727,6 +982,8 @@
          // A table's `cellpadding` is a presentational hint on its cells, not on the table.
          let restyles_cells = *attr == local_name!("cellpadding")
              && node.data.is_element_with_tag_name(&local_name!("table"));
@@ -28507,7 +28529,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
              data.hint |= if is_style {
                  RestyleHint::RESTYLE_STYLE_ATTRIBUTE
-@@ -748,27 +1004,52 @@
+@@ -748,27 +1005,52 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -28573,7 +28595,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +1057,43 @@
+@@ -776,18 +1058,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -28620,7 +28642,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +1105,30 @@
+@@ -799,10 +1106,30 @@
                          .find(is_element);
                  }
              }
@@ -28652,7 +28674,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,12 +1204,32 @@
+@@ -878,12 +1205,32 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -28685,7 +28707,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &mut self.doc.nodes[child_id];
              let child_was_in_doc = child.flags.is_in_document();
              self.mutations_occurred |= child_was_in_doc;
-@@ -892,12 +1238,13 @@
+@@ -892,12 +1239,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -28701,7 +28723,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1258,29 @@
+@@ -911,19 +1259,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -28734,7 +28756,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,12 +1295,46 @@
+@@ -938,12 +1296,46 @@
                  );
              }
  
@@ -28781,7 +28803,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          // Transfer :focus-within from the old ancestor chain to the new one (the
          // shared prefix stays). If the subtree left the document, the focus was
-@@ -975,6 +1366,23 @@
+@@ -975,6 +1367,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -28805,7 +28827,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1142,6 +1550,9 @@
+@@ -1142,6 +1551,9 @@
          for id in self.style_nodes.drain() {
              self.doc.process_style_element(id);
          }
@@ -28815,7 +28837,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          for id in self.form_nodes.drain() {
              self.doc.reset_form_owner(id);
-@@ -1222,12 +1633,51 @@
+@@ -1222,12 +1634,51 @@
                  }
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
@@ -28868,7 +28890,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      self.eager_op_queue
                          .push(SpecialOp::ProcessButtonInput(node_id));
                      self.form_nodes.insert(node_id);
-@@ -1413,6 +1863,11 @@
+@@ -1413,6 +1864,11 @@
              }
          };
  
@@ -28880,7 +28902,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +1875,98 @@
+@@ -1420,21 +1876,98 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -28983,7 +29005,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1544,6 +2076,18 @@
+@@ -1544,6 +2077,18 @@
              return;
          }
  
@@ -29002,7 +29024,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          // Add content of "value" attribute as a text node child if:
          //   - Tag name is
          if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
-@@ -1579,6 +2123,20 @@
+@@ -1579,6 +2124,20 @@
      }
  }
  
@@ -29023,7 +29045,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2935,50 @@
+@@ -2377,6 +2936,50 @@
          }
      }
  
@@ -29074,7 +29096,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3690,254 @@
+@@ -3088,3 +3691,254 @@
          );
      }
  }
@@ -30173,7 +30195,20 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -529,6 +676,23 @@
+@@ -504,6 +651,12 @@
+         self.attrs.iter().any(|attr| name == attr.name.local)
+     }
+ 
++    /// pyro: whether pyro-dom's render tree gave the element its [`crate::PYRO_STATE_NS`] `state`
++    /// tokens (which then carry `:enabled`/`:disabled`).
++    pub(crate) fn has_pyro_state(&self) -> bool {
++        self.attrs.iter().any(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
++    }
++
+     pub fn can_be_disabled(&self) -> bool {
+         local_names!("button", "input", "select", "textarea").contains(&self.name.local)
+     }
+@@ -529,6 +682,23 @@
          }
      }
  
@@ -30197,7 +30232,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn flush_open_state(&mut self) {
          let is_open = matches!(
              self.name.local,
-@@ -648,6 +812,24 @@
+@@ -648,6 +818,30 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -30212,6 +30247,12 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +            .map(|a| a.value.as_str());
 +        let bits = crate::has_invalidation::pyro_state_bits(lp);
 +        self.element_state.remove(crate::has_invalidation::PYRO_STATES);
++        // pyro: `:enabled`/`:disabled` come from the tokens when they say either (pyro-dom knows
++        // options, optgroups, fieldsets and what a disabled fieldset disables); otherwise Blitz's
++        // own `disabled` attribute handling stands.
++        if bits.intersects(ElementState::ENABLED | ElementState::DISABLED) {
++            self.element_state.remove(ElementState::ENABLED | ElementState::DISABLED);
++        }
 +        self.element_state.insert(bits);
 +        if self.name.local == local_name!("option") {
 +            let selected = self.has_attr(local_name!("selected"));
@@ -30222,7 +30263,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      #[cfg(feature = "file-input")]
      pub fn file_data(&self) -> Option<&FileData> {
          match &self.special_data {
-@@ -875,6 +1057,9 @@
+@@ -875,6 +1069,9 @@
      pub height: u32,
      /// The raw image data in RGBA8 format
      pub data: Blob<u8>,
@@ -30232,7 +30273,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  impl RasterImageData {
      pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
-@@ -882,6 +1067,35 @@
+@@ -882,6 +1079,35 @@
              width,
              height,
              data: Blob::new(data),
@@ -30268,7 +30309,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -953,11 +1167,23 @@
+@@ -953,11 +1179,23 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -30292,7 +30333,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //We seperate chars from strings in order to optimise rendering - ie not needing to
-@@ -966,6 +1192,9 @@
+@@ -966,6 +1204,9 @@
  pub enum Marker {
      Char(char),
      String(String),

@@ -885,7 +885,12 @@ impl Dom {
             }
             Defined => !e.name.local.contains('-') || e.flags & crate::node::element_flags::CUSTOM_DEFINED != 0,
             Default => {
-                (e.is_html() && matches!(&*e.name.local, "input") && e.attr_local(&local_name!("checked")).is_some())
+                // A checkbox or radio button checked by default (HTML :default); other input
+                // types ignore `checked`.
+                (e.is_html()
+                    && matches!(&*e.name.local, "input")
+                    && matches!(self.input_type_idx(idx), crate::forms::InputType::Checkbox | crate::forms::InputType::Radio)
+                    && e.attr_local(&local_name!("checked")).is_some())
                     || (e.is_html()
                         && e.name.local == local_name!("option")
                         && e.attr_local(&local_name!("selected")).is_some())

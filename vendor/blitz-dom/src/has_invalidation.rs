@@ -86,6 +86,9 @@ pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
             "out-of-range" => ElementState::OUTOFRANGE,
             "user-valid" => ElementState::USER_VALID,
             "user-invalid" => ElementState::USER_INVALID,
+            // pyro: `:enabled`/`:disabled` (see `sync_lp_attribute_state`).
+            "enabled" => ElementState::ENABLED,
+            "disabled" => ElementState::DISABLED,
             "undefined" => {
                 undefined = true;
                 ElementState::empty()

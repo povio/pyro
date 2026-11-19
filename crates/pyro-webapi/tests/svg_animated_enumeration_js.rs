@@ -533,3 +533,30 @@ fn processing_instruction_attributes() {
         r#"true|a,x|yy||a="b" x="q&quot;&lt;"|q"<|characterData|a="b" c=""|false|InvalidCharacterError"#
     );
 }
+
+/// `:enabled`/`:disabled` in style matching follow HTML: options and optgroups, and the controls a
+/// disabled fieldset or optgroup disables; `:default` takes `checked` only on checkboxes and radios
+/// (WPT css/selectors invalidation has-with-pseudo-class, input-pseudo-classes-in-has).
+#[test]
+fn enabled_disabled_and_default_in_style_matching() {
+    let env = Env::new("http://states.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              document.head.insertAdjacentHTML("beforeend", "<style>* { color: black } :disabled { color: red } :enabled { color: green } :default { outline-color: blue }</style>");
+              document.body.innerHTML = '<fieldset id=fs><input id=inner></fieldset><select><optgroup id=og><option id=op>x</option></optgroup></select><input id=text checked><input id=box type=checkbox checked>';
+              const c = (id) => getComputedStyle(document.getElementById(id)).color;
+              const out = [c("inner"), c("og"), c("op"), c("fs")];
+              document.getElementById("fs").disabled = true;
+              document.getElementById("og").disabled = true;
+              out.push(c("inner"), c("og"), c("op"), c("fs"));
+              document.getElementById("fs").disabled = false;
+              out.push(c("inner"));
+              const o = (id) => getComputedStyle(document.getElementById(id)).outlineColor;
+              out.push(o("text") === o("inner"), o("box"));
+              return out.join("|");
+            })()"##
+        ),
+        "rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(0, 128, 0)|true|rgb(0, 0, 255)"
+    );
+}

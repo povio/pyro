@@ -521,7 +521,8 @@ impl DocumentMutator<'_> {
             return;
         }
 
-        if *attr == local_name!("disabled") && element.can_be_disabled() {
+        // pyro: an element with pyro-dom's state tokens gets `:enabled`/`:disabled` from them.
+        if *attr == local_name!("disabled") && element.can_be_disabled() && !element.has_pyro_state() {
             node.disable();
             return;
         }
@@ -716,7 +717,7 @@ impl DocumentMutator<'_> {
         let tag = &element.name.local;
         let attr = &name.local;
 
-        if *attr == local_name!("disabled") && element.can_be_disabled() {
+        if *attr == local_name!("disabled") && element.can_be_disabled() && !element.has_pyro_state() {
             node.enable();
             return;
         }

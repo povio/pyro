@@ -759,6 +759,11 @@ impl Dom {
             self.state_dependents(i, &mut dependents);
             self.auto_dir_ancestors(i, &mut dependents);
         }
+        // A fieldset or optgroup whose own attributes changed (`disabled`) can disable or enable
+        // the controls and options inside it.
+        for &i in changed.iter() {
+            self.disabled_dependents(i, &mut dependents);
+        }
         changed.extend(dependents);
         changed.sort_unstable();
         changed.dedup();
@@ -909,6 +914,10 @@ impl Dom {
             (OutOfRange, "out-of-range"),
             (UserValid, "user-valid"),
             (UserInvalid, "user-invalid"),
+            // `:enabled`/`:disabled` with what Blitz cannot derive from the element alone: options
+            // and optgroups, fieldsets, and controls a disabled fieldset or optgroup disables.
+            (Enabled, "enabled"),
+            (Disabled, "disabled"),
         ] {
             if self.matches_state(n, &pc) {
                 if !out.is_empty() {
@@ -926,6 +935,21 @@ impl Dom {
             let _ = std::fmt::Write::write_fmt(&mut out, format_args!("top-layer={rank}"));
         }
         (!out.is_empty()).then_some(out)
+    }
+
+    /// The elements inside a fieldset or optgroup `i` whose `:enabled`/`:disabled` state token
+    /// follows its `disabled` attribute (the controls, options and nested fieldsets).
+    fn disabled_dependents(&self, i: u32, out: &mut Vec<u32>) {
+        if !self.slot_live(i) || !matches!(self.html_local(i).map(|l| &**l), Some("fieldset" | "optgroup")) {
+            return;
+        }
+        let mut n = self.n(i).first_child;
+        while n != NIL {
+            if self.is_form_control_idx(n) || self.is_face_idx(n) {
+                out.push(n);
+            }
+            n = self.following_in(n, i);
+        }
     }
 
     /// Elements whose [`Dom::render_states`] a change at `i` can change
