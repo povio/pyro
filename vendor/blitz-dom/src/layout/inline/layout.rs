@@ -1001,6 +1001,13 @@ impl LayoutPassState<'_> {
                 height: inputs.parent_size.height,
             };
             let margin = style.margin().resolve_or_zero(margin_basis, resolve_calc_value);
+            // pyro: a button with no baseline (empty, or layout-contained) has one synthesized at
+            // its block-end content edge (HTML § 15.5.2 "the button element"; Chromium), not at
+            // its bottom margin edge (WPT css-contain `contain-layout-button-001`).
+            let button_content_end = style.flags.intersects(StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT).then(|| {
+                style.border().resolve_or_zero(margin_basis.width, resolve_calc_value).bottom
+                    + style.padding().resolve_or_zero(margin_basis.width, resolve_calc_value).bottom
+            });
 
             #[cfg(feature = "floats")]
             let is_floated = style.float().is_floated();
@@ -1085,6 +1092,10 @@ impl LayoutPassState<'_> {
                 } else {
                     None
                 };
+                let alphabetic = alphabetic.or_else(|| {
+                    // (On alphabetic lines; a central one synthesizes its own, below.)
+                    button_content_end.filter(|_| !vertical_line_kind(self.nodes[node_id].writing_mode()).0).map(|end| (margin.top + (output.size.height - end).max(0.0)) * scale)
+                });
                 let (central_line, inverted_line) = vertical_line_kind(self.nodes[node_id].writing_mode());
                 // pyro: on a central baseline (Blink's `PhysicalBoxFragment::BaselineMetrics` with
                 // `kCentralBaseline`): the box's own central baseline, from its line-over side
