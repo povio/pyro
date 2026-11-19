@@ -3049,12 +3049,19 @@ fn reset_trailing_whitespace_level<B: Brush>(layout: &Layout<B>, line_items: &mu
                 while whitespace_start > range.start {
                     let cluster = &shaped_clusters[whitespace_start as usize - 1];
                     let characters = slice.characters_in(cluster.chars_range());
+                    // White space preserved by `white-space-collapse: break-spaces` does not
+                    // hang (CSS Text 3 § 4.1.3): it keeps its level, as in Blink and Gecko (WPT
+                    // css-text `trailing-space-and-text-alignment-rtl-004`).
+                    let breaks_spaces = |character: &Character| {
+                        layout.data.styles[character.style_index as usize].white_space_collapse
+                            == crate::style::WhiteSpaceCollapse::BreakSpaces
+                    };
                     let resets = characters.iter().all(|character| match character.whitespace {
                         Whitespace::Space
                         | Whitespace::IdeographicSpace
                         | Whitespace::OtherSpaceSeparator
-                        | Whitespace::Tab
-                        | Whitespace::Newline => true,
+                        | Whitespace::Tab => !breaks_spaces(character),
+                        Whitespace::Newline => true,
                         Whitespace::None => cluster.advance == 0.0,
                         _ => false,
                     });

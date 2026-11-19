@@ -1643,7 +1643,7 @@ index 1569071..8f285ed 100644
                  }
                  LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..69af0ae 100644
+index 3c3798c..5dd7467 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -10,7 +10,8 @@ use alloc::vec::Vec;
@@ -3278,7 +3278,7 @@ index 3c3798c..69af0ae 100644
                      if !all_hang {
                          break 'items;
                      }
-@@ -1965,9 +2933,253 @@ fn hanging_whitespace<B: Brush>(
+@@ -1965,9 +2933,260 @@ fn hanging_whitespace<B: Brush>(
          hanging_whitespace_advance,
          justification_end_cluster,
          hanging_opportunities,
@@ -3398,12 +3398,19 @@ index 3c3798c..69af0ae 100644
 +                while whitespace_start > range.start {
 +                    let cluster = &shaped_clusters[whitespace_start as usize - 1];
 +                    let characters = slice.characters_in(cluster.chars_range());
++                    // White space preserved by `white-space-collapse: break-spaces` does not
++                    // hang (CSS Text 3 § 4.1.3): it keeps its level, as in Blink and Gecko (WPT
++                    // css-text `trailing-space-and-text-alignment-rtl-004`).
++                    let breaks_spaces = |character: &Character| {
++                        layout.data.styles[character.style_index as usize].white_space_collapse
++                            == crate::style::WhiteSpaceCollapse::BreakSpaces
++                    };
 +                    let resets = characters.iter().all(|character| match character.whitespace {
 +                        Whitespace::Space
 +                        | Whitespace::IdeographicSpace
 +                        | Whitespace::OtherSpaceSeparator
-+                        | Whitespace::Tab
-+                        | Whitespace::Newline => true,
++                        | Whitespace::Tab => !breaks_spaces(character),
++                        Whitespace::Newline => true,
 +                        Whitespace::None => cluster.advance == 0.0,
 +                        _ => false,
 +                    });
@@ -3532,7 +3539,7 @@ index 3c3798c..69af0ae 100644
  /// Reorder items within line according to the bidi levels of the items
  fn reorder_line_items(runs: &mut [LineItemData]) {
      let run_count = runs.len();
-@@ -2015,12 +3227,7 @@ mod tests {
+@@ -2015,12 +3234,7 @@ mod tests {
  
      #[test]
      fn subtree_extents_restored_at_break_opportunities() {
