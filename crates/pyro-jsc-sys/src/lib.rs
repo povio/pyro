@@ -633,6 +633,17 @@ pub mod spi {
     ) -> bool;
     /// Patch 0035: 0 none, 1 report-only, 2 enforced, 3 enforced with eval enabled.
     pub type JSGlobalContextSetTrustedTypesEnforcementFn = unsafe extern "C" fn(ctx: JSGlobalContextRef, enforcement: c_int);
+    /// Patch 0036: HTML's HostPromiseRejectionTracker. Called as it happens when a promise of the
+    /// realm is rejected without a handler (`operation` 0) and when a handler is first added to a
+    /// rejected promise (1), with the promise and its reason. It may not run JavaScript.
+    pub type JSPromiseRejectionTrackerCallback =
+        unsafe extern "C" fn(ctx: JSContextRef, promise: JSObjectRef, reason: JSValueRef, operation: c_int);
+    /// `operations`: the operations the callback is called for, a bit each (`1 << operation`).
+    pub type JSGlobalContextSetPromiseRejectionTrackerFn = unsafe extern "C" fn(
+        ctx: JSGlobalContextRef,
+        callback: Option<JSPromiseRejectionTrackerCallback>,
+        operations: std::os::raw::c_uint,
+    ) -> bool;
 
     /// A custom accessor's getter (patched JSC, `JSObjectSetCustomAccessor`):
     /// called by inline caches with the receiver as `this_value` (any value,
@@ -1011,6 +1022,8 @@ pub mod spi {
         /// Patch 0035: Trusted Types hooks for eval and Function.
         pub set_compile_strings_callbacks: Option<JSGlobalContextSetCompileStringsCallbacksFn>,
         pub set_trusted_types_enforcement: Option<JSGlobalContextSetTrustedTypesEnforcementFn>,
+        /// Patch 0036: the promise rejection tracker (Reject and Handle).
+        pub set_promise_rejection_tracker: Option<JSGlobalContextSetPromiseRejectionTrackerFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
         pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
@@ -1215,6 +1228,10 @@ pub mod spi {
             set_trusted_types_enforcement: resolve!("JSGlobalContextSetTrustedTypesEnforcement"),
             #[cfg(not(any(pyro_jsc_compile_strings, not(pyro_jsc_static))))]
             set_trusted_types_enforcement: None,
+            #[cfg(any(pyro_jsc_rejection_tracker, not(pyro_jsc_static)))]
+            set_promise_rejection_tracker: resolve!("JSGlobalContextSetPromiseRejectionTracker"),
+            #[cfg(not(any(pyro_jsc_rejection_tracker, not(pyro_jsc_static))))]
+            set_promise_rejection_tracker: None,
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
             set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),

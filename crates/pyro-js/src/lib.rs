@@ -17,6 +17,7 @@ mod error;
 mod interned;
 mod persistent;
 mod realm;
+mod rejections;
 mod string;
 mod value;
 
@@ -42,6 +43,8 @@ pub use value::{Args, JsType, Object, StringUnits, Value};
 
 /// Raw FFI, for code that needs an entry point not wrapped here.
 pub use pyro_jsc_sys as sys;
+
+pub use rejections::{available as rejection_tracking_available, RejectionHooks};
 
 /// Whether this JavaScriptCore has the Trusted Types hooks for eval and Function
 /// (patch 0035, [`Scope::set_compile_strings_hooks`]).

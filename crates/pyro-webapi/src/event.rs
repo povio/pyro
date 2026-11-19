@@ -1597,6 +1597,76 @@ pub(crate) fn dispatch_unhandled_rejection<'s>(
     Ok(!crate::target::fire(&page, target, &event))
 }
 
+/// HTML's promise rejection tracking for a window or worker realm (`pyro_js::RejectionHooks`,
+/// used when JavaScriptCore has the tracker): `unhandledrejection` fires from a task queued at
+/// the end of the microtask checkpoint that left the promise without a handler (a handler added
+/// before the task runs takes the promise off the list), and `rejectionhandled` from a task
+/// queued when a handler is added to a promise reported before.
+pub(crate) const REJECTION_HOOKS: pyro_js::RejectionHooks = pyro_js::RejectionHooks {
+    schedule_notify: schedule_rejection_notify,
+    unhandled: dispatch_unhandled_rejection,
+    handled: schedule_rejection_handled,
+};
+
+/// The notification task of the promises a microtask checkpoint left without a handler. One
+/// task serves the promises reported one after another with no other task queued between them
+/// (HTML queues one task per checkpoint; a task queued in between keeps its place before the
+/// later promises).
+fn schedule_rejection_notify(s: &Scope<'_>, id: u64) {
+    let Ok(page) = page_of(s) else { return };
+    let realm_id = s.realm_id();
+    {
+        let batch = page.rejection_batch.borrow();
+        if let Some((realm, seq, ids)) = &*batch {
+            if *realm == realm_id && *seq == page.posted_tasks() {
+                ids.borrow_mut().push(id);
+                return;
+            }
+        }
+    }
+    let ids = Rc::new(RefCell::new(vec![id]));
+    let realm = s.realm().downgrade();
+    let weak_page = Rc::downgrade(&page);
+    let task_ids = ids.clone();
+    // (Recorded before the task is queued: without an event loop it runs at once.)
+    *page.rejection_batch.borrow_mut() = Some((realm_id, page.posted_tasks().wrapping_add(1), ids));
+    page.post_task(Box::new(move || {
+        if let Some(page) = weak_page.upgrade() {
+            let mut batch = page.rejection_batch.borrow_mut();
+            if batch.as_ref().is_some_and(|(_, _, ids)| Rc::ptr_eq(ids, &task_ids)) {
+                *batch = None;
+            }
+        }
+        let ids = std::mem::take(&mut *task_ids.borrow_mut());
+        let Some(realm) = realm.upgrade() else { return };
+        for id in ids {
+            let Ok(scope) = realm.scope() else { return };
+            scope.notify_rejected_promise(id);
+        }
+    }));
+}
+
+/// (Called from inside promise internals: it only queues the task.)
+fn schedule_rejection_handled(s: &Scope<'_>, promise: Persistent, reason: Persistent) {
+    let Ok(page) = page_of(s) else { return };
+    let realm = s.realm().downgrade();
+    let weak_page = Rc::downgrade(&page);
+    page.post_task(Box::new(move || {
+        let (Some(realm), Some(page)) = (realm.upgrade(), weak_page.upgrade()) else { return };
+        if page.is_disposed() || realm.scope().is_err() {
+            return;
+        }
+        let Some(target) = page.window_target() else { return };
+        let event = EventCore::trusted(&page, EventInterface::PromiseRejectionEvent, "rejectionhandled", false, false);
+        {
+            let mut fields = event.fields.borrow_mut();
+            fields.promise = Some(promise);
+            fields.reason = Some(reason);
+        }
+        crate::target::fire(&page, target, &event);
+    }));
+}
+
 pub struct SubmitEvent;
 impl JsClass for SubmitEvent {
     const NAME: &'static str = "SubmitEvent";

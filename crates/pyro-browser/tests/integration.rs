@@ -52,6 +52,7 @@ mod service_worker;
 mod static_plaintext;
 mod storage_events;
 mod style_load;
+mod promise_rejections;
 mod stylesheets;
 mod stylesheets_http;
 mod subresources;

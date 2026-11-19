@@ -335,6 +335,11 @@ pub struct PageDom {
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// The CSS-connected font faces of the document as of an author sheets key (`css_font_faces`).
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
+    /// Tasks queued through [`PageDom::post_task`] so far.
+    posted_tasks: Cell<u64>,
+    /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
+    /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
+    pub(crate) rejection_batch: RefCell<Option<(pyro_js::RealmId, u64, Rc<RefCell<Vec<u64>>>)>>,
     /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
     pub(crate) font_loads: Cell<u32>,
     font_delay_since: Cell<Option<std::time::Instant>>,
@@ -833,6 +838,8 @@ impl PageDom {
             imported_sheets: RefCell::new(FxHashMap::default()),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
+            posted_tasks: Cell::new(0),
+            rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
             font_delay_since: Cell::new(None),
             used_font_families: RefCell::new(None),
@@ -1937,7 +1944,12 @@ impl PageDom {
         }
     }
 
+    /// How many tasks [`Self::post_task`] queued: two reads that agree had no task queued between.
+    pub(crate) fn posted_tasks(&self) -> u64 {
+        self.posted_tasks.get()
+    }
     pub(crate) fn post_task(&self, task: Box<dyn FnOnce()>) {
+        self.posted_tasks.set(self.posted_tasks.get().wrapping_add(1));
         match self.hooks() {
             Some(h) => h.post_task(task),
             None => task(),

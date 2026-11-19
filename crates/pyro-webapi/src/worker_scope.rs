@@ -1224,6 +1224,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     page.register_realm(&realm);
     realm.set_embedder(page.clone());
     realm.set_unhandled_rejection_handler(crate::event::dispatch_unhandled_rejection);
+    realm.set_rejection_hooks(crate::event::REJECTION_HOOKS);
     // HTML "report the error": the global's `error` event fires in the task
     // that threw, its listeners before their microtasks.
     realm.set_exception_reporter(Some(crate::lifecycle::report_exception));

@@ -428,6 +428,8 @@ pub(crate) struct RealmInner {
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
     native_callback_hook: RefCell<Option<NativeCallbackHook>>,
     unhandled_rejection_handler: Cell<Option<UnhandledRejectionHandler>>,
+    /// HTML's rejected promise lists (`crate::rejections`).
+    pub(crate) rejections: RefCell<crate::rejections::Rejections>,
     exception_reporter: Cell<Option<ExceptionReporter>>,
     /// Optional cheap test of whether the hook has anything to do; when it
     /// says no, the hook (and the rooting of the callback result) is skipped.
@@ -638,6 +640,9 @@ impl RealmInner {
         // Release captured embedder state without holding the hook cell borrow.
         drop(self.native_callback_hook.take());
         self.unhandled_rejection_handler.set(None);
+        if let Ok(mut rejections) = self.rejections.try_borrow_mut() {
+            rejections.clear(self.ctx.get() as sys::JSContextRef);
+        }
         self.exception_reporter.set(None);
         drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
@@ -767,6 +772,14 @@ impl Realm {
 
     pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
         self.inner.unhandled_rejection_handler.set(Some(handler));
+    }
+
+    /// HTML's promise rejection tracking for this realm (`unhandledrejection` from a task,
+    /// `rejectionhandled`): see [`crate::RejectionHooks`]. Without the tracker
+    /// ([`crate::rejection_tracking_available`]) the hooks are kept but never called, and
+    /// [`Self::set_unhandled_rejection_handler`]'s handler runs as the microtask queue empties.
+    pub fn set_rejection_hooks(&self, hooks: crate::RejectionHooks) {
+        self.inner.rejections.borrow_mut().set_hooks(hooks);
     }
 
     /// Installs the embedder's "report an exception" step, run by
@@ -2564,6 +2577,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         module_fetcher: RefCell::new(None),
         native_callback_hook: RefCell::new(None),
         unhandled_rejection_handler: Cell::new(None),
+        rejections: RefCell::new(Default::default()),
         exception_reporter: Cell::new(None),
         native_callback_pending: RefCell::new(None),
         native_callback_hook_active: Cell::new(false),
@@ -3497,7 +3511,12 @@ fn install_rejection_tracking(scope: &Scope<'_>) -> JsResult<()> {
     let Some(set) = sys::spi::get().set_unhandled_rejection_callback else {
         return Ok(());
     };
+    crate::rejections::install(scope.realm.global_ctx()?);
     let f = scope.function("unhandledRejection", |s, _this, args| {
+        // With rejection hooks and the tracker (patch 0036) the promise is reported from a task.
+        if crate::rejections::about_to_notify(s, args.get(0), args.get(1)) {
+            return Ok(s.undefined());
+        }
         let canceled = if let Some(handler) = s.realm.unhandled_rejection_handler.get() {
             match handler(s, args.get(0), args.get(1)) {
                 Ok(canceled) => canceled,

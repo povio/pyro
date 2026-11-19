@@ -220,6 +220,7 @@ load failure or a crash.
 | `weak_refs` | `JSWeakCreate/Release/GetObject` | wrapper identity | `Engine::new` fails: identity is required |
 | `modules` | ObjC `JSScript` (module type), `-[JSContext setModuleLoaderDelegate:]`, `evaluateJSScript:` | ES modules, `import()` | `eval_module` → `Unsupported` |
 | `unhandled_rejections` | `JSGlobalContextSetUnhandledRejectionCallback` | `unhandledrejection` / CDP exceptions | no reports |
+| rejection tracker (patch 0036) | `JSGlobalContextSetPromiseRejectionTracker` | HTML's rejected promise lists (`pyro-js` `rejections.rs`): `unhandledrejection` from a task, not for a promise handled before it runs; `rejectionhandled` | rejections are reported as the microtask queue empties; no `rejectionhandled` |
 | `termination` | `JSContextGroupSetExecutionTimeLimit` | `TerminateHandle` | `terminate_handle()` → `Unsupported` |
 | `hidden_properties` | `JSObject{Get,Set,Delete}PrivateProperty` | listener storage | `set_hidden` → `Unsupported` |
 
