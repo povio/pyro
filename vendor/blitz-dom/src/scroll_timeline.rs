@@ -312,37 +312,75 @@ fn resolve(doc: &BaseDocument, node: NodeId, timeline: &AnimationTimeline) -> Op
 
 /// The nearest ancestor-or-self of `node` declaring timeline `name`: a scroll progress timeline
 /// before a view progress timeline on the same element (Scroll-driven Animations 1 §4.4.1).
+/// pyro: an ancestor whose `timeline-scope` names it (or is `all`) makes the timeline of the one
+/// element in its subtree declaring it visible (§4.5; pseudo-elements count). With none, or more
+/// than one, the name is inactive.
 fn named(doc: &BaseDocument, node: &Node, name: &str) -> Option<Resolved> {
     let mut current = Some(node.id);
     while let Some(id) = current {
         let el = doc.get_node(id)?;
+        if let Some(found) = declared(doc, el, name) {
+            return found;
+        }
         if let Some(style) = el.primary_styles() {
-            let ui = style.get_ui();
-            let axes = ui.scroll_timeline_axis_count().max(1);
-            for i in (0..ui.scroll_timeline_name_count()).rev() {
-                if ui.scroll_timeline_name_at(i).to_css_string() == name {
-                    let axis = ui.scroll_timeline_axis_at(i % axes);
-                    // The element itself is the scroll container (none: inactive).
-                    if !is_scroll_container(el) {
-                        return None;
+            let scope = &style.get_ui().timeline_scope.value;
+            let css = scope.to_css_string();
+            let names = css.split(',').map(str::trim).collect::<Vec<_>>();
+            if !scope.is_none() && names.iter().any(|&scoped| scoped == name || scoped == "all") {
+                let mut found = Vec::new();
+                let mut stack = vec![id];
+                while let Some(id) = stack.pop() {
+                    let Some(n) = doc.get_node(id) else { continue };
+                    if found.len() > 1 {
+                        break;
                     }
-                    return Some(Resolved { kind: Kind::Scroll, source: Some(id), vertical: vertical(el, axis), inset: None });
+                    if n.id != el.id {
+                        if let Some(resolved) = declared(doc, n, name) {
+                            found.push(resolved);
+                        }
+                    }
+                    stack.extend(n.before());
+                    stack.extend(n.after());
+                    stack.extend(n.children.iter().rev().copied().filter(|&c| doc.get_node(c).is_some_and(Node::is_element)));
                 }
-            }
-            let axes = ui.view_timeline_axis_count().max(1);
-            let insets = ui.view_timeline_inset_count().max(1);
-            for i in (0..ui.view_timeline_name_count()).rev() {
-                if ui.view_timeline_name_at(i).to_css_string() == name {
-                    return Some(Resolved {
-                        kind: Kind::View { subject: id },
-                        source: nearest_scroll_container(doc, el),
-                        vertical: vertical(el, ui.view_timeline_axis_at(i % axes)),
-                        inset: Some(ui.view_timeline_inset_at(i % insets)),
-                    });
-                }
+                return match found.len() {
+                    1 => found.pop().flatten(),
+                    _ => None,
+                };
             }
         }
         current = el.parent.filter(|&p| doc.get_node(p).is_some_and(Node::is_element));
+    }
+    None
+}
+
+/// The timeline `name` that `el` declares itself (`Some(None)`: declared, but inactive; `None`:
+/// not declared).
+fn declared(doc: &BaseDocument, el: &Node, name: &str) -> Option<Option<Resolved>> {
+    let style = el.primary_styles()?;
+    let ui = style.get_ui();
+    let axes = ui.scroll_timeline_axis_count().max(1);
+    for i in (0..ui.scroll_timeline_name_count()).rev() {
+        if ui.scroll_timeline_name_at(i).to_css_string() == name {
+            let axis = ui.scroll_timeline_axis_at(i % axes);
+            // The element itself is the scroll container (none: inactive).
+            if !is_scroll_container(el) {
+                return Some(None);
+            }
+            return Some(Some(Resolved { kind: Kind::Scroll, source: Some(el.id), vertical: vertical(el, axis), inset: None }));
+        }
+    }
+    let axes = ui.view_timeline_axis_count().max(1);
+    let insets = ui.view_timeline_inset_count().max(1);
+    for i in (0..ui.view_timeline_name_count()).rev() {
+        if ui.view_timeline_name_at(i).to_css_string() == name {
+            return Some(Some(Resolved {
+                kind: Kind::View { subject: el.id },
+                source: nearest_scroll_container(doc, el),
+                vertical: vertical(el, ui.view_timeline_axis_at(i % axes)),
+                inset: Some(ui.view_timeline_inset_at(i % insets)),
+            }));
+        }
     }
     None
 }
