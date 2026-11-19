@@ -3744,6 +3744,11 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: whether the page declares its color schemes (a `<meta name=color-scheme>`).
+    pub fn page_color_scheme_is_declared(&self) -> bool {
+        !self.page_color_scheme.is_empty()
+    }
+
     /// pyro: whether the page's color scheme (its `<meta name=color-scheme>`, with the user's
     /// preference when it supports both) is dark: the canvas is painted dark then.
     pub fn page_color_scheme_is_dark(&self) -> bool {

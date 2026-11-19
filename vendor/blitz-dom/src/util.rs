@@ -391,6 +391,10 @@ pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg:
     let defaulted = defaulted.as_deref().unwrap_or(&checked);
     // pyro: `light-dark()` is its light colour; an element whose used colour scheme is dark draws
     // [`crate::node::SvgImageData::for_color_scheme`].
+    // pyro: its `prefers-color-scheme` media blocks for the light scheme, and `:root`
+    // (`crate::svg_refs::resolve_scheme_media`).
+    let media = crate::svg_refs::resolve_scheme_media(defaulted, false);
+    let defaulted = media.as_deref().unwrap_or(defaulted);
     let schemed = crate::svg_refs::resolve_light_dark(defaulted, false);
     let svg = crate::node::SvgImageData::from_data(schemed.as_deref().unwrap_or(defaulted), &options)?;
     PARSED.with(|p| {

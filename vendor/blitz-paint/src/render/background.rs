@@ -1293,6 +1293,15 @@ impl ElementCx<'_, '_> {
         let ImageData::Svg(svg) = &bg_image.image else {
             return;
         };
+        // pyro: in this element's used colour scheme (`SvgImageData::for_color_scheme`).
+        let schemed;
+        let svg = match svg.for_color_scheme(self.dark_color_scheme()) {
+            Some(dark) => {
+                schemed = dark;
+                &schemed
+            }
+            None => svg,
+        };
 
         // A zero-sized `viewBox` disables rendering of the SVG
         if svg.intrinsic_dimensions.degenerate_view_box {

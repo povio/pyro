@@ -2777,6 +2777,11 @@ impl ElementCx<'_, '_> {
         if dark != light {
             return dark;
         }
+        // pyro: `normal` is the page's scheme where its `<meta name=color-scheme>` declares one
+        // (WPT css/mediaqueries `prefers-color-scheme-svg-image-normal-with-meta-dark`).
+        if !dark && self.context.dom.page_color_scheme_is_declared() {
+            return self.context.dom.page_color_scheme_is_dark();
+        }
         self.context.dom.viewport().color_scheme == blitz_traits::shell::ColorScheme::Dark
     }
 
@@ -6306,6 +6311,16 @@ impl ElementCx<'_, '_> {
 
         let Some(svg) = self.svg else {
             return;
+        };
+        // pyro: its `prefers-color-scheme` blocks and `light-dark()` colours follow this element's
+        // used colour scheme (blitz-dom `SvgImageData::for_color_scheme`).
+        let schemed;
+        let svg = match svg.for_color_scheme(self.dark_color_scheme()) {
+            Some(dark) => {
+                schemed = dark;
+                &schemed
+            }
+            None => svg,
         };
         // pyro: an SVG image with a `<foreignObject>` drawn as a document (blitz-dom
         // `svg_image_documents`), when it is drawn at the size the document is laid out at.

@@ -229,11 +229,22 @@ impl SvgImageData {
     /// otherwise: the image as loaded is the light one.
     pub fn for_color_scheme(&self, dark: bool) -> Option<SvgImageData> {
         let source = self.source.as_deref().filter(|_| dark)?;
-        crate::svg_refs::find_bytes(source, b"light-dark(")?;
-        if !crate::svg_refs::allows_dark_scheme(source) {
+        // pyro: its `prefers-color-scheme` media blocks follow the embedding element's used colour
+        // scheme too (WPT css/mediaqueries `prefers-color-scheme-svg-image`), whatever its own
+        // `color-scheme`; its `light-dark()` colours only where that allows dark.
+        let media = crate::svg_refs::find_bytes(source, b"prefers-color-scheme").is_some();
+        let light_dark = crate::svg_refs::find_bytes(source, b"light-dark(").is_some()
+            && crate::svg_refs::allows_dark_scheme(source);
+        if !media && !light_dark {
             return None;
         }
-        let dark_source = crate::svg_refs::resolve_light_dark(source, true)?;
+        let media_source = if media { crate::svg_refs::resolve_scheme_media(source, true) } else { None };
+        let source_now = media_source.as_deref().unwrap_or(source);
+        let dark_source = if light_dark {
+            crate::svg_refs::resolve_light_dark(source_now, true).unwrap_or_else(|| source_now.to_vec())
+        } else {
+            source_now.to_vec()
+        };
         let mut svg = crate::util::parse_svg_image(&dark_source).ok()?;
         svg.source = self.source.clone();
         Some(svg)

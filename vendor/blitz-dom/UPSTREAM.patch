@@ -4187,7 +4187,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3673,89 @@
+@@ -2248,6 +3673,94 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4262,6 +4262,11 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        }
 +    }
 +
++    /// pyro: whether the page declares its color schemes (a `<meta name=color-scheme>`).
++    pub fn page_color_scheme_is_declared(&self) -> bool {
++        !self.page_color_scheme.is_empty()
++    }
++
 +    /// pyro: whether the page's color scheme (its `<meta name=color-scheme>`, with the user's
 +    /// preference when it supports both) is dark: the canvas is painted dark then.
 +    pub fn page_color_scheme_is_dark(&self) -> bool {
@@ -4277,7 +4282,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3772,13 @@
+@@ -2264,12 +3777,13 @@
              return;
          }
  
@@ -4296,7 +4301,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +3823,19 @@
+@@ -2314,9 +3828,19 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
@@ -4317,7 +4322,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +3979,19 @@
+@@ -2460,10 +3984,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4337,7 +4342,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4148,35 @@
+@@ -2620,6 +4153,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4373,7 +4378,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4200,22 @@
+@@ -2643,12 +4205,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4401,7 +4406,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4244,7 @@
+@@ -2677,7 +4249,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4410,7 +4415,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4402,10 @@
+@@ -2835,6 +4407,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4421,7 +4426,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5353,7 @@
+@@ -3782,6 +5358,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4429,7 +4434,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5376,52 @@
+@@ -3804,6 +5381,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4482,7 +4487,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5464,121 @@
+@@ -3846,3 +5469,121 @@
          assert!(doc.has_changes());
      }
  }
@@ -40099,7 +40104,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  }
  
  impl SvgImageData {
-@@ -106,32 +179,127 @@
+@@ -106,32 +179,138 @@
          };
          let doc = roxmltree::Document::parse_with_options(text, xml_options)
              .map_err(usvg::Error::ParsingFailed)?;
@@ -40155,11 +40160,22 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +    /// otherwise: the image as loaded is the light one.
 +    pub fn for_color_scheme(&self, dark: bool) -> Option<SvgImageData> {
 +        let source = self.source.as_deref().filter(|_| dark)?;
-+        crate::svg_refs::find_bytes(source, b"light-dark(")?;
-+        if !crate::svg_refs::allows_dark_scheme(source) {
++        // pyro: its `prefers-color-scheme` media blocks follow the embedding element's used colour
++        // scheme too (WPT css/mediaqueries `prefers-color-scheme-svg-image`), whatever its own
++        // `color-scheme`; its `light-dark()` colours only where that allows dark.
++        let media = crate::svg_refs::find_bytes(source, b"prefers-color-scheme").is_some();
++        let light_dark = crate::svg_refs::find_bytes(source, b"light-dark(").is_some()
++            && crate::svg_refs::allows_dark_scheme(source);
++        if !media && !light_dark {
 +            return None;
 +        }
-+        let dark_source = crate::svg_refs::resolve_light_dark(source, true)?;
++        let media_source = if media { crate::svg_refs::resolve_scheme_media(source, true) } else { None };
++        let source_now = media_source.as_deref().unwrap_or(source);
++        let dark_source = if light_dark {
++            crate::svg_refs::resolve_light_dark(source_now, true).unwrap_or_else(|| source_now.to_vec())
++        } else {
++            source_now.to_vec()
++        };
 +        let mut svg = crate::util::parse_svg_image(&dark_source).ok()?;
 +        svg.source = self.source.clone();
 +        Some(svg)
@@ -40232,7 +40248,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().height())
      }
  
-@@ -230,6 +398,49 @@
+@@ -230,6 +409,49 @@
      }
  }
  
@@ -40282,7 +40298,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +474,314 @@
+@@ -263,3 +485,314 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }
@@ -52441,7 +52457,7 @@ diff --git a/packages/blitz-dom/src/svg_refs.rs b/packages/blitz-dom/src/svg_ref
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/svg_refs.rs
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,530 @@
 +//! pyro: SVG sources whose clip path, mask or filter references form a cycle longer than usvg
 +//! breaks. usvg sets a reference that closes a cycle of one or two elements to `none`
 +//! (`fix_recursive_links`), but follows a longer one without end and overflows the stack
@@ -52703,6 +52719,75 @@ new file mode 100644
 +
 +/// pyro: `source` with each `light-dark(a, b)` (which usvg does not parse: the paint fell back to
 +/// black) replaced by `a`, or by `b` when `dark`. `None` when there is none.
++/// pyro: the `<style>` sheets of an SVG image as usvg can apply them (its CSS has neither media
++/// queries nor `:root`): a `@media (prefers-color-scheme: …)` block is unwrapped when it matches the
++/// preferred scheme (`dark` or light) and dropped when it does not, and `:root` is the root `svg`
++/// (WPT css/mediaqueries `prefers-color-scheme-svg-as-image`). Other `@media` blocks stay as they are.
++/// `None`: nothing to change.
++pub(crate) fn resolve_scheme_media(source: &[u8], dark: bool) -> Option<Vec<u8>> {
++    if find_bytes(source, b"prefers-color-scheme").is_none() && find_bytes(source, b":root").is_none() {
++        return None;
++    }
++    let mut out = Vec::with_capacity(source.len());
++    let mut rest = source;
++    while let Some(at) = find_bytes(rest, b"@media") {
++        out.extend_from_slice(&rest[..at]);
++        let after = &rest[at + b"@media".len()..];
++        let Some(open) = after.iter().position(|&b| b == b'{' || b == b';') else {
++            out.extend_from_slice(&rest[at..]);
++            rest = &[];
++            break;
++        };
++        let condition: Vec<u8> =
++            after[..open].iter().filter(|b| !b.is_ascii_whitespace()).map(|b| b.to_ascii_lowercase()).collect();
++        let scheme = match condition.as_slice() {
++            b"(prefers-color-scheme:dark)" => Some(true),
++            b"(prefers-color-scheme:light)" => Some(false),
++            _ => None,
++        };
++        let (Some(scheme), b'{') = (scheme, after[open]) else {
++            out.extend_from_slice(&rest[at..at + b"@media".len()]);
++            rest = after;
++            continue;
++        };
++        // The block's closing brace.
++        let body = &after[open + 1..];
++        let mut depth = 0usize;
++        let mut end = None;
++        for (i, &b) in body.iter().enumerate() {
++            match b {
++                b'{' => depth += 1,
++                b'}' if depth == 0 => {
++                    end = Some(i);
++                    break;
++                }
++                b'}' => depth -= 1,
++                _ => {}
++            }
++        }
++        let Some(end) = end else {
++            out.extend_from_slice(&rest[at..]);
++            rest = &[];
++            break;
++        };
++        if scheme == dark {
++            out.extend_from_slice(&body[..end]);
++        }
++        rest = &body[end + 1..];
++    }
++    out.extend_from_slice(rest);
++    // `:root` is the root element, the outermost `svg`.
++    let mut replaced = Vec::with_capacity(out.len());
++    let mut rest = out.as_slice();
++    while let Some(at) = find_bytes(rest, b":root") {
++        replaced.extend_from_slice(&rest[..at]);
++        replaced.extend_from_slice(b"svg");
++        rest = &rest[at + b":root".len()..];
++    }
++    replaced.extend_from_slice(rest);
++    Some(replaced)
++}
++
 +pub(crate) fn resolve_light_dark(source: &[u8], dark: bool) -> Option<Vec<u8>> {
 +    const NAME: &[u8] = b"light-dark(";
 +    find_bytes(source, NAME)?;
@@ -53280,7 +53365,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  // Debug print an RcDom
  pub fn walk_tree(indent: usize, node: &Node) {
      // Skip all-whitespace text nodes entirely
-@@ -155,12 +365,42 @@
+@@ -155,12 +365,46 @@
  
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
@@ -53313,6 +53398,10 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +    let defaulted = defaulted.as_deref().unwrap_or(&checked);
 +    // pyro: `light-dark()` is its light colour; an element whose used colour scheme is dark draws
 +    // [`crate::node::SvgImageData::for_color_scheme`].
++    // pyro: its `prefers-color-scheme` media blocks for the light scheme, and `:root`
++    // (`crate::svg_refs::resolve_scheme_media`).
++    let media = crate::svg_refs::resolve_scheme_media(defaulted, false);
++    let defaulted = media.as_deref().unwrap_or(defaulted);
 +    let schemed = crate::svg_refs::resolve_light_dark(defaulted, false);
 +    let svg = crate::node::SvgImageData::from_data(schemed.as_deref().unwrap_or(defaulted), &options)?;
 +    PARSED.with(|p| {
@@ -53326,7 +53415,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +494,93 @@
+@@ -254,3 +498,93 @@
          }
      };
  }
