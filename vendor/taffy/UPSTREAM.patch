@@ -7625,7 +7625,7 @@ index 18063621..cbe0442e 100644
  }
  
 diff --git a/src/compute/grid/types/grid_item.rs b/src/compute/grid/types/grid_item.rs
-index 6ad11edc..07f881c4 100644
+index 6ad11edc..466744ec 100644
 --- a/src/compute/grid/types/grid_item.rs
 +++ b/src/compute/grid/types/grid_item.rs
 @@ -21,7 +21,7 @@ pub(in super::super) struct KnownDimensionsCacheEntry {
@@ -8000,7 +8000,25 @@ index 6ad11edc..07f881c4 100644
              size
          })
      }
-@@ -743,6 +910,12 @@ impl GridItem {
+@@ -714,9 +881,14 @@ impl GridItem {
+         let padding_border_size = (padding + border).sum_axes();
+         let box_sizing_adjustment =
+             if self.box_sizing == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
+-        self.size
+-            .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
+-            .maybe_apply_aspect_ratio(self.aspect_ratio)
++        // pyro: the item's own preferred size: one its aspect ratio transfers from the other axis is not
++        // (its computed preferred size behaves as `auto`: css-grid-1 §6.6 "minimum contribution"), so a
++        // scroll container's is its automatic minimum, zero (WPT css-sizing
++        // `aspect-ratio/grid-aspect-ratio-027`).
++        let own_size = self.size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
++        let transferred = own_size.get(axis).is_none() && self.overflow.get(axis).is_scroll_container();
++        own_size
++            .maybe_apply_aspect_ratio(self.aspect_ratio.filter(|_| !transferred))
+             .maybe_add(box_sizing_adjustment)
+             .get(axis)
+             .map(|size| {
+@@ -743,6 +915,12 @@ impl GridItem {
                  (size.is_sizing_keyword() && !size.is_stretch())
                      .then(|| self.min_content_contribution_cached(axis, tree, grid_area_size, grid_area_size))
              })
@@ -8013,7 +8031,7 @@ index 6ad11edc..07f881c4 100644
              .or_else(|| {
                  self.min_size
                      .maybe_resolve(grid_area_size.map(|size| size.unwrap_or(0.0)), |val, basis| tree.calc(val, basis))
-@@ -805,6 +978,22 @@ impl GridItem {
+@@ -805,6 +983,22 @@ impl GridItem {
              })
      }
  
@@ -8036,7 +8054,7 @@ index 6ad11edc..07f881c4 100644
      /// Retrieve the item's minimum contribution from the cache or compute it using the provided parameters
      #[inline(always)]
      pub fn minimum_contribution_cached(
-@@ -818,7 +1007,37 @@ impl GridItem {
+@@ -818,7 +1012,37 @@ impl GridItem {
          self.minimum_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.minimum_contribution(tree, axis, axis_tracks, grid_area_size, inner_node_size);
              self.minimum_contribution_cache.set(axis, Some(size));

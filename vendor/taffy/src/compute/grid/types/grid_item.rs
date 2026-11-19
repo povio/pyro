@@ -881,9 +881,14 @@ impl GridItem {
         let padding_border_size = (padding + border).sum_axes();
         let box_sizing_adjustment =
             if self.box_sizing == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
-        self.size
-            .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(self.aspect_ratio)
+        // pyro: the item's own preferred size: one its aspect ratio transfers from the other axis is not
+        // (its computed preferred size behaves as `auto`: css-grid-1 §6.6 "minimum contribution"), so a
+        // scroll container's is its automatic minimum, zero (WPT css-sizing
+        // `aspect-ratio/grid-aspect-ratio-027`).
+        let own_size = self.size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
+        let transferred = own_size.get(axis).is_none() && self.overflow.get(axis).is_scroll_container();
+        own_size
+            .maybe_apply_aspect_ratio(self.aspect_ratio.filter(|_| !transferred))
             .maybe_add(box_sizing_adjustment)
             .get(axis)
             .map(|size| {
