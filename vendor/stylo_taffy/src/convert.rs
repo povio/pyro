@@ -105,17 +105,7 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::MaxContent => taffy::Dimension::max_content(),
         stylo::Size::MinContent => taffy::Dimension::min_content(),
         stylo::Size::FitContent => taffy::Dimension::fit_content(),
-        stylo::Size::FitContentFunction(val) => match val.0.unpack() {
-            stylo::UnpackedLengthPercentage::Length(len) => {
-                taffy::Dimension::fit_content_px(len.px())
-            }
-            stylo::UnpackedLengthPercentage::Percentage(percentage) => {
-                taffy::Dimension::fit_content_percent(percentage.0)
-            }
-            stylo::UnpackedLengthPercentage::Calc(calc_ptr) => taffy::Dimension::fit_content_calc(
-                calc_ptr as *const stylo::CalcLengthPercentage as *const (),
-            ),
-        },
+        stylo::Size::FitContentFunction(val) => fit_content_function(&val.0),
 
         stylo::Size::Stretch => taffy::Dimension::stretch(),
         stylo::Size::WebkitFillAvailable => taffy::Dimension::stretch(),
@@ -129,6 +119,18 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         // Anchor positioning will be flagged off for time being
         stylo::Size::AnchorSizeFunction(_) => unreachable!(),
         stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
+    }
+}
+
+/// `fit-content(<length-percentage>)`; a `calc()` is a pointer into `val`, which must outlive it.
+#[inline]
+pub fn fit_content_function(val: &stylo::LengthPercentage) -> taffy::Dimension {
+    match val.unpack() {
+        stylo::UnpackedLengthPercentage::Length(len) => taffy::Dimension::fit_content_px(len.px()),
+        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::Dimension::fit_content_percent(percentage.0),
+        stylo::UnpackedLengthPercentage::Calc(calc_ptr) => {
+            taffy::Dimension::fit_content_calc(calc_ptr as *const stylo::CalcLengthPercentage as *const ())
+        }
     }
 }
 
@@ -204,8 +206,9 @@ pub fn max_size_keyword(val: &stylo::MaxSize) -> taffy::Dimension {
         stylo::MaxSize::MinContent => taffy::Dimension::min_content(),
         stylo::MaxSize::FitContent => taffy::Dimension::fit_content(),
         stylo::MaxSize::Stretch | stylo::MaxSize::WebkitFillAvailable => taffy::Dimension::stretch(),
-        // pyro: `fit-content(<length-percentage>)` (css-sizing-4), as `min-width` has it
-        stylo::MaxSize::FitContentFunction(val) => dimension(&stylo::Size::FitContentFunction(val.clone())),
+        // pyro: `fit-content(<length-percentage>)` (css-sizing-4), as `min-width` has it (a
+        // `calc()` points into the computed value itself, which outlives the layout)
+        stylo::MaxSize::FitContentFunction(val) => fit_content_function(&val.0),
         _ => taffy::Dimension::AUTO,
     }
 }

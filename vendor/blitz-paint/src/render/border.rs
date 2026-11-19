@@ -1273,14 +1273,58 @@ impl ElementCx<'_, '_> {
             }
             out
         };
+        // pyro: grid lines on one coordinate (around a collapsed column or row, `visibility:
+        // collapse`) are one rule: each segment is the edge that wins among theirs, and the
+        // narrower ones do not stripe it. `group(i)` is the first and last line at line i's place.
+        let groups = |at: &[f64]| -> Vec<(usize, usize)> {
+            let mut out = vec![(0, 0); at.len()];
+            let mut i = 0;
+            while i < at.len() {
+                let mut j = i;
+                while j + 1 < at.len() && (at[j + 1] - at[i]).abs() < 1e-3 {
+                    j += 1;
+                }
+                for slot in &mut out[i..=j] {
+                    *slot = (i, j);
+                }
+                i = j + 1;
+            }
+            out
+        };
+        let (col_group, row_group) = (groups(&xs), groups(&ys));
+        let best = |edges: &mut dyn Iterator<Item = blitz_dom::CollapsedEdge>| {
+            edges.filter(|edge| edge.width > 0.0).reduce(|best, edge| if edge.outranks(&best) { edge } else { best })
+        };
+        let best_v = |r: usize, (l0, l1): (usize, usize)| best(&mut (l0..=l1).map(|l| *edges.vertical_at(r, l)));
+        let best_h = |(l0, l1): (usize, usize), c: usize| best(&mut (l0..=l1).map(|l| *edges.horizontal_at(l, c)));
+        // The runs of a group of lines: its one line's, or the winners segment by segment.
+        let line_runs = |(l0, l1): (usize, usize), vertical: bool| -> Vec<(usize, usize, blitz_dom::CollapsedEdge)> {
+            if l0 == l1 {
+                let runs: Vec<_> = if vertical {
+                    edges.vertical_runs(l0).map(|(s, e, edge)| (s, e, *edge)).collect()
+                } else {
+                    edges.horizontal_runs(l0).map(|(s, e, edge)| (s, e, *edge)).collect()
+                };
+                return joined(runs);
+            }
+            let len = if vertical { edges.rows } else { edges.columns };
+            joined(
+                (0..len)
+                    .filter_map(|i| if vertical { best_v(i, (l0, l1)) } else { best_h((l0, l1), i) }.map(|edge| (i, i + 1, edge)))
+                    .collect(),
+            )
+        };
         for line in 0..=edges.rows {
-            let runs = joined(edges.horizontal_runs(line).map(|(s, e, edge)| (s, e, *edge)).collect());
-            for (c, end, edge) in runs {
+            if row_group[line].0 != line {
+                continue;
+            }
+            let group = row_group[line];
+            for (c, end, edge) in line_runs(group, false) {
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
                     let across = |col: usize| {
-                        let up = line.checked_sub(1).map_or(0.0, |r| edges.vertical_at(r, col).width);
-                        let down = (line < edges.rows).then(|| edges.vertical_at(line, col).width).unwrap_or(0.0);
+                        let up = group.0.checked_sub(1).and_then(|r| best_v(r, col_group[col])).map_or(0.0, |e| e.width);
+                        let down = (group.1 < edges.rows).then(|| best_v(group.1, col_group[col])).flatten().map_or(0.0, |e| e.width);
                         up.max(down) as f64
                     };
                     let (x0, x1) = span(&snap_x, xs[c], across(c), xs[end], across(end));
@@ -1297,8 +1341,10 @@ impl ElementCx<'_, '_> {
             }
         }
         for line in 0..=edges.columns {
-            let runs = joined(edges.vertical_runs(line).map(|(s, e, edge)| (s, e, *edge)).collect());
-            for (r, end, edge) in runs {
+            if col_group[line].0 != line {
+                continue;
+            }
+            for (r, end, edge) in line_runs(col_group[line], true) {
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
                     let x0 = snap_x(xs[line] - width / 2.0, width);
@@ -1318,19 +1364,30 @@ impl ElementCx<'_, '_> {
         // crossing, the column line's before it, the row line's after and the column line's after:
         // the row-start and column-start ones win, as among the borders of cells).
         for hl in 0..=edges.rows {
+            let hg = row_group[hl];
+            if hg.0 != hl {
+                continue;
+            }
             // (Only where a row line's rule is: the column lines at its runs' ends and inside them.)
             let mut crossings: Vec<usize> = Vec::new();
-            for (s, e, edge) in edges.horizontal_runs(hl) {
-                if edge.width > 0.0 {
-                    crossings.extend(s..=e);
+            for h in hg.0..=hg.1 {
+                for (s, e, edge) in edges.horizontal_runs(h) {
+                    if edge.width > 0.0 {
+                        crossings.extend(s..=e);
+                    }
                 }
             }
+            crossings.sort_unstable();
             crossings.dedup();
             for vl in crossings {
-                let left = vl.checked_sub(1).map(|c| *edges.horizontal_at(hl, c));
-                let right = (vl < edges.columns).then(|| *edges.horizontal_at(hl, vl));
-                let above = hl.checked_sub(1).map(|r| *edges.vertical_at(r, vl));
-                let below = (hl < edges.rows).then(|| *edges.vertical_at(hl, vl));
+                let vg = col_group[vl];
+                if vg.0 != vl {
+                    continue;
+                }
+                let left = vg.0.checked_sub(1).and_then(|c| best_h(hg, c));
+                let right = (vg.1 < edges.columns).then(|| best_h(hg, vg.1)).flatten();
+                let above = hg.0.checked_sub(1).and_then(|r| best_v(r, vg));
+                let below = (hg.1 < edges.rows).then(|| best_v(hg.1, vg)).flatten();
                 let across = |a: Option<blitz_dom::CollapsedEdge>, b: Option<blitz_dom::CollapsedEdge>| {
                     a.map_or(0.0, |e| e.width).max(b.map_or(0.0, |e| e.width)) as f64
                 };

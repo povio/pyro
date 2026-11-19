@@ -45,6 +45,10 @@ pub struct TableTreeWrapper<'a, 'doc> {
     pub(crate) definite_height: bool,
     /// pyro: whether the table's `height` is not `auto` (`LayoutPassState::restricted_cell`).
     pub(crate) restricted: bool,
+    /// pyro: the inline size of the grid (the table's content box, its outer border spacing
+    /// aside) in the grid layout running, when the table's width is known
+    /// (`Self::layout_grid`): what its cells' percentage padding resolves against.
+    pub(crate) grid_width: Option<f32>,
 }
 
 impl TableTreeWrapper<'_, '_> {
@@ -3800,6 +3804,10 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
         if inputs.known_dimensions.width.is_some() && inputs.parent_size.width.is_some() {
             if let Some(grid_width) = self.grid_inline_size().filter(|_| self.has_percent_padding(cell)) {
                 inputs.parent_size.width = Some(grid_width);
+                // (Taffy's layout cache does not key on `parent_size`: a layout of the cell
+                // against its area's width would come back.)
+                use taffy::CacheTree as _;
+                self.doc.cache_clear(node_id);
             }
         }
         let outer_basis = std::mem::replace(&mut self.doc.cell_percent_height, own_basis);
@@ -3812,9 +3820,38 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
 }
 
 impl TableTreeWrapper<'_, '_> {
-    /// pyro: the width of the table's grid (its columns and the spacing between them) when every
-    /// column has a length width.
+    /// pyro: the table's grid layout at `inputs`, with `grid_width` known while it runs.
+    pub(crate) fn layout_grid(&mut self, node_id: taffy::NodeId, inputs: taffy::tree::LayoutInput) -> taffy::LayoutOutput {
+        let grid_width = {
+            use taffy::MaybeResolve as _;
+            let style = self.style.as_ref().unwrap_or(&self.ctx.style);
+            let parent = inputs.parent_size.width;
+            let inset = style.padding.resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum()
+                + style.border.resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum();
+            // Its known width, else a fixed table's own length `width` (the grid's then; an auto
+            // table's columns may make it wider: `grid_inline_size` sums them).
+            match inputs.known_dimensions.width {
+                Some(width) => Some((width - inset).max(0.0)),
+                None if !self.ctx.is_fixed => None,
+                None => style.size.width.maybe_resolve(parent, resolve_calc_value).map(|width| match style.box_sizing {
+                    taffy::BoxSizing::ContentBox => width.max(0.0),
+                    taffy::BoxSizing::BorderBox => (width - inset).max(0.0),
+                }),
+            }
+        };
+        let outer = std::mem::replace(&mut self.grid_width, grid_width);
+        let output = taffy::compute_grid_layout(self, node_id, inputs);
+        self.grid_width = outer;
+        output
+    }
+
+    /// pyro: the width of the table's grid (its columns and the spacing between them): the one
+    /// the running layout knows (`grid_width`: a fixed table's columns are `minmax(W, W fr)`
+    /// tracks), else when every column has a length width.
     fn grid_inline_size(&self) -> Option<f32> {
+        if let Some(width) = self.grid_width {
+            return Some(width);
+        }
         let style = self.style.as_ref().unwrap_or(&self.ctx.style);
         let mut width = 0.0;
         let mut n = 0;

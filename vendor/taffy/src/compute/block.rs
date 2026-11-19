@@ -1696,7 +1696,12 @@ fn clamp_width_by_keywords(
     // (css-sizing-3 § 5.2.1): in `max-width` it is as if `none`, the max-content width is left; in
     // `min-width` it counts as zero, the min-content width is left (WPT css-sizing
     // `fit-content-length-percentage-012`, `-013`).
-    let max = resolve(item.max_size_keyword.width, container_width.or(Some(f32::INFINITY)));
+    // (A calculation is not resolved against an infinite basis: `calc(200px - 10%)` would be
+    // negative there and give the min-content width.)
+    let max_keyword = item.max_size_keyword.width;
+    let cyclic = container_width.is_none()
+        && (max_keyword.into_raw().tag() == crate::style::CompactLength::FIT_CONTENT_PERCENT_TAG || max_keyword.into_raw().is_fit_content_calc());
+    let max = if cyclic { resolve(Dimension::max_content(), None) } else { resolve(max_keyword, container_width) };
     let min = resolve(item.min_size_keyword.width, container_width.or(Some(0.0)));
     width.maybe_min(max).maybe_max(min)
 }

@@ -927,9 +927,23 @@ impl LayoutPassState<'_> {
         };
         drop(style);
         let layout_style = node.layout_style();
+        // Only an `auto` height grows to the line (its `height` is the box's otherwise), and no
+        // higher than its `max-height`.
+        if !taffy::CoreStyle::size(&layout_style).height.is_auto() {
+            return None;
+        }
         let edges = layout_style.padding().resolve_or_zero(parent_width, resolve_calc_value).vertical_axis_sum()
             + layout_style.border().resolve_or_zero(parent_width, resolve_calc_value).vertical_axis_sum();
-        Some(line + edges)
+        let max = {
+            use taffy::MaybeResolve as _;
+            taffy::CoreStyle::max_size(&layout_style).height.maybe_resolve(None, resolve_calc_value).map(|max| {
+                match taffy::CoreStyle::box_sizing(&layout_style) {
+                    taffy::BoxSizing::ContentBox => max + edges,
+                    taffy::BoxSizing::BorderBox => max.max(edges),
+                }
+            })
+        };
+        Some(max.map_or(line + edges, |max| (line + edges).min(max)))
     }
 
     /// The layout of a leaf box (text, form controls, replaced elements, hidden boxes), or the
@@ -1679,6 +1693,7 @@ impl LayoutPassState<'_> {
             style: None,
             definite_height,
             restricted,
+            grid_width: None,
         };
         table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
         // pyro: a table's content size (a flex item's flex base size) is the width its columns give
@@ -1693,7 +1708,7 @@ impl LayoutPassState<'_> {
             table_wrapper.style = Some(style);
             inputs.sizing_mode = taffy::SizingMode::InherentSize;
         }
-        let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
+        let mut output = table_wrapper.layout_grid(node_id, inputs);
         if let Some(min) = caption_min.filter(|min| *min > output.size.width) {
             if inputs.known_dimensions.width.is_none() {
                 let wider = taffy::tree::LayoutInput {
@@ -1701,7 +1716,7 @@ impl LayoutPassState<'_> {
                     ..inputs
                 };
                 table_wrapper.style = table_wrapper.auto_column_widths(&wider);
-                output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+                output = table_wrapper.layout_grid(node_id, wider);
             }
         }
         // pyro: nor does its `max-width` make it narrower than its min-content width (CSS 2.1
@@ -1723,7 +1738,7 @@ impl LayoutPassState<'_> {
                     },
                     ..inputs
                 };
-                let min = compute_grid_layout(&mut table_wrapper, node_id, measuring).size.width;
+                let min = table_wrapper.layout_grid(node_id, measuring).size.width;
                 table_wrapper.style = saved;
                 if min > output.size.width + 0.01 {
                     let wider = taffy::tree::LayoutInput {
@@ -1734,7 +1749,7 @@ impl LayoutPassState<'_> {
                     let mut style = table_wrapper.style.clone().unwrap_or_else(|| table_wrapper.ctx.style.clone());
                     style.max_size.width = taffy::style_helpers::auto();
                     table_wrapper.style = Some(style);
-                    output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+                    output = table_wrapper.layout_grid(node_id, wider);
                 }
             }
         }
@@ -1790,7 +1805,7 @@ impl LayoutPassState<'_> {
                         ..inputs
                     };
                     table_wrapper.style = table_wrapper.auto_column_widths(&inner);
-                    output = compute_grid_layout(&mut table_wrapper, node_id, inner);
+                    output = table_wrapper.layout_grid(node_id, inner);
                 }
             }
         }
@@ -2472,12 +2487,34 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
     }
 
     fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
-        // pyro: in a multi-column strip, but for a monolithic scroll container (`layout::multicol`)
-        self.multicol_strip_depth > 0
-            && !self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|style| {
-                let box_ = style.get_box();
-                box_.overflow_x.is_scrollable() || box_.overflow_y.is_scrollable()
-            })
+        // pyro: in a multi-column strip, through block containers only: a scroll container, or a
+        // flex, grid or table box between the box and the multi-column container (or the box
+        // itself a scroll container), is monolithic and fragments nothing in it (`layout::multicol`).
+        if self.multicol_strip_depth == 0 {
+            return false;
+        }
+        let mut at = Some(dom_node_id(node_id));
+        while let Some(id) = at {
+            let node = &self.nodes[id];
+            let Some(style) = node.primary_styles() else {
+                at = node.layout_parent.get().or(node.parent);
+                continue;
+            };
+            if id != dom_node_id(node_id) && super::layout::multicol::is_multicol_style(&style) {
+                return true;
+            }
+            let box_ = style.get_box();
+            if box_.overflow_x.is_scrollable() || box_.overflow_y.is_scrollable() {
+                return false;
+            }
+            use style::values::specified::box_::DisplayInside;
+            if !matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot) {
+                return false;
+            }
+            drop(style);
+            at = node.layout_parent.get().or(node.parent);
+        }
+        false
     }
 
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
