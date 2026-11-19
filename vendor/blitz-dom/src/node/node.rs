@@ -2485,12 +2485,14 @@ impl Node {
             return true;
         }
 
-        style
-            .get_svg()
-            .mask_image
-            .0
-            .iter()
-            .any(|image| !matches!(image, GenericImage::None))
+        // pyro: a `mask-border` masks as a `mask-image` does.
+        !matches!(style.get_svg().mask_border_source, GenericImage::None)
+            || style
+                .get_svg()
+                .mask_image
+                .0
+                .iter()
+                .any(|image| !matches!(image, GenericImage::None))
     }
 
     /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:

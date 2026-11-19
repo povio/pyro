@@ -129,6 +129,12 @@ impl BorderImageSideWidth {
     pub fn one() -> Self {
         GenericBorderImageSideWidth::Number(NonNegative(1.))
     }
+
+    /// Returns `auto` (pyro: `mask-border-width`'s initial value).
+    #[inline]
+    pub fn auto() -> Self {
+        GenericBorderImageSideWidth::Auto
+    }
 }
 
 impl BorderImageSlice {
@@ -137,6 +143,15 @@ impl BorderImageSlice {
     pub fn hundred_percent() -> Self {
         GenericBorderImageSlice {
             offsets: Rect::all(NonNegativeNumberOrPercentage::hundred_percent()),
+            fill: false,
+        }
+    }
+
+    /// Returns `0` (pyro: `mask-border-slice`'s initial value).
+    #[inline]
+    pub fn zero() -> Self {
+        GenericBorderImageSlice {
+            offsets: Rect::all(NonNegative(crate::values::computed::NumberOrPercentage::Number(0.))),
             fill: false,
         }
     }

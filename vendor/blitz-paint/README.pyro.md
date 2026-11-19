@@ -1136,3 +1136,9 @@ text split by position, not by the box's edge. Covered by `crates/pyro-render/te
   each column's pass leaves them out and they are painted once after the columns, in the container's own space
   (before, each column painted them, moved by its offset and cut at its range). WPT css-multicol `column-height-002`,
   `-021`, and abspos-in-multicol pages. `pyro-render/tests/multicol_column_height.rs`.
+- Lane F2, `mask-border` (css-masking-1 §8): `render/border_image.rs` draws a nine-piece image from either the
+  `border-image-*` or the `mask-border-*` values (`NinePiece`, `image_area`); `render/mask.rs` masks the element with
+  the mask border's image (a `DestIn` layer, by alpha or `mask-border-mode: luminance`) after its `mask-image` layers,
+  the isolation layer cut to the mask painting area, else the mask border image area; an image not loaded masks
+  nothing. A `mask-border` is a backdrop root (`render.rs`). WPT css-masking `mask-border-*` interpolation and
+  composition pages (+1,798 subtests).

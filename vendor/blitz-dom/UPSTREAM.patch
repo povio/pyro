@@ -8684,8 +8684,10 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                    continue;
 +                }
 +                crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(*child));
-+            }
-+        }
+             }
+         }
+-        if let Some(before_id) = before {
+-            self.clear_damage_and_dirty_flags(before_id);
 +        for pseudo_id in [before, after].into_iter().flatten() {
 +            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(pseudo_id));
 +            // pyro: a pseudo-element's children are what its content generates (text, the box
@@ -8697,17 +8699,15 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                    self.clear_damage_and_dirty_flags(child);
 +                }
 +                index += 1;
-             }
++            }
          }
--        if let Some(before_id) = before {
--            self.clear_damage_and_dirty_flags(before_id);
+-        if let Some(after_id) = after {
+-            self.clear_damage_and_dirty_flags(after_id);
 +
 +        for pseudo_id in scroll_pseudos {
 +            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(pseudo_id));
 +            self.clear_generated_children_flags(pseudo_id);
-         }
--        if let Some(after_id) = after {
--            self.clear_damage_and_dirty_flags(after_id);
++        }
 +        if is_scroll_group {
 +            for &marker in children.iter() {
 +                crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(marker));
@@ -9117,21 +9117,20 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          }
      }
  
-@@ -577,19 +1122,28 @@
+@@ -577,19 +1122,27 @@
              return;
          };
  
 -        let (style_images, elem_images) = match kind {
++        let border_sources = border_image_sources(&style);
 +        let (style_images, elem_images): (&[style::values::computed::Image], _) = match kind {
              ImageLayerKind::Background => (
                  &style.get_background().background_image.0,
                  &mut elem.background_images,
              ),
              ImageLayerKind::Mask => (&style.get_svg().mask_image.0, &mut elem.mask_images),
-+            ImageLayerKind::BorderImage => (
-+                std::slice::from_ref(&style.get_border().border_image_source),
-+                &mut elem.border_images,
-+            ),
++            // pyro: `mask-border-source` loads as the second border image.
++            ImageLayerKind::BorderImage => (&border_sources[..], &mut elem.border_images),
 +            ImageLayerKind::ListStyle => (
 +                std::slice::from_ref(&style.get_list().list_style_image),
 +                &mut elem.list_style_images,
@@ -9148,6 +9147,23 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
              let new_image = match style_image {
                  StyloImage::Url(ComputedUrl::Valid(new_url)) => {
                      let old_image = elem_images[idx].as_ref();
+@@ -647,3 +1200,16 @@
+         }
+     }
+ }
++
++/// pyro: the images an element's `border_images` load: `border-image-source`, then
++/// `mask-border-source` when it has one (else just the first).
++pub(crate) fn border_image_sources(
++    style: &style::properties::ComputedValues,
++) -> smallvec::SmallVec<[style::values::computed::Image; 2]> {
++    let mut sources = smallvec::smallvec![style.get_border().border_image_source.clone()];
++    let mask = &style.get_svg().mask_border_source;
++    if !matches!(mask, style::values::computed::Image::None) {
++        sources.push(mask.clone());
++    }
++    sources
++}
 diff --git a/packages/blitz-dom/src/layout/first_letter.rs b/packages/blitz-dom/src/layout/first_letter.rs
 new file mode 100644
 --- /dev/null
@@ -31456,7 +31472,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1175,23 +2111,117 @@
+@@ -1175,21 +2111,115 @@
              if el.is_button_input() {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
              }
@@ -31502,9 +31518,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        match &self.data {
 +            NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
 +            _ => None,
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: rewrite the layout styles derived from the node's primary style
 +    /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
 +    /// traversal, and when a cell's collapsed borders change.
@@ -31530,7 +31546,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
 +        if self.collapsed_border() == collapsed_border {
 +            return;
-+        }
+         }
 +        self.layout_data_mut().collapsed_border = collapsed_border;
 +        self.clear_layout_cache();
 +        let Some(stylo) = self.try_stylo_element_data_mut() else {
@@ -31571,11 +31587,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    #[inline]
 +    pub(crate) fn is_fieldset(&self) -> bool {
 +        self.data.downcast_element().is_some_and(|el| el.name.local == local_name!("fieldset"))
-+    }
-+
+     }
+ 
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
-     /// mode of the box laying this node out). Used for the child-style getters.
-     #[cfg(feature = "writing-mode")]
 @@ -1234,6 +2264,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
@@ -31670,7 +31684,28 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1435,6 +2523,12 @@
+@@ -1397,12 +2485,14 @@
+             return true;
+         }
+ 
+-        style
+-            .get_svg()
+-            .mask_image
+-            .0
+-            .iter()
+-            .any(|image| !matches!(image, GenericImage::None))
++        // pyro: a `mask-border` masks as a `mask-image` does.
++        !matches!(style.get_svg().mask_border_source, GenericImage::None)
++            || style
++                .get_svg()
++                .mask_image
++                .0
++                .iter()
++                .any(|image| !matches!(image, GenericImage::None))
+     }
+ 
+     /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
+@@ -1435,6 +2525,12 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -31683,7 +31718,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2594,15 @@
+@@ -1500,11 +2596,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -31699,7 +31734,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2631,7 @@
+@@ -1533,6 +2633,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -31707,7 +31742,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2658,7 @@
+@@ -1559,7 +2660,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -31716,7 +31751,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2673,18 @@
+@@ -1574,12 +2675,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -31737,7 +31772,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2695,7 @@
+@@ -1590,7 +2697,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -31746,7 +31781,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2710,7 @@
+@@ -1605,7 +2712,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -31755,7 +31790,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2821,7 @@
+@@ -1716,7 +2823,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -31764,7 +31799,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2846,13 @@
+@@ -1741,8 +2848,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -31779,7 +31814,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2928,28 @@
+@@ -1818,8 +2930,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -31810,7 +31845,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3007,36 @@
+@@ -1877,11 +3009,36 @@
                  }
              }
  
@@ -41191,14 +41226,11 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2847,26 @@
+@@ -1707,6 +2847,23 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
-+            || out_of_sync(
-+                std::slice::from_ref(&style.get_border().border_image_source),
-+                &el.border_images,
-+            )
++            || out_of_sync(&crate::layout::damage::border_image_sources(style), &el.border_images)
 +            || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
 +            // pyro: an element whose `content` is one image shows it (`flush_content_image`).
 +            || {
@@ -41218,7 +41250,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2897,745 @@
+@@ -1737,3 +2894,745 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

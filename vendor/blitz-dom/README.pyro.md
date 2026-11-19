@@ -2802,3 +2802,6 @@ text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style
   table box other than a cell). WPT css-contain `contain-paint-stacking-context-001a`,
   `contain-layout-stacking-context-001`. `pyro-render/tests/containment_and_svg_background.rs`.
 - Lane F1: offset-path points are exact to about 1e-6 px (arc lengths at 1e-7, circle and ellipse paths at 1e-6 tolerance), and an offset rotation within 1e-4 rad of a quarter turn is that quarter turn (`MotionFrame::place`).
+- Lane F2, `mask-border`: `mask-border-source` loads as the element's second `border_images` entry
+  (`layout/damage.rs` `border_image_sources`, also the stylo.rs out-of-sync check); a `mask-border` makes a stacking
+  context (`node.rs`), as `mask-image` does.
