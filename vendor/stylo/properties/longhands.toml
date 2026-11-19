@@ -2619,6 +2619,16 @@ spec = "https://drafts.csswg.org/css-text-3/#tab-size-property"
 extra_gecko_aliases = ["-moz-tab-size"]
 affects = "layout"
 
+[wrap-inside]
+type = "WrapInside"
+initial = "computed::text::WrapInside::Auto"
+struct = "text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-4/#wrap-inside"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
 [white-space-trim]
 type = "WhiteSpaceTrim"
 initial = "computed::text::WhiteSpaceTrim::NONE"

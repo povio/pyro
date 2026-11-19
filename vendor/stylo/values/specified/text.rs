@@ -1459,6 +1459,33 @@ impl WordSpaceTransform {
     }
 }
 
+/// pyro: the `wrap-inside` property: whether lines avoid breaking inside an inline box.
+///
+/// https://drafts.csswg.org/css-text-4/#wrap-inside
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum WrapInside {
+    Auto,
+    Avoid,
+}
+
 /// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
 ///
 /// https://drafts.csswg.org/css-text-4/#text-spacing-trim-property

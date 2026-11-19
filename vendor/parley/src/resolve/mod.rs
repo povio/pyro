@@ -172,6 +172,7 @@ impl ResolveContext {
             StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
             StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
+            StyleProperty::WrapAvoidDepth(value) => WrapAvoidDepth(*value),
             StyleProperty::Isolates(value) => Isolates(*value),
             StyleProperty::PhraseBreaks(value) => PhraseBreaks(*value),
             StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
@@ -226,6 +227,7 @@ impl ResolveContext {
             tab_size: scale_tab_size(raw_style.tab_size, scale),
             soft_hyphen: raw_style.soft_hyphen,
             dictionary_breaks: raw_style.dictionary_breaks,
+            wrap_avoid_depth: raw_style.wrap_avoid_depth,
             isolates: raw_style.isolates,
             phrase_breaks: raw_style.phrase_breaks,
             font_size_adjusted: raw_style.font_size_adjusted,
@@ -434,6 +436,7 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     SoftHyphen(crate::style::SoftHyphen),
     /// pyro: whether lines may break where dictionaries find word boundaries.
     DictionaryBreaks(bool),
+    WrapAvoidDepth(u8),
     Isolates(bool),
     /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
     PhraseBreaks(bool),
@@ -515,6 +518,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: whether lines may break where dictionaries find word boundaries.
     pub(crate) dictionary_breaks: bool,
+    /// pyro: see [`crate::TextStyle::wrap_avoid_depth`].
+    pub(crate) wrap_avoid_depth: u8,
     /// pyro: the span is a bidi isolate (see [`crate::TextStyle::isolates`]).
     pub(crate) isolates: bool,
     /// pyro: whether lines break between phrases ([`TextStyle::phrase_breaks`]).
@@ -576,6 +581,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size = value,
             SoftHyphen(value) => self.soft_hyphen = value,
             DictionaryBreaks(value) => self.dictionary_breaks = value,
+            WrapAvoidDepth(value) => self.wrap_avoid_depth = value,
             Isolates(value) => self.isolates = value,
             PhraseBreaks(value) => self.phrase_breaks = value,
             FontSizeAdjusted(value) => self.font_size_adjusted = value,
@@ -621,6 +627,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size == *value,
             SoftHyphen(value) => self.soft_hyphen == *value,
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
+            WrapAvoidDepth(value) => self.wrap_avoid_depth == *value,
             Isolates(value) => self.isolates == *value,
             PhraseBreaks(value) => self.phrase_breaks == *value,
             FontSizeAdjusted(value) => self.font_size_adjusted == *value,
@@ -646,6 +653,7 @@ impl<B: Brush> ResolvedStyle<B> {
             text_wrap_mode: self.text_wrap_mode,
             white_space_collapse: self.white_space_collapse,
             tab_size: self.tab_size,
+            wrap_avoid_depth: self.wrap_avoid_depth,
             soft_hyphen: self.soft_hyphen,
             text_spacing_trim: self.text_spacing_trim,
             upright: self.upright,

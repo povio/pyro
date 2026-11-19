@@ -71,6 +71,8 @@ pub struct Style<B: Brush> {
     pub(crate) white_space_collapse: WhiteSpaceCollapse,
     /// pyro: per-cluster distance between tab stops, a length in layout units.
     pub(crate) tab_size: crate::style::TabSize,
+    /// pyro: see [`crate::TextStyle::wrap_avoid_depth`].
+    pub(crate) wrap_avoid_depth: u8,
     /// pyro: what a soft hyphen of this style does at the end of a line.
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: which fullwidth punctuation of this style is set half-width at line edges.

@@ -12696,7 +12696,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1279,201 @@
+@@ -210,66 +1279,218 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -12736,6 +12736,23 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                // Text 3 § 7.3). A `<ruby>` (an inline box here, which the UA
 +                                // sheet isolates) lays its bases out as one text.
 +                                use style::computed_values::unicode_bidi::T as UnicodeBidi;
++                                // pyro: CSS Text 4 `wrap-inside: avoid` on it and the inline boxes around
++                                // it in this inline formatting context.
++                                style.wrap_avoid_depth = {
++                                    let mut depth = 0u8;
++                                    let mut id = Some(node_id);
++                                    while let Some(ancestor) = id.map(|id| &nodes[id]) {
++                                        let Some(s) = ancestor.primary_styles() else { break };
++                                        if s.clone_display() != style::values::computed::Display::Inline {
++                                            break;
++                                        }
++                                        if s.get_text().wrap_inside == style::values::computed::WrapInside::Avoid {
++                                            depth = depth.saturating_add(1);
++                                        }
++                                        id = ancestor.parent;
++                                    }
++                                    depth
++                                };
 +                                style.isolates = !matches!(*tag_name, local_name!("ruby") | local_name!("rb") | local_name!("rtc"))
 +                                    && matches!(
 +                                        computed.clone_unicode_bidi(),
@@ -12919,7 +12936,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,17 +1488,139 @@
+@@ -284,17 +1505,139 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -13062,7 +13079,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1629,314 @@
+@@ -303,3 +1646,314 @@
          }
      }
  }
@@ -48838,7 +48855,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -541,17 +816,69 @@
+@@ -541,17 +816,71 @@
          font_style,
          font_weight,
          font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
@@ -48859,6 +48876,8 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
 +        dictionary_breaks,
 +        // (Set where an inline element's span is built, `inline::build`.)
 +        isolates: false,
++        // (Set where an inline element's span is built, `inline::build`.)
++        wrap_avoid_depth: 0,
 +        phrase_breaks: itext_styles.word_break == stylo::WordBreak::AutoPhrase,
 +        // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
 +        font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,
@@ -48909,7 +48928,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +896,10 @@
+@@ -569,6 +898,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

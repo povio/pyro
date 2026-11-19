@@ -832,6 +832,8 @@ pub(crate) fn style(
         dictionary_breaks,
         // (Set where an inline element's span is built, `inline::build`.)
         isolates: false,
+        // (Set where an inline element's span is built, `inline::build`.)
+        wrap_avoid_depth: 0,
         phrase_breaks: itext_styles.word_break == stylo::WordBreak::AutoPhrase,
         // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
         font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,

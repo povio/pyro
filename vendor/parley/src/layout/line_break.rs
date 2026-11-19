@@ -733,6 +733,9 @@ pub struct BreakerState {
     /// pyro: saved breaker state for the last phrase fallback opportunity (`word-break:
     /// auto-phrase`), taken before an emergency one when the line has no regular opportunity.
     phrase_boundary: Option<PrevBoundaryState>,
+    /// pyro: the last opportunities inside 1, 2 and 3 or more `wrap-inside: avoid` boxes, which
+    /// a line takes only without one in fewer of them (`TextStyle::wrap_avoid_depth`).
+    avoid_boundaries: [Option<PrevBoundaryState>; 3],
 }
 
 impl Default for BreakerState {
@@ -756,6 +759,7 @@ impl Default for BreakerState {
             prev_boundary: None,
             emergency_boundary: None,
             phrase_boundary: None,
+            avoid_boundaries: [None, None, None],
         }
     }
 }
@@ -940,6 +944,23 @@ impl BreakerState {
     /// an *emergency* line breaking opportunity at this point.
     fn mark_emergency_break_opportunity(&mut self) {
         self.emergency_boundary = Some(PrevBoundaryState {
+            item_idx: self.item_idx,
+            run_idx: self.run_idx,
+            cluster_idx: self.cluster_idx,
+            state: self.line.clone(),
+            contributed_len: self.contributed.len(),
+            subtrees_len: self.subtrees.save(),
+        });
+    }
+
+    /// pyro: a soft wrap opportunity inside `depth` boxes with `wrap-inside: avoid`: a regular one
+    /// outside them, else one taken only without an opportunity in fewer of them.
+    fn mark_line_break_opportunity_at_depth(&mut self, depth: u8) {
+        if depth == 0 {
+            self.mark_line_break_opportunity();
+            return;
+        }
+        self.avoid_boundaries[usize::from(depth.min(3)) - 1] = Some(PrevBoundaryState {
             item_idx: self.item_idx,
             run_idx: self.run_idx,
             cluster_idx: self.cluster_idx,
@@ -1566,6 +1587,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         self.state.prev_boundary = None;
         self.state.emergency_boundary = None;
         self.state.phrase_boundary = None;
+        self.state.avoid_boundaries = [None, None, None];
 
         // `finish_line` reads the line's accumulated vertical metrics from `self.state.line`, so
         // it must run before we reset the per-line running state. It may grow the line (e.g. the
@@ -1825,7 +1847,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         if glue || glued_after {
                             self.state.line.after_box = false;
                         } else if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
-                            self.state.mark_line_break_opportunity();
+                            self.state.mark_line_break_opportunity_at_depth(
+                                self.layout.data.styles[usize::from(box_style)].wrap_avoid_depth,
+                            );
                         }
                     } else if (glue || glued_before) && self.state.line.x != 0.0 && self.state.line.has_inline_content {
                         if let Some(prev) = self.state.prev_boundary.take() {
@@ -1837,7 +1861,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         if glue || glued_after {
                             self.state.line.after_box = false;
                         } else if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
-                            self.state.mark_line_break_opportunity();
+                            self.state.mark_line_break_opportunity_at_depth(
+                                self.layout.data.styles[usize::from(box_style)].wrap_avoid_depth,
+                            );
                         }
                     } else if self.state.line.x == 0.0 || !self.state.line.has_inline_content {
                         // pyro: at the start of the line (after nothing but span edges: a 200px
@@ -1851,7 +1877,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         self.append_layout_inline_box(item.index, next_x);
                         self.state.line.text_wrap_mode = box_wrap_mode;
                         if box_wrap_mode == TextWrapMode::Wrap {
-                            self.state.mark_line_break_opportunity();
+                            self.state.mark_line_break_opportunity_at_depth(
+                                self.layout.data.styles[usize::from(box_style)].wrap_avoid_depth,
+                            );
                         }
                     } else if after_span_start {
                         // pyro: the line wraps before the start edges the box follows, or not
@@ -1938,7 +1966,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 && hyphen_fits
                                 && !self.state.line.no_break_after
                             {
-                                self.state.mark_line_break_opportunity();
+                                // pyro: inside the `wrap-inside: avoid` boxes around both sides.
+                                let styles = &self.layout.data.styles;
+                                let depth = self.state.line.last_char.map_or(0, |(last, _)| {
+                                    styles[usize::from(last)].wrap_avoid_depth.min(styles[usize::from(style_index)].wrap_avoid_depth)
+                                });
+                                self.state.mark_line_break_opportunity_at_depth(depth);
                                 // break_opportunity = true;
                             }
                         } else if first_character.flags.is_phrase_fallback()
@@ -2113,6 +2146,17 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // item/run/cluster iteration state back to how it was when the line-breaking opportunity was encountered
                             // pyro: a line whose phrase does not fit breaks as under `word-break:
                             // normal`.
+                            // pyro: else one inside the fewest `wrap-inside: avoid` boxes.
+                            else if let Some(prev) =
+                                self.state.avoid_boundaries.iter_mut().find_map(|boundary| boundary.take())
+                            {
+                                self.state.reset_to(prev);
+                                return self.start_new_line(
+                                    BreakReason::Regular,
+                                    max_advance,
+                                    line_indent,
+                                );
+                            }
                             else if let Some(prev_phrase) = self.state.phrase_boundary.take() {
                                 self.state.reset_to(prev_phrase);
                                 return self.start_new_line(

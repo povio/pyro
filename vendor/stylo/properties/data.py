@@ -703,6 +703,7 @@ class Longhand(Property):
                 "TextAutospace",
                 "WordSpaceTransform",
                 "WhiteSpaceTrim",
+                "WrapInside",
                 "TextSpacingTrim",
                 "TextBoxEdge",
                 "TextBoxTrim",

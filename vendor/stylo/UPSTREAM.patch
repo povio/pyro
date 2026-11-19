@@ -640,7 +640,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-19 17:29:08
++++ b/properties/data.py	2026-11-19 17:55:34
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -692,17 +692,18 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "PositionTryOrder",
                  "PositionVisibility",
                  "PrintColorAdjust",
-@@ -686,6 +701,9 @@
+@@ -686,6 +701,10 @@
                  "TextAlign",
                  "TextAlignLast",
                  "TextAutospace",
 +                "WordSpaceTransform",
 +                "WhiteSpaceTrim",
++                "WrapInside",
 +                "TextSpacingTrim",
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
-@@ -1323,8 +1341,17 @@
+@@ -1323,8 +1342,17 @@
                  "cursor",
                  "direction",
                  "hyphens",
@@ -778,7 +779,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-19 17:29:07
++++ b/properties/longhands.toml	2026-11-19 17:55:34
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -820,18 +821,18 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
-+animation_type = "discrete"
-+affects = "layout"
-+
+ animation_type = "discrete"
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -1019,12 +1020,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#VertexMarkerProperties"
  affects = "layout"
-@@ -1425,13 +1445,23 @@
- struct = "position"
- boxed = true
+@@ -1427,11 +1447,21 @@
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -1034,8 +1033,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
- affects = "layout"
- 
++affects = "layout"
++
  [offset-anchor]
  type = "PositionOrAuto"
  initial = "computed::PositionOrAuto::auto()"
@@ -1106,9 +1105,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
- animation_type = "discrete"
- affects = "paint"
- 
++animation_type = "discrete"
++affects = "paint"
++
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -1124,11 +1123,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [scroll-snap-type]
  type = "ScrollSnapType"
  initial = "computed::ScrollSnapType::none()"
@@ -1277,8 +1276,20 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2588,6 +2619,26 @@
+@@ -2586,8 +2617,38 @@
+ struct = "inherited_text"
+ spec = "https://drafts.csswg.org/css-text-3/#tab-size-property"
  extra_gecko_aliases = ["-moz-tab-size"]
++affects = "layout"
++
++[wrap-inside]
++type = "WrapInside"
++initial = "computed::text::WrapInside::Auto"
++struct = "text"
++animation_type = "discrete"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-text-4/#wrap-inside"
++servo_restyle_damage = "rebuild_box"
  affects = "layout"
  
 +[white-space-trim]
@@ -1304,12 +1315,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace]
  type = "TextAutospace"
  initial = "computed::text::TextAutospace::NO_AUTOSPACE"
-@@ -2597,6 +2648,28 @@
- gecko_pref = "layout.css.text-autospace.enabled"
- has_effect_on_gecko_scrollbars = false
+@@ -2599,6 +2660,28 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -1330,10 +1339,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
- affects = "layout"
- 
++affects = "layout"
++
  [text-autospace-size]
-@@ -2635,7 +2708,6 @@
+ type = "Number"
+ initial = "0.125"
+@@ -2635,7 +2718,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -1341,7 +1352,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2737,7 @@
+@@ -2665,6 +2747,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -1349,10 +1360,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3173,6 +3246,15 @@
+@@ -3171,6 +3254,15 @@
+ boxed = true
+ logical_group = "border-radius"
  logical = true
- affects = "paint"
- 
++affects = "paint"
++
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -1360,12 +1373,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [corner-top-left-shape]
- type = "CornerShape"
- initial = "computed::CornerShape::round()"
-@@ -3383,9 +3465,9 @@
+@@ -3383,9 +3475,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -1376,7 +1387,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3393,7 +3475,6 @@
+@@ -3393,7 +3485,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1384,7 +1395,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
-@@ -3403,7 +3484,6 @@
+@@ -3403,7 +3494,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1392,7 +1403,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
-@@ -3413,7 +3493,6 @@
+@@ -3413,7 +3503,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1400,7 +1411,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
-@@ -3423,7 +3502,6 @@
+@@ -3423,7 +3512,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1408,7 +1419,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
-@@ -3433,7 +3511,6 @@
+@@ -3433,7 +3521,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1416,7 +1427,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.4"
-@@ -3444,7 +3521,6 @@
+@@ -3444,7 +3531,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1424,7 +1435,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.5"
-@@ -3455,7 +3531,6 @@
+@@ -3455,7 +3541,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1432,7 +1443,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.6"
-@@ -3466,7 +3541,6 @@
+@@ -3466,7 +3551,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1440,7 +1451,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.7"
-@@ -3567,7 +3641,6 @@
+@@ -3567,7 +3651,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1448,7 +1459,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-top"
-@@ -3577,7 +3650,6 @@
+@@ -3577,7 +3660,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1456,7 +1467,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-right"
-@@ -3587,7 +3659,6 @@
+@@ -3587,7 +3669,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1464,7 +1475,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-bottom"
-@@ -3597,7 +3668,6 @@
+@@ -3597,7 +3678,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1472,7 +1483,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-left"
-@@ -3607,7 +3677,6 @@
+@@ -3607,7 +3687,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1480,7 +1491,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.4"
-@@ -3618,7 +3687,6 @@
+@@ -3618,7 +3697,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1488,7 +1499,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.5"
-@@ -3629,7 +3697,6 @@
+@@ -3629,7 +3707,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1496,7 +1507,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.6"
-@@ -3640,7 +3707,6 @@
+@@ -3640,7 +3717,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1504,7 +1515,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.7"
-@@ -3694,6 +3760,7 @@
+@@ -3694,6 +3770,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -1512,14 +1523,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3726,6 +3793,18 @@
- spec = "Internal (not web-exposed)"
- animation_type = "none"
- enabled_in = "ua"
-+affects = "layout"
-+type = "TopLayer"
-+initial = "computed::TopLayer::None"
-+
+@@ -3730,6 +3807,18 @@
+ type = "TopLayer"
+ initial = "computed::TopLayer::None"
+ 
 +# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
 +# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
 +# the top layer, past their removal (pyro-dom, blitz-paint).
@@ -1528,10 +1535,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-position-4/#overlay"
 +animation_type = "discrete"
- affects = "layout"
- type = "TopLayer"
- initial = "computed::TopLayer::None"
-@@ -3770,13 +3849,31 @@
++affects = "layout"
++type = "TopLayer"
++initial = "computed::TopLayer::None"
++
+ [scroll-behavior]
+ struct = "box"
+ servo_pref = "layout.css.scroll-behavior.enabled"
+@@ -3770,13 +3859,31 @@
  
  [column-fill]
  struct = "column"
@@ -1564,7 +1575,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [column-span]
  struct = "column"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
-@@ -3901,9 +3998,9 @@
+@@ -3901,9 +4008,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -1575,7 +1586,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +4009,6 @@
+@@ -3912,7 +4019,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -1583,7 +1594,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +4017,6 @@
+@@ -3921,7 +4027,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -1591,7 +1602,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +4025,6 @@
+@@ -3930,7 +4035,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -1599,7 +1610,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +4033,6 @@
+@@ -3939,7 +4043,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -1607,11 +1618,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4092,6 +4185,17 @@
- servo_restyle_damage = "rebuild_box"
+@@ -4093,6 +4196,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
-+
+ 
 +# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the height of
 +# its embedded document's content (`data-pyro-frame-content-height`, from pyro) for `content-height`.
 +[frame-sizing]
@@ -1622,14 +1632,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = "layout"
 +type = "FrameSizing"
 +initial = "computed::FrameSizing::Auto"
- 
++
  [object-fit]
  struct = "position"
-@@ -4109,7 +4213,62 @@
- affects = "paint"
+ spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
+@@ -4110,6 +4224,61 @@
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
-+
+ 
 +[mask-border-source]
 +type = "Image"
 +initial = "computed::Image::None"
@@ -1639,7 +1649,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-source"
 +animation_type = "discrete"
 +affects = "paint"
- 
++
 +[mask-border-slice]
 +type = "BorderImageSlice"
 +initial = "computed::BorderImageSlice::zero()"
@@ -1688,7 +1698,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [mask-mode]
  struct = "svg"
  servo_pref = "layout.css.masking.enabled"
-@@ -4249,7 +4408,7 @@
+@@ -4249,7 +4418,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -1697,7 +1707,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4449,61 @@
+@@ -4290,6 +4459,61 @@
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
  
@@ -1759,7 +1769,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4558,8 @@
+@@ -4344,8 +4568,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -5156,7 +5166,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-19 17:29:07
++++ b/values/computed/mod.rs	2026-11-19 17:55:34
 @@ -69,14 +69,14 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -5188,7 +5198,7 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
  pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
  pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
 -pub use self::text::{TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAutospace, TextFit, WhiteSpaceTrim, WordSpaceTransform, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAutospace, TextFit, WhiteSpaceTrim, WordSpaceTransform, WrapInside, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
@@ -5215,13 +5225,13 @@ diff -ruN a/values/computed/position.rs b/values/computed/position.rs
      PositionTryFallbacksTryTacticKeyword, PositionTryOrder, PositionVisibility, ScopedName,
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
-+++ b/values/computed/text.rs	2026-11-19 17:29:07
++++ b/values/computed/text.rs	2026-11-19 17:55:34
 @@ -26,7 +26,7 @@
  
  pub use crate::values::specified::text::{
      HyphenateCharacter, Hyphens, LineBreak, MozControlCharacterVisibility, OverflowWrap, RubyAlign,
 -    RubyPosition, TextAlignLast, TextAutospace, TextBoxEdge, TextBoxTrim, TextCombineUpright,
-+    RubyPosition, TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, TextSpacingTrim, TextBoxEdge, TextBoxTrim, TextCombineUpright,
++    RubyPosition, TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, WrapInside, TextSpacingTrim, TextBoxEdge, TextBoxTrim, TextCombineUpright,
      TextDecorationLine, TextDecorationSkipInk, TextDecorationStyle, TextEmphasisPosition,
      TextJustify, TextOverflow, TextRendering, TextSecurity, TextSizeAdjust, TextTransform,
      TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, WhiteSpaceCollapse, WordBreak,
@@ -7209,7 +7219,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-19 17:29:07
++++ b/values/specified/mod.rs	2026-11-19 17:55:34
 @@ -48,7 +48,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -7242,7 +7252,7 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
  pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
 -pub use self::text::{TextAlignLast, TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, TextFit, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, WrapInside, TextFit, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
@@ -7370,7 +7380,7 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
  /// https://drafts.csswg.org/css-images/#propdef-object-fit
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-19 17:29:07
++++ b/values/specified/text.rs	2026-11-19 17:55:34
 @@ -25,6 +25,23 @@
  use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
  use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
@@ -7424,17 +7434,17 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      }
  }
  
-@@ -826,6 +858,10 @@
+@@ -824,6 +856,10 @@
+         self.remove(Self::RIGHT); // Right is the default
+         true
      }
- }
- 
-+fn word_break_manual_enabled(_: &ParserContext) -> bool {
-+    cfg!(feature = "servo")
 +}
 +
- fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-     crate::pref!("layout.css.word-break.break-word.enabled", gecko = true)
++fn word_break_manual_enabled(_: &ParserContext) -> bool {
++    cfg!(feature = "servo")
  }
+ 
+ fn word_break_break_word_enabled(_: &ParserContext) -> bool {
 @@ -858,6 +894,14 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
@@ -7450,13 +7460,10 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1330,9 +1374,123 @@
-         /// Auto-spacing may replace an existing U+0020 space with custom space.
-         const REPLACE = 1 << 6;
-         */
-+    }
-+}
-+
+@@ -1333,6 +1377,147 @@
+     }
+ }
+ 
 +/// pyro: the `white-space-trim` property: which collapsible white space at a box's edges is
 +/// discarded.
 +///
@@ -7490,9 +7497,9 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +        const DISCARD_AFTER = 1 << 1;
 +        /// The collapsible white space at the start and end of the box's content.
 +        const DISCARD_INNER = 1 << 2;
-     }
- }
- 
++    }
++}
++
 +/// pyro: the `word-space-transform` property: what word separators zero width spaces and `<wbr>`
 +/// become.
 +///
@@ -7537,6 +7544,33 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +    fn validate_mixed_flags(&self) -> bool {
 +        self.intersects(Self::SPACE | Self::IDEOGRAPHIC_SPACE) && !self.contains(Self::SPACE | Self::IDEOGRAPHIC_SPACE)
 +    }
++}
++
++/// pyro: the `wrap-inside` property: whether lines avoid breaking inside an inline box.
++///
++/// https://drafts.csswg.org/css-text-4/#wrap-inside
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    FromPrimitive,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum WrapInside {
++    Auto,
++    Avoid,
 +}
 +
 +/// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.

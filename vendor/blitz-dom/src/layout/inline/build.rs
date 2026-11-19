@@ -1303,6 +1303,23 @@ fn build_inline_layout_with(
                                 // Text 3 § 7.3). A `<ruby>` (an inline box here, which the UA
                                 // sheet isolates) lays its bases out as one text.
                                 use style::computed_values::unicode_bidi::T as UnicodeBidi;
+                                // pyro: CSS Text 4 `wrap-inside: avoid` on it and the inline boxes around
+                                // it in this inline formatting context.
+                                style.wrap_avoid_depth = {
+                                    let mut depth = 0u8;
+                                    let mut id = Some(node_id);
+                                    while let Some(ancestor) = id.map(|id| &nodes[id]) {
+                                        let Some(s) = ancestor.primary_styles() else { break };
+                                        if s.clone_display() != style::values::computed::Display::Inline {
+                                            break;
+                                        }
+                                        if s.get_text().wrap_inside == style::values::computed::WrapInside::Avoid {
+                                            depth = depth.saturating_add(1);
+                                        }
+                                        id = ancestor.parent;
+                                    }
+                                    depth
+                                };
                                 style.isolates = !matches!(*tag_name, local_name!("ruby") | local_name!("rb") | local_name!("rtc"))
                                     && matches!(
                                         computed.clone_unicode_bidi(),
