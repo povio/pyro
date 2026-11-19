@@ -1785,8 +1785,38 @@ impl BaseDocument {
         // either stays four characters, as in every browser (WPT css/CSS2 content-177).
         let css = self.nodes[target_id].text_content();
         let host = self.nodes[target_id].containing_shadow_host_id();
-        let sheet = self.make_stylesheet_in(&css, Origin::Author, host);
+        // pyro: a `media` attribute is the sheet's media list (HTML `<style media>`): a sheet
+        // whose media do not match applies nothing. Parsed apart (not the shared sheet of its
+        // text, whose media list is empty).
+        let sheet = match self.node_media_list(target_id) {
+            Some(media) => DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(&css, Origin::Author, media))),
+            None => self.make_stylesheet_in(&css, Origin::Author, host),
+        };
         self.add_stylesheet_for_node(sheet, target_id);
+    }
+
+    /// pyro: the media list of the `media` attribute of the `<style>` or `<link>` element
+    /// `node_id`; `None` without one (or an empty one: all media).
+    pub(crate) fn node_media_list(&self, node_id: NodeId) -> Option<MediaList> {
+        use style::stylesheets::CssRuleType;
+        let text = self.nodes.get(node_id)?.attr(local_name!("media"))?.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let extra = self.url.url_extra_data();
+        let mut context = style::parser::ParserContext::new(
+            Origin::Author,
+            &extra,
+            Some(CssRuleType::Media),
+            style_traits::ParsingMode::DEFAULT,
+            QuirksMode::NoQuirks,
+            Default::default(),
+            None,
+            None,
+            Default::default(),
+        );
+        let mut parser = cssparser::Parser::new(text);
+        Some(MediaList::parse(&mut context, &mut parser))
     }
 
     pub fn remove_user_agent_stylesheet(&mut self, sheet: &UserAgentStylesheet) {
@@ -1870,11 +1900,16 @@ impl BaseDocument {
     }
 
     fn parse_stylesheet(&self, css: &str, origin: Origin) -> DocumentStyleSheet {
-        let data = Stylesheet::from_str(
+        DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(css, origin, MediaList::empty())))
+    }
+
+    /// pyro: [`Self::parse_stylesheet`] with the sheet's media list (`<style media>`).
+    fn parse_stylesheet_with_media(&self, css: &str, origin: Origin, media: MediaList) -> Stylesheet {
+        Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),
             origin,
-            ServoArc::new(self.guard.wrap(MediaList::empty())),
+            ServoArc::new(self.guard.wrap(media)),
             self.guard.clone(),
             Some(&StylesheetLoader {
                 tx: self.tx.clone(),
@@ -1887,9 +1922,7 @@ impl BaseDocument {
             None,
             QuirksMode::NoQuirks,
             AllowImportRules::Yes,
-        );
-
-        DocumentStyleSheet(ServoArc::new(data))
+        )
     }
 
     pub fn upsert_stylesheet_for_node(&mut self, node_id: NodeId) {
@@ -2171,6 +2204,10 @@ impl BaseDocument {
         match resource {
             Resource::Css(css, page_css) => {
                 let node_id = res.node_id.unwrap();
+                // pyro: a `<link media>` is its sheet's media list (each fetch parses its own sheet).
+                if let Some(media) = self.node_media_list(node_id) {
+                    *css.0.media.write_with(&mut self.guard.write()) = media;
+                }
                 self.add_stylesheet_for_node(css, node_id);
                 match page_css {
                     Some(text) => {

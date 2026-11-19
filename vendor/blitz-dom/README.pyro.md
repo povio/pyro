@@ -2783,3 +2783,13 @@ all, and a combining mark the transform removed (Greek uppercase drops the acute
 - Round 4 lane S4, `layout/multicol.rs` `fragmentable`: a box of size containment is monolithic (CSS Contain 2 § 3.1),
   so balancing does not split it (a `contain: size` float in columns). WPT css-multicol `multicol-fill-balance-*`,
   css-contain `contain-size-multicol-*`.
+
+## `<style media>` and `<link media>` (WPT round 4, lane S1)
+
+`src/document.rs` (`process_style_element`, `node_media_list`, `parse_stylesheet_with_media`, the `Resource::Css`
+arm), `src/mutator.rs` (`set_attribute_impl`, `clear_attribute_impl`): a `<style>` or `<link>` element's `media`
+attribute is its sheet's media list, so a sheet whose media do not match the device applies nothing (a
+`<style media=print>` applied on screen before). A `<style>` with one parses its own sheet (not the shared sheet of its
+text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style>`'s `media` processes its sheet again
+(WPT css/cssom `medialist-dynamic-001`). Covered by `a_style_element_media_attribute_limits_its_sheet` in
+`crates/pyro-render/tests/render.rs`.

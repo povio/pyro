@@ -408,6 +408,14 @@ impl DocumentMutator<'_> {
             self.restyle_siblings_for_attribute_change(node_id, &name, Some(value));
         }
 
+        // pyro: a `<style>`'s `media` is its sheet's media list (`process_style_element`).
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("style"))
+        {
+            self.style_nodes.insert(node_id);
+        }
+
         if name.local == local_name!("id") && node_is_in_document {
             if let Some(old_id) = self.doc.nodes[node_id]
                 .element_data()
@@ -596,6 +604,14 @@ impl DocumentMutator<'_> {
 
             self.restyle_for_attribute_change(node_id, &name.local);
             self.restyle_siblings_for_attribute_change(node_id, &name, None);
+        }
+
+        // pyro: without its `media`, a `<style>`'s sheet is for all media again.
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("style"))
+        {
+            self.style_nodes.insert(node_id);
         }
 
         if name.local == local_name!("id") && node_is_in_document {

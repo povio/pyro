@@ -488,6 +488,21 @@ fn print_media_applies_print_rules() {
     assert_eq!(pixel(&print, 5, 5), [255, 0, 0, 255]);
 }
 
+/// A `<style media>` is its sheet's media list: a print sheet applies only to print, and one for
+/// no medium never (WPT css/cssom `medialist-dynamic-001`). Its rules applied on screen before.
+#[test]
+fn a_style_element_media_attribute_limits_its_sheet() {
+    let html = "<!doctype html><style>body{margin:0;background:#00f}</style>\
+                <style media=print>body{background:#f00}</style>\
+                <style media='not all'>body{background:#0f0}</style>";
+    let mut r = Renderer::new();
+    let (screen, _, _) = r.render(&snap(html), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&screen, 5, 5), [0, 0, 255, 255], "screen: neither sheet");
+    let (print, _, _) =
+        r.render(&Snapshot { print: true, ..snap(html) }, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&print, 5, 5), [255, 0, 0, 255], "print: the print sheet");
+}
+
 #[test]
 fn a_clip_within_the_viewport_keeps_the_scroll_and_fixed_elements() {
     let html = r#"<!doctype html><style>body{margin:0}
