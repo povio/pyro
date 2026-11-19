@@ -580,7 +580,8 @@ pub fn compute_block_layout(
     // <https://drafts.csswg.org/css-contain-2/#containment-layout>
     let establishes_new_bfc = is_scroll_container
         || style.align_content().keyword != AlignContentKeyword::Normal
-        || contain.establishes_independent_formatting_context();
+        || contain.establishes_independent_formatting_context()
+        || style.establishes_independent_formatting_context();
     let aspect_ratio = style.aspect_ratio();
     let padding = style.padding().resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
     let border = style.border().resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
@@ -827,7 +828,10 @@ fn compute_inner(
     let is_scroll_container = overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
     let establishes_new_bfc = is_scroll_container
         || style.align_content().keyword != AlignContentKeyword::Normal
-        || style.contain().establishes_independent_formatting_context();
+        || style.contain().establishes_independent_formatting_context()
+        || style.establishes_independent_formatting_context();
+    // pyro: a `line-clamp` container (see below).
+    let own_formatting_context = style.establishes_independent_formatting_context();
 
     // Determine margin collapsing behaviour
     //
@@ -985,8 +989,10 @@ fn compute_inner(
 
     // Root BFCs contain floats: the content height extends to the bottom margin edge of any
     // floated descendant, and the container's bottom padding and border sit below that
+    // pyro: but for a `line-clamp` container: its height ends with its lines, floats or not (WPT
+    // css-overflow `line-clamp-with-floats-016`).
     #[cfg(feature = "float_layout")]
-    if block_ctx.is_bfc_root() || establishes_new_bfc {
+    if (block_ctx.is_bfc_root() || establishes_new_bfc) && !own_formatting_context {
         intrinsic_outer_height = intrinsic_outer_height
             .max(block_ctx.floated_content_height_contribution() + resolved_content_box_inset.bottom);
     }
@@ -1354,6 +1360,7 @@ fn generate_item_list(
                 && !contain.establishes_independent_formatting_context()
                 && child_style.align_content().keyword == AlignContentKeyword::Normal
                 // pyro
+                && !child_style.establishes_independent_formatting_context()
                 && !tree.block_child_establishes_formatting_context(child_node_id);
 
             BlockItem {

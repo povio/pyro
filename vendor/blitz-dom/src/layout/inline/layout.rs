@@ -1968,7 +1968,13 @@ impl LayoutPassState<'_> {
 
         #[cfg(feature = "floats")]
         {
-            if is_bfc_root {
+            // pyro: but for a `line-clamp` container: its height ends with its lines, floats or
+            // not (WPT css-overflow `line-clamp-with-floats-016`).
+            let line_clamp = self.nodes[node_id].primary_styles().is_some_and(|style| {
+                let clamp = &style.get_box().line_clamp;
+                !clamp.webkit_legacy && !clamp.max_lines.is_none()
+            });
+            if is_bfc_root && !line_clamp {
                 height = height.max(float_height_contribution * scale)
             };
         }

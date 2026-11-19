@@ -454,6 +454,14 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 // BlockContainerStyle impl
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
+    /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
+    /// box is a flow root already) establishes an independent formatting context.
+    #[inline]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        let clamp = &self.style.get_box().line_clamp;
+        !clamp.webkit_legacy && !clamp.max_lines.is_none()
+    }
+
     #[inline]
     fn own_height_keywords(&self) -> (taffy::Dimension, taffy::Dimension) {
         let (min, max) = (
@@ -640,6 +648,14 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
 // BlockItemStyle impl
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyle<T> {
+    /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
+    /// box is a flow root already) establishes an independent formatting context.
+    #[inline]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        let clamp = &self.style.get_box().line_clamp;
+        !clamp.webkit_legacy && !clamp.max_lines.is_none()
+    }
+
     #[inline]
     fn is_table(&self) -> bool {
         convert::is_table(self.effective_display())

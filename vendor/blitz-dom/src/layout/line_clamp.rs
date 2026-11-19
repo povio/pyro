@@ -156,6 +156,11 @@ impl LayoutPassState<'_> {
         let mut stack: Vec<(NodeId, f32, f32)> = vec![(root, 0.0, 0.0)];
         while let Some((id, top, below)) = stack.pop() {
             if self.nodes[id].flags.is_inline_root() {
+                // (What an earlier clamp hid in it shows again unless this one hides it.)
+                let all: Vec<NodeId> = self.nodes[id].layout_children.borrow().iter().flatten().copied().collect();
+                for child_id in all {
+                    self.nodes[child_id].flags.remove(NodeFlags::HIDDEN_BY_CLAMP);
+                }
                 let node = &mut self.nodes[id];
                 let Some(text_layout) = node.data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
                 else {
@@ -241,6 +246,25 @@ impl LayoutPassState<'_> {
         }
         let (id, kept, bottom) = clamp_line.filter(|_| clamped)?;
         self.set_clamp(id, kept, discards, &ellipsis_text);
+        // pyro: the floats and atomic inlines of the clamp line's block below its clamp line,
+        // and those of the blocks discarded after it, are hidden with the lines (WPT css-overflow
+        // `line-clamp-with-floats-003`, `-005`).
+        let block_top: f32 = {
+            let mut top = 0.0;
+            let mut at = id;
+            while at != root {
+                top += self.nodes[at].unrounded_layout().location.y;
+                match self.nodes[at].layout_parent.get() {
+                    Some(parent) => at = parent,
+                    None => break,
+                }
+            }
+            top
+        };
+        self.hide_children_below(id, bottom - block_top);
+        for &other in &discarded {
+            self.hide_children_below(other, f32::NEG_INFINITY);
+        }
         for id in discarded {
             if let Some(text_layout) =
                 self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
@@ -287,6 +311,18 @@ impl LayoutPassState<'_> {
             inner = layout.location.y + end + layout.margin.bottom;
         }
         inner
+    }
+
+    /// pyro: hides the children of the inline root `block` laid out in it (floats, atomic
+    /// inlines; not absolutely positioned boxes) whose top is at `y` or below (its coordinates).
+    fn hide_children_below(&mut self, block: NodeId, y: f32) {
+        let children: Vec<NodeId> = self.nodes[block].layout_children.borrow().iter().flatten().copied().collect();
+        for id in children {
+            let out_of_flow = self.nodes[id].primary_styles().is_some_and(|style| crate::node::style_is_out_of_flow(&style));
+            if !out_of_flow && self.nodes[id].unrounded_layout().location.y >= y - 0.01 {
+                self.nodes[id].flags.insert(NodeFlags::HIDDEN_BY_CLAMP);
+            }
+        }
     }
 
     /// pyro: hides the boxes in flow (floats too) among `parent`'s children after `child`.

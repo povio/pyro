@@ -1285,6 +1285,11 @@ impl<T: BlockContainerStyle> BlockContainerStyle for &'_ T {
     }
 
     #[inline(always)]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        (*self).establishes_independent_formatting_context()
+    }
+
+    #[inline(always)]
     fn justify_items(&self) -> AlignItems {
         (*self).justify_items()
     }
@@ -1345,6 +1350,11 @@ impl<T: BlockItemStyle> BlockItemStyle for &'_ T {
     #[inline(always)]
     fn align_content(&self) -> AlignContent {
         (*self).align_content()
+    }
+
+    #[inline(always)]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        (*self).establishes_independent_formatting_context()
     }
 
     #[cfg(feature = "float_layout")]
