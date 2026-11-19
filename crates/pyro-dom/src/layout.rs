@@ -247,6 +247,10 @@ pub struct Layout {
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<NodeId>; 2]>,
+    /// pyro: the mandatory snap containers whose initial scroll position snapped
+    /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
+    initially_snapped: rustc_hash::FxHashSet<NodeId>,
+    initial_snap_checked: std::cell::Cell<Option<u64>>,
     /// The engine laying the document out.
     external: Option<Rc<dyn GeometrySource>>,
     /// The observation stamp and viewport the engine was last synced at.
@@ -529,6 +533,8 @@ impl Layout {
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
+            initially_snapped: Default::default(),
+            initial_snap_checked: Default::default(),
             external,
             external_synced: std::cell::Cell::new(None),
             syncs: std::cell::Cell::new(0),
@@ -3041,6 +3047,33 @@ impl Layout {
             .collect();
         out.sort_by_key(|&(key, _)| key);
         out
+    }
+
+    /// pyro: CSS Scroll Snap 1 § 6.3: a scroll container that snaps mandatorily and was not
+    /// scrolled starts at a snap position (Chromium snaps it at its first layout). Looked for once
+    /// per DOM version. Whether a scroll offset changed.
+    pub fn snap_initial_positions(&mut self, dom: &Dom) -> bool {
+        let version = dom.version();
+        if self.initial_snap_checked.replace(Some(version)) == Some(version) {
+            return false;
+        }
+        let Some(source) = self.synced_geometry_source(dom).cloned() else { return false };
+        let mut moved = false;
+        for key in source.mandatory_snap_containers() {
+            let Some(el) = crate::geometry::node_of(dom, key) else { continue };
+            if self.element_scroll.contains_key(&el) || !self.initially_snapped.insert(el) {
+                continue;
+            }
+            let (tx, ty) = self.snap_scroll(dom, Some(el), (0, 0), Some(0), Some(0));
+            let x = tx.map_or(0, |t| self.clamp_scroll(dom, el, Axis::Width, t));
+            let y = ty.map_or(0, |t| self.clamp_scroll(dom, el, Axis::Height, t));
+            if (x, y) != (0, 0) {
+                self.element_scroll.insert(el, (x, y));
+                self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                moved = true;
+            }
+        }
+        moved
     }
 
     pub fn has_scroll_offsets(&self) -> bool {

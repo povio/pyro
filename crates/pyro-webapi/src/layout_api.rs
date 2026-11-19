@@ -231,6 +231,11 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    // pyro: a mandatory snap container starts at a snap position (CSS Scroll Snap 1 § 6.3), from
+    // the first rendering update that lays it out (checked once per DOM version).
+    if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        layout.snap_initial_positions(&dom);
+    }
     let (checked, queued) = page.scroll_clamp.get();
     if queued {
         // The delayed task that was to do it finds nothing owed.
@@ -302,6 +307,10 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
     // events go to its originating element, after the scroll that moved the marker (Chromium
     // scrolls the group smoothly; WPT css-overflow `scroll-marker-group-keeps-active-in-view`).
     deliver_scroll_group_moves(page);
+    // pyro: a mandatory snap container starts at a snap position (CSS Scroll Snap 1 § 6.3).
+    if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        layout.snap_initial_positions(&dom);
+    }
     if !page.layout.borrow().has_scroll_offsets() {
         return;
     }

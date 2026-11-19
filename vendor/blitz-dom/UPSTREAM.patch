@@ -24231,7 +24231,7 @@ diff --git a/packages/blitz-dom/src/layout/scroll_markers.rs b/packages/blitz-do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/scroll_markers.rs
-@@ -0,0 +1,1591 @@
+@@ -0,0 +1,1607 @@
 +//! pyro: CSS Overflow 5's scroll markers and scroll buttons: the boxes of `::scroll-marker-group`,
 +//! `::scroll-marker` and `::scroll-button()`, and `:target-current`.
 +//!
@@ -25535,6 +25535,22 @@ new file mode 100644
 +    /// pyro: after scroll offsets changed outside a layout (the page told new ones), on documents
 +    /// that use scroll markers: the next resolve picks the active markers again
 +    /// ([`Self::update_target_current`], which restyles what depends on them).
++    /// pyro: the scroll containers whose `scroll-snap-type` snaps an axis mandatorily (their
++    /// initial scroll position snaps: CSS Scroll Snap 1 § 6.3).
++    pub fn mandatory_snap_containers(&self) -> Vec<NodeId> {
++        use style_traits::ToCss as _;
++        self.nodes
++            .iter()
++            .filter(|(_, node)| node.is_element() && node.flags.is_in_document())
++            .filter(|(_, node)| {
++                node.primary_styles().is_some_and(|style| {
++                    is_scroll_container(&style) && style.get_box().scroll_snap_type.to_css_string().ends_with("mandatory")
++                })
++            })
++            .map(|(id, _)| id)
++            .collect()
++    }
++
 +    /// pyro: whether the document has scroll pseudo-elements (markers, groups, buttons).
 +    pub fn uses_scroll_markers(&self) -> bool {
 +        !self.scroll_pseudo_owners.is_empty()

@@ -952,6 +952,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }
 
+    fn mandatory_snap_containers(&self) -> Vec<u64> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.mandatory_snap_containers(self.page))).unwrap_or_default())
+    }
+
     fn take_scroll_group_moves(&self) -> Vec<u64> {
         RENDERER.with(|r| {
             r.try_borrow_mut()

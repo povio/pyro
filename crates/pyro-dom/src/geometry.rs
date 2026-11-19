@@ -394,6 +394,11 @@ pub trait GeometrySource {
     fn element_displayed(&self, _key: u64) -> Option<bool> {
         None
     }
+    /// pyro: the keys of the scroll containers that snap mandatorily (CSS Scroll Snap 1 § 6.3:
+    /// their initial scroll position snaps).
+    fn mandatory_snap_containers(&self) -> Vec<u64> {
+        Vec::new()
+    }
     /// pyro: the keys of the elements whose `::scroll-marker-group` scrolled to keep its active
     /// marker in view since the last call.
     fn take_scroll_group_moves(&self) -> Vec<u64> {

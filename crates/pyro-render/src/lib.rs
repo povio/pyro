@@ -914,6 +914,13 @@ impl Renderer {
     /// the elements whose values changed at its next resolve.
     /// The page's scroll offsets for its scroll-driven animations (`BaseDocument::set_timeline_scroll`),
     /// applied at its next sync or render.
+    /// pyro: the keys of the page's scroll containers that snap mandatorily
+    /// (blitz-dom `BaseDocument::mandatory_snap_containers`).
+    pub fn mandatory_snap_containers(&self, page: u64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        m.doc.mandatory_snap_containers().into_iter().filter_map(|id| m.key_of(id)).collect()
+    }
+
     /// pyro: whether the page's document has scroll markers or buttons (their states follow the
     /// scroll offsets).
     pub fn uses_scroll_markers(&self, page: u64) -> bool {

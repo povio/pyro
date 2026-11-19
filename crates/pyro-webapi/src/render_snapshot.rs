@@ -134,6 +134,11 @@ impl PageDom {
     }
 
     fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
+        // pyro: a mandatory snap container starts at a snap position (CSS Scroll Snap 1 § 6.3),
+        // which a capture shows even when no rendering update ran since the page loaded.
+        if let (Ok(dom), Ok(mut layout)) = (self.dom.try_borrow(), self.layout.try_borrow_mut()) {
+            layout.snap_initial_positions(&dom);
+        }
         let mut canvases = self.canvas_bitmaps();
         canvases.extend(self.video_bitmaps());
         let selection = crate::editing::selection_range(self);
