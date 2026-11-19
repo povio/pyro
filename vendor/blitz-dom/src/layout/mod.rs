@@ -2649,6 +2649,34 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         self.is_current_column_spanner(dom_node_id(child_node_id))
     }
 
+    fn block_child_container_query_width(&self, child_node_id: NodeId) -> Option<Option<f32>> {
+        use style::values::specified::ContainerType;
+        let id = dom_node_id(child_node_id);
+        let node = &self.nodes[id];
+        let style = node.primary_styles()?;
+        if !style.get_box().slow_clone_container_type().intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
+            || !style.writing_mode.is_horizontal()
+        {
+            return None;
+        }
+        drop(style);
+        let content = self.nodes.container_query_sizes.lock().unwrap().get(&id).and_then(|entry| entry.size.width);
+        let Some(content) = content else { return Some(None) };
+        use taffy::{CoreStyle as _, ResolveOrZero as _};
+        let layout_style = node.layout_style();
+        let inset = layout_style.padding().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+            + layout_style.border().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum();
+        Some(Some(content.to_f32_px() + inset))
+    }
+
+    fn block_child_float_floor(&self, child_node_id: NodeId) -> Option<f32> {
+        self.container_float_floors.get(&dom_node_id(child_node_id)).copied()
+    }
+
+    fn set_block_child_float_floor(&mut self, child_node_id: NodeId, y: f32) {
+        self.container_float_floors.insert(dom_node_id(child_node_id), y);
+    }
+
     fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
         #[cfg(feature = "writing-mode")]
         {

@@ -542,6 +542,26 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
+    /// pyro: for a block-level child that is an inline-size container query container, the border-box
+    /// width it was last styled at (its container query width; `Some(None)` before any), else `None`.
+    fn block_child_container_query_width(&self, child_node_id: NodeId) -> Option<Option<f32>> {
+        let _ = child_node_id;
+        None
+    }
+
+    /// pyro: the top below which a container query container beside floats is placed
+    /// (`set_block_child_float_floor`): placement beside floats moves forward only.
+    fn block_child_float_floor(&self, child_node_id: NodeId) -> Option<f32> {
+        let _ = child_node_id;
+        None
+    }
+
+    /// pyro: records that a container query container is placed in the float-avoiding slot at `y` to
+    /// be styled at that slot's width (the container is laid out again once its queries see it).
+    fn set_block_child_float_floor(&mut self, child_node_id: NodeId, y: f32) {
+        let _ = (child_node_id, y);
+    }
+
     /// pyro: whether a block-level child is laid out in a writing mode orthogonal to this
     /// container's: it contributes no baseline set to it (css-align-3 §9.1).
     fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {

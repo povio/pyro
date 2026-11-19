@@ -2232,6 +2232,13 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                             active_collapsible_margin_set.collapse_with_margin(item_non_auto_margin.top).resolve();
                     };
                     let min_y = committed_y_offset + y_margin_offset;
+                    // pyro: a container query container beside floats is placed no higher than the slot
+                    // it was last placed in to be styled at its width (`block_child_float_floor`).
+                    let cq_width = tree.block_child_container_query_width(item.node_id);
+                    let min_y = match cq_width.and(tree.block_child_float_floor(item.node_id)) {
+                        Some(floor) => min_y.max(floor),
+                        None => min_y,
+                    };
 
                     // In addition to the running flag, check the float context directly:
                     // floats placed by the subtree of a preceding in-flow sibling (in the same
@@ -2306,6 +2313,17 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                             if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
                                 slot_segment = Some(segment_id);
                                 continue;
+                            }
+                            // pyro: a container query container in a slot of another width than it was
+                            // styled at takes the slot for now: it is styled at the slot's width, and
+                            // placed again from here (css-contain-3 § 2.1; the queries may change what
+                            // fits: WPT container-queries `inline-size-bfc-floats`).
+                            if let Some(styled) = cq_width {
+                                let slot_width = slot.border_width;
+                                if styled.is_none_or(|styled| (styled - slot_width).abs() > FIT_TOLERANCE) {
+                                    tree.set_block_child_float_floor(item.node_id, slot.y);
+                                    break slot;
+                                }
                             }
                             // pyro: the item must not overlap the floats beside any of its height,
                             // which it has once laid out in the slot: taller than the slot stays as

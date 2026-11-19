@@ -782,7 +782,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let border_styles = self.style.get_border();
          self.rect(taffy::Rect {
              left: convert::border(
-@@ -343,12 +503,55 @@
+@@ -343,12 +503,63 @@
  // BlockContainerStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
@@ -791,7 +791,15 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +    #[inline]
 +    fn establishes_independent_formatting_context(&self) -> bool {
 +        let clamp = &self.style.get_box().line_clamp;
-+        !clamp.webkit_legacy && !clamp.max_lines.is_none()
++        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
++        // inline-size`: "causes the box to establish an independent formatting context"; no layout
++        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
++        // `inline-size-bfc-floats`).
++        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
++            || self.style.get_box().container_type.intersects(
++                style::values::specified::box_::ContainerType::SIZE
++                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
++            )
 +    }
 +
 +    #[inline]
@@ -838,7 +846,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_content(&self) -> taffy::AlignContent {
          let display = self.effective_display();
-@@ -375,12 +578,27 @@
+@@ -375,12 +586,27 @@
  
      #[inline]
      fn justify_items(&self) -> taffy::AlignItems {
@@ -866,7 +874,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
      #[inline]
      fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
-@@ -479,11 +697,53 @@
+@@ -479,11 +705,61 @@
  // BlockItemStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyle<T> {
@@ -875,7 +883,15 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +    #[inline]
 +    fn establishes_independent_formatting_context(&self) -> bool {
 +        let clamp = &self.style.get_box().line_clamp;
-+        !clamp.webkit_legacy && !clamp.max_lines.is_none()
++        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
++        // inline-size`: "causes the box to establish an independent formatting context"; no layout
++        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
++        // `inline-size-bfc-floats`).
++        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
++            || self.style.get_box().container_type.intersects(
++                style::values::specified::box_::ContainerType::SIZE
++                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
++            )
 +    }
 +
      #[inline]
@@ -920,7 +936,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.oof_self_alignment(
-@@ -494,10 +754,11 @@
+@@ -494,10 +770,11 @@
  
      #[inline]
      fn justify_self(&self) -> Option<taffy::AlignSelf> {
@@ -936,7 +952,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  
      #[inline]
-@@ -508,14 +769,28 @@
+@@ -508,14 +785,28 @@
      #[cfg(feature = "floats")]
      #[inline]
      fn float(&self) -> taffy::Float {
@@ -967,7 +983,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -523,6 +798,21 @@
+@@ -523,6 +814,21 @@
  // FlexboxContainerStyle impl
  #[cfg(feature = "flexbox")]
  impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffyStyloStyle<T> {
@@ -989,7 +1005,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn flex_direction(&self) -> taffy::FlexDirection {
          convert::flex_direction(self.style.get_position().flex_direction)
-@@ -595,6 +885,26 @@
+@@ -595,6 +901,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -1016,7 +1032,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1184,70 @@
+@@ -874,6 +1200,70 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -1087,7 +1103,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -922,11 +1296,66 @@
+@@ -922,11 +1312,66 @@
  // GridItemStyle impl
  #[cfg(feature = "grid")]
  impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
@@ -1154,7 +1170,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1379,16 @@
+@@ -950,6 +1395,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

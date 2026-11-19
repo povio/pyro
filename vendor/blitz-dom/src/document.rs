@@ -710,6 +710,11 @@ pub struct BaseDocument {
     pub(crate) marker_counters: bool,
     /// pyro: `marker_counters` was just set: the resolve runs one more pass, which evaluates them.
     pub(crate) marker_counters_pending: bool,
+    /// pyro: per size container placed beside floats, the top of the float-avoiding slot it was last
+    /// placed in to be styled at that slot's width: placement goes on from there (css-contain-3
+    /// container queries beside floats move forward only; WPT container-queries
+    /// `inline-size-bfc-floats`). Cleared at each resolve.
+    pub(crate) container_float_floors: std::collections::HashMap<crate::NodeId, f32>,
     /// pyro: the text of each list item's `::marker` `content` that reads counters, evaluated in
     /// tree order (`layout::counters`).
     pub(crate) marker_texts: HashMap<NodeId, String>,
@@ -971,6 +976,7 @@ impl BaseDocument {
             counters_dirty: true,
             marker_counters: false,
             marker_counters_pending: false,
+            container_float_floors: Default::default(),
             marker_texts: HashMap::new(),
             list_item_numbers: Default::default(),
             top_layer: Default::default(),

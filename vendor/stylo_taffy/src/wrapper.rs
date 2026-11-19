@@ -508,7 +508,15 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyl
     #[inline]
     fn establishes_independent_formatting_context(&self) -> bool {
         let clamp = &self.style.get_box().line_clamp;
-        !clamp.webkit_legacy && !clamp.max_lines.is_none()
+        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
+        // inline-size`: "causes the box to establish an independent formatting context"; no layout
+        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
+        // `inline-size-bfc-floats`).
+        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
+            || self.style.get_box().container_type.intersects(
+                style::values::specified::box_::ContainerType::SIZE
+                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
+            )
     }
 
     #[inline]
@@ -702,7 +710,15 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     #[inline]
     fn establishes_independent_formatting_context(&self) -> bool {
         let clamp = &self.style.get_box().line_clamp;
-        !clamp.webkit_legacy && !clamp.max_lines.is_none()
+        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
+        // inline-size`: "causes the box to establish an independent formatting context"; no layout
+        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
+        // `inline-size-bfc-floats`).
+        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
+            || self.style.get_box().container_type.intersects(
+                style::values::specified::box_::ContainerType::SIZE
+                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
+            )
     }
 
     #[inline]

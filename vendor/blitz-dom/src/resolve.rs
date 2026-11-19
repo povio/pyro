@@ -147,6 +147,7 @@ impl BaseDocument {
 
         // Container conditions consume content-box sizes from layout. Re-match
         // only when an actually queried size changes; bound cyclic feedback.
+        self.container_float_floors.clear();
         for pass in 0..32 {
             // we need to resolve stylist first since it will need to drive our layout bits
             self.resolve_stylist(current_time_for_animations);
