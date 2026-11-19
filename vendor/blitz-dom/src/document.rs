@@ -642,6 +642,10 @@ pub struct BaseDocument {
     /// pyro: a style traversal styled an element with `text-box-trim` (sticky): inline layouts
     /// look for the trims of their first and last lines (`layout::text_box`).
     pub(crate) text_box_trim_styles: bool,
+    /// pyro: a style traversal styled an element `column-span: all` (sticky): a multi-column
+    /// container looks for spanners below its children too (`layout::multicol`); without one its
+    /// children are all it reads.
+    pub(crate) column_span_styles: bool,
     /// pyro: the generated text of each element's `::after` and `::before` with counters and
     /// quotes evaluated (`layout::counters`), while `generated_counters`.
     pub(crate) generated_text: HashMap<NodeId, crate::layout::counters::GeneratedText>,
@@ -888,6 +892,7 @@ impl BaseDocument {
             first_line_reparented: Default::default(),
             generated_counters: false,
             text_box_trim_styles: false,
+            column_span_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
             marker_counters: false,

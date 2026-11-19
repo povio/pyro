@@ -189,3 +189,33 @@ fn spanners_share_the_rows_of_an_explicit_column_height() {
         assert_eq!(rg_at(body, 25, y), want, "{what} (y {y})");
     }
 }
+
+/// A `column-span: all` box below a child of the container spans the columns too, as long as the
+/// boxes between them are plain in-flow blocks (css-multicol-1 § 6: it is in the container's
+/// formatting context). It was laid out inside a column. A wrapper that keeps its content to
+/// itself (a transform here) has no spanner in it.
+#[test]
+fn a_spanner_below_a_child_of_the_container_spans_its_columns() {
+    let (green, blue, white) = ((0, 128), (0, 0), (255, 255));
+    let content = "<div style='height:40px;background:green'></div>\
+                   <h3 style='column-span:all;height:10px;margin:0;background:#00f'></h3>\
+                   <div style='height:40px;background:green'></div>";
+    let body = format!("<div style='columns:2;width:100px;gap:0'><div>{content}</div></div>");
+    // Two 20px columns, the spanner's row at 20..30, two more 20px columns.
+    for (x, y, want, what) in [
+        (25, 10, green, "the first column above the spanner"),
+        (75, 10, green, "the second column above the spanner"),
+        (25, 25, blue, "the spanner"),
+        (75, 25, blue, "the spanner over the second column"),
+        (25, 40, green, "the first column below the spanner"),
+        (75, 40, green, "the second column below the spanner"),
+        (75, 55, white, "below the container"),
+    ] {
+        assert_eq!(rg_at(&body, x, y), want, "{what} at ({x}, {y})");
+    }
+    // In a transformed wrapper the box is no spanner: 90px of content in two 45px columns, the
+    // blue box at 40..45 of the first only.
+    let body = format!("<div style='columns:2;width:100px;gap:0'><div style='transform:scale(1)'>{content}</div></div>");
+    assert_eq!(rg_at(&body, 25, 42), blue, "the box in the first column");
+    assert_eq!(rg_at(&body, 75, 42), green, "the second column beside it");
+}

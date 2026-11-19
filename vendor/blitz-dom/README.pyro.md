@@ -2809,8 +2809,15 @@ all, and a combining mark the transform removed (Greek uppercase drops the acute
   is balanced within what is left of its slot, the spanner follows at once when it fits in the rest of the slot (or
   starts a slot, and may then reach past its end) and otherwise starts the next slot, and content after it goes on in
   what is left of the slot it ends in. It was placed right after the rows, and the rows after it at its end (WPT
-  `column-height-017`..`-020`). Not done: a spanner that is no child of the container (`-006`, `-013`), nested
-  containers with rows (`-007`, `-008`, `-025`, `-027`..`-029`).
+  `column-height-017`..`-020`). Not done: nested containers with rows (`-007`, `-008`, `-025`, `-027`..`-029`).
+  Spanners below the container's children (`column_spanners_of`, `carries_spanners`, `spans_columns_of`): a
+  `column-span: all` box spans the columns when the boxes between it and the container are in-flow blocks that make no
+  formatting context and keep no fixed descendants (no transform, perspective, filter, layout or paint containment),
+  as css-multicol-1 § 6 and Chromium. It was laid out inside a column. The search below the children runs only once
+  a style traversal has seen `column-span: all` (`BaseDocument::column_span_styles`, sticky); a spanner's row starts at
+  the container's edge whatever its ancestors' padding (`ColumnFragment::offset`). WPT css-multicol `column-height-006`,
+  `-013`, `multicol-span-all-013`, `-margin-003`, `-block-sibling-003`, `spanner-in-opacity`,
+  `ancestor-toggle-spanner-001`, `remove-transform-descendant-becomes-spanner`.
 - Round 4 lane S4, `layout/multicol.rs` `fragmentable`: a box of size containment is monolithic (CSS Contain 2 § 3.1),
   so balancing does not split it (a `contain: size` float in columns). WPT css-multicol `multicol-fill-balance-*`,
   css-contain `contain-size-multicol-*`.
