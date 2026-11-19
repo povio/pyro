@@ -201,20 +201,22 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
             "i.addEventListener('beforeinput', ev => ev.preventDefault(), { once: true }); i.focus(); \
              [document.execCommand('insertText', false, 'd'), i.value].join('|')"
         ),
-        "true|xa"
+        // (The value the first insertion left: "a" went before the default value's "x".)
+        "true|ax"
     );
     // A focused text control wins over the selection still inside the host;
     // with a checkbox focused that selection is the target, as in Chromium.
     assert_eq!(
         eval(r, "i.focus(); document.execCommand('insertText', false, 'e'); i.value + ':' + ce.textContent"),
-        "xae:c"
+        // (Focus keeps the control's selection: after the "a" it typed at the start.)
+        "aex:c"
     );
     assert_eq!(
         eval(
             r,
             "cb.focus(); [document.execCommand('insertText', false, 'z'), cb.checked, i.value, ce.textContent].join()"
         ),
-        "true,false,xae,cz"
+        "true,false,aex,cz"
     );
 }
 
