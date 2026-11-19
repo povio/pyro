@@ -2183,9 +2183,9 @@ impl JsClass for Document {
         });
         def.method("elementFromPoint", 2, crate::html::element_from_point);
         def.method("elementsFromPoint", 2, crate::html::elements_from_point);
-        // HTML `designMode`: "on" makes the whole document editable. pyro: the selection is left as
-        // it is (Blink's `Document::setDesignMode` only restyles; HTML says to reset it to the
-        // start of the document): typing before any selection is made inserts nothing.
+        // HTML `designMode`: "on" makes the whole document editable, and puts the selection at its
+        // start (Chrome has a caret there in a focused document: WPT editing/crashtests
+        // designMode-caret-change waits for the selectionchange of an edit made at it).
         def.accessor(
             "designMode",
             |s, n| Ok(s.string(if n.page().dom.borrow().design_mode(n.id) { "on" } else { "off" })),
@@ -2196,7 +2196,11 @@ impl JsClass for Document {
                     "off" => false,
                     _ => return Ok(()),
                 };
+                let was = n.page().dom.borrow().design_mode(n.id);
                 n.page().dom.borrow_mut().set_design_mode(n.id, on).js()?;
+                if on && !was && n.page().document() == n.id {
+                    crate::editing::set_selection(n.page(), (n.id, 0), (n.id, 0));
+                }
                 Ok(())
             },
         );
