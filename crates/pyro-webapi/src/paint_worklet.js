@@ -17,6 +17,10 @@
   const fetchC = fetch;
   const reject = (e) => PromiseC.reject(e);
   const worklets = new WeakSet();
+  // Each worklet's module map ("module responses map"), by requested URL: a module being fetched or
+  // evaluated, or one that loaded, answers a later addModule() of that URL without a new fetch. A
+  // failed one leaves the map, so a later call fetches it again.
+  const moduleMaps = new WeakMap();
   // The module graphs being fetched and evaluated run one after another: each installs a fetcher
   // carrying its own credentials mode, which must not serve another graph's imports.
   let graphs = PromiseC.resolve();
@@ -24,6 +28,7 @@
     constructor(t) {
       if (t !== token) throw new TypeErrorC("Failed to construct 'Worklet': Illegal constructor");
       worklets.add(this);
+      moduleMaps.set(this, new Map());
     }
     addModule(moduleURL, options = undefined) {
       try {
@@ -41,11 +46,14 @@
         if (credentials !== 'omit' && credentials !== 'same-origin' && credentials !== 'include') {
           throw new TypeErrorC(`Failed to execute 'addModule' on 'Worklet': Failed to read the 'credentials' property from 'WorkletOptions': The provided value '${credentials}' is not a valid enum value of type RequestCredentials.`);
         }
+        const map = moduleMaps.get(this);
+        const known = map.get(url);
+        if (known) return known.then(() => undefined);
         // "fetch a worklet script graph": a failed fetch (network error, not ok) rejects with AbortError.
         const aborted = () => new DOMExceptionC('Unable to load a worklet\'s module.', 'AbortError');
         // Evaluated under the response's URL (after redirects), which import.meta.url and the module's
         // relative imports use.
-        return fetchC(url, { credentials, mode: 'cors' }).then(
+        const loading = fetchC(url, { credentials, mode: 'cors' }).then(
           (response) => {
             if (!response.ok) throw aborted();
             return response.text().then((source) => [source, response.url || url]);
@@ -56,6 +64,9 @@
           graphs = run.then(() => {}, () => {});
           return run;
         });
+        map.set(url, loading);
+        loading.then(undefined, () => { if (map.get(url) === loading) map.delete(url); });
+        return loading;
       } catch (e) {
         return reject(e);
       }

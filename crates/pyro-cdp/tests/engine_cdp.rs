@@ -11176,6 +11176,60 @@ fn paint_worklet_imports_use_the_graph_credentials_mode() {
     );
 }
 
+/// The paint worklet's module map is consulted before fetching: addModule() of a URL that already
+/// loaded resolves without a new fetch (here the server fails every later request for it).
+#[test]
+fn paint_worklet_add_module_of_a_loaded_url_does_not_fetch_again() {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let fetched = Arc::new(AtomicUsize::new(0));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = fetched.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+            let (status, ty, body) = match path.as_str() {
+                "/w.js" if count.fetch_add(1, Ordering::SeqCst) == 0 => ("200 OK", "text/javascript", "registerPaint('once', class { paint() {} });"),
+                "/w.js" => ("500 Internal Server Error", "text/plain", "gone"),
+                _ => ("200 OK", "text/html", "<!doctype html><p>page</p>"),
+            };
+            let head = format!("HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"(async () => {
+            const add = () => CSS.paintWorklet.addModule('/w.js').then(() => 'loaded', (e) => e.name);
+            const first = await add();
+            const [second, third] = await Promise.all([add(), add()]);
+            return [first, second, third].join();
+          })()"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!("loaded,loaded,loaded"), "{r}");
+    assert_eq!(fetched.load(Ordering::SeqCst), 1);
+}
+
 /// The opener's WindowProxy for a popup targets the browsing context, not a document: once the popup
 /// navigated (here to a document of another origin), the opener's postMessage reaches the popup's
 /// current document.
