@@ -714,6 +714,21 @@ it reads, `tools/serve`, `tools/wptserve`, `tools/manifest`, `tools/certs` and t
 89 MB `tools/`). A checkout from `fetch-wpt.sh --venv` took 55 s and is 366 MB. The added pages' baselines come
 from the first CI run with the change (each new pass runs again before it is recorded).
 
+What keeps a broken server from passing pages (`wptserve.test.mjs`):
+
+- A test page's or reference's main document must come back 2xx (`lib.mjs` `documentError`); anything else (the
+  proxy's empty 502 for a server that stopped answering, a missing file's 404) makes the page an `error`, never a
+  pass. Before this a crashtest or a match reftest served as an empty 502 passed: its error document painted, and a
+  reftest's test and reference rendered the same empty document.
+- The run fails as a whole (exit 3, no results file, so no baseline artifact) when its server exits or stops
+  answering: `run.mjs` asks wptserve for this run's token every 10 s and gives up after three misses.
+- wptserve is ready only when its http and https servers answer a token that only this run's config serves, and
+  `lsof` shows every port held by its own process group: a port another run's server took between the probe and
+  Python's bind starts it again on new ports (up to 3 times). It is stopped on any exit of the runner (signals and
+  uncaught errors included), and a watchdog process ends it when the runner's pid is gone.
+- Reference renders are cached per full URL (origin included): an http and an https test with the same reference
+  do not share a screenshot.
+
 h2: no reftest or crashtest is named `.h2.` at the pinned revision; one that appears is left out, counted under
 `needs HTTP/2 (wptserve runs with --no-h2)`. Serving it would need wptserve's HTTP/2 server (`h2` ports, ALPN over
 TLS, the `h2`/`hpack`/`hyperframe` libraries, which `wpt-paths.txt` already has) and HTTP/2 in pyro's network stack.

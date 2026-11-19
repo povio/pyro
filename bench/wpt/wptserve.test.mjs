@@ -1,15 +1,17 @@
 // bun test bench/wpt/wptserve.test.mjs
-// The runner never passes a page it could not load.
+// The runner never passes a page it could not load, and a run whose server is not its own or died fails.
 // The parts that start wptserve need WPT_DIR (a checkout with fetch-wpt.sh --venv); the parts that run the browser
 // also need PYRO_BIN. Without them those tests are skipped.
 import { expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { documentError } from './lib.mjs';
 import { refKey } from './reftest.mjs';
+import { listeningPorts, startWptserve } from './wptserve.mjs';
 
 const WPT = process.env.WPT_DIR;
 const BIN = process.env.PYRO_BIN;
@@ -36,6 +38,33 @@ test('a reference render is cached per origin it loads from', () => {
   expect(refKey(v, 'http://a:1', 'about:blank')).toBe(refKey(v, 'https://b:2', 'about:blank'));
 });
 
+test('lsof -F pn output gives the listening ports', () => {
+  expect([...listeningPorts('p123\nn127.0.0.1:8000\nn*:8443\np124\nn[::1]:9000\n')].sort()).toEqual([8000, 8443, 9000]);
+  expect(listeningPorts('').size).toBe(0);
+});
+
+const freePort = () => new Promise((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
+const quiet = { write() {} };
+
+test.skipIf(!HAS_WPT)('wptserve: a port another listener holds is not taken for this run\'s; stop and death are seen', async () => {
+  // Another gate's server on the port this run would use: answers everything with 200.
+  const foreign = http.createServer((q, s) => { s.writeHead(200); s.end('not yours'); });
+  const taken = await new Promise((r) => foreign.listen(0, '127.0.0.1', () => r(foreign.address().port)));
+  try {
+    const ws = await startWptserve(WPT, { log: quiet, ports: { http: taken } });
+    try {
+      expect(ws.ports.http).not.toBe(taken);
+      expect(await ws.alive()).toBe(true);
+      let exited = null;
+      ws.onExit((code) => { exited = code; });
+      process.kill(-ws.pid, 'SIGKILL');
+      for (let i = 0; i < 50 && exited === null; i++) await new Promise((r) => setTimeout(r, 100));
+      expect(exited).not.toBeNull();
+      expect(await ws.alive()).toBe(false);
+    } finally { ws.stop(); }
+  } finally { foreign.close(); }
+}, 120000);
+
 // A page discovery keeps, served by a server that answers every request with an empty 502 (what the proxy answers
 // for a wptserve that stopped answering): the crashtest and the reftest (whose test and reference would render the
 // same empty document) are errors.
@@ -60,3 +89,21 @@ test.skipIf(!HAS_WPT || !BIN)('pages served as HTTP errors are errors, not passe
     }
   } finally { bad.close(); }
 }, 300000);
+
+// The run's wptserve dies while pages run: the runner exits 3 and writes no results.
+test.skipIf(!HAS_WPT || !BIN)('a run whose wptserve dies fails as a whole', async () => {
+  const out = path.join(os.tmpdir(), `wptserve-test-${process.pid}-dies.json`);
+  const run = spawn(process.execPath, [path.join(import.meta.dir, 'run.mjs'), '--kind', 'crashtest', '--wpt', WPT, '--bin', `t=${BIN}`, '--server', 'wptserve',
+    '--match', '^css/', '--jobs', '1', '--out', out], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  const logDir = await new Promise((resolve) => run.stderr.on('data', (d) => { err += d; const m = err.match(/\(log (\S+)\/serve\.log\)/); if (m) resolve(m[1]); }));
+  const pid = spawnSync('pgrep', ['-f', `${logDir}/config.json`], { encoding: 'utf8' }).stdout.trim().split('\n')[0];
+  expect(pid).toMatch(/^\d+$/);
+  await new Promise((r) => setTimeout(r, 3000));
+  process.kill(-Number(pid), 'SIGKILL');
+  const code = await new Promise((r) => run.once('exit', r));
+  expect(code).toBe(3);
+  expect(err).toMatch(/the WPT server \(wptserve\) exited/);
+  expect(fs.existsSync(out)).toBe(false);
+  fs.rmSync(out + '.partial', { force: true });
+}, 120000);

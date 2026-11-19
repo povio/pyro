@@ -99,11 +99,34 @@ const WPT_REVISION = gitRev.status === 0 ? gitRev.stdout.trim() : null;
 
 // ---------- WPT server ----------
 let BASE = opt('--base');
+let finishing = false;
 let server, wptserve, proxy;
+// A run whose server dies or stops answering fails as a whole (exit 3, no results file): its pages' error documents
+// must not be judged, and the gate must not record a baseline from it. (Each page's own main document response is
+// checked as well: lib.mjs documentError.)
+const SERVER_LOST = 3;
+function serverLost(why) {
+  console.error(`${LABEL}: the WPT server ${why}; the run fails`);
+  process.exit(SERVER_LOST);
+}
+// Ended by a signal or an uncaught error: the servers and the browser go with the runner (the 'exit' handlers).
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) process.on(sig, () => process.exit(code));
+process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error(e); process.exit(1); });
 if (!BASE && WPTSERVE) {
   wptserve = await startWptserve(WPT);
   proxy = await startProxy();
   BASE = wptserve.base;
+  wptserve.onExit((code) => serverLost(`(wptserve) exited (${code}); log: ${wptserve.logFile}`));
+  // Liveness: this run's token over http every 10 s; three misses in a row (about 30 s and more) end the run.
+  let misses = 0, probing = false;
+  setInterval(async () => {
+    if (probing) return;
+    probing = true;
+    misses = (await wptserve.alive()) ? 0 : misses + 1;
+    probing = false;
+    if (misses >= 3) serverLost(`(wptserve) stopped answering; log: ${wptserve.logFile}`);
+  }, 10000).unref();
 } else if (!BASE) {
   server = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), WPT, '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
   const line = await new Promise((r, j) => {
@@ -111,6 +134,7 @@ if (!BASE && WPTSERVE) {
     server.once('exit', () => j(new Error('serve.mjs exited')));
   });
   BASE = `http://127.0.0.1:${line.match(/(\d+)$/)[1]}`;
+  server.once('exit', (code) => { if (!finishing) serverLost(`(serve.mjs) exited (${code})`); });
 }
 
 // The origin a page loads from, as wptrunner picks it from the file name under wptserve: `.https.` (and
@@ -484,6 +508,7 @@ await Promise.all([
 finish();
 // Writes the results and exits. `stalled`: the reason pages that have no result are recorded as errors.
 function finish(stalled) {
+  finishing = true;
   if (stalled) {
     const have = new Set(results.map((t) => t.url));
     for (const t of tests) if (!have.has(t.url)) { have.add(t.url); results.push({ dir: t.dir, url: t.url, status: 'error', error: stalled, subtests: [] }); }
