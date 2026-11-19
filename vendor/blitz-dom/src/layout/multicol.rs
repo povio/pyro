@@ -1051,6 +1051,24 @@ impl LayoutPassState<'_> {
             })
             .max(pb_sum.height);
 
+        // pyro: a table cell's `vertical-align` (as `align-content`) moves its columns down in a
+        // taller cell (`stylo_taffy::convert::table_cell_vertical_align`).
+        let free = height - pb_sum.height - columns_height;
+        if free > EPSILON
+            && let Some(style) = self.nodes[dom_id].primary_styles()
+            && style.clone_display().inside() == DisplayInside::TableCell
+            && let Some(align) = stylo_taffy::convert::table_cell_vertical_align(&style)
+        {
+            let shift = match align.keyword {
+                taffy::AlignContentKeyword::Center => snap(free / 2.0),
+                taffy::AlignContentKeyword::End | taffy::AlignContentKeyword::FlexEnd => snap(free),
+                _ => 0.0,
+            };
+            for fragment in &mut fragments {
+                fragment.top += shift;
+                fragment.offset.y += shift;
+            }
+        }
         let right = fragments.iter().map(|f| f.x + f.width).fold(width - border.right, f32::max);
         let left = fragments.iter().map(|f| f.x).fold(border.left, f32::min);
         let bottom = (content_top + columns_height).max(height - border.bottom);
@@ -1393,6 +1411,25 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: the multi-column table cells in table box `id` (whose border box starts at strip
+    /// position `top`) and their tops, through its internal boxes.
+    fn multicol_cells(&self, id: crate::NodeId, top: f32, depth: usize, out: &mut Vec<(crate::NodeId, f32)>) {
+        let children = self.nodes[id].layout_children.borrow();
+        let Some(children) = children.as_deref() else { return };
+        for &child_id in children {
+            let child = &self.nodes[child_id];
+            let Some(style) = child.primary_styles() else { continue };
+            let child_top = top + child.unrounded_layout().location.y;
+            if style.clone_display().inside() == DisplayInside::TableCell {
+                if is_multicol_style(&style) && !style.writing_mode.is_vertical() {
+                    out.push((child_id, child_top));
+                }
+            } else if depth < 3 && !child.is_out_of_flow() {
+                self.multicol_cells(child_id, child_top, depth + 1, out);
+            }
+        }
+    }
+
     /// pyro: whether anonymous block `id` comes right after, and right before, a split inline's
     /// block-level box among its parent's layout children.
     fn split_inline_neighbours(&self, id: crate::NodeId) -> (bool, bool) {
@@ -1576,9 +1613,17 @@ impl BaseDocument {
                 }
             }
             let nested = is_multicol_style(&style) && !style.writing_mode.is_vertical();
+            let mut cells = Vec::new();
+            if found.nested_breakable && child.flags.is_table_root() && style.clone_float() == Float::None {
+                self.multicol_cells(child_id, child_top, 0, &mut cells);
+            }
             if nested && found.nested_breakable && style.clone_float() == Float::None && fragmentable_but_multicol(child, &style) {
                 // pyro: fragmented by the columns (`Breaks::nested`): breakable through.
                 found.nested.push((child_id, child_top));
+            } else if !cells.is_empty() {
+                // pyro: a table with multi-column cells is fragmented with them (Chromium
+                // fragments tables): breakable through.
+                found.nested.append(&mut cells);
             } else if fragmentable(child, &style) {
                 if style.get_box().break_inside != BreakWithin::Auto {
                     found.strict.push((child_top, child_bottom));
