@@ -53,6 +53,13 @@ pub trait Fetcher: Send + Sync + 'static {
     fn defers(&self, _url: &str, _options: &blitz_traits::net::FetchOptions) -> bool {
         false
     }
+    /// pyro: whether `url` (fetched with `options`) came more than `period` after its document
+    /// first needed it, by the document's timeline (its layout's and its screenshots' alike):
+    /// a `font-display: optional` font is then not used (`NetHandler::block_period`). `None`
+    /// (the default): not known, the font is used.
+    fn late(&self, _url: &str, _options: &blitz_traits::net::FetchOptions, _period: std::time::Duration) -> Option<bool> {
+        None
+    }
     fn fetch_final(
         &self,
         url: String,
@@ -175,6 +182,18 @@ impl NetProvider for Provider {
                 .and_then(|s| s.get(&url).map(|text| Bytes::from(utf8_sheet(text))))
                 .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&key).cloned()))
         };
+        // pyro: a `font-display: optional` font that came after its block period is a failed load
+        // (`NetHandler::block_period`, by the document's timeline: `Fetcher::late`).
+        let period = handler.block_period();
+        let late_fetcher = period.and_then(|_| self.fetcher.lock().ok().map(|f| f.clone()));
+        let late = {
+            let (url, options) = (url.clone(), options.clone());
+            move || match (period, &late_fetcher) {
+                (Some(period), Some(fetcher)) => fetcher.late(&url, &options, period) == Some(true),
+                _ => false,
+            }
+        };
+        let ready = ready.map(|bytes| if late() { Bytes::new() } else { bytes });
         if let Some(bytes) = ready {
             let (final_url, opaque) =
                 self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| (url.clone(), false));
@@ -206,7 +225,7 @@ impl NetProvider for Provider {
                             c.insert(key, bytes.clone());
                         }
                     }
-                    (bytes, final_url, opaque)
+                    if late() { (Bytes::new(), final_url, opaque) } else { (bytes, final_url, opaque) }
                 }
                 // Empty bytes: Blitz's handlers treat it as a failed load.
                 Err(_) => (Bytes::new(), url.clone(), false),

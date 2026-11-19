@@ -37086,7 +37086,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Carries `@font-face` descriptors from CSS parsing through to font
  /// registration so `parley::Collection::register_fonts` can alias the bytes
  /// under the `font-family` declared in CSS rather than whatever family name
-@@ -52,16 +110,44 @@
+@@ -52,16 +110,47 @@
      /// parses this as a range; we record the lower bound, which equals the
      /// upper bound in the common single-value case.
      pub weight: Option<f32>,
@@ -37118,6 +37118,9 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +    /// composite font, such as the per-subset faces of a Google Fonts family)
 +    /// last rule first, whichever face finished loading first.
 +    pub precedence: u64,
++    /// pyro: `font-display: optional`: a font arriving after the face's block period is not
++    /// swapped in (CSS Fonts 4 § 4.10, `NetHandler::block_period`).
++    pub optional: bool,
  }
  
  #[derive(Clone, Debug)]
@@ -37133,7 +37136,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// Stylesheet loaded for an `@import` rule, to be attached to the rule on the document thread
      ImportedCss(ServoArc<Locked<ImportRule>>, ServoArc<Stylesheet>),
      Font(Bytes, FontFaceOverrides),
-@@ -140,6 +226,8 @@
+@@ -140,6 +229,8 @@
      pub guard: SharedRwLock,
      pub net_provider: Arc<dyn NetProvider>,
      pub abort_signal: Option<AbortSignal>,
@@ -37142,7 +37145,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  
  impl NetHandler for ResourceHandler<StylesheetHandler> {
-@@ -166,6 +254,7 @@
+@@ -166,6 +257,7 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.data.abort_signal.clone(),
                  import_depth: 0,
@@ -37150,7 +37153,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }),
              None, // error_reporter
              QuirksMode::NoQuirks,
-@@ -173,11 +262,22 @@
+@@ -173,11 +265,22 @@
  
          self.respond(
              resolved_url,
@@ -37174,7 +37177,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Maximum depth of nested `@import` rules. Imports nested deeper than this
  /// are refused, preventing unbounded recursion (e.g. a stylesheet whose
  /// resolved `@import` URL yields another stylesheet importing in turn, with
-@@ -194,6 +294,9 @@
+@@ -194,6 +297,9 @@
      /// Depth of `@import` nesting for the stylesheet this loader is parsing
      /// (0 for a top-level stylesheet)
      pub(crate) import_depth: usize,
@@ -37184,7 +37187,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  impl ServoStylesheetLoader for StylesheetLoader {
      fn request_stylesheet(
-@@ -224,10 +327,22 @@
+@@ -224,10 +330,22 @@
          };
  
          let url = import.url.url().unwrap().clone();
@@ -37208,7 +37211,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              ResourceHandler::boxed(
                  self.tx.clone(),
                  self.doc_id,
-@@ -262,12 +377,26 @@
+@@ -262,12 +380,26 @@
  
  impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
@@ -37236,7 +37239,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -288,6 +417,7 @@
+@@ -288,6 +420,7 @@
              &self.shell_provider,
              &self.data.lock.read(),
              self.data.loader.abort_signal.as_ref(),
@@ -37244,7 +37247,18 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          );
  
          let import_rule = self.data.import_rule.clone();
-@@ -387,6 +517,7 @@
+@@ -300,6 +433,10 @@
+     overrides: FontFaceOverrides,
+ }
+ impl NetHandler for ResourceHandler<FontFaceHandler> {
++    fn block_period(&self) -> Option<std::time::Duration> {
++        // (100 ms, as Blink's.)
++        self.data.overrides.optional.then(|| std::time::Duration::from_millis(100))
++    }
+     fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
+         let result = self.data.parse(bytes);
+         self.respond(resolved_url, result)
+@@ -387,6 +524,7 @@
      shell_provider: &Arc<dyn ShellProvider>,
      read_guard: &SharedRwLockReadGuard,
      abort_signal: Option<&AbortSignal>,
@@ -37252,7 +37266,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  ) {
      fetch_font_face_rules(
          sheet.contents(read_guard).rules(read_guard).iter(),
-@@ -397,6 +528,7 @@
+@@ -397,6 +535,7 @@
          shell_provider,
          read_guard,
          abort_signal,
@@ -37260,7 +37274,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      )
  }
  
-@@ -409,10 +541,45 @@
+@@ -409,10 +548,45 @@
      node_id: Option<NodeId>,
      network_provider: &Arc<dyn NetProvider>,
      shell_provider: &Arc<dyn ShellProvider>,
@@ -37308,7 +37322,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +588,70 @@
+@@ -421,13 +595,71 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
@@ -37346,6 +37360,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +                    }),
 +                    unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
 +                    precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
++                    optional: matches!(descriptor.font_display, Some(style::font_face::FontDisplay::Optional)),
 +                    face_metrics: {
 +                        // `normal` (no override) computes to -1.
 +                        let metric = |value: &Option<style::values::specified::font::MetricsOverride>| {
@@ -37381,7 +37396,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -450,6 +674,11 @@
+@@ -450,6 +682,11 @@
          })
  }
  
@@ -37393,7 +37408,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +697,11 @@
+@@ -468,6 +705,11 @@
              return None;
          };
  
@@ -37405,7 +37420,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +798,10 @@
+@@ -564,7 +806,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -37417,7 +37432,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +822,144 @@
+@@ -585,37 +830,144 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -37461,7 +37476,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 -        let result = self.data.parse(bytes);
 -        self.respond(resolved_url, result)
 +        self.bytes_from(resolved_url.clone(), resolved_url, false, bytes)
-+    }
+     }
 +
 +    /// pyro: the response's tainting, as the network saw it, decides an opaque image (a no-cors
 +    /// redirect chain through another origin is opaque though it ends at the document's); the
@@ -37483,9 +37498,9 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        // pyro: an image fetched with CORS (or other options) answers under its key.
 +        let key = self.data.options.cache_key(&resolved_url);
 +        self.respond(key, result)
-     }
- }
- 
++    }
++}
++
 +/// pyro: decoded raster images by encoded bytes, for every document
 +/// of the process (a template's logo decoded once, not once per document):
 +/// (encoded bytes, width, height, RGBA8 pixels). Bounded at 64 images and
@@ -37499,8 +37514,8 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +    let mut h = std::hash::DefaultHasher::new();
 +    bytes.hash(&mut h);
 +    h.finish()
-+}
-+
+ }
+ 
  impl ImageHandler {
 -    fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
 -        let image_err = match image::ImageReader::new(Cursor::new(&bytes))
@@ -37577,7 +37592,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +968,46 @@
+@@ -624,12 +976,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -37627,7 +37642,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1027,62 @@
+@@ -649,6 +1035,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -37690,7 +37705,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1234,11 @@
+@@ -800,3 +1242,11 @@
          );
      }
  }

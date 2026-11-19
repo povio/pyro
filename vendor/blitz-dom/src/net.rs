@@ -138,6 +138,9 @@ pub struct FontFaceOverrides {
     /// composite font, such as the per-subset faces of a Google Fonts family)
     /// last rule first, whichever face finished loading first.
     pub precedence: u64,
+    /// pyro: `font-display: optional`: a font arriving after the face's block period is not
+    /// swapped in (CSS Fonts 4 § 4.10, `NetHandler::block_period`).
+    pub optional: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -430,6 +433,10 @@ struct FontFaceHandler {
     overrides: FontFaceOverrides,
 }
 impl NetHandler for ResourceHandler<FontFaceHandler> {
+    fn block_period(&self) -> Option<std::time::Duration> {
+        // (100 ms, as Blink's.)
+        self.data.overrides.optional.then(|| std::time::Duration::from_millis(100))
+    }
     fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
         let result = self.data.parse(bytes);
         self.respond(resolved_url, result)
@@ -620,6 +627,7 @@ pub(crate) fn fetch_font_face_rules<'a>(
                     }),
                     unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
                     precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
+                    optional: matches!(descriptor.font_display, Some(style::font_face::FontDisplay::Optional)),
                     face_metrics: {
                         // `normal` (no override) computes to -1.
                         let metric = |value: &Option<style::values::specified::font::MetricsOverride>| {

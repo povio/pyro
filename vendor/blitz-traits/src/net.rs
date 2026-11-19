@@ -39,6 +39,14 @@ pub trait NetProvider: Send + Sync + 'static {
 pub trait NetHandler: Send + Sync + 'static {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes);
 
+    /// pyro: how long after the first request for the resource its response is still of use,
+    /// for a font of a `font-display: optional` face (its block period): a provider delivers a
+    /// response that came later as a failed load to such handlers (CSS Fonts 4 § 4.10: the font
+    /// is not swapped in). `None` (the default): no limit.
+    fn block_period(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     /// Called when fetching fails, including HTTP error statuses and cancellation.
     fn error(self: Box<Self>, _url: String, _error: String) {}
 

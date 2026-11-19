@@ -218,6 +218,14 @@ fn layout_key(
 }
 
 impl Fetcher for PageFetcher {
+    /// pyro: by the page document's timeline, which its layout keeps (`SubresourceBodies`).
+    fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
+        let (key, _) = layout_key(url, options, &self.client, &self.documents);
+        let client = options.client.as_deref().unwrap_or(&self.client);
+        let document = client.split_once('#').map(|(_, loader)| loader)?;
+        self.bodies.as_ref()?.late_for(document, &key, period)
+    }
+
     /// pyro: an image the document never fetched itself, asked for after its `load` (a style
     /// change since): Chrome paints it once it arrives, and a capture does not wait for it. One
     /// its layout fetched (or is fetching), or one in its list of available images, is waited for.

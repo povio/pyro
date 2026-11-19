@@ -245,6 +245,11 @@ pub trait SubresourceLoader: Send + Sync {
     fn document(&self) -> Option<String> {
         None
     }
+    /// pyro: this document itself (its loader id, unique per document), for the timeline of
+    /// what it needed and when (`SubresourceBodies::late_for`). `None`: not tracked.
+    fn timeline_document(&self) -> Option<String> {
+        None
+    }
     /// pyro: this document's layout asked for the font at `url` (its fetch may be shared with the
     /// identity's other documents).
     fn font_asked(&self, _url: &str) {}
@@ -279,9 +284,39 @@ pub struct SubresourceBodies {
     /// pyro: the URLs whose no-cors response's tainting was opaque (a redirect chain through
     /// another origin), so a body reused from here keeps it.
     opaque: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// pyro: when each body arrived, by key, and when each document (by its loader id) first
+    /// needed it: one timeline for a document's layout and its screenshots
+    /// ([`Self::late_for`], `font-display: optional`).
+    came: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+    needed: std::sync::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
 }
 
 impl SubresourceBodies {
+    /// pyro: the document `document` needs the body `key` (now, unless it did before).
+    pub fn needed(&self, document: &str, key: &str) {
+        let mut needed = self.needed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        needed.entry((document.to_owned(), key.to_owned())).or_insert_with(std::time::Instant::now);
+    }
+
+    /// pyro: the body `key` arrived (now, unless it did before).
+    pub fn came(&self, key: &str) {
+        let mut came = self.came.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        came.entry(key.to_owned()).or_insert_with(std::time::Instant::now);
+    }
+
+    /// pyro: whether the body `key` came more than `period` after the document `document` first
+    /// needed it (or has not come and that long has passed): a `font-display: optional` font it
+    /// does not swap in. `None` when the document never asked for it here.
+    pub fn late_for(&self, document: &str, key: &str, period: std::time::Duration) -> Option<bool> {
+        let needed = *self
+            .needed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(document.to_owned(), key.to_owned()))?;
+        let came = self.came.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(key).copied();
+        Some(came.unwrap_or_else(std::time::Instant::now).saturating_duration_since(needed) > period)
+    }
+
     /// The bodies by URL (what a load in flight or failed leaves is the
     /// embedder's loading policy).
     pub fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>> {

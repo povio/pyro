@@ -110,6 +110,10 @@ impl LocalFiles {
         if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
             return None;
         }
+        // pyro: when this document first needed it (`SubresourceBodies::late_for`).
+        if let Some(document) = loader.timeline_document() {
+            bodies.needed(&document, &key);
+        }
         {
             let mut cache = bodies.lock();
             match cache.get(&key) {
@@ -152,6 +156,7 @@ impl LocalFiles {
             Box::new(move |result| match result {
                 Ok(body) if !body.is_empty() => {
                     fetch.bodies.lock().insert(fetch.key.clone(), Arc::new(body));
+                    fetch.bodies.came(&fetch.key);
                     fetch.bodies.arrived();
                 }
                 // An empty body counts as a failure (nothing to lay out with).
@@ -172,6 +177,23 @@ impl LocalFiles {
 }
 
 impl Fetcher for LocalFiles {
+    /// pyro: by the document's timeline in its identity's bodies.
+    fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
+        let loader = self.loader.as_ref()?;
+        let document = loader.timeline_document()?;
+        let options = SubresourceOptions {
+            crossorigin: options.cors.map(|credentials| match credentials {
+                pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
+                pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
+            }),
+            integrity: options.integrity.clone(),
+            referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
+            referrer_policy: options.referrer_policy.clone(),
+        };
+        let key = options.body_key(url, loader.document().as_deref());
+        loader.bodies().late_for(&document, &key, period)
+    }
+
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         self.load(url, &SubresourceOptions::default(), done)
     }

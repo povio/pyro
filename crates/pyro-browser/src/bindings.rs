@@ -84,6 +84,11 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
         Some(self.document.clone())
     }
 
+    /// pyro: the document's loader id, as the page's clients name it (`document_client`).
+    fn timeline_document(&self) -> Option<String> {
+        Some(self.loader.0.clone())
+    }
+
     fn font_asked(&self, url: &str) {
         if let Ok(mut asked) = self.asked_fonts.lock() {
             asked.insert(url.to_owned());
