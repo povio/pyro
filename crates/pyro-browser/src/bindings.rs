@@ -89,6 +89,54 @@ impl PageHooks for Hooks {
         }
     }
 
+    fn activation_peers(&self) -> Vec<Rc<pyro_webapi::PageDom>> {
+        let Some(host) = self.frames.upgrade() else { return Vec::new() };
+        if !host.matches(self.page, &self.loader) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        // Ancestors, whatever their origin.
+        let mut key = self.page;
+        loop {
+            let parent = host.parent_key(key);
+            if parent == key {
+                break;
+            }
+            out.extend(host.page_dom(parent));
+            key = parent;
+        }
+        // Descendants of the same origin as this document.
+        let Some(me) = host.frame(self.page) else { return out };
+        let same = |f: &crate::Frame| f.origin == me.origin && (f.origin != "null" || f.opaque_origin == me.opaque_origin);
+        let mut stack: Vec<FrameKey> = host.child_keys(self.page).into_iter().collect();
+        while let Some(child) = stack.pop() {
+            if let Some(f) = host.frame(child) {
+                if same(&f) {
+                    out.extend(f.page_dom.clone());
+                }
+            }
+            stack.extend(host.child_keys(child));
+        }
+        out
+    }
+
+    fn frame_tree(&self) -> Vec<Rc<pyro_webapi::PageDom>> {
+        let Some(host) = self.frames.upgrade() else { return Vec::new() };
+        if !host.matches(self.page, &self.loader) {
+            return Vec::new();
+        }
+        let top = FrameKey { page: self.page.page, child: None };
+        let mut out = Vec::new();
+        let mut stack = vec![top];
+        while let Some(key) = stack.pop() {
+            if key != self.page {
+                out.extend(host.page_dom(key));
+            }
+            stack.extend(host.child_keys(key));
+        }
+        out
+    }
+
     fn frame_detached(&self) -> bool {
         // Only a child frame can leave its page.
         self.page.child.is_some()

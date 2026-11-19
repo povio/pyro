@@ -864,3 +864,47 @@ fn transformed_frame_quads_and_input_share_content_coordinates() {
         assert_eq!(eval_in(&mut h, context, "hits"), json!([[330, 115, true]]), "{transform}");
     }
 }
+
+/// HTML user activation across frames: a click in a child activates its parent too ("activation
+/// notification" reaches ancestors), and one document consuming the activation consumes it in
+/// every document of the frame tree, so the same click cannot gate two requests in two frames.
+#[test]
+fn user_activation_reaches_ancestors_and_is_consumed_across_frames() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let html = "<!doctype html><body style='margin:0;height:100vh'>child";
+    let expression = format!(
+        "(() => {{ document.body.style.margin = '0'; const f = document.createElement('iframe'); f.id = 'act'; f.name = 'act'; \
+           f.allowFullscreen = true; f.style.cssText = 'border:0;width:300px;height:150px'; f.srcdoc = {}; document.body.appendChild(f); }})()",
+        json!(html)
+    );
+    let mut events = h.page_with_events("Runtime.evaluate", json!({"expression":expression}));
+    events.extend(h.run_for(150));
+    let frame = child(&mut h, "act")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    let request = "document.body.requestFullscreen().then(() => document.exitFullscreen().then(() => 'granted'), e => e.name)";
+    let fullscreen = |h: &mut Harness, context: Option<i64>| {
+        let mut params = json!({"expression":request,"awaitPromise":true,"returnByValue":true});
+        if let Some(context) = context {
+            params["contextId"] = json!(context);
+        }
+        h.page("Runtime.evaluate", params)["result"]["result"]["value"].clone()
+    };
+    let click = |h: &mut Harness| {
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            let r = h.page("Input.dispatchMouseEvent", json!({"type":kind,"x":50,"y":50,"button":"left","buttons":buttons,"clickCount":1}));
+            assert_eq!(r["result"], json!({}), "{r}");
+        }
+    };
+    // No activation yet.
+    assert_eq!(fullscreen(&mut h, None), json!("TypeError"));
+    // A click in the child: the parent may use it...
+    click(&mut h);
+    assert_eq!(fullscreen(&mut h, None), json!("granted"));
+    // ...and having consumed it, the child cannot use it again.
+    assert_eq!(fullscreen(&mut h, Some(context)), json!("TypeError"));
+    // The other way round: the child uses a fresh click, then the parent has none left.
+    click(&mut h);
+    assert_eq!(fullscreen(&mut h, Some(context)), json!("granted"));
+    assert_eq!(fullscreen(&mut h, None), json!("TypeError"));
+}

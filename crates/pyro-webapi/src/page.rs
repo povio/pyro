@@ -580,6 +580,16 @@ pub trait PageHooks {
     fn frame_detached(&self) -> bool {
         false
     }
+    /// HTML "activation notification": the documents an activation of this one activates too,
+    /// besides itself: its ancestors' and its same-origin descendants' (in the frame tree).
+    fn activation_peers(&self) -> Vec<Rc<PageDom>> {
+        Vec::new()
+    }
+    /// HTML "consume user activation": every other document of this document's top-level frame
+    /// tree, whose transient activation is consumed with this one's.
+    fn frame_tree(&self) -> Vec<Rc<PageDom>> {
+        Vec::new()
+    }
     /// Observation-only (no JS): this document still belongs to a live owner
     /// frame/loader. Unlike is_focused, unselected frames also return true.
     /// Checked before a request can cancel a shared transition token.
@@ -1149,6 +1159,9 @@ impl PageDom {
     /// play unmuted.
     pub fn notify_user_activation(&self) {
         self.sticky_activation.set(true);
+        for peer in self.hooks().map(|h| h.activation_peers()).unwrap_or_default() {
+            peer.sticky_activation.set(true);
+        }
     }
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
@@ -1170,17 +1183,29 @@ impl PageDom {
     /// press): sticky activation, and transient activation for the next
     /// five seconds (Chrome's duration). A CDP evaluation's `userGesture`
     /// is sticky only: automation clients poll with it while a page loads.
+    /// The activation reaches the document's ancestors and same-origin descendants too
+    /// ([`PageHooks::activation_peers`]): a parent may use the activation of an input in its child.
     pub(crate) fn notify_input_activation(&self) {
+        let now = Some(std::time::Instant::now());
         self.sticky_activation.set(true);
-        self.input_activation.set(Some(std::time::Instant::now()));
+        self.input_activation.set(now);
+        for peer in self.hooks().map(|h| h.activation_peers()).unwrap_or_default() {
+            peer.sticky_activation.set(true);
+            peer.input_activation.set(now);
+        }
     }
     /// HTML "transient activation": trusted input within the last five seconds.
     pub fn has_transient_activation(&self) -> bool {
         self.input_activation.get().is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5))
     }
-    /// HTML "consume user activation": the transient activation ends (sticky activation stays).
+    /// HTML "consume user activation": the transient activation ends (sticky activation stays), in
+    /// every document of the top-level frame tree ([`PageHooks::frame_tree`]), so that another
+    /// frame cannot spend the same activation again.
     pub(crate) fn consume_transient_activation(&self) {
         self.input_activation.set(None);
+        for other in self.hooks().map(|h| h.frame_tree()).unwrap_or_default() {
+            other.input_activation.set(None);
+        }
     }
 
     /// HTML "plan to navigate" for a submitted form: a task navigates, and
