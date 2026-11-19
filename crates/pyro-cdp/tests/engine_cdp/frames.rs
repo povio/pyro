@@ -1015,3 +1015,32 @@ fn moving_an_iframe_reloads_it_unless_moved_from_its_own_load() {
         json!({"calls": 1, "parentLoadedAfter": 1, "selfBody": "", "plainMoveLoads": 2})
     );
 }
+
+/// Fullscreen delegation through a parent that inherited its origin: a nested srcdoc frame with
+/// `allow="fullscreen"` ('src') inside a srcdoc frame of an http page has that page's origin as its
+/// declared origin (its about:srcdoc parent's inherited one), so it may use fullscreen.
+#[test]
+fn fullscreen_delegates_through_an_inherited_origin_parent() {
+    let (addr, server) = serve_html(1, "<!doctype html><body>top");
+    let mut h = Harness::new();
+    enable(&mut h);
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    server.join().unwrap();
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"new Promise((done) => {
+            const f = document.createElement('iframe');
+            f.allowFullscreen = true;
+            f.srcdoc = "<iframe allow=fullscreen srcdoc='<p>in'></iframe><iframe srcdoc='<p>plain'></iframe>";
+            document.body.appendChild(f);
+            setTimeout(() => {
+              const [a, b] = [f.contentWindow.frames[0], f.contentWindow.frames[1]];
+              done([f.contentDocument.fullscreenEnabled, a.document.fullscreenEnabled, b.document.fullscreenEnabled]);
+            }, 400);
+          })"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!([true, true, false]), "{r}");
+}

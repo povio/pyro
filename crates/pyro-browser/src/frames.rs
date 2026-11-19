@@ -718,7 +718,7 @@ impl FrameHost {
             dom_content_loaded: false,
             loaded: false,
             sandbox,
-            fullscreen_container: fullscreen_container(&self.dom.borrow(), node),
+            fullscreen_container: fullscreen_container(&self.dom.borrow(), node, (ancestor.origin != "null").then_some(ancestor.origin.as_str())),
             unreachable: None,
         };
         self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
@@ -898,13 +898,15 @@ pub(crate) struct FullscreenContainer {
     pub declared_origin: Option<String>,
 }
 
-pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId) -> FullscreenContainer {
+/// `parent_origin`: the container document's origin as its frame has it (an about:blank or
+/// about:srcdoc document's is the origin it inherited, which its URL does not tell), `None` if opaque.
+pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId, parent_origin: Option<&str>) -> FullscreenContainer {
     let attr = |name: &str| dom.get_attribute(owner, name).ok().flatten().map(str::to_owned);
     let tuple = |url: &url::Url| {
         let origin = url.origin();
         origin.is_tuple().then(|| origin.ascii_serialization())
     };
-    let parent_origin = || dom.node_document(owner).ok().and_then(|d| dom.document_url_parsed(d).ok().flatten()).and_then(tuple);
+    let parent_origin = || parent_origin.map(str::to_owned);
     let sandboxed = attr("sandbox").is_some_and(|v| !v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("allow-same-origin")));
     let declared_origin = if sandboxed {
         None

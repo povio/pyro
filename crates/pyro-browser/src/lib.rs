@@ -1810,8 +1810,11 @@ impl Browser {
         // (The document now shown keeps the policy it was made with.)
         let container = self.doc(page).and_then(|d| d.main_frame.owner).and_then(|owner| {
             let host = self.page(page.page).map(|p| p.frames.clone())?;
+            // The container document's origin from its frame: an about:blank/srcdoc parent's
+            // inherited one.
+            let parent_origin = host.frame(host.parent_key(page)).map(|f| f.origin).filter(|o| o != "null");
             let dom = host.dom.borrow();
-            Some(frames::fullscreen_container(&dom, owner))
+            Some(frames::fullscreen_container(&dom, owner, parent_origin.as_deref()))
         });
         if let (Some(container), Some(mut state)) = (container, self.doc_mut(page)) {
             state.main_frame.fullscreen_container = container;
