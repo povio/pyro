@@ -212,6 +212,27 @@ impl Fetcher for LocalFiles {
         let options = SubresourceOptions { crossorigin: Some("anonymous".to_owned()), ..Default::default() };
         self.load(url, &options, done)
     }
+
+    /// pyro: with the response's URL after redirects as the document's network recorded it, so a
+    /// redirected sheet resolves its URLs as in screenshots.
+    fn fetch_final(
+        &self,
+        url: String,
+        options: &pyro_render::FetchOptions,
+        done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
+    ) {
+        let bodies = self.loader.as_ref().map(|l| l.bodies().clone());
+        let asked = url.clone();
+        let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> = Box::new(move |result| {
+            let url = bodies.as_ref().map_or_else(|| asked.clone(), |b| b.final_url(&asked));
+            done(result.map(|body| pyro_render::Fetched { body, url, opaque: false }))
+        });
+        if options.is_default() {
+            self.fetch(url, done)
+        } else {
+            self.fetch_with(url, options, done)
+        }
+    }
 }
 
 impl LocalFiles {

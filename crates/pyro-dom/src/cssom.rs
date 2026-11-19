@@ -365,6 +365,23 @@ impl ImportRequest {
     }
 }
 
+/// pyro: the key of an import's request (its absolute URL and its modifiers): the sheet a request
+/// with other modifiers loaded (or failed to) is not this one's.
+pub fn import_key(url: &str, import: &ImportRequest) -> String {
+    if !import.is_modified() {
+        return url.to_owned();
+    }
+    format!(
+        "{url} cross-origin={:?} integrity={:?} referrer-policy={:?}",
+        import.cross_origin, import.integrity, import.referrer_policy
+    )
+}
+
+/// pyro: the request of an `@import` rule whose prelude (what follows `@import`) is `prelude`.
+pub fn import_request(prelude: &str) -> Option<ImportRequest> {
+    leading_import_requests(&format!("@import {prelude};")).into_iter().next()
+}
+
 /// [`leading_imports`] with each import's request URL modifiers.
 pub fn leading_import_requests(text: &str) -> Vec<ImportRequest> {
     let mut p = Parser::new(text);

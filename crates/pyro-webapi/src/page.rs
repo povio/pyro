@@ -351,7 +351,9 @@ pub struct PageDom {
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
     /// The text of each sheet a `<style>` imported, by its absolute URL (for
     /// `CSSImportRule.styleSheet`); the embedder provides it as it loads.
-    pub(crate) imported_sheets: RefCell<FxHashMap<String, String>>,
+    /// pyro: by the import's request key (`pyro_dom::cssom::import_key`: its URL and modifiers),
+    /// the sheet's URL after redirects and its text.
+    pub(crate) imported_sheets: RefCell<FxHashMap<String, (String, String)>>,
     /// The constructed sheets each document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
@@ -2828,9 +2830,11 @@ impl PageDom {
 
 impl PageDom {
     /// A sheet a `<style>` imported loaded: `CSSImportRule.styleSheet` lists
-    /// its rules. `url` is the absolute URL the rule names (and, after a
-    /// redirect, the final one too).
-    pub fn provide_imported_sheet(&self, url: &str, text: &str) {
-        self.imported_sheets.borrow_mut().insert(url.to_owned(), text.to_owned());
+    /// its rules. pyro: `key` is the import's request (`pyro_dom::cssom::import_key`: the absolute
+    /// URL the rule names and its request URL modifiers; a request with other modifiers, which may
+    /// have failed its CORS or integrity check, is another), `final_url` the sheet's URL after
+    /// redirects, which its own URLs resolve against.
+    pub fn provide_imported_sheet(&self, key: &str, final_url: &str, text: &str) {
+        self.imported_sheets.borrow_mut().insert(key.to_owned(), (final_url.to_owned(), text.to_owned()));
     }
 }

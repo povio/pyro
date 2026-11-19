@@ -1337,6 +1337,7 @@ impl Browser {
         };
         let cors = options.crossorigin.is_some();
         let integrity = options.integrity;
+        let asked = request.url.clone();
         let Some(resource_loader) = self.loader_for(frame) else {
             done(Err("no resource loader".into()));
             return;
@@ -1345,7 +1346,11 @@ impl Browser {
         resource_loader.fetch(
             self,
             request,
-            Box::new(move |_, result| {
+            Box::new(move |b, result| {
+                // pyro: the layouts resolve a sheet's URLs against its URL after redirects.
+                if let (Ok(r), Some(p)) = (result.as_ref(), b.page(frame.page)) {
+                    p.frames.layout_bodies.set_final_url(&asked, &r.url);
+                }
                 done(result.and_then(|r| {
                     // pyro: a response that fails its integrity check (`integrity()`) is an error.
                     if let Some(message) = loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {

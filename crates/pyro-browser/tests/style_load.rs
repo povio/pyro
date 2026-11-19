@@ -195,3 +195,49 @@ fn an_import_rule_exposes_the_sheet_it_loaded() {
         "true|http://site.test/a.css|true|true||screen|2|p { color: green; }|http://site.test/b.css|q { }"
     );
 }
+
+/// Serves through a static loader, answering `/a.css` as if redirected to `/dir/a.css` (the
+/// response's URL).
+struct Redirected(Rc<StaticLoader>);
+impl pyro_browser::ResourceLoader for Redirected {
+    fn fetch(&self, browser: &mut pyro_browser::Browser, request: pyro_browser::FetchRequest, done: pyro_browser::FetchDone) {
+        let redirected = request.url.ends_with("/a.css");
+        self.0.fetch(
+            browser,
+            request,
+            Box::new(move |b, result| {
+                done(b, result.map(|mut r| {
+                    if redirected {
+                        r.url = "http://site.test/dir/a.css".into();
+                    }
+                    r
+                }))
+            }),
+        );
+    }
+}
+
+/// CSSOM keeps an import's sheet under its request (URL and request URL modifiers): an
+/// `@import` of the same URL whose `integrity()` fails has no sheet, though another import of
+/// that URL loaded one (they shared one entry by URL). And an imported sheet that was redirected
+/// resolves its own imports against its URL after redirects (security review cycle 1, MEDIUM 5).
+#[test]
+fn css_import_rules_keep_their_own_request_and_final_url() {
+    let (mut thread, page, loader) = setup(
+        "<style id=s>@import url(\"a.css\"); @import url(\"a.css\" integrity(\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"));</style>",
+    );
+    loader.insert("http://site.test/a.css", "text/css", "@import \"b.css\"; p { color: red }", Duration::ZERO);
+    loader.insert("http://site.test/dir/b.css", "text/css", "p { margin: 0 }", Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Redirected(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let rules = eval(
+        &thread,
+        page,
+        "const r = document.getElementById('s').sheet.cssRules; \
+         [r[0].styleSheet !== null, r[1].styleSheet === null, r[0].styleSheet && r[0].styleSheet.href].join(',')",
+    );
+    assert_eq!(rules, "true,true,http://site.test/dir/a.css");
+    assert!(loader.log.borrow().iter().any(|u| u == "http://site.test/dir/b.css"), "{:?}", loader.log.borrow());
+    assert!(!loader.log.borrow().iter().any(|u| u == "http://site.test/b.css"), "{:?}", loader.log.borrow());
+}

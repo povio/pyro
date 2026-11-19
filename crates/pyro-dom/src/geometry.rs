@@ -235,6 +235,9 @@ pub trait SubresourceLoader: Send + Sync {
 pub struct SubresourceBodies {
     bodies: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>>,
     arrivals: std::sync::atomic::AtomicU64,
+    /// pyro: the URL after redirects of a body's response, by the URL asked for, where they
+    /// differ (a sheet resolves its URLs against it).
+    finals: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl SubresourceBodies {
@@ -260,6 +263,22 @@ impl SubresourceBodies {
     /// page's back: they take it from here. The documents laid out without
     /// it (an empty entry, the embedder's load in flight) or with another
     /// body lay out again.
+    /// pyro: the response for `url` came from `final_url` after redirects.
+    pub fn set_final_url(&self, url: &str, final_url: &str) {
+        let mut finals = self.finals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if url == final_url {
+            finals.remove(url);
+        } else {
+            finals.insert(url.to_owned(), final_url.to_owned());
+        }
+    }
+
+    /// pyro: the URL after redirects of the response for `url` (`url` itself unless redirected).
+    pub fn final_url(&self, url: &str) -> String {
+        let finals = self.finals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        finals.get(url).cloned().unwrap_or_else(|| url.to_owned())
+    }
+
     pub fn provide(&self, url: &str, body: &[u8]) {
         if body.is_empty() {
             return;

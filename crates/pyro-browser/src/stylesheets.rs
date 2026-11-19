@@ -541,6 +541,7 @@ impl Browser {
         let cors = import.cross_origin.is_some();
         let integrity = import.integrity.clone();
         let modified = import.is_modified();
+        let request_key = pyro_dom::cssom::import_key(&url, &import);
         let document_origin = self.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
             let result = result.and_then(|r| match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &document_origin) {
@@ -557,7 +558,7 @@ impl Browser {
                 &finish_url,
                 &environment,
                 result,
-                modified,
+                &request_key,
             );
         };
         let Some(resource_loader) = self.loader_for(page) else {
@@ -611,8 +612,9 @@ impl Browser {
         url: &str,
         environment: &str,
         result: Result<Resource, String>,
-        modified: bool,
+        request_key: &str,
     ) {
+        let modified = request_key != url;
         let ok = result.as_ref().is_ok_and(|r| (200..300).contains(&r.status));
         {
             let Some(mut doc) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
@@ -636,10 +638,8 @@ impl Browser {
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
             // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
             if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
-                bindings.provide_imported_sheet(url, &text);
-                if r.url != url {
-                    bindings.provide_imported_sheet(&r.url, &text);
-                }
+                // pyro: under its request (URL and modifiers), at its URL after redirects.
+                bindings.provide_imported_sheet(request_key, &r.url, &text);
             }
             // The page's layouts take this sheet rather than fetching it
             // again (they read `file:` and `data:` URLs themselves), decoded
@@ -647,6 +647,7 @@ impl Browser {
             // (Not a modified import's: the layouts key its request apart, by its modifiers.)
             if let Some(p) = self.page(page.page).filter(|_| url.starts_with("http") && !modified) {
                 p.frames.layout_bodies.provide(url, &pyro_dom::cssom::stylesheet_utf8_bytes(&text));
+                p.frames.layout_bodies.set_final_url(url, &r.url);
             }
             if depth < MAX_IMPORT_DEPTH {
                 let base = url::Url::parse(&r.url).ok();

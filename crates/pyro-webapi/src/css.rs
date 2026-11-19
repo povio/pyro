@@ -1329,10 +1329,13 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
             return Ok(o.value());
         }
         let Some((page, url)) = import_url(r) else { return Ok(s.null()) };
-        let Some(text): Option<String> = page.imported_sheets.borrow().get(&url).cloned() else { return Ok(s.null()) };
+        // pyro: the sheet of this rule's request (URL and modifiers), at its URL after redirects.
+        let import = pyro_dom::cssom::import_request(&rule_prelude(r)).unwrap_or_default();
+        let request = pyro_dom::cssom::import_key(&url, &import);
+        let Some((final_url, text)) = page.imported_sheets.borrow().get(&request).cloned() else { return Ok(s.null()) };
         let media = media_text(&pyro_dom::cssom::import_split(&rule_prelude(r)).1);
         let rule = RuleData { owner: r.owner.hold()?, node: r.node.clone() };
-        let sheet = Constructed::imported(&page, url, &text, media, rule);
+        let sheet = Constructed::imported(&page, final_url, &text, media, rule);
         Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))?.value())
     });
     // The condition of `supports(...)`, or null.
@@ -1825,15 +1828,8 @@ pub enum MediaOwner {
 
 /// The URL an `@import` rule names, as written.
 fn import_href(r: &RuleData) -> String {
-    let prelude = rule_prelude(r);
-    let mut p = cssparser::Parser::new(&prelude);
-    match p.next() {
-        Ok(cssparser::Token::QuotedString(v)) | Ok(cssparser::Token::UnquotedUrl(v)) => v.to_string(),
-        Ok(cssparser::Token::Function(f)) if f.eq_ignore_ascii_case("url") => p
-            .parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(cssparser::ParseError::<()>::from))
-            .unwrap_or_default(),
-        _ => String::new(),
-    }
+    // pyro: a `url()` with request URL modifiers too.
+    pyro_dom::cssom::import_request(&rule_prelude(r)).map(|import| import.url).unwrap_or_default()
 }
 
 /// The page and absolute URL of the sheet an `@import` rule loads: its href
