@@ -5589,7 +5589,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-19 02:29:41
++++ b/values/specified/box.rs	2026-11-19 14:01:34
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -5652,7 +5652,27 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayInside::FlowRoot => true,
              _ => false,
          }
-@@ -239,7 +240,6 @@
+@@ -222,9 +223,18 @@
+     // Our u16 bits are used as follows: LOOOOOOOIIIIIIII
+     pub const LIST_ITEM_MASK: u16 = 0b1000000000000000;
+     pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
+-    pub const INSIDE_MASK: u16 = 0b0000000011111111;
++    pub const INSIDE_MASK: u16 = 0b0000000001111111;
++    /// pyro: `display: run-in` (CSS 2.1 § 9.2.3), a block (`block flow`) with this bit: where it
++    /// runs in, the next block box lays it out as its first inline box (blitz-dom
++    /// `layout::construct`); everywhere else it is the block box it says.
++    pub const RUN_IN_MASK: u16 = 0b0000000010000000;
+     pub const OUTSIDE_SHIFT: u16 = 8;
+ 
++    /// pyro: `display: run-in` (see [`Self::RUN_IN_MASK`]).
++    pub const RunIn: Self = Self(
++        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUN_IN_MASK,
++    );
++
+     /// https://drafts.csswg.org/css-display/#the-display-properties
+     /// ::new() inlined so cbindgen can use it
+     pub const None: Self =
+@@ -239,7 +249,6 @@
      );
      pub const Block: Self =
          Self(((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16);
@@ -5660,7 +5680,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const FlowRoot: Self = Self(
          ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::FlowRoot as u16,
      );
-@@ -268,11 +268,9 @@
+@@ -268,11 +277,9 @@
      #[cfg(feature = "gecko")]
      pub const Ruby: Self =
          Self(((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Ruby as u16);
@@ -5672,7 +5692,31 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -495,6 +493,10 @@
+@@ -370,6 +377,12 @@
+         self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
+     }
+ 
++    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
++    #[inline]
++    pub const fn is_run_in(&self) -> bool {
++        (self.0 & Self::RUN_IN_MASK) != 0
++    }
++
+     /// Returns whether this `display` value is some kind of list-item.
+     #[inline]
+     pub const fn is_list_item(&self) -> bool {
+@@ -440,6 +453,10 @@
+         if is_root_element && (self.is_contents() || self.is_list_item()) {
+             return Display::Block;
+         }
++        // pyro: a blockified run-in is a block.
++        if self.is_run_in() {
++            return Display::Block;
++        }
+ 
+         match self.outside() {
+             DisplayOutside::Inline => {
+@@ -495,6 +512,10 @@
      Inside(DisplayInside),
      Outside(DisplayOutside),
      ListItem,
@@ -5683,7 +5727,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl DisplayKeyword {
-@@ -525,9 +527,7 @@
+@@ -525,21 +546,21 @@
              "ruby-text" => Full(Display::RubyText),
              #[cfg(feature = "gecko")]
              "ruby-text-container" => Full(Display::RubyTextContainer),
@@ -5693,7 +5737,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "-webkit-inline-box" => Full(Display::WebkitInlineBox),
  
              /// <display-outside> = block | inline | run-in
-@@ -540,6 +540,7 @@
+             /// https://drafts.csswg.org/css-display/#typedef-display-outside
+             "block" => Outside(DisplayOutside::Block),
+             "inline" => Outside(DisplayOutside::Inline),
++            "run-in" => Full(Display::RunIn),
+ 
+             "list-item" => ListItem,
+ 
              /// <display-inside> = flow | flow-root | table | flex | grid | ruby
              /// https://drafts.csswg.org/css-display/#typedef-display-inside
              "flow" => Inside(DisplayInside::Flow),
@@ -5701,7 +5751,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "flex" => Inside(DisplayInside::Flex),
              "flow-root" => Inside(DisplayInside::FlowRoot),
              "table" => Inside(DisplayInside::Table),
-@@ -561,7 +562,6 @@
+@@ -558,10 +579,12 @@
+     {
+         let outside = self.outside();
+         let inside = self.inside();
++        if self.is_run_in() {
++            return dest.write_str("run-in");
++        }
          match *self {
              Display::Block | Display::Inline => outside.to_css(dest),
              Display::InlineBlock => dest.write_str("inline-block"),
@@ -5709,7 +5765,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              Display::WebkitInlineBox => dest.write_str("-webkit-inline-box"),
              Display::TableCaption => dest.write_str("table-caption"),
              _ => match (outside, inside) {
-@@ -626,10 +626,15 @@
+@@ -626,10 +649,15 @@
  impl Parse for Display {
      fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
          let mut got_list_item = false;
@@ -5725,7 +5781,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayKeyword::Outside(o) => {
                  outside = Some(o);
              },
-@@ -652,13 +657,19 @@
+@@ -652,13 +680,19 @@
                  DisplayKeyword::Inside(i) if inside.is_none() => {
                      inside = Some(i);
                  },
@@ -5747,7 +5803,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
  
-@@ -788,7 +799,6 @@
+@@ -788,7 +822,6 @@
      Parse,
      PartialEq,
      SpecifiedValueInfo,
@@ -5755,7 +5811,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -824,6 +834,78 @@
+@@ -824,8 +857,80 @@
      /// Used to implement the deprecated "align=middle" attribute for HTML img elements.
      #[cfg(feature = "gecko")]
      MozMiddleWithBaseline,
@@ -5775,8 +5831,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[cfg(feature = "servo")]
 +    #[css(skip)]
 +    VerticalAlignTextTop,
-+}
-+
+ }
+ 
 +#[cfg(feature = "servo")]
 +impl AlignmentBaseline {
 +    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
@@ -5831,16 +5887,16 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
 +        })
 +    }
- }
- 
++}
++
  /// A specified value for the `baseline-source` property.
-@@ -1336,11 +1418,17 @@
+ /// https://drafts.csswg.org/css-inline-3/#baseline-source
+ #[derive(
+@@ -1336,11 +1441,17 @@
      ToShmem,
      ToTyped,
  )]
 -#[css(bitflags(single = "none,auto,manipulation", mixed = "pan-x,pan-y,pinch-zoom"))]
--#[repr(C)]
--pub struct TouchAction(u8);
 +// pyro: `pan-left`, `pan-right`, `pan-up` and `pan-down` too (Pointer Events 3, as Chromium):
 +// `[pan-x | pan-left | pan-right] || [pan-y | pan-up | pan-down] || pinch-zoom`.
 +#[css(bitflags(
@@ -5848,7 +5904,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    mixed = "pan-x,pan-left,pan-right,pan-y,pan-up,pan-down,pinch-zoom",
 +    validate_mixed = "Self::validate_mixed_flags",
 +))]
-+#[repr(C)]
+ #[repr(C)]
+-pub struct TouchAction(u8);
 +pub struct TouchAction(u16);
  bitflags! {
 -    impl TouchAction: u8 {
@@ -5856,7 +5913,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          /// `none` variant
          const NONE = 1 << 0;
          /// `auto` variant
-@@ -1353,10 +1441,25 @@
+@@ -1353,10 +1464,25 @@
          const MANIPULATION = 1 << 4;
          /// `pinch-zoom` variant
          const PINCH_ZOOM = 1 << 5;
@@ -5882,7 +5939,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
-@@ -2013,8 +2116,12 @@
+@@ -2013,8 +2139,12 @@
      Auto,
      Page,
      Avoid,
@@ -5895,7 +5952,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl BreakBetween {
-@@ -2030,7 +2137,9 @@
+@@ -2030,7 +2160,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -5906,7 +5963,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2156,7 @@
+@@ -2047,7 +2179,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -5915,7 +5972,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2629,3 +2738,90 @@
+@@ -2629,3 +2761,90 @@
      Ltr,
      Rtl,
  }

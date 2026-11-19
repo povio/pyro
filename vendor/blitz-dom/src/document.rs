@@ -520,6 +520,9 @@ pub struct BaseDocument {
     pub(crate) has_changes: bool,
     /// Set of changed nodes for updating the accessibility tree
     pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
+    /// pyro: the block each `display: run-in` box that runs in runs into, by block
+    /// (`layout::construct::resolve_run_ins`).
+    pub(crate) run_in_targets: std::collections::HashMap<NodeId, NodeId>,
     /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
     /// set), so paint-tree passes visit them instead of every node.
     pub(crate) oof_hoisted: HashSet<NodeId>,
@@ -859,6 +862,7 @@ impl BaseDocument {
 
             has_changes: false,
             deferred_construction_nodes: Vec::new(),
+            run_in_targets: std::collections::HashMap::new(),
             oof_hoisted: HashSet::new(),
             sticky_nodes: HashSet::new(),
             style_changes: Vec::new(),

@@ -175,6 +175,10 @@ bitflags! {
         const INLINE_PASS_ENTRY = 1 << 29;
         /// pyro: a box after the clamp point of a line clamp (`layout::line_clamp`): not painted.
         const HIDDEN_BY_CLAMP = 1 << 30;
+        /// pyro: a `display: run-in` box that runs in: the next block box lays it out as its
+        /// first inline box, its parent has no box for it, and its style says `inline`
+        /// (`layout::construct::resolve_run_ins`).
+        const RUNS_IN = 1 << 31;
     }
 }
 
