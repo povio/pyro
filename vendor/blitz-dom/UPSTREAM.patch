@@ -13026,9 +13026,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            annotations,
 +            bidi,
 +            &mut bidi_scan,
-+        );
-+    }
-+
+         );
+     }
+ 
+-    text_layout.text = builder.build_into(&mut text_layout.layout);
+-    return;
 +    for end in piece_ends.into_iter().rev().flatten() {
 +        close_span(&mut builder, end, bidi, &mut bidi_scan);
 +    }
@@ -13109,8 +13111,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            strut_build,
 +            &space,
 +            bidi,
-         );
-     }
++        );
++    }
 +    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
 +    // overflowing line with, in the root's own style (its first available font, as in Chromium).
 +    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
@@ -13180,7 +13182,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.percent_span_edges = bidi_scan.percent_edges;
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
-+
+ 
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -13238,9 +13240,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        layout.break_all_lines(None);
 +        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
 +    }
- 
--    text_layout.text = builder.build_into(&mut text_layout.layout);
--    return;
++
 +    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
 +    /// a head has its start, a tail its end (`construct::split_inline_part`).
 +    #[allow(clippy::too_many_arguments)]
@@ -13286,7 +13286,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
- 
++
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
 +    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
@@ -13457,7 +13457,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1311,228 @@
+@@ -210,66 +1311,262 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -13480,6 +13480,40 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                            // pyro: a ruby annotation of the text since its base started, drawn
 +                            // over that text rather than in the line (`TextAnnotation`).
 +                            annotations.annotate_ruby_base(node_id, builder.text().len());
++                            // pyro: its absolutely positioned descendants (its `::before` and
++                            // `::after` too) are no annotation text: they are positioned as out of
++                            // flow boxes of this line, at the annotation's place (WPT css-contain
++                            // `contain-layout-004`, `-005`: containment does not apply to ruby
++                            // annotations, so they are positioned against the box around).
++                            let mut stack: Vec<NodeId> =
++                                node.before().into_iter().chain(node.children.iter().copied()).chain(node.after()).collect();
++                            stack.reverse();
++                            while let Some(id) = stack.pop() {
++                                let child = &nodes[id];
++                                let Some(cs) = child.primary_styles() else { continue };
++                                if cs.clone_display().is_none() {
++                                    continue;
++                                }
++                                if cs.clone_position().is_absolutely_positioned() {
++                                    builder.push_inline_box(InlineBox {
++                                        id: id.as_u64(),
++                                        kind: InlineBoxKind::OutOfFlow,
++                                        index: 0,
++                                        width: 0.0,
++                                        height: 0.0,
++                                        baseline: None,
++                                        vertical_align: Default::default(),
++                                        rtl: false,
++                                        central: false,
++                                        glue: false,
++                                    });
++                                    continue;
++                                }
++                                let mut kids: Vec<NodeId> =
++                                    child.before().into_iter().chain(child.children.iter().copied()).chain(child.after()).collect();
++                                kids.reverse();
++                                stack.extend(kids);
++                            }
                          } else {
                              // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
 -                            let style = node
@@ -13707,7 +13741,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,17 +1547,139 @@
+@@ -284,17 +1581,139 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -13850,7 +13884,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1688,314 @@
+@@ -303,3 +1722,314 @@
          }
      }
  }

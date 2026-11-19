@@ -1319,6 +1319,40 @@ fn build_inline_layout_with(
                             // pyro: a ruby annotation of the text since its base started, drawn
                             // over that text rather than in the line (`TextAnnotation`).
                             annotations.annotate_ruby_base(node_id, builder.text().len());
+                            // pyro: its absolutely positioned descendants (its `::before` and
+                            // `::after` too) are no annotation text: they are positioned as out of
+                            // flow boxes of this line, at the annotation's place (WPT css-contain
+                            // `contain-layout-004`, `-005`: containment does not apply to ruby
+                            // annotations, so they are positioned against the box around).
+                            let mut stack: Vec<NodeId> =
+                                node.before().into_iter().chain(node.children.iter().copied()).chain(node.after()).collect();
+                            stack.reverse();
+                            while let Some(id) = stack.pop() {
+                                let child = &nodes[id];
+                                let Some(cs) = child.primary_styles() else { continue };
+                                if cs.clone_display().is_none() {
+                                    continue;
+                                }
+                                if cs.clone_position().is_absolutely_positioned() {
+                                    builder.push_inline_box(InlineBox {
+                                        id: id.as_u64(),
+                                        kind: InlineBoxKind::OutOfFlow,
+                                        index: 0,
+                                        width: 0.0,
+                                        height: 0.0,
+                                        baseline: None,
+                                        vertical_align: Default::default(),
+                                        rtl: false,
+                                        central: false,
+                                        glue: false,
+                                    });
+                                    continue;
+                                }
+                                let mut kids: Vec<NodeId> =
+                                    child.before().into_iter().chain(child.children.iter().copied()).chain(child.after()).collect();
+                                kids.reverse();
+                                stack.extend(kids);
+                            }
                         } else {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             let mut style = node
