@@ -1084,7 +1084,15 @@ impl LayoutPassState<'_> {
                             let parent = inputs.parent_size.width;
                             let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                             let border = style.border().resolve_or_zero(parent, resolve_calc_value);
-                            let (w, h) = if kind == Some("range") { (129.0, 16.0) } else { (13.0, 13.0) };
+                            // `appearance: none` leaves a checkbox or radio no natural size (Chrome: 0x0).
+                            let none = node.primary_styles().is_some_and(|s| {
+                                *s.get_box().get_appearance() == style::computed_values::appearance::T::None
+                            });
+                            let (w, h) = match kind {
+                                Some("range") => (129.0, 16.0),
+                                _ if none => (0.0, 0.0),
+                                _ => (13.0, 13.0),
+                            };
                             let natural = taffy::Size {
                                 width: (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
                                 height: (h - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),

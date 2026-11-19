@@ -324,7 +324,9 @@ extra_prefixes = ["webkit"]
 spec = "https://drafts.csswg.org/css-ui-4/#propdef-appearance"
 animation_type = "discrete"
 gecko_ffi_name = "mAppearance"
-affects = "paint"
+# pyro: a checkbox or radio of `appearance: none` has no natural size (blitz-dom layout).
+affects = "layout"
+servo_restyle_damage = "rebuild_box"
 
 [aspect-ratio]
 type = "AspectRatio"

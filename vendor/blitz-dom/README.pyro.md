@@ -2729,7 +2729,7 @@ span's (WPT CSS2 `before-after-positioned-001`, whose reference uses spans).
   a grid or flex item's area is left unknown on purpose by intrinsic sizing passes, and an out-of-flow box's available
   space already excludes its margins (css-grid `grid-item-percentage-sizes-*`, `orthogonal-positioned-grid-items-*`).
   `pyro-render/tests/vertical_align_orthogonal_sizes.rs`.
-- Lane F1, `assets/default.css` + `layout/mod.rs`: `<input type=range>` is 129x16 by nature with a 2px margin and no padding, border or field background; `<progress>` is 10em x 1em and `<meter>` 5em x 1em, `vertical-align: -0.2em` (Chromium's html.css). blitz-paint `draw_bar_widget` paints them.
+- Lane F1, `assets/default.css` + `layout/mod.rs`: checkboxes, radios, ranges, progress bars and meters have `appearance: auto` (Chromium's html.css; it was the initial `none`), checkboxes and radios no padding or border of their own, and a checkbox or radio of `appearance: none` no natural size (Chrome: 0x0). `<input type=range>` is 129x16 by nature with a 2px margin and no padding, border or field background; `<progress>` is 10em x 1em and `<meter>` 5em x 1em, `vertical-align: -0.2em` (Chromium's html.css). blitz-paint `draw_bar_widget` paints them.
 
 ## SVG images: a zero height beside a ratio (WPT round 4, lane S1)
 

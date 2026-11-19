@@ -26,6 +26,10 @@ impl ElementCx<'_, '_> {
         let Some(checked) = self.element.checkbox_input_checked() else {
             return;
         };
+        // pyro: `appearance: none` draws no native checkbox or radio (CSS UI 4), only the box.
+        if self.native_appearance_none() {
+            return;
+        }
 
         let type_attr = self.node.attr(local_name!("type"));
         let disabled = self.node.attr(local_name!("disabled")).is_some();
@@ -116,6 +120,12 @@ fn draw_radio_button(
 }
 
 impl ElementCx<'_, '_> {
+    /// pyro: whether the element's `appearance` is `none` (no native look, CSS UI 4).
+    fn native_appearance_none(&self) -> bool {
+        use style::computed_values::appearance::T as Appearance;
+        *self.style.get_box().get_appearance() == Appearance::None
+    }
+
     /// pyro: the used `accent-color` when it is a colour, `None` for `auto`. A (partly)
     /// transparent one is precomposed over the canvas colour of the used colour scheme (CSS UI 4
     /// § 6.1), the `Canvas` system colour (stylo device/servo.rs).
@@ -151,8 +161,33 @@ impl ElementCx<'_, '_> {
             (false, false) => (Color::from_rgba8(0xef, 0xef, 0xef, 255), Color::from_rgba8(0x76, 0x76, 0x76, 128)),
         };
         let content = self.frame.content_box;
-        let (x0, x1) = (content.x0, content.x1);
-        let mid = (content.y0 + content.y1) / 2.0;
+        // An author or user border or background on a meter or progress bar turns its native
+        // look off too (CSS UI 4's appearance-disabling properties; WPT css-ui
+        // compute-kind-widget-generated).
+        let none = self.native_appearance_none()
+            || (name != "input"
+                && self
+                    .style
+                    .flags
+                    .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND));
+        // The control is drawn in a frame along its main axis (x, `length` long) across its
+        // thickness (y), mapped onto the content box: a vertical writing mode turns it, and the
+        // value runs from the inline start (right to left in rtl, bottom to top when the inline
+        // direction is).
+        let wm = self.style.writing_mode;
+        let vertical = wm.is_vertical();
+        let reversed = if vertical { !wm.is_inline_tb() } else { !wm.is_bidi_ltr() };
+        let (length, thickness) = if vertical { (content.height(), content.width()) } else { (content.width(), content.height()) };
+        let mut frame = Affine::translate(content.origin().to_vec2());
+        if vertical {
+            frame *= Affine::new([0.0, 1.0, 1.0, 0.0, 0.0, 0.0]);
+        }
+        if reversed {
+            frame *= Affine::new([-1.0, 0.0, 0.0, 1.0, length, 0.0]);
+        }
+        let transform = self.transform * frame;
+        let (x0, x1) = (0.0, length);
+        let mid = thickness / 2.0;
         // The fill's share of the track and its colour (`None`: an indeterminate progress bar).
         let (share, fill, border, track_inset) = match name {
             "progress" => {
@@ -200,20 +235,61 @@ impl ElementCx<'_, '_> {
                 (Some(share), accent, border, 1.0)
             }
         };
-        if x1 - x0 <= 2.0 * track_inset || content.height() <= 0.0 {
+        if x1 - x0 <= 2.0 * track_inset || thickness <= 0.0 {
             return;
         }
-        let half = 4.0f64.min(content.height() / 2.0);
+        let thumb_x = |share: Option<f64>| {
+            share.map(|share| if name == "input" { x0 + 8.0 + share * (x1 - x0 - 16.0).max(0.0) } else { x0 + share * (x1 - x0) })
+        };
+        if none {
+            // Chromium's non-native controls (html.css): a progress bar is a grey rectangle filled
+            // green up to the value, a meter a bar half as thick with Chromium's gradients, and a
+            // range only its thumb.
+            match name {
+                "progress" => {
+                    let bar = kurbo::Rect::new(0.0, 0.0, length, thickness);
+                    scene.fill(Fill::NonZero, transform, Color::from_rgba8(0x80, 0x80, 0x80, 255), None, &bar);
+                    if let Some(share) = share {
+                        let value = kurbo::Rect::new(0.0, 0.0, length * share, thickness);
+                        scene.fill(Fill::NonZero, transform, Color::from_rgba8(0, 0x80, 0, 255), None, &value);
+                    }
+                }
+                "meter" => {
+                    let rgb = |v: u32| Color::from_rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, 255);
+                    let (y0, y1) = (thickness / 4.0, thickness * 3.0 / 4.0);
+                    // Top to bottom: the edge colour, a light band at 20%, a dark band from 45%
+                    // to 55%, the edge colour again.
+                    let gradient = |[edge, light, dark]: [u32; 3]| {
+                        let [a, b, c] = [edge, light, dark].map(rgb);
+                        peniko::Gradient::new_linear((0.0, y0), (0.0, y1))
+                            .with_stops([(0.0, a), (0.2, b), (0.45, c), (0.55, c), (1.0, a)].as_slice())
+                    };
+                    let bar = kurbo::Rect::new(0.0, y0, length, y1);
+                    scene.fill(Fill::NonZero, transform, &gradient([0xdddddd, 0xeeeeee, 0xcccccc]), None, &bar);
+                    let stops = if fill == Color::from_rgba8(0x10, 0x7c, 0x10, 255) {
+                        [0xaadd77, 0xcceeaa, 0x77aa33]
+                    } else if fill == Color::from_rgba8(0xff, 0xb9, 0x00, 255) {
+                        [0xffee77, 0xffffcc, 0xddbb33]
+                    } else {
+                        [0xff7777, 0xffcccc, 0xdd4444]
+                    };
+                    let value = kurbo::Rect::new(0.0, y0, length * share.unwrap_or(0.0), y1);
+                    scene.fill(Fill::NonZero, transform, &gradient(stops), None, &value);
+                }
+                _ => {
+                    if let Some(x) = thumb_x(share) {
+                        let radius = 8.0f64.min(thickness / 2.0);
+                        scene.fill(Fill::NonZero, transform, fill, None, &Circle::new(Point::new(x, mid), radius));
+                    }
+                }
+            }
+            return;
+        }
+        let half = 4.0f64.min(thickness / 2.0);
         let track_rect = kurbo::Rect::new(x0 + track_inset, mid - half, x1 - track_inset, mid + half);
         let pill = track_rect.to_rounded_rect(half);
-        scene.fill(Fill::NonZero, self.transform, track, None, &pill);
-        let thumb_x = share.map(|share| {
-            if name == "input" {
-                x0 + 8.0 + share * (x1 - x0 - 16.0).max(0.0)
-            } else {
-                x0 + share * (x1 - x0)
-            }
-        });
+        scene.fill(Fill::NonZero, transform, track, None, &pill);
+        let thumb_x = thumb_x(share);
         if let Some(fill_end) = thumb_x {
             // The value bar within the pill: round at the start, and at the end where it reaches
             // into the end cap.
@@ -223,16 +299,16 @@ impl ElementCx<'_, '_> {
                 let end_radius = (half - (track_rect.x1 - end)).max(0.0);
                 let radii = kurbo::RoundedRectRadii::new(start_radius, end_radius, end_radius, start_radius);
                 let value = kurbo::Rect::new(track_rect.x0, track_rect.y0, end, track_rect.y1).to_rounded_rect(radii);
-                scene.fill(Fill::NonZero, self.transform, fill, None, &value);
+                scene.fill(Fill::NonZero, transform, fill, None, &value);
             }
         }
         let ring = track_rect.inset(-0.5).to_rounded_rect(half - 0.5);
-        scene.stroke(&Stroke::new(1.0), self.transform, border, None, &ring);
+        scene.stroke(&Stroke::new(1.0), transform, border, None, &ring);
         if name == "input"
             && let Some(x) = thumb_x
         {
-            let radius = 8.0f64.min(content.height() / 2.0);
-            scene.fill(Fill::NonZero, self.transform, fill, None, &Circle::new(Point::new(x, mid), radius));
+            let radius = 8.0f64.min(thickness / 2.0);
+            scene.fill(Fill::NonZero, transform, fill, None, &Circle::new(Point::new(x, mid), radius));
         }
     }
 }

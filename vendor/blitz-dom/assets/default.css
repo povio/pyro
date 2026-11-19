@@ -79,12 +79,27 @@ input[type="hidden" i] {
 input[type="checkbox"] {
     box-sizing: border-box;
     margin: 3px 3px 3px 4px;
+    /* pyro: Chromium's (html.css): no border or padding of its own, so `appearance: none`
+       leaves it 0x0. */
+    padding: initial;
+    border: initial;
+}
+
+/* pyro: native controls (Chromium's html.css); `appearance: none` turns their native look off
+   (blitz-paint form_controls.rs, layout/mod.rs). */
+input[type="checkbox" i],
+input[type="radio" i],
+input[type="range" i],
+progress,
+meter {
+    appearance: auto;
 }
 
 input[type="radio"] {
     box-sizing: border-box;
     border-radius: 13px;
     border: none;
+    padding: initial;
     margin: 3px 3px 0 5px;
 }
 
