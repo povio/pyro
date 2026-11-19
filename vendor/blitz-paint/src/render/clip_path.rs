@@ -984,7 +984,8 @@ impl ElementCx<'_, '_> {
                         || (!recording
                             && (style.get_effects().opacity < 1.0
                                 || !style.get_effects().backdrop_filter.0.is_empty()
-                                || inline_filter(dom, &style, self.scale).is_some())
+                                || inline_filter(dom, &style, self.scale).is_some()
+                                || dom.get_node(id).is_some_and(|node| has_layered_filter(dom, node, &style)))
                             && paints_alone(dom, root, id))
                 })
         };
@@ -1312,8 +1313,50 @@ impl ElementCx<'_, '_> {
             // pyro: and its filter, over its fragments as one group too (WPT filter-effects
             // `effect-reference-on-span`).
             let filter = alone.then(|| node.primary_styles()).flatten().and_then(|style| inline_filter(dom, &style, self.scale));
-            let faded = (opacity < 1.0 || filter.is_some()) && alone;
             let areas = path_of(&mut pieces.iter().flatten());
+            // pyro: a filter that moves or spreads what it filters, or an SVG filter graph
+            // ([`layered_filter`]), as `render_element` paints one (`paint_filter_steps`): its
+            // fragments in a group, in the user space of their border boxes' union (its bounding
+            // box), the filter reading past them, and a graph's filter region painted whatever they
+            // hold (WPT filter-effects `empty-element-with-filter-003`: an empty `<span>` filtered
+            // by a flood; `blur-text`). Not with a clip path or mask, painted below.
+            #[cfg(feature = "svg")]
+            if alone && !has_mask && matches!(node.primary_styles().as_deref().map(|s| s.get_clip_path()), Some(StyloClipPath::None)) {
+                let bounds = fragments.iter().fold(first.border_box, |bounds, fragment| bounds.union(fragment.border_box));
+                let steps = node.primary_styles().and_then(|style| {
+                    let size = ((bounds.width() / self.scale) as f32, (bounds.height() / self.scale) as f32);
+                    layered_filter(dom, node, &style, self.scale, size)
+                });
+                if let Some(steps) = steps {
+                    let mut group = anyrender::Scene::new();
+                    if !pieces.iter().all(Vec::is_empty) {
+                        set_filter(Some(pieces.iter().flatten().copied().collect()));
+                        group.push_clip_layer(Fill::NonZero, transform, &areas);
+                        self.draw_inline_layout(&mut group, pos);
+                        group.pop_layer();
+                        set_filter(None);
+                    }
+                    let painter = self.context;
+                    let viewport = Rect::new(0.0, 0.0, painter.width as f64, painter.height as f64);
+                    painter.paint_filter_steps(
+                        scene,
+                        group,
+                        super::EffectLayer {
+                            transform,
+                            visible: viewport,
+                            border_box: bounds,
+                            opacity,
+                            filter: None,
+                            backdrop_filter: None,
+                            backdrop_clip: None,
+                            steps: None,
+                        },
+                        steps,
+                    );
+                    continue;
+                }
+            }
+            let faded = (opacity < 1.0 || filter.is_some()) && alone;
             if faded {
                 scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
             }
@@ -1401,6 +1444,44 @@ fn inline_filter(
     }
     let filter = crate::filters::convert_filters(list, scale, &style.clone_color(), dom)?;
     (crate::layers::filter_reach(&filter, Affine::IDENTITY) == Rect::ZERO).then(|| std::sync::Arc::new(filter))
+}
+
+/// pyro: the `filter` list of the inline element `node` (of style `style`) as the layers
+/// `paint_filter_steps` paints when [`inline_filter`] cannot: an SVG filter graph (`url()` of a
+/// `<filter>` that is no colour chain, `filters::filter_steps`), or functions that move or spread
+/// what they filter (`blur()`, `drop-shadow()`) as one chain. `size`: the element's bounding box
+/// (CSS px), which a graph's `objectBoundingBox` units are relative to.
+#[cfg(feature = "svg")]
+fn layered_filter(
+    dom: &blitz_dom::BaseDocument,
+    node: &blitz_dom::Node,
+    style: &style::properties::ComputedValues,
+    scale: f64,
+    size: (f32, f32),
+) -> Option<Vec<crate::filters::FilterStep>> {
+    let list = &style.get_effects().filter.0;
+    if list.is_empty() {
+        return None;
+    }
+    let current_color = style.clone_color();
+    let references = node.element_data().map_or(&[][..], |element| &element.reference_images[..]);
+    if let Some(steps) = crate::filters::filter_steps(list, scale, &current_color, dom, size, references) {
+        return Some(steps);
+    }
+    let filter = crate::filters::convert_filters(list, scale, &current_color, dom)?;
+    (crate::layers::filter_reach(&filter, Affine::IDENTITY) != Rect::ZERO)
+        .then(|| vec![crate::filters::FilterStep::Chain(std::sync::Arc::new(filter))])
+}
+
+/// pyro: whether [`layered_filter`] has layers for the inline element `node`.
+fn has_layered_filter(dom: &blitz_dom::BaseDocument, node: &blitz_dom::Node, style: &style::properties::ComputedValues) -> bool {
+    #[cfg(feature = "svg")]
+    return layered_filter(dom, node, style, 1.0, (1.0, 1.0)).is_some();
+    #[cfg(not(feature = "svg"))]
+    {
+        let _ = (dom, node, style);
+        false
+    }
 }
 
 /// pyro: rectangles covering what `rects` cover, no two of which overlap (empty ones left out).
