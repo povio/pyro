@@ -2656,7 +2656,10 @@ fn truncate_line_at_soft_wrap(
     atoms.sort_by(|a, b| a.0.total_cmp(&b.0));
     // Where the content walked so far ends (its far edge in the line's direction), and whether
     // the ellipsis fits beyond it.
-    let mut far = if rtl { metrics.offset + metrics.advance } else { metrics.offset };
+    // (The line's items start at its `inline_min_coord`, past a float before it: WPT css-overflow
+    // `line-clamp/block-ellipsis-041`.)
+    let line_start = if rtl { metrics.inline_min_coord + metrics.offset + metrics.advance } else { metrics.inline_min_coord + metrics.offset };
+    let mut far = line_start;
     let fits_with = |far: f32, w: f32| if rtl { far - w >= -epsilon } else { far + w <= width + epsilon };
     let fits = |far: f32| fits_with(far, ellipsis_width);
     // (A break at a soft hyphen shows a hyphen too.)
@@ -2681,7 +2684,6 @@ fn truncate_line_at_soft_wrap(
     if fits(far) {
         return None;
     }
-    let line_start = if rtl { metrics.offset + metrics.advance } else { metrics.offset };
     let (split, end, hyphen) = best.unwrap_or((line.text_range().start, line_start, false));
     let x = if rtl { end - if hyphen { hyphenated_width } else { ellipsis_width } } else { end };
     Some((crate::text::TextCut { edge: end, keep_left: true, split: Some(split) }, x, hyphen))
