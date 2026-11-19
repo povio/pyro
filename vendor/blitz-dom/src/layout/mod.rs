@@ -2396,6 +2396,9 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         // floats is placed clear of them.
         multicol::is_multicol_node(self.node_from_id(child_node_id))
             || self.establishes_writing_mode_root(child_node_id)
+            // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
+            // container, not its column (its lines are not broken at the column's width).
+            || self.is_current_column_spanner(dom_node_id(child_node_id))
     }
 
     fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {

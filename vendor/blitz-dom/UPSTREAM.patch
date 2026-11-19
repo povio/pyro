@@ -19240,7 +19240,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2363,141 @@
+@@ -782,16 +2363,144 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -19277,6 +19277,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        // floats is placed clear of them.
 +        multicol::is_multicol_node(self.node_from_id(child_node_id))
 +            || self.establishes_writing_mode_root(child_node_id)
++            // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
++            // container, not its column (its lines are not broken at the column's width).
++            || self.is_current_column_spanner(dom_node_id(child_node_id))
 +    }
 +
 +    fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
@@ -19386,7 +19389,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2550,30 @@
+@@ -844,6 +2553,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -19417,7 +19420,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2582,19 @@
+@@ -852,7 +2585,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19438,7 +19441,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2610,30 @@
+@@ -868,6 +2613,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -19469,7 +19472,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2738,192 @@
+@@ -972,3 +2741,192 @@
          })
      }
  }
@@ -19666,7 +19669,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2049 @@
+@@ -0,0 +1,2059 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -20942,6 +20945,16 @@ new file mode 100644
 +}
 +
 +impl LayoutPassState<'_> {
++    /// pyro: whether `node_id` is a column spanner of the multi-column container whose strip is
++    /// being laid out (`column_spanners`).
++    pub(crate) fn is_current_column_spanner(&self, node_id: crate::NodeId) -> bool {
++        let Some((container, _)) = self.column_spanners else { return false };
++        let node = &self.nodes[node_id];
++        !node.is_out_of_flow()
++            && node.primary_styles().is_some_and(|style| is_spanner_style(&style))
++            && self.spans_columns_of(container, node_id)
++    }
++
 +    /// pyro: `inputs` for laying out `node_id` as a column spanner of the multi-column container
 +    /// whose strip is being laid out (`column_spanners`): as wide as the container's content box,
 +    /// less its margins, unless its width is not `auto`.

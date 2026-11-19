@@ -1273,6 +1273,16 @@ fn is_spanner_style(style: &ComputedValues) -> bool {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: whether `node_id` is a column spanner of the multi-column container whose strip is
+    /// being laid out (`column_spanners`).
+    pub(crate) fn is_current_column_spanner(&self, node_id: crate::NodeId) -> bool {
+        let Some((container, _)) = self.column_spanners else { return false };
+        let node = &self.nodes[node_id];
+        !node.is_out_of_flow()
+            && node.primary_styles().is_some_and(|style| is_spanner_style(&style))
+            && self.spans_columns_of(container, node_id)
+    }
+
     /// pyro: `inputs` for laying out `node_id` as a column spanner of the multi-column container
     /// whose strip is being laid out (`column_spanners`): as wide as the container's content box,
     /// less its margins, unless its width is not `auto`.
