@@ -100,3 +100,28 @@ fn nested_rows_of_many_columns_are_capped() {
         assert!(pieces > 1 && pieces <= 10_000, "#{id}: {pieces} pieces");
     }
 }
+
+/// pyro: column breaks are of their own type (CSS Fragmentation 3 § 3.1, § 3.2): `break-before:
+/// page` and `break-inside: avoid-page` do nothing in columns on screen, `column` and
+/// `avoid-column` do; a nested container that avoids column breaks inside moves whole to the
+/// next column (as Chromium lays these out).
+#[test]
+fn column_breaks_are_not_page_breaks() {
+    let p = page(
+        "<!doctype html><body style='margin:0'>\
+         <div style='columns:2;column-gap:0;width:200px'><div style='height:20px'></div>\
+         <div id=p style='break-before:page;break-inside:avoid;height:20px'></div><div style='height:20px'></div></div>\
+         <div style='columns:2;column-gap:0;width:200px'><div style='height:20px'></div>\
+         <div id=c style='break-before:column;break-inside:avoid;height:20px'></div><div style='height:20px'></div></div>\
+         <div style='columns:2;column-gap:0;width:200px;column-fill:auto;height:50px'><div style='height:30px'></div>\
+         <div id=q style='break-inside:avoid-page;height:40px'></div></div>\
+         <div style='columns:2;column-gap:0;width:200px;column-fill:auto;height:100px'><div style='height:60px'></div>\
+         <div id=n style='columns:2;column-gap:0;break-inside:avoid-column'><div style='height:30px'></div>\
+         <div style='height:30px'></div><div style='height:30px'></div></div></div>",
+    );
+    assert_eq!(rect(&p, "p"), [0.0, 20.0, 100.0, 20.0], "break-before: page does not break the columns");
+    assert_eq!(rect(&p, "c"), [100.0, 40.0, 100.0, 20.0], "break-before: column does");
+    assert_eq!(p.layout.client_rects(&p.dom, p.id("q")).len(), 2, "break-inside: avoid-page does not keep it whole");
+    let n = rect(&p, "n");
+    assert_eq!((n[0], n[1]), (100.0, 130.0), "the nested container avoiding breaks starts the next column");
+}

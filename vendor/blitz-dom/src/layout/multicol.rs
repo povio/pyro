@@ -751,7 +751,7 @@ impl LayoutPassState<'_> {
         let fragments_nested = fragmentainer.is_some() || balancing;
         let mut pass = 0;
         // pyro: the tops of nested containers to break before (`ColumnFragments::pushed`).
-        let mut pushed_nested: Vec<f32> = Vec::new();
+        let mut pushed_nested: std::collections::HashMap<crate::NodeId, f32> = std::collections::HashMap::new();
         let (strip, mut breaks) = loop {
             self.multicol_strip_depth += 1;
             let strip = if inline_root {
@@ -766,7 +766,7 @@ impl LayoutPassState<'_> {
             let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
             let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested);
             if !pushed_nested.is_empty() {
-                breaks.forced.extend(pushed_nested.iter().copied().filter(|&y| y > breaks.start + EPSILON));
+                breaks.forced.extend(pushed_nested.values().copied().filter(|&y| y > breaks.start + EPSILON));
                 breaks.forced.sort_by(f32::total_cmp);
                 breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
             }
@@ -798,15 +798,15 @@ impl LayoutPassState<'_> {
                 if laid_out.is_some_and(|c| c.pushed)
                     && !avoided
                     && used.is_some()
-                    && !pushed_nested.iter().any(|&p| (p - margin_top).abs() <= EPSILON)
+                    && !pushed_nested.contains_key(&id)
                 {
-                    pushed_nested.push(margin_top);
+                    pushed_nested.insert(id, margin_top);
                     changed = true;
                 }
-                self.nested_fragmentation.retain(|e| e.0 != id);
-                if let Some(wanted) = wanted {
-                    self.nested_fragmentation.push((id, wanted));
-                }
+                match wanted {
+                    Some(wanted) => self.nested_fragmentation.insert(id, wanted),
+                    None => self.nested_fragmentation.remove(&id),
+                };
                 let same = match (used, wanted) {
                     (None, None) => true,
                     (Some(a), Some(b)) => (a.0 - b.0).abs() <= EPSILON && (a.1 - b.1).abs() <= EPSILON,
@@ -848,7 +848,7 @@ impl LayoutPassState<'_> {
         };
         // pyro: the outer fragmentation this container is nested in (see `fragmentainer`).
         let nested_ctx = (spanners.is_empty() && multicol.height.is_none() && !vertical)
-            .then(|| self.nested_fragmentation.iter().find(|e| e.0 == dom_id).map(|e| e.1))
+            .then(|| self.nested_fragmentation.get(&dom_id).copied())
             .flatten();
 
         // The fragments, row by row: as many columns as each run of content needs, past the
@@ -1641,7 +1641,7 @@ impl BaseDocument {
             found.bottom = found.bottom.max(child_bottom);
             found.floats.push((child_top, child_bottom));
             if fragmentable(child, &style) {
-                if style.get_box().break_inside != BreakWithin::Auto {
+                if avoids_column_break_inside(&style) {
                     found.strict.push((child_top, child_bottom));
                 }
                 crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, (false, false)));
@@ -1838,7 +1838,9 @@ impl BaseDocument {
                 // pyro: forced breaks between in-flow siblings (margins after them kept).
                 let forces = |b: style::values::computed::BreakBetween| {
                     use style::values::computed::BreakBetween as B;
-                    matches!(b, B::Column | B::Page | B::Always | B::Left | B::Right)
+                    // (In columns: `page`, `left` and `right` force page breaks only, which print
+                    // pagination takes; CSS Fragmentation 3 § 3.1.)
+                    matches!(b, B::Column | B::Always)
                 };
                 if forces(style.get_box().break_before) {
                     found.forced.push(child_top - layout.margin.top.max(0.0));
@@ -1887,14 +1889,21 @@ impl BaseDocument {
                 self.multicol_cells(child_id, child_top, 0, &mut cells);
             }
             if nested && found.nested_breakable && style.clone_float() == Float::None && fragmentable_but_multicol(child, &style) {
-                // pyro: fragmented by the columns (`Breaks::nested`): breakable through.
+                // pyro: fragmented by the columns (`Breaks::nested`): breakable through, unless
+                // it avoids breaks inside.
                 found.nested.push((child_id, child_top));
+                if avoids_column_break_inside(&style) {
+                    found.strict.push((child_top, child_bottom));
+                }
             } else if !cells.is_empty() {
                 // pyro: a table with multi-column cells is fragmented with them (Chromium
-                // fragments tables): breakable through.
+                // fragments tables): breakable through, unless it avoids breaks inside.
                 found.nested.append(&mut cells);
+                if avoids_column_break_inside(&style) {
+                    found.strict.push((child_top, child_bottom));
+                }
             } else if fragmentable(child, &style) {
-                if style.get_box().break_inside != BreakWithin::Auto {
+                if avoids_column_break_inside(&style) {
                     found.strict.push((child_top, child_bottom));
                 }
                 // pyro: no break goes through a box's block-start border and padding: a column
@@ -1943,6 +1952,12 @@ struct Found {
     bottom: f32,
     /// The furthest bottom margin edge of the container's children.
     flow_end: f32,
+}
+
+/// pyro: whether `style`'s `break-inside` avoids column breaks (`avoid`, `avoid-column`; not
+/// `avoid-page`, which is for pages only: CSS Fragmentation 3 § 3.2).
+fn avoids_column_break_inside(style: &ComputedValues) -> bool {
+    matches!(style.get_box().break_inside, BreakWithin::Avoid | BreakWithin::AvoidColumn)
 }
 
 /// pyro: whether multi-column container `node` would be fragmentable if it were no multi-column

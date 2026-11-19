@@ -159,7 +159,7 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
     /// pyro: multi-column containers nested in another's columns and the outer column height and
     /// their offset down their outer column (`layout::multicol`).
-    pub(crate) nested_fragmentation: Vec<(crate::NodeId, (f32, f32))>,
+    pub(crate) nested_fragmentation: std::collections::HashMap<crate::NodeId, (f32, f32)>,
     /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
     pub(crate) multicol_strip_depth: u32,
     /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
@@ -234,7 +234,7 @@ impl<'doc> LayoutPassState<'doc> {
             column_spanners: None,
             calc_size_results: Vec::new(),
             multicol_percent_height: None,
-            nested_fragmentation: Vec::new(),
+            nested_fragmentation: std::collections::HashMap::new(),
             multicol_strip_depth: 0,
             column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
             nested_pass_budget: multicol::NESTED_PASS_BUDGET,
