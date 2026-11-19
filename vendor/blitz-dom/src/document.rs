@@ -2418,6 +2418,11 @@ impl BaseDocument {
                 self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
             }
             Resource::Font(bytes, overrides) => {
+                // pyro: SVG text draws with it too (usvg's font database).
+                #[cfg(feature = "svg")]
+                if let Some(family) = &overrides.family_name {
+                    crate::util::add_web_svg_font(&bytes, family);
+                }
                 let font = crate::util::intern_font_blob(bytes, overrides.family_name.as_deref());
 
                 // Build a `FontInfoOverride` from the `@font-face` descriptors

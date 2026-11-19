@@ -74,6 +74,43 @@ pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
     Arc::new(db)
 });
 
+/// pyro: the font database SVG text is drawn with: [`FONT_DB`] and the web fonts documents
+/// loaded (`@font-face`, `FontFace`), each face under its CSS family name ([`add_web_svg_font`]).
+/// `None` until a web font loads. Replaced (copy on write) as fonts come; its generation keys
+/// the parsed images ([`parse_svg_image`]), so SVG text drawn before a font loaded is drawn again
+/// with it.
+#[cfg(feature = "svg")]
+static WEB_FONT_DB: std::sync::RwLock<Option<(Arc<fontdb::Database>, u64)>> = std::sync::RwLock::new(None);
+
+/// pyro: the font database SVG text is drawn with now, and its generation (0: the system's).
+#[cfg(feature = "svg")]
+fn svg_font_db() -> (Arc<fontdb::Database>, u64) {
+    match &*WEB_FONT_DB.read().unwrap_or_else(|e| e.into_inner()) {
+        Some((db, generation)) => (Arc::clone(db), *generation),
+        None => (Arc::clone(&*FONT_DB), 0),
+    }
+}
+
+/// pyro: a web font's faces (`bytes`) for SVG text, under the CSS `family` name the document
+/// loaded it as (usvg matches `font-family` against the database: the font's own name may differ,
+/// `DelayedAhem` for Ahem; WPT css-masking `clip-path-svg-text-font-loading`).
+#[cfg(feature = "svg")]
+pub(crate) fn add_web_svg_font(bytes: &[u8], family: &str) {
+    let mut guard = WEB_FONT_DB.write().unwrap_or_else(|e| e.into_inner());
+    let (mut db, generation) = match guard.as_ref() {
+        Some((db, generation)) => ((**db).clone(), *generation),
+        None => ((**FONT_DB).clone(), 0),
+    };
+    let source = fontdb::Source::Binary(Arc::new(bytes.to_vec()));
+    for id in db.load_font_source(source) {
+        let Some(mut info) = db.face(id).cloned() else { continue };
+        db.remove_face(id);
+        info.families = vec![(family.to_string(), fontdb::Language::English_UnitedStates)];
+        db.push_face_info(info);
+    }
+    *guard = Some((Arc::new(db), generation + 1));
+}
+
 /// pyro: fonts added to usvg's font database when it is made.
 #[cfg(feature = "svg")]
 static SVG_FONTS: std::sync::Mutex<Vec<Arc<dyn AsRef<[u8]> + Send + Sync>>> = std::sync::Mutex::new(Vec::new());
@@ -334,15 +371,17 @@ pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg:
     // pages that clone content (a header logo on every printed page) build
     // the same one again and again; the parse depends on the source alone.
     std::thread_local! {
-        static PARSED: std::cell::RefCell<std::collections::HashMap<Vec<u8>, crate::node::SvgImageData>> =
+        static PARSED: std::cell::RefCell<std::collections::HashMap<Vec<u8>, (crate::node::SvgImageData, u64)>> =
             Default::default();
     }
     const MAX_ENTRIES: usize = 256;
-    if let Some(svg) = PARSED.with(|p| p.borrow().get(source).cloned()) {
+    // pyro: parsed with the fonts loaded so far (a web font loaded since changes the text).
+    let (fontdb, generation) = svg_font_db();
+    if let Some(svg) = PARSED.with(|p| p.borrow().get(source).filter(|(_, at)| *at == generation).map(|(svg, _)| svg.clone())) {
         return Ok(svg);
     }
     let options = usvg::Options {
-        fontdb: Arc::clone(&*FONT_DB),
+        fontdb,
         ..Default::default()
     };
     // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
@@ -359,7 +398,7 @@ pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg:
         if p.len() >= MAX_ENTRIES {
             p.clear();
         }
-        p.insert(source.to_vec(), svg.clone());
+        p.insert(source.to_vec(), (svg.clone(), generation));
     });
     Ok(svg)
 }
