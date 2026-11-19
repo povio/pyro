@@ -2236,9 +2236,14 @@ impl LayoutPartialTree for LayoutPassState<'_> {
     fn block_item_intrinsic_width_override(&self, node_id: NodeId) -> Option<f32> {
         // pyro: a column spanner while its container measures its columns without spanners
         // (`layout::multicol`, a negative width in `column_spanners`).
+        // pyro: and a fieldset's rendered legend, a row of its own above the columns (WPT
+        // css-overflow `scroll-markers/column-scroll-marker-004`).
         self.column_spanners
             .filter(|&(_, width)| width < 0.0)
-            .filter(|_| self.is_current_column_spanner(dom_node_id(node_id)))
+            .filter(|&(container, _)| {
+                let id = dom_node_id(node_id);
+                self.is_current_column_spanner(id) || self.is_measured_rendered_legend(container, id)
+            })
             .map(|_| 0.0)
     }
 

@@ -1601,6 +1601,12 @@ impl LayoutPassState<'_> {
 
     /// pyro: whether `node_id` is a column spanner of the multi-column container whose strip is
     /// being laid out (`column_spanners`).
+    /// pyro: whether `id` is the rendered legend of the fieldset `container` (measured on its
+    /// own while its columns are: `multicol_content_widths`).
+    pub(crate) fn is_measured_rendered_legend(&self, container: crate::NodeId, id: crate::NodeId) -> bool {
+        self.nodes[id].layout_parent.get() == Some(container) && self.doc.is_rendered_legend(container, id)
+    }
+
     pub(crate) fn is_current_column_spanner(&self, node_id: crate::NodeId) -> bool {
         let Some((container, _)) = self.column_spanners else { return false };
         let node = &self.nodes[node_id];

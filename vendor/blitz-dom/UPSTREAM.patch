@@ -20166,23 +20166,28 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2233,15 @@
+@@ -675,6 +2233,20 @@
      }
  
      #[inline(always)]
 +    fn block_item_intrinsic_width_override(&self, node_id: NodeId) -> Option<f32> {
 +        // pyro: a column spanner while its container measures its columns without spanners
 +        // (`layout::multicol`, a negative width in `column_spanners`).
++        // pyro: and a fieldset's rendered legend, a row of its own above the columns (WPT
++        // css-overflow `scroll-markers/column-scroll-marker-004`).
 +        self.column_spanners
 +            .filter(|&(_, width)| width < 0.0)
-+            .filter(|_| self.is_current_column_spanner(dom_node_id(node_id)))
++            .filter(|&(container, _)| {
++                let id = dom_node_id(node_id);
++                self.is_current_column_spanner(id) || self.is_measured_rendered_legend(container, id)
++            })
 +            .map(|_| 0.0)
 +    }
 +
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2265,26 @@
+@@ -698,17 +2270,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -20211,7 +20216,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2297,7 @@
+@@ -721,6 +2302,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -20219,7 +20224,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2309,122 @@
+@@ -732,6 +2314,122 @@
      }
  }
  
@@ -20342,7 +20347,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2432,12 @@
+@@ -739,10 +2437,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -20359,7 +20364,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2447,11 @@
+@@ -752,9 +2452,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -20374,7 +20379,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2479,205 @@
+@@ -782,16 +2484,205 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -20584,7 +20589,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2730,30 @@
+@@ -844,6 +2735,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -20615,7 +20620,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2762,19 @@
+@@ -852,7 +2767,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20636,7 +20641,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2790,30 @@
+@@ -868,6 +2795,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -20667,7 +20672,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2918,201 @@
+@@ -972,3 +2923,201 @@
          })
      }
  }
@@ -20873,7 +20878,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2682 @@
+@@ -0,0 +1,2688 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22477,6 +22482,12 @@ new file mode 100644
 +
 +    /// pyro: whether `node_id` is a column spanner of the multi-column container whose strip is
 +    /// being laid out (`column_spanners`).
++    /// pyro: whether `id` is the rendered legend of the fieldset `container` (measured on its
++    /// own while its columns are: `multicol_content_widths`).
++    pub(crate) fn is_measured_rendered_legend(&self, container: crate::NodeId, id: crate::NodeId) -> bool {
++        self.nodes[id].layout_parent.get() == Some(container) && self.doc.is_rendered_legend(container, id)
++    }
++
 +    pub(crate) fn is_current_column_spanner(&self, node_id: crate::NodeId) -> bool {
 +        let Some((container, _)) = self.column_spanners else { return false };
 +        let node = &self.nodes[node_id];
