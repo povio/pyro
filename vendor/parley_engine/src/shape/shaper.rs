@@ -667,11 +667,17 @@ fn shape_segment(
     // pyro: per font of the segment, whether it shapes word by word (`shapes_word_by_word`).
     let mut word_fonts: Vec<(u64, u32, bool)> = Vec::new();
 
+    // pyro: a grapheme of joiners alone (U+200D, U+200C: at the start of the text, after a space)
+    // and its font, held to be shaped with the grapheme after it: a joiner is no glyph of its own
+    // but tells the letter after it how to join, which a font shaping with `morx` (macOS's Geeza
+    // Pro) reads only from its own buffer, not the context (WPT css-text `word-break-break-all-004`).
+    let mut pending_joiner: Option<(FontInstance, TextRange)> = None;
+
     for grapheme_length in grapheme_lengths {
         let (byte_start, char_start) = (byte_end, char_end);
         char_cluster.fill(chars.by_ref().take(grapheme_length), &mut byte_end);
         char_end += grapheme_length;
-        let grapheme = TextRange {
+        let mut grapheme = TextRange {
             byte_range: byte_start..byte_end,
             char_range: char_start..char_end,
         };
@@ -679,6 +685,22 @@ fn shape_segment(
         let font = select_font
             .select_font(segment, options, char_cluster)
             .ok_or(())?;
+
+        if text[grapheme.byte_range.clone()].chars().all(|c| matches!(c, '\u{200c}' | '\u{200d}')) {
+            if let Some((held_font, held)) = pending_joiner.take() {
+                grapheme.byte_range.start = held.byte_range.start;
+                grapheme.char_range.start = held.char_range.start;
+                pending_joiner = Some((held_font, grapheme));
+            } else {
+                pending_joiner = Some((font.into(), grapheme));
+            }
+            continue;
+        }
+        let joined = pending_joiner.take();
+        if let Some((_, held)) = &joined {
+            grapheme.byte_range.start = held.byte_range.start;
+            grapheme.char_range.start = held.char_range.start;
+        }
 
         // pyro: Blink shapes word by word (a space or no-break space alone, each word between
         // them alone) when the font's OpenType lookups never involve the space glyph, so a font
@@ -708,6 +730,16 @@ fn shape_segment(
                 before_font = Some(run_font);
             }
             run = Some((font.into(), grapheme));
+        }
+    }
+    // Joiners at the end of the segment go with the run before them.
+    if let Some((held_font, held)) = pending_joiner.take() {
+        match &mut run {
+            Some((_, run_range)) => {
+                run_range.byte_range.end = held.byte_range.end;
+                run_range.char_range.end = held.char_range.end;
+            }
+            None => run = Some((held_font, held)),
         }
     }
     if let Some((run_font, run_range)) = run {
