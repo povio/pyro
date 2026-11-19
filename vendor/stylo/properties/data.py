@@ -705,6 +705,7 @@ class Longhand(Property):
                 "WhiteSpaceTrim",
                 "WrapInside",
                 "HangingPunctuation",
+                "TextGroupAlign",
                 "TextSpacingTrim",
                 "TextBoxEdge",
                 "TextBoxTrim",

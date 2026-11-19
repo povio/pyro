@@ -2629,6 +2629,16 @@ spec = "https://drafts.csswg.org/css-text-3/#hanging-punctuation-property"
 servo_restyle_damage = "rebuild_box"
 affects = "layout"
 
+[text-group-align]
+type = "TextGroupAlign"
+initial = "computed::text::TextGroupAlign::None"
+struct = "text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-4/#text-group-align-property"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
 [wrap-inside]
 type = "WrapInside"
 initial = "computed::text::WrapInside::Auto"

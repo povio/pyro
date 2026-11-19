@@ -1895,13 +1895,27 @@ impl LayoutPassState<'_> {
             inline_layout.hit_reach = None;
         }
         inline_layout.justified = justified;
-        inline_layout.layout.align(
-            alignment,
-            AlignmentOptions {
-                align_when_overflowing: false,
-                last_line_alignment,
-            },
-        );
+        // pyro: CSS Text 4 `text-group-align`: the lines align within the group of them first.
+        let group_left = self.nodes[node_id].primary_styles().and_then(|s| {
+            use style::values::computed::TextGroupAlign as G;
+            let rtl = inline_layout.layout.is_rtl();
+            match s.get_text().text_group_align {
+                G::None => None,
+                G::Left => Some(0.0),
+                G::Right => Some(1.0),
+                G::Center => Some(0.5),
+                G::Start => Some(if rtl { 1.0 } else { 0.0 }),
+                G::End => Some(if rtl { 0.0 } else { 1.0 }),
+            }
+        });
+        let options = AlignmentOptions {
+            align_when_overflowing: false,
+            last_line_alignment,
+        };
+        match group_left {
+            Some(left) => inline_layout.layout.align_in_group(alignment, options, left),
+            None => inline_layout.layout.align(alignment, options),
+        }
 
         // Parley lays out empty text as a single strut-height line (text-editor semantics),
         // but a line box containing no text, inline boxes or other in-flow content is a

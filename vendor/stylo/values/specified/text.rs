@@ -1506,6 +1506,37 @@ impl HangingPunctuation {
     }
 }
 
+/// pyro: the `text-group-align` property: how a block's lines align as a group.
+///
+/// https://drafts.csswg.org/css-text-4/#text-group-align-property
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum TextGroupAlign {
+    None,
+    Start,
+    End,
+    Left,
+    Right,
+    Center,
+}
+
 /// pyro: the `wrap-inside` property: whether lines avoid breaking inside an inline box.
 ///
 /// https://drafts.csswg.org/css-text-4/#wrap-inside

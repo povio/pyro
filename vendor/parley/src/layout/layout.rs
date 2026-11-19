@@ -350,6 +350,38 @@ impl<B: Brush> Layout<B> {
         align(&mut self.data, alignment, options);
     }
 
+    /// pyro: CSS Text 4 `text-group-align`: aligns the lines (as [`Self::align`]) within a group
+    /// as wide as the widest line's content, then places the group in each line box: `left` of
+    /// the free space goes to the group's left (0 at the left edge, 1 at the right, 0.5 centred).
+    pub fn align_in_group(&mut self, alignment: Alignment, options: AlignmentOptions, left: f32) {
+        let group = self
+            .data
+            .lines
+            .iter()
+            .map(|line| line.metrics.indent + line.metrics.advance - line.metrics.hanging_advance)
+            .fold(0.0f32, f32::max);
+        // As wide as a box of the group's min-content width: whole layout units (1/64 CSS px).
+        let scale = if self.data.scale > 0.0 { self.data.scale } else { 1.0 };
+        let group = (group / scale * 64.0).ceil() / 64.0 * scale;
+        let saved: alloc::vec::Vec<(f32, f32)> = self
+            .data
+            .lines
+            .iter_mut()
+            .map(|line| {
+                let saved = (line.metrics.inline_min_coord, line.metrics.inline_max_coord);
+                line.metrics.inline_max_coord = line.metrics.inline_min_coord + group;
+                saved
+            })
+            .collect();
+        align(&mut self.data, alignment, options);
+        for (line, (min, max)) in self.data.lines.iter_mut().zip(saved) {
+            let free = (max - min - group).max(0.0);
+            line.metrics.inline_min_coord = min;
+            line.metrics.inline_max_coord = max;
+            line.metrics.offset += free * left;
+        }
+    }
+
     /// Returns the index and `Line` object for the line containing the
     /// given byte `index` in the source text.
     pub(crate) fn line_for_byte_index(&self, index: usize) -> Option<(usize, Line<'_, B>)> {
