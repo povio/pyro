@@ -354,6 +354,60 @@ struct Planned {
 /// [`Timeline::progress`] once `animationend` fired.
 const ENDED: u32 = u32::MAX;
 
+/// Plans the `transitionstart` and `transitionend` of transition `t` from its local time `local`
+/// (ms) on, replacing those planned before, as [`plan_animation`] does for an animation: one its
+/// time reached already fires now (a transition sought or finished by script, WPT
+/// `inherit-background-color-transition`), a later one when its time gets there at `rate`.
+fn plan_transition(t: &mut Timeline, local: f64, rate: f64, held: bool, planned: &mut Vec<Planned>) {
+    t.epoch.set(false);
+    t.epoch = Rc::new(Cell::new(true));
+    let progress = t.progress.get();
+    if !t.live.get() || progress == ENDED {
+        return;
+    }
+    let (delay, duration) = (t.delay_ms, t.duration_ms);
+    let moving = !held && rate > 0.0;
+    let at = |time: f64| {
+        if time <= local {
+            Some(0.0)
+        } else if moving {
+            Some((time - local) / rate)
+        } else {
+            None
+        }
+    };
+    let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, step: u32| {
+        let due = at_ms <= 0.0;
+        if due {
+            t.progress.set(t.progress.get().max(step));
+            if step == ENDED {
+                t.ended.set(true);
+            }
+        }
+        Planned {
+            el: t.el,
+            pseudo: pseudo_name(t.pseudo),
+            ty,
+            transition: true,
+            name: t.name.clone(),
+            elapsed_s: elapsed_ms / 1000.0,
+            after: after(at_ms),
+            live: t.live.clone(),
+            ends: (step == ENDED && !due).then(|| t.ended.clone()),
+            epoch: (!due).then(|| t.epoch.clone()),
+            step: (!due).then(|| (t.progress.clone(), step)),
+        }
+    };
+    if progress < 1 {
+        if let Some(at_ms) = at(delay) {
+            planned.push(event("transitionstart", at_ms, (-delay).max(0.0), 1));
+        }
+    }
+    if let Some(at_ms) = at(delay + duration) {
+        planned.push(event("transitionend", at_ms, duration, ENDED));
+    }
+}
+
 /// Plans the events of animation `t` from its local time `local` (ms) on,
 /// replacing those planned before: the ones its time reached already and
 /// that did not fire yet fire now (a run resumed or finished by script past
@@ -650,13 +704,24 @@ pub(crate) fn scripted_state(
     let now_ms = page.animation_events.task_now(page);
     let mut planned = Vec::new();
     {
-        let Ok(mut animations) = page.animation_events.animations.try_borrow_mut() else { return };
-        let Some(t) = animations.iter_mut().find(|t| t.id == id) else { return };
         let local = match (hold, start, origin) {
             (Some(hold), _, _) => Some(hold),
             (None, Some(start), Some(origin)) => Some((now_ms - origin - start) * rate),
             _ => None,
         };
+        // A CSS transition's object: its `transitionstart` and `transitionend` follow it.
+        if let Ok(mut transitions) = page.animation_events.transitions.try_borrow_mut() {
+            if let Some(t) = transitions.iter_mut().find(|t| t.id == id) {
+                if let Some(local) = local {
+                    plan_transition(t, local, rate, hold.is_some(), &mut planned);
+                }
+                drop(transitions);
+                schedule(page, planned, true);
+                return;
+            }
+        }
+        let Ok(mut animations) = page.animation_events.animations.try_borrow_mut() else { return };
+        let Some(t) = animations.iter_mut().find(|t| t.id == id) else { return };
         match local {
             Some(local) => plan_animation(t, local, rate, hold.is_some(), &mut planned),
             None => {
@@ -1316,7 +1381,9 @@ fn start_transitions_of(
                 styles: Some((before.clone(), now.clone())),
             };
             let (delay, duration) = (transition.delay_ms, transition.duration_ms);
-            let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, ends: bool| Planned {
+            // (`transitionstart` and `transitionend` belong to the transition's plan, which script
+            // replaces through its `CSSTransition`: `scripted_state`.)
+            let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, step: Option<u32>| Planned {
                 el,
                 pseudo: pseudo_name(pseudo),
                 ty,
@@ -1325,13 +1392,13 @@ fn start_transitions_of(
                 elapsed_s: elapsed_ms / 1000.0,
                 after: after(at_ms),
                 live: timeline.live.clone(),
-                ends: ends.then(|| timeline.ended.clone()),
-                epoch: None,
-                step: None,
+                ends: (step == Some(ENDED)).then(|| timeline.ended.clone()),
+                epoch: step.map(|_| timeline.epoch.clone()),
+                step: step.map(|step| (timeline.progress.clone(), step)),
             };
-            starting.events.push(event("transitionrun", 0.0, 0.0, false));
-            starting.events.push(event("transitionstart", delay, (-delay).max(0.0), false));
-            starting.events.push(event("transitionend", delay + duration, duration, true));
+            starting.events.push(event("transitionrun", 0.0, 0.0, None));
+            starting.events.push(event("transitionstart", delay, (-delay).max(0.0), Some(1)));
+            starting.events.push(event("transitionend", delay + duration, duration, Some(ENDED)));
             starting.timelines.push(timeline);
         }
     }
