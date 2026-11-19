@@ -947,7 +947,11 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         let rel = dom.get_attribute(el, "rel").ok().flatten().unwrap_or_default().to_ascii_lowercase();
         let rel: Vec<&str> = rel.split_ascii_whitespace().collect();
         let opener = rel.contains(&"opener") && !rel.contains(&"noopener") && !rel.contains(&"noreferrer");
-        (url, dom.get_attribute(el, "target").ok().flatten().map(str::to_owned), opener)
+        // Without a target of its own (or an empty one, as browsers treat it), the first
+        // `<base target>`'s.
+        let own = dom.get_attribute(el, "target").ok().flatten().filter(|t| !t.is_empty()).map(str::to_owned);
+        let target = own.or_else(|| dom.node_document(el).ok().and_then(|doc| dom.base_target(doc)));
+        (url, target, opener)
     };
     page.navigate(crate::page::NavigationRequest {
         url,

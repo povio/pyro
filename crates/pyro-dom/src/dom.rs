@@ -1169,6 +1169,17 @@ impl Dom {
         let d = self.document_data(doc)?;
         Ok(d.base_url.as_deref().unwrap_or(&d.url))
     }
+    /// The `target` of the first `<base>` in `doc` that has one (HTML "get an element's
+    /// target": a link without a target of its own uses it).
+    pub fn base_target(&self, doc: NodeId) -> Option<String> {
+        if !self.base_seen {
+            return None;
+        }
+        self.descendants(doc).ok()?.find_map(|id| {
+            let e = self.element(id).ok()?;
+            (e.is_html() && *e.local_name() == *"base").then(|| self.get_attribute(id, "target").ok().flatten().map(str::to_owned))?
+        })
+    }
     fn first_base_href(&self, doc: NodeId) -> Option<Box<str>> {
         let href = self.descendants(doc).ok()?.find_map(|id| {
             let e = self.element(id).ok()?;

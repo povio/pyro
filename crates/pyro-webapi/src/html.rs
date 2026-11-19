@@ -401,6 +401,8 @@ const REFERRER_POLICY: EnumAttr = EnumAttr {
     invalid: "",
 };
 const LOADING: EnumAttr = EnumAttr { keywords: &["lazy", "eager"], missing: "eager", invalid: "eager" };
+/// HTML fetch priority attribute (`<img>`, `<link>`, `<script>`).
+const FETCH_PRIORITY: EnumAttr = EnumAttr { keywords: &["high", "low", "auto"], missing: "auto", invalid: "auto" };
 const DECODING: EnumAttr = EnumAttr { keywords: &["async", "sync", "auto"], missing: "auto", invalid: "auto" };
 const INPUT_MODE: EnumAttr = EnumAttr {
     keywords: &["none", "text", "tel", "url", "email", "numeric", "decimal", "search"],
@@ -1678,6 +1680,7 @@ simple_class!(HtmlLinkElement, "HTMLLinkElement", HtmlElement, |def| {
     reflect_str!(def, "media", "media");
     reflect_str!(def, "type", "type");
     reflect_enum!(def, "as", "as", LINK_AS);
+    reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
     reflect_cors!(def, "crossOrigin", "crossorigin");
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_str!(def, "integrity", "integrity");
@@ -1708,6 +1711,7 @@ simple_class!(HtmlStyleElement, "HTMLStyleElement", HtmlElement, |def| {
 });
 simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     reflect_tokens!(def, "blocking", "blocking");
+    reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
     // `src` reflects its URL; setting it is a Trusted Types sink (TrustedScriptURL).
     def.pure_accessor_typed("src", pyro_js::GetterResult::String, reflect_url!(@get "src"), |s, n, v| {
         let url = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::ScriptUrl, v, "HTMLScriptElement src", false)?;
@@ -1857,6 +1861,7 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_str!(def, "useMap", "usemap");
     reflect_enum!(def, "loading", "loading", LOADING);
     reflect_enum!(def, "decoding", "decoding", DECODING);
+    reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_bool!(def, "isMap", "ismap");
     // HTML: the rendered width and height when the image is being rendered, else (as browsers
