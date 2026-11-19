@@ -102,6 +102,9 @@ pub struct FetchRequest {
     pub loader_id: Option<String>,
     /// HTML crossorigin attribute (absent uses the resource default).
     pub crossorigin: Option<String>,
+    /// The request's credentials mode when set by its initiator rather than an attribute (a
+    /// worklet's module graph); wins over the one `crossorigin` implies.
+    pub credentials: Option<pyro_net::Credentials>,
     /// Resource Timing: the `initiatorType` of the requesting document's
     /// entry for this fetch (`None`: no entry, as for a document's own
     /// navigation or a renderer's fetch). An iframe's navigation reports to
@@ -333,6 +336,9 @@ impl ResourceLoader for NetLoader {
         }
         if request.crossorigin.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("use-credentials")) {
             req.credentials = pyro_net::Credentials::Include;
+        }
+        if let Some(credentials) = request.credentials {
+            req.credentials = credentials;
         }
         if req.url.scheme() == "blob" {
             req.blob = blob_body(browser, request.page, req.url.as_str());
@@ -881,6 +887,9 @@ struct PageModuleFetcher {
     page: FrameKey,
     sched: pyro_runtime::Scheduler<Browser>,
     fetches: Rc<ModuleFetches>,
+    /// For a worklet's module graph (`ModuleFetcher::for_worklet_graph`): the graph's credentials
+    /// mode, with which every module is fetched, outside the document's module map (`preloads`).
+    worklet_credentials: Option<pyro_net::Credentials>,
 }
 
 /// The module fetches of a realm in flight, and who waits for there to be
@@ -934,6 +943,20 @@ impl ModuleFetcher for PageModuleFetcher {
         self.fetches.in_flight.get() > 0
     }
 
+    fn for_worklet_graph(&self, credentials: &str) -> Option<Rc<dyn ModuleFetcher>> {
+        let credentials = match credentials {
+            "omit" => pyro_net::Credentials::Omit,
+            "include" => pyro_net::Credentials::Include,
+            _ => pyro_net::Credentials::SameOrigin,
+        };
+        Some(Rc::new(PageModuleFetcher {
+            page: self.page,
+            sched: self.sched.clone(),
+            fetches: Rc::default(),
+            worklet_credentials: Some(credentials),
+        }))
+    }
+
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
         let ty = request.module_type();
         if let Some(e) = pyro_webapi::module_script::disallowed(ty, true) {
@@ -948,6 +971,7 @@ impl ModuleFetcher for PageModuleFetcher {
         // `&mut Browser` is available.
         let realm = realm.downgrade();
         let page = self.page;
+        let worklet_credentials = self.worklet_credentials;
         module_trace!("requested {url}");
         let request = RefCell::new(Some(request));
         let in_flight = InFlight::new(&self.fetches);
@@ -994,7 +1018,11 @@ impl ModuleFetcher for PageModuleFetcher {
             };
             // A modulepreload of this URL already fetched (or is fetching) it
             // as a JavaScript module.
-            if ty != ModuleType::JavaScript {
+            if let Some(credentials) = worklet_credentials {
+                // A worklet graph's module: its own credentials mode and module map.
+                let opts = ScriptFetch { module: Some(ty), credentials: Some(credentials), ..ScriptFetch::default() };
+                b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
+            } else if ty != ModuleType::JavaScript {
                 let opts = ScriptFetch { module: Some(ty), ..ScriptFetch::default() };
                 b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
             } else {
@@ -1055,6 +1083,8 @@ pub(crate) struct ScriptFetch {
     pub module: Option<ModuleType>,
     /// The element's `referrerpolicy` state (`None`: the document's policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The fetch's credentials mode, set by its initiator (a worklet's module graph).
+    pub credentials: Option<pyro_net::Credentials>,
 }
 
 impl ScriptFetch {
@@ -1064,6 +1094,7 @@ impl ScriptFetch {
             crossorigin: info.crossorigin.clone(),
             module: None,
             referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
+            credentials: None,
         }
     }
 }
@@ -1198,6 +1229,7 @@ impl Browser {
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
         let req = FetchRequest {
+            credentials: None,
             post: opts.post.clone(),
             url: opts.url.clone(),
             kind: if page.child.is_some() { ResourceKind::Iframe } else { ResourceKind::Document },
@@ -1792,7 +1824,7 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin, module, referrer_policy } = opts;
+        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials } = opts;
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
@@ -1806,6 +1838,7 @@ impl Browser {
             frame_id,
             loader_id,
             crossorigin,
+            credentials,
             initiator,
             module,
             part: None,
@@ -2124,6 +2157,7 @@ impl Browser {
                 let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
+                    credentials: None,
                     post: None,
                     url: url.clone(),
                     kind: ResourceKind::Download,
@@ -2784,7 +2818,7 @@ fn dynamic_inline_module_url(base: &str) -> String {
 }
 
 pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
-    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default() })));
+    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default(), worklet_credentials: None })));
 }
 
 /// The download's file name: the `download` attribute without path

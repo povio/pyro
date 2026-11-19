@@ -75,15 +75,18 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let page = crate::target::page_of(s)?;
         let source = a.get(0).to_string()?;
         let url = a.get(1).to_string()?;
-        evaluate(s, &page, &source, &url)
+        let credentials = a.get(2).to_string()?;
+        evaluate(s, &page, &source, &url, &credentials)
     })?;
     native.set_atom("evaluate", evaluate.value())?;
     Ok(native)
 }
 
 /// Evaluates `source` (from `url`) as a module in the page's paint worklet global, made on first
-/// use. Returns a promise of the calling realm that settles as the module's evaluation does.
-fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str) -> JsResult<Value<'s>> {
+/// use, its imports fetched with the graph's `credentials` mode. Returns a promise of the calling
+/// realm that settles as the module's evaluation does. paint_worklet.js runs one graph at a time, so
+/// the fetcher installed here serves only this graph's modules.
+fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str, credentials: &str) -> JsResult<Value<'s>> {
     let deferred = s.deferred()?;
     let promise = deferred.promise.get(s);
     let realm = {
@@ -98,13 +101,13 @@ fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str) -> J
                 let ws = realm.scope()?;
                 ws.eval(PRELUDE, Some("pyro://internal/paint-worklet-global.js"), 1)?;
             }
-            // Module dependencies load as the page's do ("fetch a worklet script graph" with the
-            // document's fetch client): the calling realm's module fetcher.
-            realm.set_module_fetcher(s.realm().module_fetcher());
             *slot = Some(Rc::new(realm));
         }
         slot.as_ref().expect("worklet realm").clone()
     };
+    // "Fetch a worklet script graph" with the document's fetch client: every module of the graph is
+    // fetched with the graph's credentials mode, in the worklet's own module map (not the document's).
+    realm.set_module_fetcher(s.realm().module_fetcher().and_then(|f| f.for_worklet_graph(credentials)));
     let ws = realm.scope()?;
     let caller = s.realm().downgrade();
     let deferred = Rc::new(RefCell::new(Some(deferred)));

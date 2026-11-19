@@ -3,7 +3,8 @@
 // registerPaint() validates and records paint definitions. pyro does not draw paint() images: a
 // registered painter is never invoked. natives:
 //   active() -> whether the document is fully active
-//   evaluate(source, url) -> promise of the module's evaluation in the worklet global
+//   evaluate(source, url, credentials) -> promise of the module's evaluation in the worklet global,
+//     its imports fetched with `credentials`; one graph at a time (see `graphs`)
 (function (native) {
   'use strict';
   const token = Symbol('pyro');
@@ -16,6 +17,9 @@
   const fetchC = fetch;
   const reject = (e) => PromiseC.reject(e);
   const worklets = new WeakSet();
+  // The module graphs being fetched and evaluated run one after another: each installs a fetcher
+  // carrying its own credentials mode, which must not serve another graph's imports.
+  let graphs = PromiseC.resolve();
   class Worklet {
     constructor(t) {
       if (t !== token) throw new TypeErrorC("Failed to construct 'Worklet': Illegal constructor");
@@ -47,7 +51,11 @@
             return response.text().then((source) => [source, response.url || url]);
           },
           () => { throw aborted(); },
-        ).then(([source, finalUrl]) => native.evaluate(source, finalUrl));
+        ).then(([source, finalUrl]) => {
+          const run = graphs.then(() => native.evaluate(source, finalUrl, credentials));
+          graphs = run.then(() => {}, () => {});
+          return run;
+        });
       } catch (e) {
         return reject(e);
       }

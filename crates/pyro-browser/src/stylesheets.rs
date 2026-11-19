@@ -254,6 +254,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            credentials: None,
             post: None,
             url,
             kind: ResourceKind::Stylesheet,
@@ -578,6 +579,7 @@ impl Browser {
         let referrer = referrer.to_owned();
         let sheet_policy = self.sheet_referrer_policy(page, &referrer);
         let request = FetchRequest {
+            credentials: None,
             post: None,
             url,
             kind: ResourceKind::Stylesheet,

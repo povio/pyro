@@ -116,6 +116,7 @@ fn subresource_request_with(
     options: &SubresourceOptions,
 ) -> FetchRequest {
     FetchRequest {
+        credentials: None,
         post: None,
         url,
         kind,

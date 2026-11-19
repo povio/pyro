@@ -117,6 +117,13 @@ pub trait ModuleFetcher {
     fn busy(&self) -> bool {
         false
     }
+
+    /// A fetcher for a worklet's module graph ("fetch a worklet script graph"): every module of the
+    /// graph is fetched with `credentials` ("omit", "same-origin" or "include"), outside the
+    /// document's module map. `None`: this fetcher cannot make one.
+    fn for_worklet_graph(&self, _credentials: &str) -> Option<Rc<dyn ModuleFetcher>> {
+        None
+    }
 }
 
 /// The `type` import attribute of a module request (HTML "module type").

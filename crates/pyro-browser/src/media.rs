@@ -46,6 +46,7 @@ impl Browser {
         };
         let cors = request.crossorigin.is_some();
         let fetch = FetchRequest {
+            credentials: None,
             post: None,
             url: request.url,
             kind: if request.video { ResourceKind::Video } else { ResourceKind::Audio },

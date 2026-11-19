@@ -11112,6 +11112,70 @@ fn paint_worklet_modules_load_their_imports_at_the_final_url() {
     assert_eq!(r["result"]["result"]["value"], json!("loaded"), "{r}");
 }
 
+/// CSS.paintWorklet.addModule()'s credentials mode applies to the whole module graph: with "omit",
+/// neither the module nor its static imports carry the page's cookies, even a module the page itself
+/// imported with them (the worklet graph has a module map of its own).
+#[test]
+fn paint_worklet_imports_use_the_graph_credentials_mode() {
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+    let log: Arc<Mutex<Vec<String>>> = Arc::default();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let served = log.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+            let cookie = text
+                .lines()
+                .find_map(|l| l.strip_prefix("Cookie: ").or_else(|| l.strip_prefix("cookie: ")))
+                .unwrap_or("-")
+                .to_owned();
+            let (ty, body) = match path.as_str() {
+                "/m/root.js" => ("text/javascript", "import './dep.js'; import './shared.js';".to_owned()),
+                "/m/dep.js" | "/m/shared.js" => ("text/javascript", "export {};".to_owned()),
+                "/log" => ("text/plain", { let mut l = served.lock().unwrap().clone(); l.sort(); l.join(" ") }),
+                _ => ("text/html", "<!doctype html><p>page</p>".to_owned()),
+            };
+            if path.starts_with("/m/") {
+                served.lock().unwrap().push(format!("{path}:{cookie}"));
+            }
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"document.cookie = 'c=1'; import('/m/shared.js').then(() => CSS.paintWorklet.addModule('/m/root.js', { credentials: 'omit' })).then(() => fetch('/log')).then((r) => r.text(), (e) => 'rejected: ' + e)"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(
+        r["result"]["result"]["value"],
+        json!("/m/dep.js:- /m/root.js:- /m/shared.js:- /m/shared.js:c=1"),
+        "{r}"
+    );
+}
+
 /// The opener's WindowProxy for a popup targets the browsing context, not a document: once the popup
 /// navigated (here to a document of another origin), the opener's postMessage reaches the popup's
 /// current document.

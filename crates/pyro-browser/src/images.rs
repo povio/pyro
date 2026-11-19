@@ -462,6 +462,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            credentials: None,
             post: None,
             url,
             kind: ResourceKind::Image,
@@ -896,6 +897,7 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            credentials: None,
             post: None,
             url,
             kind: ResourceKind::Object,
