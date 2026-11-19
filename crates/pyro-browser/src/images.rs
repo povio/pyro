@@ -375,6 +375,7 @@ impl Browser {
                     referrer_policy: None,
                     timing: None,
                     partial: None,
+                nosniff: false,
                 })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, result));
@@ -746,7 +747,7 @@ impl Browser {
         if url.starts_with("blob:") {
             let ok = bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Vec::new(), content_disposition: None, header_csp: None, refresh: None, content_language: None, referrer_policy: None, timing: None, partial: None }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Vec::new(), content_disposition: None, header_csp: None, refresh: None, content_language: None, referrer_policy: None, timing: None, partial: None, nosniff: false }) } else { Err("revoked or unknown blob URL".into()) })
             });
             return;
         }

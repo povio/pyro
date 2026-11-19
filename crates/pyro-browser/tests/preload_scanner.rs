@@ -76,6 +76,7 @@ impl ManualLoader {
             referrer_policy: None,
             timing: None,
             partial: None,
+                nosniff: false,
         }
     }
 

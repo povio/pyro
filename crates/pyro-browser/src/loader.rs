@@ -157,6 +157,8 @@ pub struct Resource {
     /// `Some`: `body` is a prefix of the response body, cut as the
     /// request's `part` asked (the transfer stopped there).
     pub partial: Option<pyro_webapi::Partial>,
+    /// The response said `X-Content-Type-Options: nosniff`: a style sheet must be `text/css`.
+    pub nosniff: bool,
 }
 
 impl Resource {
@@ -427,6 +429,7 @@ impl ResourceLoader for NetLoader {
                 body: hit.file.body.to_vec(),
                 timing: report.filter(|_| document).map(Box::new),
                 partial: None,
+                nosniff: false,
             };
             browser.scheduler().post(TaskSource::Networking, move |b| {
                 b.report_resource_delivery(
@@ -490,6 +493,7 @@ impl ResourceLoader for NetLoader {
                     referrer_policy: None,
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
+                    nosniff: false,
                 };
                 let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Ok(resource)));
                 // Stop the transfer: a live stream never ends.
@@ -517,6 +521,11 @@ impl ResourceLoader for NetLoader {
                     Some(h) => Ok(Resource {
                         timing: timing(&h),
                         partial: None,
+                        nosniff: h
+                            .headers
+                            .get("x-content-type-options")
+                            .and_then(|v| v.to_str().ok())
+                            .is_some_and(|v| v.split(',').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("nosniff"))),
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,
@@ -704,6 +713,7 @@ impl ResourceLoader for StaticLoader {
                         referrer_policy: None,
                         timing: None,
                         partial,
+                        nosniff: false,
                     })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
@@ -1195,6 +1205,7 @@ impl Browser {
             referrer_policy: None,
             timing: None,
             partial: None,
+                nosniff: false,
         };
         if let Err(e) =
             self.begin_document_with(page, &document, loader_id.clone(), resource, history, Some(unreachable))

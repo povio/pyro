@@ -127,7 +127,8 @@ fn stylesheet_inserted_by_dcl_listener_delays_window_load() {
 
 #[test]
 fn invalid_mime_integrity_and_oversized_css_report_error_without_retaining_bytes() {
-    let (mut thread, page, loader) = setup("<link id=mime rel=stylesheet href=/wrong.css><link id=integrity rel=stylesheet href=/integrity.css integrity='sha256-mismatch'><link id=large rel=stylesheet href=/large.css>");
+    // A standards-mode document: a quirks-mode one takes a same-origin sheet of any type.
+    let (mut thread, page, loader) = setup("<!doctype html><link id=mime rel=stylesheet href=/wrong.css><link id=integrity rel=stylesheet href=/integrity.css integrity='sha256-mismatch'><link id=large rel=stylesheet href=/large.css>");
     loader.insert("http://site.test/wrong.css", "text/html", "html { display: none }", Duration::ZERO);
     loader.insert("http://site.test/integrity.css", "text/css", "html { display: none }", Duration::ZERO);
     loader.insert("http://site.test/large.css", "text/css", &" ".repeat(4 * 1024 * 1024 + 1), Duration::ZERO);

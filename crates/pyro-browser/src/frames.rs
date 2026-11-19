@@ -1572,6 +1572,7 @@ impl Browser {
                 referrer_policy: None,
                 timing: None,
                 partial: None,
+                nosniff: false,
             },
             history,
         )?;
