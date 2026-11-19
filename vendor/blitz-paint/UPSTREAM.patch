@@ -13504,10 +13504,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                      let stroke_is_exact = is_exact(radii.top_left)
                          && is_exact(radii.top_right)
                          && is_exact(radii.bottom_right)
-@@ -227,6 +579,39 @@
-             }
-         }
- 
+@@ -222,11 +574,44 @@
+                     let ry = (bb.height() + pb.height()) / 4.0;
+                     let e = kurbo::Ellipse::new(bb.center(), (rx, ry), 0.0);
+                     scene.stroke(&stroke, self.transform, color, None, &e);
++                    return;
++                }
++            }
++        }
++
 +        // pyro: a border of one colour and solid sides around shaped corners (`corner-shape`) is
 +        // the area between the border edge and the padding edge, filled once.
 +        if self.frame.corner_curvature.is_some() {
@@ -13532,11 +13537,11 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                });
 +                if uniform && visible.all(|(_, _, style)| *style == BorderStyle::Solid) {
 +                    scene.fill(Fill::NonZero, self.transform, color, None, &self.frame.border_ring());
-+                    return;
-+                }
-+            }
-+        }
-+
+                     return;
+                 }
+             }
+         }
+ 
 +        if self.draw_square_solid_sides_overdrawn(scene) {
 +            return;
 +        }
@@ -13600,13 +13605,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -338,6 +741,175 @@
-             }
-             scene.fill(Fill::NonZero, self.transform, color, None, &path);
-             start = next;
-+        }
-+    }
-+
+@@ -341,6 +744,175 @@
+         }
+     }
+ 
 +    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
 +    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
 +    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
@@ -13773,9 +13775,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            path.close_path();
 +            scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +            painted[i] = true;
-         }
-     }
- 
++        }
++    }
++
+     /// The border width (in device pixels) of a single edge.
+     fn edge_width(&self, edge: Edge) -> f64 {
+         match edge {
 @@ -351,163 +923,152 @@
          }
      }
@@ -14174,7 +14179,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,8 +1176,195 @@
+@@ -589,10 +1176,197 @@
          }
      }
  
@@ -14370,9 +14375,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    /// ✅ dotted - Defines a dotted border
 +    /// ✅ dashed - Defines a dashed border
      /// ✅ solid - Defines a solid border
-     /// ❌ double - Defines a double border
+-    /// ❌ double - Defines a double border
++    /// ✅ double - Defines a double border
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
-@@ -600,33 +1374,93 @@
+     /// ❌ ridge - Defines a 3D ridged border. The effect depends on the border-color value
+     /// ❌ inset - Defines a 3D inset border. The effect depends on the border-color value
+@@ -600,33 +1374,102 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
@@ -14459,6 +14467,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            BorderStyle::None | BorderStyle::Hidden => {}
 +            BorderStyle::Dotted | BorderStyle::Dashed => {
 +                self.draw_dotted_dashed_sides(scene, &frame, [Some((style, color)); 4]);
++            }
++            // pyro: a double outline is two lines a third of its width each, as a double border
++            // (WPT css-ui `outline-style-014`).
++            BorderStyle::Double
++                if width >= 3.0 * self.scale && frame.border_box.width().min(frame.border_box.height()) > 2.0 * width =>
++            {
++                let mut path = frame.border_slice(0.0, 1.0 / 3.0).border_ring();
++                path.extend(&frame.border_slice(2.0 / 3.0, 1.0).border_ring());
++                scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +            }
              // TODO: Implement other border styles
 -            BorderStyle::Inset

@@ -1366,7 +1366,7 @@ impl ElementCx<'_, '_> {
     /// ✅ dotted - Defines a dotted border
     /// ✅ dashed - Defines a dashed border
     /// ✅ solid - Defines a solid border
-    /// ❌ double - Defines a double border
+    /// ✅ double - Defines a double border
     /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
     /// ❌ ridge - Defines a 3D ridged border. The effect depends on the border-color value
     /// ❌ inset - Defines a 3D inset border. The effect depends on the border-color value
@@ -1442,6 +1442,15 @@ impl ElementCx<'_, '_> {
             BorderStyle::None | BorderStyle::Hidden => {}
             BorderStyle::Dotted | BorderStyle::Dashed => {
                 self.draw_dotted_dashed_sides(scene, &frame, [Some((style, color)); 4]);
+            }
+            // pyro: a double outline is two lines a third of its width each, as a double border
+            // (WPT css-ui `outline-style-014`).
+            BorderStyle::Double
+                if width >= 3.0 * self.scale && frame.border_box.width().min(frame.border_box.height()) > 2.0 * width =>
+            {
+                let mut path = frame.border_slice(0.0, 1.0 / 3.0).border_ring();
+                path.extend(&frame.border_slice(2.0 / 3.0, 1.0).border_ring());
+                scene.fill(Fill::NonZero, self.transform, color, None, &path);
             }
             // TODO: Implement other border styles
             BorderStyle::Solid
