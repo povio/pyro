@@ -389,6 +389,7 @@ impl LayoutPassState<'_> {
             layout.location = location;
             layout.margin = margin;
         });
+        self.inline_placed_floats.push((node_id, pos.y));
 
         // Translate anchors from item-relative to container-relative
         // coordinates and collect candidates bubbled from the float's subtree
@@ -486,6 +487,20 @@ impl LayoutPassState<'_> {
         {
             return self.compute_initial_letter_box_layout(node_id, inputs);
         }
+        // pyro: the floats this inline layout places (`inline_placed_floats`), apart from those
+        // of the layouts it runs.
+        let outer_floats = core::mem::take(&mut self.inline_placed_floats);
+        let output = self.compute_inline_root_layout(node_id, inputs, block_ctx);
+        self.inline_placed_floats = outer_floats;
+        output
+    }
+
+    fn compute_inline_root_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: taffy::tree::LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> taffy::LayoutOutput {
         let LayoutInput {
             known_dimensions,
             parent_size,
@@ -1985,6 +2000,7 @@ impl LayoutPassState<'_> {
         // by that and by what the last line loses under its edge (`layout::text_box`).
         let mut text_box_shift = 0.0;
         let mut text_box_overflows = false;
+        let mut text_box_float_shift = None;
         if has_inline_content {
             let (start, end) = crate::layout::text_box::block_trim(self.doc, node_id);
             let layout = &inline_layout.layout;
@@ -1996,9 +2012,18 @@ impl LayoutPassState<'_> {
                 // An inverted line (`vertical-lr`) has its under side at the block start.
                 text_box_shift = if trim.over { edge - top } else { line.metrics().block_max_coord - edge };
             }
+            // pyro: the last formatted line: not a phantom line holding only floats or empty
+            // boxes (CSS Inline 3 § 4.1), which the end trim passes over.
+            let last_formatted = {
+                let mut last = trailing_empty_line.unwrap_or(line_count);
+                while last > 1 && layout.get(last - 1).is_some_and(|line| line.metrics().invisible) {
+                    last -= 1;
+                }
+                last.checked_sub(1)
+            };
             let mut end_trim = 0.0;
             if let Some(trim) = end
-                && let Some(line) = trailing_empty_line.unwrap_or(line_count).checked_sub(1).and_then(|i| layout.get(i))
+                && let Some(line) = last_formatted.and_then(|i| layout.get(i))
             {
                 let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 end_trim = if trim.over { edge - line.metrics().block_min_coord } else { line.metrics().block_max_coord - edge };
@@ -2006,6 +2031,14 @@ impl LayoutPassState<'_> {
             // (Not above where a `<br>`'s clearance put the end of the content.)
             height = (height - text_box_shift - end_trim).max((br_clear_floor - text_box_shift).min(height));
             text_box_overflows = text_box_shift > 0.0 || end_trim > 0.0;
+            // pyro: the floats placed among the lines move with them; one placed after the last
+            // line moves up by its trimmed end too, as that line box itself is shorter (Blink).
+            let last_bottom = last_formatted
+                .and_then(|i| layout.get(i))
+                .map_or(f32::INFINITY, |line| line.metrics().block_max_coord / scale);
+            if text_box_shift > 0.0 || end_trim > 0.0 {
+                text_box_float_shift = Some((text_box_shift / scale, end_trim / scale, last_bottom));
+            }
         }
 
         #[cfg(feature = "floats")]
@@ -2016,6 +2049,24 @@ impl LayoutPassState<'_> {
                 let clamp = &style.get_box().line_clamp;
                 !clamp.webkit_legacy && !clamp.max_lines.is_none()
             });
+            // pyro: floats moved with the trimmed lines (`text_box_float_shift`) contribute where
+            // they are now.
+            let mut float_height_contribution = float_height_contribution;
+            if let Some((start, end, last_bottom)) = text_box_float_shift {
+                let mut bottom = f32::NEG_INFINITY;
+                for (float_id, top) in core::mem::take(&mut self.inline_placed_floats) {
+                    let shift = if top >= last_bottom { start + end } else { start };
+                    let mut margin_bottom = 0.0;
+                    self.nodes[float_id].update_unrounded_layout(|layout| {
+                        layout.location.y -= shift;
+                        margin_bottom = layout.location.y + layout.size.height + layout.margin.bottom;
+                    });
+                    bottom = bottom.max(margin_bottom - container_pb.top);
+                }
+                if bottom.is_finite() {
+                    float_height_contribution = bottom.max(0.0);
+                }
+            }
             if is_bfc_root && !line_clamp {
                 height = height.max(float_height_contribution * scale)
             };

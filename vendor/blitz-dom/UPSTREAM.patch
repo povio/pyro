@@ -13827,7 +13827,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              mut output,
              margin,
              direction,
-@@ -164,23 +362,33 @@
+@@ -164,23 +362,34 @@
          } = float;
  
          // Note: `pos` is content-box relative
@@ -13872,10 +13872,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +            layout.location = location;
 +            layout.margin = margin;
 +        });
++        self.inline_placed_floats.push((node_id, pos.y));
  
          // Translate anchors from item-relative to container-relative
          // coordinates and collect candidates bubbled from the float's subtree
-@@ -190,19 +398,104 @@
+@@ -190,11 +399,107 @@
          }
      }
  
@@ -13960,16 +13961,30 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          node_id: NodeId,
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
-     ) -> taffy::LayoutOutput {
++    ) -> taffy::LayoutOutput {
 +        // (A floated first letter's box is laid out as any inline root.)
 +        if self.nodes[node_id].flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX)
 +            && self.nodes[node_id].primary_styles().is_some_and(|style| style.slow_clone_initial_letter().size > 0.0)
 +        {
 +            return self.compute_initial_letter_box_layout(node_id, inputs);
 +        }
++        // pyro: the floats this inline layout places (`inline_placed_floats`), apart from those
++        // of the layouts it runs.
++        let outer_floats = core::mem::take(&mut self.inline_placed_floats);
++        let output = self.compute_inline_root_layout(node_id, inputs, block_ctx);
++        self.inline_placed_floats = outer_floats;
++        output
++    }
++
++    fn compute_inline_root_layout(
++        &mut self,
++        node_id: NodeId,
++        inputs: taffy::tree::LayoutInput,
++        block_ctx: Option<&mut BlockContext<'_>>,
+     ) -> taffy::LayoutOutput {
          let LayoutInput {
              known_dimensions,
-             parent_size,
+@@ -202,7 +507,10 @@
              run_mode,
              ..
          } = inputs;
@@ -13981,7 +13996,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Pull these out earlier to avoid borrowing issues
          let is_scroll_container =
-@@ -322,7 +615,9 @@
+@@ -322,7 +630,9 @@
                      && display.inside() == DisplayInside::Flow
                  {
                      let claims = stylo_taffy::convert::inline_containing_block_claims(&style);
@@ -13992,7 +14007,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          flags |= StyleFlags::SPAN_ABSOLUTE_CB;
                      }
                      if claims.fixed {
-@@ -335,6 +630,32 @@
+@@ -335,6 +645,32 @@
          StyleFlags::empty()
      }
  
@@ -14025,7 +14040,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
      fn compute_inline_layout_inner(
          &mut self,
          node_id: NodeId,
-@@ -358,7 +679,9 @@
+@@ -358,7 +694,9 @@
              .take_inline_layout()
              .unwrap();
  
@@ -14036,7 +14051,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Note: both horizontal and vertical percentage padding/borders are resolved against the container's inline size (i.e. width).
          // This is not a bug, but is how CSS is specified (see: https://developer.mozilla.org/en-US/docs/Web/CSS/padding#values)
-@@ -375,6 +698,12 @@
+@@ -375,6 +713,12 @@
          } else {
              Size::ZERO
          };
@@ -14049,7 +14064,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
          // However, the axis are switched (transposed) because a node that scrolls vertically needs
-@@ -403,6 +732,16 @@
+@@ -403,6 +747,16 @@
  
          // Resolve node's preferred/min/max sizes (width/heights) against the available space (percentages resolve to pixel values)
          // For ContentSize mode, we pretend that the node has no size styles as these should be ignored.
@@ -14066,7 +14081,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          let (node_size, node_min_size, node_max_size, aspect_ratio) = match sizing_mode {
              SizingMode::ContentSize => {
                  let node_size = known_dimensions;
-@@ -427,8 +766,16 @@
+@@ -427,8 +781,16 @@
                      .maybe_resolve(parent_size, resolve_calc_value)
                      .maybe_add(box_sizing_adjustment);
  
@@ -14083,7 +14098,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  (node_size, style_min_size, style_max_size, aspect_ratio)
              }
          };
-@@ -441,7 +788,7 @@
+@@ -441,7 +803,7 @@
  
          // Short circuit if inline context contains no text or inline boxes
          if !has_styles_preventing_being_collapsed_through
@@ -14092,7 +14107,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              && inline_layout.layout.inline_boxes().len() == 0
          {
              // Put layout back
-@@ -450,9 +797,20 @@
+@@ -450,9 +812,20 @@
                  .downcast_element_mut()
                  .unwrap()
                  .inline_layout_data = Some(inline_layout);
@@ -14116,7 +14131,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Compute available space
-@@ -482,15 +840,70 @@
+@@ -482,15 +855,70 @@
          };
  
          // Compute size of inline boxes
@@ -14188,7 +14203,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  } else {
                      available_space.height.into_option()
                  },
-@@ -507,11 +920,42 @@
+@@ -507,11 +935,42 @@
          };
  
          // Update inline boxes
@@ -14234,7 +14249,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
              #[cfg(feature = "floats")]
              let is_floated = style.float().is_floated();
-@@ -543,10 +987,17 @@
+@@ -543,10 +1002,17 @@
                  && !style
                      .flags
                      .intersects(StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
@@ -14253,7 +14268,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              drop(style);
  
              if is_out_of_flow || is_floated {
-@@ -554,10 +1005,26 @@
+@@ -554,10 +1020,26 @@
                  ibox.height = 0.0;
                  ibox.baseline = None;
              } else {
@@ -14283,7 +14298,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          output.baselines.last.or(output.baselines.first)
                      } else {
                          output.baselines.first.or(output.baselines.last)
-@@ -573,6 +1040,37 @@
+@@ -573,6 +1055,37 @@
                  } else {
                      None
                  };
@@ -14321,7 +14336,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  // Vertical margins adjust the space the box reserves in the line. A box with a
                  // baseline splits that space into ascent (`margin.top + baseline`) and descent
                  // (`margin.bottom + height - baseline`), either of which may be negative. A box
-@@ -592,28 +1090,86 @@
+@@ -592,28 +1105,86 @@
          let text_indent = self.nodes[node_id]
              .primary_styles()
              .map(|s| s.slow_clone_text_indent())
@@ -14418,7 +14433,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  let min_content_width = content_sizes.min;
                  let max_content_width = content_sizes.max;
  
-@@ -622,6 +1178,9 @@
+@@ -622,6 +1193,9 @@
                      AvailableSpace::MinContent => {
                          let mut width: f32 = 0.0;
                          for ibox in inline_layout.layout.inline_boxes_mut() {
@@ -14428,7 +14443,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              let (is_floated, margin) = {
                                  let style =
                                      self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-@@ -659,6 +1218,9 @@
+@@ -659,6 +1233,9 @@
                          let mut right_band: f32 = 0.0;
                          let mut width: f32 = 0.0;
                          for ibox in inline_layout.layout.inline_boxes_mut() {
@@ -14438,7 +14453,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              let (float, clear, margin) = {
                                  let style =
                                      self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-@@ -708,6 +1270,9 @@
+@@ -708,6 +1285,9 @@
                          .min(max_content_width + float_width)
                          .max(min_content_width),
                  };
@@ -14448,7 +14463,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
                  let style_width = node_size.width.map(|w| w * scale);
                  let min_width = node_min_size.width.map(|w| w * scale);
-@@ -752,7 +1317,7 @@
+@@ -752,7 +1332,7 @@
                  .inline_layout_data = Some(inline_layout);
  
              let measured_size = inputs.known_dimensions.unwrap_or(taffy::Size {
@@ -14457,7 +14472,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  // Height is ignored if RequestedAxis if Horizontal
                  height: 0.0,
              });
-@@ -773,14 +1338,37 @@
+@@ -773,14 +1353,37 @@
              .px();
          inline_layout
              .layout
@@ -14497,7 +14512,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              let fit_width = width.max(max_content_width);
              let rounding_error = (fit_width + pbw).abs() * 8.0 * f32::EPSILON;
              if (max_content_width - width).abs() <= rounding_error {
-@@ -791,10 +1379,12 @@
+@@ -791,10 +1394,12 @@
          };
          #[cfg(feature = "floats")]
          let slack = max_advance - width;
@@ -14510,7 +14525,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Out-of-flow candidates bubbled up from this container and its in-flow subtree.
-@@ -808,166 +1398,472 @@
+@@ -808,166 +1413,472 @@
          let mut line_bottoms = [0.0f64; 2];
          #[cfg(feature = "floats")]
          let mut line_count_so_far = 0usize;
@@ -14834,7 +14849,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                );
 +                                continue;
 +                            }
-+
+ 
+-                        let state = breaker.state_mut();
 +                            // pyro: the initial letter box (`layout::first_letter`) is placed by
 +                            // the first line, which it starts: at the line's start (after the
 +                            // text indent, beside the floats along its whole height), its cap
@@ -14916,7 +14932,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                line_start_state = has_active_floats.then(|| breaker.state().clone());
 +                                continue;
 +                            }
-+
+ 
+-                        if !pending_floats.is_empty() {
+-                            let min_y = state.line_y() as f32 / scale;
+-                            for float in pending_floats.drain(..) {
 +                            let (direction, clear, margin) = {
 +                                let style = self.child_layout_style(&self.nodes[node_id]);
 +                                // We can assume that the box is a float because we only set `break_on_box: true` for floats
@@ -14933,8 +14952,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                        .resolve_or_zero(inputs.parent_size, resolve_calc_value),
 +                                )
 +                            };
- 
--                        let state = breaker.state_mut();
++
 +                            let output = self.compute_child_layout(
 +                                crate::taffy_node_id(node_id),
 +                                float_child_inputs,
@@ -14948,10 +14966,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                direction,
 +                                clear,
 +                            };
- 
--                        if !pending_floats.is_empty() {
--                            let min_y = state.line_y() as f32 / scale;
--                            for float in pending_floats.drain(..) {
++
 +                            // A float that doesn't fit beside the content already on the line is
 +                            // placed below the line (CSS 2.1 §9.5.1), as are any floats after it
 +                            // (a float may not be higher than an earlier float).
@@ -14990,12 +15005,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            state.set_line_x(0.0);
 -                            state.set_line_max_advance(max_advance);
 -                        }
-+                                let min_y = state.line_y() / scale as f64;
-+                                line_slot =
-+                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
-+                                has_active_floats = line_slot.segment_id.is_some();
-+                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
- 
+-
 -                        line_start_state = has_active_floats.then(|| breaker.state().clone());
 -                        continue;
 -                    }
@@ -15023,7 +15033,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                                    .resolve_or_zero(inputs.parent_size, resolve_calc_value),
 -                            )
 -                        };
--
++                                let min_y = state.line_y() / scale as f64;
++                                line_slot =
++                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
++                                has_active_floats = line_slot.segment_id.is_some();
++                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
+ 
 -                        let output = self.compute_child_layout(
 -                            crate::taffy_node_id(node_id),
 -                            float_child_inputs,
@@ -15117,7 +15132,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Propagate the height consumed by floats placed within this container to the
-@@ -989,19 +1885,56 @@
+@@ -989,19 +1900,56 @@
              })
              .unwrap_or((parley::layout::Alignment::Start, None));
  
@@ -15183,7 +15198,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          let mut height = if has_inline_content {
              inline_layout.layout.height()
-@@ -1047,9 +1980,43 @@
+@@ -1047,9 +1995,79 @@
              }
          }
  
@@ -15192,6 +15207,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +        // by that and by what the last line loses under its edge (`layout::text_box`).
 +        let mut text_box_shift = 0.0;
 +        let mut text_box_overflows = false;
++        let mut text_box_float_shift = None;
 +        if has_inline_content {
 +            let (start, end) = crate::layout::text_box::block_trim(self.doc, node_id);
 +            let layout = &inline_layout.layout;
@@ -15203,9 +15219,18 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                // An inverted line (`vertical-lr`) has its under side at the block start.
 +                text_box_shift = if trim.over { edge - top } else { line.metrics().block_max_coord - edge };
 +            }
++            // pyro: the last formatted line: not a phantom line holding only floats or empty
++            // boxes (CSS Inline 3 § 4.1), which the end trim passes over.
++            let last_formatted = {
++                let mut last = trailing_empty_line.unwrap_or(line_count);
++                while last > 1 && layout.get(last - 1).is_some_and(|line| line.metrics().invisible) {
++                    last -= 1;
++                }
++                last.checked_sub(1)
++            };
 +            let mut end_trim = 0.0;
 +            if let Some(trim) = end
-+                && let Some(line) = trailing_empty_line.unwrap_or(line_count).checked_sub(1).and_then(|i| layout.get(i))
++                && let Some(line) = last_formatted.and_then(|i| layout.get(i))
 +            {
 +                let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
 +                end_trim = if trim.over { edge - line.metrics().block_min_coord } else { line.metrics().block_max_coord - edge };
@@ -15213,6 +15238,14 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +            // (Not above where a `<br>`'s clearance put the end of the content.)
 +            height = (height - text_box_shift - end_trim).max((br_clear_floor - text_box_shift).min(height));
 +            text_box_overflows = text_box_shift > 0.0 || end_trim > 0.0;
++            // pyro: the floats placed among the lines move with them; one placed after the last
++            // line moves up by its trimmed end too, as that line box itself is shorter (Blink).
++            let last_bottom = last_formatted
++                .and_then(|i| layout.get(i))
++                .map_or(f32::INFINITY, |line| line.metrics().block_max_coord / scale);
++            if text_box_shift > 0.0 || end_trim > 0.0 {
++                text_box_float_shift = Some((text_box_shift / scale, end_trim / scale, last_bottom));
++            }
 +        }
 +
          #[cfg(feature = "floats")]
@@ -15224,11 +15257,29 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                let clamp = &style.get_box().line_clamp;
 +                !clamp.webkit_legacy && !clamp.max_lines.is_none()
 +            });
++            // pyro: floats moved with the trimmed lines (`text_box_float_shift`) contribute where
++            // they are now.
++            let mut float_height_contribution = float_height_contribution;
++            if let Some((start, end, last_bottom)) = text_box_float_shift {
++                let mut bottom = f32::NEG_INFINITY;
++                for (float_id, top) in core::mem::take(&mut self.inline_placed_floats) {
++                    let shift = if top >= last_bottom { start + end } else { start };
++                    let mut margin_bottom = 0.0;
++                    self.nodes[float_id].update_unrounded_layout(|layout| {
++                        layout.location.y -= shift;
++                        margin_bottom = layout.location.y + layout.size.height + layout.margin.bottom;
++                    });
++                    bottom = bottom.max(margin_bottom - container_pb.top);
++                }
++                if bottom.is_finite() {
++                    float_height_contribution = bottom.max(0.0);
++                }
++            }
 +            if is_bfc_root && !line_clamp {
                  height = height.max(float_height_contribution * scale)
              };
          }
-@@ -1073,12 +2040,32 @@
+@@ -1073,12 +2091,32 @@
              .or(node_size)
              .unwrap_or(measured_size + content_box_inset.sum_axes())
              .maybe_clamp(node_min_size, node_max_size);
@@ -15262,7 +15313,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      .unwrap_or(0.0),
              ),
          }
-@@ -1097,8 +2084,25 @@
+@@ -1097,8 +2135,25 @@
                  final_size.height - content_box_inset.vertical_axis_sum() - measured_size.height;
              taffy::compute_block_align_content_offset(align_content, free_space)
          };
@@ -15288,7 +15339,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Store sizes and positions of inline boxes. Walking a line's items builds every
          // glyph run on it, so lines are only walked when there are boxes to find.
-@@ -1113,6 +2117,13 @@
+@@ -1113,6 +2168,13 @@
                      line_has_in_flow_content |= run.advance() > 0.0;
                  }
                  if let parley::layout::PositionedLayoutItem::InlineBox(ibox) = item {
@@ -15302,7 +15353,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      let order = ibox_order;
                      ibox_order += 1;
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -1172,7 +2183,7 @@
+@@ -1172,7 +2234,7 @@
                              .bottom
                              .maybe_resolve(container_content_size.height, resolve_calc_value),
                      };
@@ -15311,7 +15362,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      drop(style);
  
                      if is_absolute {
-@@ -1186,10 +2197,20 @@
+@@ -1186,10 +2248,20 @@
                          //   box, or below it if in-flow content precedes it on the line (its
                          //   hypothetical box would start a new line after that content).
                          let line_metrics = line.metrics();
@@ -15335,7 +15386,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              (
                                  taffy::Line { start: x, end: x },
                                  taffy::Line {
-@@ -1198,21 +2219,55 @@
+@@ -1198,21 +2270,55 @@
                                  },
                              )
                          } else {
@@ -15350,8 +15401,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                    .find(|candidate| candidate.id == ibox.id)
 +                                    .map_or(0, |candidate| candidate.index);
 +                                first_in_flow_index(&line, &inline_layout.layout).is_some_and(|first| first < at)
-                             } else {
--                                line_top
++                            } else {
 +                                line_has_in_flow_content
 +                            };
 +                            // pyro: the static-position rectangle is the line box's block
@@ -15362,7 +15412,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                            let y = if preceded { line_bottom } else { line_top };
 +                            let x = if container_direction.is_rtl() {
 +                                final_size.width - container_pb.right + span_offset.x
-+                            } else {
+                             } else {
+-                                line_top
 +                                container_pb.left + span_offset.x
                              };
                              (
@@ -15400,7 +15451,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              node: taffy::NodeId::from(ibox.id),
                              order,
                              position,
-@@ -1220,11 +2275,11 @@
+@@ -1220,11 +2326,11 @@
                                  x: AxisStaticPosition::from_alignment(
                                      justify_self.resolve_self_relative(
                                          item_direction,
@@ -15414,7 +15465,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                                  ),
                                  y: AxisStaticPosition::from_alignment(
                                      align_self.resolve_self_relative(
-@@ -1238,10 +2293,11 @@
+@@ -1238,10 +2344,11 @@
                              },
                          });
                      } else if is_floated {
@@ -15430,7 +15481,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      } else {
                          line_has_in_flow_content = true;
                          // Re-measure the box to get its border-box size (this hits the layout
-@@ -1250,6 +2306,14 @@
+@@ -1250,6 +2357,14 @@
                          let mut output =
                              self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                          let size = output.size;
@@ -15445,7 +15496,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
  
                          let is_relative = position == taffy::Position::Relative;
-@@ -1266,23 +2330,44 @@
+@@ -1266,23 +2381,44 @@
                              taffy::Point::ZERO
                          };
  
@@ -15503,7 +15554,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,20 +2382,126 @@
+@@ -1297,20 +2433,126 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -15633,7 +15684,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1360,14 +2551,19 @@
+@@ -1360,14 +2602,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -15656,7 +15707,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2580,306 @@
+@@ -1384,3 +2631,306 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }
@@ -17445,10 +17496,13 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
      let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
      let result = calc.resolve(CSSPixelLength::new(parent_size));
-@@ -101,9 +155,56 @@
+@@ -101,9 +155,59 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
++    /// pyro: the floats the running inline layout placed, with the top of each margin box
++    /// (content-box relative, CSS px): `text-box-trim` moves them with its lines.
++    pub(crate) inline_placed_floats: Vec<(crate::NodeId, f32)>,
 +    /// This rounding pass's nodes reached and subtrees skipped (see `layout::writing_mode`).
 +    #[cfg(feature = "writing-mode")]
 +    pub(crate) round_counts: (u64, u64),
@@ -17502,10 +17556,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
      /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
      #[inline]
-@@ -138,6 +239,18 @@
+@@ -138,6 +242,19 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
++            inline_placed_floats: Vec::new(),
 +            #[cfg(feature = "writing-mode")]
 +            round_counts: (0, 0),
 +            column_spanners: None,
@@ -17521,7 +17576,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +287,25 @@
+@@ -174,14 +291,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -17555,7 +17610,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +315,513 @@
+@@ -191,13 +319,513 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -18071,7 +18126,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +841,188 @@
+@@ -217,13 +845,188 @@
          }
      }
  
@@ -18260,7 +18315,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1038,43 @@
+@@ -239,8 +1042,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -18305,7 +18360,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1089,7 @@
+@@ -255,7 +1093,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -18314,7 +18369,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -287,15 +1121,47 @@
+@@ -287,15 +1125,47 @@
                          .attr(local_name!("cols"))
                          .and_then(|val| val.parse::<f32>().ok());
  
@@ -18367,7 +18422,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -322,73 +1188,202 @@
+@@ -322,73 +1192,202 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -18609,7 +18664,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1402,50 @@
+@@ -407,39 +1406,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -18681,7 +18736,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1478,90 @@
+@@ -472,6 +1482,90 @@
                          _ => unreachable!(),
                      };
  
@@ -18772,7 +18827,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1578,551 @@
+@@ -488,126 +1582,551 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -19410,7 +19465,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2182,11 @@
+@@ -667,7 +2186,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19423,7 +19478,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2194,15 @@
+@@ -675,6 +2198,15 @@
      }
  
      #[inline(always)]
@@ -19439,7 +19494,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2226,26 @@
+@@ -698,17 +2230,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -19468,7 +19523,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2258,7 @@
+@@ -721,6 +2262,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -19476,7 +19531,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2270,122 @@
+@@ -732,6 +2274,122 @@
      }
  }
  
@@ -19599,7 +19654,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2393,12 @@
+@@ -739,10 +2397,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -19616,7 +19671,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2408,11 @@
+@@ -752,9 +2412,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -19631,7 +19686,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2440,186 @@
+@@ -782,16 +2444,186 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -19822,7 +19877,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2672,30 @@
+@@ -844,6 +2676,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -19853,7 +19908,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2704,19 @@
+@@ -852,7 +2708,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19874,7 +19929,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2732,30 @@
+@@ -868,6 +2736,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -19905,7 +19960,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2860,192 @@
+@@ -972,3 +2864,192 @@
          })
      }
  }

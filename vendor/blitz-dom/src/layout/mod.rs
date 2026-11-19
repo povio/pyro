@@ -155,6 +155,9 @@ pub(crate) struct LayoutPassState<'doc> {
     /// size, against which its percentage padding resolves (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
+    /// pyro: the floats the running inline layout placed, with the top of each margin box
+    /// (content-box relative, CSS px): `text-box-trim` moves them with its lines.
+    pub(crate) inline_placed_floats: Vec<(crate::NodeId, f32)>,
     /// This rounding pass's nodes reached and subtrees skipped (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) round_counts: (u64, u64),
@@ -239,6 +242,7 @@ impl<'doc> LayoutPassState<'doc> {
             current_align_axis_is_inline: false,
             #[cfg(feature = "writing-mode")]
             orthogonal_percent_basis: None,
+            inline_placed_floats: Vec::new(),
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
