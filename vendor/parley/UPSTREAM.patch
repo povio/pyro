@@ -5014,7 +5014,7 @@ index e967f50..68055ee 100644
  pub use layout::*;
  pub use style::*;
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..c10260c 100644
+index f465832..39813da 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -5026,7 +5026,7 @@ index f465832..c10260c 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,23 @@ impl ResolveContext {
+@@ -169,6 +169,24 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
@@ -5045,12 +5045,13 @@ index f465832..c10260c 100644
 +            StyleProperty::TextAutospace(value) => TextAutospace(*value),
 +            StyleProperty::Upright(value) => Upright(*value),
 +            StyleProperty::Vertical(value) => Vertical(*value),
++            StyleProperty::FontVariantEmoji(value) => FontVariantEmoji(*value),
 +            StyleProperty::TextJustify(value) => TextJustify(*value),
 +            StyleProperty::SpacingScales(value) => SpacingScales(*value),
          }
      }
  
-@@ -210,6 +227,25 @@ impl ResolveContext {
+@@ -210,6 +228,26 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
@@ -5069,6 +5070,7 @@ index f465832..c10260c 100644
 +            text_autospace: raw_style.text_autospace,
 +            upright: raw_style.upright,
 +            vertical: raw_style.vertical,
++            font_variant_emoji: raw_style.font_variant_emoji,
 +            text_justify: raw_style.text_justify,
 +            spacing_scales: raw_style.spacing_scales,
 +            annotation_space: raw_style.annotation_space.scale(scale),
@@ -5076,7 +5078,7 @@ index f465832..c10260c 100644
          }
      }
  
-@@ -400,6 +436,44 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +438,46 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -5106,6 +5108,8 @@ index f465832..c10260c 100644
 +    Upright(bool),
 +    /// pyro: text in a vertical line.
 +    Vertical(bool),
++    /// pyro: emoji or text presentation.
++    FontVariantEmoji(crate::style::FontVariantEmoji),
 +    /// pyro: where justification adds space.
 +    TextJustify(crate::style::TextJustify),
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -5121,7 +5125,7 @@ index f465832..c10260c 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +522,45 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +526,47 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -5156,6 +5160,8 @@ index f465832..c10260c 100644
 +    pub(crate) upright: bool,
 +    /// pyro: text in a vertical line (`TextStyle::vertical`).
 +    pub(crate) vertical: bool,
++    /// pyro: `TextStyle::font_variant_emoji`.
++    pub(crate) font_variant_emoji: crate::style::FontVariantEmoji,
 +    /// pyro: where justification adds space.
 +    pub(crate) text_justify: crate::style::TextJustify,
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -5167,7 +5173,7 @@ index f465832..c10260c 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +594,23 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +600,24 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
@@ -5186,12 +5192,13 @@ index f465832..c10260c 100644
 +            TextAutospace(value) => self.text_autospace = value,
 +            Upright(value) => self.upright = value,
 +            Vertical(value) => self.vertical = value,
++            FontVariantEmoji(value) => self.font_variant_emoji = value,
 +            TextJustify(value) => self.text_justify = value,
 +            SpacingScales(value) => self.spacing_scales = value,
          }
      }
  
-@@ -513,6 +643,23 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +650,24 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
@@ -5210,12 +5217,13 @@ index f465832..c10260c 100644
 +            TextAutospace(value) => self.text_autospace == *value,
 +            Upright(value) => self.upright == *value,
 +            Vertical(value) => self.vertical == *value,
++            FontVariantEmoji(value) => self.font_variant_emoji == *value,
 +            TextJustify(value) => self.text_justify == *value,
 +            SpacingScales(value) => self.spacing_scales == *value,
          }
      }
  
-@@ -527,6 +674,12 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +682,12 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
@@ -5999,7 +6007,7 @@ index 0000000..ce15c33
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..45b22d5 100644
+index 060a32d..651f826 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -6332,7 +6340,7 @@ index 060a32d..45b22d5 100644
 +            levels[index] = last;
 +        }
 +        last = level_of(slot, &levels).or(last);
-     }
++    }
 +    let mut next = None;
 +    for slot in slots.iter().rev() {
 +        if let Slot::Box(index) = *slot
@@ -6358,7 +6366,7 @@ index 060a32d..45b22d5 100644
 +            levels[index] = after.or(before[index]);
 +        }
 +        after = level_of(slot, &levels).or(after);
-+    }
+     }
 +    levels.into_iter().map(|level| level.unwrap_or(paragraph)).collect()
  }
  
@@ -6394,7 +6402,19 @@ index 060a32d..45b22d5 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +546,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -322,7 +508,10 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+         cluster: &mut CharCluster,
+     ) -> Option<FontInstanceRef<'_>> {
+         let style_index = cluster.style_index();
+-        let is_emoji = cluster.is_emoji();
++        // pyro: the presentation the cluster asks for: a variation selector's (U+FE0F emoji,
++        // U+FE0E text), else `font-variant-emoji`'s, else its default (CSS Fonts 4 § 6.13).
++        let presentation = emoji_presentation(cluster, self.styles[style_index as usize].font_variant_emoji);
++        let is_emoji = cluster.is_emoji() || presentation == Some(true);
+ 
+         if style_index != self.style_index || is_emoji || self.fonts_id.is_none() {
+             self.style_index = style_index;
+@@ -360,12 +549,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -6433,7 +6453,7 @@ index 060a32d..45b22d5 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +583,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +586,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -6446,7 +6466,15 @@ index 060a32d..45b22d5 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -405,15 +621,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -399,29 +618,42 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+ 
+         let mut selected_font = None;
+         let mut best_coverage = Coverage::NONE;
++        // pyro: the first font covering the cluster whose kind (colour or not) is the presentation's.
++        let mut presented_font = None;
+ 
+         self.query.matches_with(|font| {
+             let Some(charmap) = font.charmap() else {
                  return fontique::QueryStatus::Continue;
              };
  
@@ -6469,7 +6497,73 @@ index 060a32d..45b22d5 100644
                  },
                  self.analysis_data_sources,
              );
-@@ -473,3 +689,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
++            if let Some(want_color) = presentation
++                && coverage.is_complete()
++            {
++                if is_color_font(font) == want_color {
++                    presented_font = Some(font);
++                    return fontique::QueryStatus::Stop;
++                }
++                if best_coverage.is_complete() {
++                    return fontique::QueryStatus::Continue;
++                }
++            }
+             if coverage > best_coverage {
+                 selected_font = Some(font);
+                 best_coverage = coverage;
+ 
+-                if coverage.is_complete() {
++                if coverage.is_complete() && presentation.is_none() {
+                     fontique::QueryStatus::Stop
+                 } else {
+                     fontique::QueryStatus::Continue
+@@ -434,7 +666,7 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+             }
+         });
+ 
+-        selected_font.map(|font| FontInstanceRef {
++        presented_font.or(selected_font).map(|font| FontInstanceRef {
+             data: &font.blob,
+             index: font.index,
+             synthesis: &font.synthesis,
+@@ -442,6 +674,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+     }
+ }
+ 
++/// pyro: whether `cluster` asks for emoji presentation (`Some(true)`), text presentation
++/// (`Some(false)`) or neither: a variation selector in it decides, else `font-variant-emoji`
++/// (`text`, `emoji`, and `unicode`: the default presentation), else none (`normal`: each font's
++/// own glyph, as before).
++fn emoji_presentation(cluster: &CharCluster, variant: crate::style::FontVariantEmoji) -> Option<bool> {
++    use crate::style::FontVariantEmoji;
++    if cluster.chars().iter().any(|c| c.ch == '\u{FE0F}') {
++        return Some(true);
++    }
++    if cluster.chars().iter().any(|c| c.ch == '\u{FE0E}') {
++        return Some(false);
++    }
++    // Only for emoji: other text has no presentation to choose.
++    let is_emoji_char = cluster.chars().first().is_some_and(|c| parley_engine::is_emoji_char(c.ch));
++    match variant {
++        FontVariantEmoji::Emoji if is_emoji_char => Some(true),
++        FontVariantEmoji::Text if is_emoji_char => Some(false),
++        // The Unicode default presentation (`Emoji_Presentation`).
++        FontVariantEmoji::Unicode if is_emoji_char => {
++            Some(cluster.chars().first().is_some_and(|c| parley_engine::is_emoji_presentation_char(c.ch)))
++        }
++        _ => None,
++    }
++}
++
++/// pyro: whether `font` draws colour glyphs (`parley_engine::is_color_font`).
++fn is_color_font(font: &QueryFont) -> bool {
++    parley_engine::is_color_font(font.blob.as_ref(), font.index)
++}
++
+ /// Just query for any generic family's font from the font collection.
+ ///
+ /// This sets generic families on `query`, so callers need to make sure to set families back again.
+@@ -473,3 +735,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }
@@ -6582,7 +6676,7 @@ index 0000000..e8fc4f6
 +    }
 +}
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..a9e9641 100644
+index d9977df..e54e8a3 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -43,6 +43,158 @@ pub enum WhiteSpaceCollapse {
@@ -6795,7 +6889,7 @@ index d9977df..a9e9641 100644
  /// Which reference of a span (or [`InlineBox`]) is aligned with the same reference of its
  /// *parent* span (the enclosing style span, or the root style for top-level content). Mirrors the
  /// CSS `alignment-baseline` property.
-@@ -123,6 +297,25 @@ pub enum AlignmentBaseline {
+@@ -123,6 +297,39 @@ pub enum AlignmentBaseline {
      /// Align the vertical midpoint of the box with the parent span's baseline plus half the
      /// x-height of the parent.
      Middle,
@@ -6818,10 +6912,24 @@ index d9977df..a9e9641 100644
 +    Mathematical,
 +    /// pyro: css-inline-3 `alignment-baseline: hanging`.
 +    Hanging,
++}
++
++/// pyro: CSS `font-variant-emoji`.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
++pub enum FontVariantEmoji {
++    /// Each emoji's default presentation (`Emoji_Presentation`).
++    #[default]
++    Normal,
++    /// Text presentation.
++    Text,
++    /// Emoji presentation.
++    Emoji,
++    /// As `normal` (the Unicode default presentation).
++    Unicode,
  }
  
  /// A shift applied to a span (or [`InlineBox`]) after [`AlignmentBaseline`] alignment. Mirrors
-@@ -138,6 +331,10 @@ pub enum AlignmentBaseline {
+@@ -138,6 +345,10 @@ pub enum AlignmentBaseline {
  pub enum BaselineShift {
      /// Raise the box by the given distance (in layout units). Negative values lower it.
      Length(f32),
@@ -6832,7 +6940,7 @@ index d9977df..a9e9641 100644
      /// Lower the box to the proper position for subscripts of the parent span.
      Sub,
      /// Raise the box to the proper position for superscripts of the parent span.
-@@ -206,7 +403,8 @@ impl VerticalAlign {
+@@ -206,7 +417,8 @@ impl VerticalAlign {
      pub(crate) fn nearly_eq(self, other: Self) -> bool {
          self.alignment == other.alignment
              && match (self.shift, other.shift) {
@@ -6842,7 +6950,7 @@ index d9977df..a9e9641 100644
                  (a, b) => a == b,
              }
      }
-@@ -217,6 +415,10 @@ impl VerticalAlign {
+@@ -217,6 +429,10 @@ impl VerticalAlign {
                  shift: BaselineShift::Length(value * scale),
                  ..self
              },
@@ -6853,7 +6961,7 @@ index d9977df..a9e9641 100644
              _ => self,
          }
      }
-@@ -277,6 +479,41 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +493,43 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -6888,6 +6996,8 @@ index d9977df..a9e9641 100644
 +    Upright(bool),
 +    /// pyro: text in a vertical line (`TextStyle::vertical`).
 +    Vertical(bool),
++    /// pyro: emoji or text presentation (`TextStyle::font_variant_emoji`).
++    FontVariantEmoji(FontVariantEmoji),
 +    /// pyro: where justification adds space.
 +    TextJustify(TextJustify),
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -6895,7 +7005,7 @@ index d9977df..a9e9641 100644
  }
  
  /// Unresolved styles.
-@@ -334,6 +571,107 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +587,110 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -6945,6 +7055,9 @@ index d9977df..a9e9641 100644
 +    /// with `text-orientation: mixed` or `upright`): shaping runs split where a character's
 +    /// vertical orientation (UTR #50, [`crate::upright_in_vertical`]) changes.
 +    pub vertical: bool,
++    /// pyro: CSS `font-variant-emoji`: the presentation emoji take where no variation selector
++    /// chooses one (a colour font for emoji presentation, a text font for text presentation).
++    pub font_variant_emoji: FontVariantEmoji,
 +    /// pyro: where justification adds space in this style's text (CSS `text-justify`).
 +    pub text_justify: TextJustify,
 +    /// pyro: which of this style's letter and word spacing scale with its font size (CSS
@@ -7003,7 +7116,7 @@ index d9977df..a9e9641 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +703,25 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +722,26 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
@@ -7022,6 +7135,7 @@ index d9977df..a9e9641 100644
 +            text_autospace: TextAutospace::default(),
 +            upright: false,
 +            vertical: false,
++            font_variant_emoji: FontVariantEmoji::Normal,
 +            text_justify: TextJustify::default(),
 +            spacing_scales: SpacingScales::default(),
 +            annotation_space: AnnotationSpace::default(),

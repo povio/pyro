@@ -131,3 +131,23 @@ pub use glyph::Glyph;
 pub use shape::atom::{Atom, Atoms, Grapheme, Graphemes, ShapedClusterGlyphs, ShapedSlice};
 pub use shape::shaped_text::{ClusterGlyphs, FontMetrics, IdeographicBaselines, ShapedRun, ShapedText};
 pub use shape::shaper::{FontInstance, FontInstanceRef, FontSelector, ShapeOptions, Shaper};
+
+/// pyro: whether the font at `index` in `data` draws colour glyphs (a `COLR`, `CBDT`, `sbix` or
+/// `SVG ` table): an emoji font for emoji presentation.
+pub fn is_color_font(data: &[u8], index: u32) -> bool {
+    let Ok(font_ref) = skrifa::FontRef::from_index(data, index) else { return false };
+    [*b"COLR", *b"CBDT", *b"sbix", *b"SVG "]
+        .iter()
+        .any(|tag| font_ref.table_data(skrifa::raw::types::Tag::new(tag)).is_some())
+}
+
+/// pyro: whether `ch` is an emoji (Unicode `Emoji`) other than an ASCII character (digits, `#`
+/// and `*` are `Emoji` too, but have no presentation to choose by themselves).
+pub fn is_emoji_char(ch: char) -> bool {
+    !ch.is_ascii() && icu_properties::CodePointSetData::new::<icu_properties::props::Emoji>().contains(ch)
+}
+
+/// pyro: whether `ch` has emoji presentation by default (Unicode `Emoji_Presentation`).
+pub fn is_emoji_presentation_char(ch: char) -> bool {
+    icu_properties::CodePointSetData::new::<icu_properties::props::EmojiPresentation>().contains(ch)
+}

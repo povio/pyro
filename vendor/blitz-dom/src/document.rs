@@ -96,6 +96,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.text-autospace.enabled", true);
         // pyro: `text-combine-upright` (no text-autospace in such upright text; the layout ignores it).
         style_config::set_pref!("layout.css.text-combine-upright.enabled", true);
+        // pyro: `font-variant-emoji` (parley picks a colour or a text font by it).
+        style_config::set_pref!("layout.css.font-variant-emoji.enabled", true);
         // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
         style_config::set_pref!("layout.css.initial-letter.enabled", true);
         // pyro: `dominant-baseline` on HTML boxes (`stylo_to_parley::vertical_align`).

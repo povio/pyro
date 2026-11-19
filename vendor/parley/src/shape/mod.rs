@@ -508,7 +508,10 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
         cluster: &mut CharCluster,
     ) -> Option<FontInstanceRef<'_>> {
         let style_index = cluster.style_index();
-        let is_emoji = cluster.is_emoji();
+        // pyro: the presentation the cluster asks for: a variation selector's (U+FE0F emoji,
+        // U+FE0E text), else `font-variant-emoji`'s, else its default (CSS Fonts 4 § 6.13).
+        let presentation = emoji_presentation(cluster, self.styles[style_index as usize].font_variant_emoji);
+        let is_emoji = cluster.is_emoji() || presentation == Some(true);
 
         if style_index != self.style_index || is_emoji || self.fonts_id.is_none() {
             self.style_index = style_index;
@@ -615,6 +618,8 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
 
         let mut selected_font = None;
         let mut best_coverage = Coverage::NONE;
+        // pyro: the first font covering the cluster whose kind (colour or not) is the presentation's.
+        let mut presented_font = None;
 
         self.query.matches_with(|font| {
             let Some(charmap) = font.charmap() else {
@@ -633,11 +638,22 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                 },
                 self.analysis_data_sources,
             );
+            if let Some(want_color) = presentation
+                && coverage.is_complete()
+            {
+                if is_color_font(font) == want_color {
+                    presented_font = Some(font);
+                    return fontique::QueryStatus::Stop;
+                }
+                if best_coverage.is_complete() {
+                    return fontique::QueryStatus::Continue;
+                }
+            }
             if coverage > best_coverage {
                 selected_font = Some(font);
                 best_coverage = coverage;
 
-                if coverage.is_complete() {
+                if coverage.is_complete() && presentation.is_none() {
                     fontique::QueryStatus::Stop
                 } else {
                     fontique::QueryStatus::Continue
@@ -650,12 +666,42 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
             }
         });
 
-        selected_font.map(|font| FontInstanceRef {
+        presented_font.or(selected_font).map(|font| FontInstanceRef {
             data: &font.blob,
             index: font.index,
             synthesis: &font.synthesis,
         })
     }
+}
+
+/// pyro: whether `cluster` asks for emoji presentation (`Some(true)`), text presentation
+/// (`Some(false)`) or neither: a variation selector in it decides, else `font-variant-emoji`
+/// (`text`, `emoji`, and `unicode`: the default presentation), else none (`normal`: each font's
+/// own glyph, as before).
+fn emoji_presentation(cluster: &CharCluster, variant: crate::style::FontVariantEmoji) -> Option<bool> {
+    use crate::style::FontVariantEmoji;
+    if cluster.chars().iter().any(|c| c.ch == '\u{FE0F}') {
+        return Some(true);
+    }
+    if cluster.chars().iter().any(|c| c.ch == '\u{FE0E}') {
+        return Some(false);
+    }
+    // Only for emoji: other text has no presentation to choose.
+    let is_emoji_char = cluster.chars().first().is_some_and(|c| parley_engine::is_emoji_char(c.ch));
+    match variant {
+        FontVariantEmoji::Emoji if is_emoji_char => Some(true),
+        FontVariantEmoji::Text if is_emoji_char => Some(false),
+        // The Unicode default presentation (`Emoji_Presentation`).
+        FontVariantEmoji::Unicode if is_emoji_char => {
+            Some(cluster.chars().first().is_some_and(|c| parley_engine::is_emoji_presentation_char(c.ch)))
+        }
+        _ => None,
+    }
+}
+
+/// pyro: whether `font` draws colour glyphs (`parley_engine::is_color_font`).
+fn is_color_font(font: &QueryFont) -> bool {
+    parley_engine::is_color_font(font.blob.as_ref(), font.index)
 }
 
 /// Just query for any generic family's font from the font collection.

@@ -318,6 +318,20 @@ pub enum AlignmentBaseline {
     Hanging,
 }
 
+/// pyro: CSS `font-variant-emoji`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FontVariantEmoji {
+    /// Each emoji's default presentation (`Emoji_Presentation`).
+    #[default]
+    Normal,
+    /// Text presentation.
+    Text,
+    /// Emoji presentation.
+    Emoji,
+    /// As `normal` (the Unicode default presentation).
+    Unicode,
+}
+
 /// A shift applied to a span (or [`InlineBox`]) after [`AlignmentBaseline`] alignment. Mirrors
 /// the CSS `baseline-shift` property.
 ///
@@ -510,6 +524,8 @@ pub enum StyleProperty<'a, B: Brush> {
     Upright(bool),
     /// pyro: text in a vertical line (`TextStyle::vertical`).
     Vertical(bool),
+    /// pyro: emoji or text presentation (`TextStyle::font_variant_emoji`).
+    FontVariantEmoji(FontVariantEmoji),
     /// pyro: where justification adds space.
     TextJustify(TextJustify),
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -617,6 +633,9 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// with `text-orientation: mixed` or `upright`): shaping runs split where a character's
     /// vertical orientation (UTR #50, [`crate::upright_in_vertical`]) changes.
     pub vertical: bool,
+    /// pyro: CSS `font-variant-emoji`: the presentation emoji take where no variation selector
+    /// chooses one (a colour font for emoji presentation, a text font for text presentation).
+    pub font_variant_emoji: FontVariantEmoji,
     /// pyro: where justification adds space in this style's text (CSS `text-justify`).
     pub text_justify: TextJustify,
     /// pyro: which of this style's letter and word spacing scale with its font size (CSS
@@ -718,6 +737,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             text_autospace: TextAutospace::default(),
             upright: false,
             vertical: false,
+            font_variant_emoji: FontVariantEmoji::Normal,
             text_justify: TextJustify::default(),
             spacing_scales: SpacingScales::default(),
             annotation_space: AnnotationSpace::default(),
