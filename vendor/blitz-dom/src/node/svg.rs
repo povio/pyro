@@ -118,22 +118,28 @@ pub struct SvgImageData {
     pub viewport_dependent: bool,
 }
 
-/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background`
-/// declaration of its `style` attribute) drawn as a full-size `<rect>` under its content: an
-/// image's root element paints its background over the whole canvas, which usvg does only for
-/// `background-color` (a presentation attribute to it, also in `style`: drawing that one here too
-/// painted it twice) (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is
-/// none.
+/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (the last `background`
+/// or `background-color` declaration of its `style` attribute, names in any case) drawn as a
+/// full-size `<rect>` under its content: an image's root element paints its background over the
+/// whole canvas (WPT css-ui `box-sizing-*`, whose images are only that). usvg paints a
+/// `background-color` itself, but only one named in lowercase (it matches names case-sensitively):
+/// that one is left to it (drawing it here too painted it twice). `None` when there is none.
 fn root_background_painted(text: &str, doc: &roxmltree::Document) -> Option<String> {
     let root = doc.root_element();
     let style = root.attribute("style")?;
-    let color = style.split(';').find_map(|declaration| {
-        let (name, value) = declaration.split_once(':')?;
-        let name = name.trim();
-        name.eq_ignore_ascii_case("background")
-            .then(|| value.trim())
-            .filter(|value| value.parse::<svgtypes::Color>().is_ok())
-    })?;
+    let (name, color) = style
+        .split(';')
+        .filter_map(|declaration| {
+            let (name, value) = declaration.split_once(':')?;
+            let name = name.trim();
+            (name.eq_ignore_ascii_case("background") || name.eq_ignore_ascii_case("background-color"))
+                .then(|| (name, value.trim()))
+                .filter(|(_, value)| value.parse::<svgtypes::Color>().is_ok())
+        })
+        .last()?;
+    if name == "background-color" {
+        return None;
+    }
     // Under the first child (an empty root has nothing to paint over the background anyway; the
     // background alone is then inserted before the closing tag).
     let at = match root.first_child() {
@@ -752,4 +758,27 @@ fn absolute_length_px(length: svgtypes::Length) -> Option<f32> {
     };
     let px = (length.number * scale) as f32;
     (px.is_finite() && px >= 0.0).then_some(px)
+}
+
+#[cfg(test)]
+mod root_background_tests {
+    use super::{root_background_painted, roxmltree};
+
+    fn painted(svg: &str) -> Option<String> {
+        let doc = roxmltree::Document::parse(svg).expect("xml");
+        root_background_painted(svg, &doc)
+    }
+
+    #[test]
+    fn background_color_in_any_case_but_usvgs_own() {
+        let svg = |style: &str| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" style="{style}"><g/></svg>"#);
+        // usvg paints a lowercase `background-color` itself: not drawn again.
+        assert_eq!(painted(&svg("background-color: red")), None);
+        // It does not see other cases: drawn here.
+        assert!(painted(&svg("BACKGROUND-COLOR: red")).is_some_and(|s| s.contains(r#"fill="red""#)));
+        assert!(painted(&svg("Background: lime")).is_some_and(|s| s.contains(r#"fill="lime""#)));
+        // The last declaration wins.
+        assert_eq!(painted(&svg("BACKGROUND-COLOR: red; background-color: blue")), None);
+        assert!(painted(&svg("background-color: red; background: blue")).is_some_and(|s| s.contains(r#"fill="blue""#)));
+    }
 }
