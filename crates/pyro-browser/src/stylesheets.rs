@@ -607,7 +607,8 @@ impl Browser {
             // Chromium: a failed import of an imported sheet still loads a `<style>`; a link's
             // fails with any import that fails or is not CSS.
             let css = result.as_ref().is_ok_and(|r| stylesheet_mime_ok(r, quirks, &document_url));
-            entry.failed |= if entry.link { !ok || !css } else { !ok && depth == 1 };
+            // A `<style>`'s own import also fails on a type that is not CSS (a text/plain sheet).
+            entry.failed |= if entry.link { !ok || !css } else { (!ok || !css) && depth == 1 };
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
