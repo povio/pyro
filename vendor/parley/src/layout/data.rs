@@ -971,7 +971,9 @@ impl ContentWidthsMeasurer {
                 self.running_hanging_whitespace += advance;
                 self.hangs_conditionally =
                     style.white_space_collapse == WhiteSpaceCollapse::Preserve;
-            } else {
+            } else if !(advance == 0.0 && whitespace == Whitespace::None) {
+                // pyro: a cluster of no advance (a zero width joiner after a space) does not end
+                // the hanging white space before it (WPT css-text `white-space-vs-joiners-002`).
                 self.running_hanging_whitespace = 0.0;
             }
         }

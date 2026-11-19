@@ -1834,7 +1834,7 @@
          let is_break_anywhere = break_anywhere_iter
              .peek()
              .is_some_and(|range| range.contains(&byte_pos));
-@@ -733,7 +825,39 @@
+@@ -733,7 +825,43 @@
                  // `line-break: anywhere`: an opportunity around every grapheme.
                  prev_char.is_some() && is_grapheme_start
              } else {
@@ -1866,7 +1866,11 @@
 +                    && is_grapheme_start
 +                    && ch.is_alphanumeric()
 +                    && prev_char.is_some_and(|prev: char| prev.is_alphanumeric());
-+                let is_icu_line = is_icu_line || leaves_break_all;
++                // pyro: and after a space that a zero width joiner extends (one grapheme, GB9), whose
++                // opportunity before the joiner falls inside the cluster and LB8a forbids one after
++                // it, as Gecko and WebKit break (WPT css-text `white-space-vs-joiners-002`).
++                let after_joined_space = prev_char == Some('\u{200D}') && prev_prev_char == Some(' ');
++                let is_icu_line = is_icu_line || leaves_break_all || after_joined_space;
 +                (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
 +                    // (Nor before a word joiner or zero width space, which UAX #14 LB7 and LB11
 +                    // keep: `a &#x2060;b`.)
@@ -1875,7 +1879,7 @@
              };
              // Consumers can override soft wrap opportunities, except around a mandatory
              // break.
-@@ -751,6 +875,7 @@
+@@ -751,6 +879,7 @@
          };
  
          prev_prev_char = prev_char;
@@ -1883,7 +1887,7 @@
          prev_char = Some(ch);
          prev_is_mandatory_linebreak = is_mandatory_linebreak;
  
-@@ -808,21 +933,288 @@
+@@ -808,21 +937,288 @@
          ));
      }
  
