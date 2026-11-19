@@ -43,20 +43,43 @@ pub(super) fn oval_path(rect: Rect) -> Option<BezPath> {
 fn closed(path: &BezPath) -> BezPath {
     let mut out = BezPath::new();
     let mut open = false;
+    let mut start = Point::ZERO;
+    // pyro: a subpath whose last segment ends a hair from its start (an arc to the start point
+    // computed in floating point) ends exactly there: the close then adds no segment of its own,
+    // whose arbitrary direction made a stray miter at the vertex (WPT css-borders
+    // `border-shape-shape-arc-miter-limit`).
+    let snap_end = |out: &mut BezPath, start: Point| {
+        let elements = out.elements_mut();
+        if let Some(last) = elements.last_mut() {
+            let end = match last {
+                PathEl::LineTo(p) | PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => Some(p),
+                _ => None,
+            };
+            if let Some(end) = end.filter(|end| end.distance(start) < 1e-6) {
+                *end = start;
+            }
+        }
+    };
     for el in path.elements() {
         match el {
-            PathEl::MoveTo(_) => {
+            PathEl::MoveTo(p) => {
                 if open {
+                    snap_end(&mut out, start);
                     out.close_path();
                 }
                 open = true;
+                start = *p;
             }
-            PathEl::ClosePath => open = false,
+            PathEl::ClosePath => {
+                snap_end(&mut out, start);
+                open = false;
+            }
             _ => {}
         }
         out.push(*el);
     }
     if open {
+        snap_end(&mut out, start);
         out.close_path();
     }
     out
