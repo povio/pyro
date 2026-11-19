@@ -406,6 +406,22 @@ impl VelloCpuScenePainter {
                 }
                 continue;
             }
+            // pyro: a clip to a rectangle on whole device pixels (an `overflow` clip) is a clip
+            // path too: its coverage is the layer's, and like Skia's it composites what it clips
+            // once, as the same content drawn unclipped (a layer rounds it a second time; WPT
+            // css-pseudo `highlight-painting-004`, whose references clip with `overflow: hidden`).
+            if let RenderCommand::PushClipLayer(clip) = &commands[i]
+                && pixel_aligned_rect(&clip.clip, transform * clip.transform)
+                && !(self.backdrop_filters && crate::backdrop::is_root(commands, i))
+            {
+                self.render_ctx.set_transform(transform * clip.transform);
+                self.render_ctx.set_fill_rule(clip.fill);
+                self.render_ctx.push_clip_path(&clip.clip);
+                self.clip_paths.push(Pushed::ClipPath);
+                open.push((i, false));
+                i += 1;
+                continue;
+            }
             if let RenderCommand::PushClipLayer(clip) = &commands[i]
                 && self.blending
                 && blends_inside(commands, i)
@@ -1388,5 +1404,42 @@ mod local_raster_tests {
         assert!(blended.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255), "antialiased edges");
         let off = blended.chunks_exact(4).zip(painted.chunks_exact(4)).filter(|(a, b)| a != b).count();
         assert_eq!(off, 0, "pixels off");
+    }
+}
+
+/// pyro: whether `path` under `transform` is an axis-aligned rectangle with its edges on whole
+/// device pixels (so a clip to it has no antialiased edge).
+fn pixel_aligned_rect(path: &kurbo::BezPath, transform: Affine) -> bool {
+    use kurbo::PathEl;
+    let mut points: Vec<kurbo::Point> = Vec::with_capacity(5);
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) if points.is_empty() => points.push(transform * p),
+            PathEl::LineTo(p) if !points.is_empty() && points.len() < 5 => points.push(transform * p),
+            PathEl::ClosePath => {}
+            _ => return false,
+        }
+    }
+    if points.len() == 5 && (points[4] - points[0]).hypot() < 1e-6 {
+        points.pop();
+    }
+    if points.len() != 4 {
+        return false;
+    }
+    let whole = |v: f64| (v - v.round()).abs() < 1e-3;
+    if !points.iter().all(|p| whole(p.x) && whole(p.y)) {
+        return false;
+    }
+    // Consecutive corners share an x or a y, alternately.
+    (0..4).all(|k| {
+        let (a, b) = (points[k], points[(k + 1) % 4]);
+        let horizontal = (a.y - b.y).abs() < 1e-3;
+        let vertical = (a.x - b.x).abs() < 1e-3;
+        horizontal != vertical || (horizontal && vertical)
+    }) && {
+        let (a, b, c) = (points[0], points[1], points[2]);
+        let first_horizontal = (a.y - b.y).abs() < 1e-3;
+        let second_horizontal = (b.y - c.y).abs() < 1e-3;
+        first_horizontal != second_horizontal
     }
 }
