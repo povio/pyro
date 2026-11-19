@@ -2176,6 +2176,15 @@ impl Io {
                     Err(_) => return Err(NetError::Other("authentication interception dropped".into())),
                 }
             };
+            // pyro: a response to an authentication retry answers the request as last sent, with
+            // its `Authorization`: it is stored (if at all) under those headers and as credentialed,
+            // never as the anonymous request that got the challenge (the shared asset store refuses
+            // a request with credentials).
+            let (sent, credentialed) = if auth_attempts > 0 && headers.contains_key(header::AUTHORIZATION) {
+                (sent.map(|_| headers.clone()), true)
+            } else {
+                (sent, credentialed)
+            };
             let status = resp.status();
             // The server's reason phrase when it is not the standard one (hyper keeps only those): XHR and fetch
             // report it as statusText, as Chromium does (`HTTP/1.1 204 UNICORNSWIN`).
