@@ -30,6 +30,26 @@
    "subtests": [
     "animation-timeline: view(inline) changes to view(inline 50px), withouttimeline range name"
    ]
+  },
+  "trusted-types/SharedWorker-setTimeout-setInterval.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/DedicatedWorker-eval.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/inheriting-csp-for-local-schemes.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/SharedWorker-importScripts.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/Document-parseHTMLUnsafe-respects-current-globals-CSP.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
   }
  }
 }
