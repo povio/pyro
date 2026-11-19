@@ -186,12 +186,12 @@ pub fn resolve_transform(
     ResolvedTransform::Flat((resolved != Affine::IDENTITY).then_some(resolved))
 }
 
-/// pyro: the offset transform of `offset-path: path()` with `offset-distance` and `offset-rotate`,
-/// in the frame of the transform origin, which stands for the anchor point (`offset-anchor: auto`):
-/// the path's origin is the anchor's place without the offset, and the box moves along the path
-/// to the point `offset-distance` along it (a closed path wraps around, an open one clamps),
-/// turned by the path's direction there (`auto`, `reverse`) plus the angle. `ray()`, `url()`, other
-/// shapes and an explicit `offset-anchor` are not laid out (no offset transform).
+/// pyro: the offset transform (CSS Motion Path 1 § 4), in the frame of the transform origin, as
+/// Chrome lays it out (measured): the anchor point (`offset-anchor`, `auto`: the transform origin)
+/// goes to the point `offset-distance` along the path (a closed path wraps around, an open one
+/// clamps) and the box turns by `offset-rotate` (`auto`, `reverse`: plus the path's direction).
+/// `path()` is in the box's coordinates (its top-left corner at the origin); `ray()`, basic shapes,
+/// `url()` and a coord box alone are in the containing block's coord box ([`MotionFrame`]).
 fn offset_transform(box_styles: &BoxStyleStruct, reference_box: Rect<CSSPixelLength>) -> Option<Affine> {
     use style::values::generics::basic_shape::{GenericBasicShape, GenericPathOrShapeFunction};
     use style::values::generics::motion::{GenericOffsetPath, GenericOffsetPathFunction};
@@ -205,8 +205,11 @@ fn offset_transform(box_styles: &BoxStyleStruct, reference_box: Rect<CSSPixelLen
         GenericOffsetPathFunction::Shape(shape) => shape,
         GenericOffsetPathFunction::Url(_) => {
             // An SVG shape element's geometry, laid out as a basic shape is (Chrome); anything
-            // else is `path("m 0 0")`, which moves nothing.
-            let path = MOTION_URL_PATH.with(|p| p.borrow().clone())?;
+            // else is `path("m 0 0")`: the anchor point goes to the box's top-left corner.
+            let Some(path) = MOTION_URL_PATH.with(|p| p.borrow().clone()) else {
+                let frame = MotionFrame::new(box_styles, reference_box, *coord_box);
+                return Some(frame.place(kurbo::Point::ZERO, box_styles.offset_rotate.angle.radians64()));
+            };
             let frame = MotionFrame::new(box_styles, reference_box, *coord_box);
             let mut path = path;
             path.apply_affine(Affine::translate(frame.area.origin().to_vec2()));
@@ -227,13 +230,16 @@ fn offset_transform(box_styles: &BoxStyleStruct, reference_box: Rect<CSSPixelLen
             |v: &f32| *v as f64,
             |a: &f32| *a as f64,
         )?;
+        // The path is in the box's coordinates (its top-left corner at the origin), and the anchor
+        // point goes to the point along it (as Chrome, measured).
         let (point, direction) = point_along(&bez, &box_styles.offset_distance)?;
         let rotate = &box_styles.offset_rotate;
         let mut angle = rotate.angle.radians64();
         if rotate.auto {
             angle += direction;
         }
-        return Some(Affine::translate(point.to_vec2()) * Affine::rotate(angle));
+        let frame = MotionFrame::new(box_styles, reference_box, *coord_box);
+        return Some(frame.place(point, angle));
     }
     shape_transform(box_styles, reference_box, shape, *coord_box)
 }

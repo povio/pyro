@@ -508,9 +508,22 @@ impl BaseDocument {
         {
             owner = parent;
         }
+        let root = node_id == self.root_element().id;
+        let viewport = (
+            self.viewport.window_size.0 as f64 / self.viewport.scale_f64(),
+            self.viewport.window_size.1 as f64 / self.viewport.scale_f64(),
+        );
         let contents = {
             let node = &mut self.nodes[node_id];
-            let context = node.transform_context_for_children(accumulated);
+            let mut context = node.transform_context_for_children(accumulated);
+            // pyro: the boxes the root contains are in the initial containing block, the
+            // viewport, for `offset-path` (`MotionContainingBlock`).
+            if root {
+                context.cb_size = viewport;
+                context.cb_border = [0.0; 4];
+                context.cb_padding = [0.0; 4];
+                context.cb_radii = Default::default();
+            }
             let refresh = context.gives() || node.flags.contains(NodeFlags::GIVES_3D_CONTEXT);
             node.flags.set(NodeFlags::GIVES_3D_CONTEXT, context.gives());
             ContainingTransform { context, refresh, parent: Some(owner) }
