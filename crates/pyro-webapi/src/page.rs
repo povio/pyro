@@ -1258,7 +1258,9 @@ impl PageDom {
         // A face of the document's sheets delays the load event only once text uses its family:
         // Chromium starts a face's load when layout first needs it, while the layout engine here
         // fetches every `@font-face` source when the sheet arrives.
-        let pending = self.font_loads.get() > 0 || (self.fonts_pending() && self.used_face_loading());
+        // Checked at every microtask checkpoint while loading: from the last completed layout,
+        // never running layout (a sync per checkpoint pinned a core on script-heavy pages).
+        let pending = self.font_loads.get() > 0 || (self.fonts_pending_as_laid_out() && self.used_face_loading());
         if !pending {
             return false;
         }
@@ -1292,6 +1294,12 @@ impl PageDom {
                 return loading.iter().any(|family| used.contains(family));
             }
         }
+        // The families as of the last completed layout: walking every element's computed style
+        // while the layout is stale would run it (this is asked at every checkpoint). None
+        // collected yet: no face delays the load.
+        if !layout.style().engine_current(&dom) {
+            return self.used_font_families.borrow().as_ref().is_some_and(|(_, used)| loading.iter().any(|family| used.contains(family)));
+        }
         let mut used = std::collections::HashSet::new();
         if let Ok(nodes) = dom.descendants(self.document()) {
             for id in nodes {
@@ -1308,6 +1316,13 @@ impl PageDom {
         let hit = loading.iter().any(|family| used.contains(family));
         *self.used_font_families.borrow_mut() = Some((version, used));
         hit
+    }
+
+    /// [`pyro_dom::layout::Layout::fonts_pending_as_laid_out`].
+    pub fn fonts_pending_as_laid_out(&self) -> bool {
+        let Some(layout) = self.try_layout() else { return false };
+        let Ok(dom) = self.dom.try_borrow() else { return false };
+        layout.fonts_pending_as_laid_out(&dom)
     }
 
     /// pyro: whether web fonts are still loading (`document.fonts`).

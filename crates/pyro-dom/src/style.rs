@@ -1235,6 +1235,35 @@ impl StyleEngine {
         }
     }
 
+    /// Whether the layout engine's last sync answers for `dom` as it is now: a style or geometry
+    /// query then syncs nothing.
+    pub fn engine_current(&self, dom: &Dom) -> bool {
+        if self.external_syncing.get() {
+            return false;
+        }
+        let stamp = self.observation_stamp(dom);
+        let external = self.external.borrow();
+        external.as_ref().is_some_and(|(source, at)| *at == Some(stamp) && !source.stale() && !self.animations_changed())
+    }
+
+    /// The stamp of the layout engine's last sync (`None` before the first).
+    pub fn engine_sync_stamp(&self) -> Option<(u64, u64, u32, u32)> {
+        self.external.borrow().as_ref()?.1
+    }
+
+    /// [`Self::engine_displayed`] as of the engine's last sync, never syncing: `None` when the
+    /// engine has not seen `el` (inserted since), or cannot tell.
+    pub fn displayed_as_synced(&self, dom: &Dom, el: NodeId) -> Option<bool> {
+        self.owns(dom, el)?;
+        if self.external_syncing.get() {
+            return None;
+        }
+        let external = self.external.borrow();
+        let (source, at) = external.as_ref()?;
+        at.as_ref()?;
+        source.element_displayed(crate::snapshot::render_key(el))
+    }
+
     /// Brings the layout engine's styles up to `dom` (layout is left to the
     /// next geometry query); the stamp they answer for, `None` when
     /// there are no computed styles (no engine, or it is inactive or syncing).

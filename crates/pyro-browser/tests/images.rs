@@ -315,14 +315,16 @@ fn canvas_origin_clean_uses_the_documents_actual_origin() {
 }
 
 /// `<object data>` fetches its data: `load` for a fetched resource, `error` for a failed one, no
-/// event without `data` or when the object is not being rendered (`display: none`), and a
-/// pending object fetch delays the window's `load`.
+/// event without `data` or when the object is not being rendered (`display: none`, decided from
+/// the last completed layout: here a layout read right after insertion), and a pending object
+/// fetch delays the window's `load`.
 #[test]
 fn objects_fire_load_and_error_for_their_data() {
     let (mut thread, page, loader) = setup(
         "<script>globalThis.objects = []; for (const t of ['load', 'error']) document.addEventListener(t, e => { if (e.target.tagName === 'OBJECT') objects.push(e.target.id + ':' + t) }, true); addEventListener('load', () => objects.push('window:load'));</script>\
          <object id=a data=/a.svg></object><object id=b data=/missing.svg></object><object id=c></object>\
-         <div style=display:none><object id=d data=/a.svg></object></div>",
+         <div style=display:none id=hide></div>\
+         <script>const d = document.createElement('object'); d.id = 'd'; d.data = '/a.svg'; hide.append(d); document.body.offsetWidth;</script>",
     );
     loader.insert(
         "http://site.test/a.svg",
@@ -388,12 +390,14 @@ fn relevant_mutations_restart_the_request() {
 
 /// `sizes="auto"` of a lazy image is its laid-out width; a lazy image that is not rendered
 /// selects (its `auto` entry skipped) without fetching until it is rendered, or until it stops
-/// being lazy (then the source selected while deferred is fetched).
+/// being lazy (then the source selected while deferred is fetched). "Rendered" and the width come
+/// from the last completed layout, never running one per image: here a layout read right after
+/// the insertion.
 #[test]
 fn sizes_auto_and_deferred_lazy_images() {
     let (mut thread, page, loader) = setup(
-        "<img id=a loading=lazy sizes=auto style='width:10px' srcset='/s.png 50w, /l.png 51w'>\
-         <img id=b loading=lazy sizes='auto, 500px' style='display:none;width:10px' srcset='/s.png?b 50w, /l.png?b 500w'>",
+        "<body><script>document.body.innerHTML = \"<img id=a loading=lazy sizes=auto style='width:10px' srcset='/s.png 50w, /l.png 51w'>\
+         <img id=b loading=lazy sizes='auto, 500px' style='display:none;width:10px' srcset='/s.png?b 50w, /l.png?b 500w'>\"; document.body.offsetWidth;</script>",
     );
     for url in ["s.png", "l.png", "s.png?b", "l.png?b"] {
         loader.insert_bytes(&format!("http://site.test/{url}"), "image/png", &png(3, 2), Duration::ZERO);

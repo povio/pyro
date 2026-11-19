@@ -103,6 +103,8 @@ pub(crate) struct Images {
     /// Each lazy image's last `sizes="auto"` width while it was rendered: what `auto` stays when
     /// it stops being rendered.
     auto_widths: HashMap<NodeId, f64>,
+    /// The layout engine's sync stamp when the deferred images were last checked.
+    checked_at: Option<(u64, u64, u32, u32)>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -173,6 +175,16 @@ fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
     Some((attr("width")?, attr("height")?))
 }
 
+/// Whether `node` is being rendered as of the last completed layout, never running layout: the
+/// full answer when that layout is current (a query then syncs nothing), else the engine's last
+/// answer; `None` when that layout has not seen `node` (inserted since) or cannot tell.
+fn rendered_as_laid_out(layout: &pyro_dom::layout::Layout, dom: &pyro_dom::Dom, node: NodeId) -> Option<bool> {
+    if layout.style().engine_current(dom) {
+        return Some(layout.check_visibility(dom, node, Default::default()));
+    }
+    layout.style().displayed_as_synced(dom, node)
+}
+
 impl Browser {
     pub(crate) fn image_event(&mut self, page: FrameKey, node: NodeId) {
         self.image_event_with(page, node, false);
@@ -194,11 +206,19 @@ impl Browser {
         // A lazy image's concrete width, for `sizes="auto"` (laid out, else its `width`
         // attribute, else the default object size's 300 px).
         drop(state);
-        let (lazy, rendered_width, attr_width, auto_css_width) = {
+        let (lazy, hidden, rendered_width, attr_width, auto_css_width) = {
             let dom = bindings.dom.borrow();
             let lazy = dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
             let connected = dom.is_connected(node).unwrap_or(false);
-            let rendered = if connected && lazy { bindings.layout().rendered_content_size(&dom, node) } else { None };
+            // "Being rendered" from the last completed layout, never running layout here (this
+            // runs per inserted image); its size only when that layout is current (free then).
+            let laid_out = if connected && lazy { rendered_as_laid_out(&bindings.layout(), &dom, node) } else { None };
+            let hidden = lazy && (!connected || laid_out == Some(false));
+            let rendered = if laid_out == Some(true) && bindings.layout().style().engine_current(&dom) {
+                bindings.layout().rendered_content_size(&dom, node)
+            } else {
+                None
+            };
             // `object-fit: cover` (sizes-auto 2d, tentative): the width the image is drawn at,
             // max(width, height x ratio), the ratio from `h` descriptors, else the dimension
             // attributes.
@@ -229,7 +249,7 @@ impl Browser {
                 && attr.is_none()
                 && bindings.layout().style().computed_value(&dom, node, "width").is_none_or(|w| w == "auto")
                 && dom.natural_size(node).is_none();
-            (lazy, rendered, attr, auto_css)
+            (lazy, hidden, rendered, attr, auto_css)
         };
         // A lazy image's concrete width, for `sizes="auto"`: laid out (the default object size's
         // 300 px while its width is `auto` and no image gave a natural width). Not rendered: its
@@ -250,7 +270,9 @@ impl Browser {
         } else {
             None
         };
-        let deferred_now = lazy && rendered_width.is_none();
+        // Not rendered as of the last layout (or detached): select now, fetch once rendered. Not
+        // in that layout yet (inserted since): fetched now, as an eager image.
+        let deferred_now = hidden;
         let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
         let candidate = match stored {
             // `loading` stopped being lazy: the source selected while deferred is fetched.
@@ -520,7 +542,7 @@ impl Browser {
         // in a `display: none` subtree neither loads nor delays the window's `load`).
         let rendered = connected && {
             let dom = bindings.dom.borrow();
-            bindings.layout().check_visibility(&dom, node, Default::default())
+            rendered_as_laid_out(&bindings.layout(), &dom, node) != Some(false)
         };
         if connected && !rendered && data.is_some() {
             self.note_hidden_object(page, node);
@@ -549,7 +571,16 @@ impl Browser {
         }
         let nodes: Vec<NodeId> = state.images.deferred.keys().copied().collect();
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let checked = state.images.checked_at;
         drop(state);
+        // Decided once per completed layout (this runs at every microtask checkpoint): the
+        // engine's answers change only when it syncs, and nothing here makes it sync. An image
+        // connected since that layout is not in it: it is fetched as an eager image.
+        let synced = bindings.layout().style().engine_sync_stamp();
+        let stamp_moved = synced != checked;
+        if let Some(mut p) = self.doc_mut(page) {
+            p.images.checked_at = synced;
+        }
         for node in nodes {
             let rendered = {
                 let dom = bindings.dom.borrow();
@@ -560,7 +591,11 @@ impl Browser {
                     }
                     continue;
                 }
-                dom.is_connected(node).unwrap_or(false) && bindings.layout().rendered_content_size(&dom, node).is_some()
+                dom.is_connected(node).unwrap_or(false)
+                    && match rendered_as_laid_out(&bindings.layout(), &dom, node) {
+                        Some(rendered) => stamp_moved && rendered,
+                        None => true,
+                    }
             };
             if rendered {
                 self.image_event_with(page, node, false);
@@ -585,6 +620,26 @@ impl Browser {
         if host.hidden_objects.borrow().is_empty() {
             return;
         }
+        // Decided once per completed layout, never syncing (this runs at every microtask
+        // checkpoint): nothing changes until the engine syncs again.
+        let synced = host.hidden_objects.borrow().first().and_then(|(page, _)| {
+            let bindings = self.doc(*page).and_then(|p| p.main_frame.page_dom.clone())?;
+            let stamp = bindings.layout().style().engine_sync_stamp();
+            Some(stamp)
+        });
+        // An object connected since that layout is not in it: checked (and fetched) now.
+        let unseen = host.hidden_objects.borrow().iter().any(|(page, node)| {
+            self.doc(*page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|b| {
+                let dom = b.dom.borrow();
+                dom.is_connected(*node).unwrap_or(false) && b.layout().style().displayed_as_synced(&dom, *node).is_none()
+            })
+        });
+        if let Some(stamp) = synced {
+            if stamp == host.hidden_checked_at.get() && !unseen {
+                return;
+            }
+            host.hidden_checked_at.set(stamp);
+        }
         let hidden = std::mem::take(&mut *host.hidden_objects.borrow_mut());
         for (page, node) in hidden {
             let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { continue };
@@ -592,7 +647,7 @@ impl Browser {
                 let dom = bindings.dom.borrow();
                 let connected = dom.is_connected(node).unwrap_or(false);
                 let embed = dom.element(node).is_ok_and(|e| &*e.name.local == "embed");
-                (connected, embed, connected && bindings.layout().check_visibility(&dom, node, Default::default()))
+                (connected, embed, connected && rendered_as_laid_out(&bindings.layout(), &dom, node) != Some(false))
             };
             if !connected {
                 continue;
@@ -623,7 +678,7 @@ impl Browser {
         };
         let rendered = connected && {
             let dom = bindings.dom.borrow();
-            bindings.layout().check_visibility(&dom, node, Default::default())
+            rendered_as_laid_out(&bindings.layout(), &dom, node) != Some(false)
         };
         if connected && !rendered && src.is_some() {
             self.note_hidden_object(page, node);

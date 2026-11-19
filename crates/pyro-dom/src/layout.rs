@@ -622,6 +622,16 @@ impl Layout {
         self.external.as_ref().is_some_and(|s| s.fonts_pending())
     }
 
+    /// [`Self::fonts_pending`] as of the last completed layout, never running layout: the loads
+    /// that layout started (a face is loaded when layout first needs it). For readiness checks
+    /// made at every microtask checkpoint (the load event).
+    pub fn fonts_pending_as_laid_out(&self, dom: &Dom) -> bool {
+        if self.style.engine_current(dom) {
+            return self.fonts_pending(dom);
+        }
+        self.external.as_ref().is_some_and(|s| s.fonts_pending())
+    }
+
     /// A rect query lays the document out anyway: sync the engine before
     /// the visibility check, so that check reads the styles of that one
     /// sync (it stamps the style engine) instead of running a style-only

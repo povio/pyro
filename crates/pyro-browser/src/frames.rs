@@ -196,6 +196,8 @@ pub(crate) struct FrameHost {
     /// `<object>`/`<embed>` elements not fetched because they were not being rendered: fetched
     /// once rendered (`Browser::fetch_rendered_objects`).
     pub(crate) hidden_objects: RefCell<Vec<(FrameKey, NodeId)>>,
+    /// The layout engine's sync stamp when the hidden objects were last checked.
+    pub(crate) hidden_checked_at: Cell<Option<(u64, u64, u32, u32)>>,
 }
 /// A popup page made when `window.open` ran, before the embedder creates the
 /// page: its frame tree with the initial about:blank document and realms
@@ -269,6 +271,7 @@ impl FrameHost {
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
+            hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
         let key: FrameKey = id.into();
@@ -335,6 +338,7 @@ impl FrameHost {
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
+            hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
