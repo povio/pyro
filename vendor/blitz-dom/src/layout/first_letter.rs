@@ -133,7 +133,9 @@ pub(crate) fn scan_text_in(text: &str, dutch: bool) -> TextScan {
     let Some(&(start, first)) = chars.peek() else {
         return TextScan::Empty;
     };
-    if first.is_whitespace() {
+    // (A control character such as U+000B, white space to Rust but not to CSS, is a letter: WPT
+    // css-pseudo `first-letter-c0`.)
+    if first.is_whitespace() && !first.is_control() {
         return TextScan::Stop;
     }
     // pyro: a punctuation mark keeps the combining marks after it (WPT css-pseudo
@@ -146,7 +148,7 @@ pub(crate) fn scan_text_in(text: &str, dutch: bool) -> TextScan {
     }
     let letter = match chars.next() {
         None => return TextScan::Letter(start..text.len()),
-        Some((_, c)) if c.is_whitespace() => return TextScan::Skip,
+        Some((_, c)) if c.is_whitespace() && !c.is_control() => return TextScan::Skip,
         Some((_, c)) => c,
     };
     // pyro: the letter is one grapheme: a pair of regional indicators is one flag, and an emoji

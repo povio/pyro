@@ -10426,7 +10426,7 @@ diff --git a/packages/blitz-dom/src/layout/first_letter.rs b/packages/blitz-dom/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/first_letter.rs
-@@ -0,0 +1,793 @@
+@@ -0,0 +1,795 @@
 +//! pyro: `::first-letter` (CSS 2.1 5.12.2, CSS Pseudo-Elements 4 2.2).
 +//!
 +//! The first letter of a block container's first formatted line takes the style of the
@@ -10562,7 +10562,9 @@ new file mode 100644
 +    let Some(&(start, first)) = chars.peek() else {
 +        return TextScan::Empty;
 +    };
-+    if first.is_whitespace() {
++    // (A control character such as U+000B, white space to Rust but not to CSS, is a letter: WPT
++    // css-pseudo `first-letter-c0`.)
++    if first.is_whitespace() && !first.is_control() {
 +        return TextScan::Stop;
 +    }
 +    // pyro: a punctuation mark keeps the combining marks after it (WPT css-pseudo
@@ -10575,7 +10577,7 @@ new file mode 100644
 +    }
 +    let letter = match chars.next() {
 +        None => return TextScan::Letter(start..text.len()),
-+        Some((_, c)) if c.is_whitespace() => return TextScan::Skip,
++        Some((_, c)) if c.is_whitespace() && !c.is_control() => return TextScan::Skip,
 +        Some((_, c)) => c,
 +    };
 +    // pyro: the letter is one grapheme: a pair of regional indicators is one flag, and an emoji
