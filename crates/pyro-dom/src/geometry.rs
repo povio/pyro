@@ -423,6 +423,11 @@ pub trait GeometrySource {
     fn mandatory_snap_containers(&self) -> Vec<u64> {
         Vec::new()
     }
+    /// pyro: the target of the scroll marker at the document point (`x`, `y`): its element's key,
+    /// or its multi-column container's and the column's index.
+    fn scroll_marker_at(&self, _x: f64, _y: f64) -> Option<(u64, Option<u32>)> {
+        None
+    }
     /// pyro: whether an element was ever styled with a `scroll-snap-type`, as of the last sync
     /// (no snapping to look for otherwise).
     fn uses_scroll_snap(&self) -> bool {

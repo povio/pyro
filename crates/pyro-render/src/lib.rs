@@ -951,6 +951,14 @@ impl Renderer {
         m.doc.mandatory_snap_containers().into_iter().filter_map(|id| m.key_of(id)).collect()
     }
 
+    /// pyro: the target of the scroll marker at the document point (`x`, `y`) of `page`: its
+    /// element's key, or its multi-column container's and the column's index.
+    pub fn scroll_marker_at(&self, page: u64, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
+        let m = self.mirrors.get(&page)?;
+        let (id, column) = m.doc.scroll_marker_at(x as f32, y as f32)?;
+        Some((m.key_of(id)?, column))
+    }
+
     /// pyro: whether an element of the page's document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self, page: u64) -> bool {
         self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_snap())

@@ -3588,6 +3588,40 @@ impl Layout {
 
     /// `scrollIntoView` keeps the existing vertical start alignment for the
     /// viewport, after revealing clipped overflow ancestors inside-out.
+    /// pyro: a click's default action on a `::scroll-marker` at the client point: scrolls to its
+    /// target (CSS Overflow 5 § 3.2). A column's container scrolls the column into its
+    /// scrollport as its `::column`'s `scroll-snap-align` aligns it (start without one); an
+    /// element scrolls into view. Returns the scrollers that moved (WPT css-overflow
+    /// `column-scroll-marker-002`, `column-scroll-marker-activation-target-current`).
+    pub fn activate_scroll_marker_at(&mut self, dom: &Dom, point: (f64, f64)) -> Vec<ScrollTarget> {
+        let Some(source) = self.synced_geometry_source(dom).cloned() else { return Vec::new() };
+        let doc_point = (point.0 + self.window_scroll.0 as f64, point.1 + self.window_scroll.1 as f64);
+        let Some((key, column)) = source.scroll_marker_at(doc_point.0, doc_point.1) else { return Vec::new() };
+        let Some(target) = crate::geometry::node_of(dom, key) else { return Vec::new() };
+        let Some(index) = column else {
+            return self.scroll_into_view_targets(dom, target);
+        };
+        let Some(&[cx, _cy, cw, _ch]) = source.column_boxes(key).get(index as usize) else { return Vec::new() };
+        let value = |name: &str| self.style.computed_value(dom, target, name).unwrap_or_default();
+        let border_left = value("border-left-width").trim_end_matches("px").parse::<f64>().unwrap_or(0.0);
+        let align = self.computed_pseudo_style_value(dom, target, &style::selector_parser::PseudoElement::Column, "scroll-snap-align");
+        let mut parts = align.split_whitespace();
+        let block = parts.next().unwrap_or("none").to_owned();
+        let inline = parts.next().map(str::to_owned).unwrap_or(block);
+        let width = self.client_width(dom, target) as f64;
+        let left = cx - border_left;
+        let x = match inline.as_str() {
+            "center" => left + cw / 2.0 - width / 2.0,
+            "end" => left + cw - width,
+            _ => left,
+        };
+        if self.element_scroll_to(dom, target, Some(x.round().max(0.0) as i32), None) {
+            vec![ScrollTarget::Container(target)]
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn scroll_into_view(&mut self, dom: &Dom, el: NodeId) -> bool {
         !self.scroll_into_view_targets(dom, el).is_empty()
     }

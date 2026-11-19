@@ -1320,6 +1320,30 @@ impl BaseDocument {
             .collect()
     }
 
+    /// pyro: the target of the `::scroll-marker` box at the document point (`x`, `y`): its
+    /// element, or its multi-column container and column (CSS Overflow 5 § 3.2: activating a
+    /// marker scrolls to its target; WPT css-overflow `column-scroll-marker-002`).
+    pub fn scroll_marker_at(&self, x: f32, y: f32) -> Option<(NodeId, Option<u32>)> {
+        for &owner in &self.scroll_pseudo_owners {
+            let Some(group) = self.nodes.get(owner).and_then(|n| n.scroll_pseudos()).and_then(|s| s.group) else { continue };
+            let Some(group_node) = self.nodes.get(group) else { continue };
+            let markers: Vec<NodeId> = group_node.layout_children.borrow().iter().flatten().copied().collect();
+            for marker in markers {
+                let Some(node) = self.nodes.get(marker) else { continue };
+                if !matches!(node.scroll_pseudo(), Some((PseudoElement::ScrollMarker, _))) {
+                    continue;
+                }
+                let origin = node.absolute_position(0.0, 0.0);
+                let (left, top) = (origin.x + node.scroll_offset().x as f32, origin.y + node.scroll_offset().y as f32);
+                let size = node.final_layout().size;
+                if x >= left && y >= top && x < left + size.width && y < top + size.height {
+                    return self.marker_target(marker);
+                }
+            }
+        }
+        None
+    }
+
     /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self) -> bool {
         self.scroll_snap_styles

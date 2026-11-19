@@ -2545,7 +2545,18 @@ fn dispatch_mouse_inner(
                     f.pointer_type = "touch".into();
                     f.is_primary = false;
                 }
-                dispatch_with_activation(page, ct, &ev);
+                let proceed = dispatch_with_activation(page, ct, &ev);
+                // pyro: an uncanceled click on a `::scroll-marker` scrolls to its target.
+                if proceed && name == "click" && !page.is_disposed() {
+                    let moved = page.layout.borrow_mut().activate_scroll_marker_at(&page.dom.borrow(), (m.x, m.y));
+                    for scrolled in moved {
+                        let node = match scrolled {
+                            pyro_dom::layout::ScrollTarget::Viewport => None,
+                            pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
+                        };
+                        crate::layout_api::fire_scroll(page, node);
+                    }
+                }
                 if name == "click" && m.click_count == 2 {
                     if let Some(k) = key_of(page, ct) {
                         fire_mouse(page, k, EventInterface::MouseEvent, "dblclick", m, true);

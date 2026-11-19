@@ -968,6 +968,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.column_boxes(self.page, key))).unwrap_or_default())
     }
 
+    fn scroll_marker_at(&self, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.scroll_marker_at(self.page, x, y))
+    }
+
     fn uses_scroll_snap(&self) -> bool {
         RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.uses_scroll_snap(self.page))))
     }
