@@ -18,8 +18,9 @@
 //!   exists), `fetch`, `localStorage` and `sessionStorage`;
 //! - once the popup page exists and is same-origin: every other Window
 //!   member reads through to the popup's real global (`document`,
-//!   `addEventListener`, ...). Cross-origin reads throw SecurityError, as
-//!   browsers do; before the page exists they are undefined.
+//!   `addEventListener`, ...), and assignments to other names set them on
+//!   that global. Cross-origin reads throw SecurityError, as browsers do;
+//!   before the page exists they are undefined.
 //!
 //! Before the page exists, `fetch` runs in the opener's realm (the initial
 //! about:blank document shares the opener's origin and base URL, so the
@@ -407,8 +408,16 @@ impl JsClass for PopupWindow {
             d.post_message(s, &a)?;
             Ok(s.undefined())
         });
-        // Everything else reads through to the popup's global once it exists.
+        // Everything else reads through to the popup's global once it exists,
+        // and assigning it (`popup.x = v`) sets it there, as a WindowProxy's
+        // [[Set]] does; before the page exists it stays on the stand-in.
         def.named(false, |s, d, name| d.forward(s, name));
+        def.named_setter(|_s, d, name, v| {
+            let Some((_, realm)) = d.reachable_page()? else { return Ok(false) };
+            let scope = realm.scope()?;
+            scope.global().set(name, scope.rehome(v))?;
+            Ok(true)
+        });
     }
 }
 
