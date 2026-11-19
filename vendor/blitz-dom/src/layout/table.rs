@@ -1915,11 +1915,9 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     };
     // Trailing `<col>` columns which contain no cells and have no definite width
     // (i.e. would be zero-width) are dropped, so they don't add border-spacing.
-    while column_sizes.len() > cursor.num_columns as usize
-        && column_sizes
-            .last()
-            .is_some_and(|c| c.min.into_raw().tag() == taffy::CompactLength::AUTO_TAG)
-    {
+    // pyro: those with a width too, past the last cell (Chromium; WPT css-tables
+    // `table_grid_size_col_colspan`: the grid is no wider than its cells).
+    while column_sizes.len() > cursor.num_columns as usize && cursor.num_columns > 0 {
         column_sizes.pop();
         columns.pop();
     }
@@ -2152,6 +2150,30 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
     style.collapsed_rows = rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
     style.collapsed_columns = collapsed_columns(doc, &columns);
+    // pyro: a `<col>`'s width has the halves of the collapsed borders beside its column in it (CSS 2.1
+    // § 17.6.2, as Chromium): in uniform gutters, which hold the borders whole, the track is that much
+    // narrower (WPT css-tables `table_grid_size_col_colspan`).
+    if border_collapse == BorderCollapse::Collapse && collapsed_edges.is_none() && collapse_gap.0 > 0.0 {
+        let gap = collapse_gap.0;
+        for (column, track) in style.grid_template_columns.iter_mut().enumerate() {
+            if !col_widths.get(column).copied().unwrap_or(false) {
+                continue;
+            }
+            if let taffy::GridTemplateComponent::Single(track) = track {
+                let raw = track.max.into_raw();
+                match raw.tag() {
+                    taffy::CompactLength::FIT_CONTENT_PX_TAG => {
+                        track.max = taffy::MaxTrackSizingFunction::fit_content_px((raw.value() - gap).max(0.0));
+                    }
+                    taffy::CompactLength::LENGTH_TAG => {
+                        let width = (raw.value() - gap).max(0.0);
+                        *track = style_helpers::length(width);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     if let Some(edges) = &collapsed_edges {
         let zero = style_helpers::length(0.0);
         style.gap = taffy::Size { width: zero, height: zero };
