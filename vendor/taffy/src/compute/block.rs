@@ -2226,7 +2226,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                             && item.size_style.width.is_auto()
                             && !item.is_table
                             && !item.is_compressible_replaced
-                            && non_stretch_justify_self.is_none();
+                            && non_stretch_justify_self.is_none()
+                            // pyro: an orthogonal box's width is its block size, set by its
+                            // content: it is as wide as it is laid out in the slot.
+                            && !tree.block_child_is_orthogonal(item.node_id);
                         let mut slot_segment = None;
                         let mut height_retries = 0;
                         let slot = loop {

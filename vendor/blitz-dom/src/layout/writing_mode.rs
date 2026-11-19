@@ -258,7 +258,7 @@ impl LayoutPassState<'_> {
 
         // pyro: the box's own sizes in its inline axis, from its computed style (a table cell's
         // layout style has no height or max-height: in a horizontal table they are its row's).
-        let own_inline = self.orthogonal_inline_constraints(node_id, inputs.parent_size.width);
+        let own_inline = self.orthogonal_inline_constraints(node_id, inputs.parent_size.width, cb_inline);
         if inputs.run_mode != RunMode::PerformHiddenLayout
             && inputs.known_dimensions.width.is_none()
             && is_intrinsic_inline_measurement
@@ -444,8 +444,9 @@ impl LayoutPassState<'_> {
     }
 
     /// pyro: an orthogonal box's `size`, `min-` and `max-` sizes in its inline axis as border-box
-    /// lengths, from its computed style (`basis`: their percentages' basis, if definite).
-    fn orthogonal_inline_constraints(&self, node_id: NodeId, basis: Option<f32>) -> InlineConstraints {
+    /// lengths, from its computed style (`basis`: their percentages' basis, if definite;
+    /// `padding_basis`: the containing block's inline size, for percentage padding).
+    fn orthogonal_inline_constraints(&self, node_id: NodeId, basis: Option<f32>, padding_basis: Option<f32>) -> InlineConstraints {
         use taffy::MaybeResolve as _;
         let node = &self.nodes[dom_node_id(node_id)];
         let Some(computed) = node.primary_styles() else { return InlineConstraints::default() };
@@ -464,8 +465,9 @@ impl LayoutPassState<'_> {
             )
         };
         let style = node.layout_style();
-        let pb = taffy::CoreStyle::padding(&style).resolve_or_zero(basis, resolve_calc_value)
-            + taffy::CoreStyle::border(&style).resolve_or_zero(basis, resolve_calc_value);
+        // (Percentage padding resolves against the containing block's inline size, css-writing-modes-3 §7.3.)
+        let pb = taffy::CoreStyle::padding(&style).resolve_or_zero(padding_basis, resolve_calc_value)
+            + taffy::CoreStyle::border(&style).resolve_or_zero(padding_basis, resolve_calc_value);
         let extra = pb.left + pb.right;
         let border_box = |value: Option<f32>| {
             value.map(|value| match taffy::CoreStyle::box_sizing(&style) {
