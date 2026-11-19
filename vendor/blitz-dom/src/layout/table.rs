@@ -76,8 +76,13 @@ impl TableTreeWrapper<'_, '_> {
         if !ctx.is_fixed && n > 0 && self.has_percent_cell(&ctx) {
             return self.percent_column_widths(inputs, &ctx);
         }
-        if ctx.is_fixed || n == 0 || !(all_auto || all_hinted) {
+        if ctx.is_fixed || n == 0 {
             return None;
+        }
+        // pyro: columns of mixed kinds (a `<col>` width beside auto columns, say) get the automatic
+        // table layout's widths too (`percent_column_widths`, Blink's distribution), not the grid's.
+        if !(all_auto || all_hinted) {
+            return self.percent_column_widths(inputs, &ctx);
         }
         // The new hinted-track path inspects physical widths. Keep vertical
         // and orthogonal cells on the existing logical-axis grid fallback.
@@ -197,7 +202,9 @@ impl TableTreeWrapper<'_, '_> {
             let spacing = gap * (end.saturating_sub(column + 1)) as f32;
             let sum = |w: &[f32]| w[column.min(end)..end].iter().sum::<f32>() + spacing;
             if lo > sum(&min) + 0.01 || (hi > sum(&max) + 0.01 && !at_min) {
-                return None;
+                // pyro: distributed as Blink does (`percent_column_widths`), not by the grid, which
+                // shares a spanning cell's excess over fixed columns too (WPT css-tables `colspan-004`).
+                return self.percent_column_widths(inputs, &ctx);
             }
         }
         let (sum_min, sum_max) = (min.iter().sum::<f32>(), max.iter().sum::<f32>());
@@ -309,13 +316,21 @@ impl TableTreeWrapper<'_, '_> {
         let mut max = vec![0.0f32; n];
         let mut percent: Vec<Option<f32>> = (0..n).map(|c| ctx.column_percents.get(c).copied().flatten()).collect();
         let mut fixed = vec![false; n];
-        // `<col>` and first-row lengths.
+        // `<col>` and first-row lengths (pyro: also as the `fit-content(<length>)` hint tracks of
+        // columns with cells, `build_table_context`).
         for (c, track) in style.grid_template_columns.iter().enumerate() {
             if let taffy::GridTemplateComponent::Single(track) = track {
-                if track.max.into_raw().tag() == taffy::CompactLength::LENGTH_TAG {
+                if matches!(track.max.into_raw().tag(), taffy::CompactLength::LENGTH_TAG | taffy::CompactLength::FIT_CONTENT_PX_TAG) {
                     let len = track.max.into_raw().value();
                     max[c] = len;
                     fixed[c] = len > 0.0;
+                }
+                // pyro: a `<col>`'s length `min-width` (`push_columns`: `minmax(<length>, auto)`)
+                // is a floor of the column (WPT css-tables `col-definite-min-size-001`).
+                if track.min.into_raw().tag() == taffy::CompactLength::LENGTH_TAG {
+                    let len = track.min.into_raw().value();
+                    min[c] = min[c].max(len);
+                    max[c] = max[c].max(len);
                 }
             }
         }
@@ -340,6 +355,22 @@ impl TableTreeWrapper<'_, '_> {
             let lo = measure(self, idx, taffy::AvailableSpace::MinContent);
             let hi = measure(self, idx, taffy::AvailableSpace::MaxContent).max(lo);
             if cell.colspan > 1 || column >= n {
+                // pyro: a spanning cell's length `width` is its max-content contribution (its
+                // border box), as a single cell's is its column's.
+                let hi = match self.cell_width(cell) {
+                    Some(width) if width.tag() == taffy::CompactLength::LENGTH_TAG => {
+                        let box_extra = match cell.style.box_sizing {
+                            taffy::BoxSizing::ContentBox => {
+                                let p = cell.style.padding.resolve_or_zero(None, resolve_calc_value);
+                                let b = cell.style.border.resolve_or_zero(None, resolve_calc_value);
+                                (p + b).horizontal_axis_sum()
+                            }
+                            taffy::BoxSizing::BorderBox => 0.0,
+                        };
+                        hi.max(width.value() + box_extra)
+                    }
+                    _ => hi,
+                };
                 spanning.push((column, (cell.colspan as usize).max(1), lo, hi));
                 continue;
             }
@@ -364,6 +395,10 @@ impl TableTreeWrapper<'_, '_> {
                     fixed[column] = true;
                     max[column] = max[column].max(width.value() + box_extra);
                 }
+                // pyro: a column with a length width (its `<col>`'s) keeps it as its max-content
+                // width: its auto cells' content widens it only to their min-content width (Blink;
+                // WPT CSS2 `vertical-align-baseline-003`'s reference).
+                taffy::CompactLength::AUTO_TAG if fixed[column] => {}
                 taffy::CompactLength::AUTO_TAG => max[column] = max[column].max(hi),
                 _ => return None,
             }
@@ -377,8 +412,17 @@ impl TableTreeWrapper<'_, '_> {
             let end = (column + span).min(n);
             let columns = column.min(end)..end;
             let spacing = gap * columns.len().saturating_sub(1) as f32;
+            // pyro: auto columns first, then fixed ones, then percentage ones (Blink's
+            // `DistributeColspanCellToColumns`: unconstrained columns take a spanning cell's excess).
+            let auto: Vec<usize> = columns.clone().filter(|&c| percent[c].is_none() && !fixed[c]).collect();
             let free: Vec<usize> = columns.clone().filter(|&c| percent[c].is_none()).collect();
-            let group = if free.is_empty() { columns.collect() } else { free };
+            let group = if !auto.is_empty() {
+                auto
+            } else if free.is_empty() {
+                columns.collect()
+            } else {
+                free
+            };
             let total: f32 = group.iter().map(|&c| max[c]).sum();
             let snapshot = max.clone();
             let max_share = |c: usize, total: f32| snapshot[c] / total;
