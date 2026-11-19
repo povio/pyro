@@ -508,3 +508,28 @@ fn has_invalidation_reaches_ancestors_of_the_anchor() {
         "rgb(128, 128, 128)|rgb(255, 0, 0)|rgb(128, 128, 128)"
     );
 }
+
+/// Processing instruction attributes (WPT dom/nodes/processing-instruction-attributes): the data
+/// read as quoted pairs; writes rewrite it in place as characterData mutations; invalid names throw.
+#[test]
+fn processing_instruction_attributes() {
+    let env = Env::new("http://pi.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              const pi = document.createProcessingInstruction("t", 'a="b" x="yy"');
+              const mo = new MutationObserver(() => {});
+              mo.observe(pi, { characterData: true, attributes: true });
+              const out = [pi.hasAttributes(), pi.getAttributeNames().join(","), pi.getAttribute("x"), pi.getAttribute("X")];
+              pi.setAttribute("x", 'q"<');
+              out.push(pi.data, pi.getAttribute("x"), mo.takeRecords().map(r => r.type).join());
+              pi.removeAttribute("x");
+              pi.toggleAttribute("c");
+              out.push(pi.data, document.createProcessingInstruction("t", "a=b").hasAttributes());
+              try { pi.setAttribute("a=", "v"); out.push("no throw"); } catch (e) { out.push(e.name); }
+              return out.join("|");
+            })()"##
+        ),
+        r#"true|a,x|yy||a="b" x="q&quot;&lt;"|q"<|characterData|a="b" c=""|false|InvalidCharacterError"#
+    );
+}
