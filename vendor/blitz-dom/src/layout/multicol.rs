@@ -829,8 +829,24 @@ impl LayoutPassState<'_> {
                 let rest = Breaks { start, ..breaks.clone() };
                 let run = rest.fill(row_height, count + 1);
                 if placed.is_empty() && offset > EPSILON && first >= 1.0 {
-                    pushed = run.violations > 0
-                        || run.columns.iter().take(count).any(|&(a, b)| b - a > row_height + EPSILON);
+                    let violates = |a: f32| containing(&rest.strict, a + row_height).is_some_and(|(s, _)| s <= a + EPSILON);
+                    pushed = run.columns.first().is_some_and(|&(a, b)| violates(a) || b - a > row_height + EPSILON);
+                    // A later column of this row, partway down its outer column, that would break
+                    // what is kept together is left empty: what it would hold starts the next
+                    // row, a whole outer column tall (WPT css-multicol `multicol-nested-013`).
+                    // (Not once the row's first column breaks something itself: then the row
+                    // takes lesser breaks too, as Chromium weighs them.)
+                    if !last_box_row
+                        && run.columns.first().is_some_and(|c| !violates(c.0))
+                        && let Some(i) = (1..count.min(run.columns.len())).find(|&i| violates(run.columns[i].0))
+                    {
+                        placed.extend(run.columns.iter().take(i).map(|&(a, b)| (a, b, top, row_height)));
+                        start = run.columns[i].0;
+                        top += row_height;
+                        available = outer_height;
+                        row_top = top;
+                        continue;
+                    }
                 }
                 if run.columns.len() <= count || last_box_row {
                     // (`column-fill: auto` without a definite height balances too.)
