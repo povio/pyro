@@ -2313,12 +2313,14 @@
  impl core::fmt::Debug for AnalysisOptions<'_> {
 --- a/src/shape/data.rs
 +++ b/src/shape/data.rs
-@@ -57,7 +57,26 @@
-         Self(glyph_len as u16)
-     }
- 
-+    /// pyro: these flags with `glyph_len` glyphs.
+@@ -55,9 +55,28 @@
      #[inline(always)]
+     pub(crate) const fn new(glyph_len: u8) -> Self {
+         Self(glyph_len as u16)
++    }
++
++    /// pyro: these flags with `glyph_len` glyphs.
++    #[inline(always)]
 +    pub(crate) const fn with_glyph_len(mut self, glyph_len: u8) -> Self {
 +        self.0 = self.0 & !Self::GLYPH_LEN_MASK | glyph_len as u16;
 +        self
@@ -2328,10 +2330,10 @@
 +    #[inline(always)]
 +    pub(crate) const fn bits(self) -> u16 {
 +        self.0
-+    }
-+
+     }
+ 
 +    /// pyro: flags from [`Self::bits`].
-+    #[inline(always)]
+     #[inline(always)]
 +    pub(crate) const fn from_bits(bits: u16) -> Self {
 +        Self(bits)
 +    }
@@ -2340,7 +2342,7 @@
      pub(crate) const fn with_inline_glyph(mut self, set: bool) -> Self {
          self.0 = self.0 & !Self::INLINE_GLYPH | if set { Self::INLINE_GLYPH } else { 0 };
          self
-@@ -253,19 +272,38 @@
+@@ -253,19 +272,41 @@
  
  /// Properties of a [`Character`].
  #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -2381,10 +2383,13 @@
 +    const PHRASE_FALLBACK: u16 = 1 << 12;
 +    /// pyro: the source character is U+2061, the strut parley commits for an empty inline box.
 +    const EMPTY_BOX_STRUT: u16 = 1 << 13;
++    /// pyro: the character is a virama that links consonants into a conjunct (`Indic_Conjunct_Break
++    /// = Linker`).
++    const LINKER: u16 = 1 << 14;
  
      #[inline(always)]
      pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
-@@ -275,7 +313,7 @@
+@@ -275,7 +316,7 @@
              clippy::cast_possible_truncation,
              reason = "`len_utf8` is between 1 and 4 inclusive"
          )]
@@ -2393,7 +2398,7 @@
          Self(
              (len_utf8 - 1)
                  | if is_emoji { Self::EMOJI } else { 0 }
-@@ -288,10 +326,108 @@
+@@ -288,10 +329,120 @@
                      Self::SOFT_WRAP_OPPORTUNITY
                  } else {
                      0
@@ -2407,8 +2412,20 @@
 +                    Self::EMPTY_BOX_STRUT
 +                } else {
 +                    0
++                }
++                | if matches!(source_char, '\u{94d}' | '\u{9cd}' | '\u{acd}' | '\u{b4d}' | '\u{c4d}' | '\u{d4d}') {
++                    Self::LINKER
++                } else {
++                    0
                  },
-+        )
+         )
+     }
+ 
++    /// pyro: whether the character is a virama that links consonants into a conjunct (Devanagari,
++    /// Bengali, Gujarati, Oriya, Telugu, Malayalam: `Indic_Conjunct_Break = Linker`).
++    #[inline(always)]
++    pub fn is_linker(self) -> bool {
++        self.0 & Self::LINKER != 0
 +    }
 +
 +    /// pyro: these flags with [`Self::is_phrase_fallback`] set to `value`.
@@ -2446,9 +2463,9 @@
 +                | if trim & TRIM_OPEN != 0 { Self::TRIM_OPEN } else { 0 }
 +                | if trim & TRIM_CLOSE != 0 { Self::TRIM_CLOSE } else { 0 }
 +                | if trim & TRIMMED != 0 { Self::TRIMMED } else { 0 },
-         )
-     }
- 
++        )
++    }
++
 +    /// pyro: whether the character is fullwidth opening punctuation that its font can set
 +    /// half-width (CSS `text-spacing-trim`): the line breaker may trim it at the start of a line.
 +    #[inline(always)]

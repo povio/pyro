@@ -304,6 +304,9 @@ impl CharacterFlags {
     const PHRASE_FALLBACK: u16 = 1 << 12;
     /// pyro: the source character is U+2061, the strut parley commits for an empty inline box.
     const EMPTY_BOX_STRUT: u16 = 1 << 13;
+    /// pyro: the character is a virama that links consonants into a conjunct (`Indic_Conjunct_Break
+    /// = Linker`).
+    const LINKER: u16 = 1 << 14;
 
     #[inline(always)]
     pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
@@ -336,8 +339,20 @@ impl CharacterFlags {
                     Self::EMPTY_BOX_STRUT
                 } else {
                     0
+                }
+                | if matches!(source_char, '\u{94d}' | '\u{9cd}' | '\u{acd}' | '\u{b4d}' | '\u{c4d}' | '\u{d4d}') {
+                    Self::LINKER
+                } else {
+                    0
                 },
         )
+    }
+
+    /// pyro: whether the character is a virama that links consonants into a conjunct (Devanagari,
+    /// Bengali, Gujarati, Oriya, Telugu, Malayalam: `Indic_Conjunct_Break = Linker`).
+    #[inline(always)]
+    pub fn is_linker(self) -> bool {
+        self.0 & Self::LINKER != 0
     }
 
     /// pyro: these flags with [`Self::is_phrase_fallback`] set to `value`.

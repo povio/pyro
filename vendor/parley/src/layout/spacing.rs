@@ -227,6 +227,13 @@ impl EffectiveSpacing {
             return Gaps::ZERO;
         }
         let mut gaps = self.spacing.gaps(whitespace);
+        // pyro: nor after a grapheme that ends with a virama (one a consonant would have joined
+        // into a conjunct: after an independent vowel, `অ্যা`): the letter after it is in the
+        // same syllable, which Blink spaces as one (WPT css-text
+        // `letter-spacing-bengali-yaphala-001`).
+        if atom.characters().last().is_some_and(|last| last.flags.is_linker()) {
+            gaps.after -= self.spacing.letter;
+        }
 
         let amount = self.justification.amount_per_opportunity;
         let range = atom.shaped_clusters_range();

@@ -4351,7 +4351,7 @@ index 852bc48..e314b9b 100644
                      if self.atom_glyph == 0 {
                          glyph.x += self.gaps.before;
 diff --git a/src/layout/spacing.rs b/src/layout/spacing.rs
-index 4eccc6c..9dc98a3 100644
+index 4eccc6c..b7e49a5 100644
 --- a/src/layout/spacing.rs
 +++ b/src/layout/spacing.rs
 @@ -83,12 +83,46 @@ pub(crate) struct Spacing {
@@ -4446,7 +4446,7 @@ index 4eccc6c..9dc98a3 100644
      /// The combined [`Spacing`] and [`Justification`] effective for a run.
      ///
      /// To measure text for purposes like line breaking, pass [`Justification::NONE`].
-@@ -173,12 +221,35 @@ impl EffectiveSpacing {
+@@ -173,12 +221,42 @@ impl EffectiveSpacing {
      #[inline(always)]
      pub(crate) fn gaps(self, atom: &Atom<'_>) -> Gaps {
          let whitespace = atom.characters()[0].whitespace;
@@ -4456,6 +4456,13 @@ index 4eccc6c..9dc98a3 100644
 +            return Gaps::ZERO;
 +        }
          let mut gaps = self.spacing.gaps(whitespace);
++        // pyro: nor after a grapheme that ends with a virama (one a consonant would have joined
++        // into a conjunct: after an independent vowel, `অ্যা`): the letter after it is in the
++        // same syllable, which Blink spaces as one (WPT css-text
++        // `letter-spacing-bengali-yaphala-001`).
++        if atom.characters().last().is_some_and(|last| last.flags.is_linker()) {
++            gaps.after -= self.spacing.letter;
++        }
  
 -        if is_word_separator(whitespace)
 -            && atom.shaped_clusters_range().end <= self.justification.justification_end_cluster
