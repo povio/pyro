@@ -388,7 +388,18 @@ impl Mirror {
     }
 
     pub(crate) fn node(&self, key: u64) -> Option<NodeId> {
-        self.nodes.get(&key).map(|e| e.id)
+        if let Some(e) = self.nodes.get(&key) {
+            return Some(e.id);
+        }
+        // pyro: a `::before` / `::after` box, by its element's key with the pseudo-element in the
+        // top two bits (pyro-dom `snapshot::pseudo_render_key`).
+        let element = self.nodes.get(&(key & !(3 << 62)))?.id;
+        let node = self.doc.get_node(element)?;
+        match key >> 62 {
+            1 => node.before(),
+            2 => node.after(),
+            _ => None,
+        }
     }
 
     /// The key of the mirrored Blitz node `id`.

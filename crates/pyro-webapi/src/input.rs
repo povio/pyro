@@ -2558,7 +2558,8 @@ fn dispatch_mouse_inner(
             {
                 return Ok(None);
             }
-            let moved = page.layout.borrow_mut().wheel_scroll(&page.dom.borrow(), target, m.delta_x, m.delta_y);
+            let moved =
+                page.layout.borrow_mut().wheel_scroll_at(&page.dom.borrow(), target, (m.x, m.y), m.delta_x, m.delta_y);
             for scrolled in moved {
                 let node = match scrolled {
                     pyro_dom::layout::ScrollTarget::Viewport => None,

@@ -1107,6 +1107,7 @@ impl Renderer {
         let started = Instant::now();
         // The focused text control's selection, set once laid out (its editor is made then).
         let mut control = None;
+        let mut pseudo_scrolls: Vec<(blitz_dom::NodeId, u8, (f64, f64))> = Vec::new();
         let (doc, bridge, clip) = match &snap.live {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
@@ -1153,6 +1154,13 @@ impl Renderer {
                     Some(m) => {
                         if let Some(offsets) = &snap.element_scroll {
                             m.set_element_scroll(offsets);
+                            // pyro: a `::before` / `::after` box may be made anew by the settle
+                            // below: its offset is given again after it.
+                            pseudo_scrolls = offsets
+                                .iter()
+                                .filter(|(key, _)| key >> 62 != 0)
+                                .filter_map(|&(key, o)| Some((m.node(key & !(3 << 62))?, (key >> 62) as u8, o)))
+                                .collect();
                         }
                         if let Some(offsets) = &snap.sticky_offsets {
                             m.set_sticky_offsets(offsets);
@@ -1265,6 +1273,17 @@ impl Renderer {
         }
         if let Some((id, start, end)) = control {
             doc.set_text_input_selection(id, start, end);
+        }
+        for (element, pseudo, (x, y)) in pseudo_scrolls {
+            let Some(node) = doc.get_node(element) else { continue };
+            let Some(id) = (if pseudo == 1 { node.before() } else { node.after() }) else { continue };
+            if let Some(node) = doc.get_node_mut(id) {
+                let offset = blitz_dom::Point { x, y };
+                if *node.scroll_offset() != offset {
+                    *node.scroll_offset_mut() = offset;
+                    node.scroll_offset_changed();
+                }
+            }
         }
         if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
             let resolved = resolving.elapsed();

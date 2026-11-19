@@ -256,6 +256,10 @@ pub struct Layout {
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
+    /// pyro: the scroll offsets of scroll containers that are `::before` (1) or `::after` (2)
+    /// boxes of an element, which they keep across relayouts (WPT css-overflow
+    /// `before-after-pseudo-element-scrolling`).
+    pseudo_scroll: FxHashMap<(NodeId, u8), (i32, i32)>,
     /// pyro: whether the viewport took its initial snap position.
     viewport_initially_snapped: bool,
     /// pyro: the scroll offset script last gave an element on each axis in its CSS px (x, y), with
@@ -546,6 +550,7 @@ impl Layout {
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
             initially_snapped: Default::default(),
+            pseudo_scroll: FxHashMap::default(),
             viewport_initially_snapped: false,
             css_scroll: FxHashMap::default(),
             initial_snap_checked: Default::default(),
@@ -3143,6 +3148,12 @@ impl Layout {
             .iter()
             .filter(|(_, &o)| o != (0, 0))
             .map(|(&el, &(x, y))| (crate::snapshot::render_key(el), (x as f64, y as f64)))
+            .chain(
+                self.pseudo_scroll
+                    .iter()
+                    .filter(|(_, &o)| o != (0, 0))
+                    .map(|(&(el, p), &(x, y))| (crate::snapshot::pseudo_render_key(el, p), (x as f64, y as f64))),
+            )
             .collect()
     }
 
@@ -3212,7 +3223,10 @@ impl Layout {
     }
 
     pub fn has_scroll_offsets(&self) -> bool {
-        self.window_scroll != (0, 0) || self.element_scroll.values().any(|&o| o != (0, 0)) || !self.snapped.is_empty()
+        self.window_scroll != (0, 0)
+            || self.element_scroll.values().any(|&o| o != (0, 0))
+            || !self.snapped.is_empty()
+            || self.pseudo_scroll.values().any(|&o| o != (0, 0))
     }
 
     /// Re-clamps scroll offsets to the current scrollable extents and
@@ -3338,6 +3352,69 @@ impl Layout {
     /// each axis' whole delta latches to the nearest container that can still
     /// move, else the viewport. Returns the scrollers that moved. Dispatching
     /// the cancelable `wheel` event first is the caller's job.
+    /// [`Self::wheel_scroll`] at the client point (`x`, `y`) over `target`: a `::before` or
+    /// `::after` box of `target` that is a scroll container under the point scrolls first, on each
+    /// axis it can still move on (WPT css-overflow `before-after-pseudo-element-scrolling`).
+    pub fn wheel_scroll_at(
+        &mut self,
+        dom: &Dom,
+        target: NodeId,
+        point: (f64, f64),
+        delta_x: f64,
+        delta_y: f64,
+    ) -> Vec<ScrollTarget> {
+        let (mut dx, mut dy) = (delta_to_scroll(delta_x), delta_to_scroll(delta_y));
+        if let Some(source) = self.synced_geometry_source(dom).cloned() {
+            for (pseudo, which) in [
+                (1u8, style::selector_parser::PseudoElement::Before),
+                (2u8, style::selector_parser::PseudoElement::After),
+            ] {
+                if dx == 0 && dy == 0 {
+                    break;
+                }
+                let scrolls = |name: &str| {
+                    matches!(self.computed_pseudo_style_value(dom, target, &which, name).as_str(), "hidden" | "scroll" | "auto")
+                };
+                if !scrolls("overflow-x") && !scrolls("overflow-y") {
+                    continue;
+                }
+                let Some(b) = source.element_box(crate::snapshot::pseudo_render_key(target, pseudo)) else { continue };
+                let (px, py) = if b.fixed {
+                    point
+                } else {
+                    (point.0 + self.window_scroll.0 as f64, point.1 + self.window_scroll.1 as f64)
+                };
+                if px < b.x || py < b.y || px >= b.x + b.width || py >= b.y + b.height {
+                    continue;
+                }
+                let max_x = (b.scroll_width - b.client_width).round().max(0.0) as i32;
+                let max_y = (b.scroll_height - b.client_height).round().max(0.0) as i32;
+                let current = self.pseudo_scroll.get(&(target, pseudo)).copied().unwrap_or((0, 0));
+                let next = (
+                    current.0.saturating_add(dx).clamp(0, max_x),
+                    current.1.saturating_add(dy).clamp(0, max_y),
+                );
+                if next.0 != current.0 {
+                    dx = 0;
+                }
+                if next.1 != current.1 {
+                    dy = 0;
+                }
+                if next != current {
+                    self.pseudo_scroll.insert((target, pseudo), next);
+                    self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                }
+            }
+        }
+        let mut moved = Vec::new();
+        for (axis, d) in [(Axis::Width, dx), (Axis::Height, dy)] {
+            if let Some(t) = self.scroll_axis(dom, target, axis, d) {
+                moved.push(t);
+            }
+        }
+        moved
+    }
+
     pub fn wheel_scroll(&mut self, dom: &Dom, target: NodeId, delta_x: f64, delta_y: f64) -> Vec<ScrollTarget> {
         let mut moved = Vec::new();
         for (axis, d) in [(Axis::Width, delta_x), (Axis::Height, delta_y)] {

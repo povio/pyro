@@ -130,6 +130,12 @@ pub fn render_key(id: NodeId) -> u64 {
     ((id.generation() as u64) << 32) | id.index() as u64
 }
 
+/// pyro: the render key of `id`'s `::before` (`pseudo` 1) or `::after` (2) box: the element's
+/// with the pseudo-element in its two top bits (which generations never reach).
+pub fn pseudo_render_key(id: NodeId, pseudo: u8) -> u64 {
+    render_key(id) | ((pseudo as u64 & 3) << 62)
+}
+
 /// Tree scope of a node being serialized: index into the shadow hosts
 /// entered so far, `NONE` for the document.
 type Scope = usize;
