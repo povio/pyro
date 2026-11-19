@@ -53,6 +53,17 @@ use crate::{BaseDocument, Node, dom_node_id};
 
 /// How many columns a container makes at most (its content is cut off past them).
 const MAX_COLUMNS: usize = 1000;
+/// pyro: how many column fragments one container makes at most, nested rows included (what is
+/// left past them goes to its last column).
+const MAX_FRAGMENTS: usize = 10_000;
+/// pyro: how many column fragments a layout pass makes in all its multi-column containers, nested
+/// ones included (`LayoutPassState::column_fragment_budget`); past them a container makes one
+/// column (a page cannot make millions: a thousand columns in each of a thousand nested rows).
+pub(crate) const COLUMN_FRAGMENT_BUDGET: usize = 200_000;
+/// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
+/// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
+/// them otherwise.
+pub(crate) const NESTED_PASS_BUDGET: usize = 256;
 /// Positions closer than this are the same (CSS px).
 const EPSILON: f32 = 1.0 / 128.0;
 
@@ -277,6 +288,24 @@ impl RowSlots {
     }
 }
 
+/// pyro: a part of a strip (between spanners, or from a row on), its breaks shared.
+#[derive(Clone, Copy)]
+struct Part<'a> {
+    breaks: &'a Breaks,
+    start: f32,
+    end: f32,
+}
+
+impl Part<'_> {
+    fn fill(&self, height: f32, max_columns: usize) -> FillRun {
+        self.breaks.fill_range(self.start, self.end, height, max_columns)
+    }
+
+    fn balance(&self, count: usize, limit: Option<f32>) -> f32 {
+        self.breaks.balance_range(self.start, self.end, count, limit)
+    }
+}
+
 /// How a strip fills columns of one height.
 struct FillRun {
     /// Each column's strip range (`start..end`).
@@ -352,6 +381,12 @@ impl Breaks {
     /// The strip in columns of height `height`, at most `max_columns` of them (the last takes the
     /// rest).
     fn fill(&self, height: f32, max_columns: usize) -> FillRun {
+        self.fill_range(self.start, self.end, height, max_columns)
+    }
+
+    /// pyro: [`Self::fill`] for the part `from..to` of the strip (no copy of the breaks per
+    /// part or row).
+    fn fill_range(&self, from: f32, to: f32, height: f32, max_columns: usize) -> FillRun {
         let no_height = self.whole_in_empty_columns && height <= EPSILON;
         // pyro: columns of no height of a container whose own lines they show (an inline
         // formatting context root) cut those lines as before: a stopgap that keeps WPT
@@ -361,7 +396,7 @@ impl Breaks {
         let degenerate = self.cut_in_empty_columns && height <= EPSILON;
         let height = height.max(1.0);
         let mut run = FillRun { columns: Vec::new(), shortage: None, violations: 0 };
-        let mut start = self.start;
+        let mut start = from;
         let note = |run: &mut FillRun, s: Option<f32>| {
             if let Some(s) = s.filter(|&s| s > EPSILON) {
                 run.shortage = Some(run.shortage.map_or(s, |m: f32| m.min(s)));
@@ -376,15 +411,15 @@ impl Breaks {
             let limit = self.trimmed_limit(start + height);
             // pyro: a forced break before the column's end ends it there.
             let forced = (run.columns.len() + 1 < max_columns)
-                .then(|| self.forced.iter().copied().find(|&f| f > start + EPSILON && f < self.end - EPSILON))
+                .then(|| self.forced.iter().copied().find(|&f| f > start + EPSILON && f < to - EPSILON))
                 .flatten();
             if let Some(f) = forced.filter(|&f| f <= limit.max(start + height) + EPSILON) {
                 run.columns.push((start, f));
                 start = f;
                 continue;
             }
-            if limit >= self.end - EPSILON || run.columns.len() + 1 >= max_columns {
-                run.columns.push((start, self.end.max(start)));
+            if limit >= to - EPSILON || run.columns.len() + 1 >= max_columns {
+                run.columns.push((start, to.max(start)));
                 return run;
             }
             let (strict, strict_short) = Self::break_before(&self.strict, start, limit);
@@ -414,7 +449,7 @@ impl Breaks {
             };
             let (end, next) = self.break_at(end);
             run.columns.push((start, end.max(start)));
-            if next >= self.end - EPSILON {
+            if next >= to - EPSILON {
                 // Nothing but margins left.
                 return run;
             }
@@ -425,7 +460,12 @@ impl Breaks {
     /// The balanced column height: the least that fits the strip in `count` columns, keeping
     /// together what `strict` keeps where it can, no more than `limit`.
     fn balance(&self, count: usize, limit: Option<f32>) -> f32 {
-        let total = self.end - self.start;
+        self.balance_range(self.start, self.end, count, limit)
+    }
+
+    /// pyro: [`Self::balance`] for the part `from..to` of the strip.
+    fn balance_range(&self, from: f32, to: f32, count: usize, limit: Option<f32>) -> f32 {
+        let total = to - from;
         if total <= EPSILON {
             return 0.0;
         }
@@ -433,9 +473,9 @@ impl Breaks {
         // are as many as the columns or more, every column holds one segment (or one and the
         // overflow columns after the last), so they are as tall as the tallest (Chromium; WPT
         // css-multicol `multicol-fill-balance-002`, `-040`).
-        let mut cuts: Vec<f32> = vec![self.start];
-        cuts.extend(self.forced.iter().copied().filter(|&f| f > self.start + EPSILON && f < self.end - EPSILON));
-        cuts.push(self.end);
+        let mut cuts: Vec<f32> = vec![from];
+        cuts.extend(self.forced.iter().copied().filter(|&f| f > from + EPSILON && f < to - EPSILON));
+        cuts.push(to);
         let segments = cuts.len() - 1;
         let tallest_segment = cuts.windows(2).map(|w| w[1] - w[0]).fold(0.0, f32::max);
         // At most this many columns fit the content whatever their height.
@@ -445,7 +485,7 @@ impl Breaks {
             height = height.min(limit);
         }
         for _ in 0..200 {
-            let run = self.fill(height, MAX_COLUMNS);
+            let run = self.fill_range(from, to, height, MAX_COLUMNS);
             if run.columns.len() <= fits && run.violations == 0 {
                 break;
             }
@@ -458,7 +498,7 @@ impl Breaks {
                 // moves its break by as much as it grows).
                 let top = total.min(limit.unwrap_or(f32::INFINITY));
                 let (mut lo, mut hi) = (height, top);
-                if self.fill(hi, MAX_COLUMNS).columns.len() > fits {
+                if self.fill_range(from, to, hi, MAX_COLUMNS).columns.len() > fits {
                     height = top;
                     break;
                 }
@@ -467,7 +507,7 @@ impl Breaks {
                         break;
                     }
                     let mid = (lo + hi) / 2.0;
-                    if self.fill(mid, MAX_COLUMNS).columns.len() <= fits { hi = mid } else { lo = mid }
+                    if self.fill_range(from, to, mid, MAX_COLUMNS).columns.len() <= fits { hi = mid } else { lo = mid }
                 }
                 height = hi;
                 continue;
@@ -486,7 +526,7 @@ impl Breaks {
             }
         }
         // The tallest column's content, not more.
-        let run = self.fill(height, MAX_COLUMNS);
+        let run = self.fill_range(from, to, height, MAX_COLUMNS);
         let tallest = run.columns.iter().take(fits.max(1)).map(|&(a, b)| b - a).fold(0.0, f32::max);
         // pyro: (when what is kept together still breaks, the columns stay as tall as balancing
         // stretched them: Chromium; WPT css-multicol `multicol-nested-020`)
@@ -731,7 +771,7 @@ impl LayoutPassState<'_> {
                 breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
             }
             pass += 1;
-            if breaks.nested.is_empty() || pass > 5 {
+            if breaks.nested.is_empty() || pass > 5 || self.nested_pass_budget == 0 {
                 break (strip, breaks);
             }
             // pyro: a multi-column container nested in these columns is fragmented by them: it is
@@ -785,6 +825,7 @@ impl LayoutPassState<'_> {
             if !changed {
                 break (strip, breaks);
             }
+            self.nested_pass_budget -= 1;
         };
         self.multicol_percent_height = outer_percent_height;
         self.column_spanners = outer_spanners;
@@ -831,20 +872,28 @@ impl LayoutPassState<'_> {
         // each outer column the box reaches: the first as tall as what is left of its outer
         // column, the others as tall as an outer column, each filled in turn; the row the content
         // ends in is balanced (unless `column-fill: auto`). A definite height ends the rows.
+        // pyro: the fragments this container may make (`COLUMN_FRAGMENT_BUDGET`, `MAX_FRAGMENTS`).
+        let fragment_cap = self.column_fragment_budget.clamp(2, MAX_FRAGMENTS);
         let mut pushed = false;
         if let Some((outer_height, offset)) = nested_ctx {
             let box_end = definite_height.map(|height| content_top + height);
             let first = outer_height - offset - content_top;
             let (mut top, mut available) = if first >= 1.0 { (content_top, first) } else { (content_top, outer_height) };
             let mut start = breaks.start;
+            let end = breaks.end;
             let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
-            for _ in 0..MAX_COLUMNS {
+            loop {
                 let row_height = box_end.map_or(available, |end| available.min(end - top).max(1.0));
+                // (Past the fragment cap, what is left goes to one last column.)
+                if placed.len() + count + 1 >= fragment_cap {
+                    placed.push((start, end, top, row_height));
+                    row_top = top + row_height;
+                    break;
+                }
                 let last_box_row = box_end.is_some_and(|end| top + available >= end - EPSILON);
-                let rest = Breaks { start, ..breaks.clone() };
-                let run = rest.fill(row_height, count + 1);
+                let run = breaks.fill_range(start, end, row_height, count + 1);
                 if placed.is_empty() && offset > EPSILON && first >= 1.0 {
-                    let violates = |a: f32| containing(&rest.strict, a + row_height).is_some_and(|(s, _)| s <= a + EPSILON);
+                    let violates = |a: f32| containing(&breaks.strict, a + row_height).is_some_and(|(s, _)| s <= a + EPSILON);
                     pushed = run.columns.first().is_some_and(|&(a, b)| violates(a) || b - a > row_height + EPSILON);
                     // A later column of this row, partway down its outer column, that would break
                     // what is kept together is left empty: what it would hold starts the next
@@ -866,11 +915,11 @@ impl LayoutPassState<'_> {
                 if run.columns.len() <= count || last_box_row {
                     // (`column-fill: auto` without a definite height balances too.)
                     let height = if matches!(multicol.fill, ColumnFill::Balance) || !fill_auto {
-                        rest.balance(count, Some(row_height)).min(row_height)
+                        breaks.balance_range(start, end, count, Some(row_height)).min(row_height)
                     } else {
                         row_height
                     };
-                    let columns = rest.fill(height, MAX_COLUMNS).columns;
+                    let columns = breaks.fill_range(start, end, height, fragment_cap - placed.len()).columns;
                     let shown = if box_end.is_some() { row_height } else { height };
                     placed.extend(columns.into_iter().map(|(a, b)| (a, b, top, shown)));
                     row_top = top + shown;
@@ -908,23 +957,24 @@ impl LayoutPassState<'_> {
             }
             let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
             if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
-                let run = Breaks { start: run_start, end: run_end, ..breaks.clone() };
+                // (The part `run_start..run_end` of the strip: no copy of the breaks per part.)
+                let run = Part { breaks: &breaks, start: run_start, end: run_end };
                 // pyro: rows of an explicit `column-height` (`slotted`, below).
                 if let Some(rows) = slotted {
                     let (top, available) = rows.content_start(row_top);
                     // The row the run starts in may be partly taken (after a spanner): its
                     // columns are as tall as what is left of it, the rows after it whole.
                     let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
-                    let mut rest = Some(run.clone());
+                    let mut rest = Some(run);
                     let mut row = (top, available);
                     if available < rows.height - EPSILON {
                         let first = run.fill(available, count + 1).columns;
-                        rest = first.get(count).map(|&(start, _)| Breaks { start, ..run.clone() });
+                        rest = first.get(count).map(|&(start, _)| Part { start, ..run });
                         placed.extend(first.into_iter().take(count).map(|(a, b)| (a, b, top, available)));
                         row = (rows.next(rows.slot(top).0), rows.height);
                     }
                     if let Some(rest) = rest {
-                        for (i, (a, b)) in rest.fill(rows.height, MAX_COLUMNS).columns.into_iter().enumerate() {
+                        for (i, (a, b)) in rest.fill(rows.height, fragment_cap).columns.into_iter().enumerate() {
                             placed.push((a, b, row.0 + (i / count.max(1)) as f32 * rows.stride, rows.height));
                         }
                     }
@@ -934,9 +984,9 @@ impl LayoutPassState<'_> {
                         && let Some(&(_, _, last_top, limit)) = placed.last()
                     {
                         let from = placed.iter().position(|p| p.2 == last_top).unwrap_or(0);
-                        let tail = Breaks { start: placed[from].0, end: run_end, ..breaks.clone() };
+                        let tail = Part { breaks: &breaks, start: placed[from].0, end: run_end };
                         let height = tail.balance(count, Some(limit)).min(limit);
-                        let refilled = tail.fill(height, MAX_COLUMNS).columns;
+                        let refilled = tail.fill(height, fragment_cap).columns;
                         if refilled.len() <= count {
                             placed.truncate(from);
                             placed.extend(refilled.into_iter().map(|(a, b)| (a, b, last_top, height)));
@@ -1009,7 +1059,7 @@ impl LayoutPassState<'_> {
                 // pyro: `column-wrap: wrap`: each `count` columns make a row (css-multicol-2).
                 let per_row = if fixed_height.is_some() && multicol.wrap { count.max(1) } else { usize::MAX };
                 let row_gap = multicol.row_gap(definite_height);
-                let mut columns = run.fill(column_height, MAX_COLUMNS).columns;
+                let mut columns = run.fill(column_height, fragment_cap).columns;
                 let rows = columns.len().div_ceil(per_row).max(1);
                 // pyro: wrapping at the container's height (`column-height: auto`), `column-fill:
                 // balance` balances the last row (of at most `count` columns), that height its
@@ -1022,9 +1072,9 @@ impl LayoutPassState<'_> {
                     && columns.len() - last_row.min(columns.len()) <= count
                     && let Some(&(tail_start, _)) = columns.get(last_row)
                 {
-                    let tail = Breaks { start: tail_start, end: run_end, ..breaks.clone() };
+                    let tail = Part { breaks: &breaks, start: tail_start, end: run_end };
                     let height = tail.balance(count, Some(column_height)).min(column_height);
-                    let refilled = tail.fill(height, MAX_COLUMNS).columns;
+                    let refilled = tail.fill(height, fragment_cap).columns;
                     if refilled.len() <= count {
                         columns.truncate(last_row);
                         columns.extend(refilled);
@@ -1165,6 +1215,7 @@ impl LayoutPassState<'_> {
             baselines.last = shown(baselines.last);
         }
         if inputs.run_mode == RunMode::PerformLayout {
+            self.column_fragment_budget = self.column_fragment_budget.saturating_sub(columns.fragments.len());
             self.doc.has_multicol = true;
             self.nodes[dom_id].layout_data_mut().columns = Some(Box::new(columns));
         }

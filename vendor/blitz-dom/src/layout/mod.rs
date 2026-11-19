@@ -162,6 +162,10 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) nested_fragmentation: Vec<(crate::NodeId, (f32, f32))>,
     /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
     pub(crate) multicol_strip_depth: u32,
+    /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
+    pub(crate) column_fragment_budget: usize,
+    /// pyro: see `multicol::NESTED_PASS_BUDGET`.
+    pub(crate) nested_pass_budget: usize,
     /// pyro: a table cell being laid out and the border-box height its children's percentage
     /// heights resolve against: its own length `height` (`table::TableTreeWrapper::definite_height`).
     pub(crate) cell_percent_height: Option<(crate::NodeId, f32)>,
@@ -232,6 +236,8 @@ impl<'doc> LayoutPassState<'doc> {
             multicol_percent_height: None,
             nested_fragmentation: Vec::new(),
             multicol_strip_depth: 0,
+            column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
+            nested_pass_budget: multicol::NESTED_PASS_BUDGET,
             cell_percent_height: None,
             restricted_cell: None,
             stale_lines: Vec::new(),

@@ -84,3 +84,19 @@ fn lines_of_an_inline_container_with_padding_break_between_lines() {
     assert!(x < 100.0 && y > 25.0 && y < 40.0, "b at the bottom of the first column: {:?}", rect(&p, "b"));
     assert_eq!(rect(&p, "mc")[3], 50.0, "two lines a column, below the padding");
 }
+
+/// pyro: a container nested in 1px-tall outer columns makes a row in each of them; a thousand
+/// columns in each of a thousand rows would be a million fragments from a few elements. They
+/// are capped per container (and per layout pass): what is left goes to the last column.
+#[test]
+fn nested_rows_of_many_columns_are_capped() {
+    let inner = "<div style='column-count:1000;column-gap:0'><div class=tall style='height:100000000px'></div></div>";
+    let p = page(&format!(
+        "<!doctype html><body style='margin:0'><div style='columns:2;column-fill:auto;height:1px;width:400px'>{}</div>",
+        inner.replace("class=tall", "id=t1") + &inner.replace("class=tall", "id=t2")
+    ));
+    for id in ["t1", "t2"] {
+        let pieces = p.layout.client_rects(&p.dom, p.id(id)).len();
+        assert!(pieces > 1 && pieces <= 10_000, "#{id}: {pieces} pieces");
+    }
+}
