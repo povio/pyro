@@ -329,7 +329,8 @@ jobs:
             arch: arm64
             fork: true
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    # A slow artifact transfer must not consume the installed-package test's entire budget.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -340,10 +341,12 @@ jobs:
         with:
           bun-version: '1.4.0'
       - uses: actions/download-artifact@v4
+        timeout-minutes: 15
         with:
           name: npm-package
           path: npm-package
       - name: Test installed CLI and API with Node and Bun
+        timeout-minutes: 5
         env:
           ARCH: ${{ matrix.arch }}
           FORK: ${{ matrix.fork }}

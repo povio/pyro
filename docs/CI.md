@@ -45,3 +45,8 @@ measured in CI. Moving the full-suite trigger earlier would require a separate, 
 macOS JSC output/source/build trees and PGO LLVM/source trees are workspace-local. Their changed cache layouts use
 new cache keys, so the first run populates them cold. macOS sccache has a unique job socket and is stopped after the
 build; one registration cannot borrow another job's credentials or counters.
+
+Release smoke jobs budget artifact transfer separately (15 minutes) from installed-package tests (5 minutes), within
+a 25-minute job limit. This prevents a slow package download consuming the entire test budget; it does not claim to
+fix transfer throughput. The v0.0.48 attempt spent 9m14s downloading its package and hit the former 10-minute job limit
+only 39 seconds into the test step. The release still cannot publish until all installed-package checks pass.
