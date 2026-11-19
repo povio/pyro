@@ -382,14 +382,14 @@ impl BaseDocument {
 
     /// pyro: an inline `<svg>` serialized again with its selected text in its `::selection` fill and
     /// stroke (CSS Pseudo 4 § 3.2: `fill`, `stroke-color`, `stroke-width` apply to selected SVG
-    /// text), for a content box of `width` x `height` CSS px; `None` with no selected text that
+    /// text) and casting its `text-shadow`, for a content box of `width` x `height` CSS px; `None` with no selected text that
     /// such a style restyles. Not kept: made for each paint with a selection.
     #[cfg(feature = "svg")]
     pub fn inline_svg_with_selection(&self, node_id: NodeId, width: f32, height: f32) -> Option<std::sync::Arc<crate::node::SvgImageData>> {
         use style::properties::LonghandId;
         let selection = self.dom_selection?;
         let selected = self.selected_text_nodes(selection);
-        let mut overrides: HashMap<NodeId, (usize, Option<usize>, String)> = HashMap::new();
+        let mut overrides: HashMap<NodeId, crate::node::svg_css::SelectedSvgText> = HashMap::new();
         let mut stack = vec![node_id];
         while let Some(id) = stack.pop() {
             let Some(node) = self.nodes.get(id) else { continue };
@@ -410,8 +410,14 @@ impl BaseDocument {
                         attrs.push_str(&format!(" {name}=\"{escaped}\""));
                     }
                 }
-                if !attrs.is_empty() {
-                    overrides.insert(id, (from, to, attrs));
+                // pyro: and its `text-shadow`, cast by the selected text under the text's own.
+                let shadows = if self.declared_css(&style, LonghandId::TextShadow).is_some() {
+                    crate::node::svg_css::text_shadows(&style, id)
+                } else {
+                    Vec::new()
+                };
+                if !attrs.is_empty() || !shadows.is_empty() {
+                    overrides.insert(id, crate::node::svg_css::SelectedSvgText { from, to, attrs, shadows });
                 }
                 continue;
             }

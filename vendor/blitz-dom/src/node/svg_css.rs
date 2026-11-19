@@ -249,7 +249,7 @@ thread_local! {
     static VIEWPORT_DEPENDENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// pyro: the selected text nodes to write in their `::selection` paint, with the UTF-16 range
     /// selected and the attributes (`BaseDocument::inline_svg_with_selection`).
-    pub(crate) static SELECTED_SVG_TEXT: std::cell::RefCell<std::collections::HashMap<NodeId, (usize, Option<usize>, String)>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    pub(crate) static SELECTED_SVG_TEXT: std::cell::RefCell<std::collections::HashMap<NodeId, SelectedSvgText>> = std::cell::RefCell::new(std::collections::HashMap::new());
     /// pyro: the root's laid-out content box size to serialize with ([`svg_source_for_viewport`]).
     static ROOT_VIEWPORT: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
 }
@@ -449,31 +449,58 @@ fn local_urls(value: &str) -> String {
     out
 }
 
-/// An SVG `<text>`'s `text-shadow`, which is written as a copy of the text before it, moved by
-/// the offset and painted in the shadow's colour (blurred by half the blur radius), as Chromium
-/// draws text shadows: what the text paints, its fill and stroke with their opacities and dashes.
-/// `None` without one, or with several.
-fn text_shadow(style: &ComputedValues, root: NodeId) -> Option<TextShadow> {
-    use crate::util::ToColorColor as _;
-    let text = style.get_inherited_text();
-    let [shadow] = &text.text_shadow.0[..] else {
-        return None;
-    };
-    let c = shadow.color.resolve_to_absolute(&text.color).as_color_color().to_rgba8();
-    // In CSS px without the `zoom` Stylo's computed lengths have (see [`filter_value`]).
-    let zoom = f64::from(style.effective_zoom.value());
-    Some(TextShadow {
-        dx: f64::from(shadow.horizontal.px()) / zoom,
-        dy: f64::from(shadow.vertical.px()) / zoom,
-        deviation: f64::from(shadow.blur.px()) / zoom / 2.0,
-        color: [c.r, c.g, c.b, c.a],
-        root,
-    })
+/// The byte offset in `content` of the UTF-16 offset `utf16` (the end past its end).
+fn utf16_to_byte(content: &str, utf16: usize) -> usize {
+    let mut units = 0;
+    for (index, c) in content.char_indices() {
+        if units >= utf16 {
+            return index;
+        }
+        units += c.len_utf16();
+    }
+    content.len()
 }
 
-/// A `<text>`'s `text-shadow` (see [`text_shadow`]).
+/// pyro: a selected SVG text node written in its `::selection` paint (`inline_svg_with_selection`):
+/// the UTF-16 range selected, the paint attributes, and the highlight's `text-shadow`s.
+#[derive(Clone, Default)]
+pub(crate) struct SelectedSvgText {
+    pub from: usize,
+    pub to: Option<usize>,
+    pub attrs: String,
+    pub shadows: Vec<TextShadow>,
+}
+
+/// An SVG `<text>`'s `text-shadow`s, each written as a copy of the text before it, the last at
+/// the bottom, moved by the offset and painted in the shadow's colour (blurred by half the blur
+/// radius), as Chromium draws text shadows: what the text paints, its fill and stroke with their
+/// opacities and dashes. `root` is the `<text>` (for a highlight's style, any node).
+pub(crate) fn text_shadows(style: &ComputedValues, root: NodeId) -> Vec<TextShadow> {
+    use crate::util::ToColorColor as _;
+    let text = style.get_inherited_text();
+    // In CSS px without the `zoom` Stylo's computed lengths have (see [`filter_value`]).
+    let zoom = f64::from(style.effective_zoom.value());
+    text.text_shadow
+        .0
+        .iter()
+        .map(|shadow| {
+            let c = shadow.color.resolve_to_absolute(&text.color).as_color_color().to_rgba8();
+            TextShadow {
+                dx: f64::from(shadow.horizontal.px()) / zoom,
+                dy: f64::from(shadow.vertical.px()) / zoom,
+                deviation: f64::from(shadow.blur.px()) / zoom / 2.0,
+                color: [c.r, c.g, c.b, c.a],
+                root,
+                selected_only: false,
+            }
+        })
+        .filter(|shadow| shadow.color[3] > 0)
+        .collect()
+}
+
+/// A `<text>`'s `text-shadow` (see [`text_shadows`]).
 #[derive(Clone, Copy)]
-struct TextShadow {
+pub(crate) struct TextShadow {
     dx: f64,
     dy: f64,
     /// Half the blur radius: the standard deviation Chromium blurs text shadows by.
@@ -481,6 +508,9 @@ struct TextShadow {
     color: [u8; 4],
     /// The `<text>`.
     root: NodeId,
+    /// pyro: a `::selection` shadow: cast by the selected text alone (the rest is written
+    /// without paint, where it is).
+    selected_only: bool,
 }
 
 /// Whether a `<g>` written around `node` (or next to it) is drawn as `node` would be: its parent
@@ -808,19 +838,35 @@ impl Writer<'_> {
             NodeData::Text(data) => {
                 // pyro: selected text in its `::selection` paint (`inline_svg_with_selection`).
                 let selected = SELECTED_SVG_TEXT.with(|cell| cell.borrow().get(&node.id).cloned());
+                // pyro: a `::selection` shadow's copy: the text outside the selection unpainted.
+                if self.shadow_copy.is_some_and(|shadow| shadow.selected_only) {
+                    let content = data.content.as_str();
+                    let (from, to) = match &selected {
+                        Some(selected) => {
+                            let byte = |utf16: usize| utf16_to_byte(content, utf16);
+                            let from = byte(selected.from);
+                            (from, selected.to.map_or(content.len(), byte).max(from))
+                        }
+                        None => (content.len(), content.len()),
+                    };
+                    for (part, painted) in [(&content[..from], false), (&content[from..to], true), (&content[to..], false)] {
+                        if part.is_empty() {
+                            continue;
+                        }
+                        if painted {
+                            encode_text_to_string(part, &mut self.out);
+                        } else {
+                            self.out.push_str("<tspan fill=\"none\" stroke=\"none\">");
+                            encode_text_to_string(part, &mut self.out);
+                            self.out.push_str("</tspan>");
+                        }
+                    }
+                    return;
+                }
                 match selected.filter(|_| in_text(node) && self.shadow_copy.is_none()) {
-                    Some((from, to, attrs)) => {
+                    Some(SelectedSvgText { from, to, attrs, .. }) => {
                         let content = data.content.as_str();
-                        let byte = |utf16: usize| {
-                            let mut units = 0;
-                            for (index, c) in content.char_indices() {
-                                if units >= utf16 {
-                                    return index;
-                                }
-                                units += c.len_utf16();
-                            }
-                            content.len()
-                        };
+                        let byte = |utf16: usize| utf16_to_byte(content, utf16);
                         let (from, to) = (byte(from), to.map_or(content.len(), byte));
                         encode_text_to_string(&content[..from], &mut self.out);
                         let _ = write!(self.out, "<tspan{attrs}>");
@@ -899,8 +945,25 @@ impl Writer<'_> {
             && &*data.name.local == "text"
             && in_group_container(node)
         {
-            let shadow = node.primary_styles().and_then(|style| text_shadow(&style, node.id));
-            if let Some(shadow) = shadow.filter(|shadow| shadow.color[3] > 0) {
+            let mut shadows = node.primary_styles().map(|style| text_shadows(&style, node.id)).unwrap_or_default();
+            // pyro: the shadows of its selected text's `::selection` style, under its own (as
+            // Chromium paints them; WPT css-pseudo `svg-text-selection-shadow`).
+            let selection_shadows = SELECTED_SVG_TEXT.with(|cell| {
+                let selected = cell.borrow();
+                if selected.is_empty() {
+                    return Vec::new();
+                }
+                let mut stack = vec![node.id];
+                while let Some(id) = stack.pop() {
+                    if let Some(found) = selected.get(&id).filter(|found| !found.shadows.is_empty()) {
+                        return found.shadows.clone();
+                    }
+                    stack.extend(node.tree()[id].children.iter().copied());
+                }
+                Vec::new()
+            });
+            shadows.extend(selection_shadows.into_iter().map(|shadow| TextShadow { root: node.id, selected_only: true, ..shadow }));
+            for shadow in shadows.into_iter().rev() {
                 let _ = write!(self.out, "<g transform=\"translate({} {})\"", num(shadow.dx), num(shadow.dy));
                 if shadow.deviation > 0.0 {
                     let _ = write!(self.out, " filter=\"blur({}px)\"", num(shadow.deviation));
