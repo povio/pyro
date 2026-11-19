@@ -8413,7 +8413,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // UA policy, not author styling.
          let node_id = self.node.id;
          let opacity = self.context.dom.scrollbar_opacity(node_id);
-@@ -967,259 +3179,3441 @@
+@@ -967,259 +3179,3478 @@
          }
      }
  
@@ -9842,6 +9842,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                transform,
 -                TextPaintOptions {
 -                    scale: self.scale,
+-                    brush_override: None,
+-                },
+-                self.node.id,
+-                &mut draw_text_context,
+-            );
 +                self.node.id,
 +                &text_layout.layout,
 +                &text_layout.text,
@@ -10542,12 +10547,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                transform,
 +                TextPaintOptions {
 +                    scale: self.scale,
-                     brush_override: None,
++                    brush_override: None,
 +                    shadows: true,
-                 },
-                 self.node.id,
--                &mut draw_text_context,
--            );
++                },
++                self.node.id,
 +                None,
 +                &mut draw_text_context,
 +                None,
@@ -11246,6 +11249,43 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        parent_style_transform: Affine,
 +        clip_rect: Rect,
 +    ) {
++        // pyro: an inline (not atomic, not listed for its own content) that keeps out-of-flow boxes
++        // in its stacking context stands for them here (blitz-dom
++        // `restore_out_of_flow_stacking_owners`): they paint at this positioned level, placed as this
++        // element's hoisted children are, in a group with its opacity and filter that is their
++        // backdrop root (its own fragments paint with its inline root's content).
++        if let Some(child) = self.context.dom.get_node(child_id)
++            && !child.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
++            && child.primary_styles().is_some_and(|style| style.clone_display().is_inline_flow())
++            && clip_path::owns_hoisted(self.context.dom.as_ref(), child_id)
++        {
++            let owned = clip_path::owned_hoisted(self.context.dom.as_ref(), child_id);
++            let style = child.primary_styles().unwrap();
++            let opacity = style.get_effects().opacity;
++            let filter = convert_filters(&style.get_effects().filter.0, self.scale, &style.clone_color(), self.context.dom)
++                .map(Arc::new);
++            drop(style);
++            let viewport = Rect::new(0.0, 0.0, self.context.width as f64, self.context.height as f64);
++            let grouped = opacity < 1.0 || filter.is_some();
++            if grouped {
++                scene.push_layer(Fill::NonZero, BlendMode::default(), opacity, Affine::IDENTITY, &viewport, filter, None);
++            }
++            scene.push_layer(
++                Fill::NonZero,
++                BlendMode::default(),
++                1.0,
++                Affine::IDENTITY,
++                &viewport,
++                Some(crate::layers::backdrop_root_marker()),
++                None,
++            );
++            self.draw_hoisted_children(scene, owned.iter(), parent_style_transform, clip_rect);
++            scene.pop_layer();
++            if grouped {
++                scene.pop_layer();
++            }
++            return;
++        }
 +        // Fixed-position children of the root element are positioned against
 +        // the viewport and do not scroll with it, so cancel out the viewport
 +        // scroll (applied in `paint_scene`). A fixed box contained by a
@@ -12065,7 +12105,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6623,60 @@
+@@ -1229,9 +6660,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12128,7 +12168,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6698,20 @@
+@@ -1253,9 +6735,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12152,7 +12192,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6722,209 @@
+@@ -1266,26 +6759,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12364,7 +12404,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +6932,38 @@
+@@ -1293,15 +6969,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12404,7 +12444,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +6974,108 @@
+@@ -1312,7 +7011,108 @@
          );
      }
  
@@ -12513,7 +12553,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7092,22 @@
+@@ -1329,9 +7129,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12539,7 +12579,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7123,28 @@
+@@ -1347,10 +7160,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12568,7 +12608,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7152,23 @@
+@@ -1358,8 +7189,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12593,7 +12633,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7192,27 @@
+@@ -1383,22 +7229,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12630,7 +12670,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7241,32 @@
+@@ -1427,6 +7278,32 @@
      }
  }
  
@@ -12663,7 +12703,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7278,13 @@
+@@ -1438,6 +7315,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12677,7 +12717,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7304,364 @@
+@@ -1457,12 +7341,364 @@
          }
      };
      let s_border = style.get_border();
@@ -18929,7 +18969,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
      /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
      /// elements; `auto` components resolve to the corresponding border box edge.
-@@ -41,435 +149,1552 @@
+@@ -41,435 +149,1521 @@
          Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
      }
  
@@ -19057,7 +19097,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        let border_box = scale_rect(self.frame.border_box, 1.0 / self.scale);
 +        border_box + self.margins()
 +    }
- 
++
 +    /// The margins (CSS px). An inline box (no box of layout's own) has its style's, in every
 +    /// side, as Chromium takes them for its margin box.
 +    pub(super) fn margins(&self) -> Insets {
@@ -19084,7 +19124,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            margin.bottom as f64,
 +        )
 +    }
-+
+ 
 +    /// The edges of a `<geometry-box>` with its rounded corners (CSS Shapes' box shapes), in CSS
 +    /// px: the border radii for the border box, the inner radii for the padding and content boxes,
 +    /// and for the margin box the radii grown by the margins as `box-shadow`'s spread grows them
@@ -19494,31 +19534,53 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -            let x = ox + resolve_lp(&pos.horizontal, w);
 -            let y = oy + resolve_lp(&pos.vertical, h);
 -            (x, y)
--        }
 +        GenericPositionOrAuto::Auto => reference.center(),
 +        GenericPositionOrAuto::Position(pos) => Point::new(
 +            reference.x0 + resolve_lp(&pos.horizontal, reference.width()),
 +            reference.y0 + resolve_lp(&pos.vertical, reference.height()),
 +        ),
++    }
++}
++
++/// A `circle()`'s radius: a percentage is of the reference box's direction-agnostic size
++/// (`sqrt(w² + h²) / sqrt(2)`); the side keywords measure to the box's sides in both axes, the
++/// corner keywords to its corners.
++fn circle_radius(
++    radius: &GenericShapeRadius<LengthPercentage>,
++    center: Point,
++    reference: Rect,
++) -> f64 {
++    let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
++    let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
++    match radius {
++        GenericShapeRadius::Length(lp) => {
++            let agnostic = reference.width().hypot(reference.height()) / std::f64::consts::SQRT_2;
++            resolve_lp(&lp.0, agnostic)
+         }
++        GenericShapeRadius::ClosestSide => dx[0].min(dx[1]).min(dy[0]).min(dy[1]),
++        GenericShapeRadius::FarthestSide => dx[0].max(dx[1]).max(dy[0]).max(dy[1]),
++        GenericShapeRadius::ClosestCorner => dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
++        GenericShapeRadius::FarthestCorner => dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
      }
  }
  
 -/// Resolve a shape radius keyword or length value
 -fn resolve_shape_radius(
-+/// A `circle()`'s radius: a percentage is of the reference box's direction-agnostic size
-+/// (`sqrt(w² + h²) / sqrt(2)`); the side keywords measure to the box's sides in both axes, the
-+/// corner keywords to its corners.
-+fn circle_radius(
++/// One of an `ellipse()`'s radii, along the axis whose reference box edges are `start` and `end`
++/// and center coordinate `center`: the side keywords measure to the sides in that axis only.
++fn ellipse_radius(
      radius: &GenericShapeRadius<LengthPercentage>,
 -    primary_size: f64,
 -    secondary_size: f64,
 -    center_offset_primary: f64,
 -    center_offset_secondary: f64,
-+    center: Point,
-+    reference: Rect,
++    center: f64,
++    start: f64,
++    end: f64,
++    corners: (f64, f64),
  ) -> f64 {
-+    let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
-+    let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
++    let near = (center - start).abs().min((end - center).abs());
++    let far = (center - start).abs().max((end - center).abs());
      match radius {
 -        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, primary_size),
 -        GenericShapeRadius::ClosestSide => center_offset_primary
@@ -19530,14 +19592,40 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -            .max(primary_size - center_offset_primary)
 -            .max(center_offset_secondary)
 -            .max(secondary_size - center_offset_secondary),
--
++        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
++        GenericShapeRadius::ClosestSide => near,
++        GenericShapeRadius::FarthestSide => far,
++        // pyro: (`layout.css.ellipse-corners.enabled`) the distance to the closest or farthest
++        // corner, in both axes (WPT `clip-path-ellipse-closest-farthest-corner`).
++        GenericShapeRadius::ClosestCorner => corners.0,
++        GenericShapeRadius::FarthestCorner => corners.1,
++    }
++}
+ 
 -        GenericShapeRadius::FarthestCorner => {
 -            let dp = center_offset_primary.max(primary_size - center_offset_primary);
 -            let ds = center_offset_secondary.max(secondary_size - center_offset_secondary);
 -            dp.hypot(ds)
-+        GenericShapeRadius::Length(lp) => {
-+            let agnostic = reference.width().hypot(reference.height()) / std::f64::consts::SQRT_2;
-+            resolve_lp(&lp.0, agnostic)
++/// pyro: `url()` references from a box's CSS to SVG elements of the page (`clip-path: url(#c)`
++/// naming a `<clipPath>`, `mask-image: url(#m)` a `<mask>`).
++#[cfg(feature = "svg")]
++pub(super) mod svg_reference {
++    use anyrender_svg::usvg;
++    use blitz_dom::{BaseDocument, Node, NodeId, local_name};
++    use kurbo::{Affine, BezPath};
++    use peniko::Fill;
++    use style::values::computed::url::ComputedUrl;
++
++    /// The element a `url()` names when it is a reference into this document: `url(#id)`, or
++    /// the document's own URL with a fragment (a fragment alone is resolved against the base
++    /// URL, which a `<base>` may have moved). `None` for another document's.
++    pub(in crate::render) fn local_reference(dom: &BaseDocument, url: &ComputedUrl) -> Option<NodeId> {
++        let url = url.url()?;
++        let fragment = url.fragment()?;
++        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
++        let target = document(url.as_str());
++        if target != document(dom.url().as_str()) && target != document(dom.base_url().as_str()) {
++            return None;
          }
 -        GenericShapeRadius::ClosestCorner => {
 -            let dp = center_offset_primary
@@ -19548,15 +19636,21 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                .max(0.0);
 -            dp.hypot(ds)
 -        }
-+        GenericShapeRadius::ClosestSide => dx[0].min(dx[1]).min(dy[0]).min(dy[1]),
-+        GenericShapeRadius::FarthestSide => dx[0].max(dx[1]).max(dy[0]).max(dy[1]),
-+        GenericShapeRadius::ClosestCorner => dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
-+        GenericShapeRadius::FarthestCorner => dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
++        dom.get_element_by_id(&percent_decode(fragment))
      }
- }
+-}
  
 -type GenericPathCommand<Angle, N> = GenericShapeCommand<Angle, N, GenericPosition<N, N>, N>;
--
++    /// pyro: the SVG document a `url()` names an element of, when it is another document that
++    /// the element has loaded (`images`: its `reference_images`, or its `mask_images`), with the
++    /// element's id: `clip-path: url(shapes.svg#clip)`, a `data:` URL too.
++    /// pyro: whether the document `url` names (another document's element) is still loading.
++    pub(crate) fn external_loading(images: &[Option<blitz_dom::node::ImageResourceData>], url: &ComputedUrl) -> bool {
++        use blitz_dom::node::Status;
++        let Some(url) = url.url() else { return false };
++        images.iter().flatten().any(|image| *image.url == **url && image.status == Status::Loading)
++    }
+ 
 -/// Convert an SVG path() to a kurbo BezPath.
 -/// The returned path is in the path's own coordinate system (origin at 0,0).
 -/// The caller is responsible for translating it to the reference box origin.
@@ -19568,80 +19662,6 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -) -> Option<BezPath> {
 -    if commands.is_empty() {
 -        return None;
-+/// One of an `ellipse()`'s radii, along the axis whose reference box edges are `start` and `end`
-+/// and center coordinate `center`: the side keywords measure to the sides in that axis only.
-+fn ellipse_radius(
-+    radius: &GenericShapeRadius<LengthPercentage>,
-+    center: f64,
-+    start: f64,
-+    end: f64,
-+    corners: (f64, f64),
-+) -> f64 {
-+    let near = (center - start).abs().min((end - center).abs());
-+    let far = (center - start).abs().max((end - center).abs());
-+    match radius {
-+        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
-+        GenericShapeRadius::ClosestSide => near,
-+        GenericShapeRadius::FarthestSide => far,
-+        // pyro: (`layout.css.ellipse-corners.enabled`) the distance to the closest or farthest
-+        // corner, in both axes (WPT `clip-path-ellipse-closest-farthest-corner`).
-+        GenericShapeRadius::ClosestCorner => corners.0,
-+        GenericShapeRadius::FarthestCorner => corners.1,
-     }
-+}
- 
--    let mut bez = BezPath::new();
--    let mut cur = Point::ZERO;
--    let mut subpath_start = cur;
--    // Tracks the last control point for smooth continuation.
--    let mut last_control: Option<Point> = None;
-+/// pyro: `url()` references from a box's CSS to SVG elements of the page (`clip-path: url(#c)`
-+/// naming a `<clipPath>`, `mask-image: url(#m)` a `<mask>`).
-+#[cfg(feature = "svg")]
-+pub(super) mod svg_reference {
-+    use anyrender_svg::usvg;
-+    use blitz_dom::{BaseDocument, Node, NodeId, local_name};
-+    use kurbo::{Affine, BezPath};
-+    use peniko::Fill;
-+    use style::values::computed::url::ComputedUrl;
- 
--    for cmd in commands {
--        match &cmd {
--            GenericShapeCommand::Close => {
--                bez.close_path();
--                cur = subpath_start;
--                last_control = None;
--            }
--            GenericShapeCommand::Move { point } => {
--                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                bez.move_to(p);
--                cur = p;
--                subpath_start = p;
--                last_control = None;
-+    /// The element a `url()` names when it is a reference into this document: `url(#id)`, or
-+    /// the document's own URL with a fragment (a fragment alone is resolved against the base
-+    /// URL, which a `<base>` may have moved). `None` for another document's.
-+    pub(in crate::render) fn local_reference(dom: &BaseDocument, url: &ComputedUrl) -> Option<NodeId> {
-+        let url = url.url()?;
-+        let fragment = url.fragment()?;
-+        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
-+        let target = document(url.as_str());
-+        if target != document(dom.url().as_str()) && target != document(dom.base_url().as_str()) {
-+            return None;
-+        }
-+        dom.get_element_by_id(&percent_decode(fragment))
-+    }
-+
-+    /// pyro: the SVG document a `url()` names an element of, when it is another document that
-+    /// the element has loaded (`images`: its `reference_images`, or its `mask_images`), with the
-+    /// element's id: `clip-path: url(shapes.svg#clip)`, a `data:` URL too.
-+    /// pyro: whether the document `url` names (another document's element) is still loading.
-+    pub(crate) fn external_loading(images: &[Option<blitz_dom::node::ImageResourceData>], url: &ComputedUrl) -> bool {
-+        use blitz_dom::node::Status;
-+        let Some(url) = url.url() else { return false };
-+        images.iter().flatten().any(|image| *image.url == **url && image.status == Status::Loading)
-+    }
-+
 +    pub(crate) fn external_reference(
 +        images: &[Option<blitz_dom::node::ImageResourceData>],
 +        url: &ComputedUrl,
@@ -19654,8 +19674,13 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            return None;
 +        };
 +        Some((svg.source.clone()?, percent_decode(fragment)))
-+    }
-+
+     }
+ 
+-    let mut bez = BezPath::new();
+-    let mut cur = Point::ZERO;
+-    let mut subpath_start = cur;
+-    // Tracks the last control point for smooth continuation.
+-    let mut last_control: Option<Point> = None;
 +    fn percent_decode(text: &str) -> String {
 +        let bytes = text.as_bytes();
 +        let mut out = Vec::with_capacity(bytes.len());
@@ -19671,16 +19696,17 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            } else {
 +                out.push(bytes[i]);
 +                i += 1;
-             }
--            GenericShapeCommand::Line { point } => {
--                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                bez.line_to(p);
--                cur = p;
--                last_control = None;
++            }
 +        }
 +        String::from_utf8_lossy(&out).into_owned()
 +    }
-+
+ 
+-    for cmd in commands {
+-        match &cmd {
+-            GenericShapeCommand::Close => {
+-                bez.close_path();
+-                cur = subpath_start;
+-                last_control = None;
 +    /// Whether `node` is the SVG element `name`.
 +    pub(in crate::render) fn is_svg_element(node: &Node, name: &str) -> bool {
 +        node.element_data().is_some_and(|element| {
@@ -19712,9 +19738,11 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    }
 +                }
              }
--            GenericShapeCommand::HLine { x } => {
--                cur.x = resolve_axis_endpoint(x, cur.x, &resolve_x);
--                bez.line_to(cur);
+-            GenericShapeCommand::Move { point } => {
+-                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+-                bez.move_to(p);
+-                cur = p;
+-                subpath_start = p;
 -                last_control = None;
 +            if let Some(style) = node.primary_styles() {
 +                if let style::values::computed::basic_shape::ClipPath::Url(url) = style.get_clip_path()
@@ -19730,12 +19758,31 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    }
 +                }
              }
+-            GenericShapeCommand::Line { point } => {
+-                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+-                bez.line_to(p);
+-                cur = p;
+-                last_control = None;
++            for &child in &node.children {
++                references(dom, child, out);
+             }
+-            GenericShapeCommand::HLine { x } => {
+-                cur.x = resolve_axis_endpoint(x, cur.x, &resolve_x);
+-                bez.line_to(cur);
+-                last_control = None;
++        }
++        // A depth-first search over the referenced elements: a reference to one on the path
++        // is a cycle.
++        fn visit(dom: &BaseDocument, element: NodeId, path: &mut Vec<NodeId>, done: &mut Vec<NodeId>) -> bool {
++            if path.contains(&element) {
++                return true;
+             }
 -            GenericShapeCommand::VLine { y } => {
 -                cur.y = resolve_axis_endpoint(y, cur.y, &resolve_y);
 -                bez.line_to(cur);
 -                last_control = None;
-+            for &child in &node.children {
-+                references(dom, child, out);
++            if done.contains(&element) || path.len() > 64 {
++                return path.len() > 64;
              }
 -            GenericShapeCommand::CubicCurve {
 -                point,
@@ -19748,29 +19795,6 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                bez.curve_to(c1, c2, p);
 -                last_control = Some(c2);
 -                cur = p;
-+        }
-+        // A depth-first search over the referenced elements: a reference to one on the path
-+        // is a cycle.
-+        fn visit(dom: &BaseDocument, element: NodeId, path: &mut Vec<NodeId>, done: &mut Vec<NodeId>) -> bool {
-+            if path.contains(&element) {
-+                return true;
-             }
--            GenericShapeCommand::QuadCurve { point, control1 } => {
--                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                let c1 = resolve_control_point(control1, cur, p, &resolve_x, &resolve_y);
--                bez.quad_to(c1, p);
--                last_control = Some(c1);
--                cur = p;
-+            if done.contains(&element) || path.len() > 64 {
-+                return path.len() > 64;
-             }
--            GenericShapeCommand::SmoothCubic { point, control2 } => {
--                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                let c2 = resolve_control_point(control2, cur, p, &resolve_x, &resolve_y);
--                let c1 = reflect_point(last_control, cur);
--                bez.curve_to(c1, c2, p);
--                last_control = Some(c2);
--                cur = p;
 +            path.push(element);
 +            let mut targets = Vec::new();
 +            references(dom, element, &mut targets);
@@ -19779,9 +19803,9 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    return true;
 +                }
              }
--            GenericShapeCommand::SmoothQuad { point } => {
+-            GenericShapeCommand::QuadCurve { point, control1 } => {
 -                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                let c1 = reflect_point(last_control, cur);
+-                let c1 = resolve_control_point(control1, cur, p, &resolve_x, &resolve_y);
 -                bez.quad_to(c1, p);
 -                last_control = Some(c1);
 -                cur = p;
@@ -19820,76 +19844,22 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                if let Some(found) = clipped_group(child) {
 +                    return Some(found);
 +                }
-+            }
-+        }
-+        None
-+    }
-+
-+    /// A clip path that is one shape (with no clip path of its own, through groups that only
-+    /// transform): that shape in the user space of the element that references it, with its
-+    /// clip rule. An empty path when it has no visible shape. `None` for any other clip path.
-+    pub(in crate::render) fn single_shape(clip: &usvg::ClipPath) -> Option<(BezPath, Fill)> {
-+        fn walk<'a>(group: &'a usvg::Group, found: &mut Option<&'a usvg::Path>) -> bool {
-+            for node in group.children() {
-+                match node {
-+                    usvg::Node::Path(path) => {
-+                        if !path.is_visible() {
-+                            continue;
-+                        }
-+                        if found.is_some() {
-+                            return false;
-+                        }
-+                        *found = Some(path);
-+                    }
-+                    usvg::Node::Group(child) => {
-+                        if child.clip_path().is_some()
-+                            || child.mask().is_some()
-+                            || !child.filters().is_empty()
-+                            || !walk(child, found)
-+                        {
-+                            return false;
-+                        }
-+                    }
-+                    _ => return false,
-+                }
-+            }
-+            true
-+        }
-+        if clip.clip_path().is_some() {
-+            return None;
-+        }
-+        let mut found = None;
-+        if !walk(clip.root(), &mut found) {
-+            return None;
-+        }
-+        let Some(path) = found else {
-+            return Some((BezPath::new(), Fill::NonZero));
-+        };
-+        let mut shape = to_bez_path(path.data());
-+        shape.apply_affine(to_affine(clip.transform()) * to_affine(path.abs_transform()));
-+        let fill = match path.fill().map(|fill| fill.rule()) {
-+            Some(usvg::FillRule::EvenOdd) => Fill::EvenOdd,
-+            _ => Fill::NonZero,
-+        };
-+        Some((shape, fill))
-+    }
-+
-+    pub(in crate::render) fn to_affine(ts: usvg::Transform) -> Affine {
-+        Affine::new([ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty].map(f64::from))
-+    }
-+
-+    fn to_bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
-+        use usvg::tiny_skia_path::PathSegment;
-+        let point = |p: usvg::tiny_skia_path::Point| kurbo::Point::new(p.x as f64, p.y as f64);
-+        let mut out = BezPath::new();
-+        for segment in path.segments() {
-+            match segment {
-+                PathSegment::MoveTo(p) => out.move_to(point(p)),
-+                PathSegment::LineTo(p) => out.line_to(point(p)),
-+                PathSegment::QuadTo(p1, p2) => out.quad_to(point(p1), point(p2)),
-+                PathSegment::CubicTo(p1, p2, p3) => out.curve_to(point(p1), point(p2), point(p3)),
-+                PathSegment::Close => out.close_path(),
              }
+-            GenericShapeCommand::SmoothCubic { point, control2 } => {
+-                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+-                let c2 = resolve_control_point(control2, cur, p, &resolve_x, &resolve_y);
+-                let c1 = reflect_point(last_control, cur);
+-                bez.curve_to(c1, c2, p);
+-                last_control = Some(c2);
+-                cur = p;
+-            }
+-            GenericShapeCommand::SmoothQuad { point } => {
+-                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+-                let c1 = reflect_point(last_control, cur);
+-                bez.quad_to(c1, p);
+-                last_control = Some(c1);
+-                cur = p;
+-            }
 -            GenericShapeCommand::Arc {
 -                point,
 -                radii,
@@ -19921,10 +19891,93 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                for el in arc.append_iter(0.1) {
 -                    bez.push(el);
 +        }
++        None
++    }
++
++    /// A clip path that is one shape (with no clip path of its own, through groups that only
++    /// transform): that shape in the user space of the element that references it, with its
++    /// clip rule. An empty path when it has no visible shape. `None` for any other clip path.
++    pub(in crate::render) fn single_shape(clip: &usvg::ClipPath) -> Option<(BezPath, Fill)> {
++        fn walk<'a>(group: &'a usvg::Group, found: &mut Option<&'a usvg::Path>) -> bool {
++            for node in group.children() {
++                match node {
++                    usvg::Node::Path(path) => {
++                        if !path.is_visible() {
++                            continue;
++                        }
++                        if found.is_some() {
++                            return false;
++                        }
++                        *found = Some(path);
++                    }
++                    usvg::Node::Group(child) => {
++                        if child.clip_path().is_some()
++                            || child.mask().is_some()
++                            || !child.filters().is_empty()
++                            || !walk(child, found)
++                        {
++                            return false;
++                        }
++                    }
++                    _ => return false,
+                 }
+-                last_control = None;
+-                cur = p;
+             }
++            true
+         }
++        if clip.clip_path().is_some() {
++            return None;
++        }
++        let mut found = None;
++        if !walk(clip.root(), &mut found) {
++            return None;
++        }
++        let Some(path) = found else {
++            return Some((BezPath::new(), Fill::NonZero));
++        };
++        let mut shape = to_bez_path(path.data());
++        shape.apply_affine(to_affine(clip.transform()) * to_affine(path.abs_transform()));
++        let fill = match path.fill().map(|fill| fill.rule()) {
++            Some(usvg::FillRule::EvenOdd) => Fill::EvenOdd,
++            _ => Fill::NonZero,
++        };
++        Some((shape, fill))
+     }
+ 
+-    Some(bez)
++    pub(in crate::render) fn to_affine(ts: usvg::Transform) -> Affine {
++        Affine::new([ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty].map(f64::from))
++    }
++
++    fn to_bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
++        use usvg::tiny_skia_path::PathSegment;
++        let point = |p: usvg::tiny_skia_path::Point| kurbo::Point::new(p.x as f64, p.y as f64);
++        let mut out = BezPath::new();
++        for segment in path.segments() {
++            match segment {
++                PathSegment::MoveTo(p) => out.move_to(point(p)),
++                PathSegment::LineTo(p) => out.line_to(point(p)),
++                PathSegment::QuadTo(p1, p2) => out.quad_to(point(p1), point(p2)),
++                PathSegment::CubicTo(p1, p2, p3) => out.curve_to(point(p1), point(p2), point(p3)),
++                PathSegment::Close => out.close_path(),
++            }
++        }
 +        out
 +    }
-+}
-+
+ }
+ 
+-/// Resolve a CommandEndPoint to an absolute Point.
+-/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur`.
+-fn resolve_endpoint<N>(
+-    endpoint: &CommandEndPoint<GenericPosition<N, N>, N>,
+-    cur: Point,
+-    resolve_x: impl Fn(&N) -> f64,
+-    resolve_y: impl Fn(&N) -> f64,
+-) -> Point {
+-    match endpoint {
+-        CommandEndPoint::ToPosition(pos) => {
+-            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
 +#[cfg(feature = "svg")]
 +impl ElementCx<'_, '_> {
 +    /// pyro: `clip-path: url(#id)` naming a `<clipPath>` of this document, as Chromium applies one
@@ -19944,15 +19997,13 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                let node = dom.get_node(target)?;
 +                if !is_svg_element(node, "clipPath") {
 +                    return None;
-                 }
--                last_control = None;
--                cur = p;
++                }
 +                if reference_cycle(dom, target) {
 +                    return Some(ElementClip::Nothing);
 +                }
 +                let units = node.attr(blitz_dom::local_name!("clipPathUnits")) == Some("objectBoundingBox");
 +                (Some(target), node.attr(blitz_dom::local_name!("id"))?.to_string(), units)
-             }
++            }
 +            None => {
 +                // pyro: another document's `<clipPath>` still loading clips everything (an empty
 +                // path, as Chromium has it; WPT css-masking `clip-path-url-reference-empty-while-loading`).
@@ -20005,27 +20056,34 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                transform: user,
 +            }),
          }
+-        CommandEndPoint::ByCoordinate(coord) => {
+-            Point::new(cur.x + resolve_x(&coord.x), cur.y + resolve_y(&coord.y))
+-        }
      }
-+}
+ }
  
--    Some(bez)
+-/// Resolve a ControlPoint to an absolute Point.
+-/// - `Absolute`: uses the position directly.
+-/// - `Relative`: the coordinate pair is offset from a base point determined by `ControlReference`:
+-///   - `Start` (default): relative to the command's starting point (`cur`).
+-///   - `End`: relative to the command's end point (`end`).
+-///   - `Origin`: relative to the reference box origin (0,0 in path coordinates).
+-fn resolve_control_point<N>(
+-    control_point: &ControlPoint<GenericPosition<N, N>, N>,
+-    cur: Point,
+-    end: Point,
+-    resolve_x: impl Fn(&N) -> f64,
+-    resolve_y: impl Fn(&N) -> f64,
+-) -> Point {
+-    match control_point {
+-        ControlPoint::Absolute(pos) => {
+-            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
 +thread_local! {
 +    /// pyro: set while an inline layout is painted for its inline elements' clip paths and masks
 +    /// ([`ElementCx::draw_inline_effects`]), whose passes paint it plainly.
 +    static INLINE_EFFECTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
- }
- 
--/// Resolve a CommandEndPoint to an absolute Point.
--/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur`.
--fn resolve_endpoint<N>(
--    endpoint: &CommandEndPoint<GenericPosition<N, N>, N>,
--    cur: Point,
--    resolve_x: impl Fn(&N) -> f64,
--    resolve_y: impl Fn(&N) -> f64,
--) -> Point {
--    match endpoint {
--        CommandEndPoint::ToPosition(pos) => {
--            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
++}
++
 +/// pyro: an inline element's piece on one line, in an inline layout's space (device px, with the
 +/// text's placement shifts).
 +#[derive(Clone, Copy)]
@@ -20053,8 +20111,11 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        if INLINE_EFFECTS.get() {
 +            return false;
          }
--        CommandEndPoint::ByCoordinate(coord) => {
--            Point::new(cur.x + resolve_x(&coord.x), cur.y + resolve_y(&coord.y))
+-        ControlPoint::Relative(rel) => {
+-            let base = match rel.reference {
+-                ControlReference::Start => cur,
+-                ControlReference::End => end,
+-                ControlReference::Origin => Point::ZERO,
 +        // pyro: a vertical layout's lines each have their transform (`vertical_line_transform`):
 +        // the fragments are placed in this element's space through them.
 +        let vertical = self.node.vertical_block_axis();
@@ -20065,9 +20126,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        let styles = layout.styles();
 +        if styles.len() < 2 {
 +            return false;
-         }
--    }
--}
++        }
 +        let dom = self.context.dom;
 +        let root = self.node.id;
 +        // pyro: a recording paint (the PDF's text) leaves out inline opacity and backdrop
@@ -20083,10 +20142,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                // pyro: a `display: contents` element has no box to clip, mask or fade.
 +                .filter(|style| !style.clone_display().is_contents())
 +                .is_some_and(|style| {
-+                    // pyro: an inline stacking context that keeps out-of-flow descendants
-+                    // (blitz-dom `restore_out_of_flow_stacking_owners`) paints them with its areas.
-+                    owns_hoisted(dom, id)
-+                    || !matches!(style.get_clip_path(), StyloClipPath::None)
++                    !matches!(style.get_clip_path(), StyloClipPath::None)
 +                        || style
 +                            .get_svg()
 +                            .mask_image
@@ -20134,23 +20190,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            }
 +            true
 +        });
- 
--/// Resolve a ControlPoint to an absolute Point.
--/// - `Absolute`: uses the position directly.
--/// - `Relative`: the coordinate pair is offset from a base point determined by `ControlReference`:
--///   - `Start` (default): relative to the command's starting point (`cur`).
--///   - `End`: relative to the command's end point (`end`).
--///   - `Origin`: relative to the reference box origin (0,0 in path coordinates).
--fn resolve_control_point<N>(
--    control_point: &ControlPoint<GenericPosition<N, N>, N>,
--    cur: Point,
--    end: Point,
--    resolve_x: impl Fn(&N) -> f64,
--    resolve_y: impl Fn(&N) -> f64,
--) -> Point {
--    match control_point {
--        ControlPoint::Absolute(pos) => {
--            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
++
 +        // The layout's space, as `draw_inline_layout` paints it.
 +        let subpixel = text_layout.content_box_subpixel_offset;
 +        let origin = Vec2::new(
@@ -20322,12 +20362,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                };
 +                fragments[slot].push(InlineFragment { border_box, area });
 +            }
-         }
--        ControlPoint::Relative(rel) => {
--            let base = match rel.reference {
--                ControlReference::Start => cur,
--                ControlReference::End => end,
--                ControlReference::Origin => Point::ZERO,
++        }
 +
 +        // pyro: each element's areas without those of the elements before it: where neighbours'
 +        // areas met in a pixel column (each snapped out to whole device pixels), both elements'
@@ -20544,29 +20579,8 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                }
 +            }
 +            let faded = (opacity < 1.0 || filter.is_some()) && alone;
-+            // pyro: the out-of-flow boxes this inline stacking context keeps: they paint in its
-+            // group, after its areas, under its clip path, and it is their backdrop root.
-+            // (A positioned inline box listed in the paint tree paints them with its entry, where
-+            // its fragments paint: `draw_inline_pass_entry`.)
-+            let owned = if node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
-+                Vec::new()
-+            } else {
-+                owned_hoisted(dom, effect)
-+            };
-+            let group_area = if owned.is_empty() { areas.clone() } else { visible.to_path(0.1) };
 +            if faded {
-+                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &group_area, filter, None);
-+            }
-+            if !owned.is_empty() {
-+                scene.push_layer(
-+                    Fill::NonZero,
-+                    peniko::BlendMode::default(),
-+                    1.0,
-+                    transform,
-+                    &visible.to_path(0.1),
-+                    Some(crate::layers::backdrop_root_marker()),
-+                    None,
-+                );
++                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
 +            }
 +
 +            // The clip path, against the first fragment's border box.
@@ -20620,13 +20634,6 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    set_filter(None);
 +                }
 +            });
-+            if !owned.is_empty() {
-+                with_element_clip(scene, clip.as_ref(), first_transform, self.scale, first_visible, |scene| {
-+                    let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
-+                    self.draw_hoisted_children(scene, owned.iter(), self.transform, everything);
-+                });
-+                scene.pop_layer();
-+            }
 +            if faded {
 +                scene.pop_layer();
 +            }

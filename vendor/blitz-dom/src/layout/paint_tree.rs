@@ -503,6 +503,18 @@ impl BaseDocument {
             let target = context_of(self, box_parent);
             (target != context_of(self, Some(cb))).then_some((id, target))
         }).collect();
+        // pyro: an inline that keeps out-of-flow boxes stands for them at the positioned level of
+        // its own enclosing stacking context, in tree order (it is a stacking context of z-index
+        // 0): the painter paints them there (blitz-paint `draw_paint_child`), above the in-flow
+        // content around (WPT filter-effects `filtered-inline-is-container`). A positioned inline
+        // listed in the paint tree is there already.
+        for &(_, owner) in &inline_owners {
+            if self.nodes[owner].flags.contains(NodeFlags::INLINE_PASS_ENTRY) || moves.iter().any(|(moved, _)| *moved == owner) {
+                continue;
+            }
+            let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, owner);
+            moves.push((owner, context_of(self, box_parent)));
+        }
         // The positioned boxes nested in the clip owners that took an escaping box join it there.
         for &owner in &clip_owners {
             let mut nested = Vec::new();

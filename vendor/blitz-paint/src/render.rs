@@ -5854,6 +5854,43 @@ impl ElementCx<'_, '_> {
         parent_style_transform: Affine,
         clip_rect: Rect,
     ) {
+        // pyro: an inline (not atomic, not listed for its own content) that keeps out-of-flow boxes
+        // in its stacking context stands for them here (blitz-dom
+        // `restore_out_of_flow_stacking_owners`): they paint at this positioned level, placed as this
+        // element's hoisted children are, in a group with its opacity and filter that is their
+        // backdrop root (its own fragments paint with its inline root's content).
+        if let Some(child) = self.context.dom.get_node(child_id)
+            && !child.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
+            && child.primary_styles().is_some_and(|style| style.clone_display().is_inline_flow())
+            && clip_path::owns_hoisted(self.context.dom.as_ref(), child_id)
+        {
+            let owned = clip_path::owned_hoisted(self.context.dom.as_ref(), child_id);
+            let style = child.primary_styles().unwrap();
+            let opacity = style.get_effects().opacity;
+            let filter = convert_filters(&style.get_effects().filter.0, self.scale, &style.clone_color(), self.context.dom)
+                .map(Arc::new);
+            drop(style);
+            let viewport = Rect::new(0.0, 0.0, self.context.width as f64, self.context.height as f64);
+            let grouped = opacity < 1.0 || filter.is_some();
+            if grouped {
+                scene.push_layer(Fill::NonZero, BlendMode::default(), opacity, Affine::IDENTITY, &viewport, filter, None);
+            }
+            scene.push_layer(
+                Fill::NonZero,
+                BlendMode::default(),
+                1.0,
+                Affine::IDENTITY,
+                &viewport,
+                Some(crate::layers::backdrop_root_marker()),
+                None,
+            );
+            self.draw_hoisted_children(scene, owned.iter(), parent_style_transform, clip_rect);
+            scene.pop_layer();
+            if grouped {
+                scene.pop_layer();
+            }
+            return;
+        }
         // Fixed-position children of the root element are positioned against
         // the viewport and do not scroll with it, so cancel out the viewport
         // scroll (applied in `paint_scene`). A fixed box contained by a
