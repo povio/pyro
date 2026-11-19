@@ -222,6 +222,9 @@ jobs:
           export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
           if [ -d patched-jsc ]; then
             mkdir -p "$(dirname "$PYRO_JSC_DIR")"
+            # The runner keeps its home between jobs, and another job may have left this build there: replace it
+            # (mv would move the artifact inside it, or fail once it is there), as publish-npm.yml does.
+            rm -rf "$PYRO_JSC_DIR"
             mv patched-jsc "$PYRO_JSC_DIR"
           fi
           cargo +stable build --locked --profile wptiter --package pyro
