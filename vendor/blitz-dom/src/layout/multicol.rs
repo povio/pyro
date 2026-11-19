@@ -772,6 +772,18 @@ impl LayoutPassState<'_> {
                 breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
             }
             pass += 1;
+            // pyro: a column spanner comes after the content before it, also what overflows the
+            // boxes before it (Chromium lays that content out in the row of columns the spanner
+            // ends; WPT css-multicol `multicol-span-all-children-height-013`): it is pushed below
+            // it (`block_child_min_top`) and the strip laid out again.
+            let floors_changed = spanning.is_some()
+                && pass <= 5
+                && self.nested_pass_budget > 0
+                && self.update_spanner_floors(dom_id);
+            if floors_changed {
+                self.nested_pass_budget -= 1;
+                continue;
+            }
             if breaks.nested.is_empty() || pass > 5 || self.nested_pass_budget == 0 {
                 break (strip, breaks);
             }
@@ -1408,29 +1420,78 @@ fn is_spanner_style(style: &ComputedValues) -> bool {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: pushes each column spanner of `container` below what the boxes before it hold,
+    /// overflow included (`spanner_floors`), clearing the layouts that must be redone. Whether a
+    /// floor changed.
+    fn update_spanner_floors(&mut self, container: crate::NodeId) -> bool {
+        let mut changed = false;
+        for (id, parent_offset) in self.doc.column_spanners_of(container) {
+            let before = self.doc.content_bottom_before(container, id);
+            let layout = *self.nodes[id].unrounded_layout();
+            let current_top = parent_offset.y + layout.location.y - layout.margin.top.max(0.0);
+            let existing = self.spanner_floors.get(&id).copied();
+            // The least top of its border box in its parent's coordinates.
+            let wanted = (before > current_top + 0.5 || existing.is_some())
+                .then(|| before + layout.margin.top.max(0.0) - parent_offset.y)
+                .filter(|&floor| floor > layout.location.y - 0.5 || existing.is_some());
+            let same = match (existing, wanted) {
+                (None, None) => true,
+                (Some(a), Some(b)) => (a - b).abs() <= 0.5,
+                _ => false,
+            };
+            if same {
+                continue;
+            }
+            match wanted {
+                Some(floor) => self.spanner_floors.insert(id, floor),
+                None => self.spanner_floors.remove(&id),
+            };
+            changed = true;
+            use taffy::CacheTree as _;
+            let mut at = Some(id);
+            while let Some(node) = at.filter(|&n| n != container) {
+                self.cache_clear(crate::taffy_node_id(node));
+                at = self.nodes[node].layout_parent.get();
+            }
+        }
+        changed
+    }
+
     /// pyro: the margin-box heights of the column spanners inside box `node_id` of the strip being
     /// laid out (`column_spanners`), when it has a `known_height` (its own: spanners take none of
     /// it) and carries spanners. `None` when there are none.
     pub(crate) fn spanner_extent_in(&self, node_id: crate::NodeId, known_height: Option<f32>) -> Option<f32> {
         let (container, width) = self.column_spanners?;
-        known_height?;
+        let height = known_height?;
         if width < 0.0 || node_id == container || !self.doc.carries_spanners(node_id) {
             return None;
         }
-        let mut total = 0.0;
+        // The spanners inside it: their margin boxes in its coordinates.
+        let mut spans: Vec<(f32, f32)> = Vec::new();
         for (id, _) in self.doc.column_spanners_of(container) {
+            let layout = self.nodes[id].unrounded_layout();
+            let mut y = layout.location.y;
             let mut at = self.nodes[id].layout_parent.get();
             while let Some(parent) = at.filter(|&p| p != container) {
                 if parent == node_id {
-                    let layout = self.nodes[id].unrounded_layout();
-                    total += layout.size.height + layout.margin.top.max(0.0) + layout.margin.bottom.max(0.0);
+                    spans.push((y - layout.margin.top.max(0.0), y + layout.size.height + layout.margin.bottom.max(0.0)));
                     break;
                 }
+                y += self.nodes[parent].unrounded_layout().location.y;
                 at = self.nodes[parent].layout_parent.get();
             }
         }
-        (total > EPSILON).then_some(total)
+        let &(last_start, last_end) = spans.last()?;
+        let total: f32 = spans.iter().map(|&(a, b)| b - a).sum();
+        // What of its height the content before the last spanner takes (spanners take none),
+        // and what is left after it: the box goes on that far below the last spanner, at least
+        // its height and the spanners' (content before a spanner that overflows the box puts the
+        // spanner lower: Chromium; WPT css-multicol `multicol-span-all-children-height-012`).
+        let before = (last_start - (total - (last_end - last_start))).max(0.0);
+        let needed = (height + total).max(last_end + (height - before.min(height)));
+        (needed - height > EPSILON).then_some(needed - height)
     }
+
 
     /// pyro: whether `node_id` is a column spanner of the multi-column container whose strip is
     /// being laid out (`column_spanners`).
@@ -1538,6 +1599,43 @@ impl Node {
 }
 
 impl BaseDocument {
+    /// pyro: how far down `container`'s strip the content before spanner `spanner` reaches
+    /// (container coordinates): the boxes before it in the flow and what overflows them, not the
+    /// boxes it is in (their own size), nor out-of-flow boxes.
+    fn content_bottom_before(&self, container: crate::NodeId, spanner: crate::NodeId) -> f32 {
+        let mut path = Vec::new();
+        let mut at = self.nodes[spanner].layout_parent.get();
+        while let Some(node) = at.filter(|&n| n != container) {
+            path.push(node);
+            at = self.nodes[node].layout_parent.get();
+        }
+        let mut bottom = f32::NEG_INFINITY;
+        let mut parent = container;
+        let mut top = 0.0f32;
+        // Down the path to the spanner: at each level the children before the next box on it.
+        for next in path.iter().rev().copied().chain(std::iter::once(spanner)) {
+            let children = self.nodes[parent].layout_children.borrow();
+            for &child_id in children.iter().flatten() {
+                if child_id == next {
+                    break;
+                }
+                let child = &self.nodes[child_id];
+                if child.is_out_of_flow() || child.primary_styles().is_none_or(|s| s.get_box().display.is_none()) {
+                    continue;
+                }
+                let layout = child.unrounded_layout();
+                let child_top = top + layout.location.y;
+                // (Its border box and its overflow: margins collapse with the spanner's.)
+                let overflow = layout.scrollable_overflow_rect.bottom().abs();
+                bottom = bottom.max(child_top + layout.size.height.max(overflow));
+            }
+            drop(children);
+            top += self.nodes[next].unrounded_layout().location.y;
+            parent = next;
+        }
+        bottom
+    }
+
     /// pyro: whether box `id` carries spanners of multi-column container `container` (it is below
     /// it through boxes that carry spanners, and carries them itself): a spanner's row is no part
     /// of its box (its background and borders are not painted there).

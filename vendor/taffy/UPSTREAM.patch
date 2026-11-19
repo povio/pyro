@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..dc3778fc 100644
+index 3cd3e713..ca03e7d3 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -1458,7 +1458,21 @@ index 3cd3e713..dc3778fc 100644
              }
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
-@@ -1908,6 +2712,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1845,6 +2649,13 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+                 margin
+             };
+ 
++            // pyro: see `LayoutBlockContainer::block_child_min_top`.
++            if let Some(floor) = tree.block_child_min_top(item.node_id) {
++                if location.y < floor {
++                    location.y = floor;
++                }
++            }
++
+             // Defer `set_unrounded_layout` to the post-loop pass in `compute_inner` so that
+             // `align-content` can shift `location.y` before the layout is committed to the tree.
+             item.final_layout = Some(Layout {
+@@ -1908,6 +2719,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  y_offset_for_absolute = committed_y_offset + item_layout.size.height + y_margin_offset;
              } else {
                  committed_y_offset = location.y - inset_offset.y + item_layout.size.height;
@@ -1466,7 +1480,7 @@ index 3cd3e713..dc3778fc 100644
                  // A self-collapsing item with clearance is not collapsed through (its margins do not collapse
                  // with margins of preceding siblings), but its top and bottom margins still collapse with each
                  // other and with the margins of following siblings.
-@@ -1931,6 +2736,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1931,6 +2743,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
          }
      }
  
@@ -1505,7 +1519,7 @@ index 3cd3e713..dc3778fc 100644
      // The margins of a self-collapsing element with clearance do not collapse with the bottom
      // margin of the parent block: they extend the parent's content height instead of escaping it
      let last_child_bottom_margin_set =
-@@ -1947,5 +2784,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1947,5 +2791,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -9395,7 +9409,7 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..96557547 100644
+index 7d4adf22..280d5d0a 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
@@ -9548,7 +9562,7 @@ index 7d4adf22..96557547 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +488,125 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +488,132 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
@@ -9581,6 +9595,13 @@ index 7d4adf22..96557547 100644
 +    fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
 +        let _ = child_node_id;
 +        false
++    }
++
++    /// pyro: the least position (its border box's top in this container's coordinates) of a
++    /// block-level child: a column spanner after content that overflows the boxes before it.
++    fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
++        let _ = child_node_id;
++        None
 +    }
 +
 +    /// pyro: whether a block-level child clears every float before it whatever its `clear` (a

@@ -2649,6 +2649,13 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 margin
             };
 
+            // pyro: see `LayoutBlockContainer::block_child_min_top`.
+            if let Some(floor) = tree.block_child_min_top(item.node_id) {
+                if location.y < floor {
+                    location.y = floor;
+                }
+            }
+
             // Defer `set_unrounded_layout` to the post-loop pass in `compute_inner` so that
             // `align-content` can shift `location.y` before the layout is committed to the tree.
             item.final_layout = Some(Layout {

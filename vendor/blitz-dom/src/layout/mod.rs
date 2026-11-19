@@ -173,6 +173,9 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: multi-column containers nested in another's columns and the outer column height and
     /// their offset down their outer column (`layout::multicol`).
     pub(crate) nested_fragmentation: std::collections::HashMap<crate::NodeId, (f32, f32)>,
+    /// pyro: column spanners pushed below the content that overflows the boxes before them, and
+    /// the least top of each in its parent (`layout::multicol`, `block_child_min_top`).
+    pub(crate) spanner_floors: std::collections::HashMap<crate::NodeId, f32>,
     /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
     pub(crate) multicol_strip_depth: u32,
     /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
@@ -249,6 +252,7 @@ impl<'doc> LayoutPassState<'doc> {
             calc_size_results: Vec::new(),
             multicol_percent_height: None,
             nested_fragmentation: std::collections::HashMap::new(),
+            spanner_floors: std::collections::HashMap::new(),
             multicol_strip_depth: 0,
             column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
             nested_pass_budget: multicol::NESTED_PASS_BUDGET,
@@ -2487,6 +2491,13 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
             // container, not its column (its lines are not broken at the column's width).
             || self.is_current_column_spanner(dom_node_id(child_node_id))
+    }
+
+    fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
+        if self.spanner_floors.is_empty() {
+            return None;
+        }
+        self.spanner_floors.get(&dom_node_id(child_node_id)).copied()
     }
 
     fn block_child_clears_floats(&self, child_node_id: NodeId) -> bool {

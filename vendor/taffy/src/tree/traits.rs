@@ -519,6 +519,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
+    /// pyro: the least position (its border box's top in this container's coordinates) of a
+    /// block-level child: a column spanner after content that overflows the boxes before it.
+    fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
+        let _ = child_node_id;
+        None
+    }
+
     /// pyro: whether a block-level child clears every float before it whatever its `clear` (a
     /// column spanner: the floats before it are in the row of columns it ends).
     fn block_child_clears_floats(&self, child_node_id: NodeId) -> bool {
