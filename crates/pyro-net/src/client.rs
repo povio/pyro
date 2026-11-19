@@ -2036,9 +2036,17 @@ impl Io {
                 && pause_response.is_none();
             let request_time = wall_time();
             let sent = if cacheable { Some(headers.clone()) } else { None };
+            // pyro: whether this hop carries credentials (as the cookie decision above): the cache
+            // serves a response only to a request of the same kind (`HttpCache::lookup`).
+            let credentialed = match req.credentials {
+                Credentials::Include => true,
+                Credentials::SameOrigin => same_origin,
+                Credentials::Omit => false,
+            } || headers.contains_key(header::AUTHORIZATION);
             let mut revalidating = None;
             if cacheable {
-                let lookup = self.shared.cache.lock().unwrap().lookup(&url, &headers, cache_mode, request_time);
+                let lookup =
+                    self.shared.cache.lock().unwrap().lookup(&url, &headers, credentialed, cache_mode, request_time);
                 match lookup {
                     crate::cache::Lookup::Hit(cached) => {
                         // A stored response passes the TAO check a network one would.
@@ -2064,7 +2072,7 @@ impl Io {
                 .as_ref()
                 .filter(|_| cacheable && crate::cache::shared_request_eligible(&headers));
             if let (Some(store), None) = (shared_assets, revalidating.as_ref()) {
-                let lookup = store.with(|c| c.lookup(&url, &headers, cache_mode, request_time));
+                let lookup = store.with(|c| c.lookup(&url, &headers, credentialed, cache_mode, request_time));
                 if let crate::cache::Lookup::Hit(cached) = lookup {
                     crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
                     let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
@@ -2416,10 +2424,10 @@ impl Io {
                     if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
                 if let Some(response) = store {
                     let mut cache = self.shared.cache.lock().unwrap();
-                    cache.insert(&url, sent, status, &response, body.clone(), request_time, response_time, protocol);
+                    cache.insert(&url, sent, credentialed, status, &response, body.clone(), request_time, response_time, protocol);
                 }
                 if let (Some(s), Some(response)) = (shared_store, shared_response) {
-                    s.with(|c| c.insert(&url, sent, status, &response, body, request_time, response_time, protocol));
+                    s.with(|c| c.insert(&url, sent, credentialed, status, &response, body, request_time, response_time, protocol));
                 }
             }
             self.shared.emit(NetEvent::LoadingFinished { id, encoded_len: encoded, timestamp: self.shared.now() });

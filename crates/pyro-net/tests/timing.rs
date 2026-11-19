@@ -127,17 +127,21 @@ fn a_cache_hit_passes_the_timing_allow_origin_check_too() {
     for path in ["/cached-other", "/cached-tao"] {
         let mut req = get(port, path);
         req.origin = Some(same.clone());
+        req.credentials = pyro_net::Credentials::Include;
         let first = head(&client, req);
         assert!(!first.from_cache && !first.timing.timing_allow_failed);
     }
+    // (All credentialed: the cache serves a response only to a request of the same kind.)
     // Stored without the other origin in Timing-Allow-Origin: a hit hides
     // its details from that origin's document, as the network would.
     let mut req = get(port, "/cached-other");
     req.origin = Some("https://other.test".into());
+    req.credentials = pyro_net::Credentials::Include;
     let hit = head(&client, req);
     assert!(hit.from_cache && hit.timing.timing_allow_failed);
     let mut req = get(port, "/cached-tao");
     req.origin = Some("https://other.test".into());
+    req.credentials = pyro_net::Credentials::Include;
     let hit = head(&client, req);
     assert!(hit.from_cache && !hit.timing.timing_allow_failed);
 }
