@@ -1,9 +1,7 @@
 //! `PageObserver::on_network_delivery`: fetch/XHR transport progress reaches
 //! the browser's observer, identified by page, context and loader, before the
 //! script it lets run, and never for a replaced or closed document.
-use pyro_browser::{
-    BrowserThread, ContextId, LoaderId, NavigateOpts, PageEvent, PageId, PageObserver, DEFAULT_CONTEXT,
-};
+use pyro_browser::{BrowserThread, ContextId, LoaderId, NavigateOpts, PageEvent, PageId, PageObserver, DEFAULT_CONTEXT};
 use pyro_js::{ConsoleLevel, EngineHooks, Realm, Value};
 use pyro_net::{NetworkDelivery, RequestId};
 use std::cell::RefCell;

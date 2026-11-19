@@ -365,8 +365,5 @@ fn the_document_timeline_advances_between_tasks_that_leave_the_dom_alone() {
          document.body.animate({ opacity: [0, 1] }, { duration: 1 }).finished.then(() => { globalThis.finished = true; }); 0",
     );
     run_until(&mut t, &root, "times.length === 4 && globalThis.finished === true");
-    assert_eq!(
-        eval(&root, "String(globalThis.finished === true && times.every((time, i) => i === 0 || time > times[i - 1]))"),
-        "true"
-    );
+    assert_eq!(eval(&root, "String(globalThis.finished === true && times.every((time, i) => i === 0 || time > times[i - 1]))"), "true");
 }

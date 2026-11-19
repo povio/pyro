@@ -552,11 +552,9 @@ impl Browser {
         let request_key = pyro_dom::cssom::import_key(&url, &import);
         let document_origin = self.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
-            let result = result.and_then(|r| {
-                match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &document_origin) {
-                    Some(message) => Err(message),
-                    None => Ok(r),
-                }
+            let result = result.and_then(|r| match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &document_origin) {
+                Some(message) => Err(message),
+                None => Ok(r),
             });
             b.style_import_done(
                 page,

@@ -233,10 +233,7 @@ fn a_later_submission_replaces_the_forms_planned_navigation() {
 fn a_document_navigating_while_it_loads_replaces_its_entry() {
     for (script, expected) in [
         ("location.href = '/other'", "replace:/other"),
-        (
-            "document.body.appendChild(document.createElement('form')).action = '/other'; document.forms[0].submit()",
-            "replace:/other",
-        ),
+        ("document.body.appendChild(document.createElement('form')).action = '/other'; document.forms[0].submit()", "replace:/other"),
         ("location.hash = 'x'", "replace:/next#x"),
     ] {
         let html = format!(

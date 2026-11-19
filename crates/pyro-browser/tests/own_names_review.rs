@@ -55,10 +55,7 @@ fn computed_style_own_names_through_every_internal_method() {
         ("const out = []; for (const k in getComputedStyle(a)) out.push(k); const n = out.filter(k => isNaN(+k)); [n.length, n.includes('cssText'), n.indexOf('cssFloat') > n.indexOf('color')].join()", "750,true,true"),
     ];
     for (src, want) in checks {
-        let body = match src.rfind("; ") {
-            Some(i) if src.starts_with("const ") => format!("{}; return {}", &src[..i], &src[i + 2..]),
-            _ => format!("return {src}"),
-        };
+        let body = match src.rfind("; ") { Some(i) if src.starts_with("const ") => format!("{}; return {}", &src[..i], &src[i + 2..]), _ => format!("return {src}") };
         assert_eq!(eval(&root, &format!("(() => {{ {body} }})()")), *want, "{src}");
     }
 }
@@ -155,10 +152,7 @@ fn computed_style_own_values_and_names_after_prototype_changes() {
         ("['color', 'epubCaptionSide', 'cssFloat', '0', 'length'].map(k => Object.prototype.propertyIsEnumerable.call(getComputedStyle(a), k)).join()", "true,false,false,true,false"),
     ];
     for (src, want) in checks {
-        let body = match src.rfind("; ") {
-            Some(i) if src.starts_with("const ") => format!("{}; return {}", &src[..i], &src[i + 2..]),
-            _ => format!("return {src}"),
-        };
+        let body = match src.rfind("; ") { Some(i) if src.starts_with("const ") => format!("{}; return {}", &src[..i], &src[i + 2..]), _ => format!("return {src}") };
         assert_eq!(eval(&root, &format!("(() => {{ {body} }})()")), *want, "{src}");
     }
 }

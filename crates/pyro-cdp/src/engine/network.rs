@@ -570,10 +570,8 @@ impl EngineHost {
                     bypass: bool,
                 }
                 let params: Params = cmd.command.params()?;
-                self.sessions
-                    .get_mut(cmd.session_id)
-                    .ok_or_else(|| CdpError::server("session is gone"))?
-                    .bypass_service_worker = params.bypass;
+                self.sessions.get_mut(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?.bypass_service_worker =
+                    params.bypass;
                 self.apply_network_overrides(cmd.page);
                 Ok(Some(json!({})))
             }

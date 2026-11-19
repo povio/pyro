@@ -489,8 +489,7 @@ async fn a_step_times_out_on_time_while_page_javascript_holds_the_thread() {
     assert!(message.contains("timed out after 400 ms"), "{message}");
     assert!(took < Duration::from_millis(1500), "answered after {took:?} (the script ran 3 s)");
     // The script was not stopped: the page finishes it and serves the next run.
-    let done =
-        json!({"check":{"locator":{"css":"body[data-done='1']"},"assert":"count","expected":1,"timeout":10_000}});
+    let done = json!({"check":{"locator":{"css":"body[data-done='1']"},"assert":"count","expected":1,"timeout":10_000}});
     let run = call(&mut s, json!({"id":5,"method":"Pyro.run","params":{"steps":[done]},"sessionId":session})).await;
     assert!(run["result"]["results"].is_array(), "{run}");
     let _ = s.shutdown().await;
@@ -622,7 +621,8 @@ async fn a_parked_run_is_not_a_quiet_moment() {
     let addr = serve(ServerConfig::default()).await;
     let mut s = connect(addr).await;
     let session = page_session(&mut s).await;
-    let run = |id: u64, steps: Value| json!({"id": id, "method": "Pyro.run", "params": {"steps": steps}, "sessionId": session});
+    let run =
+        |id: u64, steps: Value| json!({"id": id, "method": "Pyro.run", "params": {"steps": steps}, "sessionId": session});
     // A loaded document replaced by another leaves its collection pending.
     for (id, body) in [(10, "one"), (11, "two")] {
         let r = call(&mut s, run(id, json!([{"goto": {"url": format!("data:text/html,<p>{body}</p>")}}]))).await;

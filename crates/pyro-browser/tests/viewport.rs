@@ -275,10 +275,7 @@ fn resize_layout_reads_include_new_unstyled_nodes() {
     t.browser.navigate(page, NavigateOpts::address_bar("http://resize-layout.test/")).unwrap();
     settle(&mut t);
     eval(&t, page, "document.body.offsetWidth");
-    eval(
-        &t,
-        page,
-        r#"
+    eval(&t, page, r#"
         globalThis.widths = [];
         addEventListener('resize', () => {
             const node = document.createElement('div');
@@ -287,8 +284,7 @@ fn resize_layout_reads_include_new_unstyled_nodes() {
             document.body.append(node);
             widths.push(document.body.offsetWidth);
         });
-    "#,
-    );
+    "#);
     for width in 700..720 {
         t.browser.set_viewport(page, Viewport::new(width, 600)).unwrap();
         settle(&mut t);
@@ -312,10 +308,7 @@ fn viewport_restyles_siblings_and_moved_children_of_unstyled_nodes() {
     t.browser.navigate(page, NavigateOpts::address_bar("http://resize-move.test/")).unwrap();
     settle(&mut t);
     eval(&t, page, "document.body.offsetWidth");
-    eval(
-        &t,
-        page,
-        r#"
+    eval(&t, page, r#"
         globalThis.widths = [];
         addEventListener('resize', () => {
             const node = document.createElement('div');
@@ -330,8 +323,7 @@ fn viewport_restyles_siblings_and_moved_children_of_unstyled_nodes() {
             widths.push([document.body.offsetWidth, node.offsetWidth,
                 document.getElementById('existing').offsetWidth, moved.offsetWidth, child.offsetWidth].join(':'));
         });
-    "#,
-    );
+    "#);
     let mut expected = Vec::new();
     for width in 700..720 {
         t.browser.set_viewport(page, Viewport::new(width, 600)).unwrap();
@@ -347,17 +339,10 @@ fn viewport_restyles_siblings_and_moved_children_of_unstyled_nodes() {
 /// Playwright's `devices['iPhone 13']`: a 390x664 viewport at DPR 3 on a
 /// 390x844 screen, `isMobile`.
 fn iphone_13() -> Viewport {
-    Viewport {
-        device_scale_factor: 3.0,
-        screen_width: Some(390),
-        screen_height: Some(844),
-        mobile: true,
-        ..Viewport::new(390, 664)
-    }
+    Viewport { device_scale_factor: 3.0, screen_width: Some(390), screen_height: Some(844), mobile: true, ..Viewport::new(390, 664) }
 }
 
-const PHONE: &str =
-    "[innerWidth, innerHeight, document.documentElement.clientWidth, document.documentElement.clientHeight, \
+const PHONE: &str = "[innerWidth, innerHeight, document.documentElement.clientWidth, document.documentElement.clientHeight, \
     visualViewport.width, visualViewport.height, visualViewport.scale, matchMedia('(max-width: 600px)').matches, \
     outerWidth, screen.width, document.body.getBoundingClientRect().width].join('|')";
 

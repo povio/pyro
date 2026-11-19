@@ -293,8 +293,7 @@ impl WorkerRuntime {
                     preview: p.generate_preview,
                     group: p.object_group.or(inherited),
                 };
-                let called = scope
-                    .compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args));
+                let called = scope.compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args));
                 self.finish(&scope, called, p.await_promise, options);
                 Ok(None)
             }

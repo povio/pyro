@@ -855,16 +855,8 @@ fn a_full_port_queue_throws_before_the_transfer_list_is_consumed() {
 
 /// Registers /nav-sw.js for /nav/ from `page` and waits for it to be active.
 fn register_nav(thread: &mut BrowserThread, page: PageId) {
-    eval(
-        thread,
-        page,
-        "navigator.serviceWorker.register('/nav-sw.js', {scope: '/nav/'}).then((r) => globalThis.navReg = r); 'ok'",
-    );
-    until(
-        thread,
-        page,
-        "globalThis.navReg !== undefined && navReg.active !== null && navReg.active.state === 'activated'",
-    );
+    eval(thread, page, "navigator.serviceWorker.register('/nav-sw.js', {scope: '/nav/'}).then((r) => globalThis.navReg = r); 'ok'");
+    until(thread, page, "globalThis.navReg !== undefined && navReg.active !== null && navReg.active.state === 'activated'");
 }
 
 #[test]
@@ -883,11 +875,7 @@ fn service_worker_answers_navigations_and_subresources() {
     assert_eq!(server.hits("/nav/script.js") + server.hits("/nav/style.css") + server.hits("/nav/frame"), 0);
     assert_eq!(eval(&thread, page, "String(navigator.serviceWorker.controller !== null)"), "true");
     assert_eq!(
-        eval(
-            &thread,
-            page,
-            "String(document.querySelector('iframe').contentWindow.navigator.serviceWorker.controller !== null)"
-        ),
+        eval(&thread, page, "String(document.querySelector('iframe').contentWindow.navigator.serviceWorker.controller !== null)"),
         "true"
     );
 
@@ -1039,11 +1027,7 @@ fn cache_storage_api() {
     assert_eq!(get("illegal"), "TypeError");
 
     // The context's documents share the origin's caches, across navigation.
-    eval(
-        &thread,
-        page,
-        "caches.open('v2').then((c) => c.put('/kept', new Response('kept'))).then(() => globalThis.kept = 1); 'ok'",
-    );
+    eval(&thread, page, "caches.open('v2').then((c) => c.put('/kept', new Response('kept'))).then(() => globalThis.kept = 1); 'ok'");
     until(&mut thread, page, "globalThis.kept === 1");
     navigate(&mut thread, &server, page, "/page2");
     eval(&thread, page, "caches.match('/kept').then((r) => r.text()).then((t) => globalThis.kept = t); 'ok'");
@@ -1053,11 +1037,7 @@ fn cache_storage_api() {
     eval(&thread, page, "new Worker('/caches-worker.js').onmessage = (e) => globalThis.fromWorker = e.data; 'ok'");
     until(&mut thread, page, "globalThis.fromWorker !== undefined");
     assert_eq!(eval(&thread, page, "fromWorker"), "v2,worker");
-    eval(
-        &thread,
-        page,
-        "caches.match('/from-worker').then((r) => r.text()).then((t) => globalThis.workerPut = t); 'ok'",
-    );
+    eval(&thread, page, "caches.match('/from-worker').then((r) => r.text()).then((t) => globalThis.workerPut = t); 'ok'");
     until(&mut thread, page, "globalThis.workerPut !== undefined");
     assert_eq!(eval(&thread, page, "workerPut"), "worker put");
     // Another context starts empty.
@@ -1075,11 +1055,7 @@ fn service_worker_and_page_share_cache_storage() {
     let (server, mut thread) = setup();
     let page = open(&mut thread, &server, "/page");
     eval(&thread, page, "navigator.serviceWorker.register('/cache-sw.js'); 'ok'");
-    until(
-        &mut thread,
-        page,
-        "navigator.serviceWorker.controller !== null && navigator.serviceWorker.controller.state === 'activated'",
-    );
+    until(&mut thread, page, "navigator.serviceWorker.controller !== null && navigator.serviceWorker.controller.state === 'activated'");
     // The worker's install filled a cache the page sees.
     eval(&thread, page, "caches.match('/real').then((r) => r.text()).then((t) => globalThis.pre = t); 'ok'");
     until(&mut thread, page, "globalThis.pre !== undefined");
@@ -1138,22 +1114,15 @@ fn service_worker_background_fetches_are_not_client_document_requests() {
     let events = thread.browser.context_net(context).unwrap().subscribe();
     eval(&thread, page, "globalThis.workerReply=null;navigator.serviceWorker.addEventListener('message',e=>{if(e.data.kind==='background-fetched')globalThis.workerReply=e.data.body});navigator.serviceWorker.controller.postMessage('background-fetch');");
     until(&mut thread, page, "globalThis.workerReply!==null");
-    eval(
-        &thread,
-        page,
-        "globalThis.clientReply=null;fetch('/real').then(r=>r.text()).then(v=>globalThis.clientReply=v);",
-    );
+    eval(&thread, page, "globalThis.clientReply=null;fetch('/real').then(r=>r.text()).then(v=>globalThis.clientReply=v);");
     until(&mut thread, page, "globalThis.clientReply!==null");
     let mut client_requests = Vec::new();
     let mut worker_requests = Vec::new();
     while let Ok(event) = events.try_recv() {
         if let pyro_net::NetEvent::RequestWillBeSent { request, .. } = event {
             if request.url.path() == "/real" {
-                if request.loader_id.is_some() {
-                    client_requests.push(request);
-                } else {
-                    worker_requests.push(request);
-                }
+                if request.loader_id.is_some() { client_requests.push(request); }
+                else { worker_requests.push(request); }
             }
         }
     }
@@ -1178,14 +1147,10 @@ fn service_worker_intercepted_fetch_preserves_client_network_observations() {
     let mut finishes = 0;
     while let Ok(event) = events.try_recv() {
         match event {
-            pyro_net::NetEvent::RequestWillBeSent { request, .. } if request.url.path() == "/api/observed" => {
-                starts.push(request)
-            }
-            pyro_net::NetEvent::ResponseReceived { head, .. } if head.url.path() == "/api/observed" => {
-                responses.push(head)
-            }
+            pyro_net::NetEvent::RequestWillBeSent { request, .. } if request.url.path() == "/api/observed" => starts.push(request),
+            pyro_net::NetEvent::ResponseReceived { head, .. } if head.url.path() == "/api/observed" => responses.push(head),
             pyro_net::NetEvent::LoadingFinished { .. } => finishes += 1,
-            _ => {}
+            _ => {},
         }
     }
     assert_eq!(starts.len(), 1);
@@ -1213,10 +1178,7 @@ fn shared_workers_are_shared_between_documents_by_url_and_name() {
     eval(&thread, b, connect);
     until(&mut thread, b, "got.length === 1");
     assert_eq!(eval(&thread, a, "got.join()"), "one:1");
-    assert_eq!(
-        eval(&thread, b, "got.join() + ':' + (sw instanceof EventTarget) + ':' + (sw.port instanceof MessagePort)"),
-        "one:2:true:true"
-    );
+    assert_eq!(eval(&thread, b, "got.join() + ':' + (sw instanceof EventTarget) + ':' + (sw.port instanceof MessagePort)"), "one:2:true:true");
     eval(&thread, b, "sw.port.postMessage('hi'); 'ok'");
     until(&mut thread, b, "got.length === 2");
     assert_eq!(eval(&thread, b, "got[1]"), "echo:hi");

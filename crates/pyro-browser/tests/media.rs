@@ -13,10 +13,7 @@ fn eval(thread: &BrowserThread, page: PageId, source: &str) -> String {
     scope.eval(source, None, 1).unwrap_or_else(|e| panic!("{}", e.details(&scope).text())).to_string().unwrap()
 }
 fn settle(thread: &mut BrowserThread) {
-    assert_ne!(
-        thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))),
-        pyro_runtime::RunOutcome::TimedOut
-    );
+    assert_ne!(thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))), pyro_runtime::RunOutcome::TimedOut);
 }
 /// Moves the page clock (and its timers) `ms` ahead, then runs what came due.
 fn advance(thread: &mut BrowserThread, ms: u64) {

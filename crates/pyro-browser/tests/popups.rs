@@ -53,9 +53,7 @@ impl Events {
 fn setup() -> (BrowserThread, Rc<Events>) {
     let mut t = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
-    for url in
-        ["http://app.test/a", "http://app.test/b", "http://app.test/c", "http://other.test/x", "http://other.test/y"]
-    {
+    for url in ["http://app.test/a", "http://app.test/b", "http://app.test/c", "http://other.test/x", "http://other.test/y"] {
         loader.insert(url, "text/html", "<p>page</p>", Duration::ZERO);
     }
     loader.insert(

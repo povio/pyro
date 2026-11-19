@@ -640,11 +640,7 @@ impl EngineHost {
 
 /// The hook of a document's style engine while its page tracks rule usage:
 /// before a style recalculation, the rules of its sheets that match now.
-fn recalc_hook(
-    sheets: Weak<RefCell<Sheets>>,
-    page_dom_id: u64,
-    document: pyro_dom::NodeId,
-) -> pyro_dom::style::RecalcHook {
+fn recalc_hook(sheets: Weak<RefCell<Sheets>>, page_dom_id: u64, document: pyro_dom::NodeId) -> pyro_dom::style::RecalcHook {
     Rc::new(move |dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine| {
         let Some(sheets) = sheets.upgrade() else { return };
         // Busy: the host is looking at the sheets itself.

@@ -184,13 +184,13 @@ fn has_follows_script_driven_state() {
     loader.insert("http://site.test/", "text/html", PAGE, Duration::ZERO);
     thread.browser.set_loader(Some(loader));
     thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
-    assert_ne!(
-        thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))),
-        pyro_runtime::RunOutcome::TimedOut
-    );
+    assert_ne!(thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))), pyro_runtime::RunOutcome::TimedOut);
     let realm = thread.browser.page(page).unwrap().main_frame.main_realm().unwrap();
     let scope = realm.scope().unwrap();
-    let out =
-        scope.eval(STEPS, None, 1).unwrap_or_else(|e| panic!("{}", e.details(&scope).text())).to_string().unwrap();
+    let out = scope
+        .eval(STEPS, None, 1)
+        .unwrap_or_else(|e| panic!("{}", e.details(&scope).text()))
+        .to_string()
+        .unwrap();
     assert_eq!(out, "[]");
 }

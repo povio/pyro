@@ -272,8 +272,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             sent_referrer: None,
             timing: None,
             partial: None,
-            nosniff: false,
-            opaque: false,
+                nosniff: false, opaque: false,
         }),
     );
     settle(&mut t);
@@ -641,18 +640,12 @@ fn a_navigated_away_document_stays_usable_while_held() {
     let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
-    eval(
-        &root,
-        "globalThis.f=document.createElement('iframe'); f.srcdoc='<p id=old>old</p>'; document.body.appendChild(f)",
-    );
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<p id=old>old</p>'; document.body.appendChild(f)");
     settle(&mut t);
     eval(&root, "globalThis.saved = f.contentDocument; globalThis.savedWindow = f.contentWindow");
     eval(&root, "f.srcdoc='<p id=new>new</p>'");
     settle(&mut t);
-    assert_eq!(
-        eval(&root, "f.contentDocument.querySelector('p').id + ':' + (f.contentDocument !== saved)"),
-        "new:true"
-    );
+    assert_eq!(eval(&root, "f.contentDocument.querySelector('p').id + ':' + (f.contentDocument !== saved)"), "new:true");
     assert_eq!(
         eval(
             &root,
@@ -792,14 +785,11 @@ fn svg_use_elements_get_live_instances() {
         let d = dom.dom.borrow();
         let doc = dom.document();
         let host = d.get_element_by_id(doc, "u").unwrap().unwrap();
-        d.shadow_root(host)
-            .unwrap()
-            .map(|sr| d.children(sr).unwrap().map(|c| d.outer_html(c).unwrap()).collect::<Vec<_>>().join(""))
+        d.shadow_root(host).unwrap().map(|sr| {
+            d.children(sr).unwrap().map(|c| d.outer_html(c).unwrap()).collect::<Vec<_>>().join("")
+        })
     };
-    assert_eq!(
-        instance(&t).as_deref(),
-        Some(r#"<g id="t"><rect id="r" width="10" height="10" onclick="window.arg = typeof evt"></rect></g>"#)
-    );
+    assert_eq!(instance(&t).as_deref(), Some(r#"<g id="t"><rect id="r" width="10" height="10" onclick="window.arg = typeof evt"></rect></g>"#));
     assert_eq!(eval(&root, "[u.shadowRoot, document.getElementById('r').getRootNode() === document].join()"), ",true");
     // The referenced subtree changes: the instance follows after the task.
     eval(&root, "document.getElementById('r').setAttribute('width', '20'); 'ok'");
@@ -857,12 +847,7 @@ fn an_object_showing_a_document_is_a_frame() {
          <script>globalThis.loads = 0; for (const id of ['a', 'b']) document.getElementById(id).onload = () => loads++;</script>",
         Duration::ZERO,
     );
-    loader.insert(
-        "http://site.test/inner.html",
-        "text/html",
-        "<p id=p>inner</p><script>window.answer = 42</script>",
-        Duration::ZERO,
-    );
+    loader.insert("http://site.test/inner.html", "text/html", "<p id=p>inner</p><script>window.answer = 42</script>", Duration::ZERO);
     loader.insert("http://site.test/inner.htm", "text/html", "<p id=p>second</p>", Duration::ZERO);
     t.browser.set_loader(Some(loader.clone()));
     t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
@@ -915,15 +900,9 @@ fn object_content_type_and_attribute_changes_decide_its_navigable() {
         "2|page|page|none|doc,page,page"
     );
     // `c` turns into a document object, `a` loses its document, `b` navigates elsewhere.
-    eval(
-        &root,
-        "o('c').type = 'text/html'; o('c').data = '/other.html'; o('a').data = '/pic.png'; o('b').data = '/doc.html';",
-    );
+    eval(&root, "o('c').type = 'text/html'; o('c').data = '/other.html'; o('a').data = '/pic.png'; o('b').data = '/doc.html';");
     settle(&mut t);
-    assert_eq!(
-        eval(&root, "[text('a'), text('b'), text('c'), frameTexts()].join('|')"),
-        "none|doc|other|doc,doc,other"
-    );
+    assert_eq!(eval(&root, "[text('a'), text('b'), text('c'), frameTexts()].join('|')"), "none|doc|other|doc,doc,other");
 }
 
 /// An `<object>` is fetched first even when its `type` says text/html: a failed fetch fires
@@ -955,10 +934,7 @@ fn object_fallback_on_failure_and_document_once_rendered() {
     eval(&root, "o('hidden').style.display = 'inline';");
     settle(&mut t);
     assert_eq!(
-        eval(
-            &root,
-            "[events.join(), o('hidden').contentDocument?.getElementById('p')?.textContent, window.length].join('|')"
-        ),
+        eval(&root, "[events.join(), o('hidden').contentDocument?.getElementById('p')?.textContent, window.length].join('|')"),
         "missing:error,hidden:load|doc|1"
     );
 }

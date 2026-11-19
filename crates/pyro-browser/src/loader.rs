@@ -546,9 +546,11 @@ impl ResourceLoader for NetLoader {
                         timing: timing(&h),
                         partial: None,
                         opaque: h.kind == pyro_net::ResponseKind::Opaque,
-                        nosniff: h.headers.get("x-content-type-options").and_then(|v| v.to_str().ok()).is_some_and(
-                            |v| v.split(',').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("nosniff")),
-                        ),
+                        nosniff: h
+                            .headers
+                            .get("x-content-type-options")
+                            .and_then(|v| v.to_str().ok())
+                            .is_some_and(|v| v.split(',').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("nosniff"))),
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,
@@ -566,8 +568,7 @@ impl ResourceLoader for NetLoader {
                             };
                             let enforce = joined(http::header::CONTENT_SECURITY_POLICY);
                             let report_only = joined(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY);
-                            (!enforce.is_empty() || !report_only.is_empty())
-                                .then(|| format!("{enforce}\n{report_only}"))
+                            (!enforce.is_empty() || !report_only.is_empty()).then(|| format!("{enforce}\n{report_only}"))
                         },
                         // Only a document honours it; other kinds skip the lookup.
                         refresh: document
@@ -1388,7 +1389,7 @@ impl Browser {
             sent_referrer: None,
             timing: None,
             partial: None,
-            nosniff: false,
+                nosniff: false,
             opaque: false,
         };
         if let Err(e) =
@@ -1490,9 +1491,7 @@ impl Browser {
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
         // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
-        if let Some(csp) =
-            resource.header_csp.as_deref().filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp))
-        {
+        if let Some(csp) = resource.header_csp.as_deref().filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp)) {
             let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
             if !enforce.is_empty() {
                 let _ = dom.borrow_mut().set_header_csp(doc, true);
@@ -1518,12 +1517,11 @@ impl Browser {
         // inherits its same-origin container document's.
         if page.child.is_some() {
             let parent = self.page(page.page).map(|p| p.frames.parent_key(page)).filter(|&k| k != page);
-            let inherited =
-                parent.and_then(|k| self.doc(k)).and_then(|d| d.main_frame.page_dom.clone()).and_then(|pd| {
-                    let dom = pd.dom.borrow();
-                    let data = dom.document_data(pd.document()).ok()?;
-                    (origin_of(&data.url.to_string()) == origin).then_some(data.charset)
-                });
+            let inherited = parent.and_then(|k| self.doc(k)).and_then(|d| d.main_frame.page_dom.clone()).and_then(|pd| {
+                let dom = pd.dom.borrow();
+                let data = dom.document_data(pd.document()).ok()?;
+                (origin_of(&data.url.to_string()) == origin).then_some(data.charset)
+            });
             parser.set_fallback_charset(inherited);
         }
         // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
@@ -2734,8 +2732,7 @@ fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi
         Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
         None => scope.link_and_evaluate_module(url),
     };
-    let report =
-        |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+    let report = |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| s.report_exception(&JsError::thrown(Persistent::new(s, e)));
     let reported = match evaluated {
         Ok(promise) => scope.then(promise, |_s, _v| {}, report),
         Err(JsError::Thrown(error)) => {
@@ -2821,12 +2818,7 @@ fn dynamic_inline_module_url(base: &str) -> String {
 }
 
 pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
-    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher {
-        page,
-        sched,
-        fetches: Rc::default(),
-        worklet_credentials: None,
-    })));
+    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default(), worklet_credentials: None })));
 }
 
 /// The download's file name: the `download` attribute without path

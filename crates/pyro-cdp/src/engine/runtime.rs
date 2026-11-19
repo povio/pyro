@@ -589,8 +589,7 @@ impl EngineHost {
             args.push(&scope, value);
         }
         let call = crate::perf::span("js.call_function");
-        let called =
-            scope.compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args));
+        let called = scope.compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args));
         drop(call);
         match called {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),

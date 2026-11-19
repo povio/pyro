@@ -607,8 +607,8 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
             .with_spa_fallback(options.static_spa_fallback);
     }
     if let Some(server) = &options.proxy {
-        profile.net.proxy = pyro_net::ProxyConfig::parse(server, options.proxy_bypass.as_deref())
-            .map_err(|e| format!("--proxy: {e}"))?;
+        profile.net.proxy =
+            pyro_net::ProxyConfig::parse(server, options.proxy_bypass.as_deref()).map_err(|e| format!("--proxy: {e}"))?;
     } else if options.proxy_bypass.is_some() {
         return Err("--proxy-bypass needs --proxy".into());
     }
