@@ -263,7 +263,12 @@ impl ElementCx<'_, '_> {
         let mut external: Option<std::sync::Arc<[u8]>> = None;
         let (target, id, user_space) = match local_reference(dom, url) {
             Some(target) => {
-                let Some(node) = dom.get_node(target).filter(|node| is_svg_element(node, "mask")) else {
+                // (One in contents `content-visibility: hidden` skips is no mask: not rendered, CSS
+                // Contain 2 § 4.1; the layer is then transparent black.)
+                let Some(node) = dom
+                    .get_node(target)
+                    .filter(|node| is_svg_element(node, "mask") && !dom.skipped_by_content_visibility(target))
+                else {
                     return false;
                 };
                 if reference_cycle(dom, target) {

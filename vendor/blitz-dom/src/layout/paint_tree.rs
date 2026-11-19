@@ -1572,7 +1572,7 @@ impl BaseDocument {
     /// pyro: whether an ancestor of `id` skips its contents with `content-visibility: hidden`
     /// (CSS Contain 2 § 4.1: a skipped element is not rendered, in the top layer neither; as
     /// `layout::construct`, on an element containment applies to).
-    fn skipped_by_content_visibility(&self, id: NodeId) -> bool {
+    pub fn skipped_by_content_visibility(&self, id: NodeId) -> bool {
         use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
         let mut current = self.nodes.get(id).and_then(|node| node.parent);
         while let Some(ancestor) = current {

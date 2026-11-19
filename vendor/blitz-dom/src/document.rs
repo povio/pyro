@@ -3547,7 +3547,10 @@ impl BaseDocument {
                         "filter" | "clipPath" | "mask" | "linearGradient" | "radialGradient" | "pattern" | "marker"
                     )
             });
-            if !resource {
+            // pyro: nor one in contents `content-visibility: hidden` skips (CSS Contain 2 § 4.1:
+            // not rendered, its resources neither; WPT css-contain
+            // `content-visibility/content-visibility-svg-gradient`).
+            if !resource || self.skipped_by_content_visibility(node.id) {
                 continue;
             }
             let source = node.svg_source();

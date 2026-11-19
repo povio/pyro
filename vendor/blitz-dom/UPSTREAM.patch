@@ -4008,7 +4008,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +3413,153 @@
+@@ -2147,12 +3413,156 @@
          self.mousedown_node_id
      }
  
@@ -4146,7 +4146,10 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +                        "filter" | "clipPath" | "mask" | "linearGradient" | "radialGradient" | "pattern" | "marker"
 +                    )
 +            });
-+            if !resource {
++            // pyro: nor one in contents `content-visibility: hidden` skips (CSS Contain 2 § 4.1:
++            // not rendered, its resources neither; WPT css-contain
++            // `content-visibility/content-visibility-svg-gradient`).
++            if !resource || self.skipped_by_content_visibility(node.id) {
 +                continue;
 +            }
 +            let source = node.svg_source();
@@ -4162,7 +4165,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +3595,12 @@
+@@ -2188,6 +3598,12 @@
          self.viewport.clone()
      }
  
@@ -4175,7 +4178,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3661,89 @@
+@@ -2248,6 +3664,89 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4265,7 +4268,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3760,12 @@
+@@ -2264,12 +3763,12 @@
              return;
          }
  
@@ -4283,7 +4286,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2317,6 +3813,15 @@
+@@ -2317,6 +3816,15 @@
          let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
          let styles_use_viewport_units = old_device.used_viewport_size();
  
@@ -4299,7 +4302,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +3965,19 @@
+@@ -2460,10 +3968,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4319,7 +4322,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4134,35 @@
+@@ -2620,6 +4137,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4355,7 +4358,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4186,22 @@
+@@ -2643,12 +4189,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4383,7 +4386,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4230,7 @@
+@@ -2677,7 +4233,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4392,7 +4395,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4388,10 @@
+@@ -2835,6 +4391,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4403,7 +4406,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5339,7 @@
+@@ -3782,6 +5342,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4411,7 +4414,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5362,52 @@
+@@ -3804,6 +5365,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4464,7 +4467,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5450,121 @@
+@@ -3846,3 +5453,121 @@
          assert!(doc.has_changes());
      }
  }
@@ -25173,7 +25176,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +    /// pyro: whether an ancestor of `id` skips its contents with `content-visibility: hidden`
 +    /// (CSS Contain 2 § 4.1: a skipped element is not rendered, in the top layer neither; as
 +    /// `layout::construct`, on an element containment applies to).
-+    fn skipped_by_content_visibility(&self, id: NodeId) -> bool {
++    pub fn skipped_by_content_visibility(&self, id: NodeId) -> bool {
 +        use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
 +        let mut current = self.nodes.get(id).and_then(|node| node.parent);
 +        while let Some(ancestor) = current {
