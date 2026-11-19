@@ -527,6 +527,7 @@ impl BaseDocument {
                 context.cb_border = [0.0; 4];
                 context.cb_padding = [0.0; 4];
                 context.cb_radii = Default::default();
+                context.cb_corner_exponents = [2.0; 4];
             }
             let refresh = context.gives() || node.flags.contains(NodeFlags::GIVES_3D_CONTEXT);
             node.flags.set(NodeFlags::GIVES_3D_CONTEXT, context.gives());
@@ -1643,6 +1644,7 @@ impl ContainingTransform {
                     cb_border: self.context.cb_border,
                     cb_padding: self.context.cb_padding,
                     cb_radii: self.context.cb_radii,
+                    cb_corner_exponents: self.context.cb_corner_exponents,
                     ..Default::default()
                 },
                 ..*self

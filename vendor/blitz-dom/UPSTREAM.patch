@@ -36159,7 +36159,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  use super::{Attribute, DocumentData, ElementData, LayoutData};
  
  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-@@ -60,9 +60,301 @@
+@@ -60,9 +60,303 @@
          const IS_IN_DOCUMENT = 0b00000100;
          /// Whether the node is an inline box whose in-flow content is block-level only
          const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
@@ -36304,6 +36304,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    pub cb_border: [f64; 4],
 +    pub cb_padding: [f64; 4],
 +    pub cb_radii: [kurbo::Vec2; 4],
++    /// pyro: its corners' superellipse exponents (`corner-shape`), as `MotionContainingBlock` has them.
++    pub cb_corner_exponents: [f64; 4],
 +}
 +
 +/// pyro: a 3D rendering context as an element of it gives it to its children
@@ -36461,7 +36463,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  impl NodeFlags {
      #[inline(always)]
      pub fn is_inline_root(&self) -> bool {
-@@ -84,6 +376,7 @@
+@@ -84,6 +378,7 @@
          self.remove(Self::IS_INLINE_ROOT);
          self.remove(Self::IS_TABLE_ROOT);
          self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
@@ -36469,7 +36471,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -101,6 +394,11 @@
+@@ -101,6 +396,11 @@
      pub layout_parent: Cell<Option<NodeId>>,
      /// A separate child list that includes anonymous collections of inline elements
      pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
@@ -36481,7 +36483,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
      /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
      /// `Layout.location` of these boxes is relative to this node's border box.
-@@ -239,19 +537,6 @@
+@@ -239,19 +539,6 @@
          }
      }
  
@@ -36501,7 +36503,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn cache(&self) -> &Cache {
          &self.layout_data().cache
-@@ -267,9 +552,23 @@
+@@ -267,9 +554,23 @@
          &self.layout_data().unrounded_layout
      }
  
@@ -36528,7 +36530,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      #[inline]
-@@ -292,6 +591,21 @@
+@@ -292,6 +593,21 @@
          &mut self.layout_data_mut().scroll_offset
      }
  
@@ -36550,7 +36552,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn scrollable_overflow(&self) -> &KurboRect {
          &self.layout_data().scrollable_overflow
-@@ -302,6 +616,17 @@
+@@ -302,6 +618,17 @@
          &mut self.layout_data_mut().scrollable_overflow
      }
  
@@ -36568,7 +36570,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Style data from stylo, if this node kind carries it (element or document
      /// nodes). Returns `None` for text/comment nodes.
      #[inline]
-@@ -417,6 +742,7 @@
+@@ -417,6 +744,7 @@
              parent: None,
              children: ThinVec::new(),
              layout_parent: Cell::new(None),
@@ -36576,7 +36578,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              oof_containing_block: Cell::new(None),
              layout_children: RefCell::new(None),
              hoisted_children: RefCell::new(ThinVec::new()),
-@@ -425,30 +751,459 @@
+@@ -425,30 +753,467 @@
              stacking_context: None,
              sc_contribution_cache: RefCell::new(ThinVec::new()),
  
@@ -36756,6 +36758,13 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                r(&b.border_bottom_right_radius),
 +                r(&b.border_bottom_left_radius),
 +            ];
++            let exponent = |k: f32| if k.is_nan() { 2.0 } else { 2f64.powf(f64::from(k).clamp(-20.0, 20.0)) };
++            context.cb_corner_exponents = [
++                exponent(b.corner_top_left_shape.k),
++                exponent(b.corner_top_right_shape.k),
++                exponent(b.corner_bottom_right_shape.k),
++                exponent(b.corner_bottom_left_shape.k),
++            ];
 +        }
 +        let box_styles = s.get_box();
 +        // pyro: an anonymous box (a table wrapper, row group or row around a cell) passes on the
@@ -36807,6 +36816,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                    border: parent.cb_border,
 +                    padding: parent.cb_padding,
 +                    radii: parent.cb_radii,
++                    corner_exponents: parent.cb_corner_exponents,
 +                });
 +            let previous = crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.replace(motion));
 +            let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
@@ -37052,7 +37062,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          let slot = self.transform_mut();
          match (slot.as_deref_mut(), transform) {
-@@ -456,7 +1211,7 @@
+@@ -456,7 +1221,7 @@
              (None, Some(new)) => *slot = Some(Box::new(new)),
              (_, None) => *slot = None,
          }
@@ -37061,7 +37071,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
-@@ -483,13 +1238,47 @@
+@@ -483,13 +1248,47 @@
          Some(
              if self.element_data().is_some_and(|el| el.is_button_input()) {
                  stylo_taffy::convert::button_input_display(display)
@@ -37109,7 +37119,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let style = self.primary_styles();
          let style = style.as_ref();
  
-@@ -514,14 +1303,35 @@
+@@ -514,14 +1313,35 @@
          }
          let display = self.display_style().unwrap_or(StyloDisplay::inline());
          match display.outside() {
@@ -37149,7 +37159,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  } else {
                      false
                  }
-@@ -537,6 +1347,26 @@
+@@ -537,6 +1357,26 @@
              .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
      }
  
@@ -37176,7 +37186,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_whitespace_node(&self) -> bool {
          match &self.data {
              NodeData::Text(data) => data.content.chars().all(|c| c.is_ascii_whitespace()),
-@@ -633,6 +1463,56 @@
+@@ -633,6 +1473,56 @@
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
@@ -37233,7 +37243,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Clears the damaged_descendants flag on this node.
      pub fn unset_damaged_descendants(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
-@@ -649,6 +1529,8 @@
+@@ -649,6 +1539,8 @@
      pub fn mark_damaged(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
              if flag.swap(true, Ordering::Relaxed) {
@@ -37242,7 +37252,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return;
              }
          }
-@@ -659,6 +1541,8 @@
+@@ -659,6 +1551,8 @@
              // because all further ancestors must also have it set
              if let Some(flag) = parent.damaged_descendants_flag() {
                  if flag.swap(true, Ordering::Relaxed) {
@@ -37251,7 +37261,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      break;
                  }
              }
-@@ -666,6 +1550,55 @@
+@@ -666,6 +1560,55 @@
          }
      }
  
@@ -37307,7 +37317,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      // pub fn damage_mut(&mut self) -> Option<&mut RestyleDamage> {
      //     self.stylo_element_data
      //         .get_mut()
-@@ -761,8 +1694,8 @@
+@@ -761,8 +1704,8 @@
  
      pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
          if let Some(data) = self.element_data_mut() {
@@ -37318,7 +37328,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,9 +1797,13 @@
+@@ -864,9 +1807,13 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -37334,7 +37344,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
                  return y_offset as f64;
              }
-@@ -965,11 +1902,14 @@
+@@ -965,11 +1912,14 @@
  pub struct TextNodeData {
      /// The textual content of the text node
      pub content: String,
@@ -37350,7 +37360,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -1061,6 +2001,11 @@
+@@ -1061,6 +2011,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -37362,7 +37372,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,13 +2106,24 @@
+@@ -1161,13 +2116,24 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -37389,7 +37399,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1175,23 +2131,117 @@
+@@ -1175,23 +2141,117 @@
              if el.is_button_input() {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
              }
@@ -37509,7 +37519,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,6 +2284,19 @@
+@@ -1234,6 +2294,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -37529,7 +37539,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2353,7 @@
+@@ -1290,7 +2363,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -37538,7 +37548,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2390,47 @@
+@@ -1327,8 +2400,47 @@
              .unwrap_or(0)
      }
  
@@ -37587,7 +37597,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1358,10 +2460,37 @@
+@@ -1358,10 +2470,37 @@
              return true;
          }
  
@@ -37625,7 +37635,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2498,48 @@
+@@ -1369,7 +2508,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -37675,7 +37685,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2567,14 @@
+@@ -1397,12 +2577,14 @@
              return true;
          }
  
@@ -37696,7 +37706,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1435,6 +2607,16 @@
+@@ -1435,6 +2617,16 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -37713,7 +37723,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2682,15 @@
+@@ -1500,11 +2692,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -37729,7 +37739,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2719,7 @@
+@@ -1533,6 +2729,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -37737,7 +37747,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2746,7 @@
+@@ -1559,7 +2756,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -37746,7 +37756,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2761,18 @@
+@@ -1574,12 +2771,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -37767,7 +37777,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2783,7 @@
+@@ -1590,7 +2793,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -37776,7 +37786,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2798,7 @@
+@@ -1605,7 +2808,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -37785,7 +37795,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2909,7 @@
+@@ -1716,7 +2919,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -37794,7 +37804,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2934,13 @@
+@@ -1741,8 +2944,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -37809,7 +37819,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3016,28 @@
+@@ -1818,8 +3026,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -37840,7 +37850,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3095,36 @@
+@@ -1877,11 +3105,36 @@
                  }
              }
  
@@ -42467,7 +42477,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
                  // Set viewport
                  // viewport_mut handles change detection. So we just unconditionally set the values;
-@@ -154,57 +303,269 @@
+@@ -154,57 +303,270 @@
                  sub_viewport.color_scheme = self.viewport.color_scheme;
  
                  let viewport_scale = self.viewport.scale();
@@ -42715,6 +42725,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                context.cb_border = [0.0; 4];
 +                context.cb_padding = [0.0; 4];
 +                context.cb_radii = Default::default();
++                context.cb_corner_exponents = [2.0; 4];
 +            }
 +            let refresh = context.gives() || node.flags.contains(NodeFlags::GIVES_3D_CONTEXT);
 +            node.flags.set(NodeFlags::GIVES_3D_CONTEXT, context.gives());
@@ -42762,7 +42773,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              for &child_id in children {
                  // Out-of-flow children are laid out relative to their containing
                  // block, not their DOM parent: they are visited (and their overflow
-@@ -212,18 +573,34 @@
+@@ -212,18 +574,34 @@
                  if self.nodes[child_id].is_out_of_flow() {
                      continue;
                  }
@@ -42803,7 +42814,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +608,409 @@
+@@ -231,28 +609,409 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -43221,7 +43232,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -264,6 +1022,43 @@
+@@ -264,6 +1023,43 @@
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
@@ -43265,7 +43276,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +1072,35 @@
+@@ -277,20 +1073,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -43308,7 +43319,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +1110,33 @@
+@@ -300,16 +1111,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -43346,7 +43357,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -320,10 +1147,45 @@
+@@ -320,10 +1148,45 @@
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              }
  
@@ -43392,7 +43403,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +1220,32 @@
+@@ -358,6 +1221,32 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -43425,7 +43436,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +1255,9 @@
+@@ -367,9 +1256,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -43438,7 +43449,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +1274,14 @@
+@@ -386,7 +1275,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -43454,7 +43465,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +1290,13 @@
+@@ -395,18 +1291,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -43474,7 +43485,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +1309,7 @@
+@@ -419,10 +1310,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -43486,7 +43497,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,6 +1317,33 @@
+@@ -430,6 +1318,33 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -43520,7 +43531,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1351,797 @@
+@@ -437,32 +1352,798 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -43821,6 +43832,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                    cb_border: self.context.cb_border,
 +                    cb_padding: self.context.cb_padding,
 +                    cb_radii: self.context.cb_radii,
++                    cb_corner_exponents: self.context.cb_corner_exponents,
 +                    ..Default::default()
 +                },
 +                ..*self
@@ -48683,7 +48695,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
      });
  
      let mut resolved = Affine::IDENTITY;
-@@ -115,15 +157,911 @@
+@@ -115,15 +157,967 @@
          resolved *= Affine::scale_non_uniform(scale_transform.x, scale_transform.y)
      }
  
@@ -48825,6 +48837,8 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +    pub padding: [f64; 4],
 +    /// Its border radii (top-left, top-right, bottom-right, bottom-left), resolved.
 +    pub radii: [kurbo::Vec2; 4],
++    /// pyro: the superellipse exponents of its corners (`corner-shape`, 2 for `round`), in that order.
++    pub corner_exponents: [f64; 4],
 +}
 +
 +thread_local! {
@@ -49137,20 +49151,35 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +        shrink(cb.radii[2], r, b),
 +        shrink(cb.radii[3], l, b),
 +    ];
-+    let path = rounded_rect_path(frame.area, radii);
++    // pyro: with its corners' shapes (`corner-shape`; WPT css-borders
++    // `corner-shape-offset-path-coord-box-*`).
++    let path = shaped_rect_path(frame.area, radii, cb.corner_exponents);
 +    let (point, direction) = point_along(&path, &box_styles.offset_distance)?;
 +    let rotate = &box_styles.offset_rotate;
 +    let mut angle = rotate.angle.radians64();
 +    if rotate.auto {
-+        angle += direction;
++        // pyro: a direction within 1e-9 of a quarter turn is that (a corner's polyline leaves
++        // rounding noise on an edge's direction, which turned the box by a hair).
++        let quarter = std::f64::consts::FRAC_PI_2;
++        let snapped = (direction / quarter).round() * quarter;
++        angle += if (direction - snapped).abs() < 1e-9 { snapped } else { direction };
 +    }
-+    Some(frame.place(point, angle))
++    // (A corner's polyline leaves rounding noise on the point: `snap`.)
++    Some(snap(frame.place(point, angle)))
 +}
 +
 +/// pyro: a rectangle with elliptical corners (top-left, top-right, bottom-right, bottom-left) as a path that starts at the
 +/// top edge after the top-left corner and runs clockwise; radii that do not fit are scaled down
 +/// together (CSS Backgrounds § 5.5).
 +pub(crate) fn rounded_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4]) -> kurbo::BezPath {
++    shaped_rect_path(rect, radii, [2.0; 4])
++}
++
++/// pyro: [`rounded_rect_path`] with each corner (top-left, top-right, bottom-right, bottom-left) a
++/// superellipse of its exponent (`corner-shape`, CSS Borders 4: 2 an ellipse, 1 a bevel, a larger
++/// one squarer; below 1 the convex corner of the inverse exponent mirrored through its chord's
++/// middle, as a scoop is a round corner's mirror), drawn as a polyline unless it is round.
++pub(crate) fn shaped_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4], exponents: [f64; 4]) -> kurbo::BezPath {
 +    use kurbo::{Arc, Point, Vec2};
 +    let (w, h) = (rect.width().max(0.0), rect.height().max(0.0));
 +    let [tl, tr, br, bl] = radii.map(|r| Vec2::new(r.x.max(0.0), r.y.max(0.0)));
@@ -49162,24 +49191,63 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +    }
 +    let [tl, tr, br, bl] = [tl * f, tr * f, br * f, bl * f];
 +    let mut path = kurbo::BezPath::new();
-+    let corner = |path: &mut kurbo::BezPath, center: Point, radii: Vec2, start: f64| {
-+        if radii.x > 0.0 && radii.y > 0.0 {
++    let corner = |path: &mut kurbo::BezPath, center: Point, radii: Vec2, start: f64, exponent: f64| {
++        if !(radii.x > 0.0 && radii.y > 0.0) {
++            return;
++        }
++        if (exponent - 2.0).abs() < 1e-9 || !exponent.is_finite() || exponent <= 0.0 {
 +            let arc = Arc::new(center, radii, start, std::f64::consts::FRAC_PI_2, 0.0);
 +            for el in arc.append_iter(0.01) {
 +                path.push(el);
 +            }
++            return;
++        }
++        let convex = if exponent < 1.0 { 1.0 / exponent } else { exponent };
++        let at = |angle: f64| {
++            let (sin, cos) = angle.sin_cos();
++            // (A quarter turn's cosine is 6e-17, not 0: with a notch's huge exponent its power
++            // would be 1.)
++            let p = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v.signum() * v.abs().powf(2.0 / convex) };
++            center + Vec2::new(radii.x * p(cos), radii.y * p(sin))
++        };
++        let (from, to) = (at(start), at(start + std::f64::consts::FRAC_PI_2));
++        // A square corner (`square`) goes through the outer corner, a notch through the center:
++        // two straight legs, exactly.
++        // A bevel: one straight segment.
++        if (exponent - 1.0).abs() < 1e-9 {
++            path.line_to(to);
++            return;
++        }
++        if convex >= 1000.0 {
++            let outer = (from.to_vec2() + to.to_vec2() - center.to_vec2()).to_point();
++            path.line_to(if exponent < 1.0 { center } else { outer });
++            path.line_to(to);
++            return;
++        }
++        const STEPS: usize = 64;
++        for i in 1..=STEPS {
++            let step = |i: usize| at(start + std::f64::consts::FRAC_PI_2 * i as f64 / STEPS as f64);
++            // A concave corner: the convex one mirrored through its chord's middle (which takes
++            // its start to its end: walked from the other end).
++            let point = if exponent < 1.0 {
++                (from.to_vec2() + to.to_vec2() - step(STEPS - i).to_vec2()).to_point()
++            } else {
++                step(i)
++            };
++            path.line_to(point);
 +        }
 +    };
 +    use std::f64::consts::{FRAC_PI_2, PI};
 +    path.move_to((rect.x0 + tl.x, rect.y0));
 +    path.line_to((rect.x1 - tr.x, rect.y0));
-+    corner(&mut path, Point::new(rect.x1 - tr.x, rect.y0 + tr.y), tr, -FRAC_PI_2);
++    let [e_tl, e_tr, e_br, e_bl] = exponents;
++    corner(&mut path, Point::new(rect.x1 - tr.x, rect.y0 + tr.y), tr, -FRAC_PI_2, e_tr);
 +    path.line_to((rect.x1, rect.y1 - br.y));
-+    corner(&mut path, Point::new(rect.x1 - br.x, rect.y1 - br.y), br, 0.0);
++    corner(&mut path, Point::new(rect.x1 - br.x, rect.y1 - br.y), br, 0.0, e_br);
 +    path.line_to((rect.x0 + bl.x, rect.y1));
-+    corner(&mut path, Point::new(rect.x0 + bl.x, rect.y1 - bl.y), bl, FRAC_PI_2);
++    corner(&mut path, Point::new(rect.x0 + bl.x, rect.y1 - bl.y), bl, FRAC_PI_2, e_bl);
 +    path.line_to((rect.x0, rect.y0 + tl.y));
-+    corner(&mut path, Point::new(rect.x0 + tl.x, rect.y0 + tl.y), tl, PI);
++    corner(&mut path, Point::new(rect.x0 + tl.x, rect.y0 + tl.y), tl, PI, e_tl);
 +    path.close_path();
 +    path
 +}

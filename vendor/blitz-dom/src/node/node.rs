@@ -201,6 +201,8 @@ pub struct TransformContext {
     pub cb_border: [f64; 4],
     pub cb_padding: [f64; 4],
     pub cb_radii: [kurbo::Vec2; 4],
+    /// pyro: its corners' superellipse exponents (`corner-shape`), as `MotionContainingBlock` has them.
+    pub cb_corner_exponents: [f64; 4],
 }
 
 /// pyro: a 3D rendering context as an element of it gives it to its children
@@ -918,6 +920,13 @@ impl Node {
                 r(&b.border_bottom_right_radius),
                 r(&b.border_bottom_left_radius),
             ];
+            let exponent = |k: f32| if k.is_nan() { 2.0 } else { 2f64.powf(f64::from(k).clamp(-20.0, 20.0)) };
+            context.cb_corner_exponents = [
+                exponent(b.corner_top_left_shape.k),
+                exponent(b.corner_top_right_shape.k),
+                exponent(b.corner_bottom_right_shape.k),
+                exponent(b.corner_bottom_left_shape.k),
+            ];
         }
         let box_styles = s.get_box();
         // pyro: an anonymous box (a table wrapper, row group or row around a cell) passes on the
@@ -969,6 +978,7 @@ impl Node {
                     border: parent.cb_border,
                     padding: parent.cb_padding,
                     radii: parent.cb_radii,
+                    corner_exponents: parent.cb_corner_exponents,
                 });
             let previous = crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.replace(motion));
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);

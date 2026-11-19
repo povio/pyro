@@ -291,6 +291,8 @@ pub struct MotionContainingBlock {
     pub padding: [f64; 4],
     /// Its border radii (top-left, top-right, bottom-right, bottom-left), resolved.
     pub radii: [kurbo::Vec2; 4],
+    /// pyro: the superellipse exponents of its corners (`corner-shape`, 2 for `round`), in that order.
+    pub corner_exponents: [f64; 4],
 }
 
 thread_local! {
@@ -603,20 +605,35 @@ fn coord_box_transform(
         shrink(cb.radii[2], r, b),
         shrink(cb.radii[3], l, b),
     ];
-    let path = rounded_rect_path(frame.area, radii);
+    // pyro: with its corners' shapes (`corner-shape`; WPT css-borders
+    // `corner-shape-offset-path-coord-box-*`).
+    let path = shaped_rect_path(frame.area, radii, cb.corner_exponents);
     let (point, direction) = point_along(&path, &box_styles.offset_distance)?;
     let rotate = &box_styles.offset_rotate;
     let mut angle = rotate.angle.radians64();
     if rotate.auto {
-        angle += direction;
+        // pyro: a direction within 1e-9 of a quarter turn is that (a corner's polyline leaves
+        // rounding noise on an edge's direction, which turned the box by a hair).
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let snapped = (direction / quarter).round() * quarter;
+        angle += if (direction - snapped).abs() < 1e-9 { snapped } else { direction };
     }
-    Some(frame.place(point, angle))
+    // (A corner's polyline leaves rounding noise on the point: `snap`.)
+    Some(snap(frame.place(point, angle)))
 }
 
 /// pyro: a rectangle with elliptical corners (top-left, top-right, bottom-right, bottom-left) as a path that starts at the
 /// top edge after the top-left corner and runs clockwise; radii that do not fit are scaled down
 /// together (CSS Backgrounds § 5.5).
 pub(crate) fn rounded_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4]) -> kurbo::BezPath {
+    shaped_rect_path(rect, radii, [2.0; 4])
+}
+
+/// pyro: [`rounded_rect_path`] with each corner (top-left, top-right, bottom-right, bottom-left) a
+/// superellipse of its exponent (`corner-shape`, CSS Borders 4: 2 an ellipse, 1 a bevel, a larger
+/// one squarer; below 1 the convex corner of the inverse exponent mirrored through its chord's
+/// middle, as a scoop is a round corner's mirror), drawn as a polyline unless it is round.
+pub(crate) fn shaped_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4], exponents: [f64; 4]) -> kurbo::BezPath {
     use kurbo::{Arc, Point, Vec2};
     let (w, h) = (rect.width().max(0.0), rect.height().max(0.0));
     let [tl, tr, br, bl] = radii.map(|r| Vec2::new(r.x.max(0.0), r.y.max(0.0)));
@@ -628,24 +645,63 @@ pub(crate) fn rounded_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4]) -> k
     }
     let [tl, tr, br, bl] = [tl * f, tr * f, br * f, bl * f];
     let mut path = kurbo::BezPath::new();
-    let corner = |path: &mut kurbo::BezPath, center: Point, radii: Vec2, start: f64| {
-        if radii.x > 0.0 && radii.y > 0.0 {
+    let corner = |path: &mut kurbo::BezPath, center: Point, radii: Vec2, start: f64, exponent: f64| {
+        if !(radii.x > 0.0 && radii.y > 0.0) {
+            return;
+        }
+        if (exponent - 2.0).abs() < 1e-9 || !exponent.is_finite() || exponent <= 0.0 {
             let arc = Arc::new(center, radii, start, std::f64::consts::FRAC_PI_2, 0.0);
             for el in arc.append_iter(0.01) {
                 path.push(el);
             }
+            return;
+        }
+        let convex = if exponent < 1.0 { 1.0 / exponent } else { exponent };
+        let at = |angle: f64| {
+            let (sin, cos) = angle.sin_cos();
+            // (A quarter turn's cosine is 6e-17, not 0: with a notch's huge exponent its power
+            // would be 1.)
+            let p = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v.signum() * v.abs().powf(2.0 / convex) };
+            center + Vec2::new(radii.x * p(cos), radii.y * p(sin))
+        };
+        let (from, to) = (at(start), at(start + std::f64::consts::FRAC_PI_2));
+        // A square corner (`square`) goes through the outer corner, a notch through the center:
+        // two straight legs, exactly.
+        // A bevel: one straight segment.
+        if (exponent - 1.0).abs() < 1e-9 {
+            path.line_to(to);
+            return;
+        }
+        if convex >= 1000.0 {
+            let outer = (from.to_vec2() + to.to_vec2() - center.to_vec2()).to_point();
+            path.line_to(if exponent < 1.0 { center } else { outer });
+            path.line_to(to);
+            return;
+        }
+        const STEPS: usize = 64;
+        for i in 1..=STEPS {
+            let step = |i: usize| at(start + std::f64::consts::FRAC_PI_2 * i as f64 / STEPS as f64);
+            // A concave corner: the convex one mirrored through its chord's middle (which takes
+            // its start to its end: walked from the other end).
+            let point = if exponent < 1.0 {
+                (from.to_vec2() + to.to_vec2() - step(STEPS - i).to_vec2()).to_point()
+            } else {
+                step(i)
+            };
+            path.line_to(point);
         }
     };
     use std::f64::consts::{FRAC_PI_2, PI};
     path.move_to((rect.x0 + tl.x, rect.y0));
     path.line_to((rect.x1 - tr.x, rect.y0));
-    corner(&mut path, Point::new(rect.x1 - tr.x, rect.y0 + tr.y), tr, -FRAC_PI_2);
+    let [e_tl, e_tr, e_br, e_bl] = exponents;
+    corner(&mut path, Point::new(rect.x1 - tr.x, rect.y0 + tr.y), tr, -FRAC_PI_2, e_tr);
     path.line_to((rect.x1, rect.y1 - br.y));
-    corner(&mut path, Point::new(rect.x1 - br.x, rect.y1 - br.y), br, 0.0);
+    corner(&mut path, Point::new(rect.x1 - br.x, rect.y1 - br.y), br, 0.0, e_br);
     path.line_to((rect.x0 + bl.x, rect.y1));
-    corner(&mut path, Point::new(rect.x0 + bl.x, rect.y1 - bl.y), bl, FRAC_PI_2);
+    corner(&mut path, Point::new(rect.x0 + bl.x, rect.y1 - bl.y), bl, FRAC_PI_2, e_bl);
     path.line_to((rect.x0, rect.y0 + tl.y));
-    corner(&mut path, Point::new(rect.x0 + tl.x, rect.y0 + tl.y), tl, PI);
+    corner(&mut path, Point::new(rect.x0 + tl.x, rect.y0 + tl.y), tl, PI, e_tl);
     path.close_path();
     path
 }
