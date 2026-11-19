@@ -1149,3 +1149,11 @@ text split by position, not by the box's edge. Covered by `crates/pyro-render/te
 - Round 4 lane S4, `render/border.rs` `draw_outline`: a negative `outline-offset` pulls the outline in no further than
   to the middle of the box in each axis apart (it was clamped by the smaller half in both). WPT css-ui `outline-014`,
   `-015`, `negative-outline-offset`. `pyro-render/tests/outline_offset_clamp.rs`.
+
+- Round 5, `src/render.rs` (`register_negative_inline_spans`): a positioned inline box with a negative `z-index`
+  listed in its own inline root's stacking context is painted in the negative layer, before the root's inline content.
+  The root left such a box to its paint-tree entry while painting its inline content, so the entry (already past) found
+  nothing and the text was never painted. The root now says where it is before its negative layer is painted. One
+  whose stacking context is further up is still not painted (it would need the root's transform before the root
+  paints). WPT css-contain `contain-layout-016`, `contain-paint-020`; test
+  `a_negative_z_index_inline_box_paints_over_its_stacking_contexts_background` (pyro-render).

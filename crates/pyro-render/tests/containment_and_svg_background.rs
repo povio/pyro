@@ -112,3 +112,21 @@ fn layout_and_paint_containment_make_a_stacking_context() {
         matches(&test, "<div style='width:40px;height:40px;background:#00a000'></div>", "<div style='width:40px;height:40px;background:#f00'></div>");
     }
 }
+
+/// A relatively positioned inline box with a negative `z-index` whose block is its stacking
+/// context paints over that block's background (CSS 2.1 Appendix E step 3), as in WPT css-contain
+/// `contain-layout-016` and `contain-paint-020`. Its text was never painted: its entry in the
+/// negative layer came before the inline root had left it its place.
+#[test]
+fn a_negative_z_index_inline_box_paints_over_its_stacking_contexts_background() {
+    for context in ["contain:layout", "contain:paint", "position:relative;z-index:0", "isolation:isolate"] {
+        let test = format!(
+            "<div style='{context};background:#fff;font:20px/1 monospace'><span style='position:relative;z-index:-1'>PASS</span></div>"
+        );
+        matches(
+            &test,
+            "<div style='background:#fff;font:20px/1 monospace'><span>PASS</span></div>",
+            "<div style='background:#fff;font:20px/1 monospace'></div>",
+        );
+    }
+}
