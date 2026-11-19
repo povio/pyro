@@ -176,9 +176,9 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
         eval(r, "[document.execCommand('insertText', false, 'a'), document.execCommand('bold'), log.length].join()"),
         "false,false,0"
     );
-    // The input's caret starts at the end of its value; execCommand types there.
-    assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'a') + ':' + i.value"), "true:xa");
-    assert_eq!(eval(r, "ta.focus(); document.execCommand('InsertText', false, 'b') + ':' + ta.value"), "true:yb");
+    // A fresh control's caret starts at the start of its value (as in Chromium); execCommand types there.
+    assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'a') + ':' + i.value"), "true:ax");
+    assert_eq!(eval(r, "ta.focus(); document.execCommand('InsertText', false, 'b') + ':' + ta.value"), "true:by");
     assert_eq!(eval(r, "ce.focus(); document.execCommand('insertText', false, 'c') + ':' + ce.textContent"), "true:c");
     assert_eq!(
         eval(r, "log.join(' ')"),

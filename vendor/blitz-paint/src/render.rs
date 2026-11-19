@@ -4285,6 +4285,8 @@ impl ElementCx<'_, '_> {
                         // (The bar's left edge is the caret position.)
                         let x = rect.x0;
                         let (x0, x1) = if rtl { (x - width, x) } else { (x, x + width) };
+                        // (At whole device pixels, as a highlight's edges are.)
+                        let (x0, x1) = (x0.round(), x1.round());
                         rect = match shape {
                             CaretShape::Block => Rect::new(x0, rect.y0, x1, rect.y1),
                             _ => {

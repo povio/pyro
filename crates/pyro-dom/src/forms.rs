@@ -1021,8 +1021,9 @@ impl Dom {
         let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
         Ok(match &e.control {
             Some(c) if c.selection_set => (c.selection.0.min(len), c.selection.1.min(len)),
-            // A fresh control has its cursor at the end of the default value.
-            _ => (len, len),
+            // A fresh control has its cursor at the start of its value (as in Chromium and
+            // Gecko; a value set by script moves it to the end: HTML § 4.10.5.4 "value" mode).
+            _ => (0, 0),
         })
     }
     pub fn set_selection_range(&mut self, id: NodeId, start: u32, end: u32) -> DomResult<()> {
