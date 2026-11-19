@@ -22,14 +22,59 @@ const FINE: f64 = 0.02;
 
 /// pyro: `path` under `transform` for vello_cpu: a path with curves in device space, flattened to
 /// [`FINE`], with the identity left to apply; a path of lines only as it is, under `transform`.
-fn device_path(path: BezPath, transform: Affine) -> (BezPath, Affine) {
+/// Only a path that lies near the raster (`bounds`, device px) is flattened here: flattening the
+/// whole of one reaching far past it (a huge ellipse of which an arc shows) would cost what is out
+/// of view; such a path is left to vello_cpu, which culls what lies outside as it flattens.
+fn device_path(path: BezPath, transform: Affine, bounds: Rect) -> (BezPath, Affine) {
     use kurbo::PathEl;
     if !path.elements().iter().any(|el| matches!(el, PathEl::QuadTo(..) | PathEl::CurveTo(..))) {
+        return (path, transform);
+    }
+    if !near_raster(transform.transform_rect_bbox(curves_bbox(&path)), bounds) {
         return (path, transform);
     }
     let mut out = BezPath::new();
     kurbo::flatten(transform * path, FINE, |el| out.push(el));
     (out, Affine::IDENTITY)
+}
+
+/// pyro: the bounding box of `path`'s curved segments (their ends and control points): what
+/// flattening costs work for (its lines cost none: a huge rectangle around an oval that cuts a
+/// shadow is no reason to leave the oval coarse).
+fn curves_bbox(path: &BezPath) -> Rect {
+    use kurbo::PathEl;
+    let mut bbox: Option<Rect> = None;
+    let mut last = kurbo::Point::ZERO;
+    let mut add = |p: kurbo::Point, bbox: &mut Option<Rect>| {
+        *bbox = Some(bbox.map_or(Rect::from_points(p, p), |b| b.union_pt(p)));
+    };
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) | PathEl::LineTo(p) => last = p,
+            PathEl::QuadTo(a, p) => {
+                for q in [last, a, p] {
+                    add(q, &mut bbox);
+                }
+                last = p;
+            }
+            PathEl::CurveTo(a, b, p) => {
+                for q in [last, a, b, p] {
+                    add(q, &mut bbox);
+                }
+                last = p;
+            }
+            PathEl::ClosePath => {}
+        }
+    }
+    bbox.unwrap_or(Rect::ZERO)
+}
+
+/// pyro: whether `bbox` (device px) lies within the raster `bounds` grown by their own size on
+/// every side: the work of flattening what lies there at [`FINE`] is bounded by the raster's size.
+fn near_raster(bbox: Rect, bounds: Rect) -> bool {
+    let margin = bounds.width().max(bounds.height()).max(1.0);
+    let near = bounds.inflate(margin, margin);
+    bbox.is_finite() && bbox.x0 >= near.x0 && bbox.y0 >= near.y0 && bbox.x1 <= near.x1 && bbox.y1 <= near.y1
 }
 
 pub struct VelloCpuScenePainter {
@@ -143,6 +188,13 @@ pub(crate) enum Pushed {
     Nothing,
 }
 
+impl VelloCpuScenePainter {
+    /// pyro: the raster's bounds, device px.
+    fn raster_bounds(&self) -> Rect {
+        Rect::new(0.0, 0.0, f64::from(self.render_ctx.width()), f64::from(self.render_ctx.height()))
+    }
+}
+
 impl RenderContext for VelloCpuScenePainter {}
 impl PaintScene for VelloCpuScenePainter {
     fn reset(&mut self) {
@@ -162,7 +214,7 @@ impl PaintScene for VelloCpuScenePainter {
     ) {
         // pyro: a layer's filter is applied by `append_scene` (see `crate::filters`); a layer
         // pushed here directly is drawn unfiltered, as vello_cpu cannot filter on worker threads.
-        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform);
+        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx.push_layer(
@@ -176,7 +228,7 @@ impl PaintScene for VelloCpuScenePainter {
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform);
+        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx.push_clip_layer(&clip);
@@ -204,7 +256,13 @@ impl PaintScene for VelloCpuScenePainter {
         // a stroked circle and a filled ring of the same curve are then one shape.
         let [a, b, c, d, _, _] = transform.as_coeffs();
         let scale = (a * a + b * b).sqrt().max((c * c + d * d).sqrt());
-        if scale.is_finite() && scale > 1e-9 {
+        // (Only near the raster, as `device_path`: the stroke's reach counts too.)
+        let reach = style.width * scale * style.miter_limit.max(1.0);
+        let near = near_raster(
+            transform.transform_rect_bbox(curves_bbox(&shape.path_elements(DEFAULT_TOLERANCE).collect())).inflate(reach, reach),
+            self.raster_bounds(),
+        );
+        if near && scale.is_finite() && scale > 1e-9 {
             let outline = kurbo::stroke(
                 shape.path_elements(DEFAULT_TOLERANCE),
                 style,
@@ -232,7 +290,7 @@ impl PaintScene for VelloCpuScenePainter {
         brush_transform: Option<Affine>,
         shape: &impl Shape,
     ) {
-        let (path, path_transform) = device_path(shape.into_path(DEFAULT_TOLERANCE), transform);
+        let (path, path_transform) = device_path(shape.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
         self.render_ctx.set_transform(path_transform);
         self.render_ctx.set_fill_rule(style);
         let paint = self.convert_paint(paint.into());

@@ -4662,10 +4662,10 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..d143531 100644
+index 1b09a33..278c343 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -1,19 +1,62 @@
+@@ -1,19 +1,107 @@
  use std::sync::Arc;
  
 +use anyrender::recording::{LayerCommand, RenderCommand};
@@ -4692,14 +4692,59 @@ index 1b09a33..d143531 100644
 +
 +/// pyro: `path` under `transform` for vello_cpu: a path with curves in device space, flattened to
 +/// [`FINE`], with the identity left to apply; a path of lines only as it is, under `transform`.
-+fn device_path(path: BezPath, transform: Affine) -> (BezPath, Affine) {
++/// Only a path that lies near the raster (`bounds`, device px) is flattened here: flattening the
++/// whole of one reaching far past it (a huge ellipse of which an arc shows) would cost what is out
++/// of view; such a path is left to vello_cpu, which culls what lies outside as it flattens.
++fn device_path(path: BezPath, transform: Affine, bounds: Rect) -> (BezPath, Affine) {
 +    use kurbo::PathEl;
 +    if !path.elements().iter().any(|el| matches!(el, PathEl::QuadTo(..) | PathEl::CurveTo(..))) {
++        return (path, transform);
++    }
++    if !near_raster(transform.transform_rect_bbox(curves_bbox(&path)), bounds) {
 +        return (path, transform);
 +    }
 +    let mut out = BezPath::new();
 +    kurbo::flatten(transform * path, FINE, |el| out.push(el));
 +    (out, Affine::IDENTITY)
++}
++
++/// pyro: the bounding box of `path`'s curved segments (their ends and control points): what
++/// flattening costs work for (its lines cost none: a huge rectangle around an oval that cuts a
++/// shadow is no reason to leave the oval coarse).
++fn curves_bbox(path: &BezPath) -> Rect {
++    use kurbo::PathEl;
++    let mut bbox: Option<Rect> = None;
++    let mut last = kurbo::Point::ZERO;
++    let mut add = |p: kurbo::Point, bbox: &mut Option<Rect>| {
++        *bbox = Some(bbox.map_or(Rect::from_points(p, p), |b| b.union_pt(p)));
++    };
++    for el in path.elements() {
++        match *el {
++            PathEl::MoveTo(p) | PathEl::LineTo(p) => last = p,
++            PathEl::QuadTo(a, p) => {
++                for q in [last, a, p] {
++                    add(q, &mut bbox);
++                }
++                last = p;
++            }
++            PathEl::CurveTo(a, b, p) => {
++                for q in [last, a, b, p] {
++                    add(q, &mut bbox);
++                }
++                last = p;
++            }
++            PathEl::ClosePath => {}
++        }
++    }
++    bbox.unwrap_or(Rect::ZERO)
++}
++
++/// pyro: whether `bbox` (device px) lies within the raster `bounds` grown by their own size on
++/// every side: the work of flattening what lies there at [`FINE`] is bounded by the raster's size.
++fn near_raster(bbox: Rect, bounds: Rect) -> bool {
++    let margin = bounds.width().max(bounds.height()).max(1.0);
++    let near = bounds.inflate(margin, margin);
++    bbox.is_finite() && bbox.x0 >= near.x0 && bbox.y0 >= near.y0 && bbox.x1 <= near.x1 && bbox.y1 <= near.y1
 +}
 +
  pub struct VelloCpuScenePainter {
@@ -4730,7 +4775,7 @@ index 1b09a33..d143531 100644
  }
  
  impl VelloCpuScenePainter {
-@@ -22,13 +65,38 @@ impl VelloCpuScenePainter {
+@@ -22,13 +110,38 @@ impl VelloCpuScenePainter {
      }
  
      pub fn with_image_cache_config(width: u16, height: u16, config: ImageCacheConfig) -> Self {
@@ -4770,7 +4815,7 @@ index 1b09a33..d143531 100644
      fn convert_paint(&mut self, paint: PaintRef<'_>) -> PaintType {
          match paint {
              Paint::Solid(alpha_color) => PaintType::Solid(alpha_color),
-@@ -64,10 +132,22 @@ impl VelloCpuScenePainter {
+@@ -64,10 +177,29 @@ impl VelloCpuScenePainter {
      }
  }
  
@@ -4785,6 +4830,13 @@ index 1b09a33..d143531 100644
 +    Nothing,
 +}
 +
++impl VelloCpuScenePainter {
++    /// pyro: the raster's bounds, device px.
++    fn raster_bounds(&self) -> Rect {
++        Rect::new(0.0, 0.0, f64::from(self.render_ctx.width()), f64::from(self.render_ctx.height()))
++    }
++}
++
  impl RenderContext for VelloCpuScenePainter {}
  impl PaintScene for VelloCpuScenePainter {
      fn reset(&mut self) {
@@ -4793,7 +4845,7 @@ index 1b09a33..d143531 100644
      }
  
      fn push_layer(
-@@ -77,40 +157,38 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -77,40 +209,38 @@ impl PaintScene for VelloCpuScenePainter {
          alpha: f32,
          transform: Affine,
          clip: &impl Shape,
@@ -4814,7 +4866,7 @@ index 1b09a33..d143531 100644
 -
 +        // pyro: a layer's filter is applied by `append_scene` (see `crate::filters`); a layer
 +        // pushed here directly is drawn unfiltered, as vello_cpu cannot filter on worker threads.
-+        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform);
++        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
          self.render_ctx.push_layer(
@@ -4830,7 +4882,7 @@ index 1b09a33..d143531 100644
      }
  
      fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-+        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform);
++        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
 -        self.render_ctx
@@ -4849,7 +4901,7 @@ index 1b09a33..d143531 100644
      }
  
      fn stroke<'a>(
-@@ -121,6 +199,21 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -121,6 +251,27 @@ impl PaintScene for VelloCpuScenePainter {
          brush_transform: Option<Affine>,
          shape: &impl Shape,
      ) {
@@ -4858,7 +4910,13 @@ index 1b09a33..d143531 100644
 +        // a stroked circle and a filled ring of the same curve are then one shape.
 +        let [a, b, c, d, _, _] = transform.as_coeffs();
 +        let scale = (a * a + b * b).sqrt().max((c * c + d * d).sqrt());
-+        if scale.is_finite() && scale > 1e-9 {
++        // (Only near the raster, as `device_path`: the stroke's reach counts too.)
++        let reach = style.width * scale * style.miter_limit.max(1.0);
++        let near = near_raster(
++            transform.transform_rect_bbox(curves_bbox(&shape.path_elements(DEFAULT_TOLERANCE).collect())).inflate(reach, reach),
++            self.raster_bounds(),
++        );
++        if near && scale.is_finite() && scale > 1e-9 {
 +            let outline = kurbo::stroke(
 +                shape.path_elements(DEFAULT_TOLERANCE),
 +                style,
@@ -4871,12 +4929,12 @@ index 1b09a33..d143531 100644
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_stroke(style.clone());
          let paint = self.convert_paint(paint.into());
-@@ -139,14 +232,15 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -139,14 +290,15 @@ impl PaintScene for VelloCpuScenePainter {
          brush_transform: Option<Affine>,
          shape: &impl Shape,
      ) {
 -        self.render_ctx.set_transform(transform);
-+        let (path, path_transform) = device_path(shape.into_path(DEFAULT_TOLERANCE), transform);
++        let (path, path_transform) = device_path(shape.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
 +        self.render_ctx.set_transform(path_transform);
          self.render_ctx.set_fill_rule(style);
          let paint = self.convert_paint(paint.into());
@@ -4892,7 +4950,7 @@ index 1b09a33..d143531 100644
      }
  
      fn draw_glyphs<'a, 's: 'a>(
-@@ -163,6 +257,16 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -163,6 +315,16 @@ impl PaintScene for VelloCpuScenePainter {
          glyph_transform: Option<Affine>,
          glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
      ) {
@@ -4909,7 +4967,7 @@ index 1b09a33..d143531 100644
          self.render_ctx.set_transform(transform);
          let paint = self.convert_paint(paint.into());
          self.render_ctx.set_paint(paint);
-@@ -177,7 +281,13 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,7 +339,13 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -4924,7 +4982,7 @@ index 1b09a33..d143531 100644
                      .glyph_transform(glyph_transform.unwrap_or_default())
                      .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
                          id: g.id,
-@@ -201,6 +311,7 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -201,6 +369,7 @@ impl PaintScene for VelloCpuScenePainter {
                      }));
              }
          }
@@ -4932,7 +4990,7 @@ index 1b09a33..d143531 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +327,815 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +385,815 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -5748,7 +5806,7 @@ index 1b09a33..d143531 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1212,234 @@ mod clip_rule_tests {
+@@ -292,4 +1270,234 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

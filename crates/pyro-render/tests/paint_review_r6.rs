@@ -263,3 +263,21 @@ fn an_inline_clip_path_cuts_the_positioned_box_it_keeps() {
     // Past it (the box reaches to x 220 and y 120): the page.
     assert_eq!(pixel(&img, 150, 100), [255, 255, 255], "past the inline");
 }
+
+/// A huge ellipse and a huge stroked circle of which only an arc is in view paint in bounded time:
+/// the fine flattening (`anyrender_vello_cpu` `device_path`) is done only for paths near the
+/// raster; one far past it is left to vello_cpu, which culls what is out of view. The whole curve
+/// was tessellated at a fiftieth of a pixel first. Review cycle 3, finding 1.
+#[test]
+fn a_huge_curve_with_an_arc_in_view_paints_in_bounded_time() {
+    let start = std::time::Instant::now();
+    let img = render(
+        "<svg width='400' height='300' style='display:block'>\
+         <ellipse cx='200' cy='3000150' rx='3000000' ry='3000000' fill='green'/>\
+         <circle cx='200' cy='-2999850' r='3000000' fill='none' stroke='blue' stroke-width='20'/></svg>",
+    );
+    assert!(start.elapsed() < std::time::Duration::from_secs(5), "took {:?}", start.elapsed());
+    // The ellipse's top edge crosses the middle: green below, white above.
+    assert_eq!(pixel(&img, 200, 200), [0, 128, 0], "inside the ellipse");
+    assert_eq!(pixel(&img, 200, 100), [255, 255, 255], "above it");
+}
