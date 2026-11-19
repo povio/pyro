@@ -100,14 +100,26 @@ impl PageDom {
     /// URLs (the frame's base URL); `mark` puts a valueless attribute on one
     /// element (a screenshot clip target).
     pub fn render_snapshot(&self, base_url: &str, mark: Option<(NodeId, &str)>) -> RenderSnapshot {
-        self.snapshot_as(base_url, mark, Form::Html)
+        self.snapshot_as(base_url, mark, Form::Html, &[])
+    }
+
+    /// pyro: a frame's [`PageDom::render_snapshot`] with its animations now: its animated
+    /// elements carry their render keys (`data-pyro-key`) for the renderer to sample them into
+    /// the frame's document.
+    pub fn render_snapshot_frame(self: &std::rc::Rc<Self>, base_url: &str) -> (RenderSnapshot, Option<pyro_dom::animation::AnimationFrame>) {
+        let frame = self.animation_frame();
+        if frame.elements.is_empty() {
+            return (self.snapshot_as(base_url, None, Form::Html, &[]), None);
+        }
+        let keys: Vec<u64> = frame.elements.iter().map(|e| e.key).collect();
+        (self.snapshot_as(base_url, None, Form::Html, &keys), Some(frame))
     }
 
     /// As [`PageDom::render_snapshot`], with the document as a keyed node
     /// list (`pyro_dom::Dom::render_tree`) instead of HTML: a renderer can
     /// diff it against the previous one. `mark`'s element is its `mark`.
     pub fn render_snapshot_tree(&self, base_url: &str, mark: Option<NodeId>) -> RenderSnapshot {
-        self.snapshot_as(base_url, mark.map(|m| (m, "")), Form::Tree)
+        self.snapshot_as(base_url, mark.map(|m| (m, "")), Form::Tree, &[])
     }
 
     /// The base URL a render snapshot's document resolves URLs against: `frame_base_url` (the
@@ -124,7 +136,7 @@ impl PageDom {
 
     /// The viewport and scroll of a render snapshot, without the document.
     pub fn render_view(&self) -> RenderSnapshot {
-        self.snapshot_as("", None, Form::None)
+        self.snapshot_as("", None, Form::None, &[])
     }
 
     /// Changes whenever a render snapshot of the document could: the DOM
@@ -136,7 +148,7 @@ impl PageDom {
         (dom.uid(), version, generation)
     }
 
-    fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
+    fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form, keyed: &[u64]) -> RenderSnapshot {
         // pyro: a mandatory snap container starts at a snap position (CSS Scroll Snap 1 § 6.3),
         // which a capture shows even when no rendering update ran since the page loaded.
         if let (Ok(dom), Ok(mut layout)) = (self.dom.try_borrow(), self.layout.try_borrow_mut()) {
@@ -188,7 +200,7 @@ impl PageDom {
             selected_replaced,
             caret,
             url_target: dom.url_target_element(self.document()).map(pyro_dom::snapshot::render_key),
-            ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
+            ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form, keyed)
         }
     }
 }
@@ -200,6 +212,7 @@ fn snapshot_of(
     base_url: &str,
     mark: Option<(NodeId, &str)>,
     form: Form,
+    keyed: &[u64],
 ) -> RenderSnapshot {
     {
         let style = layout.style();
@@ -223,7 +236,7 @@ fn snapshot_of(
         let (html, tree) = match form {
             Form::Html => {
                 (
-                dom.render_html_positioned(document, &opts, &layout.scrolled_elements(), &layout.sticky_offsets(dom))
+                dom.render_html_keyed(document, &opts, &layout.scrolled_elements(), &layout.sticky_offsets(dom), keyed)
                     .unwrap_or_default(),
                 None,
             )

@@ -237,6 +237,9 @@ pub struct Snapshot {
     /// The animated values of a [`Live`] document's elements now
     /// ([`Renderer::set_animations`]); `None` leaves the document's.
     pub animations: Option<Arc<AnimationFrame>>,
+    /// pyro: the animations of the frames' documents now, by frame client (`srcdoc` frames'
+    /// `data-pyro-frame-client`; their elements by `data-pyro-key`).
+    pub frame_animations: Vec<(String, Arc<AnimationFrame>)>,
     /// An XML document (XHTML, SVG, other XML): selectors match element and
     /// attribute names case-sensitively. A [`Live`] document whose value
     /// changes is built anew.
@@ -1251,6 +1254,9 @@ impl Renderer {
                     self.animations.insert(live.page, frame.clone());
                 }
                 self.apply_animations(live.page);
+                if let Some(m) = self.mirrors.get_mut(&live.page) {
+                    m.doc.set_frame_animations(snap.frame_animations.iter().cloned().collect());
+                }
                 let images = mirror::take_svg_image_hrefs();
                 if let (false, Some(m)) = (images.is_empty(), self.mirrors.get_mut(&live.page)) {
                     svg_use::resolve_images(

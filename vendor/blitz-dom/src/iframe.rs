@@ -65,7 +65,7 @@ impl BaseDocument {
             base_url,
             frame_client,
             frame_client_attribute: self.frame_client_attribute.clone(),
-            ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
+            ua_stylesheets: self.ua_stylesheets.clone(),
             net_provider: Some(self.net_provider.clone()),
             navigation_provider: Some(Arc::new(IframeNavigationProvider {
                 node_id,

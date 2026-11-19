@@ -326,6 +326,14 @@ impl BaseDocument {
             let no_scrollbars = node
                 .attr(markup5ever::LocalName::from("scrolling"))
                 .is_some_and(|value| value.eq_ignore_ascii_case("no") || value.eq_ignore_ascii_case("noscroll"));
+            // pyro: the frame document's animations (by its client), sampled into it.
+            let frame_animations = self.frame_animations.clone();
+            // (Its client in the attribute the snapshot names, `DocumentConfig::frame_client_attribute`.)
+            let frame_effects = self
+                .frame_client_attribute
+                .as_deref()
+                .and_then(|name| node.attr(markup5ever::LocalName::from(name)))
+                .and_then(|client| frame_animations.get(client).cloned());
             let frame_scroll = node
                 .attr(markup5ever::LocalName::from("data-pyro-frame-scroll"))
                 .and_then(|value| {
@@ -350,9 +358,21 @@ impl BaseDocument {
                     ((size.width * viewport_scale) as u32, (size.height * viewport_scale) as u32);
                 drop(sub_viewport);
 
+                // pyro: its scroll position first (its scroll timelines read it), and its
+                // animations now.
+                if let Some((x, y)) = frame_scroll {
+                    sub_doc.set_viewport_scroll(crate::Point { x, y });
+                }
+                sub_doc.frame_animations = frame_animations.clone();
+                sub_doc.sample_frame_animations(frame_effects.as_deref().map(|v| v.as_slice()));
                 sub_doc.resolve(current_time_for_animations);
                 if let Some((x, y)) = frame_scroll {
                     sub_doc.set_viewport_scroll(crate::Point { x, y });
+                }
+                // pyro: its scroll-driven animations at the scroll position and layout now (they
+                // are placed after its layout: styled again with them).
+                if sub_doc.has_scroll_driven_animations() {
+                    sub_doc.resolve(current_time_for_animations);
                 }
 
                 subdoc_is_animating |= sub_doc.is_animating();

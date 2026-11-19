@@ -676,6 +676,7 @@ impl Page {
             if let Some(page_dom) = &self.main_frame.page_dom {
                 if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
                     dom.set_frame_documents(&self.frame_tree_documents(), Vec::new());
+                    dom.frame_animations.clear();
                 }
             }
             return sheets;
@@ -692,6 +693,7 @@ impl Page {
             self.frames.keys().into_iter().filter(|k| k.child.is_some()).map(|k| (depth(k), k)).collect();
         keys.sort_by(|a, b| b.0.cmp(&a.0));
         let mut documents = Vec::new();
+        let mut frame_animations = Vec::new();
         for (_, key) in keys {
             let Some((owner, page_dom, base_url, url, client)) = self.frames.with_frame(key, |f| {
                 (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
@@ -701,7 +703,8 @@ impl Page {
             };
             let (Some(owner), Some(page_dom)) = (owner, page_dom) else { continue };
             // Each frame's HTML is taken after its own frames' documents are set (deeper first).
-            let snapshot = page_dom.render_snapshot(&base_url, None);
+            // (Its animated elements keyed, its animations kept for the renderer.)
+            let (snapshot, animations) = page_dom.render_snapshot_frame(&base_url);
             sheets.extend(snapshot.sheets);
             let base = if base_url.is_empty() { url } else { base_url };
             let document =
@@ -709,12 +712,17 @@ impl Page {
             if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
                 dom.set_frame_document(owner, Some(document.clone()));
             }
+            frame_animations.push((document.client.clone(), animations));
             documents.push((owner, document));
         }
         let store = self.main_frame.page_dom.as_ref().map(|p| p.dom.clone());
         if let Some(store) = store {
             if let Ok(mut dom) = store.try_borrow_mut() {
                 dom.set_frame_documents(&self.frame_tree_documents(), documents);
+                dom.frame_animations = frame_animations
+                    .into_iter()
+                    .filter_map(|(client, frame)| Some((client, std::sync::Arc::new(frame?))))
+                    .collect();
             }
         }
         sheets

@@ -543,6 +543,15 @@ pub struct BaseDocument {
     pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
     /// Nodes that contain sub documents
     pub(crate) sub_document_nodes: HashSet<NodeId>,
+    /// pyro: the user-agent sheets it was made with, which the frame documents it makes take too
+    /// (the embedder's: no native CSS animations or transitions in a frame either, as its
+    /// animations are sampled in, `frame_animations`).
+    pub(crate) ua_stylesheets: Vec<UserAgentStylesheet>,
+    /// pyro: the animations of frame documents now, by frame client (`data-pyro-frame-client`):
+    /// sampled into those sub-documents at each resolve, their elements by `data-pyro-key`
+    /// (handed down to nested frames).
+    pub(crate) frame_animations:
+        std::sync::Arc<HashMap<String, std::sync::Arc<Vec<(u64, crate::animation::ElementEffects)>>>>,
     /// Load state (abort controller and in-flight request id) for each
     /// `<iframe>` element whose sub-document is loaded automatically
     pub(crate) iframe_loads: HashMap<NodeId, crate::iframe::IframeLoad>,
@@ -906,6 +915,8 @@ impl BaseDocument {
             subdoc_is_animating: false,
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
+            ua_stylesheets: config.ua_stylesheets.clone(),
+            frame_animations: Default::default(),
             iframe_loads: HashMap::new(),
 
             #[cfg(feature = "custom-widget")]

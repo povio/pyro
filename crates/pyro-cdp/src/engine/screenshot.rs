@@ -473,6 +473,14 @@ impl EngineHost {
                 (s, tree)
             }
         };
+        // pyro: the frames' documents' animations, sampled into them by the renderer.
+        let frame_animations: Vec<(String, Arc<pyro_render::AnimationFrame>)> = dom
+            .dom
+            .borrow()
+            .frame_animations
+            .iter()
+            .map(|(client, frame)| (client.clone(), Arc::new(pyro_layout::animation_frame(frame))))
+            .collect();
         Ok(Snapshot {
             html: String::new(),
             frame_client_attribute: Some(pyro_dom::snapshot::frame_client_attribute().to_owned()),
@@ -516,6 +524,8 @@ impl EngineHost {
             scroll_targets: Some(s.scroll_targets),
             // CSS animations, transitions and Web Animations as they are now.
             animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
+            // pyro: the frames' documents' animations, sampled into them by the renderer.
+            frame_animations,
             xml_document: s.xml_document,
             quirks_mode: s.quirks_mode,
             limited_quirks_mode: s.limited_quirks_mode,

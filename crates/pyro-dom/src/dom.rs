@@ -247,6 +247,9 @@ pub struct Dom {
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
+    /// pyro: each frame document's animations now, by its client (`FrameDocument::client`): the
+    /// renderer samples them into the frame's document (`data-pyro-key` elements).
+    pub frame_animations: rustc_hash::FxHashMap<String, std::sync::Arc<crate::animation::AnimationFrame>>,
     /// Versions at or below this have no complete journal.
     journal_floor: u64,
     /// Old values of attributes selectors read, from their first change
@@ -340,6 +343,7 @@ impl Dom {
             frame_content_heights: Default::default(),
             svg_pans: Default::default(),
             frame_documents: Default::default(),
+            frame_animations: Default::default(),
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_disabled: Vec::new(),

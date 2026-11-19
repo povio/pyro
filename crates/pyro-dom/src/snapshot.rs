@@ -202,6 +202,9 @@ struct HtmlSink<'a> {
     mark: Option<&'a str>,
     scroll: &'a [(u64, (f64, f64))],
     sticky: &'a [(u64, (f64, f64))],
+    /// pyro: elements written with their render key (`data-pyro-key`): a frame's animated
+    /// elements, whose sampled animations the renderer applies to its document by key.
+    keyed: &'a [u64],
 }
 
 impl Sink for HtmlSink<'_> {
@@ -249,6 +252,10 @@ impl Sink for HtmlSink<'_> {
         if let Some((_, (x, y))) = self.sticky.iter().find(|(id, _)| *id == key) {
             use std::fmt::Write;
             let _ = write!(out, " data-pyro-sticky=\"{x} {y}\"");
+        }
+        if self.keyed.contains(&key) {
+            use std::fmt::Write;
+            let _ = write!(out, " data-pyro-key=\"{key}\"");
         }
         out.push('>');
     }
@@ -333,8 +340,21 @@ impl Dom {
         scroll: &[(u64, (f64, f64))],
         sticky: &[(u64, (f64, f64))],
     ) -> DomResult<String> {
+        self.render_html_keyed(doc, opts, scroll, sticky, &[])
+    }
+
+    /// pyro: [`Dom::render_html_positioned`] with the elements of `keyed` (render keys) written
+    /// with a `data-pyro-key` attribute (a frame's animated elements).
+    pub fn render_html_keyed(
+        &self,
+        doc: NodeId,
+        opts: &RenderHtml<'_>,
+        scroll: &[(u64, (f64, f64))],
+        sticky: &[(u64, (f64, f64))],
+        keyed: &[u64],
+    ) -> DomResult<String> {
         let mut sink =
-            HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll, sticky };
+            HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll, sticky, keyed };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.out)
     }

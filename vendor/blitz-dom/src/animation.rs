@@ -353,6 +353,34 @@ impl BaseDocument {
     /// Replaces the document's sampled animations: the effects of each element
     /// in effect now (an element left out has none). Elements whose sampled
     /// values change are marked for restyle; the next `resolve` cascades them.
+    /// pyro: the animations of the frame documents (by frame client; see
+    /// `BaseDocument::frame_animations`).
+    pub fn set_frame_animations(&mut self, frames: std::collections::HashMap<String, std::sync::Arc<Vec<(u64, ElementEffects)>>>) {
+        if frames.is_empty() && self.frame_animations.is_empty() {
+            return;
+        }
+        self.frame_animations = std::sync::Arc::new(frames);
+    }
+
+    /// pyro: samples this frame document's animations (`frame`: by render key) into its elements
+    /// that carry their key (`data-pyro-key`).
+    pub(crate) fn sample_frame_animations(&mut self, frame: Option<&[(u64, ElementEffects)]>) {
+        let Some(frame) = frame else {
+            if self.has_sampled_animations() {
+                self.set_sampled_animations(Vec::new());
+            }
+            return;
+        };
+        let attr = markup5ever::LocalName::from("data-pyro-key");
+        let keyed: std::collections::HashMap<u64, NodeId> = self
+            .nodes
+            .iter()
+            .filter_map(|(id, node)| Some((node.attr(attr.clone())?.parse::<u64>().ok()?, id)))
+            .collect();
+        let effects: Vec<_> = frame.iter().filter_map(|(key, e)| Some((*keyed.get(key)?, e.clone()))).collect();
+        self.set_sampled_animations(effects);
+    }
+
     pub fn set_sampled_animations(&mut self, effects: Vec<(NodeId, ElementEffects)>) {
         let mut state = std::mem::take(&mut self.sampled_animations);
         let mut next: FxHashMap<NodeId, ElementState> = FxHashMap::default();
