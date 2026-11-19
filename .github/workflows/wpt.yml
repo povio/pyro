@@ -302,16 +302,8 @@ jobs:
         working-directory: bench
         run: bun install --frozen-lockfile
       # The pinned WPT revision, only the directories bench/wpt/wpt-paths.txt lists (about 290 MB).
-      - uses: actions/cache@v4
-        env:
-          PATH: /usr/bin:/bin:/usr/sbin:/sbin
-        id: wpt-cache
-        with:
-          path: wpt
-          key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
-      - name: Fetch WPT
-        if: steps.wpt-cache.outputs.cache-hit != 'true'
-        run: bench/wpt/fetch-wpt.sh wpt
+      - name: Prepare local WPT checkout
+        run: bench/wpt/prepare-ci-wpt.sh subset
       # The browser: this run's build, or the cached one when its inputs did not change.
       - uses: actions/download-artifact@v4
         if: needs.build.result == 'success'
@@ -342,7 +334,7 @@ jobs:
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
           # Earlier arguments win, so runner-args can override the defaults after them.
-          bun bench/wpt/gate.mjs run "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$JOBS" \
+          bun bench/wpt/gate.mjs run "${extra[@]}" --wpt "$WPT_DIR" --bin browser/pyro --jobs "$JOBS" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -809,9 +801,11 @@ jobs:
       - name: Install the runner's dependencies
         working-directory: bench
         run: bun install --frozen-lockfile
-      # A PATH without zstd on every cache step: the first lp-m1 machine has none, so its cache entries are gzip, and a
-      # machine with zstd (the second lp-m1 runner, GitHub's macOS images) would look for another cache version and miss them.
+      - name: Prepare local WPT checkout
+        if: runner.environment == 'self-hosted'
+        run: bench/wpt/prepare-ci-wpt.sh subset
       - uses: actions/cache@v4
+        if: runner.environment == 'github-hosted'
         id: wpt-cache
         env:
           PATH: /usr/bin:/bin:/usr/sbin:/sbin
@@ -819,7 +813,7 @@ jobs:
           path: wpt
           key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
       - name: Fetch WPT
-        if: steps.wpt-cache.outputs.cache-hit != 'true'
+        if: runner.environment == 'github-hosted' && steps.wpt-cache.outputs.cache-hit != 'true'
         run: bench/wpt/fetch-wpt.sh wpt
       - uses: actions/download-artifact@v4
         if: needs.build.result == 'success'
@@ -852,7 +846,7 @@ jobs:
           # machines (runs 44292757214, 44295604936, 44298843277): --jobs 8 130 s per shard, 30% of 8 CPUs; 12 101-111 s,
           # 40%, same results; 16 88-89 s, 47%, same results but one first-run timeout that its reruns passed; no
           # swap growth, no thermal limit, Low Power Mode off. Earlier arguments win, so reftest-args can override.
-          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
+          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt "${WPT_DIR:-wpt}" --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
@@ -973,16 +967,8 @@ jobs:
       - name: Install the runner's dependencies
         working-directory: bench
         run: bun install --frozen-lockfile
-      - uses: actions/cache@v4
-        id: wpt-cache
-        env:
-          PATH: /usr/bin:/bin:/usr/sbin:/sbin
-        with:
-          path: wpt
-          key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
-      - name: Fetch WPT
-        if: steps.wpt-cache.outputs.cache-hit != 'true'
-        run: bench/wpt/fetch-wpt.sh wpt
+      - name: Prepare local WPT checkout
+        run: bench/wpt/prepare-ci-wpt.sh subset
       - uses: actions/download-artifact@v4
         if: needs.build.result == 'success'
         with:
@@ -1012,7 +998,7 @@ jobs:
           # A runner can cap its share with PYRO_CI_CPUS in its .env (the Mac Studio runner uses 4).
           # 44307460716): --jobs 8 21.0 s, 36% of 8 CPUs; --jobs 16 15.5 s, 59%; all 1,979 pages pass in both, no reruns,
           # no swap growth, no thermal limit. Earlier arguments win, so crashtest-args can override.
-          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
+          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt "$WPT_DIR" --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             "${full[@]}" --out wpt-crashtest-shard-0.json --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;

@@ -21,6 +21,14 @@ independent of workers inside each shard. Set `PYRO_CI_CPUS` in each self-hosted
 registrations share one physical machine; registrations are not separate CPU/memory capacity. In-progress full runs
 are not cancelled by newer pushes, and the existing gate/retry/baseline semantics are unchanged.
 
+Self-hosted macOS jobs reuse a local WPT checkout outside the cleaned workspace, under the runner's work folder
+(`.pyro-wpt/`, isolated by repository and runner registration). Each registration runs one job at a time and holds
+at most one sparse and one full checkout. Changes to the revision, sparse paths or fetch/setup scripts rebuild the
+checkout; the full checkout also tracks its Python interpreter and keeps its wptserve venv at a stable path. A
+failed setup never marks the checkout ready. Warm reuse checks the revision and tracked files and removes leftover
+untracked files. Hosted jobs still use Actions caching. The first job per registration fetches cold; warm jobs
+skip the Actions cache download and extraction (the 74 MB subset cache took 6m34s just to extract in one main run).
+
 Registry/git downloads are cached separately from compiler objects. WPT does not save large Cargo target archives;
 sccache covers ordinary Rust compilation, including vendored/path crates. PGO scripts explicitly disable the compiler
 wrapper for instrumented/profile-use builds because sccache does not hash the profile file. JSC consumers on macOS
@@ -29,7 +37,7 @@ use their workspace artifact instead of deleting a shared home-directory build a
 Validation:
 
 ```sh
-node --test scripts/ci/plan.test.mjs
+node --test scripts/ci/*.test.mjs
 actionlint -ignore SC2016
 ```
 

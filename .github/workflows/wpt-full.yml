@@ -52,6 +52,7 @@ on:
       - .github/workflows/wpt-full.yml
       - bench/wpt/wptserve.mjs
       - bench/wpt/fetch-wpt.sh
+      - bench/wpt/prepare-ci-wpt.sh
       - bench/wpt/testdriver.mjs
       - bench/wpt/testdriver-vendor.js
 
@@ -118,16 +119,10 @@ jobs:
           for p in python3 /usr/bin/python3; do echo "$p: $(command -v $p) $($p --version 2>&1)"; done
           python3 -m pip --version || true
           sw_vers -productVersion
-      - uses: actions/cache@v4
-        env:
-          PATH: /usr/bin:/bin:/usr/sbin:/sbin
-        with:
-          path: wpt-full
-          key: wpt-full-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/fetch-wpt.sh') }}
-      - name: Fetch WPT (all of it) and wptserve's venv
+      - name: Prepare local full WPT checkout and venv
         env:
           WPT_PYTHON: /usr/bin/python3
-        run: bench/wpt/fetch-wpt.sh --all --venv wpt-full
+        run: bench/wpt/prepare-ci-wpt.sh full
       - uses: actions/download-artifact@v4
         with:
           name: wpt-browser
@@ -140,7 +135,7 @@ jobs:
             '"html/browsers/origin/relaxing-the-same-origin-restriction/document_domain_setter.html",' \
             '"dom/nodes/Node-appendChild.html","html/dom/render-blocking/remove-attr-unblocks-rendering.optional.html",' \
             '"uievents/click/click_events_on_input.html","css/selectors/focus-visible-001.html"]' > smoke.json
-          bun bench/wpt/run.mjs --wpt wpt-full --bin pyro=browser/pyro --server wptserve --testdriver --dirs all --tests smoke.json \
+          bun bench/wpt/run.mjs --wpt "$WPT_DIR" --bin pyro=browser/pyro --server wptserve --testdriver --dirs all --tests smoke.json \
             --jobs 2 --out smoke-results.json
           bun -e 'const r = JSON.parse(require("fs").readFileSync("smoke-results.json")); for (const t of r.results) { const s = t.subtests ?? []; console.log(t.status, `${s.filter((x) => x.status === "Pass").length}/${s.length}`, t.url); } if (r.results.length < 8 || r.results.some((t) => t.status !== "complete")) process.exit(1);'
 
@@ -165,13 +160,20 @@ jobs:
           bun-version: '1.4.3'
       - working-directory: bench
         run: bun install --frozen-lockfile
+      - name: Prepare local full WPT checkout and venv
+        if: runner.environment == 'self-hosted'
+        env:
+          WPT_PYTHON: /usr/bin/python3
+        run: bench/wpt/prepare-ci-wpt.sh full
       - uses: actions/cache@v4
+        if: runner.environment == 'github-hosted'
         env:
           PATH: /usr/bin:/bin:/usr/sbin:/sbin
         with:
           path: wpt-full
           key: wpt-full-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/fetch-wpt.sh') }}
       - name: Fetch WPT (all of it) and wptserve's venv
+        if: runner.environment == 'github-hosted'
         env:
           WPT_PYTHON: /usr/bin/python3
         run: bench/wpt/fetch-wpt.sh --all --venv wpt-full
@@ -203,7 +205,7 @@ jobs:
           # only the pages whose result differs from it run again (in run 44235329366, 8,875 of a shard's 8,892
           # reruns of every page matched their first run). For a WPT revision it does not cover, gate.mjs runs every
           # page twice (bootstrap).
-          bun bench/wpt/gate.mjs run --kind ${{ matrix.kind }} "${extra[@]}" --wpt wpt-full --bin browser/pyro \
+          bun bench/wpt/gate.mjs run --kind ${{ matrix.kind }} "${extra[@]}" --wpt "${WPT_DIR:-wpt-full}" --bin browser/pyro \
             --server wptserve --testdriver --dirs all --baseline bench/wpt/full/${{ matrix.kind }}/ --full --jobs "$jobs" \
             --slow-jobs "$slow" --shard ${{ matrix.shard }}/${{ matrix.of }} "${rerun[@]}" --out "$OUT" --no-check
           gzip -9 "$OUT"
