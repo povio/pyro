@@ -1052,6 +1052,17 @@ impl LayoutPassState<'_> {
                 style.border().resolve_or_zero(margin_basis.width, resolve_calc_value).bottom
                     + style.padding().resolve_or_zero(margin_basis.width, resolve_calc_value).bottom
             });
+            // pyro: a checkbox or a radio button has its baseline at its block-end border edge,
+            // its margin below it (Chromium; WPT css-writing-modes
+            // `forms/{checkbox,radio}-appearance-native-vertical-*-baseline` in sideways lines).
+            let toggle_border_end = self.nodes[NodeId::from_u64(ibox.id)]
+                .element_data()
+                .is_some_and(|element| {
+                    element.name.local == markup5ever::local_name!("input")
+                        && element
+                            .attr(markup5ever::local_name!("type"))
+                            .is_some_and(|kind| kind.eq_ignore_ascii_case("checkbox") || kind.eq_ignore_ascii_case("radio"))
+                });
 
             #[cfg(feature = "floats")]
             let is_floated = style.float().is_floated();
@@ -1139,6 +1150,15 @@ impl LayoutPassState<'_> {
                 let alphabetic = alphabetic.or_else(|| {
                     // (On alphabetic lines; a central one synthesizes its own, below.)
                     button_content_end.filter(|_| !vertical_line_kind(self.nodes[node_id].writing_mode()).0).map(|end| (margin.top + (output.size.height - end).max(0.0)) * scale)
+                });
+                let alphabetic = alphabetic.or_else(|| {
+                    // (Its line-under border edge: block-start in inverted sideways lines, whose
+                    // baselines are turned below, `sideways_inverted_lines`.)
+                    let wm = self.nodes[node_id].writing_mode();
+                    (toggle_border_end && !vertical_line_kind(wm).0).then(|| match sideways_inverted_lines(wm) {
+                        true => margin.top * scale,
+                        false => (margin.top + output.size.height) * scale,
+                    })
                 });
                 let (central_line, inverted_line) = vertical_line_kind(self.nodes[node_id].writing_mode());
                 // pyro: on a central baseline (Blink's `PhysicalBoxFragment::BaselineMetrics` with
