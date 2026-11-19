@@ -274,3 +274,56 @@ fn pseudo_element_effects_animate_the_pseudo_element() {
     let img = render(&mut r, &snap, Vec::new());
     assert_near(pixel(&img, 25, 25), [0, 200, 0], "no animation: the base value");
 }
+
+/// A CSS animation's `@keyframes` come from the tree scope of the declaration of `animation-name`
+/// that won the cascade: the document's `::part()` rule beats the shadow tree's own normal rule, so
+/// the document's `pulse` runs, though the shadow rule also declares something `!important` (its
+/// node in the important tier holds no important `animation-name`).
+#[test]
+fn keyframes_come_from_the_scope_of_the_winning_animation_name() {
+    let html = "<!doctype html><style>body{margin:0;background:#fff}\
+        @keyframes pulse{from,to{background-color:rgb(0,200,0)}}\
+        #host::part(target){width:100px;height:100px;animation-name:pulse;background-color:rgb(255,255,255)}</style>\
+        <div id=host><template shadowrootmode=open><style>\
+        @keyframes pulse{from,to{background-color:rgb(0,0,200)}}\
+        div{animation-name:pulse;color:red !important}</style><div part=target></div></template></div>";
+    // Declarative shadow roots (`<template shadowrootmode>`), as `Document.parseHTMLUnsafe`.
+    let dom: DomRef = Rc::new(RefCell::new(pyro_dom::Dom::new()));
+    let doc = pyro_dom::parse::parse_html_unsafe(&dom, html);
+    let d = dom.borrow();
+    let host = d.get_element_by_id(doc, "host").unwrap().unwrap();
+    let root = d.shadow_root(host).unwrap().expect("a shadow root");
+    let mut part = d.first_child(root).unwrap();
+    while let Some(n) = part.filter(|&n| d.get_attribute(n, "part").ok().flatten().is_none()) {
+        part = d.next_sibling(n).unwrap();
+    }
+    let key = render_key(part.expect("the shadow tree's part"));
+    let tree = d
+        .render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
+    let tree = Tree {
+        nodes: tree
+            .nodes
+            .into_iter()
+            .map(|node| TreeNode {
+                key: node.key,
+                parent: node.parent,
+                kind: match node.kind {
+                    RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+                    RenderNodeKind::Text(text) => TreeKind::Text(text),
+                },
+            })
+            .collect(),
+    };
+    let snap = Snapshot {
+        base_url: "http://test/".into(),
+        width: 200,
+        height: 100,
+        device_scale_factor: 1.0,
+        live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
+        ..Default::default()
+    };
+    let mut r = Renderer::new();
+    let img = render(&mut r, &snap, frame(key, vec![], vec![css("pulse", Some("linear"), 0.5)]));
+    assert_near(pixel(&img, 50, 50), [0, 200, 0], "the document's @keyframes pulse");
+}

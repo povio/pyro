@@ -1339,8 +1339,8 @@ fn cascade_pseudo<'a>(
     resolver.cascade_style_and_visited_for_pseudo_with_default_parents(inputs, pseudo, &primary).0
 }
 
-/// pyro: the cascade level of the declaration of `animation-name` that `node`'s style uses (the
-/// highest priority one), whose tree scope a `@keyframes` name is looked up in; `None` without one
+/// pyro: the cascade level of the declaration of `animation-name` that won `node`'s cascade (the
+/// highest priority one, of its rule node's importance tier), whose tree scope a `@keyframes` name is looked up in; `None` without one
 /// (inherited or initial) or for a user agent rule.
 fn animation_name_scope(doc: &BaseDocument, node: &Node) -> Option<style::rule_tree::CascadeLevel> {
     use style::properties::{LonghandId, PropertyDeclarationId};
@@ -1353,7 +1353,11 @@ fn animation_name_scope(doc: &BaseDocument, node: &Node) -> Option<style::rule_t
             continue;
         }
         let Some(source) = rule.style_source() else { continue };
-        if source.read(&guard).get(PropertyDeclarationId::Longhand(LonghandId::AnimationName)).is_some() {
+        // (Only a declaration of the rule node's own tier: a rule with some `!important`
+        // declaration has a node in the important tier too, where its normal `animation-name`
+        // does not take part.)
+        let declared = source.read(&guard).get(PropertyDeclarationId::Longhand(LonghandId::AnimationName));
+        if declared.is_some_and(|(_, importance)| importance.important() == level.is_important()) {
             return Some(level);
         }
     }
