@@ -148,6 +148,12 @@ impl PageHooks for Hooks {
         out
     }
 
+    fn is_secure_context(&self) -> Option<bool> {
+        let host = self.frames.upgrade()?;
+        let url = host.nav(self.page)?.url();
+        Some(crate::window::frame_chain_secure(&host, self.page, &url))
+    }
+
     fn frame_tree(&self) -> Vec<Rc<pyro_webapi::PageDom>> {
         let Some(host) = self.frames.upgrade() else { return Vec::new() };
         if !host.matches(self.page, &self.loader) {

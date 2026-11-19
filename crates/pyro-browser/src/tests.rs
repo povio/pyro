@@ -1496,7 +1496,9 @@ fn secure_context_follows_potentially_trustworthy_urls_of_the_frame_chain() {
     for url in ["http://app.localhost/", "http://[::1]/", "http://localhost.evil.test/"] {
         loader.insert(url, "text/html", "<p>x</p>", Duration::ZERO);
     }
-    let child = "<script>console.log('child', location.protocol, isSecureContext)</script>";
+    // Its [SecureContext] members follow isSecureContext: absent in an https frame of an http page.
+    let child = "<script>console.log('child', location.protocol, isSecureContext, 'locks' in navigator, \
+                 'mediaDevices' in navigator, 'paintWorklet' in CSS, 'LockManager' in window)</script>";
     loader.insert("https://secure.test/", "text/html", child, Duration::ZERO);
     loader.insert("http://insecure.test/", "text/html", "<iframe src='https://secure.test/'></iframe>", Duration::ZERO);
     t.browser.set_loader(Some(loader));
@@ -1510,7 +1512,11 @@ fn secure_context_follows_potentially_trustworthy_urls_of_the_frame_chain() {
     t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
     assert_eq!(eval_string(&t, page, "String(isSecureContext)"), "false");
     // An https frame of an http page is not secure (Chrome).
-    assert!(rec.console.borrow().contains(&"log:child https: false".to_owned()), "{:?}", rec.console.borrow());
+    assert!(
+        rec.console.borrow().contains(&"log:child https: false false false false false".to_owned()),
+        "{:?}",
+        rec.console.borrow()
+    );
 }
 
 #[test]

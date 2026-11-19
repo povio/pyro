@@ -11,9 +11,13 @@ const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet"];
 /// `Navigator` attributes that exist only in a secure context.
 const NAVIGATOR: &[&str] = &["locks", "mediaDevices"];
 
-/// A secure context: the realm's origin or its document's URL is potentially trustworthy (a
-/// sandboxed https document, whose origin is opaque, is still a secure context).
+/// A secure context (HTML): the document and every ancestor document are potentially trustworthy,
+/// as the embedder reports it (`PageHooks::is_secure_context`); without one, the realm's origin or the
+/// document's URL decides (a sandboxed https document, whose origin is opaque, is still secure).
 pub(crate) fn secure(s: &Scope<'_>, page: &PageDom) -> bool {
+    if let Some(secure) = page.hooks_secure_context() {
+        return secure;
+    }
     let trustworthy = |url: &str| pyro_net::Url::parse(url).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u));
     s.realm().origin().is_some_and(|o| trustworthy(&o))
         || page.dom.borrow().document_data(page.document()).ok().is_some_and(|d| trustworthy(&d.url.to_string()))

@@ -616,6 +616,11 @@ pub trait PageHooks {
     fn frame_tree(&self) -> Vec<Rc<PageDom>> {
         Vec::new()
     }
+    /// HTML "secure context" for this document, ancestors included (the embedder knows the frame
+    /// chain); `None` when it cannot tell (the document's own URL decides then).
+    fn is_secure_context(&self) -> Option<bool> {
+        None
+    }
     /// Observation-only (no JS): this document still belongs to a live owner
     /// frame/loader. Unlike is_focused, unselected frames also return true.
     /// Checked before a request can cancel a shared transition token.
@@ -2072,6 +2077,9 @@ impl PageDom {
             dom.watch_iframes(self.document()).expect("page document");
             self.connected_iframes.borrow_mut().clear();
         }
+    }
+    pub fn hooks_secure_context(&self) -> Option<bool> {
+        self.hooks().and_then(|h| h.is_secure_context())
     }
     pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()

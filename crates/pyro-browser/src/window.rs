@@ -448,18 +448,30 @@ impl JsClass for Window {
 /// ancestor frames are potentially trustworthy (Chrome checks every
 /// ancestor; an about:blank or about:srcdoc document counts as its parent).
 fn is_secure_context(w: &WindowData) -> bool {
-    let trustworthy = |url: &str| pyro_net::Url::parse(url).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u));
-    if !trustworthy(&w.url()) {
+    match (w.frames.upgrade(), w.frame) {
+        (Some(host), Some(key)) => frame_chain_secure(&host, key, &w.url()),
+        _ => trustworthy_url(&w.url()),
+    }
+}
+
+fn trustworthy_url(url: &str) -> bool {
+    pyro_net::Url::parse(url).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u))
+}
+
+/// HTML "secure context" for the document of frame `key` at `url`: it and every ancestor frame's
+/// document are potentially trustworthy (also the page's `[SecureContext]` members,
+/// `PageHooks::is_secure_context`).
+pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate::frames::FrameKey, url: &str) -> bool {
+    if !trustworthy_url(url) {
         return false;
     }
-    let (Some(host), Some(mut key)) = (w.frames.upgrade(), w.frame) else { return true };
     while key.child.is_some() {
         let parent = host.parent_key(key);
         if parent == key {
             break;
         }
         key = parent;
-        if !host.nav(key).is_some_and(|nav| trustworthy(&nav.url())) {
+        if !host.nav(key).is_some_and(|nav| trustworthy_url(&nav.url())) {
             return false;
         }
     }
