@@ -1334,10 +1334,10 @@ index 4b0cf9a..7275cbf 100644
      pub fn break_lines(&mut self) -> BreakLines<'_, B> {
          BreakLines::new(self)
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..8f285ed 100644
+index 1569071..541a31a 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
-@@ -22,6 +22,15 @@ pub struct Line<'a, B: Brush> {
+@@ -22,11 +22,26 @@ pub struct Line<'a, B: Brush> {
  }
  
  impl<'a, B: Brush> Line<'a, B> {
@@ -1353,7 +1353,18 @@ index 1569071..8f285ed 100644
      /// Returns the metrics for the line.
      pub fn metrics(&self) -> &LineMetrics {
          &self.data.metrics
-@@ -71,10 +80,29 @@ impl<'a, B: Brush> Line<'a, B> {
+     }
+ 
++    /// pyro: whether the line's paragraph is right-to-left: the layout's base direction, or
++    /// under `unicode-bidi: plaintext` that of the paragraph the line is in.
++    pub fn is_rtl(&self) -> bool {
++        self.layout.data.level_at(self.data.text_range.start).is_rtl()
++    }
++
+     pub fn break_reason(&self) -> BreakReason {
+         self.data.break_reason
+     }
+@@ -71,10 +86,29 @@ impl<'a, B: Brush> Line<'a, B> {
          })
      }
  
@@ -1384,7 +1395,7 @@ index 1569071..8f285ed 100644
              Some(metrics) => self
                  .data
                  .style_baseline(&self.layout.data.aligned_subtree_offsets, metrics),
-@@ -82,6 +110,39 @@ impl<'a, B: Brush> Line<'a, B> {
+@@ -82,6 +116,39 @@ impl<'a, B: Brush> Line<'a, B> {
          }
      }
  
@@ -1424,7 +1435,7 @@ index 1569071..8f285ed 100644
      /// Block-axis coordinate of the top edge of the layout's inline box `index`.
      pub(crate) fn inline_box_top(&self, index: usize) -> f32 {
          let layout_box = &self.layout.data.inline_boxes[index];
-@@ -91,12 +152,18 @@ impl<'a, B: Brush> Line<'a, B> {
+@@ -91,12 +158,18 @@ impl<'a, B: Brush> Line<'a, B> {
              BaselineShift::Bottom => self.data.metrics.block_max_coord - inline_box.height,
              _ => {
                  let aligned_subtree_root = self
@@ -1447,7 +1458,7 @@ index 1569071..8f285ed 100644
                  self.data.metrics.baseline
                      - self.data.aligned_subtree_offset(
                          &self.layout.data.aligned_subtree_offsets,
-@@ -188,6 +255,12 @@ pub struct LineMetrics {
+@@ -188,6 +261,12 @@ pub struct LineMetrics {
      // into two fields.
      pub hanging_advance: f32,
  
@@ -1460,7 +1471,7 @@ index 1569071..8f285ed 100644
      /// The minimum inline-axis coordinate of the line.
      ///
      /// For horizontal text, this would be the left of the line.
-@@ -213,6 +286,12 @@ pub struct LineMetrics {
+@@ -213,6 +292,12 @@ pub struct LineMetrics {
      /// For horizontal text, this is the bottom of the line box.
      pub block_max_coord: f32,
  
@@ -1473,7 +1484,7 @@ index 1569071..8f285ed 100644
      /// The minimum block-axis coordinate of the line's content.
      ///
      /// This covers, roughly, the line's glyphs and inline boxes. This does not take into account
-@@ -231,6 +310,21 @@ pub struct LineMetrics {
+@@ -231,6 +316,21 @@ pub struct LineMetrics {
      ///
      /// For horizontal text, this would be the bottom of the line's content.
      pub content_block_max_coord: f32,
@@ -1495,7 +1506,7 @@ index 1569071..8f285ed 100644
  }
  
  impl LineMetrics {
-@@ -277,6 +371,12 @@ pub struct PositionedInlineBox {
+@@ -277,6 +377,12 @@ pub struct PositionedInlineBox {
      pub baseline: Option<f32>,
      pub id: u64,
      pub kind: InlineBoxKind,
@@ -1508,7 +1519,7 @@ index 1569071..8f285ed 100644
  }
  
  /// Sequence of fully positioned glyphs with the same style.
-@@ -299,6 +399,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -299,6 +405,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          &self.run
      }
  
@@ -1537,7 +1548,7 @@ index 1569071..8f285ed 100644
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
-@@ -313,6 +435,36 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -313,6 +441,36 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          self.style_index
      }
  
@@ -1574,7 +1585,7 @@ index 1569071..8f285ed 100644
      /// Returns the offset to the baseline.
      pub fn baseline(&self) -> f32 {
          self.baseline
-@@ -356,6 +508,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -356,6 +514,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
  struct AtomIter<'a> {
      atoms: Atoms<'a>,
      spacing: EffectiveSpacing,
@@ -1583,7 +1594,7 @@ index 1569071..8f285ed 100644
      is_rtl: bool,
      /// The next atom in visual order, if it has been peeked but not yet consumed.
      peeked: Option<Atom<'a>>,
-@@ -372,6 +526,7 @@ impl<'a> AtomIter<'a> {
+@@ -372,6 +532,7 @@ impl<'a> AtomIter<'a> {
                  slice.atoms_start()
              },
              spacing: run.line_spacing(),
@@ -1591,7 +1602,7 @@ index 1569071..8f285ed 100644
              is_rtl,
              peeked: None,
          }
-@@ -404,7 +559,8 @@ impl<'a> AtomIter<'a> {
+@@ -404,7 +565,8 @@ impl<'a> AtomIter<'a> {
              .iter()
              .map(|cluster| usize::from(cluster.glyph_len()))
              .sum();
@@ -1601,7 +1612,7 @@ index 1569071..8f285ed 100644
          if glyph_count != 0 && !self.spacing.is_zero() {
              advance += self.spacing.gaps(atom).total();
          }
-@@ -433,23 +589,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+@@ -433,23 +595,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                      let x = self.offset
                          + self.line.data.metrics.inline_min_coord
                          + self.line.data.metrics.offset;

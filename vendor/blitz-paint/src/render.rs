@@ -2186,7 +2186,9 @@ fn line_truncation_at<'a>(
     scale: f32,
     width: f32,
 ) -> Option<LineTruncation<'a>> {
-    let rtl = text_layout.layout.is_rtl();
+    // pyro: the line's paragraph's direction (`unicode-bidi: plaintext`: WPT css-overflow
+    // `line-clamp-with-text-overflow-string-009`).
+    let rtl = line.is_rtl();
     let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
         Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
         None => (text_layout.ellipsis.as_deref()?, text_layout.ellipsis_text.as_str(), false),

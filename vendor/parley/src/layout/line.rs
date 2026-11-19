@@ -36,6 +36,12 @@ impl<'a, B: Brush> Line<'a, B> {
         &self.data.metrics
     }
 
+    /// pyro: whether the line's paragraph is right-to-left: the layout's base direction, or
+    /// under `unicode-bidi: plaintext` that of the paragraph the line is in.
+    pub fn is_rtl(&self) -> bool {
+        self.layout.data.level_at(self.data.text_range.start).is_rtl()
+    }
+
     pub fn break_reason(&self) -> BreakReason {
         self.data.break_reason
     }
