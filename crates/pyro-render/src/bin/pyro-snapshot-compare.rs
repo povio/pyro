@@ -33,6 +33,10 @@ struct Capture {
     limited_quirks_mode: bool,
     #[serde(default)]
     content_language: Option<String>,
+    /// `CSS.registerProperty()` registrations ([`Snapshot::registered_properties`]); absent in
+    /// captures written before they were recorded.
+    #[serde(default)]
+    registered_properties: Vec<(String, String, bool, Option<String>)>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +98,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
     let s = request.snapshot;
     let snapshot = Snapshot {
         html: s.html,
+        frame_client_attribute: None,
         base_url: s.base_url,
         sheets: s.sheets,
         width: s.width,
