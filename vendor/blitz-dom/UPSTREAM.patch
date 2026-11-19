@@ -49085,7 +49085,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -541,17 +816,71 @@
+@@ -541,17 +816,72 @@
          font_style,
          font_weight,
          font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
@@ -49149,6 +49149,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
 +        upright: style.writing_mode.is_vertical()
 +            && !style.writing_mode.is_sideways()
 +            && style.writing_mode.contains(style::logical_geometry::WritingMode::UPRIGHT),
++        vertical: style.writing_mode.is_vertical() && !style.writing_mode.is_sideways(),
 +        text_justify: match itext_styles.text_justify {
 +            style::values::computed::TextJustify::Auto => parley::TextJustify::Auto,
 +            style::values::computed::TextJustify::None => parley::TextJustify::None,
@@ -49158,7 +49159,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +898,10 @@
+@@ -569,6 +899,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

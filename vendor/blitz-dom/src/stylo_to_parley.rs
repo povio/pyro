@@ -875,6 +875,7 @@ pub(crate) fn style(
         upright: style.writing_mode.is_vertical()
             && !style.writing_mode.is_sideways()
             && style.writing_mode.contains(style::logical_geometry::WritingMode::UPRIGHT),
+        vertical: style.writing_mode.is_vertical() && !style.writing_mode.is_sideways(),
         text_justify: match itext_styles.text_justify {
             style::values::computed::TextJustify::Auto => parley::TextJustify::Auto,
             style::values::computed::TextJustify::None => parley::TextJustify::None,

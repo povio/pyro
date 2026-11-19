@@ -20891,7 +20891,7 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 --- a/packages/blitz-paint/src/text.rs
 +++ b/packages/blitz-paint/src/text.rs
-@@ -1,19 +1,316 @@
+@@ -1,19 +1,306 @@
  use anyrender::PaintScene;
 +use anyrender::filters::{Filter, FilterEffect};
  use blitz_dom::CopyStyleGetters;
@@ -21112,17 +21112,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +/// Whether `text-orientation: mixed` stands a character upright (UTR #50's `Vertical_Orientation`
 +/// other than R, by block).
 +fn is_upright_char(c: char) -> bool {
-+    matches!(c as u32,
-+        0x1100..=0x11FF
-+        | 0x2E80..=0x4DBF
-+        | 0x4E00..=0xA4CF
-+        | 0xAC00..=0xD7FF
-+        | 0xF900..=0xFAFF
-+        | 0xFE30..=0xFE4F
-+        | 0xFF00..=0xFF60
-+        | 0xFFE0..=0xFFE6
-+        | 0x1F000..=0x1FAFF
-+        | 0x20000..=0x3FFFF)
++    parley::upright_in_vertical(c)
 +}
 +
 +/// pyro: a glyph run's font on a central baseline (the `mixed` and `upright` text of
@@ -21166,7 +21156,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +fn layout_unit(v: f64) -> f64 {
 +    (v * 64.0).round() / 64.0
 +}
- 
++
 +impl CentralMetrics {
 +    /// Where a decoration line `thickness` CSS px thick starts, CSS px below the line-over edge
 +    /// (measured on Chrome 157, Inter at 10 to 54 px): an underline 1px under the em box
@@ -21189,7 +21179,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +    }
 +}
-+
+ 
 +/// pyro: whether a decorating box's underline goes on the line-over side (and its overline on
 +/// the line-under side) in text on a central baseline: Blink's `ResolveUnderlinePosition`
 +/// (`kOver`): for Japanese and Korean unless `text-underline-position: left`, otherwise only
@@ -21212,7 +21202,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Draw the backgrounds of inline elements (e.g. `<span style="background: ...">`).
  ///
  /// Each glyph run carries the node id of the innermost inline element it belongs to
-@@ -29,72 +326,81 @@
+@@ -29,72 +316,81 @@
      doc: &BaseDocument,
      transform: Affine,
      inline_root_id: NodeId,
@@ -21335,7 +21325,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Mirrors Blink's `SelectBestDashGap`: choose the gap length (as close as possible to
  /// `gap_length`) that fits a whole number of `dash_length` dashes across `stroke_length`,
  /// so dashes are evenly distributed and a dash lands at each end of the line.
-@@ -126,7 +432,7 @@
+@@ -126,7 +422,7 @@
  /// decorating box. The `text-decoration-inset` and `text-underline-offset` values
  /// depend on the run's advance/font-size and are resolved lazily when drawing.
  #[derive(Clone)]
@@ -21344,7 +21334,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      line: TextDecorationLine,
      style: TextDecorationStyle,
      color: Color,
-@@ -137,8 +443,25 @@
+@@ -137,8 +433,25 @@
      underline_under: bool,
      /// Whether `text-underline-position: from-font` is in effect.
      underline_from_font: bool,
@@ -21372,7 +21362,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  }
  
  /// An element on the current ancestor path (inline root -> run node), caching the
-@@ -151,8 +474,101 @@
+@@ -151,8 +464,101 @@
      fill_color: Color,
      /// The decoration this node introduces as a decorating box, if any.
      decoration: Option<ResolvedDecoration>,
@@ -21474,7 +21464,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Resolve the cached style values for a single node into a [`DecorationStackEntry`].
  fn resolve_decoration_entry(doc: &BaseDocument, node_id: NodeId) -> DecorationStackEntry {
      let Some(styles) = doc.get_node(node_id).and_then(|node| node.primary_styles()) else {
-@@ -160,56 +576,56 @@
+@@ -160,56 +566,56 @@
              node_id,
              fill_color: Color::BLACK,
              decoration: None,
@@ -21565,7 +21555,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// The run-dependent geometry used to position and size a decoration, captured from a
  /// single glyph run. Firefox draws a decoration once for the whole decorating box using
  /// the box's own font, so we prefer the values from a run whose innermost node *is* the
-@@ -219,14 +635,17 @@
+@@ -219,14 +625,17 @@
      /// The baseline the decoration is positioned from (the run's own, `vertical-align`
      /// shifted, baseline).
      baseline: f32,
@@ -21587,7 +21577,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  }
  
  /// A decoration accumulated across the runs of a single line for one decorating box.
-@@ -237,15 +656,59 @@
+@@ -237,15 +646,59 @@
  struct LineDecoration {
      node_id: NodeId,
      deco: ResolvedDecoration,
@@ -21647,7 +21637,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Reusable scratch storage for drawing text across all inline formatting contexts in a
  /// document. The vectors are cleared between uses without releasing their allocations.
  #[derive(Default)]
-@@ -253,38 +716,370 @@
+@@ -253,38 +706,370 @@
      stack: Vec<DecorationStackEntry>,
      path_scratch: Vec<NodeId>,
      deco_boxes: Vec<LineDecoration>,
@@ -22039,7 +22029,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// across renderers.
  ///
  /// `double_dir` points away from the text (`+1` = down, `-1` = up) and is used to place the
-@@ -296,24 +1091,21 @@
+@@ -296,24 +1081,21 @@
      scale: f64,
      x0: f64,
      width: f64,
@@ -22070,19 +22060,24 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      let butt_stroke = Stroke::new(size).with_caps(Cap::Butt);
  
      match deco_style {
-@@ -399,26 +1191,83 @@
+@@ -399,26 +1181,83 @@
  pub(crate) struct TextPaintOptions {
      pub scale: f64,
      pub brush_override: Option<Color>,
--}
 +    /// pyro: draw `text-shadow` (not in a `background-clip: text` mask, nor in a recording
 +    /// paint: the PDF matches each glyph run drawn to the text run recorded for it).
 +    pub shadows: bool,
-+}
+ }
  
 -/// Paint the decorations accumulated for one line, one line per decorating box.
 -fn flush_line_decorations(
 -    scene: &mut impl PaintScene,
+-    transform: Affine,
+-    options: TextPaintOptions,
+-    deco_boxes: &[LineDecoration],
+-    win_ascent_ratios: &mut WinAscentCache,
+-    inline_root_id: NodeId,
+-    line_baseline: f32,
 +/// pyro: what [`flush_line_decorations`] draws of a line's decorations.
 +#[derive(Clone, Copy, PartialEq, Eq)]
 +enum DecorationPhase {
@@ -22118,12 +22113,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +#[allow(clippy::too_many_arguments)]
 +fn flush_line_decorations<S: PaintScene>(
 +    scene: &mut S,
-     transform: Affine,
-     options: TextPaintOptions,
-     deco_boxes: &[LineDecoration],
--    win_ascent_ratios: &mut WinAscentCache,
-     inline_root_id: NodeId,
--    line_baseline: f32,
++    transform: Affine,
++    options: TextPaintOptions,
++    deco_boxes: &[LineDecoration],
++    inline_root_id: NodeId,
 +    strut: &StrutGeometry,
 +    phase: DecorationPhase,
 +    line_runs: &[parley::GlyphRun<'_, TextBrush>],
@@ -22163,7 +22156,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
          // Prefer the decorating box's own font; fall back to the first run it covers.
          let geom = match (&acc.own, &acc.first) {
              (Some(own), _) => own.clone(),
-@@ -426,9 +1275,14 @@
+@@ -426,9 +1265,14 @@
                  let mut geom = first.clone();
                  // A descendant run's baseline may be shifted by `vertical-align`, but the
                  // decoration is positioned from the decorating box's own baseline. For the
@@ -22181,7 +22174,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
                  }
                  geom
              }
-@@ -442,160 +1296,492 @@
+@@ -442,160 +1286,492 @@
          let brush = anyrender::Paint::from(brush_override.unwrap_or(deco.color));
  
          // `text-decoration-inset` shortens (or, when negative, extends) the line from the
@@ -22801,7 +22794,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1794,853 @@
+@@ -608,152 +1784,853 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -23771,7 +23764,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2648,54 @@
+@@ -761,12 +2638,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -23828,11 +23821,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -803,4 +2732,240 @@
-         prev = *point;
+@@ -804,3 +2723,239 @@
      }
      prev.1
-+}
+ }
 +
 +/// pyro: where `text-decoration-skip-ink` leaves gaps in a decoration line spanning `extent`
 +/// (layout x), as Blink's `TextPainter::ClipDecorationLine` cuts them: around the ink of every
@@ -23919,7 +23911,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +    }
 +    merged
- }
++}
 +
 +/// pyro: whether a character is CJK (Han, kana, Hangul, their punctuation and compatibility
 +/// forms), whose glyphs `text-decoration-skip-ink: auto` does not skip (Blink's

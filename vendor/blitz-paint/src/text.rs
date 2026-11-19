@@ -214,17 +214,7 @@ impl VerticalLine {
 /// Whether `text-orientation: mixed` stands a character upright (UTR #50's `Vertical_Orientation`
 /// other than R, by block).
 fn is_upright_char(c: char) -> bool {
-    matches!(c as u32,
-        0x1100..=0x11FF
-        | 0x2E80..=0x4DBF
-        | 0x4E00..=0xA4CF
-        | 0xAC00..=0xD7FF
-        | 0xF900..=0xFAFF
-        | 0xFE30..=0xFE4F
-        | 0xFF00..=0xFF60
-        | 0xFFE0..=0xFFE6
-        | 0x1F000..=0x1FAFF
-        | 0x20000..=0x3FFFF)
+    parley::upright_in_vertical(c)
 }
 
 /// pyro: a glyph run's font on a central baseline (the `mixed` and `upright` text of

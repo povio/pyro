@@ -134,7 +134,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
 
             // Items are at least one character long, therefore the item's own first character is
             // never a split point.
-            chars.next();
+            // pyro: in a vertical line (not upright throughout) an item keeps one vertical
+            // orientation, which paint draws a run by (`upright_in_vertical`).
+            let item_upright = chars.next().map(|(_, (_, c))| crate::upright_in_vertical(c));
 
             let char_end = 'item: loop {
                 let Some(&(char_index, (byte_index, _))) = chars.peek() else {
@@ -184,6 +186,14 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         // pyro: and at the edges of a bidi isolate (CSS Text 3 § 7.3, WPT css-text
                         // `boundary-shaping-008`), where HarfBuzz would ligate across.
                         || isolating_span(styles, style_index) != isolating_span(styles, item_style_index);
+                }
+
+                if !split
+                    && item_style.vertical
+                    && !item_style.upright
+                    && let Some(&(_, (_, c))) = chars.peek()
+                {
+                    split = Some(crate::upright_in_vertical(c)) != item_upright;
                 }
 
                 if split {

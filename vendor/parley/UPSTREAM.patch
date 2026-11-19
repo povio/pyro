@@ -4734,7 +4734,7 @@ index 2b2ae69..e43eda0 100644
              Self::PreserveBreaks => matches!(c, ' ' | '\t'),
          }
 diff --git a/src/lib.rs b/src/lib.rs
-index e967f50..f77853e 100644
+index e967f50..5b39765 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -47,7 +47,7 @@
@@ -4763,8 +4763,37 @@ index e967f50..f77853e 100644
  };
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
+@@ -140,6 +141,28 @@ pub use inline_box::{InlineBox, InlineBoxKind};
+ pub use layout::Layout;
+ pub use util::BoundingBox;
+ 
++/// pyro: whether `text-orientation: mixed` stands a character upright in a vertical line (UTR #50
++/// `Vertical_Orientation` other than R, by block), the rule shaping splits runs by
++/// ([`TextStyle::vertical`]) and blitz-paint draws by.
++pub fn upright_in_vertical(c: char) -> bool {
++    // The fullwidth forms that are R in a block that is otherwise U: the hyphen-minus and the
++    // less-than, equals and greater-than signs.
++    if matches!(c as u32, 0xFF0D | 0xFF1C..=0xFF1E) {
++        return false;
++    }
++    matches!(c as u32,
++        0x1100..=0x11FF
++        | 0x2E80..=0x4DBF
++        | 0x4E00..=0xA4CF
++        | 0xAC00..=0xD7FF
++        | 0xF900..=0xFAFF
++        | 0xFE30..=0xFE4F
++        | 0xFF00..=0xFF60
++        | 0xFFE0..=0xFFE6
++        | 0x1F000..=0x1FAFF
++        | 0x20000..=0x3FFFF)
++}
++
+ pub use editing::*;
+ pub use layout::*;
+ pub use style::*;
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..772be0f 100644
+index f465832..82ddaff 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -4776,7 +4805,7 @@ index f465832..772be0f 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,20 @@ impl ResolveContext {
+@@ -169,6 +169,21 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
@@ -4792,12 +4821,13 @@ index f465832..772be0f 100644
 +            StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
 +            StyleProperty::TextAutospace(value) => TextAutospace(*value),
 +            StyleProperty::Upright(value) => Upright(*value),
++            StyleProperty::Vertical(value) => Vertical(*value),
 +            StyleProperty::TextJustify(value) => TextJustify(*value),
 +            StyleProperty::SpacingScales(value) => SpacingScales(*value),
          }
      }
  
-@@ -210,6 +224,22 @@ impl ResolveContext {
+@@ -210,6 +225,23 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
@@ -4813,6 +4843,7 @@ index f465832..772be0f 100644
 +            text_spacing_trim: raw_style.text_spacing_trim,
 +            text_autospace: raw_style.text_autospace,
 +            upright: raw_style.upright,
++            vertical: raw_style.vertical,
 +            text_justify: raw_style.text_justify,
 +            spacing_scales: raw_style.spacing_scales,
 +            annotation_space: raw_style.annotation_space.scale(scale),
@@ -4820,7 +4851,7 @@ index f465832..772be0f 100644
          }
      }
  
-@@ -400,6 +430,40 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +432,42 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -4846,6 +4877,8 @@ index f465832..772be0f 100644
 +    TextAutospace(crate::style::TextAutospace),
 +    /// pyro: upright glyphs in a vertical line.
 +    Upright(bool),
++    /// pyro: text in a vertical line.
++    Vertical(bool),
 +    /// pyro: where justification adds space.
 +    TextJustify(crate::style::TextJustify),
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -4861,7 +4894,7 @@ index f465832..772be0f 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +512,39 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +516,41 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -4890,6 +4923,8 @@ index f465832..772be0f 100644
 +    pub(crate) text_autospace: crate::style::TextAutospace,
 +    /// pyro: upright glyphs in a vertical line.
 +    pub(crate) upright: bool,
++    /// pyro: text in a vertical line (`TextStyle::vertical`).
++    pub(crate) vertical: bool,
 +    /// pyro: where justification adds space.
 +    pub(crate) text_justify: crate::style::TextJustify,
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -4901,7 +4936,7 @@ index f465832..772be0f 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +578,20 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +584,21 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
@@ -4917,12 +4952,13 @@ index f465832..772be0f 100644
 +            TextSpacingTrim(value) => self.text_spacing_trim = value,
 +            TextAutospace(value) => self.text_autospace = value,
 +            Upright(value) => self.upright = value,
++            Vertical(value) => self.vertical = value,
 +            TextJustify(value) => self.text_justify = value,
 +            SpacingScales(value) => self.spacing_scales = value,
          }
      }
  
-@@ -513,6 +624,20 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +631,21 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
@@ -4938,12 +4974,13 @@ index f465832..772be0f 100644
 +            TextSpacingTrim(value) => self.text_spacing_trim == *value,
 +            TextAutospace(value) => self.text_autospace == *value,
 +            Upright(value) => self.upright == *value,
++            Vertical(value) => self.vertical == *value,
 +            TextJustify(value) => self.text_justify == *value,
 +            SpacingScales(value) => self.spacing_scales == *value,
          }
      }
  
-@@ -527,6 +652,11 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +660,11 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
@@ -5722,7 +5759,7 @@ index 0000000..ce15c33
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..bcf9938 100644
+index 060a32d..d7faa2a 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -5776,9 +5813,14 @@ index 060a32d..bcf9938 100644
          core::iter::from_fn(move || {
              if item_start_char == char_count {
                  return None;
-@@ -121,22 +136,24 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -119,24 +134,28 @@ pub(crate) fn shape_text<'a, B: Brush>(
+ 
+             // Items are at least one character long, therefore the item's own first character is
              // never a split point.
-             chars.next();
+-            chars.next();
++            // pyro: in a vertical line (not upright throughout) an item keeps one vertical
++            // orientation, which paint draws a run by (`upright_in_vertical`).
++            let item_upright = chars.next().map(|(_, (_, c))| crate::upright_in_vertical(c));
  
 -            let char_end = loop {
 +            let char_end = 'item: loop {
@@ -5803,7 +5845,7 @@ index 060a32d..bcf9938 100644
                          inline_box_iter.next();
                          split = true;
                      } else {
-@@ -145,41 +162,62 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -145,41 +164,70 @@ pub(crate) fn shape_text<'a, B: Brush>(
                  }
  
                  if split {
@@ -5831,6 +5873,14 @@ index 060a32d..bcf9938 100644
 +                        // pyro: and at the edges of a bidi isolate (CSS Text 3 § 7.3, WPT css-text
 +                        // `boundary-shaping-008`), where HarfBuzz would ligate across.
 +                        || isolating_span(styles, style_index) != isolating_span(styles, item_style_index);
++                }
++
++                if !split
++                    && item_style.vertical
++                    && !item_style.upright
++                    && let Some(&(_, (_, c))) = chars.peek()
++                {
++                    split = Some(crate::upright_in_vertical(c)) != item_upright;
                  }
  
                  if split {
@@ -5870,7 +5920,7 @@ index 060a32d..bcf9938 100644
  
      scx.shape_text(
          text,
-@@ -190,6 +228,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -190,6 +238,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
          &mut layout.data.shaped_text,
      );
  
@@ -5878,7 +5928,7 @@ index 060a32d..bcf9938 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -200,20 +239,13 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -200,20 +249,13 @@ pub(crate) fn shape_text<'a, B: Brush>(
          let run_text_byte_start = shaped_run.range.byte_range.start;
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
@@ -5903,7 +5953,7 @@ index 060a32d..bcf9938 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -228,25 +260,130 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,25 +270,130 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // we probably shouldn't itemize on them; we should just ensure we don't ligate if
              // they're non-zero).
              run_style,
@@ -6024,7 +6074,7 @@ index 060a32d..bcf9938 100644
 +            levels[index] = next;
 +        }
 +        next = level_of(slot, &levels).or(next);
-     }
++    }
 +    // An edge with nothing on its side takes the other side's level.
 +    let (mut before, mut after) = (alloc::vec![None; inline_boxes.len()], None);
 +    let mut last = None;
@@ -6033,7 +6083,7 @@ index 060a32d..bcf9938 100644
 +            before[index] = last;
 +        }
 +        last = level_of(slot, &levels).or(last);
-+    }
+     }
 +    for slot in slots.iter().rev() {
 +        if let Slot::Box(index) = *slot
 +            && levels[index].is_none()
@@ -6046,7 +6096,7 @@ index 060a32d..bcf9938 100644
  }
  
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +396,15 @@ enum LastResortFont {
+@@ -259,6 +406,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -6062,7 +6112,7 @@ index 060a32d..bcf9938 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +430,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +440,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -6077,7 +6127,7 @@ index 060a32d..bcf9938 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +509,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +519,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -6116,7 +6166,7 @@ index 060a32d..bcf9938 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +546,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +556,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -6129,7 +6179,7 @@ index 060a32d..bcf9938 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -405,15 +584,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -405,15 +594,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                  return fontique::QueryStatus::Continue;
              };
  
@@ -6152,7 +6202,7 @@ index 060a32d..bcf9938 100644
                  },
                  self.analysis_data_sources,
              );
-@@ -473,3 +652,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +662,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }
@@ -6265,7 +6315,7 @@ index 0000000..e8fc4f6
 +    }
 +}
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..8ba4032 100644
+index d9977df..af4af78 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -43,6 +43,158 @@ pub enum WhiteSpaceCollapse {
@@ -6526,7 +6576,7 @@ index d9977df..8ba4032 100644
              _ => self,
          }
      }
-@@ -277,6 +469,35 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +469,37 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -6555,6 +6605,8 @@ index d9977df..8ba4032 100644
 +    TextAutospace(TextAutospace),
 +    /// pyro: upright glyphs in a vertical line (`text-orientation: upright`).
 +    Upright(bool),
++    /// pyro: text in a vertical line (`TextStyle::vertical`).
++    Vertical(bool),
 +    /// pyro: where justification adds space.
 +    TextJustify(TextJustify),
 +    /// pyro: which of the letter and word spacing scale with the font size.
@@ -6562,7 +6614,7 @@ index d9977df..8ba4032 100644
  }
  
  /// Unresolved styles.
-@@ -334,6 +555,97 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +557,101 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -6602,6 +6654,10 @@ index d9977df..8ba4032 100644
 +    /// pyro: this style's glyphs stand upright in vertical lines (CSS `text-orientation:
 +    /// upright`): a glyph without a vertical advance (`vmtx`) advances by the font's height.
 +    pub upright: bool,
++    /// pyro: this style's text is in a vertical line, not sideways (CSS `writing-mode: vertical-*`
++    /// with `text-orientation: mixed` or `upright`): shaping runs split where a character's
++    /// vertical orientation (UTR #50, [`crate::upright_in_vertical`]) changes.
++    pub vertical: bool,
 +    /// pyro: where justification adds space in this style's text (CSS `text-justify`).
 +    pub text_justify: TextJustify,
 +    /// pyro: which of this style's letter and word spacing scale with its font size (CSS
@@ -6660,7 +6716,7 @@ index d9977df..8ba4032 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +677,22 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +683,23 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
@@ -6676,6 +6732,7 @@ index d9977df..8ba4032 100644
 +            text_spacing_trim: TextSpacingTrim::default(),
 +            text_autospace: TextAutospace::default(),
 +            upright: false,
++            vertical: false,
 +            text_justify: TextJustify::default(),
 +            spacing_scales: SpacingScales::default(),
 +            annotation_space: AnnotationSpace::default(),

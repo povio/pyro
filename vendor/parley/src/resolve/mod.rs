@@ -181,6 +181,7 @@ impl ResolveContext {
             StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
             StyleProperty::TextAutospace(value) => TextAutospace(*value),
             StyleProperty::Upright(value) => Upright(*value),
+            StyleProperty::Vertical(value) => Vertical(*value),
             StyleProperty::TextJustify(value) => TextJustify(*value),
             StyleProperty::SpacingScales(value) => SpacingScales(*value),
         }
@@ -236,6 +237,7 @@ impl ResolveContext {
             text_spacing_trim: raw_style.text_spacing_trim,
             text_autospace: raw_style.text_autospace,
             upright: raw_style.upright,
+            vertical: raw_style.vertical,
             text_justify: raw_style.text_justify,
             spacing_scales: raw_style.spacing_scales,
             annotation_space: raw_style.annotation_space.scale(scale),
@@ -452,6 +454,8 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     TextAutospace(crate::style::TextAutospace),
     /// pyro: upright glyphs in a vertical line.
     Upright(bool),
+    /// pyro: text in a vertical line.
+    Vertical(bool),
     /// pyro: where justification adds space.
     TextJustify(crate::style::TextJustify),
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -537,6 +541,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) text_autospace: crate::style::TextAutospace,
     /// pyro: upright glyphs in a vertical line.
     pub(crate) upright: bool,
+    /// pyro: text in a vertical line (`TextStyle::vertical`).
+    pub(crate) vertical: bool,
     /// pyro: where justification adds space.
     pub(crate) text_justify: crate::style::TextJustify,
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -590,6 +596,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TextSpacingTrim(value) => self.text_spacing_trim = value,
             TextAutospace(value) => self.text_autospace = value,
             Upright(value) => self.upright = value,
+            Vertical(value) => self.vertical = value,
             TextJustify(value) => self.text_justify = value,
             SpacingScales(value) => self.spacing_scales = value,
         }
@@ -636,6 +643,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TextSpacingTrim(value) => self.text_spacing_trim == *value,
             TextAutospace(value) => self.text_autospace == *value,
             Upright(value) => self.upright == *value,
+            Vertical(value) => self.vertical == *value,
             TextJustify(value) => self.text_justify == *value,
             SpacingScales(value) => self.spacing_scales == *value,
         }

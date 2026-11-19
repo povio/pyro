@@ -494,6 +494,8 @@ pub enum StyleProperty<'a, B: Brush> {
     TextAutospace(TextAutospace),
     /// pyro: upright glyphs in a vertical line (`text-orientation: upright`).
     Upright(bool),
+    /// pyro: text in a vertical line (`TextStyle::vertical`).
+    Vertical(bool),
     /// pyro: where justification adds space.
     TextJustify(TextJustify),
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -591,6 +593,10 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: this style's glyphs stand upright in vertical lines (CSS `text-orientation:
     /// upright`): a glyph without a vertical advance (`vmtx`) advances by the font's height.
     pub upright: bool,
+    /// pyro: this style's text is in a vertical line, not sideways (CSS `writing-mode: vertical-*`
+    /// with `text-orientation: mixed` or `upright`): shaping runs split where a character's
+    /// vertical orientation (UTR #50, [`crate::upright_in_vertical`]) changes.
+    pub vertical: bool,
     /// pyro: where justification adds space in this style's text (CSS `text-justify`).
     pub text_justify: TextJustify,
     /// pyro: which of this style's letter and word spacing scale with its font size (CSS
@@ -689,6 +695,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             text_spacing_trim: TextSpacingTrim::default(),
             text_autospace: TextAutospace::default(),
             upright: false,
+            vertical: false,
             text_justify: TextJustify::default(),
             spacing_scales: SpacingScales::default(),
             annotation_space: AnnotationSpace::default(),
