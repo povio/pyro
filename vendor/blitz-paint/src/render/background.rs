@@ -1330,6 +1330,34 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: a background image's rectangle (`pos`, device px from `origin_rect`'s corner, and its size) as
+    /// Chromium places it on a box laid out at a fraction of a pixel: from the box's unrounded
+    /// place, the image's rectangle snapped to whole device pixels (`BackgroundImageGeometry`), so
+    /// that two boxes rounded apart place images centred on one point alike (WPT css-backgrounds
+    /// `subpixel-position-center`, `background-position-subpixel-at-border`). A box at whole
+    /// pixels, or under a transform that is not a translation, keeps the position as it is.
+    fn subpixel_image_rect(&self, pos: Point, size: Size, origin_rect: Rect, base: Affine) -> (Point, Size) {
+        let [a, b, c, d, tx, ty] = (self.transform * base).as_coeffs();
+        if a != 1.0 || b != 0.0 || c != 0.0 || d != 1.0 {
+            return (pos, size);
+        }
+        let (unrounded, _) = self.context.dom.physical_unrounded_geometry(self.node.id);
+        let fraction = |v: f32| f64::from(v) - f64::from(v).round();
+        let (fx, fy) = (fraction(unrounded.x), fraction(unrounded.y));
+        if fx.abs() < 1e-6 && fy.abs() < 1e-6 {
+            return (pos, size);
+        }
+        // Each edge at the whole device pixel nearest its unrounded place.
+        let snap = |v: f64, length: f64, f: f64, origin: f64, t: f64| {
+            let start = t + origin + v + f * self.scale;
+            let (x0, x1) = (start.round(), (start + length).round());
+            (x0 - t - origin, (x1 - x0).max(1.0))
+        };
+        let (x, w) = snap(pos.x, size.width, fx, origin_rect.x0, tx);
+        let (y, h) = snap(pos.y, size.height, fy, origin_rect.y0, ty);
+        (Point::new(x, y), Size::new(w, h))
+    }
+
     fn draw_raster_image_layer(
         &self,
         scene: &mut impl PaintScene,
@@ -1365,7 +1393,7 @@ impl ElementCx<'_, '_> {
         );
 
         let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
-        let bg_size = bg_size * self.scale;
+        let (bg_pos, bg_size) = self.subpixel_image_rect(bg_pos, bg_size * self.scale, origin_rect, base_transform);
         if !(bg_size.width > 0.0 && bg_size.height > 0.0) {
             return;
         }
