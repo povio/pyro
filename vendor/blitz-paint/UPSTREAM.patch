@@ -16648,7 +16648,7 @@ diff --git a/packages/blitz-paint/src/render/border_shape.rs b/packages/blitz-pa
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/border_shape.rs
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,403 @@
 +//! pyro: `border-shape` (CSS Borders 4 §11), as Blink's `BorderShapePainter` draws it.
 +//!
 +//! With one shape the border is a stroke along it, as wide as the relevant side's border and in
@@ -16676,7 +16676,7 @@ new file mode 100644
 +/// such as a rectangle's, end at their last corner).
 +/// pyro: the oval filling `rect`, drawn as a `border-radius: 50%` box is (as `ellipse()` is);
 +/// `None` for an empty rectangle.
-+fn oval_path(rect: Rect) -> Option<BezPath> {
++pub(super) fn oval_path(rect: Rect) -> Option<BezPath> {
 +    if !(rect.width() > 0.0 && rect.height() > 0.0) {
 +        return None;
 +    }
@@ -16819,6 +16819,17 @@ new file mode 100644
 +        } else {
 +            boolean(&shapes, |inside| inside[0] && !inside[1])
 +        }
++    }
++
++    /// pyro: the box of the inner edge when it is a circle (an oval shape without an inner one):
++    /// its inset shadow is drawn as a `border-radius: 50%` box's.
++    pub(super) fn inner_circle(&self) -> Option<Rect> {
++        if self.inner.is_some() {
++            return None;
++        }
++        let half = self.width.max(0.0) / 2.0;
++        let inner = self.oval?.inflate(-half, -half);
++        ((inner.width() - inner.height()).abs() < 1e-6 && inner.width() > 0.0).then_some(inner)
 +    }
 +
 +    /// The box of the outer edge moved out by `offset` when it is a circle: vello's blurred
@@ -17044,7 +17055,7 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-paint/src/render/box_shadow.rs
 --- a/packages/blitz-paint/src/render/box_shadow.rs
 +++ b/packages/blitz-paint/src/render/box_shadow.rs
-@@ -1,17 +1,342 @@
+@@ -1,17 +1,359 @@
  use super::ElementCx;
  use crate::color::{Color, ToColorColor as _};
 +use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
@@ -17324,7 +17335,10 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +            );
 +            let spread = shadow.spread.px() as f64 * self.scale;
 +            let blur = shadow.base.blur.px() as f64 * self.scale;
-+            if !clipped {
++            // pyro: a circle's blurred inset shadow clips itself to the circle (below): a second
++            // clip would take its anti-aliased edge's coverage twice.
++            let inset_circle = inset && blur > 0.0 && shape.inner_circle().is_some();
++            if !clipped && !inset_circle {
 +                if inset {
 +                    scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
 +                } else {
@@ -17347,7 +17361,21 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +                }
 +                clipped = true;
 +            }
-+            if inset {
++            if let Some(circle) = shape.inner_circle().filter(|_| inset_circle) {
++                // pyro: a circle's blurred inset shadow as a `border-radius: 50%` box's: the
++                // colour less the blurred hole (WPT css-borders `border-shape-shadow-inset-blur`).
++                let clip_path = super::border_shape::oval_path(circle).unwrap_or_default();
++                scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, self.transform, &clip_path, None, None);
++                scene.fill(Fill::NonZero, self.transform, color, None, &clip_path);
++                scene.push_layer(Fill::NonZero, Compose::DestOut, 1.0, self.transform, &clip_path, None, None);
++                let hole = circle.inflate(-spread, -spread);
++                if hole.width() > 0.0 && hole.height() > 0.0 {
++                    let transform = self.transform.then_translate(offset);
++                    scene.draw_box_shadow(transform, hole, Color::WHITE, hole.width() / 2.0, blur / 2.0);
++                }
++                scene.pop_layer();
++                scene.pop_layer();
++            } else if inset {
 +                // The hole is the inner edge shrunk by the spread; the shadow is all around it.
 +                let hole = if spread == 0.0 {
 +                    clip.clone()
@@ -17388,7 +17416,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          let current_color = self.style.clone_color();
          let opacity = self.style.get_effects().opacity;
-@@ -21,7 +346,11 @@
+@@ -21,7 +363,11 @@
              .background_color
              .resolve_to_absolute(&current_color)
              .as_srgb_color();
@@ -17401,7 +17429,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
          let needs_clip = opacity < 1.0 || !bg_is_opaque;
  
          let max_shadow_rect = box_shadow.iter().fold(Rect::ZERO, |prev, shadow| {
-@@ -76,12 +405,51 @@
+@@ -76,12 +422,51 @@
                              continue;
                          }
  
@@ -17457,7 +17485,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
                      }
                  }
              },
-@@ -95,8 +463,13 @@
+@@ -95,8 +480,13 @@
          if !has_inset_shadow {
              return;
          }
@@ -17471,7 +17499,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          for shadow in box_shadow.iter().filter(|s| s.inset) {
              let shadow_color = shadow
-@@ -104,17 +477,40 @@
+@@ -104,17 +494,40 @@
                  .color
                  .resolve_to_absolute(&current_color)
                  .as_srgb_color();
@@ -17519,7 +17547,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
              scene.push_layer(
                  Fill::NonZero,
                  Mix::Normal,
-@@ -141,19 +537,35 @@
+@@ -141,19 +554,35 @@
                  None,
                  None,
              );

@@ -276,7 +276,10 @@ impl ElementCx<'_, '_> {
             );
             let spread = shadow.spread.px() as f64 * self.scale;
             let blur = shadow.base.blur.px() as f64 * self.scale;
-            if !clipped {
+            // pyro: a circle's blurred inset shadow clips itself to the circle (below): a second
+            // clip would take its anti-aliased edge's coverage twice.
+            let inset_circle = inset && blur > 0.0 && shape.inner_circle().is_some();
+            if !clipped && !inset_circle {
                 if inset {
                     scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
                 } else {
@@ -299,7 +302,21 @@ impl ElementCx<'_, '_> {
                 }
                 clipped = true;
             }
-            if inset {
+            if let Some(circle) = shape.inner_circle().filter(|_| inset_circle) {
+                // pyro: a circle's blurred inset shadow as a `border-radius: 50%` box's: the
+                // colour less the blurred hole (WPT css-borders `border-shape-shadow-inset-blur`).
+                let clip_path = super::border_shape::oval_path(circle).unwrap_or_default();
+                scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, self.transform, &clip_path, None, None);
+                scene.fill(Fill::NonZero, self.transform, color, None, &clip_path);
+                scene.push_layer(Fill::NonZero, Compose::DestOut, 1.0, self.transform, &clip_path, None, None);
+                let hole = circle.inflate(-spread, -spread);
+                if hole.width() > 0.0 && hole.height() > 0.0 {
+                    let transform = self.transform.then_translate(offset);
+                    scene.draw_box_shadow(transform, hole, Color::WHITE, hole.width() / 2.0, blur / 2.0);
+                }
+                scene.pop_layer();
+                scene.pop_layer();
+            } else if inset {
                 // The hole is the inner edge shrunk by the spread; the shadow is all around it.
                 let hole = if spread == 0.0 {
                     clip.clone()

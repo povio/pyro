@@ -25,7 +25,7 @@ fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
 /// such as a rectangle's, end at their last corner).
 /// pyro: the oval filling `rect`, drawn as a `border-radius: 50%` box is (as `ellipse()` is);
 /// `None` for an empty rectangle.
-fn oval_path(rect: Rect) -> Option<BezPath> {
+pub(super) fn oval_path(rect: Rect) -> Option<BezPath> {
     if !(rect.width() > 0.0 && rect.height() > 0.0) {
         return None;
     }
@@ -168,6 +168,17 @@ impl BorderShape {
         } else {
             boolean(&shapes, |inside| inside[0] && !inside[1])
         }
+    }
+
+    /// pyro: the box of the inner edge when it is a circle (an oval shape without an inner one):
+    /// its inset shadow is drawn as a `border-radius: 50%` box's.
+    pub(super) fn inner_circle(&self) -> Option<Rect> {
+        if self.inner.is_some() {
+            return None;
+        }
+        let half = self.width.max(0.0) / 2.0;
+        let inner = self.oval?.inflate(-half, -half);
+        ((inner.width() - inner.height()).abs() < 1e-6 && inner.width() > 0.0).then_some(inner)
     }
 
     /// The box of the outer edge moved out by `offset` when it is a circle: vello's blurred
