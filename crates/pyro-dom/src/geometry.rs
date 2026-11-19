@@ -404,6 +404,11 @@ pub trait GeometrySource {
     fn mandatory_snap_containers(&self) -> Vec<u64> {
         Vec::new()
     }
+    /// pyro: whether an element was ever styled with a `scroll-snap-type`, as of the last sync
+    /// (no snapping to look for otherwise).
+    fn uses_scroll_snap(&self) -> bool {
+        false
+    }
     /// pyro: the keys of the elements whose `::scroll-marker-group` scrolled to keep its active
     /// marker in view since the last call.
     fn take_scroll_group_moves(&self) -> Vec<u64> {

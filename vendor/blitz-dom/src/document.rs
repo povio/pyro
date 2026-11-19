@@ -663,6 +663,9 @@ pub struct BaseDocument {
     /// container looks for spanners below its children too (`layout::multicol`); without one its
     /// children are all it reads.
     pub(crate) column_span_styles: bool,
+    /// pyro: an element was ever styled with a `scroll-snap-type` (snapping is looked for only
+    /// then: `mandatory_snap_containers`).
+    pub(crate) scroll_snap_styles: bool,
     /// pyro: the generated text of each element's `::after` and `::before` with counters and
     /// quotes evaluated (`layout::counters`), while `generated_counters`.
     pub(crate) generated_text: HashMap<NodeId, crate::layout::counters::GeneratedText>,
@@ -916,6 +919,7 @@ impl BaseDocument {
             generated_counters: false,
             text_box_trim_styles: false,
             column_span_styles: false,
+            scroll_snap_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
             marker_counters: false,

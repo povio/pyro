@@ -252,6 +252,8 @@ pub struct Layout {
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
+    /// pyro: whether the viewport took its initial snap position.
+    viewport_initially_snapped: bool,
     /// pyro: the scroll offset script last gave an element on each axis in its CSS px (x, y), with
     /// the whole layout px it was kept as: read back while the offset is still that one, as a
     /// zoomed element's fractional offset ([`Self::css_scroll`]).
@@ -540,6 +542,7 @@ impl Layout {
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
             initially_snapped: Default::default(),
+            viewport_initially_snapped: false,
             css_scroll: FxHashMap::default(),
             initial_snap_checked: Default::default(),
             external,
@@ -3155,6 +3158,11 @@ impl Layout {
     /// scrolled starts at a snap position (Chromium snaps it at its first layout). Looked for once
     /// per DOM version. Whether a scroll offset changed.
     pub fn snap_initial_positions(&mut self, dom: &Dom) -> bool {
+        // pyro: free for a document no element of which was styled with a `scroll-snap-type` as
+        // of the last sync (looked for again after the next: the version is not marked checked).
+        if !self.external.as_ref().filter(|s| s.active()).is_some_and(|s| s.uses_scroll_snap()) {
+            return false;
+        }
         let version = dom.version();
         if self.initial_snap_checked.replace(Some(version)) == Some(version) {
             return false;
@@ -3174,6 +3182,17 @@ impl Layout {
                 self.element_scroll.insert(el, (x, y));
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
                 moved = true;
+            }
+        }
+        // pyro: the viewport too, when the root's `scroll-snap-type` snaps mandatorily.
+        if self.window_scroll == (0, 0) && !self.viewport_initially_snapped {
+            let doc = self.style.document();
+            let mandatory = dom.document_element(doc).ok().flatten().is_some_and(|root| {
+                self.style.computed_value(dom, root, "scroll-snap-type").unwrap_or_default().ends_with("mandatory")
+            });
+            if mandatory {
+                self.viewport_initially_snapped = true;
+                moved |= self.window_scroll_to(dom, Some(0), Some(0));
             }
         }
         moved

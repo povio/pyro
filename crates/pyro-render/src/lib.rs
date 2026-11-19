@@ -939,6 +939,11 @@ impl Renderer {
         m.doc.mandatory_snap_containers().into_iter().filter_map(|id| m.key_of(id)).collect()
     }
 
+    /// pyro: whether an element of the page's document was ever styled with a `scroll-snap-type`.
+    pub fn uses_scroll_snap(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_snap())
+    }
+
     /// pyro: whether the page's document has scroll markers or buttons (their states follow the
     /// scroll offsets).
     pub fn uses_scroll_markers(&self, page: u64) -> bool {

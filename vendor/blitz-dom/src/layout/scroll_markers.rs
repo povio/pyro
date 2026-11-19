@@ -1305,6 +1305,9 @@ impl BaseDocument {
     /// initial scroll position snaps: CSS Scroll Snap 1 § 6.3).
     pub fn mandatory_snap_containers(&self) -> Vec<NodeId> {
         use style_traits::ToCss as _;
+        if !self.scroll_snap_styles {
+            return Vec::new();
+        }
         self.nodes
             .iter()
             .filter(|(_, node)| node.is_element() && node.flags.is_in_document())
@@ -1315,6 +1318,11 @@ impl BaseDocument {
             })
             .map(|(id, _)| id)
             .collect()
+    }
+
+    /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.
+    pub fn uses_scroll_snap(&self) -> bool {
+        self.scroll_snap_styles
     }
 
     /// pyro: whether the document has scroll pseudo-elements (markers, groups, buttons).

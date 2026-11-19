@@ -7501,3 +7501,30 @@ fn a_dialog_closing_through_an_overlay_transition_stays_laid_out_as_modal() {
     assert_eq!(result, "block,fixed,false");
     e.page.dispose();
 }
+
+#[test]
+fn the_viewport_starts_at_the_mandatory_snap_position_of_the_root() {
+    // CSS Scroll Snap 1 § 6.3: the root's `scroll-snap-type` snaps the viewport's initial scroll
+    // position too (review of round 6: only scroll containers snapped).
+    let e = env(
+        "<html style='scroll-snap-type:y mandatory'><body style='margin:0'>\
+         <div style='height:300px;margin-top:150px;scroll-snap-align:start'></div>\
+         <div style='height:3000px'></div></body></html>",
+    );
+    assert_eq!(eval(&e.main, "String(document.scrollingElement.scrollTop)"), "150");
+    e.page.dispose();
+}
+
+#[test]
+fn a_container_styled_to_snap_after_the_first_layout_starts_at_a_snap_position() {
+    // Snapping is looked for once an element was styled with a `scroll-snap-type` (pages without
+    // one pay nothing); a container that gets one later still starts snapped.
+    let e = env(
+        "<body style='margin:0'><div id=s style='overflow:hidden;height:200px'>\
+         <div style='height:300px;margin-top:150px;scroll-snap-align:start'></div>\
+         <div style='height:3000px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "String(s.scrollTop)"), "0");
+    assert_eq!(eval(&e.main, "s.style.scrollSnapType='y mandatory';String(s.scrollTop)"), "150");
+    e.page.dispose();
+}
