@@ -585,7 +585,8 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
 /// `counter-reset` wins; and the reversed counters (`reversed(name)`) its style resets.
 fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, list: bool, walk: &mut Walk) {
     for pair in style.get_counters().counter_reset.iter().filter(|pair| pair.is_reversed) {
-        let value = if pair.value == i32::MIN { reversed_initial(doc, node, &pair.name.0) } else { pair.value };
+        let siblings = reversed_scope_has_siblings(walk, &pair.name.0);
+        let value = if pair.value == i32::MIN { reversed_initial(doc, node, &pair.name.0, siblings) } else { pair.value };
         // pyro: the element's own increment of the counter follows its reset (this runs after
         // the walk applied it to the instance it reset).
         let own: i32 = style
@@ -619,7 +620,10 @@ fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, lis
     let name = Atom::from("list-item");
     let value = match (reversed, start) {
         (true, Some(start)) => start.saturating_add(1),
-        (true, None) => reversed_initial(doc, node, &name),
+        (true, None) => {
+            let siblings = reversed_scope_has_siblings(walk, &name);
+            reversed_initial(doc, node, &name, siblings)
+        }
         (false, Some(start)) => start.saturating_sub(1),
         (false, None) => return,
     };
@@ -634,17 +638,22 @@ fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, lis
 /// resets the counter again) that increment or set it, in tree order, the negated increments
 /// (list items -1 each unless they increment it themselves) up to the first that sets it, plus
 /// that value, plus the last non-zero negated increment.
-fn reversed_initial(doc: &BaseDocument, node: NodeId, name: &Atom) -> i32 {
+/// pyro: whether the reversed instance of `name` just made is visible to its element's following
+/// siblings: the walk scoped it so, and it is not a `list-item` nested in another (the items after
+/// a nested list are its parent list's, WPT css-lists `li-value-reversed-007a`).
+fn reversed_scope_has_siblings(walk: &Walk, name: &Atom) -> bool {
+    walk.counters.get(name).is_some_and(|stack| {
+        stack.last().is_some_and(|instance| instance.sibling) && (stack.len() == 1 || &**name != "list-item")
+    })
+}
+
+fn reversed_initial(doc: &BaseDocument, node: NodeId, name: &Atom, siblings: bool) -> i32 {
     let (mut num, mut last) = (0i32, 0i32);
     // pyro: the counter's scope (CSS Lists 3 § 4.4): the element itself, its descendants, and
-    // its following siblings with theirs. (Not the siblings for the `list-item` of an HTML list:
-    // the items after a nested reversed list are its parent list's, WPT css-lists
-    // `li-value-reversed-007a`.)
-    let html_list = doc.nodes[node].element_data().is_some_and(|element| {
-        matches!(&*element.name.local, "ol" | "ul" | "menu" | "dir")
-    });
+    // its following siblings with theirs when the walk made the instance visible to them
+    // (`siblings`: `Walk::reset` scopes a reset inside another instance to its element).
     let done = scan_reversed_element(doc, node, name, &mut num, &mut last, true)
-        || (!(html_list && &**name == "list-item") && doc.nodes[node].parent.is_some_and(|parent| {
+        || (siblings && doc.nodes[node].parent.is_some_and(|parent| {
             let siblings = &doc.nodes[parent].children;
             let at = siblings.iter().position(|&id| id == node).map_or(siblings.len(), |at| at + 1);
             siblings[at..]
