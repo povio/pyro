@@ -7442,3 +7442,31 @@ fn a_float_a_line_clamp_discarded_is_neither_hit_nor_scrollable_overflow() {
     assert_eq!(eval(&e.main, "String(clamp.scrollHeight===clamp.clientHeight)"), "true");
     e.page.dispose();
 }
+
+#[test]
+fn a_run_in_lets_go_of_its_block_when_it_stops_running_in() {
+    // Each run-in (H*) runs into the block after it until a change; then it is a block of its
+    // own, above its former target. `H6` stays a block: its target starts with a run-in that runs
+    // in (CSS Display 3 § 2.6).
+    let e = env(
+        "<body style='margin:0;font:20px/20px monospace'><style>.r{display:run-in}</style>\
+         <div id=c1><div id=r1 class=r>H1</div><div id=t1>body one</div></div>\
+         <div id=c2><div id=r2 class=r>H2</div><div id=t2>body two</div></div>\
+         <div id=c4><div id=r4 class=r>H4</div><div id=t4>body four</div></div>\
+         <div id=c5><div id=r5 class=r>H5</div><div id=t5>body five</div></div>\
+         <div id=c6><div id=r6 class=r>H6</div><div id=t6><span class=r>I6</span><div>inner</div></div></div>\
+         <div id=c7><div id=r7 class=r>H7</div><div id=t7>body seven</div></div></body>",
+    );
+    let result = eval(
+        &e.main,
+        "const top=e=>Math.round(e.getBoundingClientRect().top);\
+         const before=top(r1)===top(t1)&&top(r7)===top(t7);\
+         r1.style.display='block';\
+         t2.style.display='inline';\
+         r4.appendChild(document.createElement('div')).textContent='blk';\
+         c5.insertBefore(document.createTextNode('text'),t5);\
+         [before,top(r1)<top(t1),top(r2)!==top(t2),top(r4)<top(t4),top(r5)<top(t5),top(r6)<top(t6),top(r7)===top(t7)].join(',')",
+    );
+    assert_eq!(result, "true,true,true,true,true,true,true");
+    e.page.dispose();
+}

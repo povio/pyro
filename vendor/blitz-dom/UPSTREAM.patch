@@ -6174,7 +6174,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          } else {
              let position = style
                  .map(|s| s.clone_position())
-@@ -391,12 +518,215 @@
+@@ -391,12 +518,262 @@
      }
  }
  
@@ -6229,22 +6229,36 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +        let original = box_style.original_display;
 +        let display = box_style.display;
 +        let was = node.flags.contains(NodeFlags::RUNS_IN);
-+        if !original.is_run_in() || !(display.is_run_in() || was) {
-+            continue;
-+        }
-+        let target = (!box_style.float.is_floating()
++        // (No longer a run-in at all, or blockified: it runs into nothing, and the block it ran
++        // into lets it go.)
++        let candidate = original.is_run_in() && (display.is_run_in() || was);
++        let target = (candidate
++            && !box_style.float.is_floating()
 +            && !crate::node::style_is_out_of_flow(&style)
 +            && !contains_block_box(doc, id))
 +        .then(|| run_in_target(doc, &children[index + 1..]))
 +        .flatten();
 +        let runs = target.is_some();
 +        drop(style);
++        let old_target = doc.run_in_targets.iter().find(|&(_, &run_in)| run_in == id).map(|(&target, _)| target);
 +        if runs != was {
 +            doc.nodes[id].flags.set(NodeFlags::RUNS_IN, runs);
 +        }
 +        doc.run_in_targets.retain(|_, run_in| *run_in != id);
 +        if let Some(target) = target {
 +            doc.run_in_targets.insert(target, id);
++        }
++        // The blocks it leaves or joins build their boxes again (their content changed).
++        if old_target != target {
++            for block in old_target.into_iter().chain(target) {
++                if doc.nodes.get(block).is_some() {
++                    doc.nodes[block].insert_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
++                    doc.nodes[block].mark_damaged();
++                }
++            }
++        }
++        if !candidate {
++            continue;
 +        }
 +        let wanted = if runs { StyloDisplay::Inline } else { original };
 +        let current = doc.nodes[id].primary_styles().map(|style| style.get_box().display);
@@ -6307,10 +6321,43 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +        let block = display.outside() == DisplayOutside::Block
 +            && display.inside() == DisplayInside::Flow
 +            && !display.is_run_in()
-+            && !box_style.original_display.is_run_in();
++            && !box_style.original_display.is_run_in()
++            // (Nor a block that starts with a run-in of its own: CSS Display 3 § 2.6.)
++            && !starts_with_run_in(doc, id);
 +        return block.then_some(id);
 +    }
 +    None
++}
++
++/// pyro: whether the first box the element `id` generates in flow among its children is a
++/// run-in box that runs in (floats, absolutely positioned boxes, comments, collapsible white space and boxes
++/// not generated passed over).
++fn starts_with_run_in(doc: &BaseDocument, id: NodeId) -> bool {
++    let children = &doc.nodes[id].children;
++    for (index, &child) in children.iter().enumerate() {
++        let node = &doc.nodes[child];
++        match node.data.kind() {
++            NodeKind::Comment => continue,
++            NodeKind::Text if node.is_collapsible_whitespace_node() => continue,
++            NodeKind::Element => {}
++            _ => return false,
++        }
++        let Some(style) = node.primary_styles() else { return false };
++        let box_style = style.get_box();
++        if box_style.display.inside() == DisplayInside::None
++            || box_style.float.is_floating()
++            || crate::node::style_is_out_of_flow(&style)
++        {
++            continue;
++        }
++        // (A run-in that runs in itself; one that becomes a block is the block's first box like
++        // any other: WPT css-display `run-in-basic-005`.)
++        return box_style.original_display.is_run_in()
++            && box_style.display.is_run_in()
++            && !contains_block_box(doc, child)
++            && run_in_target(doc, &children[index + 1..]).is_some();
++    }
++    false
 +}
 +
 +/// pyro: the run-in box that runs into the block `target` (`resolve_run_ins`), if one does.
@@ -6391,7 +6438,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  }
  
  fn collect_layout_children_with_wrap(
-@@ -410,31 +740,80 @@
+@@ -410,31 +787,80 @@
          *doc.nodes[container_node_id].display_constructed_as_mut() = display;
      }
  
@@ -6480,7 +6527,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,17 +823,91 @@
+@@ -444,17 +870,91 @@
              }
          }
  
@@ -6577,7 +6624,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -488,13 +941,43 @@
+@@ -488,13 +988,43 @@
          } else {
              (0, false)
          };
@@ -6623,7 +6670,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +1013,9 @@
+@@ -530,7 +1060,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -6634,7 +6681,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +1038,9 @@
+@@ -553,9 +1085,9 @@
          }
  
          DisplayInside::Table => {
@@ -6646,7 +6693,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +1049,10 @@
+@@ -564,13 +1096,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -6664,7 +6711,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -581,9 +1063,34 @@
+@@ -581,9 +1110,34 @@
          // layout children (text nodes carry no style and cannot be laid out
          // as block/flex/grid items).
          _ => {
@@ -6699,7 +6746,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +1104,10 @@
+@@ -597,7 +1151,10 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -6711,7 +6758,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +1119,39 @@
+@@ -609,18 +1166,39 @@
              }
  
              // TODO: fix display:contents
@@ -6763,7 +6810,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +1160,14 @@
+@@ -629,6 +1207,14 @@
                  return;
              }
  
@@ -6778,7 +6825,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +1190,234 @@
+@@ -651,29 +1237,234 @@
      }
  }
  
@@ -6964,7 +7011,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +            data.content = text;
 +            return true;
 +        }
-+    }
+     }
 +    for child in std::mem::take(&mut doc.nodes[pe_node_id].children) {
 +        doc.remove_node_from_tree(child);
 +    }
@@ -7004,7 +7051,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +        };
 +        doc.nodes[child].parent = Some(pe_node_id);
 +        doc.nodes[pe_node_id].children.push(child);
-     }
++    }
 +    true
  }
  
@@ -7030,7 +7077,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1433,27 @@
+@@ -689,8 +1480,27 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -7058,7 +7105,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1482,11 @@
+@@ -719,11 +1529,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -7075,7 +7122,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1496,11 @@
+@@ -733,6 +1543,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -7087,7 +7134,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1518,110 @@
+@@ -750,53 +1565,110 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -7236,7 +7283,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1630,90 @@
+@@ -805,9 +1677,90 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -7329,7 +7376,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -827,9 +1733,24 @@
+@@ -827,9 +1780,24 @@
          // Taffy knows how to deal with `Display::None` children.
          //
          // Also hide all-whitespace flexbox children as these should be ignored
@@ -7355,7 +7402,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,23 +1765,95 @@
+@@ -844,23 +1812,95 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -7455,7 +7502,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1868,22 @@
+@@ -875,6 +1915,22 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -7478,7 +7525,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1903,9 @@
+@@ -894,6 +1950,9 @@
          unreachable!();
      };
  
@@ -7488,7 +7535,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +1935,69 @@
+@@ -923,6 +1982,69 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -7558,7 +7605,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +2019,25 @@
+@@ -944,6 +2066,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -7584,7 +7631,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +2047,41 @@
+@@ -953,10 +2094,41 @@
          );
      });
  
@@ -7627,7 +7674,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +2090,33 @@
+@@ -965,16 +2137,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -7662,7 +7709,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,50 +2134,89 @@
+@@ -992,50 +2181,89 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  

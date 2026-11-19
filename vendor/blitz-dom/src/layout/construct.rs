@@ -568,22 +568,36 @@ fn resolve_run_ins(doc: &mut BaseDocument, container: NodeId) {
         let original = box_style.original_display;
         let display = box_style.display;
         let was = node.flags.contains(NodeFlags::RUNS_IN);
-        if !original.is_run_in() || !(display.is_run_in() || was) {
-            continue;
-        }
-        let target = (!box_style.float.is_floating()
+        // (No longer a run-in at all, or blockified: it runs into nothing, and the block it ran
+        // into lets it go.)
+        let candidate = original.is_run_in() && (display.is_run_in() || was);
+        let target = (candidate
+            && !box_style.float.is_floating()
             && !crate::node::style_is_out_of_flow(&style)
             && !contains_block_box(doc, id))
         .then(|| run_in_target(doc, &children[index + 1..]))
         .flatten();
         let runs = target.is_some();
         drop(style);
+        let old_target = doc.run_in_targets.iter().find(|&(_, &run_in)| run_in == id).map(|(&target, _)| target);
         if runs != was {
             doc.nodes[id].flags.set(NodeFlags::RUNS_IN, runs);
         }
         doc.run_in_targets.retain(|_, run_in| *run_in != id);
         if let Some(target) = target {
             doc.run_in_targets.insert(target, id);
+        }
+        // The blocks it leaves or joins build their boxes again (their content changed).
+        if old_target != target {
+            for block in old_target.into_iter().chain(target) {
+                if doc.nodes.get(block).is_some() {
+                    doc.nodes[block].insert_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+                    doc.nodes[block].mark_damaged();
+                }
+            }
+        }
+        if !candidate {
+            continue;
         }
         let wanted = if runs { StyloDisplay::Inline } else { original };
         let current = doc.nodes[id].primary_styles().map(|style| style.get_box().display);
@@ -646,10 +660,43 @@ fn run_in_target(doc: &BaseDocument, after: &[NodeId]) -> Option<NodeId> {
         let block = display.outside() == DisplayOutside::Block
             && display.inside() == DisplayInside::Flow
             && !display.is_run_in()
-            && !box_style.original_display.is_run_in();
+            && !box_style.original_display.is_run_in()
+            // (Nor a block that starts with a run-in of its own: CSS Display 3 § 2.6.)
+            && !starts_with_run_in(doc, id);
         return block.then_some(id);
     }
     None
+}
+
+/// pyro: whether the first box the element `id` generates in flow among its children is a
+/// run-in box that runs in (floats, absolutely positioned boxes, comments, collapsible white space and boxes
+/// not generated passed over).
+fn starts_with_run_in(doc: &BaseDocument, id: NodeId) -> bool {
+    let children = &doc.nodes[id].children;
+    for (index, &child) in children.iter().enumerate() {
+        let node = &doc.nodes[child];
+        match node.data.kind() {
+            NodeKind::Comment => continue,
+            NodeKind::Text if node.is_collapsible_whitespace_node() => continue,
+            NodeKind::Element => {}
+            _ => return false,
+        }
+        let Some(style) = node.primary_styles() else { return false };
+        let box_style = style.get_box();
+        if box_style.display.inside() == DisplayInside::None
+            || box_style.float.is_floating()
+            || crate::node::style_is_out_of_flow(&style)
+        {
+            continue;
+        }
+        // (A run-in that runs in itself; one that becomes a block is the block's first box like
+        // any other: WPT css-display `run-in-basic-005`.)
+        return box_style.original_display.is_run_in()
+            && box_style.display.is_run_in()
+            && !contains_block_box(doc, child)
+            && run_in_target(doc, &children[index + 1..]).is_some();
+    }
+    false
 }
 
 /// pyro: the run-in box that runs into the block `target` (`resolve_run_ins`), if one does.
