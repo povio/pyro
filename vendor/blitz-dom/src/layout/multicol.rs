@@ -1295,7 +1295,9 @@ impl LayoutPassState<'_> {
         let margin = ls.margin().resolve_or_zero(Some(width), resolve_calc_value);
         inputs.parent_size.width = Some(width);
         inputs.available_space.width = AvailableSpace::Definite(width);
-        if ls.size().width.is_auto() {
+        // (A table is as wide as its content needs in that width, not stretched: Chromium; WPT
+        // css-multicol `multicol-span-all-005`.)
+        if ls.size().width.is_auto() && !node.flags.is_table_root() {
             inputs.known_dimensions.width = Some((width - margin.left - margin.right).max(0.0));
         }
         inputs
