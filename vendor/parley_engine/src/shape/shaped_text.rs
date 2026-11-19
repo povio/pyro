@@ -772,6 +772,9 @@ impl ShapedText {
         normalized_coords: &[harfrust::NormalizedCoord],
         metrics: Option<RunMetrics>,
         trim: Option<&super::han_kerning::RunTrim>,
+        // pyro: the glyphs' positions shaped top to bottom (`ShapeOptions::vertical_upright`),
+        // in place of `glyph_buffer`'s.
+        vertical: Option<&[harfrust::GlyphPosition]>,
     ) -> RunMetrics {
         debug_assert_eq!(
             range.char_range.len(),
@@ -835,7 +838,9 @@ impl ShapedText {
         // `HarfRust` returns glyphs in visual order, so we need to process them as such while
         // maintaining logical ordering of clusters.
 
-        let glyph_positions = glyph_buffer.glyph_positions();
+        let glyph_positions = vertical
+            .filter(|positions| positions.len() == glyph_buffer.glyph_positions().len())
+            .unwrap_or(glyph_buffer.glyph_positions());
         let scale_factor = options.font_size / units_per_em;
         let shaped_clusters_start = self.shaped_clusters.len();
 
@@ -917,6 +922,7 @@ impl ShapedText {
             font_metrics,
             hyphen: metrics.hyphen,
             upright_advance: None,
+            vertical_shaped: vertical.is_some_and(|positions| positions.len() == glyph_buffer.glyph_positions().len()),
         });
         metrics
     }
@@ -952,6 +958,8 @@ pub struct ShapedRun {
     /// pyro: the advance of every glyph of an upright run in a font without vertical metrics
     /// (parley's `shape::upright`): the hyphens the line breaker shows advance by it too.
     pub upright_advance: Option<f32>,
+    /// pyro: its advances are the ones shaping it top to bottom gives (`ShapeOptions::vertical_upright`).
+    pub vertical_shaped: bool,
     /// The font metrics of this run.
     pub font_metrics: FontMetrics,
 }
@@ -1192,6 +1200,7 @@ mod tests {
                 auto_opsz: false,
                 language_override: None,
                 spacing_trim: Default::default(),
+                vertical_upright: false,
                 isolated_before: false,
                 isolated_after: false,
             },
@@ -1358,6 +1367,7 @@ mod tests {
                     auto_opsz: false,
                     language_override: None,
                     spacing_trim: Default::default(),
+                    vertical_upright: false,
                     isolated_before: false,
                     isolated_after: false,
                 },
@@ -1374,6 +1384,7 @@ mod tests {
                     auto_opsz: false,
                     language_override: None,
                     spacing_trim: Default::default(),
+                    vertical_upright: false,
                     isolated_before: false,
                     isolated_after: false,
                 },

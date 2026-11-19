@@ -80,6 +80,10 @@ pub struct ShapeOptions<'a> {
     pub isolated_before: bool,
     /// pyro: whether an atomic inline sits right after the item.
     pub isolated_after: bool,
+    /// pyro: the item stands upright in a vertical line: in a font with vertical metrics its
+    /// advances and offsets along the line are the ones shaping it top to bottom gives
+    /// (`vmtx`, with `vhal`/`vchw`/`vpal`/`vkrn` for `halt`/`chws`/`palt`/`kern`).
+    pub vertical_upright: bool,
 }
 
 /// The font instance to shape an item with.
@@ -396,6 +400,7 @@ fn shape_segment(
                 spacing_trim: options.spacing_trim,
                 isolated_before: options.isolated_before,
                 isolated_after: options.isolated_after,
+                vertical_upright: options.vertical_upright,
             };
             &adjusted
         } else {
@@ -497,6 +502,28 @@ fn shape_segment(
             _ => (features, features),
         };
 
+        // pyro: an upright item in a font with vertical metrics, shaped top to bottom too.
+        let vertical = (options.vertical_upright && !segment.bidi_level.is_rtl())
+            .then(|| {
+                use skrifa::raw::TableProvider as _;
+                let font_ref = font_ref();
+                font_ref.vmtx().ok()?;
+                let data = harfrust::ShaperData::new(&font_ref);
+                let shaper = data.shaper(&font_ref).instance(Some(instance)).build();
+                let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
+                    ""
+                } else {
+                    &text[..range.byte_range.start]
+                };
+                let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
+                    ""
+                } else {
+                    &text[range.byte_range.end..]
+                };
+                vertical_positions(&shaper, run_text, pre, post, hb_script, language.as_ref(), run_features, options.point_size)
+            })
+            .flatten();
+
         let glyph_key = cache::GlyphKey {
             font_blob_id: font.font.data.id(),
             font_index: font.font.index,
@@ -526,6 +553,7 @@ fn shape_segment(
                 instance.coords(),
                 Some(metrics),
                 trim.as_ref(),
+                vertical.as_deref(),
             );
             Some(())
         });
@@ -632,6 +660,7 @@ fn shape_segment(
             harf_shaper.coords(),
             None,
             trim.as_ref(),
+            vertical.as_deref(),
         );
 
         // The glyphs stay in the cache; the next run gets a new buffer.
@@ -847,6 +876,77 @@ fn han_font_data(
         buffer = Some(glyphs.clear());
         found
     })
+}
+
+/// pyro: the positions of `run_text`'s glyphs shaped top to bottom: each advance the vertical
+/// one, each offset along the line the one the positioning features give it (the difference to
+/// shaping without them, which leaves the glyph's vertical origin). `features` take their
+/// vertical counterparts (`halt` `vhal`, `chws` `vchw`, `palt` `vpal`, `kern` `vkrn`), so the
+/// metrics and the features that change advances combine (CSS Text 4 `text-spacing-trim` in
+/// vertical lines).
+fn vertical_positions(
+    shaper: &harfrust::Shaper<'_>,
+    run_text: &str,
+    pre: &str,
+    post: &str,
+    script: harfrust::Script,
+    language: Option<&harfrust::Language>,
+    features: &[harfrust::Feature],
+    point_size: f32,
+) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+    use alloc::vec::Vec;
+    const POSITIONING: [&[u8; 4]; 4] = [b"vhal", b"vchw", b"vpal", b"vkrn"];
+    let vertical_tag = |tag: harfrust::Tag| match &tag.to_be_bytes() {
+        b"halt" => harfrust::Tag::new(b"vhal"),
+        b"chws" => harfrust::Tag::new(b"vchw"),
+        b"palt" => harfrust::Tag::new(b"vpal"),
+        b"kern" => harfrust::Tag::new(b"vkrn"),
+        _ => tag,
+    };
+    let with: Vec<harfrust::Feature> =
+        features.iter().map(|f| harfrust::Feature { tag: vertical_tag(f.tag), ..*f }).collect();
+    let mut without = with.clone();
+    without.retain(|f| !POSITIONING.iter().any(|t| f.tag == harfrust::Tag::new(t)));
+    without.extend(POSITIONING.iter().map(|t| harfrust::Feature::new(harfrust::Tag::new(t), 0, ..)));
+    let shape = |features: &[harfrust::Feature]| {
+        let mut buffer = harfrust::UnicodeBuffer::new();
+        buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
+        #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
+        for (i, ch) in run_text.chars().enumerate() {
+            let ch = match ch {
+                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
+                ch => ch,
+            };
+            buffer.add(ch, i as u32);
+        }
+        buffer.set_pre_context(pre);
+        buffer.set_post_context(post);
+        buffer.set_direction(harfrust::Direction::TopToBottom);
+        buffer.set_script(script);
+        if let Some(language) = language {
+            buffer.set_language(language.clone());
+        }
+        shaper.shape(buffer, HarfShapeOptions::new().features(features).point_size(Some(point_size)))
+    };
+    let (with, without) = (shape(&with), shape(&without));
+    let (positions, base) = (with.glyph_positions(), without.glyph_positions());
+    if positions.len() != base.len() {
+        return None;
+    }
+    Some(
+        positions
+            .iter()
+            .zip(base)
+            .map(|(p, b)| {
+                let mut out = *p;
+                out.x_advance = -p.y_advance;
+                out.y_advance = 0;
+                out.x_offset = -(p.y_offset - b.y_offset);
+                out.y_offset = 0;
+                out
+            })
+            .collect(),
+    )
 }
 
 /// Up to harfrust's context length (5 characters) of `text`'s end.

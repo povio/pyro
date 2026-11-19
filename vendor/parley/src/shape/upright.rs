@@ -21,7 +21,11 @@ pub(crate) fn apply<B: Brush>(layout: &mut Layout<B>, styles: &[ResolvedStyle<B>
     let mut upright_runs: Vec<(usize, f32)> = Vec::new();
     for (run_index, run) in shaped_text.runs().iter().enumerate() {
         let Some(height) = shaped_text.default_vertical_advance(run.font_index, run.font_size) else {
-            // Vertical metrics: each upright cluster's own advance height.
+            // Vertical metrics: each upright cluster's own advance height (unless shaping top to
+            // bottom gave them already, with the features that change them).
+            if run.vertical_shaped {
+                continue;
+            }
             for index in run.shaped_clusters_range.clone() {
                 let cluster = &clusters[index as usize];
                 let Some(character) = characters.get(cluster.chars_range().start as usize) else { continue };

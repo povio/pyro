@@ -292,14 +292,10 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -128,10 +234,125 @@
-             strikethrough_size,
-             x_height: metrics.x_height,
-             cap_height: metrics.cap_height,
-+        }
-+    }
-+}
-+
+@@ -132,6 +238,121 @@
+     }
+ }
+ 
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -391,10 +387,10 @@
 +            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
 +                .with_face_metrics(font.synthesis.face_metrics(), font_size),
 +            hyphen,
-         }
-     }
- }
- 
++        }
++    }
++}
++
 +/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
 +#[derive(Clone, Debug, PartialEq)]
 +struct RunMetricsEntry {
@@ -436,10 +432,13 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -218,6 +443,278 @@
+@@ -215,9 +440,281 @@
          }
-     }
- 
+         for shaped_cluster in self.shaped_clusters.iter_mut() {
+             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
++        }
++    }
++
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
@@ -669,7 +668,7 @@
 +        } else {
 +            self.glyphs.extend(own);
 +            self.glyphs.extend(added);
-+        }
+         }
 +        let len = self.glyphs.len() - start;
 +        if len == 0 || len > 255 {
 +            self.glyphs.truncate(start);
@@ -681,8 +680,8 @@
 +        cluster.flags = cluster.flags.with_glyph_len(len as u8).with_inline_glyph(false);
 +        cluster.advance = advance;
 +        Some(saved)
-+    }
-+
+     }
+ 
 +    /// pyro: gives the shaped cluster at `index` back what [`Self::show_hyphen`] returned.
 +    pub fn restore_cluster(&mut self, index: u32, saved: ClusterGlyphs) {
 +        if let Some(cluster) = self.shaped_clusters.get_mut(index as usize) {
@@ -715,18 +714,21 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +770,9 @@
+@@ -273,7 +770,12 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
 -    ) {
 +        metrics: Option<RunMetrics>,
 +        trim: Option<&super::han_kerning::RunTrim>,
++        // pyro: the glyphs' positions shaped top to bottom (`ShapeOptions::vertical_upright`),
++        // in place of `glyph_buffer`'s.
++        vertical: Option<&[harfrust::GlyphPosition]>,
 +    ) -> RunMetrics {
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +801,36 @@
+@@ -302,42 +804,65 @@
                  index
              });
  
@@ -773,7 +775,13 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -324,20 +841,23 @@
+ 
+-        let glyph_positions = glyph_buffer.glyph_positions();
++        let glyph_positions = vertical
++            .filter(|positions| positions.len() == glyph_buffer.glyph_positions().len())
++            .unwrap_or(glyph_buffer.glyph_positions());
+         let scale_factor = options.font_size / units_per_em;
+         let shaped_clusters_start = self.shaped_clusters.len();
  
          // Push all characters.
          let characters_start = self.characters.len();
@@ -803,18 +811,19 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +915,10 @@
+@@ -395,7 +920,11 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
 +            hyphen: metrics.hyphen,
 +            upright_advance: None,
++            vertical_shaped: vertical.is_some_and(|positions| positions.len() == glyph_buffer.glyph_positions().len()),
          });
 +        metrics
      }
  }
  
-@@ -423,6 +946,12 @@
+@@ -423,6 +952,14 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -824,10 +833,12 @@
 +    /// pyro: the advance of every glyph of an upright run in a font without vertical metrics
 +    /// (parley's `shape::upright`): the hyphens the line breaker shows advance by it too.
 +    pub upright_advance: Option<f32>,
++    /// pyro: its advances are the ones shaping it top to bottom gives (`ShapeOptions::vertical_upright`).
++    pub vertical_shaped: bool,
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +1063,15 @@
+@@ -534,7 +1071,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -844,7 +855,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1184,16 @@
+@@ -647,9 +1192,17 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -856,12 +867,13 @@
 +                auto_opsz: false,
 +                language_override: None,
 +                spacing_trim: Default::default(),
++                vertical_upright: false,
 +                isolated_before: false,
 +                isolated_after: false,
              },
          }];
          shaper.shape_text(
-@@ -765,7 +1309,8 @@
+@@ -765,7 +1318,8 @@
  
      #[test]
      fn newlines_removed() {
@@ -871,7 +883,7 @@
              let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
  
              let index = shaped
-@@ -805,18 +1350,32 @@
+@@ -805,18 +1359,34 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -883,6 +895,7 @@
 +                    auto_opsz: false,
 +                    language_override: None,
 +                    spacing_trim: Default::default(),
++                    vertical_upright: false,
 +                    isolated_before: false,
 +                    isolated_after: false,
                  },
@@ -899,6 +912,7 @@
 +                    auto_opsz: false,
 +                    language_override: None,
 +                    spacing_trim: Default::default(),
++                    vertical_upright: false,
 +                    isolated_before: false,
 +                    isolated_after: false,
                  },
@@ -952,7 +966,7 @@
      /// The language to shape the item with.
      pub language: Option<Language>,
      /// The font features to shape the item with.
-@@ -34,6 +62,24 @@
+@@ -34,6 +62,28 @@
      pub features: &'a [FontFeature],
      /// The font variations that are constant over an item.
      pub variations: &'a [FontVariation],
@@ -974,10 +988,14 @@
 +    pub isolated_before: bool,
 +    /// pyro: whether an atomic inline sits right after the item.
 +    pub isolated_after: bool,
++    /// pyro: the item stands upright in a vertical line: in a font with vertical metrics its
++    /// advances and offsets along the line are the ones shaping it top to bottom gives
++    /// (`vmtx`, with `vhal`/`vchw`/`vpal`/`vkrn` for `halt`/`chws`/`palt`/`kern`).
++    pub vertical_upright: bool,
  }
  
  /// The font instance to shape an item with.
-@@ -85,24 +131,34 @@
+@@ -85,24 +135,34 @@
  
  /// Reusable scratch to shape text using [`Self::shape_text`].
  pub struct Shaper {
@@ -1012,7 +1030,7 @@
          }
      }
  }
-@@ -170,6 +226,7 @@
+@@ -170,6 +230,7 @@
                  "items must not span past the text"
              );
  
@@ -1020,7 +1038,7 @@
              loop {
                  let segment = itemizer
                      .next(
-@@ -178,10 +235,15 @@
+@@ -178,10 +239,15 @@
                      )
                      .expect("A segment must be yielded, given items tile the full text exactly");
  
@@ -1036,7 +1054,7 @@
                      &item.options,
                      &mut select_font,
                      analysis.char_info(),
-@@ -228,6 +290,7 @@
+@@ -228,6 +294,7 @@
      scx: &mut Shaper,
      text: &str,
      segment: &Segment,
@@ -1044,7 +1062,7 @@
      options: &ShapeOptions<'_>,
      select_font: &mut impl FontSelector,
      char_info: &[CharInfo],
-@@ -258,10 +321,21 @@
+@@ -258,10 +325,21 @@
          harfrust::Direction::LeftToRight
      };
      let hb_script = script_to_harfrust(segment.script);
@@ -1070,7 +1088,7 @@
      scx.features.clear();
      scx.features.extend(options.features.iter().map(|feature| {
          harfrust::Feature::new(
-@@ -272,15 +346,85 @@
+@@ -272,15 +350,86 @@
      }));
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
@@ -1125,6 +1143,7 @@
 +                spacing_trim: options.spacing_trim,
 +                isolated_before: options.isolated_before,
 +                isolated_after: options.isolated_after,
++                vertical_upright: options.vertical_upright,
 +            };
 +            &adjusted
 +        } else {
@@ -1159,7 +1178,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +435,104 @@
+@@ -291,12 +440,127 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -1226,6 +1245,28 @@
 +            _ => (features, features),
 +        };
 +
++        // pyro: an upright item in a font with vertical metrics, shaped top to bottom too.
++        let vertical = (options.vertical_upright && !segment.bidi_level.is_rtl())
++            .then(|| {
++                use skrifa::raw::TableProvider as _;
++                let font_ref = font_ref();
++                font_ref.vmtx().ok()?;
++                let data = harfrust::ShaperData::new(&font_ref);
++                let shaper = data.shaper(&font_ref).instance(Some(instance)).build();
++                let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
++                    ""
++                } else {
++                    &text[..range.byte_range.start]
++                };
++                let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
++                    ""
++                } else {
++                    &text[range.byte_range.end..]
++                };
++                vertical_positions(&shaper, run_text, pre, post, hb_script, language.as_ref(), run_features, options.point_size)
++            })
++            .flatten();
++
 +        let glyph_key = cache::GlyphKey {
 +            font_blob_id: font.font.data.id(),
 +            font_index: font.font.index,
@@ -1255,6 +1296,7 @@
 +                instance.coords(),
 +                Some(metrics),
 +                trim.as_ref(),
++                vertical.as_deref(),
 +            );
 +            Some(())
 +        });
@@ -1265,7 +1307,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -309,7 +545,7 @@
+@@ -309,7 +573,7 @@
                  direction,
                  hb_script,
                  language.clone(),
@@ -1274,7 +1316,7 @@
                  Some(options.variations),
              ),
              || {
-@@ -318,7 +554,7 @@
+@@ -318,7 +582,7 @@
                      direction,
                      Some(hb_script),
                      language.as_ref(),
@@ -1283,7 +1325,7 @@
                  )
              },
          );
-@@ -328,8 +564,6 @@
+@@ -328,8 +592,6 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -1292,7 +1334,7 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,11 +574,37 @@
+@@ -340,11 +602,37 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -1332,7 +1374,7 @@
          buffer.set_direction(direction);
          buffer.set_script(hb_script);
  
-@@ -356,11 +616,11 @@
+@@ -356,11 +644,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1347,12 +1389,13 @@
              text,
              range,
              segment,
-@@ -370,15 +630,24 @@
+@@ -370,15 +658,25 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
 +            None,
 +            trim.as_ref(),
++            vertical.as_deref(),
          );
  
 -        // Replace buffer to reuse allocation in the next run.
@@ -1374,7 +1417,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -395,12 +664,23 @@
+@@ -395,12 +693,23 @@
      // The end of the previous grapheme.
      let mut byte_end = text_range.start;
      let mut char_end = char_range.start;
@@ -1399,7 +1442,7 @@
              byte_range: byte_start..byte_end,
              char_range: char_start..char_end,
          };
-@@ -409,26 +689,178 @@
+@@ -409,26 +718,249 @@
              .select_font(segment, options, char_cluster)
              .ok_or(())?;
  
@@ -1450,8 +1493,6 @@
              run = Some((font.into(), grapheme));
          }
      }
--    if let Some((run_font, run_range)) = run {
--        shape_run(&run_font, run_range);
 +    // Joiners at the end of the segment go with the run before them.
 +    if let Some((held_font, held)) = pending_joiner.take() {
 +        match &mut run {
@@ -1461,10 +1502,11 @@
 +            }
 +            None => run = Some((held_font, held)),
 +        }
-     }
-+    if let Some((run_font, run_range)) = run {
-+        shape_run(&run_font, run_range, before_font.as_ref(), None);
 +    }
+     if let Some((run_font, run_range)) = run {
+-        shape_run(&run_font, run_range);
++        shape_run(&run_font, run_range, before_font.as_ref(), None);
+     }
  
      Ok(())
  }
@@ -1564,6 +1606,77 @@
 +        buffer = Some(glyphs.clear());
 +        found
 +    })
++}
++
++/// pyro: the positions of `run_text`'s glyphs shaped top to bottom: each advance the vertical
++/// one, each offset along the line the one the positioning features give it (the difference to
++/// shaping without them, which leaves the glyph's vertical origin). `features` take their
++/// vertical counterparts (`halt` `vhal`, `chws` `vchw`, `palt` `vpal`, `kern` `vkrn`), so the
++/// metrics and the features that change advances combine (CSS Text 4 `text-spacing-trim` in
++/// vertical lines).
++fn vertical_positions(
++    shaper: &harfrust::Shaper<'_>,
++    run_text: &str,
++    pre: &str,
++    post: &str,
++    script: harfrust::Script,
++    language: Option<&harfrust::Language>,
++    features: &[harfrust::Feature],
++    point_size: f32,
++) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
++    use alloc::vec::Vec;
++    const POSITIONING: [&[u8; 4]; 4] = [b"vhal", b"vchw", b"vpal", b"vkrn"];
++    let vertical_tag = |tag: harfrust::Tag| match &tag.to_be_bytes() {
++        b"halt" => harfrust::Tag::new(b"vhal"),
++        b"chws" => harfrust::Tag::new(b"vchw"),
++        b"palt" => harfrust::Tag::new(b"vpal"),
++        b"kern" => harfrust::Tag::new(b"vkrn"),
++        _ => tag,
++    };
++    let with: Vec<harfrust::Feature> =
++        features.iter().map(|f| harfrust::Feature { tag: vertical_tag(f.tag), ..*f }).collect();
++    let mut without = with.clone();
++    without.retain(|f| !POSITIONING.iter().any(|t| f.tag == harfrust::Tag::new(t)));
++    without.extend(POSITIONING.iter().map(|t| harfrust::Feature::new(harfrust::Tag::new(t), 0, ..)));
++    let shape = |features: &[harfrust::Feature]| {
++        let mut buffer = harfrust::UnicodeBuffer::new();
++        buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
++        #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
++        for (i, ch) in run_text.chars().enumerate() {
++            let ch = match ch {
++                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
++                ch => ch,
++            };
++            buffer.add(ch, i as u32);
++        }
++        buffer.set_pre_context(pre);
++        buffer.set_post_context(post);
++        buffer.set_direction(harfrust::Direction::TopToBottom);
++        buffer.set_script(script);
++        if let Some(language) = language {
++            buffer.set_language(language.clone());
++        }
++        shaper.shape(buffer, HarfShapeOptions::new().features(features).point_size(Some(point_size)))
++    };
++    let (with, without) = (shape(&with), shape(&without));
++    let (positions, base) = (with.glyph_positions(), without.glyph_positions());
++    if positions.len() != base.len() {
++        return None;
++    }
++    Some(
++        positions
++            .iter()
++            .zip(base)
++            .map(|(p, b)| {
++                let mut out = *p;
++                out.x_advance = -p.y_advance;
++                out.y_advance = 0;
++                out.x_offset = -(p.y_offset - b.y_offset);
++                out.y_offset = 0;
++                out
++            })
++            .collect(),
++    )
 +}
 +
 +/// Up to harfrust's context length (5 characters) of `text`'s end.
@@ -1715,7 +1828,7 @@
 +}
 --- a/src/shape/atom.rs
 +++ b/src/shape/atom.rs
-@@ -917,9 +917,16 @@
+@@ -917,9 +917,17 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -1727,6 +1840,7 @@
 +                auto_opsz: false,
 +                language_override: None,
 +                spacing_trim: Default::default(),
++                vertical_upright: false,
 +                isolated_before: false,
 +                isolated_after: false,
              },

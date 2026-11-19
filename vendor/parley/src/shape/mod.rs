@@ -245,6 +245,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     spacing_trim: spacing_trim(item_style),
                     isolated_before,
                     isolated_after,
+                    vertical_upright: item_style.vertical && (item_style.upright || item_upright == Some(true)),
                 },
             })
         })

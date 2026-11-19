@@ -925,6 +925,7 @@ mod tests {
                 auto_opsz: false,
                 language_override: None,
                 spacing_trim: Default::default(),
+                vertical_upright: false,
                 isolated_before: false,
                 isolated_after: false,
             },
