@@ -3623,6 +3623,10 @@ mod settle_resolution_tests {
             self.0.lock().unwrap().push(url);
             done(Err("offline asset guard".into()));
         }
+        // (A mask image is fetched in CORS mode.)
+        fn fetch_cors(&self, url: String, done: Delivery) {
+            self.fetch(url, done)
+        }
     }
 
     #[test]

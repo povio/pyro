@@ -10403,7 +10403,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                      }
                  }
                  _ => None,
-@@ -647,3 +1268,153 @@
+@@ -647,3 +1268,154 @@
          }
      }
  }
@@ -10514,12 +10514,13 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +
 +        // An image of that URL already loaded without CORS (an `<img>`'s) does not stand in.
 +        let url = Some("http://other.test/a.svg");
-+        let (mut doc, net, div) = doc_cached("float: left; shape-outside: url(http://other.test/a.svg)", url);
++        let (_, net, _) = doc_cached("float: left; shape-outside: url(http://other.test/a.svg)", url);
 +        assert_eq!(net.requests(), vec![("http://other.test/a.svg".to_string(), true)]);
-+        // A same-origin one is the same response with CORS or without: the loaded one is used.
-+        let (doc, net, div) = doc_cached("float: left; shape-outside: url(http://page.test/a.svg)", Some("http://page.test/a.svg"));
-+        assert!(net.requests().is_empty(), "{:?}", net.requests());
-+        assert!(shape(&doc, div).is_some_and(|(_, ok, loaded)| ok && loaded));
++        // A same-origin one is fetched in CORS mode too: its URL may redirect to another origin
++        // that grants no CORS permission (security review finding 2), so an image of it loaded
++        // without CORS does not stand in either.
++        let (_, net, _) = doc_cached("float: left; shape-outside: url(http://page.test/a.svg)", Some("http://page.test/a.svg"));
++        assert_eq!(net.requests(), vec![("http://page.test/a.svg".to_string(), true)]);
 +        let (mut doc, net, div) = doc_cached("float: left; shape-outside: url(http://other.test/a.svg)", url);
 +        // The CORS check fails (an empty body): no shape (as `none`).
 +        net.answer("http://other.test/a.svg", "");
