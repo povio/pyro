@@ -233,40 +233,77 @@ pub(crate) fn float_bands(
     let mut y = 0.0;
     while y < height {
         let y1 = (y + step).min(height);
-        // The area's extent over the row grown by `shape-margin` vertically.
-        let (lo, hi) = (y - shape_margin, y1 + shape_margin);
+        // The extent of the area grown by `shape-margin` (the points within that distance of
+        // it) over the row: the extremes of the edges' grown extents.
         let mut extent: Option<(f64, f64)> = None;
         for &(a, b) in &edges {
-            let (top, bottom) = if a.y <= b.y { (a, b) } else { (b, a) };
-            // An edge only touching the row's top or bottom is not in it (a horizontal edge is
-            // in the row it starts).
-            let horizontal = (bottom.y - top.y).abs() < 1e-9;
-            if if horizontal { top.y < lo || top.y >= hi } else { bottom.y <= lo || top.y >= hi } {
+            let mirror = |p: Point| Point::new(-p.x, p.y);
+            let (Some(r), Some(l)) = (edge_max_x(a, b, y, y1, shape_margin), edge_max_x(mirror(a), mirror(b), y, y1, shape_margin))
+            else {
                 continue;
-            }
-            // The edge's part within the row.
-            let x_at = |yy: f64| {
-                if (bottom.y - top.y).abs() < 1e-9 {
-                    top.x
-                } else {
-                    top.x + (bottom.x - top.x) * ((yy - top.y) / (bottom.y - top.y))
-                }
             };
-            let y_from = top.y.max(lo);
-            let y_to = bottom.y.min(hi);
-            for x in [x_at(y_from), x_at(y_to)] {
-                extent = Some(extent.map_or((x, x), |(l, r)| (l.min(x), r.max(x))));
-            }
+            let l = -l;
+            extent = Some(extent.map_or((l, r), |(el, er)| (el.min(l), er.max(r))));
         }
-        let extent = extent.map(|(l, r)| {
-            let l = (l - shape_margin).max(0.0);
-            let r = (r + shape_margin).min(size.0 as f64);
-            (l as f32, r as f32)
-        });
+        let extent = extent.map(|(l, r)| (l.max(0.0) as f32, r.min(size.0 as f64) as f32));
         bands.push((y as f32, y1 as f32, extent.filter(|(l, r)| r > l || shape_margin > 0.0)));
         y = y1;
     }
     Some(bands)
+}
+
+/// The rightmost x of the points within `m` of the edge `a`-`b` whose y is in the row `y0..y1`
+/// (`None`: none is). With no margin an edge only touching the row's top or bottom is not in it,
+/// nor is a horizontal edge (the area has no height there; the other edges bound it).
+fn edge_max_x(a: Point, b: Point, y0: f64, y1: f64, m: f64) -> Option<f64> {
+    let (top, bottom) = if a.y <= b.y { (a, b) } else { (b, a) };
+    let dy = bottom.y - top.y;
+    let horizontal = dy.abs() < 1e-9;
+    let k = if horizontal { 0.0 } else { (bottom.x - top.x) / dy };
+    let x_at = |y: f64| if horizontal { top.x.max(bottom.x) } else { top.x + k * (y - top.y) };
+    let mut best: Option<f64> = None;
+    let mut take = |v: f64| best = Some(best.map_or(v, |b: f64| b.max(v)));
+    // The part of the edge in the row.
+    let inside = if m > 0.0 { bottom.y >= y0 && top.y <= y1 } else { !horizontal && bottom.y > y0 && top.y < y1 };
+    if inside {
+        let (from, to) = (top.y.max(y0), bottom.y.min(y1));
+        take(x_at(from).max(x_at(to)) + m.max(0.0));
+    }
+    if m <= 0.0 {
+        return best;
+    }
+    // A part above or below the row reaches into it by `sqrt(m² - u²)` at distance `u` from it.
+    // Along the part x is `c + s u`; `c + s u + sqrt(m² - u²)` is greatest at
+    // `u = m s / sqrt(1 + s²)` (s > 0), clamped to the part.
+    let mut part = |y_from: f64, y_to: f64, u_of: &dyn Fn(f64) -> f64, s: f64| {
+        if y_from > y_to {
+            return;
+        }
+        let (u_a, u_b) = { let (p, q) = (u_of(y_from), u_of(y_to)); (p.min(q), p.max(q)) };
+        if u_a >= m - 1e-9 {
+            return;
+        }
+        let u_b = u_b.min(m);
+        let x_of_u = |u: f64| {
+            // y at distance u, on the part.
+            let y = if (u_of(y_from) - u).abs() < 1e-12 { y_from } else if (u_of(y_to) - u).abs() < 1e-12 { y_to } else {
+                y_from + (y_to - y_from) * ((u - u_of(y_from)) / (u_of(y_to) - u_of(y_from)))
+            };
+            x_at(y)
+        };
+        let f = |u: f64| x_of_u(u) + (m * m - u * u).max(0.0).sqrt();
+        let mut v = f(u_a).max(f(u_b));
+        if s > 0.0 && !horizontal {
+            let u = (m * s / (1.0 + s * s).sqrt()).clamp(u_a, u_b);
+            v = v.max(f(u));
+        }
+        take(v);
+    };
+    // Above: u = y0 - y, x = c - k u.
+    part(top.y.max(y0 - m), bottom.y.min(y0), &|y| y0 - y, -k);
+    // Below: u = y - y1, x = c + k u.
+    part(top.y.max(y1), bottom.y.min(y1 + m), &|y| y - y1, k);
+    best
 }
 
 /// [`float_bands`] for a float's computed style, its margin box and margins: the border widths and
