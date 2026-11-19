@@ -222,7 +222,11 @@ impl Browser {
                 if cover { ratio().map_or(w, |r| w.max(h * r)) } else { w }
             });
             let attr = dom.get_attribute(node, "width").ok().flatten().and_then(|w| w.trim().parse::<f64>().ok());
-            let auto_css = attr.is_none()
+            // Lazy images only: the style read flushes style, which an eager image's insertion
+            // must not do (it started the layout engine's fetches during parsing).
+            let auto_css = lazy
+                && rendered.is_some()
+                && attr.is_none()
                 && bindings.layout().style().computed_value(&dom, node, "width").is_none_or(|w| w == "auto")
                 && dom.natural_size(node).is_none();
             (lazy, rendered, attr, auto_css)
