@@ -15,7 +15,8 @@ use objc2_core_foundation::{
     CFArray, CFDictionary, CFRange, CFRetained, CFString, CFType, CFURL, CFURLPathStyle,
 };
 use objc2_core_text::{
-    CTFont, CTFontCollection, CTFontDescriptor, CTFontUIFontType, kCTFontURLAttribute,
+    CTFont, CTFontCollection, CTFontDescriptor, CTFontUIFontType, kCTFontFamilyNameAttribute,
+    kCTFontURLAttribute,
 };
 use objc2_foundation::{
     NSSearchPathDirectory, NSSearchPathDomainMask, NSSearchPathForDirectoriesInDomains,
@@ -46,13 +47,23 @@ impl SystemFonts {
         let name_map = scanned.family_names;
         let mut generic_families = GenericFamilyMap::default();
         for (family, names) in DEFAULT_GENERIC_FAMILIES {
-            generic_families.set(
-                *family,
-                names
-                    .iter()
-                    .filter_map(|name| name_map.get(name))
-                    .map(|name| name.id()),
-            );
+            // pyro: `system-ui` is the system UI font with the fonts its own cascade draws the
+            // scripts it lacks with (SF Arabic for Arabic), as macOS renders its UI text
+            // (CSS Fonts 4 `system-ui`; WPT css-fonts `system-ui-ar`, `-ur`).
+            let cascade = match family {
+                GenericFamily::SystemUi => system_ui_cascade(),
+                _ => Vec::new(),
+            };
+            let mut ids: Vec<FamilyId> = Vec::new();
+            for name in names.iter().copied().map(ToString::to_string).chain(cascade) {
+                let found = name_map.get(&name).or_else(|| name.strip_prefix('.').and_then(|name| name_map.get(name)));
+                if let Some(found) = found
+                    && !ids.contains(&found.id())
+                {
+                    ids.push(found.id());
+                }
+            }
+            generic_families.set(*family, ids.into_iter());
         }
         Self {
             name_map: Arc::new(name_map),
@@ -167,6 +178,24 @@ fn collect_files(dir: &Path, max_depth: u32, depth: u32, out: &mut Vec<PathBuf>)
             out.push(path);
         }
     }
+}
+
+/// pyro: the family names of the system UI font's default cascade list (its fallback fonts).
+fn system_ui_cascade() -> Vec<alloc::string::String> {
+    let Some(font) = (unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) }) else {
+        return Vec::new();
+    };
+    let Some(list) = (unsafe { font.default_cascade_list_for_languages(None) }) else { return Vec::new() };
+    let list: CFRetained<CFArray<CTFontDescriptor>> = unsafe { CFRetained::cast_unchecked(list) };
+    let mut out = Vec::new();
+    for index in 0..list.len() {
+        let Some(descriptor) = list.get(index) else { continue };
+        let Some(name) = (unsafe { descriptor.attribute(kCTFontFamilyNameAttribute) }) else { continue };
+        if let Ok(name) = name.downcast::<CFString>() {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 fn create_base_font(prefer_ui_font: bool) -> CFRetained<CTFont> {
