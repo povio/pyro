@@ -492,7 +492,10 @@ impl LayoutPassState<'_> {
             run_mode,
             ..
         } = inputs;
-        let style = self.nodes[node_id].layout_style();
+        let mut style = self.nodes[node_id].layout_style();
+        // pyro: a box laid out in an orthogonal flow resolves its percentage padding against its
+        // containing block's inline size, not the transposed parent size (`layout::writing_mode`).
+        style.set_percent_basis(self.orthogonal_percent_basis_of(node_id));
 
         // Pull these out earlier to avoid borrowing issues
         let is_scroll_container =
@@ -676,7 +679,9 @@ impl LayoutPassState<'_> {
             .take_inline_layout()
             .unwrap();
 
-        let style = self.nodes[node_id].layout_style();
+        let mut style = self.nodes[node_id].layout_style();
+        // pyro: as in `compute_inline_layout`, an orthogonal box's percentages.
+        style.set_percent_basis(self.orthogonal_percent_basis_of(node_id));
 
         // Note: both horizontal and vertical percentage padding/borders are resolved against the container's inline size (i.e. width).
         // This is not a bug, but is how CSS is specified (see: https://developer.mozilla.org/en-US/docs/Web/CSS/padding#values)
