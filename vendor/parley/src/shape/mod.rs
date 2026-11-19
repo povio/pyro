@@ -107,6 +107,18 @@ pub(crate) fn shape_text<'a, B: Brush>(
             }
         })
         .collect();
+    // pyro: upright glyphs in a vertical line take the font's vertical alternates (`vert`, as
+    // HarfBuzz enables it shaping top to bottom, CSS Fonts 4 § 7.1 default features); the
+    // style's own settings come after it, so `"vert" 0` turns it off (WPT css-fonts
+    // `font-default-04`).
+    let upright_features: &'_ Vec<SmallVec<[FontFeature; 8]>> = &style_features
+        .iter()
+        .map(|features| {
+            core::iter::once(FontFeature::new(Tag::new(b"vert"), 1))
+                .chain(features.iter().copied())
+                .collect()
+        })
+        .collect();
 
     // pyro: the layout's scale (set before shaping), to shape with the unscaled size as the point size.
     let scale = layout.data.scale;
@@ -221,7 +233,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     font_size: item_style.font_size,
                     // pyro: tracking follows the unscaled size (styles hold sizes times the scale).
                     point_size: if scale > 0.0 { item_style.font_size / scale } else { item_style.font_size },
-                    features: &style_features[item_style_index as usize],
+                    features: if item_style.vertical && (item_style.upright || item_upright == Some(true)) {
+                        &upright_features[item_style_index as usize]
+                    } else {
+                        &style_features[item_style_index as usize]
+                    },
                     variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
                     face_size_adjust: !item_style.font_size_adjusted,
                     auto_opsz: item_style.auto_optical_size,

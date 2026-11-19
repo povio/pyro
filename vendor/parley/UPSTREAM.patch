@@ -5988,7 +5988,7 @@ index 0000000..ce15c33
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..6fe814a 100644
+index 060a32d..266ec82 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -6023,17 +6023,29 @@ index 060a32d..6fe814a 100644
      // If we have both empty text and no inline boxes, shape with a fake space
      // to generate metrics that can be used to size a cursor.
      if text.is_empty() && inline_boxes.is_empty() {
-@@ -98,6 +108,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -97,6 +107,21 @@ pub(crate) fn shape_text<'a, B: Brush>(
+             }
          })
          .collect();
- 
++    // pyro: upright glyphs in a vertical line take the font's vertical alternates (`vert`, as
++    // HarfBuzz enables it shaping top to bottom, CSS Fonts 4 § 7.1 default features); the
++    // style's own settings come after it, so `"vert" 0` turns it off (WPT css-fonts
++    // `font-default-04`).
++    let upright_features: &'_ Vec<SmallVec<[FontFeature; 8]>> = &style_features
++        .iter()
++        .map(|features| {
++            core::iter::once(FontFeature::new(Tag::new(b"vert"), 1))
++                .chain(features.iter().copied())
++                .collect()
++        })
++        .collect();
++
 +    // pyro: the layout's scale (set before shaping), to shape with the unscaled size as the point size.
 +    let scale = layout.data.scale;
-+
+ 
      // Split when shaping-relevant style properties change and at inline boxes.
      let items = {
-         // TODO: we currently walk characters here, but we could instead just walk boundaries of
-@@ -109,6 +122,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -109,6 +134,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
  
          // Positioned at `item_start_char`, i.e., the first character not yet covered by an item.
          let mut chars = text.char_indices().enumerate().peekable();
@@ -6042,7 +6054,7 @@ index 060a32d..6fe814a 100644
          core::iter::from_fn(move || {
              if item_start_char == char_count {
                  return None;
-@@ -119,24 +134,33 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -119,24 +146,33 @@ pub(crate) fn shape_text<'a, B: Brush>(
  
              // Items are at least one character long, therefore the item's own first character is
              // never a split point.
@@ -6079,7 +6091,7 @@ index 060a32d..6fe814a 100644
                          inline_box_iter.next();
                          split = true;
                      } else {
-@@ -145,41 +169,73 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -145,41 +181,77 @@ pub(crate) fn shape_text<'a, B: Brush>(
                  }
  
                  if split {
@@ -6136,9 +6148,14 @@ index 060a32d..6fe814a 100644
                  options: ShapeOptions {
                      language: item_style.locale,
                      font_size: item_style.font_size,
+-                    features: &style_features[item_style_index as usize],
 +                    // pyro: tracking follows the unscaled size (styles hold sizes times the scale).
 +                    point_size: if scale > 0.0 { item_style.font_size / scale } else { item_style.font_size },
-                     features: &style_features[item_style_index as usize],
++                    features: if item_style.vertical && (item_style.upright || item_upright == Some(true)) {
++                        &upright_features[item_style_index as usize]
++                    } else {
++                        &style_features[item_style_index as usize]
++                    },
                      variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
 +                    face_size_adjust: !item_style.font_size_adjusted,
 +                    auto_opsz: item_style.auto_optical_size,
@@ -6157,7 +6174,7 @@ index 060a32d..6fe814a 100644
  
      scx.shape_text(
          text,
-@@ -190,6 +246,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -190,6 +262,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
          &mut layout.data.shaped_text,
      );
  
@@ -6165,7 +6182,7 @@ index 060a32d..6fe814a 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -200,20 +257,13 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -200,20 +273,13 @@ pub(crate) fn shape_text<'a, B: Brush>(
          let run_text_byte_start = shaped_run.range.byte_range.start;
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
@@ -6190,7 +6207,7 @@ index 060a32d..6fe814a 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -228,25 +278,149 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,27 +294,151 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // we probably shouldn't itemize on them; we should just ensure we don't ligate if
              // they're non-zero).
              run_style,
@@ -6265,9 +6282,9 @@ index 060a32d..6fe814a 100644
 +        | TextSpacingTrim::SpaceFirst
 +        | TextSpacingTrim::TrimStart
 +        | TextSpacingTrim::TrimBoth => SpacingTrim::Adjacent,
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: the bidi level of each inline box. An atomic or out-of-flow box takes the level it
 +/// resolved to as U+FFFC (`Analysis::object_levels`); a span's start edge takes the level of what
 +/// follows it and its end edge that of what precedes it (the edges sit inside the span's bidi
@@ -6279,7 +6296,7 @@ index 060a32d..6fe814a 100644
 +    let object_levels = analysis.object_levels();
 +    if char_levels.is_empty() {
 +        return alloc::vec![paragraph; inline_boxes.len()];
-     }
++    }
 +    // The paragraph in logical order: characters, and the boxes before the character at their
 +    // index. `None`: a box whose level is still to find (an edge), or a removed character.
 +    enum Slot {
@@ -6349,10 +6366,12 @@ index 060a32d..6fe814a 100644
 +        after = level_of(slot, &levels).or(after);
 +    }
 +    levels.into_iter().map(|level| level.unwrap_or(paragraph)).collect()
- }
- 
++}
++
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +433,15 @@ enum LastResortFont {
+ #[derive(Debug)]
+ enum LastResortFont {
+@@ -259,6 +449,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -6368,7 +6387,7 @@ index 060a32d..6fe814a 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +467,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +483,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -6383,7 +6402,7 @@ index 060a32d..6fe814a 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -322,7 +508,10 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -322,7 +524,10 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          cluster: &mut CharCluster,
      ) -> Option<FontInstanceRef<'_>> {
          let style_index = cluster.style_index();
@@ -6395,7 +6414,7 @@ index 060a32d..6fe814a 100644
  
          if style_index != self.style_index || is_emoji || self.fonts_id.is_none() {
              self.style_index = style_index;
-@@ -360,12 +549,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +565,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -6434,7 +6453,7 @@ index 060a32d..6fe814a 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +586,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +602,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -6447,7 +6466,7 @@ index 060a32d..6fe814a 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -399,29 +618,63 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -399,29 +634,63 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
  
          let mut selected_font = None;
          let mut best_coverage = Coverage::NONE;
@@ -6519,7 +6538,7 @@ index 060a32d..6fe814a 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -434,7 +687,7 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -434,7 +703,7 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              }
          });
  
@@ -6528,7 +6547,7 @@ index 060a32d..6fe814a 100644
              data: &font.blob,
              index: font.index,
              synthesis: &font.synthesis,
-@@ -442,6 +695,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -442,6 +711,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
      }
  }
  
@@ -6565,7 +6584,7 @@ index 060a32d..6fe814a 100644
  /// Just query for any generic family's font from the font collection.
  ///
  /// This sets generic families on `query`, so callers need to make sure to set families back again.
-@@ -473,3 +756,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +772,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }
