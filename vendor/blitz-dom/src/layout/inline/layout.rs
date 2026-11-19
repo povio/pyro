@@ -325,6 +325,20 @@ fn retry_line_slot(
     narrowed.then_some(narrowed_slot)
 }
 
+/// pyro: the slot to retry a line in that a retry narrowed for a taller attempt, when the
+/// line's own height leaves it more room (the content that made the attempt taller moved on to
+/// the next line): the slot beside the floats over the line's own height, if wider. Taken once
+/// per line, so that the line cannot go back and forth.
+#[cfg(feature = "floats")]
+fn wider_line_slot(block_ctx: &BlockContext, slot: &ContentSlot, line: &LineBreakData, scale: f32) -> Option<ContentSlot> {
+    slot.segment_id?;
+    let line_y = (line.line_y_start / scale as f64) as f32;
+    let line_height = ((line.line_y_end - line.line_y_start) / scale as f64) as f32;
+    let wider = block_ctx.find_content_slot(line_y, line_height, Clear::None, None);
+    let widens = wider.x < slot.x - FIT_TOLERANCE || wider.x + wider.width > slot.x + slot.width + FIT_TOLERANCE;
+    (widens && (wider.y - line_y).abs() <= FIT_TOLERANCE && wider.x <= slot.x + FIT_TOLERANCE && wider.x + wider.width >= slot.x + slot.width - FIT_TOLERANCE).then_some(wider)
+}
+
 impl LayoutPassState<'_> {
     /// Place a float laid out by inline layout at or below `min_y` (content-box relative)
     #[cfg(feature = "floats")]
@@ -1502,19 +1516,24 @@ impl LayoutPassState<'_> {
                 // `None` if the line can't be retried (no floats beside it, or a float was placed
                 // part way through it).
                 let mut line_start_state = has_active_floats.then(|| breaker.state().clone());
+                // pyro: whether the current line was retried, and whether in a wider slot
+                // (`wider_line_slot`).
+                let (mut line_narrowed, mut line_widened) = (false, false);
 
                 while let Some(yield_data) = breaker.break_next() {
                     match yield_data {
                         YieldData::LineBreak(line_break_data) => {
                             if let Some(saved_state) = line_start_state.take()
-                                && let Some(retry_slot) = retry_line_slot(
-                                    &block_ctx,
-                                    &line_slot,
-                                    &line_break_data,
-                                    wraps,
-                                    scale,
-                                )
+                                && let Some(retry_slot) =
+                                    retry_line_slot(&block_ctx, &line_slot, &line_break_data, wraps, scale).or_else(|| {
+                                        let wider = (line_narrowed && !line_widened)
+                                            .then(|| wider_line_slot(&block_ctx, &line_slot, &line_break_data, scale))
+                                            .flatten();
+                                        line_widened |= wider.is_some();
+                                        wider
+                                    })
                             {
+                                line_narrowed = true;
                                 // Floats queued during this line attempt will be encountered again
                                 pending_floats.clear();
                                 line_slot = retry_slot;
@@ -1526,6 +1545,8 @@ impl LayoutPassState<'_> {
                             }
                             line_bottoms[line_count_so_far % 2] = line_break_data.line_y_end;
                             line_count_so_far += 1;
+                            line_narrowed = false;
+                            line_widened = false;
 
                             // pyro: the initial letter's cap height stays on its first line's text
                             // (Blink places it after the line, `PostPlaceInitialLetterBox`): what
