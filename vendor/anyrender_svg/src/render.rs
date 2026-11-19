@@ -390,7 +390,7 @@ fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<crate::filter::FilterGraph>
         .zip(filter_regions(g, ts))
         .map(|(filter, (region, bounded))| {
             let notes = |index| crate::filter::notes(filter.id(), index);
-            let mut graph = crate::filter::FilterGraph::new(filter, &notes, tainted)?;
+            let mut graph = crate::filter::FilterGraph::new(filter, &notes, tainted, Some(g.bounding_box()))?;
             tainted = graph.tainted;
             graph.region = region;
             graph.bounded = bounded;

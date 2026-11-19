@@ -1260,6 +1260,19 @@ impl Writer<'_> {
             self.out.push_str(" />");
         } else {
             self.out.push('>');
+            // pyro: a `<filter>` whose primitive subregions are fractions of the bounding box
+            // (`primitiveUnits="objectBoundingBox"`) starts with a marker primitive (it passes the
+            // source graphic on, as the first primitive's input is): usvg resolves those subregions
+            // against the filter region, and anyrender_svg puts them back on the bounding box
+            // (`filter::OBB_MARK`; WPT filter-effects `filter-subregion-01`).
+            if tag == "filter"
+                && data.name.ns == ns!(svg)
+                && data
+                    .attr(markup5ever::LocalName::from("primitiveUnits"))
+                    .is_some_and(|units| units.trim() == "objectBoundingBox")
+            {
+                self.out.push_str("<feOffset result=\"__pyro_obb\"/>");
+            }
             // pyro: the root's pan and zoom by script (`currentTranslate`, `currentScale`; pyro-dom
             // `SVG_PAN_ATTR`), applied to its content outside its own viewBox transform.
             let pan = is_root
