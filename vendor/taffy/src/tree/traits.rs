@@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
 
     /// Compute the specified node's size or full layout given the specified constraints
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput;
+
+    /// pyro: a width that replaces the block-level item `node_id`'s own in its parent block
+    /// container's intrinsic (content-based) width, whatever its style says: a column spanner
+    /// while a multi-column container measures its columns without them.
+    #[inline(always)]
+    fn block_item_intrinsic_width_override(&self, node_id: NodeId) -> Option<f32> {
+        let _ = node_id;
+        None
+    }
 }
 
 /// Extends [`LayoutPartialTree`] with the operations needed by the out-of-flow positioning pass

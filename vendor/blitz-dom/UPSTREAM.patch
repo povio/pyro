@@ -18400,7 +18400,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,124 +1511,548 @@
+@@ -488,126 +1511,550 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -18570,15 +18570,13 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 -                    Display::None => taffy::LayoutOutput::HIDDEN,
 +                    Display::Grid => ChildLayout::Grid,
 +                    Display::None => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
-                 }
-             }
--            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
++                }
++            }
 +            NodeData::Document(_) => ChildLayout::FlowRoot,
- 
--            _ => taffy::LayoutOutput::HIDDEN,
++
 +            _ => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
-         }
-     }
++        }
++    }
 +
 +    /// A table root's layout (see [`Self::dispatch_child_layout`]).
 +    #[inline(never)]
@@ -18686,8 +18684,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    style.max_size.width = taffy::style_helpers::auto();
 +                    table_wrapper.style = Some(style);
 +                    output = compute_grid_layout(&mut table_wrapper, node_id, wider);
-+                }
-+            }
+                 }
+             }
+-            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
 +        }
 +
 +        // pyro: a height a flex or grid parent gives a table is its wrapper box's, captions included
@@ -18899,7 +18898,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        }
 +        widest
 +    }
-+
+ 
+-            _ => taffy::LayoutOutput::HIDDEN,
 +    /// pyro: lays out a table's captions (`TableContext::captions`) above (`caption-side: top`)
 +    /// and below its grid, each a block as wide as the grid less its margins: the table's box is
 +    /// then its wrapper box, the grid (`output`, laid out) moved down by the captions above it, as
@@ -19010,14 +19010,14 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                self.set_unrounded_layout(taffy_node_id(*caption), &layout);
 +            }
 +            *context.grid_box.borrow_mut() = Some((top, grid_height));
-+        }
+         }
 +        output.size.height = top + grid_height + bottom;
 +        output.baselines.first = output.baselines.first.map(|baseline| baseline + top);
 +        output.baselines.last = output.baselines.last.map(|baseline| baseline + top);
 +        top
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
 +enum ChildLayout {
 +    /// A leaf box, laid out.
@@ -19032,9 +19032,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// pyro: a multi-column container, whose content is a block or (`inline_root`) an inline
 +    /// formatting context.
 +    Multicol { inline_root: bool },
- }
- 
++}
++
  impl TraversePartialTree for LayoutPassState<'_> {
+     type ChildIter<'a>
+         = RefCellChildIter<'a>
 @@ -667,7 +2114,11 @@
      }
  
@@ -19048,7 +19050,23 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +2149,26 @@
+@@ -675,6 +2126,15 @@
+     }
+ 
+     #[inline(always)]
++    fn block_item_intrinsic_width_override(&self, node_id: NodeId) -> Option<f32> {
++        // pyro: a column spanner while its container measures its columns without spanners
++        // (`layout::multicol`, a negative width in `column_spanners`).
++        self.column_spanners
++            .filter(|&(_, width)| width < 0.0)
++            .filter(|_| self.is_current_column_spanner(dom_node_id(node_id)))
++            .map(|_| 0.0)
++    }
++
+     fn compute_child_layout(
+         &mut self,
+         node_id: NodeId,
+@@ -698,17 +2158,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -19077,7 +19095,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2181,7 @@
+@@ -721,6 +2190,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -19085,7 +19103,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2193,122 @@
+@@ -732,6 +2202,122 @@
      }
  }
  
@@ -19208,7 +19226,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2316,12 @@
+@@ -739,10 +2325,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -19225,7 +19243,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2331,11 @@
+@@ -752,9 +2340,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -19240,7 +19258,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2363,144 @@
+@@ -782,16 +2372,144 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -19389,7 +19407,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2553,30 @@
+@@ -844,6 +2562,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -19420,7 +19438,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2585,19 @@
+@@ -852,7 +2594,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19441,7 +19459,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2613,30 @@
+@@ -868,6 +2622,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -19472,7 +19490,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2741,192 @@
+@@ -972,3 +2750,192 @@
          })
      }
  }
@@ -19669,7 +19687,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2111 @@
+@@ -0,0 +1,2119 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -20893,7 +20911,7 @@ new file mode 100644
 +        let dom_id = dom_node_id(node_id);
 +        let spanners: Vec<crate::NodeId> =
 +            if inline_root { Vec::new() } else { self.doc.column_spanners_of(dom_id).into_iter().map(|(id, _)| id).collect() };
-+        let outer_spanners = std::mem::replace(&mut self.column_spanners, (!spanners.is_empty()).then_some((dom_id, 0.0)));
++        let outer_spanners = std::mem::replace(&mut self.column_spanners, (!spanners.is_empty()).then_some((dom_id, -1.0)));
 +        let mut min = measure(self, AvailableSpace::MinContent);
 +        let mut max = measure(self, AvailableSpace::MaxContent);
 +        self.column_spanners = outer_spanners;
@@ -20971,6 +20989,14 @@ new file mode 100644
 +            return inputs;
 +        };
 +        if !is_spanner_style(&style) || !self.spans_columns_of(container, node_id) {
++            return inputs;
++        }
++        // pyro: a negative width: the columns are being measured without the spanners
++        // (`multicol_content_widths`), which are as wide as nothing then.
++        if width < 0.0 {
++            inputs.parent_size.width = Some(0.0);
++            inputs.available_space.width = AvailableSpace::Definite(0.0);
++            inputs.known_dimensions.width = Some(0.0);
 +            return inputs;
 +        }
 +        let ls = node.layout_style();

@@ -1501,6 +1501,11 @@ fn determine_content_based_container_width(
     #[cfg(feature = "float_layout")]
     let mut float_contribution = FloatIntrinsicWidthCalculator::new(available_width);
     for item in items.iter().filter(|item| !item.position.is_out_of_flow()) {
+        // pyro: see `LayoutPartialTree::block_item_intrinsic_width_override`.
+        if let Some(width) = tree.block_item_intrinsic_width_override(item.node_id) {
+            max_child_width = f32::max(max_child_width, width);
+            continue;
+        }
         let mut known_dimensions = item.size.maybe_clamp(item.min_size, item.max_size);
         // pyro
         if let (true, Some(width)) = (item.min_width_is_content, known_dimensions.width) {

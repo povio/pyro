@@ -1221,7 +1221,7 @@ impl LayoutPassState<'_> {
         let dom_id = dom_node_id(node_id);
         let spanners: Vec<crate::NodeId> =
             if inline_root { Vec::new() } else { self.doc.column_spanners_of(dom_id).into_iter().map(|(id, _)| id).collect() };
-        let outer_spanners = std::mem::replace(&mut self.column_spanners, (!spanners.is_empty()).then_some((dom_id, 0.0)));
+        let outer_spanners = std::mem::replace(&mut self.column_spanners, (!spanners.is_empty()).then_some((dom_id, -1.0)));
         let mut min = measure(self, AvailableSpace::MinContent);
         let mut max = measure(self, AvailableSpace::MaxContent);
         self.column_spanners = outer_spanners;
@@ -1299,6 +1299,14 @@ impl LayoutPassState<'_> {
             return inputs;
         };
         if !is_spanner_style(&style) || !self.spans_columns_of(container, node_id) {
+            return inputs;
+        }
+        // pyro: a negative width: the columns are being measured without the spanners
+        // (`multicol_content_widths`), which are as wide as nothing then.
+        if width < 0.0 {
+            inputs.parent_size.width = Some(0.0);
+            inputs.available_space.width = AvailableSpace::Definite(0.0);
+            inputs.known_dimensions.width = Some(0.0);
             return inputs;
         }
         let ls = node.layout_style();

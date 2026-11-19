@@ -2126,6 +2126,15 @@ impl LayoutPartialTree for LayoutPassState<'_> {
     }
 
     #[inline(always)]
+    fn block_item_intrinsic_width_override(&self, node_id: NodeId) -> Option<f32> {
+        // pyro: a column spanner while its container measures its columns without spanners
+        // (`layout::multicol`, a negative width in `column_spanners`).
+        self.column_spanners
+            .filter(|&(_, width)| width < 0.0)
+            .filter(|_| self.is_current_column_spanner(dom_node_id(node_id)))
+            .map(|_| 0.0)
+    }
+
     fn compute_child_layout(
         &mut self,
         node_id: NodeId,
