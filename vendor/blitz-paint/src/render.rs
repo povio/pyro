@@ -2736,6 +2736,24 @@ fn truncate_line(
         }
         let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true, split: None };
         let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
+        // pyro: a line clamp's ellipsis follows the kept content less the spaces at its end
+        // (Chromium; WPT css-overflow `line-clamp/webkit-line-clamp-024`).
+        if forced && let Some(end) = end {
+            let mut content_end: Option<f32> = None;
+            for run in runs() {
+                let mut x = run.offset();
+                for cluster in run.run().visual_clusters() {
+                    let x1 = x + cluster.advance();
+                    if x1 <= cut.edge + epsilon && !cluster.is_space_or_nbsp() && cluster.advance() > 0.0 {
+                        content_end = Some(content_end.map_or(x1, |e| e.max(x1)));
+                    }
+                    x = x1;
+                }
+            }
+            if let Some(content_end) = content_end.filter(|&e| e < end) {
+                return Some((crate::text::TextCut { edge: content_end, keep_left: true, split: None }, content_end));
+            }
+        }
         if let Some(end) = end {
             return Some((cut, end));
         }
