@@ -319,6 +319,37 @@ fn inline_modules_inserted_by_script_each_run() {
     assert!(!log.iter().any(|l| l.starts_with("exception") || l.starts_with("rejection")), "{log:?}");
 }
 
+const TOP_LEVEL_AWAIT_PAGE: &str = r#"<!doctype html><html><head>
+<script>document.addEventListener('DOMContentLoaded', () => console.log('dcl'));</script>
+<script type="module">import '/dep.js'; console.log('importer-ran'); await new Promise(r => setTimeout(r, 200)); console.log('importer-resumed');</script>
+<script type="module">console.log('waiter-ran'); await new Promise(() => {});</script>
+<script type="module" src="/after.js" onload="console.log('after-load')"></script>
+</head><body></body></html>"#;
+
+/// HTML runs a module script without awaiting its evaluation promise: a
+/// top-level await (one that never settles too) holds up neither the
+/// modules after it nor DOMContentLoaded and load, while the module graph's
+/// fetch (a slow import) still does.
+#[test]
+fn top_level_await_holds_up_neither_later_modules_nor_load() {
+    let log = load(
+        TOP_LEVEL_AWAIT_PAGE,
+        &[("/dep.js", "console.log('dep-ran')", 100), ("/after.js", "console.log('after-ran')", 0)],
+    );
+    assert_before(
+        &log,
+        &[
+            ("dep-ran", "importer-ran"),
+            ("importer-ran", "waiter-ran"),
+            ("waiter-ran", "after-ran"),
+            ("after-ran", "after-load"),
+            ("after-load", "dcl"),
+            ("dcl", "event:load"),
+        ],
+    );
+    assert!(!log.iter().any(|l| l.starts_with("exception") || l.starts_with("rejection")), "{log:?}");
+}
+
 /// `Range.createContextualFragment` scripts run once the fragment is
 /// inserted (postscribe-style injectors); `innerHTML`'s never do.
 #[test]

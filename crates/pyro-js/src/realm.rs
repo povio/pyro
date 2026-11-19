@@ -105,6 +105,18 @@ pub trait ModuleFetcher {
     fn document_base_url(&self, _realm: &Realm) -> Option<String> {
         None
     }
+
+    /// Calls `then` once none of this fetcher's fetches is in flight: now
+    /// when none is, else when the last one has been completed. A fetcher
+    /// that completes every request within `fetch` is always idle.
+    fn when_idle(&self, then: Box<dyn FnOnce()>) {
+        then();
+    }
+
+    /// Whether a fetch of this fetcher is in flight.
+    fn busy(&self) -> bool {
+        false
+    }
 }
 
 /// The `type` import attribute of a module request (HTML "module type").
@@ -1086,6 +1098,11 @@ impl Realm {
 
     pub fn set_module_fetcher(&self, fetcher: Option<Rc<dyn ModuleFetcher>>) {
         *self.inner.module_fetcher.borrow_mut() = fetcher;
+    }
+
+    /// The fetcher [`Realm::set_module_fetcher`] installed.
+    pub fn module_fetcher(&self) -> Option<Rc<dyn ModuleFetcher>> {
+        self.inner.module_fetcher.borrow().clone()
     }
 
     pub fn ptr_eq(&self, other: &Realm) -> bool {

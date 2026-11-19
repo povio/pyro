@@ -18,14 +18,16 @@
 //! fetch their graph and run when ready. External and module script elements
 //! get `load`/`error` events.
 //!
-//! Deviations: a deferred module's evaluation promise (including top-level
-//! await) is awaited before the next deferred script/`DOMContentLoaded`,
-//! because JSC fetches the module graph during evaluation, not before it. A
-//! script-inserted script is prepared when the inserting script returns (a
+//! Deviations: JSC fetches the module graph during evaluation, not before
+//! it, so a module counts as run (for the next deferred script,
+//! `DOMContentLoaded` and `load`) when its evaluation promise settles or,
+//! pending on a top-level await, once the realm has no module fetch in flight
+//! after a task (`Browser::execute_module`). A script-inserted script is prepared when the inserting script returns (a
 //! parser-run script) or at the end of the inserting task (a handler or a
 //! timer), instead of inside the DOM call that inserted it. A module
-//! element's `load` fires when its evaluation promise fulfills, `error` when
-//! it rejects (also for an evaluation error).
+//! element's `load` fires when it counts as run and its evaluation promise
+//! has not rejected by then, `error` when it rejected (also for an
+//! evaluation error).
 //!
 //! DOM lifecycle and currentScript are wired through pyro-webapi. Iframe/image
 //! resources are separate loader work; linked stylesheets are handled by
@@ -869,6 +871,39 @@ pub(crate) struct DocumentLoad {
 struct PageModuleFetcher {
     page: FrameKey,
     sched: pyro_runtime::Scheduler<Browser>,
+    fetches: Rc<ModuleFetches>,
+}
+
+/// The module fetches of a realm in flight, and who waits for there to be
+/// none ([`ModuleFetcher::when_idle`]).
+#[derive(Default)]
+struct ModuleFetches {
+    in_flight: std::cell::Cell<usize>,
+    idle: RefCell<Vec<Box<dyn FnOnce()>>>,
+}
+
+/// One fetch in flight: from the request until its result is handed to the
+/// engine, or the request is dropped.
+struct InFlight(Rc<ModuleFetches>);
+
+impl InFlight {
+    fn new(fetches: &Rc<ModuleFetches>) -> InFlight {
+        fetches.in_flight.set(fetches.in_flight.get() + 1);
+        InFlight(fetches.clone())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let left = self.0.in_flight.get() - 1;
+        self.0.in_flight.set(left);
+        if left == 0 {
+            let waiters = std::mem::take(&mut *self.0.idle.borrow_mut());
+            for then in waiters {
+                then();
+            }
+        }
+    }
 }
 
 impl ModuleFetcher for PageModuleFetcher {
@@ -876,6 +911,18 @@ impl ModuleFetcher for PageModuleFetcher {
         let page = pyro_webapi::target::page_of(&realm.scope().ok()?).ok()?;
         let dom = page.dom.try_borrow().ok()?;
         dom.document_base_url(page.document()).ok().map(str::to_owned)
+    }
+
+    fn when_idle(&self, then: Box<dyn FnOnce()>) {
+        if self.fetches.in_flight.get() == 0 {
+            then();
+        } else {
+            self.fetches.idle.borrow_mut().push(then);
+        }
+    }
+
+    fn busy(&self) -> bool {
+        self.fetches.in_flight.get() > 0
     }
 
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
@@ -894,6 +941,7 @@ impl ModuleFetcher for PageModuleFetcher {
         let page = self.page;
         module_trace!("requested {url}");
         let request = RefCell::new(Some(request));
+        let in_flight = InFlight::new(&self.fetches);
         self.sched.post(TaskSource::Networking, move |b| {
             let Some(request) = request.borrow_mut().take() else {
                 module_trace!("task found no request {url}");
@@ -906,6 +954,8 @@ impl ModuleFetcher for PageModuleFetcher {
             module_trace!("fetching {url} (document {})", b.doc(page).is_some());
             let traced = url.clone();
             let complete = move |_b: &mut Browser, res: Result<String, String>| {
+                // Dropped when this returns, the result handed to the engine.
+                let _in_flight = in_flight;
                 match &res {
                     Ok(text) => module_trace!("loaded {traced} ({} bytes)", text.len()),
                     Err(e) => module_trace!("failed {traced}: {e}"),
@@ -2462,8 +2512,25 @@ impl Browser {
                 }
             });
         };
-        let resume = Rc::new(resume);
-        let (ok, err) = (resume.clone(), resume);
+        // HTML runs a module script without awaiting its evaluation promise:
+        // a top-level await holds up neither the scripts after it nor
+        // DOMContentLoaded and load. The promise also covers the fetch of
+        // the module graph, which must finish first, so the script counts
+        // as run once its promise settles or, still pending, when no module
+        // fetch of the realm is in flight after a task (the engine requests
+        // a module's imports from promise jobs, so between tasks no fetch in
+        // flight means every import was requested and loaded, and the
+        // module evaluated up to its top-level await).
+        let done = Rc::new(std::cell::Cell::new(false));
+        let resume = {
+            let done = done.clone();
+            Rc::new(move |ok: bool| {
+                if !done.replace(true) {
+                    resume(ok);
+                }
+            })
+        };
+        let (ok, err) = (resume.clone(), resume.clone());
         let r = scope.then(
             promise,
             move |_s, _v| ok(true),
@@ -2475,6 +2542,9 @@ impl Browser {
         if let Err(e) = r {
             scope.report_exception(&e);
             return false;
+        }
+        if let Some(fetcher) = realm.module_fetcher() {
+            graph_loaded(self.scheduler(), Rc::downgrade(&fetcher), done, Box::new(move || resume(true)));
         }
         if let Some(mut l) = self.load_mut(page) {
             if deferred {
@@ -2501,6 +2571,29 @@ impl Browser {
         let Ok(scope) = realm.scope() else { return };
         pyro_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(error.to_owned()));
     }
+}
+
+/// Calls `then` in a later task in which `fetcher` has no fetch in flight,
+/// unless `done` is set by then (see `Browser::execute_module`).
+fn graph_loaded(
+    sched: pyro_runtime::Scheduler<Browser>,
+    fetcher: std::rc::Weak<dyn ModuleFetcher>,
+    done: Rc<std::cell::Cell<bool>>,
+    then: Box<dyn FnOnce()>,
+) {
+    let again = sched.clone();
+    sched.post(TaskSource::Networking, move |_b| {
+        let Some(f) = fetcher.upgrade() else { return };
+        if done.get() {
+            return;
+        }
+        if !f.busy() {
+            then();
+            return;
+        }
+        let weak = fetcher.clone();
+        f.when_idle(Box::new(move || graph_loaded(again, weak, done, then)));
+    });
 }
 
 /// The synchronous part of "prepare the script element" for a script the
@@ -2552,7 +2645,7 @@ fn dynamic_inline_module_url(base: &str) -> String {
 }
 
 pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
-    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched })));
+    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default() })));
 }
 
 /// The download's file name: the `download` attribute without path
