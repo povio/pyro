@@ -1412,7 +1412,33 @@ impl BaseDocument {
     /// whole document (see [`Self::top_layer_nodes`]), not in its place.
     #[inline]
     pub fn is_in_top_layer(&self, id: NodeId) -> bool {
-        !self.top_layer.is_empty() && self.top_layer.contains(id) && self.renders_in_top_layer(id)
+        !self.top_layer.is_empty()
+            && self.top_layer.contains(id)
+            && self.renders_in_top_layer(id)
+            && !self.skipped_by_content_visibility(id)
+    }
+
+    /// pyro: whether an ancestor of `id` skips its contents with `content-visibility: hidden`
+    /// (CSS Contain 2 § 4.1: a skipped element is not rendered, in the top layer neither; as
+    /// `layout::construct`, on an element containment applies to).
+    fn skipped_by_content_visibility(&self, id: NodeId) -> bool {
+        use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
+        let mut current = self.nodes.get(id).and_then(|node| node.parent);
+        while let Some(ancestor) = current {
+            let Some(node) = self.nodes.get(ancestor) else { return false };
+            let hidden = node.primary_styles().is_some_and(|style| {
+                let display = style.get_box().display;
+                style.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden
+                    && !display.is_contents()
+                    && !display.is_none()
+                    && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+            });
+            if hidden {
+                return true;
+            }
+            current = node.parent;
+        }
+        false
     }
 
     /// pyro: whether top-layer element `id` is rendered in the top layer: its `overlay` is `auto`
@@ -1432,6 +1458,7 @@ impl BaseDocument {
                 .get(id)
                 .is_some_and(|n| n.flags.is_in_document() && n.is_element())
                 && self.renders_in_top_layer(id)
+                && !self.skipped_by_content_visibility(id)
         })
     }
 

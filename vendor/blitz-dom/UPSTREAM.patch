@@ -21492,8 +21492,15 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            // (`layout::multicol`).
 +            || self.column_fragments().is_some()
 +            || self.vertical_column_fragments().is_some()
-+    }
-+
+     }
+ 
+-    /// Whether this is a `position: relative` or `sticky` box.
+-    fn is_in_flow_positioned(&self) -> bool {
+-        self.primary_styles().is_some_and(|style| {
+-            matches!(
+-                style.clone_position(),
+-                Position::Relative | Position::Sticky
+-            )
 +    /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
 +    /// block box of the normal flow whose background goes with the other block backgrounds of
 +    /// its stacking context (step 4), under the floats of its subtree (step 5, lifted to the
@@ -21543,15 +21550,8 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
 +        })
-     }
- 
--    /// Whether this is a `position: relative` or `sticky` box.
--    fn is_in_flow_positioned(&self) -> bool {
--        self.primary_styles().is_some_and(|style| {
--            matches!(
--                style.clone_position(),
--                Position::Relative | Position::Sticky
--            )
++    }
++
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -21672,7 +21672,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1332,116 @@
+@@ -539,3 +1332,143 @@
          )
      }
  }
@@ -21756,7 +21756,33 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +    /// whole document (see [`Self::top_layer_nodes`]), not in its place.
 +    #[inline]
 +    pub fn is_in_top_layer(&self, id: NodeId) -> bool {
-+        !self.top_layer.is_empty() && self.top_layer.contains(id) && self.renders_in_top_layer(id)
++        !self.top_layer.is_empty()
++            && self.top_layer.contains(id)
++            && self.renders_in_top_layer(id)
++            && !self.skipped_by_content_visibility(id)
++    }
++
++    /// pyro: whether an ancestor of `id` skips its contents with `content-visibility: hidden`
++    /// (CSS Contain 2 § 4.1: a skipped element is not rendered, in the top layer neither; as
++    /// `layout::construct`, on an element containment applies to).
++    fn skipped_by_content_visibility(&self, id: NodeId) -> bool {
++        use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
++        let mut current = self.nodes.get(id).and_then(|node| node.parent);
++        while let Some(ancestor) = current {
++            let Some(node) = self.nodes.get(ancestor) else { return false };
++            let hidden = node.primary_styles().is_some_and(|style| {
++                let display = style.get_box().display;
++                style.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden
++                    && !display.is_contents()
++                    && !display.is_none()
++                    && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
++            });
++            if hidden {
++                return true;
++            }
++            current = node.parent;
++        }
++        false
 +    }
 +
 +    /// pyro: whether top-layer element `id` is rendered in the top layer: its `overlay` is `auto`
@@ -21776,6 +21802,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                .get(id)
 +                .is_some_and(|n| n.flags.is_in_document() && n.is_element())
 +                && self.renders_in_top_layer(id)
++                && !self.skipped_by_content_visibility(id)
 +        })
 +    }
 +
@@ -34098,7 +34125,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2471,38 @@
+@@ -1369,7 +2471,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -34115,8 +34142,18 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                    | WillChangeBits::PERSPECTIVE
 +                    // pyro: `contain` too (some of its values make one; WPT css-contain
 +                    // `contain-paint-stacking-context-001b`).
-+                    | WillChangeBits::CONTAIN,
++                    | WillChangeBits::CONTAIN
++                    // pyro: and `view-transition-name` (CSS View Transitions 1 § 3.2: a value
++                    // other than `none` makes one; WPT css-will-change).
++                    | WillChangeBits::VIEW_TRANSITION_NAME,
 +            ) {
++                return true;
++            }
++            // pyro: `z-index` where a `z-index` other than `auto` would make one: a positioned box,
++            // a flex or grid item (WPT css-will-change `will-change-stacking-context-z-index-*`).
++            if box_style.will_change.bits.intersects(WillChangeBits::Z_INDEX)
++                && (position != Position::Static || is_flex_or_grid_item)
++            {
 +                return true;
 +            }
 +        }
@@ -34138,7 +34175,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2530,14 @@
+@@ -1397,12 +2540,14 @@
              return true;
          }
  
@@ -34159,7 +34196,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1435,6 +2570,12 @@
+@@ -1435,6 +2580,12 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -34172,7 +34209,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2641,15 @@
+@@ -1500,11 +2651,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -34188,7 +34225,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2678,7 @@
+@@ -1533,6 +2688,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -34196,7 +34233,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2705,7 @@
+@@ -1559,7 +2715,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -34205,7 +34242,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2720,18 @@
+@@ -1574,12 +2730,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -34226,7 +34263,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2742,7 @@
+@@ -1590,7 +2752,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -34235,7 +34272,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2757,7 @@
+@@ -1605,7 +2767,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -34244,7 +34281,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2868,7 @@
+@@ -1716,7 +2878,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -34253,7 +34290,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2893,13 @@
+@@ -1741,8 +2903,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -34268,7 +34305,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2975,28 @@
+@@ -1818,8 +2985,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -34299,7 +34336,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3054,36 @@
+@@ -1877,11 +3064,36 @@
                  }
              }
  

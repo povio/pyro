@@ -2483,8 +2483,18 @@ impl Node {
                     | WillChangeBits::PERSPECTIVE
                     // pyro: `contain` too (some of its values make one; WPT css-contain
                     // `contain-paint-stacking-context-001b`).
-                    | WillChangeBits::CONTAIN,
+                    | WillChangeBits::CONTAIN
+                    // pyro: and `view-transition-name` (CSS View Transitions 1 § 3.2: a value
+                    // other than `none` makes one; WPT css-will-change).
+                    | WillChangeBits::VIEW_TRANSITION_NAME,
             ) {
+                return true;
+            }
+            // pyro: `z-index` where a `z-index` other than `auto` would make one: a positioned box,
+            // a flex or grid item (WPT css-will-change `will-change-stacking-context-z-index-*`).
+            if box_style.will_change.bits.intersects(WillChangeBits::Z_INDEX)
+                && (position != Position::Static || is_flex_or_grid_item)
+            {
                 return true;
             }
         }
