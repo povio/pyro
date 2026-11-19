@@ -874,9 +874,11 @@ pub struct CollapsedEdge {
 
 impl CollapsedEdge {
     /// pyro: whether this edge beats `other` where collapsed borders meet (wider, or as wide with a
-    /// style that wins): the winner of a junction paints it (`blitz-paint`'s `draw_collapsed_edges`).
+    /// style that wins, then the box it comes from: a cell's over a row's, ... a column group's,
+    /// as along an edge): the winner of a junction paints it (`blitz-paint`'s `draw_collapsed_edges`;
+    /// WPT css-tables `tentative/paint/collapsed-border-large-cell`).
     pub fn outranks(&self, other: &CollapsedEdge) -> bool {
-        (self.width, self.rank) > (other.width, other.rank)
+        (self.width, self.rank, self.priority) > (other.width, other.rank, other.priority)
     }
 
     /// pyro: whether the winning border is `double` (painted as two lines).
