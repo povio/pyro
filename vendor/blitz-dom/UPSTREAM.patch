@@ -14817,7 +14817,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,373 @@
+@@ -0,0 +1,374 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -14904,7 +14904,8 @@ new file mode 100644
 +        // else its maximum height), from the top of its border box.
 +        let limit = spec
 +            .auto
-+            .then(|| inputs.known_dimensions.height.or(height.map(|h| h + box_sizing_inset)).or(max))
++            // (A `min-height` above the `max-height` wins: WPT css-overflow `line-clamp-auto-014`.)
++            .then(|| inputs.known_dimensions.height.or(height.map(|h| h + box_sizing_inset)).or(max.map(|max| min.map_or(max, |min| min.max(max)))))
 +            .flatten()
 +            .map(|block_size| block_size - padding.bottom - border.bottom);
 +        let content_top = padding.top + border.top;

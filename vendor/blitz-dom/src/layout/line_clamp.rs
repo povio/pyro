@@ -84,7 +84,8 @@ impl LayoutPassState<'_> {
         // else its maximum height), from the top of its border box.
         let limit = spec
             .auto
-            .then(|| inputs.known_dimensions.height.or(height.map(|h| h + box_sizing_inset)).or(max))
+            // (A `min-height` above the `max-height` wins: WPT css-overflow `line-clamp-auto-014`.)
+            .then(|| inputs.known_dimensions.height.or(height.map(|h| h + box_sizing_inset)).or(max.map(|max| min.map_or(max, |min| min.max(max)))))
             .flatten()
             .map(|block_size| block_size - padding.bottom - border.bottom);
         let content_top = padding.top + border.top;
