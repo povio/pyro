@@ -4096,12 +4096,19 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
         // No line box: the bottom of its content box, when it has in-flow content (a cell without any,
         // however tall, takes no part in its row's baseline, as in Chromium; WPT css-align
         // `baseline-rules/synthesized-baseline-table-cell-001`).
-        let has_content = node.layout_children.borrow().as_ref().is_some_and(|children| {
-            children.iter().any(|&child| {
-                let child = &self.doc.nodes[child];
-                !child.is_out_of_flow() && !child.is_whitespace_node()
-            })
-        });
+        // (Its line boxes count: a layout-contained cell with text has no baseline but has content,
+        // WPT css-contain `contain-layout-baseline-004`.)
+        let has_lines = node
+            .element_data()
+            .and_then(|element| element.inline_layout_data.as_ref())
+            .is_some_and(|layout| layout.layout.lines().next().is_some());
+        let has_content = has_lines
+            || node.layout_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().any(|&child| {
+                    let child = &self.doc.nodes[child];
+                    !child.is_out_of_flow() && !child.is_whitespace_node()
+                })
+            });
         if !has_content {
             return None;
         }
