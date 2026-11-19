@@ -843,7 +843,9 @@ pub(crate) fn analyze_text(
                     false => is_icu_line,
                 };
                 (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
-                    || (prev_char == Some(' ') && !matches!(ch, ' ' | ')' | ']' | '}'))
+                    // (Nor before a word joiner or zero width space, which UAX #14 LB7 and LB11
+                    // keep: `a &#x2060;b`.)
+                    || (prev_char == Some(' ') && !matches!(ch, ' ' | ')' | ']' | '}' | '\u{2060}' | '\u{FEFF}' | '\u{200B}'))
                     || after_break_space
             };
             // Consumers can override soft wrap opportunities, except around a mandatory
