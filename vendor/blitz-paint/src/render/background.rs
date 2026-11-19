@@ -362,10 +362,24 @@ impl ElementCx<'_, '_> {
                     &self.frame.padding_box_path(),
                 );
             }
+            // pyro: no clip layer where nothing reaches past the clip: one image, not repeated,
+            // inside a rectangular clip box (Chromium clips a background to a pixel rectangle
+            // without a layer; a vello_cpu layer rounds what it holds a level apart from the
+            // same image drawn directly, as an `<img>` is: WPT css-images `object-position-svg-*`).
+            let blend = *get_cyclic(&bg_styles.background_blend_mode.0, idx);
+            let unclipped = blend == style::values::computed::effects::Blend::Normal
+                && canvas.is_none()
+                && local.is_none()
+                && !layer.border_area
+                && shape_clip.is_none()
+                && !self.frame.has_border_radius()
+                && self.frame.corner_curvature.is_none()
+                && !(layer.clip == BoxModelBox::BorderBox && shrunk_border_box.get().is_some_and(Option::is_some))
+                && self.image_tile_within(&layer, area);
             self.context.layer_manager.maybe_with_layer(
                 scene,
-                true,
-                crate::blend::convert_blend_mode(*get_cyclic(&bg_styles.background_blend_mode.0, idx)),
+                !unclipped,
+                crate::blend::convert_blend_mode(blend),
                 1.0,
                 self.transform,
                 &background_clip_path,
@@ -1553,6 +1567,55 @@ impl ElementCx<'_, '_> {
     /// The background positioning area of `layer` and the transform from its space to the scene,
     /// with `area` (this element's space) taken to that space: the viewport for a fixed layer,
     /// else the origin box in this element's space.
+    /// pyro: whether `layer` draws one SVG image tile (a `url()` image, `no-repeat` on both axes,
+    /// not fixed) that lies inside `clip` (this element's space, device px), its drawing too (it
+    /// stays in its viewport).
+    fn image_tile_within(&self, layer: &ImageLayerStyles, clip: Rect) -> bool {
+        use BackgroundRepeatKeyword::NoRepeat;
+        let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
+        if !matches!((repeat_x, repeat_y), (NoRepeat, NoRepeat))
+            || self.layer_is_fixed(layer)
+            || !matches!(layer.stylo_image, GenericImage::Url(_))
+        {
+            return false;
+        }
+        let Some(data) = layer.image_data else { return false };
+        let origin_rect = self.box_rect(layer.origin);
+        let (w, h) = (origin_rect.width() / self.scale, origin_rect.height() / self.scale);
+        let (pos, size) = match &data.image {
+            // (A raster `<img>` is drawn in its element's clip layer, `should_clip_node`: its
+            // background twin keeps its layer too.)
+            #[cfg(feature = "svg")]
+            ImageData::Svg(svg) => {
+                let size = svg.tree.size();
+                let ink = svg.tree.root().abs_layer_bounding_box();
+                if ink.left() < -0.01
+                    || ink.top() < -0.01
+                    || ink.right() > size.width() + 0.01
+                    || ink.bottom() > size.height() + 0.01
+                    || svg.intrinsic_dimensions.degenerate_view_box
+                {
+                    return false;
+                }
+                let width = svg.intrinsic_width().filter(|w| w.is_finite() && *w > 0.0);
+                let height = svg.intrinsic_height().filter(|h| h.is_finite() && *h > 0.0);
+                let ratio = match (width, height) {
+                    (Some(w), Some(h)) => Some(w / h),
+                    _ => svg.viewbox_aspect_ratio(),
+                }
+                .filter(|r| r.is_finite() && *r > 0.0);
+                let mode = BackgroundSizeComputeMode::Intrinsic { width, height, ratio };
+                let (pos, size) = compute_layer_position_and_size(layer, w, h, mode);
+                ((pos.to_vec2() * self.scale).to_point(), size * self.scale)
+            }
+            #[allow(unreachable_patterns)]
+            _ => return false,
+        };
+        let tile = Rect::from_origin_size(origin_rect.origin() + pos.to_vec2(), size);
+        let e = 1e-3;
+        tile.x0 >= clip.x0 - e && tile.y0 >= clip.y0 - e && tile.x1 <= clip.x1 + e && tile.y1 <= clip.y1 + e
+    }
+
     fn positioning_area(&self, layer: &ImageLayerStyles, area: Rect) -> (Rect, Affine, Rect) {
         if self.layer_is_fixed(layer) {
             let (viewport_rect, transform) = self.fixed_positioning_area();
