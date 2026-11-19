@@ -321,7 +321,7 @@ struct Breaks {
     /// (`fill`).
     whole_in_empty_columns: bool,
     /// pyro: the container has no block size (a size-contained one) and no `column-height`: its
-    /// strip goes in one column, not in a run of 1px ones (classic scrollbars only).
+    /// strip goes in one column, not in a run of 1px ones.
     one_column_when_empty: bool,
     /// pyro: line boxes and monolithic boxes a column holds whole even when they are taller than
     /// it, overflowing it (`held_whole`). Merged.
@@ -982,8 +982,11 @@ impl LayoutPassState<'_> {
         // `contain-size-multicol-002`, where classic scrollbars show the overflow). Classic
         // scrollbars only, so that overlay mode keeps its results.
         breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
-        breaks.one_column_when_empty =
-            self.doc.nodes.classic_scrollbars && multicol.height.is_none() && definite_height.is_some_and(|h| h <= EPSILON);
+        // (Not an authored `height: 0`: Chrome makes overflow columns there, css-multicol
+        // `multicol-zero-height-001`.)
+        breaks.one_column_when_empty = multicol.height.is_none()
+            && size.height.is_none()
+            && definite_height.is_some_and(|h| h <= EPSILON);
         // The strip's parts: runs of columns, and the spanners between them (strip ranges).
         let spanners = match spanning {
             Some(_) => self.doc.column_spanner_ranges(dom_id),

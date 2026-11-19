@@ -618,9 +618,7 @@ impl BaseDocument {
         let columns_base =
             self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut overflow, Rect::ZERO));
         // pyro: so does a vertical writing mode's (its columns shown by paint only).
-        // (Classic scrollbars only: overlay mode keeps its results.)
-        let vertical_columns_base = (self.nodes.classic_scrollbars
-            && columns_base.is_none()
+        let vertical_columns_base = (columns_base.is_none()
             && self.nodes[node_id].vertical_column_fragments().is_some())
             .then(|| std::mem::replace(&mut overflow, Rect::ZERO));
 
