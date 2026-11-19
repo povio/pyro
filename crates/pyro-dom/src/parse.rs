@@ -231,9 +231,21 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         created
     }
     fn create_comment(&self, text: StrTendril) -> u32 {
+        // `<?target data>` in HTML (vendor/html5ever `pi`): the tokenizer marks the bogus comment
+        // it read; it is a processing instruction when its target is one, else the comment.
+        let text: &str = &text;
+        let text = match text.strip_prefix(html5ever::pi::MARK) {
+            Some(marked) => {
+                if let Some((target, data)) = html5ever::pi::parse(marked) {
+                    return self.create_pi(target.into(), data.into());
+                }
+                marked
+            }
+            None => text,
+        };
         self.dom.with(|d| {
             let owner = self.doc_owner(d);
-            d.alloc_raw(NodeKind::Comment(text.to_string()), owner)
+            d.alloc_raw(NodeKind::Comment(text.to_owned()), owner)
         })
     }
     fn create_pi(&self, target: StrTendril, data: StrTendril) -> u32 {

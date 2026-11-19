@@ -235,3 +235,5 @@ stylo_malloc_size_of = { path = "vendor/stylo_malloc_size_of" }
 idna = { path = "vendor/idna" }
 # WHATWG URL Standard fixes over url 2.5.8; see vendor/url/README.pyro.md.
 url = { path = "vendor/url" }
+# `<?target data>` in HTML is a processing instruction; see vendor/html5ever/README.pyro.md.
+html5ever = { path = "vendor/html5ever" }

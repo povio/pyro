@@ -86,6 +86,11 @@ impl Dom {
     pub fn inner_html(&self, id: NodeId) -> DomResult<String> {
         let i = self.check(id)?;
         let mut out = String::new();
+        // HTML fragment serialization: a node that serializes as void has no contents, whatever
+        // children script gave it.
+        if self.n(i).element().is_some_and(|e| e.is_html() && is_void(&e.name.local)) {
+            return Ok(out);
+        }
         let src = match self.n(i).element() {
             Some(e) if e.template_contents != NIL => e.template_contents,
             _ => i,
@@ -408,7 +413,7 @@ impl Dom {
                                 e.is_html()
                                     && matches!(
                                         &*e.name.local,
-                                        "style" | "script" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext"
+                                        "style" | "script" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext" | "noscript"
                                     )
                             });
                         if raw {
@@ -427,7 +432,8 @@ impl Dom {
                         out.push_str(&pi.target);
                         out.push(' ');
                         out.push_str(&pi.data);
-                        out.push('>');
+                        // (`?>`: HTML parses `<?target data?>` as a processing instruction.)
+                        out.push_str("?>");
                     }
                     NodeKind::Attr(_) => {}
                     NodeKind::Doctype(d) => {

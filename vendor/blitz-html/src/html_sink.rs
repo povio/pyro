@@ -220,7 +220,9 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
     }
 
     fn create_comment(&self, text: StrTendril) -> Self::Handle {
-        self.mutr().create_comment_node(&text)
+        // pyro: the data of a comment that started with `<?` is marked (vendor/html5ever `pi`).
+        let text: &str = &text;
+        self.mutr().create_comment_node(text.strip_prefix(html5ever::pi::MARK).unwrap_or(text))
     }
 
     fn create_pi(&self, _target: StrTendril, _data: StrTendril) -> Self::Handle {
