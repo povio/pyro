@@ -2553,6 +2553,9 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                                     | DisplayInside::TableRowGroup
                                     | DisplayInside::TableHeaderGroup
                                     | DisplayInside::TableFooterGroup
+                                    // pyro: or a column or column group (`Style::collapsed_columns`)
+                                    | DisplayInside::TableColumn
+                                    | DisplayInside::TableColumnGroup
                             ) || el.layout_parent.get().or(el.parent).is_some_and(|parent| {
                                 el.tree()[parent]
                                     .primary_styles()

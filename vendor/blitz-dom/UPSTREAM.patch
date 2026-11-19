@@ -45230,7 +45230,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2438,253 @@
+@@ -1546,14 +2438,256 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -45349,6 +45349,9 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                                    | DisplayInside::TableRowGroup
 +                                    | DisplayInside::TableHeaderGroup
 +                                    | DisplayInside::TableFooterGroup
++                                    // pyro: or a column or column group (`Style::collapsed_columns`)
++                                    | DisplayInside::TableColumn
++                                    | DisplayInside::TableColumnGroup
 +                            ) || el.layout_parent.get().or(el.parent).is_some_and(|parent| {
 +                                el.tree()[parent]
 +                                    .primary_styles()
@@ -45484,7 +45487,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2728,12 @@
+@@ -1597,6 +2731,12 @@
      }
  }
  
@@ -45497,7 +45500,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2806,41 @@
+@@ -1669,12 +2809,41 @@
                      .push(pe_node_id);
              }
          }
@@ -45539,7 +45542,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2855,12 @@
+@@ -1689,11 +2858,12 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -45554,7 +45557,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2874,24 @@
+@@ -1707,6 +2877,24 @@
              &style.get_background().background_image.0,
              &el.background_images,
          ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
@@ -45579,7 +45582,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2922,745 @@
+@@ -1737,3 +2925,745 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
