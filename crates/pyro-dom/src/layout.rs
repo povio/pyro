@@ -3061,7 +3061,8 @@ impl Layout {
         let mut moved = false;
         for key in source.mandatory_snap_containers() {
             let Some(el) = crate::geometry::node_of(dom, key) else { continue };
-            if self.element_scroll.contains_key(&el) || !self.initially_snapped.insert(el) {
+            // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
+            if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0)) || !self.initially_snapped.insert(el) {
                 continue;
             }
             let (tx, ty) = self.snap_scroll(dom, Some(el), (0, 0), Some(0), Some(0));
@@ -3524,6 +3525,42 @@ impl Layout {
     }
 
         /// `offset_x` aligns the horizontal axis, `offset_y` the vertical one.
+    /// pyro: the alignment functions of `scrollIntoView` for the target `el` in the scroll container
+    /// `container`: its `scroll-snap-align` on an axis the container snaps, else the ones asked for.
+    #[allow(clippy::type_complexity)]
+    fn snap_aligned_offsets(
+        &self,
+        dom: &Dom,
+        container: NodeId,
+        el: NodeId,
+        offset_x: fn(f64, f64, f64, i64) -> Option<i32>,
+        offset_y: fn(f64, f64, f64, i64) -> Option<i32>,
+    ) -> (fn(f64, f64, f64, i64) -> Option<i32>, fn(f64, f64, f64, i64) -> Option<i32>) {
+        let snap_type = self.style.computed_value(dom, container, "scroll-snap-type").unwrap_or_default();
+        let (snap_x, snap_y) = match snap_type.split_whitespace().next() {
+            Some("x") | Some("inline") => (true, false),
+            Some("y") | Some("block") => (false, true),
+            Some("both") => (true, true),
+            _ => return (offset_x, offset_y),
+        };
+        let align = self.style.computed_value(dom, el, "scroll-snap-align").unwrap_or_default();
+        let mut words = align.split_whitespace();
+        let block = words.next().unwrap_or("none").to_owned();
+        let inline = words.next().map(str::to_owned).unwrap_or_else(|| block.clone());
+        let pick = |keyword: &str, asked: fn(f64, f64, f64, i64) -> Option<i32>| -> fn(f64, f64, f64, i64) -> Option<i32> {
+            match keyword {
+                "start" => ScrollAlign::Start.offset_fn(),
+                "center" => ScrollAlign::Center.offset_fn(),
+                "end" => ScrollAlign::End.offset_fn(),
+                _ => asked,
+            }
+        };
+        (
+            if snap_x { pick(&inline, offset_x) } else { offset_x },
+            if snap_y { pick(&block, offset_y) } else { offset_y },
+        )
+    }
+
     fn scroll_into_view_offset_targets(
         &mut self,
         dom: &Dom,
@@ -3582,6 +3619,10 @@ impl Layout {
                 axes.y = user.y || height <= self.client_height(dom, node);
             }
             if axes.x || axes.y || explicit {
+                // pyro: a snap area of a snapping container is scrolled to its snap position (its
+                // `scroll-snap-align` in place of the alignment asked for), as Chromium does (CSS
+                // Scroll Snap 1 § 4; WPT css-overflow `targeted-column-scroll-marker-selection-001`).
+                let (offset_x, offset_y) = if script { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
                 let left = (axes.x || explicit)
                     .then(|| offset_x(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();
