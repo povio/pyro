@@ -128,7 +128,12 @@ async function render(page, cdp, base, url, deadline, st) {
   const left = () => Math.max(1, deadline - Date.now());
   let t = Date.now();
   const lap = (k) => { if (st) { const n = Date.now(); st[k] = (st[k] ?? 0) + n - t; t = n; } };
-  await page.goto(url === 'about:blank' ? url : `${base}/${url}`, { waitUntil: 'commit', timeout: left() });
+  // The page's time ran out before this render (the test took it all, a reference is next): a timeout, not a goto
+  // error. A navigation that does not commit in time is one too.
+  if (Date.now() >= deadline) return { timeout: true, late: true };
+  const committed = await page.goto(url === 'about:blank' ? url : `${base}/${url}`, { waitUntil: 'commit', timeout: left() })
+    .then(() => true, (e) => (Date.now() >= deadline && /Timeout/.test(String(e.message)) ? false : Promise.reject(e)));
+  if (!committed) return { timeout: true };
   lap('goto');
   // A navigation inside the page destroys the context the wait runs in: wait again in the new one.
   for (;;) {
@@ -186,7 +191,7 @@ export async function runReftest(page, t, base, limit) {
     const refs = [];
     for (const r of t.refs) {
       const shot = await renderRef(page, cdp, base, r.url, viewport, deadline, st);
-      if (shot.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], stages: st, error: `reference ${r.url} ${shot.wait ? 'kept reftest-wait' : 'did not load'}` };
+      if (shot.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], stages: st, error: shot.late ? `no time left for reference ${r.url}` : `reference ${r.url} ${shot.wait ? 'kept reftest-wait' : 'did not load'}` };
       refs.push(shot);
     }
     t1 = Date.now();
