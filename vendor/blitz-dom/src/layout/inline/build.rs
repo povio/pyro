@@ -232,6 +232,37 @@ fn reopen_bidi_controls(builder: &mut TreeBuilder<TextBrush>, bidi_scan: &BidiSc
 /// pyro: the split inlines (`NodeFlags::IS_SPLIT_INLINE`) whose box holds the anonymous block
 /// `root_id` (inline content between two of their block-level boxes), innermost first: its
 /// content is inside their spans, with neither their start nor their end.
+/// pyro: the direction of an anonymous box of the root element (its own text, a run of its
+/// inline children): the root's used direction, that of its `<body>` child (css-writing-modes-3 §8,
+/// unless either has containment). `None` for other boxes.
+pub(crate) fn principal_direction(
+    nodes: &crate::NodeTree,
+    node_id: NodeId,
+) -> Option<style::computed_values::direction::T> {
+    let node = &nodes[node_id];
+    if !node.is_anonymous() {
+        return None;
+    }
+    let root_id = node.layout_parent.get().or(node.parent)?;
+    let root = &nodes[root_id];
+    // (Not its `::before` or `::after`, which have computed values of their own.)
+    if root.before() == Some(node_id) || root.after() == Some(node_id) {
+        return None;
+    }
+    let is_root = root.data.downcast_element().is_some_and(|el| *el.name.local == *"html")
+        && root.parent.is_some_and(|parent| matches!(nodes[parent].data, crate::node::NodeData::Document(_)));
+    if !is_root || root.primary_styles().is_none_or(|style| !style.clone_contain().is_empty()) {
+        return None;
+    }
+    let body = root
+        .children
+        .iter()
+        .map(|&child| &nodes[child])
+        .find(|child| child.data.downcast_element().is_some_and(|el| *el.name.local == *"body"))?;
+    let style = body.primary_styles()?;
+    style.clone_contain().is_empty().then(|| style.clone_direction())
+}
+
 fn split_pieces(nodes: &crate::NodeTree, root_id: NodeId) -> Vec<(NodeId, bool, bool)> {
     let mut pieces = Vec::new();
     let root = &nodes[root_id];
@@ -437,10 +468,8 @@ fn build_inline_layout_with(
     // Create a parley tree builder
     let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
     if let Some(style) = root_node_style.as_deref() {
-        builder.set_base_direction(stylo_to_parley::base_direction(
-            style.clone_direction(),
-            style.clone_unicode_bidi(),
-        ));
+        let direction = principal_direction(nodes, inline_context_root_node_id).unwrap_or_else(|| style.clone_direction());
+        builder.set_base_direction(stylo_to_parley::base_direction(direction, style.clone_unicode_bidi()));
     }
 
     let text_transform = root_node_style
