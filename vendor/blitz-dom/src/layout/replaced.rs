@@ -92,19 +92,16 @@ pub(crate) fn object_loads_image(element: &ElementData) -> bool {
     }
 }
 
-/// pyro: whether an `<object>` shows a loaded `image`: a raster image, or an SVG
-/// with a natural width or height or a ratio. An SVG with none of them keeps the
-/// object's fallback, as before objects loaded images: Chromium would draw it at
-/// the default object size, which makes WPT CSS2 `replaced-intrinsic-002` (a
-/// pass only because its fallback text lay under the reference's green square;
-/// every browser fails it) fail.
+/// pyro: whether an `<object>` shows a loaded `image`: a raster image or an SVG, also one with no
+/// natural size or ratio, drawn at the default object size as Chromium does (WPT css-sizing
+/// `aspect-ratio/replaced-element-021`; the owner's "follow Chrome": WPT CSS2
+/// `replaced-intrinsic-002`, which every browser fails, passed only because its fallback text
+/// lay under the reference's green square, and fails now as in Chromium).
 pub(crate) fn object_shows_image(image: &crate::node::ImageData) -> bool {
     match image {
         crate::node::ImageData::Raster(_) => true,
         #[cfg(feature = "svg")]
-        crate::node::ImageData::Svg(svg) => {
-            svg.intrinsic_width().is_some() || svg.intrinsic_height().is_some() || svg.viewbox_aspect_ratio().is_some()
-        }
+        crate::node::ImageData::Svg(_) => true,
         crate::node::ImageData::None => false,
     }
 }
