@@ -645,14 +645,18 @@ fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut Animation
         let animation_interval = w.target.page.moving_animation_frame_interval();
         frame.timer = Some(if animation_interval.is_none() && take_eager_frame() {
             let realm_weak = s.realm().downgrade();
-            frame.backup = Some(w.sched.set_timer(Duration::from_millis(FRAME_MS), false, true, move |_browser: &mut Browser| {
+            frame.backup = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |_browser: &mut Browser| {
                 let Some(realm) = realm_weak.upgrade() else { return };
                 let Ok(scope) = realm.scope() else { return };
                 run_animation_frame(&scope);
             }));
             w.sched.set_idle_timer(true, run)
         } else {
-            w.sched.set_timer(animation_interval.unwrap_or(Duration::from_millis(FRAME_MS)), false, true, run)
+            // A frame timer: once due the frame runs before the tasks and timers that are
+            // waiting, however many, so a page that keeps its thread busy (timers always
+            // behind) renders on time and a client waiting for frames (a click's "stable for
+            // two frames" check) is not held behind every round of the page's backlog.
+            w.sched.set_frame_timer(animation_interval.unwrap_or(Duration::from_millis(FRAME_MS)), true, run)
         });
     }
 }

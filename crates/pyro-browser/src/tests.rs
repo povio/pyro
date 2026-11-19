@@ -109,6 +109,47 @@ fn animation_frames_run_once_idle_after_a_client_command_then_on_the_clock() {
     assert!(ms[9] - ms[3] >= 29.0, "frames kept running eagerly: {ms:?}");
 }
 
+/// Animation frames a page gets while 100 timers that are always behind
+/// (each busy for 1 ms and set again at once) run 300 times.
+fn frames_under_a_timer_backlog(t: &mut BrowserThread, rec: &Recorder, page: PageId) -> u32 {
+    eval(
+        t,
+        page,
+        "let ticks = 0, frames = 0;
+         const frame = () => { frames++; if (ticks < 300) requestAnimationFrame(frame) };
+         requestAnimationFrame(frame);
+         const tick = () => {
+             const until = performance.now() + 1; while (performance.now() < until) {}
+             if (++ticks < 300) setTimeout(tick, 0); else if (ticks === 300) console.log('frames ' + frames);
+         };
+         for (let i = 0; i < 100; i++) setTimeout(tick, 0);",
+    );
+    let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(20)));
+    assert_eq!(r, RunOutcome::Idle);
+    let log = rec.console.borrow();
+    log.iter().find_map(|l| l.strip_prefix("log:frames ")).expect("timers ran").parse().unwrap()
+}
+
+#[test]
+fn animation_frames_keep_their_cadence_on_a_page_whose_timers_are_always_behind() {
+    // A frame is a rendering opportunity between tasks, not one more timer at
+    // the back of the queue: in deadline order each frame waited for a whole
+    // round of the 100 timers (3 frames in these 300 ms, and a client's click
+    // that waits for two or three frames took a second on such a page).
+    let (mut t, rec, page) = setup();
+    let frames = frames_under_a_timer_backlog(&mut t, &rec, page);
+    assert!(frames >= 15, "{frames} frames in 300 ms of timers");
+}
+
+/// The same for the frames a client command makes eager (their backup timer).
+#[test]
+fn eager_animation_frames_keep_their_cadence_on_a_page_whose_timers_are_always_behind() {
+    let (mut t, rec, page) = setup();
+    crate::note_client_activity();
+    let frames = frames_under_a_timer_backlog(&mut t, &rec, page);
+    assert!(frames >= 15, "{frames} frames in 300 ms of timers after a client command");
+}
+
 #[test]
 fn animation_frame_callbacks_share_a_frame_and_timestamp() {
     let (mut t, rec, page) = setup();
