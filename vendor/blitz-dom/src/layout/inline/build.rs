@@ -480,6 +480,32 @@ fn build_inline_layout_with(
             ..Default::default()
         });
 
+    // pyro: combined text (`text-combine-upright: all`, a horizontal box in a vertical line) of
+    // two, three or four characters takes the font's half-, third- or quarter-width forms
+    // (`hwid`, `twid`, `qwid`), as Blink does before it compresses it (css-writing-modes-4 §9.1.1).
+    if let Some(style) = root_node_style.as_deref()
+        && style.get_inherited_text().text_combine_upright == style::values::computed::TextCombineUpright::All
+        && !style.writing_mode.is_vertical()
+    {
+        let count = root_node.text_content().trim().chars().count();
+        let tag: Option<&[u8; 4]> = match count {
+            2 => Some(b"hwid"),
+            3 => Some(b"twid"),
+            4 => Some(b"qwid"),
+            _ => None,
+        };
+        if let Some(tag) = tag {
+            let mut features = match &parley_style.font_features {
+                parley::FontFeatures::List(list) => list.to_vec(),
+                _ => Vec::new(),
+            };
+            if !features.iter().any(|f| f.tag == crate::stylo_to_parley::parley::Tag::from_bytes(*tag)) {
+                features.push(parley::FontFeature { tag: crate::stylo_to_parley::parley::Tag::from_bytes(*tag), value: 1 });
+            }
+            parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(features));
+        }
+    }
+
     // The formatting-context root's vertical alignment positions its box in
     // its parent's context (for example a middle-aligned table cell). It does
     // not shift that box's own line strut or inherited direct text. Descendant

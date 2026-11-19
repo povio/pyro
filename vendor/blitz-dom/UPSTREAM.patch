@@ -11291,10 +11291,36 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          .as_ref()
          .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
          .unwrap_or_else(|| parley::TextStyle {
-@@ -45,12 +480,20 @@
+@@ -45,12 +480,46 @@
              ..Default::default()
          });
  
++    // pyro: combined text (`text-combine-upright: all`, a horizontal box in a vertical line) of
++    // two, three or four characters takes the font's half-, third- or quarter-width forms
++    // (`hwid`, `twid`, `qwid`), as Blink does before it compresses it (css-writing-modes-4 §9.1.1).
++    if let Some(style) = root_node_style.as_deref()
++        && style.get_inherited_text().text_combine_upright == style::values::computed::TextCombineUpright::All
++        && !style.writing_mode.is_vertical()
++    {
++        let count = root_node.text_content().trim().chars().count();
++        let tag: Option<&[u8; 4]> = match count {
++            2 => Some(b"hwid"),
++            3 => Some(b"twid"),
++            4 => Some(b"qwid"),
++            _ => None,
++        };
++        if let Some(tag) = tag {
++            let mut features = match &parley_style.font_features {
++                parley::FontFeatures::List(list) => list.to_vec(),
++                _ => Vec::new(),
++            };
++            if !features.iter().any(|f| f.tag == crate::stylo_to_parley::parley::Tag::from_bytes(*tag)) {
++                features.push(parley::FontFeature { tag: crate::stylo_to_parley::parley::Tag::from_bytes(*tag), value: 1 });
++            }
++            parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(features));
++        }
++    }
++
 +    // The formatting-context root's vertical alignment positions its box in
 +    // its parent's context (for example a middle-aligned table cell). It does
 +    // not shift that box's own line strut or inherited direct text. Descendant
@@ -11314,7 +11340,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          ));
      }
  
-@@ -59,15 +502,68 @@
+@@ -59,15 +528,68 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -11383,7 +11409,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -76,54 +572,501 @@
+@@ -76,54 +598,501 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -11742,7 +11768,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.percent_span_edges = bidi_scan.percent_edges;
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
-+
+ 
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -11839,7 +11865,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
- 
++
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
 +    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
@@ -11891,7 +11917,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1086,49 @@
+@@ -143,6 +1112,49 @@
                      }
                  }
  
@@ -11941,7 +11967,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1147,44 @@
+@@ -161,41 +1173,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -12008,7 +12034,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1199,182 @@
+@@ -210,66 +1225,182 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -12212,7 +12238,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1389,16 @@
+@@ -284,6 +1415,16 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -12229,7 +12255,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1406,95 @@
+@@ -291,10 +1432,95 @@
              NodeData::Text(data) => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
@@ -12328,7 +12354,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1503,314 @@
+@@ -303,3 +1529,314 @@
          }
      }
  }
