@@ -471,6 +471,49 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
         }
     }
 
+    /// pyro: whether the run's span, or a span around it up to the line's root, is aligned by a
+    /// named baseline of its own (`alignment-baseline: alphabetic | ideographic | middle |
+    /// mathematical | hanging | text-top | text-bottom`): the line placed it against its parent's
+    /// baseline of that name, which on a central baseline (vertical writing modes) it keeps,
+    /// moving as its parent does.
+    pub fn named_aligned(&self) -> bool {
+        use crate::style::AlignmentBaseline;
+        let styles = self.run.layout.styles();
+        let mut index = self.style_index;
+        loop {
+            let Some(style) = styles.get(usize::from(index)) else {
+                return false;
+            };
+            if matches!(
+                style.vertical_align.alignment,
+                AlignmentBaseline::Alphabetic
+                    | AlignmentBaseline::Ideographic
+                    | AlignmentBaseline::XMiddle
+                    | AlignmentBaseline::Mathematical
+                    | AlignmentBaseline::Hanging
+                    | AlignmentBaseline::TextOver
+                    | AlignmentBaseline::TextUnder
+            ) {
+                return true;
+            }
+            if style.parent == index {
+                return false;
+            }
+            index = style.parent;
+        }
+    }
+
+    /// pyro: the height of the run's central baseline over its alphabetic one: the middle of
+    /// the font's ideographic em box in its `BASE` table, else the middle of its whole-pixel
+    /// ascent and descent (Blink's central baseline).
+    pub fn central_height(&self) -> f32 {
+        let metrics = self.run.font_metrics();
+        let font = parley_engine::FontInstance { font: self.run.font().clone(), synthesis: Default::default() };
+        parley_engine::IdeographicBaselines::from_font_instance(&font, self.run.font_size())
+            .and_then(|base| Some((base.ideographic_over? + base.ideographic_under?) / 2.))
+            .unwrap_or((metrics.ascent.round() - metrics.descent.round()) / 2.)
+    }
+
     /// Returns the offset to the baseline.
     pub fn baseline(&self) -> f32 {
         self.baseline

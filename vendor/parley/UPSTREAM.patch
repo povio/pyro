@@ -1509,7 +1509,7 @@ index 4b0cf9a..a89bee4 100644
      /// given byte `index` in the source text.
      pub(crate) fn line_for_byte_index(&self, index: usize) -> Option<(usize, Line<'_, B>)> {
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..541a31a 100644
+index 1569071..b3db35c 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
 @@ -22,11 +22,26 @@ pub struct Line<'a, B: Brush> {
@@ -1723,7 +1723,7 @@ index 1569071..541a31a 100644
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
-@@ -313,6 +441,36 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -313,6 +441,79 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          self.style_index
      }
  
@@ -1757,10 +1757,53 @@ index 1569071..541a31a 100644
 +        }
 +    }
 +
++    /// pyro: whether the run's span, or a span around it up to the line's root, is aligned by a
++    /// named baseline of its own (`alignment-baseline: alphabetic | ideographic | middle |
++    /// mathematical | hanging | text-top | text-bottom`): the line placed it against its parent's
++    /// baseline of that name, which on a central baseline (vertical writing modes) it keeps,
++    /// moving as its parent does.
++    pub fn named_aligned(&self) -> bool {
++        use crate::style::AlignmentBaseline;
++        let styles = self.run.layout.styles();
++        let mut index = self.style_index;
++        loop {
++            let Some(style) = styles.get(usize::from(index)) else {
++                return false;
++            };
++            if matches!(
++                style.vertical_align.alignment,
++                AlignmentBaseline::Alphabetic
++                    | AlignmentBaseline::Ideographic
++                    | AlignmentBaseline::XMiddle
++                    | AlignmentBaseline::Mathematical
++                    | AlignmentBaseline::Hanging
++                    | AlignmentBaseline::TextOver
++                    | AlignmentBaseline::TextUnder
++            ) {
++                return true;
++            }
++            if style.parent == index {
++                return false;
++            }
++            index = style.parent;
++        }
++    }
++
++    /// pyro: the height of the run's central baseline over its alphabetic one: the middle of
++    /// the font's ideographic em box in its `BASE` table, else the middle of its whole-pixel
++    /// ascent and descent (Blink's central baseline).
++    pub fn central_height(&self) -> f32 {
++        let metrics = self.run.font_metrics();
++        let font = parley_engine::FontInstance { font: self.run.font().clone(), synthesis: Default::default() };
++        parley_engine::IdeographicBaselines::from_font_instance(&font, self.run.font_size())
++            .and_then(|base| Some((base.ideographic_over? + base.ideographic_under?) / 2.))
++            .unwrap_or((metrics.ascent.round() - metrics.descent.round()) / 2.)
++    }
++
      /// Returns the offset to the baseline.
      pub fn baseline(&self) -> f32 {
          self.baseline
-@@ -356,6 +514,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -356,6 +557,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
  struct AtomIter<'a> {
      atoms: Atoms<'a>,
      spacing: EffectiveSpacing,
@@ -1769,7 +1812,7 @@ index 1569071..541a31a 100644
      is_rtl: bool,
      /// The next atom in visual order, if it has been peeked but not yet consumed.
      peeked: Option<Atom<'a>>,
-@@ -372,6 +532,7 @@ impl<'a> AtomIter<'a> {
+@@ -372,6 +575,7 @@ impl<'a> AtomIter<'a> {
                  slice.atoms_start()
              },
              spacing: run.line_spacing(),
@@ -1777,7 +1820,7 @@ index 1569071..541a31a 100644
              is_rtl,
              peeked: None,
          }
-@@ -404,7 +565,8 @@ impl<'a> AtomIter<'a> {
+@@ -404,7 +608,8 @@ impl<'a> AtomIter<'a> {
              .iter()
              .map(|cluster| usize::from(cluster.glyph_len()))
              .sum();
@@ -1787,7 +1830,7 @@ index 1569071..541a31a 100644
          if glyph_count != 0 && !self.spacing.is_zero() {
              advance += self.spacing.gaps(atom).total();
          }
-@@ -433,23 +595,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+@@ -433,23 +638,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                      let x = self.offset
                          + self.line.data.metrics.inline_min_coord
                          + self.line.data.metrics.offset;

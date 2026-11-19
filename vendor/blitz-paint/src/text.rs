@@ -58,7 +58,7 @@ impl VerticalLine {
             .map(|run| {
                 let metrics = run.run().font_metrics();
                 central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
-                run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
+                run.baseline() - run.central_height()
             });
         Self { central, central_x_height, all_upright, counterclockwise: false, sideways }
     }
@@ -132,6 +132,11 @@ impl VerticalLine {
         if self.sideways && !run.style().upright {
             return None;
         }
+        // pyro: a run aligned by a named baseline of its own keeps the place the line gave it
+        // against its parent's baseline of that name (the line's tallest run, which stays put).
+        if !run.edge_aligned() && run.named_aligned() {
+            return Some(run.baseline() - run.central_height());
+        }
         if !run.edge_aligned() {
             // `middle`: the box's middle goes half the parent's x-height over the central
             // baseline (as Blink, which aligns on the central baseline in vertical lines).
@@ -140,8 +145,7 @@ impl VerticalLine {
             }
             return Some(central);
         }
-        let metrics = run.run().font_metrics();
-        Some(run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0)
+        Some(run.baseline() - run.central_height())
     }
 
     /// Moves a run's fragment box from the alphabetic baseline to the central one.
@@ -149,8 +153,7 @@ impl VerticalLine {
         let Some(central) = self.central_for(run) else {
             return Affine::IDENTITY;
         };
-        let metrics = run.run().font_metrics();
-        let at = run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0;
+        let at = run.baseline() - run.central_height();
         Affine::translate((0.0, (central - at) as f64))
     }
 
