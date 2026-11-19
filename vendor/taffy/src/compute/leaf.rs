@@ -68,14 +68,10 @@ where
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
-    let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-        Overflow::Scroll => style.scrollbar_width(),
-        _ => 0.0,
-    });
-    // TODO: make side configurable based on the `direction` property
-    let mut content_box_inset = padding_border;
-    content_box_inset.right += scrollbar_gutter.x;
-    content_box_inset.bottom += scrollbar_gutter.y;
+    // pyro: `CoreStyle::scrollbar_gutter`: which edges hold scrollbar space.
+    let gutter_edges = style.scrollbar_gutter();
+    let scrollbar_gutter = Point { x: gutter_edges.left + gutter_edges.right, y: gutter_edges.top + gutter_edges.bottom };
+    let content_box_inset = padding_border + gutter_edges;
 
     let has_styles_preventing_being_collapsed_through = !style.is_block()
         || style.overflow().x.is_scroll_container()

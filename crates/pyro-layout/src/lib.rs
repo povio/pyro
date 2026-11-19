@@ -935,6 +935,16 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.document_size(self.page))
     }
 
+    fn viewport_gutters(&self) -> Option<[f64; 4]> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_gutters(self.page))
+    }
+
+    fn viewport_scrollbar_sizes(&self) -> (f64, f64) {
+        RENDERER
+            .with(|r| Some(r.try_borrow().ok()?.as_ref()?.viewport_scrollbar_sizes(self.page)))
+            .unwrap_or((0.0, 0.0))
+    }
+
     fn element_style(&self, key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         if let Some(style) = self.undisplayed.borrow().get(&key) {
             return Some(style.clone());

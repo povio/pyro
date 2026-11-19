@@ -536,7 +536,16 @@ impl BaseDocument {
 
         // pyro: the scrollable overflow starts at the padding box
         // (CSS Overflow 3 2.2), not the border box.
+        // pyro: classic scrollbars: less its scrollbar gutters (the scrollport; Chrome's `scrollWidth`
+        // of a box whose content fits is its `clientWidth`).
         let mut overflow = padding_box(&layout, scale);
+        if let Some(bars) = self.nodes[node_id].classic_scrollbars() {
+            let g = bars.gutters;
+            overflow.x0 += g.left as f64 * scale;
+            overflow.y0 += g.top as f64 * scale;
+            overflow.x1 = (overflow.x1 - g.right as f64 * scale).max(overflow.x0);
+            overflow.y1 = (overflow.y1 - g.bottom as f64 * scale).max(overflow.y0);
+        }
         // pyro: a multi-column container's content lies in its strip: what it reaches is shown in
         // the columns (`layout::multicol`), added to the padding box below.
         let columns_base =
@@ -1420,28 +1429,78 @@ impl BaseDocument {
         // println!("\n\nRESOLVE LAYOUT\n===========\n");
 
         let foreign_objects = self.foreign_object_roots();
-        let mut state = LayoutPassState::new(self);
-        #[cfg(feature = "writing-mode")]
-        let (available_space, initial_containing_block) = {
-            state.layout_wm = state.layout_wm_of(crate::dom_node_id(root_element_id));
-            if state.layout_wm.is_vertical() {
-                (available_space.transpose(), initial_containing_block.transpose())
-            } else {
-                (available_space, initial_containing_block)
+        // pyro: classic scrollbars (`stylo_taffy::scrollbars`): the viewport's scrollbar gutters
+        // make the initial containing block smaller, and the root starts after the left and top
+        // ones. A pass that turns an `overflow: auto` box's or the viewport's scrollbar on or off
+        // lays the document out again (as Chrome does), a few times at most.
+        let classic = stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic;
+        if classic {
+            self.viewport_scrollbars = self.viewport_scrollbars_for(self.viewport_scrollbars.shown);
+        } else {
+            self.viewport_scrollbars = Default::default();
+        }
+        let (full_available_space, full_initial_containing_block) = (available_space, initial_containing_block);
+        let mut passes = 0;
+        let mut state = loop {
+            passes += 1;
+            let gutters = self.viewport_scrollbars.gutters;
+            let shrink = |space: taffy::Size<AvailableSpace>| taffy::Size {
+                width: match space.width {
+                    AvailableSpace::Definite(w) => AvailableSpace::Definite((w - gutters.left - gutters.right).max(0.0)),
+                    other => other,
+                },
+                height: match space.height {
+                    AvailableSpace::Definite(h) => AvailableSpace::Definite((h - gutters.top - gutters.bottom).max(0.0)),
+                    other => other,
+                },
+            };
+            let (available_space, initial_containing_block) =
+                (shrink(full_available_space), shrink(full_initial_containing_block));
+            let mut state = LayoutPassState::new(self);
+            #[cfg(feature = "writing-mode")]
+            let (available_space, initial_containing_block) = {
+                state.layout_wm = state.layout_wm_of(crate::dom_node_id(root_element_id));
+                if state.layout_wm.is_vertical() {
+                    (available_space.transpose(), initial_containing_block.transpose())
+                } else {
+                    (available_space, initial_containing_block)
+                }
+            };
+            taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
+            // pyro: inline roots that a measuring run left unlike their final layout after this pass
+            // last laid them out are laid out again, with the boxes they are in (once: what a second
+            // run leaves so the next pass lays out; `LayoutPassState::mark_final_layout_stale`).
+            if state.mark_stale_lines_up() {
+                taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
+                state.mark_stale_lines_up();
+            }
+            if gutters.left != 0.0 || gutters.top != 0.0 {
+                state.nodes[crate::dom_node_id(root_element_id)].update_unrounded_layout(|layout| {
+                    layout.location.x += gutters.left;
+                    layout.location.y += gutters.top;
+                });
+            }
+            #[cfg(feature = "writing-mode")]
+            state.physicalise_and_round_layout(root_element_id);
+            #[cfg(not(feature = "writing-mode"))]
+            taffy::round_layout(&mut state, root_element_id);
+            if !classic || passes >= 4 {
+                break state;
+            }
+            drop(state);
+            let boxes_changed = self.update_auto_scrollbars();
+            let viewport_changed = self.update_viewport_scrollbars();
+            if !boxes_changed && !viewport_changed {
+                break LayoutPassState::new(self);
             }
         };
-        taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
-        // pyro: inline roots that a measuring run left unlike their final layout after this pass
-        // last laid them out are laid out again, with the boxes they are in (once: what a second
-        // run leaves so the next pass lays out; `LayoutPassState::mark_final_layout_stale`).
-        if state.mark_stale_lines_up() {
-            taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
-            state.mark_stale_lines_up();
-        }
+        // The foreign objects' fallback viewport, in the root's axes as before.
         #[cfg(feature = "writing-mode")]
-        state.physicalise_and_round_layout(root_element_id);
-        #[cfg(not(feature = "writing-mode"))]
-        taffy::round_layout(&mut state, root_element_id);
+        let initial_containing_block = if state.layout_wm_of(crate::dom_node_id(root_element_id)).is_vertical() {
+            initial_containing_block.transpose()
+        } else {
+            initial_containing_block
+        };
 
         // pyro: each `<foreignObject>` is laid out as a root in a box of its `width` and
         // `height` (presentation attributes, `stylo.rs`), placed at its origin; blitz-paint draws
@@ -1466,6 +1525,136 @@ impl BaseDocument {
 
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
+    }
+
+    /// pyro: the viewport's overflow (CSS Overflow 3 § 3.3): the root's, or the `<body>`'s when the
+    /// root's is `visible` and the body's goes to the viewport; `visible` is used as `auto` and `clip`
+    /// as `hidden` (physical: x is `overflow-x`).
+    pub fn viewport_overflow(&self) -> taffy::Point<style::values::computed::Overflow> {
+        use style::values::computed::Overflow;
+        let auto = taffy::Point { x: Overflow::Auto, y: Overflow::Auto };
+        let Some(root) = self.try_root_element() else { return auto };
+        let Some(html) = root.primary_styles() else { return auto };
+        let mut overflow = (html.clone_overflow_x(), html.clone_overflow_y());
+        if overflow == (Overflow::Visible, Overflow::Visible) {
+            let body = root.children.iter().copied().find(|&child| self.body_overflow_goes_to_viewport(child));
+            if let Some(body) = body.and_then(|body| self.nodes[body].primary_styles()) {
+                overflow = (body.clone_overflow_x(), body.clone_overflow_y());
+            }
+        }
+        let used = |overflow: Overflow| match overflow {
+            Overflow::Visible => Overflow::Auto,
+            Overflow::Clip => Overflow::Hidden,
+            other => other,
+        };
+        taffy::Point { x: used(overflow.0), y: used(overflow.1) }
+    }
+
+    /// pyro: classic scrollbars: the viewport's gutters when the scrollbars `shown` show (the root's
+    /// `scrollbar-gutter` and `scrollbar-width` are the viewport's).
+    fn viewport_scrollbars_for(&self, shown: taffy::Point<bool>) -> crate::ViewportScrollbars {
+        use style::values::computed::ScrollbarGutter;
+        let Some(html) = self.try_root_element().and_then(|root| root.primary_styles()) else {
+            return Default::default();
+        };
+        let thickness = stylo_taffy::scrollbars::thickness(html.clone_scrollbar_width());
+        let overflow = self.viewport_overflow();
+        use style::values::computed::Overflow;
+        let shown = taffy::Point {
+            x: overflow.x == Overflow::Scroll || (overflow.x == Overflow::Auto && shown.x),
+            y: overflow.y == Overflow::Scroll || (overflow.y == Overflow::Auto && shown.y),
+        };
+        let gutter = html.get_box().scrollbar_gutter;
+        let inputs = stylo_taffy::scrollbars::GutterInputs {
+            thickness,
+            overflow,
+            auto_shows: shown,
+            stable: gutter.contains(ScrollbarGutter::STABLE),
+            both_edges: gutter.contains(ScrollbarGutter::BOTH_EDGES),
+            vertical: html.writing_mode.is_vertical(),
+            // The viewport's vertical scrollbar is on the right whatever the direction (Chrome).
+            rtl: false,
+        };
+        let shown = if thickness > 0.0 { shown } else { taffy::Point { x: false, y: false } };
+        crate::ViewportScrollbars { gutters: inputs.gutters().edges, shown, thickness }
+    }
+
+    /// pyro: classic scrollbars: after a layout pass, the viewport's `overflow: auto` scrollbars show
+    /// when the document overflows its scrollport (and stop showing when it no longer does with
+    /// them). Whether the gutters changed (the document is laid out again).
+    fn update_viewport_scrollbars(&mut self) -> bool {
+        let Some(root) = self.try_root_element() else { return false };
+        let size = self.stylist.device().au_viewport_size();
+        let (width, height) = (size.width.to_f32_px(), size.height.to_f32_px());
+        let port = self.viewport_scrollbars.scrollport(width, height);
+        let layout = root.final_layout();
+        // The document's extent: the root's margin box and its scrollable overflow.
+        let overflow = layout.scrollable_overflow_rect.rect();
+        let right = (layout.location.x + layout.size.width + layout.margin.right)
+            .max(layout.location.x + overflow.right) as f64;
+        let bottom = (layout.location.y + layout.size.height + layout.margin.bottom)
+            .max(layout.location.y + overflow.bottom) as f64;
+        let shown = taffy::Point { x: right > port.x1 + 0.5, y: bottom > port.y1 + 0.5 };
+        let root_id = root.id;
+        let next = self.viewport_scrollbars_for(shown);
+        let changed = next.gutters != self.viewport_scrollbars.gutters;
+        self.viewport_scrollbars = next;
+        if changed {
+            self.nodes[root_id].clear_layout_cache();
+        }
+        changed
+    }
+
+    /// pyro: classic scrollbars: after a layout pass, an `overflow: auto` box whose content overflows
+    /// shows its scrollbar (`NodeFlags::AUTO_SCROLLBAR_X`/`_Y`), which takes a gutter; one whose content
+    /// no longer overflows with it stops showing it. A box whose scrollbars changed is laid out again
+    /// with its ancestors. Whether any changed.
+    fn update_auto_scrollbars(&mut self) -> bool {
+        use style::values::computed::Overflow;
+        use style::values::computed::ui::ScrollbarWidth;
+        let mut changed = Vec::new();
+        for (id, node) in self.nodes.iter() {
+            let had = node.flags & (NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
+            let Some(style) = node.primary_styles() else {
+                if !had.is_empty() {
+                    changed.push((id, NodeFlags::empty()));
+                }
+                continue;
+            };
+            let (x, y) = (style.clone_overflow_x(), style.clone_overflow_y());
+            if x != Overflow::Auto && y != Overflow::Auto && had.is_empty() {
+                continue;
+            }
+            let eligible = style.clone_scrollbar_width() != ScrollbarWidth::None
+                && !node.flags.contains(NodeFlags::OVERFLOW_TO_VIEWPORT)
+                && !node.is_root_element()
+                && node.is_element();
+            let mut want = NodeFlags::empty();
+            if eligible {
+                let layout = node.final_layout();
+                if x == Overflow::Auto && layout.scroll_width() > 0.5 {
+                    want |= NodeFlags::AUTO_SCROLLBAR_X;
+                }
+                if y == Overflow::Auto && layout.scroll_height() > 0.5 {
+                    want |= NodeFlags::AUTO_SCROLLBAR_Y;
+                }
+            }
+            if want != had {
+                changed.push((id, want));
+            }
+        }
+        for &(id, want) in &changed {
+            let node = &mut self.nodes[id];
+            node.flags.remove(NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
+            node.flags.insert(want);
+            let mut current = Some(id);
+            while let Some(id) = current {
+                let node = &mut self.nodes[id];
+                node.clear_layout_cache();
+                current = node.parent;
+            }
+        }
+        !changed.is_empty()
     }
 }
 

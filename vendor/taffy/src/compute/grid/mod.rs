@@ -156,10 +156,11 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
-    let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-        Overflow::Scroll => style.scrollbar_width(),
-        _ => 0.0,
-    });
+    let scrollbar_gutter = {
+        // pyro: `CoreStyle::scrollbar_gutter_size` (classic scrollbars' `overflow: auto` and `scrollbar-gutter`)
+        let size = style.scrollbar_gutter_size();
+        Point { x: size.width, y: size.height }
+    };
     #[cfg(feature = "content_size")]
     let is_scroll_container = {
         let overflow = style.overflow();

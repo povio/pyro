@@ -125,7 +125,10 @@ pub use config::{DocumentConfig, StyleThreading};
 pub use document::{SvgImageDocument, 
     StyleChange,
     BaseDocument, BoundingRect, DocGuard, DocGuardMut, Document, PlainDocument, UserAgentStylesheet,
+    ViewportScrollbars,
 };
+/// pyro: the process's scrollbar mode (overlay or classic scrollbars).
+pub use stylo_taffy::scrollbars::{self as scrollbar_mode, ScrollbarMode, scrollbar_mode as current_scrollbar_mode, set_scrollbar_mode};
 pub use markup5ever::{
     LocalName, Namespace, NamespaceStaticSet, Prefix, PrefixStaticSet, QualName, local_name,
     namespace_prefix, namespace_url, ns,

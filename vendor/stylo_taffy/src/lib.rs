@@ -16,6 +16,8 @@ pub use convert::to_taffy_style;
 pub use convert::to_taffy_style_in;
 
 pub mod writing_mode;
+
+pub mod scrollbars;
 pub use style::logical_geometry::WritingMode;
 pub use writing_mode::WritingModeExt;
 

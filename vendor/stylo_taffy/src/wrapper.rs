@@ -53,6 +53,14 @@ bitflags! {
         /// pyro: the element is an `<input>`: its `overflow` makes it no scroll container for layout (an
         /// automatic minimum size of zero; Blink, WPT css-grid `stretch-grid-item-text-input-overflow`).
         const IS_INPUT = 1 << 10;
+        /// pyro: classic scrollbars (`crate::scrollbars`): the node's `overflow-x: auto` shows its
+        /// horizontal scrollbar (its content overflowed horizontally the last time it was laid out).
+        const AUTO_SCROLLBAR_X = 1 << 11;
+        /// pyro: classic scrollbars: the node's `overflow-y: auto` shows its vertical scrollbar.
+        const AUTO_SCROLLBAR_Y = 1 << 12;
+        /// pyro: the node is the root element, whose `overflow` and `scrollbar-gutter` are the
+        /// viewport's: its own box takes no scrollbar gutters.
+        const IS_ROOT = 1 << 13;
     }
 }
 
@@ -264,11 +272,43 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         self.layout_wm().logical_point(overflow)
     }
 
-    // pyro: scrollbars overlay content (as headless Chrome, and Chrome with overlay scrollbars):
-    // no box reserves scrollbar space, so `scrollbar-gutter` (parsed, computed) changes no layout.
+    // pyro: overlay scrollbars (the default `crate::scrollbars::ScrollbarMode`) take no space, so
+    // `scrollbar-gutter` changes no layout; classic ones take their thickness.
     #[inline]
     fn scrollbar_width(&self) -> f32 {
-        0.0
+        crate::scrollbars::thickness(self.style.clone_scrollbar_width())
+    }
+
+    // pyro: the gutters of classic scrollbars (`crate::scrollbars::GutterInputs::gutters`), in the
+    // layout's axes.
+    #[inline]
+    fn scrollbar_gutter(&self) -> taffy::Rect<f32> {
+        let zero = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
+        if crate::scrollbars::scrollbar_mode() == crate::scrollbars::ScrollbarMode::Overlay
+            || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT)
+        {
+            return zero;
+        }
+        let thickness = self.scrollbar_width();
+        if thickness <= 0.0 {
+            return zero;
+        }
+        let box_styles = self.style.get_box();
+        let gutter = box_styles.scrollbar_gutter;
+        let own_wm = self.style.writing_mode;
+        let inputs = crate::scrollbars::GutterInputs {
+            thickness,
+            overflow: taffy::Point { x: box_styles.overflow_x, y: box_styles.overflow_y },
+            auto_shows: taffy::Point {
+                x: self.flags.contains(StyleFlags::AUTO_SCROLLBAR_X),
+                y: self.flags.contains(StyleFlags::AUTO_SCROLLBAR_Y),
+            },
+            stable: gutter.contains(style::values::computed::ScrollbarGutter::STABLE),
+            both_edges: gutter.contains(style::values::computed::ScrollbarGutter::BOTH_EDGES),
+            vertical: own_wm.is_vertical(),
+            rtl: !own_wm.is_bidi_ltr(),
+        };
+        self.rect(inputs.gutters().edges)
     }
 
     #[inline]

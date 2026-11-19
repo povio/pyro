@@ -384,6 +384,35 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // scrollports narrow this rectangle further for their descendants.
         let viewport_clip_rect = Rect::new(0.0, 0.0, self.width as f64, self.height as f64);
 
+        // pyro: classic scrollbars: the document is cut to the viewport's scrollport, the
+        // viewport less its scrollbar gutters; the canvas background goes under the gutters.
+        let viewport_bars = self.dom.as_ref().viewport_scrollbars;
+        let scrollport = viewport_bars.any().then(|| {
+            let port = viewport_bars.scrollport(self.width as f32 / self.scale as f32, self.height as f32 / self.scale as f32);
+            port.scale_from_origin(self.scale) + Vec2::new(self.initial_x, self.initial_y)
+        });
+        if let Some(port) = scrollport {
+            if self.backgrounds
+                && let Some(source) = self.canvas_background
+                && let Some(style) = self.dom.get_node(source).and_then(|node| node.primary_styles())
+            {
+                let bg_color =
+                    style.get_background_color().resolve_to_absolute(&style.clone_color()).as_srgb_color();
+                let canvas = Rect::from_origin_size((self.initial_x, self.initial_y), (self.width as f64, self.height as f64));
+                for strip in [
+                    Rect::new(canvas.x0, canvas.y0, port.x0, canvas.y1),
+                    Rect::new(port.x1, canvas.y0, canvas.x1, canvas.y1),
+                    Rect::new(port.x0, canvas.y0, port.x1, port.y0),
+                    Rect::new(port.x0, port.y1, port.x1, canvas.y1),
+                ] {
+                    if strip.width() > 0.0 && strip.height() > 0.0 {
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &strip);
+                    }
+                }
+            }
+            scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &port);
+        }
+
         self.render_element(
             scene,
             root_id,
@@ -396,6 +425,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
         if !self.top_layer.is_empty() {
             self.paint_top_layer(scene, root_id, viewport_scroll, viewport_clip_rect);
+        }
+
+        if let Some(port) = scrollport {
+            scene.pop_layer();
+            self.paint_viewport_scrollbars(scene, port, viewport_bars, viewport_scroll);
         }
 
         // Render debug overlay
@@ -428,6 +462,45 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     self.initial_y,
                 );
             }
+        }
+    }
+
+    /// pyro: classic scrollbars: the viewport's scrollbars that show, in its gutters around
+    /// `port` (the scrollport, scene px).
+    fn paint_viewport_scrollbars(
+        &self,
+        scene: &mut impl PaintScene,
+        port: Rect,
+        bars: blitz_dom::ViewportScrollbars,
+        scroll: blitz_dom::Point<f64>,
+    ) {
+        let s = self.scale;
+        let thickness = bars.thickness as f64 * s;
+        // The document's extent (CSS px): the root's margin box and its scrollable overflow.
+        let (doc_width, doc_height) = self.root_element_id.and_then(|id| self.dom.get_node(id)).map_or((0.0, 0.0), |root| {
+            let l = root.final_layout();
+            let overflow = l.scrollable_overflow_rect.rect();
+            (
+                (l.location.x + l.size.width + l.margin.right).max(l.location.x + overflow.right) as f64,
+                (l.location.y + l.size.height + l.margin.bottom).max(l.location.y + overflow.bottom) as f64,
+            )
+        });
+        let origin = Vec2::new(self.initial_x, self.initial_y);
+        let (port_w, port_h) = (port.width() / s, port.height() / s);
+        let port_origin = ((port.x0 - origin.x) / s, (port.y0 - origin.y) / s);
+        if bars.shown.y {
+            let track = Rect::new(port.x1, port.y0, port.x1 + thickness, port.y1);
+            let content = (doc_height - port_origin.1).max(port_h);
+            paint_classic_scrollbar(scene, Affine::IDENTITY, track, true, port_h, content, scroll.y, s);
+        }
+        if bars.shown.x {
+            let track = Rect::new(port.x0, port.y1, port.x1, port.y1 + thickness);
+            let content = (doc_width - port_origin.0).max(port_w);
+            paint_classic_scrollbar(scene, Affine::IDENTITY, track, false, port_w, content, scroll.x, s);
+        }
+        if bars.shown.x && bars.shown.y {
+            let corner = Rect::new(port.x1, port.y1, port.x1 + thickness, port.y1 + thickness);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, CLASSIC_SCROLLBAR_CORNER, None, &corner);
         }
     }
 
@@ -1712,6 +1785,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // clipped content.
         #[cfg(feature = "scrollbars")]
         cx.draw_scrollbars(scene);
+        // pyro: classic scrollbars (`blitz_dom::ScrollbarMode::Classic`) in their gutters.
+        cx.draw_classic_scrollbars(scene);
 
         // pyro: and those of a table's rows and row groups, which paint no box.
         cx.draw_table_part_outlines(scene);
@@ -2621,6 +2696,55 @@ impl ElementCx<'_, '_> {
             return dark;
         }
         self.context.dom.viewport().color_scheme == blitz_traits::shell::ColorScheme::Dark
+    }
+
+    /// pyro: paints the box's classic scrollbars ([`Node::classic_scrollbars`]) that show, in
+    /// their gutters over the padding box's edges, unscrolled: the track, the arrow buttons and
+    /// the thumb ([`paint_classic_scrollbar`]). A gutter `scrollbar-gutter` reserves alone paints
+    /// nothing (the background shows), as in Chrome.
+    fn draw_classic_scrollbars(&self, scene: &mut impl PaintScene) {
+        let Some(bars) = self.node.classic_scrollbars() else {
+            return;
+        };
+        if !bars.shown.x && !bars.shown.y {
+            return;
+        }
+        let layout = self.node.final_layout();
+        let s = self.scale;
+        let g = bars.gutters;
+        let (b, size) = (layout.border, layout.size);
+        // The padding box, CSS px from the border box origin.
+        let (px0, py0) = (b.left as f64, b.top as f64);
+        let (px1, py1) = ((size.width - b.right) as f64, (size.height - b.bottom) as f64);
+        let client = (
+            (self.node.client_width() as f64).max(0.0),
+            (self.node.client_height() as f64).max(0.0),
+        );
+        let scroll = (self.node.scroll_width() as f64, self.node.scroll_height() as f64);
+        let offset = *self.node.scroll_offset();
+        let bottom_bar = if bars.shown.x { g.bottom as f64 } else { 0.0 };
+        if bars.shown.y {
+            let width = if bars.vertical_on_left { g.left } else { g.right } as f64;
+            let x0 = if bars.vertical_on_left { px0 } else { px1 - width };
+            let track = Rect::new(x0, py0, x0 + width, py1 - bottom_bar);
+            paint_classic_scrollbar(scene, self.transform, track.scale_from_origin(s), true, client.1, scroll.1, offset.y, s);
+        }
+        if bars.shown.x {
+            let height = g.bottom as f64;
+            let (left, right) = if bars.shown.y {
+                if bars.vertical_on_left { (g.left as f64, 0.0) } else { (0.0, g.right as f64) }
+            } else {
+                (0.0, 0.0)
+            };
+            let track = Rect::new(px0 + left, py1 - height, px1 - right, py1);
+            paint_classic_scrollbar(scene, self.transform, track.scale_from_origin(s), false, client.0, scroll.0, offset.x, s);
+            if bars.shown.y {
+                // The corner between the two.
+                let x0 = if bars.vertical_on_left { px0 } else { px1 - right };
+                let corner = Rect::new(x0, py1 - height, x0 + left.max(right), py1).scale_from_origin(s);
+                scene.fill(Fill::NonZero, self.transform, CLASSIC_SCROLLBAR_CORNER, None, &corner);
+            }
+        }
     }
 
     /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
@@ -6746,4 +6870,73 @@ fn tree_precedes(doc: &BaseDocument, a: NodeId, b: NodeId) -> bool {
     let Some(parent) = doc.get_node(ca[common - 1]) else { return false };
     let index = |id: NodeId| parent.children.iter().position(|&child| child == id);
     matches!((index(ca[common]), index(cb[common])), (Some(x), Some(y)) if x < y)
+}
+
+/// pyro: classic scrollbar colours (Chrome's on Linux: `NativeThemeBase`).
+const CLASSIC_SCROLLBAR_TRACK: Color = Color::from_rgba8(0xf1, 0xf1, 0xf1, 0xff);
+const CLASSIC_SCROLLBAR_THUMB: Color = Color::from_rgba8(0xc1, 0xc1, 0xc1, 0xff);
+const CLASSIC_SCROLLBAR_ARROW: Color = Color::from_rgba8(0x50, 0x50, 0x50, 0xff);
+const CLASSIC_SCROLLBAR_CORNER: Color = Color::from_rgba8(0xdc, 0xdc, 0xdc, 0xff);
+
+/// pyro: paints a classic scrollbar over `track` (scene px under `transform`): the track, an arrow
+/// button at each end (as long as the bar is thick) and the thumb, whose length is the track's
+/// (between the buttons) times `client / scroll` (CSS px: the scrollport's and the content's
+/// length) and whose start follows `offset` (the scroll offset) over the scroll range.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_classic_scrollbar(
+    scene: &mut impl PaintScene,
+    transform: Affine,
+    track: Rect,
+    vertical: bool,
+    client: f64,
+    scroll: f64,
+    offset: f64,
+    scale: f64,
+) {
+    if track.width() <= 0.0 || track.height() <= 0.0 {
+        return;
+    }
+    scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_TRACK, None, &track);
+    let (thickness, length) = if vertical { (track.width(), track.height()) } else { (track.height(), track.width()) };
+    // The buttons are as long as the bar is thick, while two of them fit.
+    let button = if length >= 2.0 * thickness { thickness } else { 0.0 };
+    if button > 0.0 {
+        for start in [true, false] {
+            let (cx, cy) = if vertical {
+                (track.center().x, if start { track.y0 + button / 2.0 } else { track.y1 - button / 2.0 })
+            } else {
+                (if start { track.x0 + button / 2.0 } else { track.x1 - button / 2.0 }, track.center().y)
+            };
+            let r = (thickness * 0.2).max(scale);
+            let dir = if start { -1.0 } else { 1.0 };
+            let mut arrow = kurbo::BezPath::new();
+            if vertical {
+                arrow.move_to((cx, cy + dir * r * 0.6));
+                arrow.line_to((cx - r, cy - dir * r * 0.4));
+                arrow.line_to((cx + r, cy - dir * r * 0.4));
+            } else {
+                arrow.move_to((cx + dir * r * 0.6, cy));
+                arrow.line_to((cx - dir * r * 0.4, cy - r));
+                arrow.line_to((cx - dir * r * 0.4, cy + r));
+            }
+            arrow.close_path();
+            scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_ARROW, None, &arrow);
+        }
+    }
+    let room = length - 2.0 * button;
+    if scroll <= client + 0.5 || room <= 0.0 || client <= 0.0 {
+        return;
+    }
+    let min_thumb = thickness.min(room);
+    let thumb_len = (room * client / scroll).clamp(min_thumb, room);
+    let range = scroll - client;
+    let progress = (offset / range).clamp(0.0, 1.0);
+    let start = button + progress * (room - thumb_len);
+    let inset = (2.0 * scale).min(thickness / 4.0);
+    let thumb = if vertical {
+        Rect::new(track.x0 + inset, track.y0 + start, track.x1 - inset, track.y0 + start + thumb_len)
+    } else {
+        Rect::new(track.x0 + start, track.y0 + inset, track.x0 + start + thumb_len, track.y1 - inset)
+    };
+    scene.fill(Fill::NonZero, transform, CLASSIC_SCROLLBAR_THUMB, None, &thumb);
 }

@@ -354,6 +354,16 @@ pub trait GeometrySource {
     }
     /// The document's scroll size as of the last sync.
     fn document_size(&self) -> Option<(f64, f64)>;
+    /// pyro: the space the viewport's shown classic scrollbars take (the vertical one's width,
+    /// the horizontal one's height) as of the last sync; zero with overlay scrollbars.
+    fn viewport_scrollbar_sizes(&self) -> (f64, f64) {
+        (0.0, 0.0)
+    }
+    /// pyro: the viewport's classic scrollbar gutters (left, top, right, bottom; CSS px) as of the
+    /// last sync, `None` when it has none: a point in them hits the root element.
+    fn viewport_gutters(&self) -> Option<[f64; 4]> {
+        None
+    }
     /// Whether any element is `position: sticky` (as of the last sync).
     fn has_sticky(&self) -> bool;
     /// The document's URL (relative sub-resources resolve against it).

@@ -464,8 +464,8 @@ struct BlockItem {
     overflow: Point<Overflow>,
     /// The contain style of the item
     contain: Contain,
-    /// The width of the item's scrollbars (if it has scrollbars)
-    scrollbar_width: f32,
+    /// pyro: the space the item's scrollbar gutters take in each axis (`CoreStyle::scrollbar_gutter_size`)
+    scrollbar_size: Size<f32>,
 
     /// The position style of the item
     position: Position,
@@ -745,14 +745,14 @@ fn compute_inner(
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
+    // pyro: `CoreStyle::scrollbar_gutter` (which edges, and classic scrollbars' `overflow: auto` and
+    // `scrollbar-gutter`).
     let scrollbar_gutter = {
-        let offsets = style.overflow().transpose().map(|overflow| match overflow {
-            Overflow::Scroll => style.scrollbar_width(),
-            _ => 0.0,
-        });
-        match direction {
-            Direction::Ltr => Rect { top: 0.0, left: 0.0, right: offsets.x, bottom: offsets.y },
-            Direction::Rtl => Rect { top: 0.0, left: offsets.x, right: 0.0, bottom: offsets.y },
+        let gutter = style.scrollbar_gutter();
+        // The vertical scrollbar of a box laid out in its containing block's direction (an anonymous box).
+        match (direction, style.direction()) {
+            (Direction::Ltr, Direction::Rtl) | (Direction::Rtl, Direction::Ltr) => Rect { left: gutter.right, right: gutter.left, ..gutter },
+            _ => gutter,
         }
     };
     let padding_border = padding + border;
@@ -1438,7 +1438,7 @@ fn generate_item_list(
                 .map(|ratio| (ratio, box_sizing_adjustment + aspect_ratio_inset(&child_style, pb_sum))),
                 overflow,
                 contain,
-                scrollbar_width: child_style.scrollbar_width(),
+                scrollbar_size: child_style.scrollbar_gutter_size(),
                 position,
                 direction: child_style.direction(),
                 align_self: child_style.align_self(),
@@ -2035,10 +2035,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             let item_non_auto_margin = item_margin.map(|m| m.unwrap_or(0.0));
             let item_non_auto_x_margin_sum = item_non_auto_margin.horizontal_axis_sum();
 
-            let scrollbar_size = Size {
-                width: if item.overflow.y == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
-                height: if item.overflow.x == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
-            };
+            let scrollbar_size = item.scrollbar_size;
 
             // Handle floated boxes
             #[cfg(feature = "float_layout")]

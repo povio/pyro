@@ -751,6 +751,18 @@ pub fn text_antialiasing() -> bool {
     TEXT_ANTIALIASING.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Sets how scrollbars take space in this process (`serve --scrollbars`): overlay scrollbars
+/// (the default) take none; classic ones (`classic: true`, as Chrome's on Linux, where wpt.fyi
+/// runs it) take 15 CSS px of their scroll container's padding box, and `scrollbar-gutter`
+/// reserves that space. Call at startup, before any layout.
+pub fn set_classic_scrollbars(classic: bool) {
+    blitz_dom::set_scrollbar_mode(if classic {
+        blitz_dom::ScrollbarMode::Classic
+    } else {
+        blitz_dom::ScrollbarMode::Overlay
+    });
+}
+
 /// Adds the font file at `path` (TTF/OTF/TTC) to the fonts of every page and
 /// inline SVG in this process, as if it were installed (`serve --font`; WPT's
 /// runner installs Ahem). Reads the file now and loads nothing else: call it
@@ -1985,11 +1997,32 @@ impl Renderer {
         }
     }
 
+    /// pyro: the space `page`'s viewport's shown classic scrollbars take (the vertical one's width,
+    /// the horizontal one's height), as last laid out: the root's `clientWidth`/`clientHeight`
+    /// are the viewport less these (Chrome: a `scrollbar-gutter: stable` gutter alone takes none).
+    pub fn viewport_scrollbar_sizes(&self, page: u64) -> (f64, f64) {
+        let Some(m) = self.mirrors.get(&page) else { return (0.0, 0.0) };
+        let bars = m.doc.viewport_scrollbars;
+        let size = |shown: bool| if shown { bars.thickness as f64 } else { 0.0 };
+        (size(bars.shown.y), size(bars.shown.x))
+    }
+
+    /// pyro: `page`'s viewport's classic scrollbar gutters (left, top, right, bottom; CSS px), as
+    /// last laid out; `None` when it has none.
+    pub fn viewport_gutters(&self, page: u64) -> Option<[f64; 4]> {
+        let bars = self.mirrors.get(&page)?.doc.viewport_scrollbars;
+        let g = bars.gutters;
+        bars.any().then(|| [g.left, g.top, g.right, g.bottom].map(f64::from))
+    }
+
     /// `page`'s document scroll size (at least the viewport), as last synced.
     pub fn document_size(&self, page: u64) -> Option<(f64, f64)> {
         let m = self.mirrors.get(&page)?;
         let doc = &m.doc;
-        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
+        // pyro: less the viewport's shown classic scrollbars (Chrome's root `scrollWidth`).
+        let bars = doc.viewport_scrollbars;
+        let bar = |shown: bool| if shown { bars.thickness as f64 } else { 0.0 };
+        let (vw, vh) = (m.viewport.0 as f64 - bar(bars.shown.y), m.viewport.1 as f64 - bar(bars.shown.x));
         // Without a document element the document is as large as the viewport.
         let Some(root) = doc.try_root_element() else { return Some((vw, vh)) };
         let (size, overflow) =

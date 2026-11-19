@@ -461,15 +461,23 @@ impl Geometry {
         // overflow on its start side, from the padding box's end edge; one at the start, over
         // the overflow on its end side.
         let reversed = node.final_layout().scrollable_overflow_rect.is_reversed();
+        // pyro: classic scrollbars: the scrollport is the padding box less the scrollbar gutters.
+        let g = node.classic_scrollbars().map(|bars| bars.gutters);
+        let g = (
+            g.map_or(0.0, |g| g.left),
+            g.map_or(0.0, |g| g.right),
+            g.map_or(0.0, |g| g.top),
+            g.map_or(0.0, |g| g.bottom),
+        );
         let scroll_width = if reversed.x {
-            client_width.max((l.size.width - l.border.right) as f64 - o.x0)
+            client_width.max((l.size.width - l.border.right - g.1) as f64 - o.x0)
         } else {
-            client_width.max(o.x1 - l.border.left as f64)
+            client_width.max(o.x1 - (l.border.left + g.0) as f64)
         };
         let scroll_height = if reversed.y {
-            client_height.max((l.size.height - l.border.bottom) as f64 - o.y0)
+            client_height.max((l.size.height - l.border.bottom - g.3) as f64 - o.y0)
         } else {
-            client_height.max(o.y1 - l.border.top as f64)
+            client_height.max(o.y1 - (l.border.top + g.2) as f64)
         };
         Some(LayoutBox {
             x: rect.x0,

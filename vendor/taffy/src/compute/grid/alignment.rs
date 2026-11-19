@@ -133,7 +133,7 @@ pub(super) fn align_and_position_item(
     let overflow = style.overflow();
     #[cfg(feature = "content_size")]
     let contain = style.contain();
-    let scrollbar_width = style.scrollbar_width();
+    let scrollbar_gutter_size = style.scrollbar_gutter_size();
     // pyro: a subgrid is stretched in its subgridded axes, whatever its alignment, size, minimum and
     // maximum size and aspect ratio say (css-grid-2 §9); an `auto` margin is zero there.
     let is_subgrid = subgrid.width || subgrid.height;
@@ -501,10 +501,7 @@ pub(super) fn align_and_position_item(
     let y_relative = relative_offset(position, inset_vertical, Direction::Ltr);
     let y = y_without_relative_offset + y_relative;
 
-    let scrollbar_size = Size {
-        width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
-        height: if overflow.x == Overflow::Scroll { scrollbar_width } else { 0.0 },
-    };
+    let scrollbar_size = scrollbar_gutter_size;
 
     let resolved_margin = Rect { left: x_margin.start, right: x_margin.end, top: y_margin.start, bottom: y_margin.end };
 

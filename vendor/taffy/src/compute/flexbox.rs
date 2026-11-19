@@ -74,8 +74,8 @@ struct FlexItem {
     overflow: Point<Overflow>,
     /// The contain style of the item
     contain: Contain,
-    /// The width of the scrollbars (if it has any)
-    scrollbar_width: f32,
+    /// pyro: the space the item's scrollbar gutters take in each axis (`CoreStyle::scrollbar_gutter_size`)
+    scrollbar_size: Size<f32>,
     /// The flex shrink style of the item
     flex_shrink: f32,
     /// The flex grow style of the item
@@ -901,10 +901,11 @@ fn compute_constants(
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
-    let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-        Overflow::Scroll => style.scrollbar_width(),
-        _ => 0.0,
-    });
+    let scrollbar_gutter = {
+        // pyro: `CoreStyle::scrollbar_gutter_size` (classic scrollbars' `overflow: auto` and `scrollbar-gutter`)
+        let size = style.scrollbar_gutter_size();
+        Point { x: size.width, y: size.height }
+    };
     #[cfg(feature = "content_size")]
     let is_scroll_container = {
         let overflow = style.overflow();
@@ -1139,7 +1140,7 @@ fn generate_anonymous_flex_items(
                     .resolve_self_relative(child_style.direction(), constants.layout_direction, constants.is_column),
                 overflow: child_style.overflow(),
                 contain: child_style.contain(),
-                scrollbar_width: child_style.scrollbar_width(),
+                scrollbar_size: child_style.scrollbar_gutter_size(),
                 flex_grow: child_style.flex_grow(),
                 flex_shrink: child_style.flex_shrink(),
                 flex_basis_is_definite: false,
@@ -3388,8 +3389,8 @@ fn calculate_flex_item(
         Point { x: offset_cross, y: offset_main }
     };
     let scrollbar_size = Size {
-        width: if item.overflow.y == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
-        height: if item.overflow.x == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
+        width: item.scrollbar_size.width,
+        height: item.scrollbar_size.height,
     };
 
     tree.set_unrounded_layout(

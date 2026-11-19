@@ -51,7 +51,7 @@ pub enum DisplayOuter {
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq)]
-    pub struct NodeFlags: u32 {
+    pub struct NodeFlags: u64 {
         /// Whether the node is the root node of an Inline Formatting Context
         const IS_INLINE_ROOT = 0b00000001;
         /// Whether the node is the root node of an Table formatting context
@@ -120,6 +120,12 @@ bitflags! {
         /// pyro: during the construction of an inline formatting context, an inline box one of whose
         /// children is a table part (`IS_SPACE_BETWEEN_TABLE_PARTS`); cleared as the box is done.
         const ENCLOSES_TABLE_PARTS = 1 << 24;
+        /// pyro: classic scrollbars (`stylo_taffy::scrollbars`): the node's `overflow-x: auto`
+        /// shows its horizontal scrollbar (its content overflowed horizontally when last laid out),
+        /// which takes a gutter (`stylo_taffy::StyleFlags::AUTO_SCROLLBAR_X`).
+        const AUTO_SCROLLBAR_X = 1 << 32;
+        /// pyro: classic scrollbars: the node's `overflow-y: auto` shows its vertical scrollbar.
+        const AUTO_SCROLLBAR_Y = 1 << 33;
         /// pyro: a table cell whose content is laid out lower in its box, by its
         /// `LayoutData::table_baseline_offset` (a cell aligned on its row's baseline; set by its
         /// table's layout, `layout::table::shift_cell_content`).
@@ -2158,6 +2164,15 @@ impl Node {
         // pyro
         if self.flags.contains(NodeFlags::OVERFLOW_TO_VIEWPORT) {
             flags |= stylo_taffy::StyleFlags::OVERFLOW_TO_VIEWPORT;
+        }
+        if self.flags.contains(NodeFlags::AUTO_SCROLLBAR_X) {
+            flags |= stylo_taffy::StyleFlags::AUTO_SCROLLBAR_X;
+        }
+        if self.flags.contains(NodeFlags::AUTO_SCROLLBAR_Y) {
+            flags |= stylo_taffy::StyleFlags::AUTO_SCROLLBAR_Y;
+        }
+        if self.is_root_element() {
+            flags |= stylo_taffy::StyleFlags::IS_ROOT;
         }
 
         #[cfg(feature = "writing-mode")]

@@ -799,14 +799,12 @@ impl LayoutPassState<'_> {
         // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
         // However, the axis are switched (transposed) because a node that scrolls vertically needs
         // *horizontal* space to be reserved for a scrollbar
-        let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-            Overflow::Scroll => style.scrollbar_width(),
-            _ => 0.0,
-        });
-        // TODO: make side configurable based on the `direction` property
-        let mut content_box_inset = container_pb;
-        content_box_inset.right += scrollbar_gutter.x;
-        content_box_inset.bottom += scrollbar_gutter.y;
+        // pyro: `CoreStyle::scrollbar_gutter`: which edges hold scrollbar space (classic scrollbars:
+        // `overflow: auto` with a scrollbar, `scrollbar-gutter`, the start edge in `direction: rtl`).
+        let gutter_edges = style.scrollbar_gutter();
+        let scrollbar_gutter =
+            taffy::Point { x: gutter_edges.left + gutter_edges.right, y: gutter_edges.top + gutter_edges.bottom };
+        let content_box_inset = container_pb + gutter_edges;
 
         let has_styles_preventing_being_collapsed_through = !style.is_block()
             || style.overflow().x.is_scroll_container()
@@ -1266,7 +1264,8 @@ impl LayoutPassState<'_> {
         let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale - hang_first;
         inline_layout.layout.set_text_indent(intrinsic_indent, indent_options);
 
-        let pbw = container_pb.horizontal_components().sum() * scale;
+        // pyro: and the inline-axis scrollbar gutters (`content_box_inset`).
+        let pbw = content_box_inset.horizontal_components().sum() * scale;
         let width = known_dimensions
             .width
             .map(|w| (w * scale) - pbw)
@@ -2700,12 +2699,7 @@ impl LayoutPassState<'_> {
             .unwrap()
             .inline_layout_data = Some(inline_layout);
 
-        let oof_position_inset = taffy::Rect {
-            left: border.left,
-            right: border.right + scrollbar_gutter.x,
-            top: border.top,
-            bottom: border.bottom + scrollbar_gutter.y,
-        };
+        let oof_position_inset = border + gutter_edges;
 
         LayoutOutput {
             size: final_size,

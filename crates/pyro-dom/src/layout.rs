@@ -1020,9 +1020,12 @@ impl Layout {
             return None;
         }
         let v = self.viewport();
+        // pyro: less the viewport's shown classic scrollbars.
+        let (bar_width, bar_height) =
+            self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
         Some(match axis {
-            Axis::Width => v.width as f64,
-            Axis::Height => v.height as f64,
+            Axis::Width => (v.width as f64 - bar_width).max(0.0),
+            Axis::Height => (v.height as f64 - bar_height).max(0.0),
         })
     }
 
@@ -1937,7 +1940,9 @@ impl Layout {
     pub fn document_scroll_size(&self, dom: &Dom) -> (f64, f64) {
         let (w, h) = self.document_extent(dom);
         let (vw, vh) = self.window_size();
-        (w.max(vw as f64), h.max(vh as f64))
+        // pyro: less the viewport's shown classic scrollbars (Chrome).
+        let (bw, bh) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
+        (w.max(vw as f64 - bw), h.max(vh as f64 - bh))
     }
 
     // ----- hit testing -------------------------------------------------------
@@ -2102,6 +2107,15 @@ impl Layout {
         if ignore_x {
             // A whole row of the page: nothing a point index narrows.
             return self.hit_test_descent(dom, x, y, true);
+        }
+        // pyro: classic scrollbars: a point in the viewport's scrollbar gutters (outside its
+        // scrollport) hits the root element (Chrome).
+        if let Some([left, top, right, bottom]) = self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()) {
+            let (vw, vh) = (self.viewport().width as f64, self.viewport().height as f64);
+            let in_viewport = x >= 0.0 && y >= 0.0 && x < vw && y < vh;
+            if in_viewport && (x < left || y < top || x >= vw - right || y >= vh - bottom) {
+                return dom.document_element(self.document()).ok().flatten();
+            }
         }
         if let Some(index) = self.hit_index_for(dom, false) {
             return self.hit_test_indexed(dom, &index, x, y);

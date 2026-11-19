@@ -169,6 +169,27 @@ pub trait CoreStyle {
     fn scrollbar_width(&self) -> f32 {
         0.0
     }
+    /// pyro: the space reserved for scrollbars (scrollbar gutters) at each edge of the padding box, in the
+    /// layout's axes. By default the end edges hold `scrollbar_width` for `Overflow::Scroll` (the vertical
+    /// scrollbar at the start edge for `Direction::Rtl`); stylo_taffy's classic scrollbars also reserve
+    /// gutters for `overflow: auto` with a scrollbar and for `scrollbar-gutter`.
+    #[inline(always)]
+    fn scrollbar_gutter(&self) -> Rect<f32> {
+        let offsets = self.overflow().transpose().map(|overflow| match overflow {
+            Overflow::Scroll => self.scrollbar_width(),
+            _ => 0.0,
+        });
+        match self.direction() {
+            Direction::Ltr => Rect { top: 0.0, left: 0.0, right: offsets.x, bottom: offsets.y },
+            Direction::Rtl => Rect { top: 0.0, left: offsets.x, right: 0.0, bottom: offsets.y },
+        }
+    }
+    /// pyro: the total space `scrollbar_gutter` reserves in each axis (width: the inline-axis edges).
+    #[inline(always)]
+    fn scrollbar_gutter_size(&self) -> Size<f32> {
+        let gutter = self.scrollbar_gutter();
+        Size { width: gutter.left + gutter.right, height: gutter.top + gutter.bottom }
+    }
 
     // Position properties
     /// What should the `position` value of this struct use as a base offset?
@@ -1179,6 +1200,10 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
     #[inline(always)]
     fn scrollbar_width(&self) -> f32 {
         (*self).scrollbar_width()
+    }
+    #[inline(always)]
+    fn scrollbar_gutter(&self) -> Rect<f32> {
+        (*self).scrollbar_gutter()
     }
     #[inline(always)]
     fn position(&self) -> Position {

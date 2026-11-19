@@ -395,6 +395,10 @@ pub struct BaseDocument {
     pub(crate) meta_nodes: Vec<NodeId>,
     /// pyro: the root's available space in the last layout pass.
     pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
+    /// pyro: classic scrollbars (`stylo_taffy::scrollbars`): the viewport's scrollbar gutters (physical
+    /// edges, CSS px), which the initial containing block is smaller by, and which of its scrollbars
+    /// show (x: the horizontal one). All zero with overlay scrollbars.
+    pub viewport_scrollbars: ViewportScrollbars,
     /// See [`BaseDocument::set_layout_size`].
     layout_size: Option<(f32, f32)>,
     /// See [`BaseDocument::set_layout_size`].
@@ -841,6 +845,7 @@ impl BaseDocument {
             page_color_scheme: style::values::specified::color::ColorSchemeFlags::empty(),
             meta_nodes: Default::default(),
             last_layout_space: None,
+            viewport_scrollbars: ViewportScrollbars::default(),
             layout_size: None,
             layout_available: None,
             flags: DocumentFlags::empty(),
@@ -5526,4 +5531,36 @@ pub(crate) fn without_fragment(url: &str) -> &str {
 /// pyro: whether a sheet's text may hold `@scope` rules (at-rule names are ASCII case-insensitive).
 pub(crate) fn sheet_has_scope_rules(css: &str) -> bool {
     css.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"@scope"))
+}
+
+/// pyro: the viewport's classic scrollbars ([`BaseDocument::viewport_scrollbars`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewportScrollbars {
+    /// The gutter at each physical edge of the viewport (CSS px): the scrollport and the initial
+    /// containing block are the viewport less these.
+    pub gutters: taffy::Rect<f32>,
+    /// Whether the horizontal (x) and vertical (y) scrollbars show (`overflow: scroll`, or `auto`
+    /// with the document overflowing); a `scrollbar-gutter: stable` gutter alone shows none.
+    pub shown: taffy::Point<bool>,
+    /// The thickness a shown scrollbar has.
+    pub thickness: f32,
+}
+
+impl ViewportScrollbars {
+    /// The viewport less the gutters: the scrollport, in viewport coordinates (CSS px).
+    pub fn scrollport(&self, width: f32, height: f32) -> kurbo::Rect {
+        let g = self.gutters;
+        kurbo::Rect::new(
+            g.left as f64,
+            g.top as f64,
+            (width - g.right).max(g.left) as f64,
+            (height - g.bottom).max(g.top) as f64,
+        )
+    }
+
+    /// Whether any edge has a gutter.
+    pub fn any(&self) -> bool {
+        let g = self.gutters;
+        g.left > 0.0 || g.right > 0.0 || g.top > 0.0 || g.bottom > 0.0
+    }
 }

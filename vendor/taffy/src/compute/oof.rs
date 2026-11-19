@@ -595,7 +595,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     let align_self =
         child_style.align_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, false);
     let overflow = child_style.overflow();
-    let scrollbar_width = child_style.scrollbar_width();
+    let scrollbar_gutter_size = child_style.scrollbar_gutter_size();
     #[cfg(feature = "content_size")]
     let contain = child_style.contain();
 
@@ -896,10 +896,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
 
     // Note: axis intentionally switched here as scrollbars take up space in the opposite axis
     // to the axis in which scrolling is enabled.
-    let scrollbar_size = Size {
-        width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
-        height: if overflow.x == Overflow::Scroll { scrollbar_width } else { 0.0 },
-    };
+    let scrollbar_size = scrollbar_gutter_size;
 
     let layout = Layout {
         order: candidate.order,

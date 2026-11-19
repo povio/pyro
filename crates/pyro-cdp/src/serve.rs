@@ -103,6 +103,11 @@ options:
                                         when WPT's runner starts it without font
                                         antialiasing (the WPT reftests). Default: on;
                                         env PYRO_TEXT_ANTIALIASING=on|off
+  --scrollbars <overlay|classic>        classic: scrollbars take 15px of their box's
+                                        layout space and scrollbar-gutter reserves it,
+                                        as Chrome's on Linux (wpt.fyi's runs); overlay
+                                        scrollbars take none. Default: overlay;
+                                        env PYRO_SCROLLBARS=overlay|classic
   --font <FILE>                         a font file (TTF, OTF or TTC) pages and SVG text
                                         can use by its family name, as if it were
                                         installed (repeatable; the WPT reftests' Ahem;
@@ -269,6 +274,10 @@ pub struct ServeOptions {
     /// text of screenshots aliased, as Chrome under WPT's runner
     /// (`pyro_render::set_text_antialiasing`). On by default.
     pub text_antialiasing: bool,
+    /// `--scrollbars` (or `PYRO_SCROLLBARS`): `classic` scrollbars take layout space, as
+    /// Chrome's on Linux (wpt.fyi's runs); `overlay` (the default) take none
+    /// (`pyro_render::set_classic_scrollbars`).
+    pub classic_scrollbars: bool,
     /// `--font` files: fonts pages can use by name, as if installed
     /// (`pyro_render::add_font_file`).
     pub fonts: Vec<PathBuf>,
@@ -402,6 +411,10 @@ impl Default for ServeOptions {
                 .ok()
                 .and_then(|v| parse_switch(TEXT_ANTIALIASING_ENV, &v).ok())
                 .unwrap_or(true),
+            classic_scrollbars: std::env::var(SCROLLBARS_ENV)
+                .ok()
+                .and_then(|v| parse_scrollbars(SCROLLBARS_ENV, &v).ok())
+                .unwrap_or(false),
             fonts: std::env::var_os(FONTS_ENV)
                 .map(|v| std::env::split_paths(&v).filter(|p| !p.as_os_str().is_empty()).collect())
                 .unwrap_or_default(),
@@ -418,6 +431,18 @@ pub const FONTS_ENV: &str = "PYRO_FONTS";
 
 /// Environment equivalent of `--text-antialiasing` (`on`/`off`).
 pub const TEXT_ANTIALIASING_ENV: &str = "PYRO_TEXT_ANTIALIASING";
+
+/// Environment equivalent of `--scrollbars` (`overlay`/`classic`).
+pub const SCROLLBARS_ENV: &str = "PYRO_SCROLLBARS";
+
+/// `--scrollbars` values: whether scrollbars are classic.
+fn parse_scrollbars(flag: &str, value: &str) -> Result<bool, String> {
+    match value.trim() {
+        "classic" => Ok(true),
+        "overlay" => Ok(false),
+        other => Err(format!("{flag}: '{other}' is not overlay or classic")),
+    }
+}
 
 /// Environment equivalent of `--parent-pid`.
 pub const PARENT_PID_ENV: &str = "PYRO_PARENT_PID";
@@ -529,6 +554,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
             "--hyphen-digit-breaks" => o.hyphen_digit_breaks = parse_switch("--hyphen-digit-breaks", &value()?)?,
             "--text-antialiasing" => o.text_antialiasing = parse_switch("--text-antialiasing", &value()?)?,
+            "--scrollbars" => o.classic_scrollbars = parse_scrollbars("--scrollbars", &value()?)?,
             "--font" => o.fonts.push(PathBuf::from(value()?)),
             "--parent-pid" => o.parent_pid = Some(parse_pid(&value()?)?),
             "--template" => o.template = Some(PathBuf::from(value()?)),
@@ -625,6 +651,8 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     pyro_render::set_hyphen_digit_breaks(options.hyphen_digit_breaks);
     #[cfg(feature = "render")]
     pyro_render::set_text_antialiasing(options.text_antialiasing);
+    #[cfg(feature = "render")]
+    pyro_render::set_classic_scrollbars(options.classic_scrollbars);
     // Read now, loaded at the first font use (in the template and its forks too).
     #[cfg(feature = "render")]
     for path in &options.fonts {
@@ -1716,6 +1744,18 @@ mod tests {
             .unwrap()
             .local_storage
             .is_empty());
+    }
+
+    #[test]
+    fn scrollbars_flag() {
+        let args = |a: &[&str]| parse_args(&a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        if std::env::var_os(SCROLLBARS_ENV).is_none() {
+            assert!(!args(&[]).unwrap().classic_scrollbars);
+        }
+        assert!(args(&["--scrollbars", "classic"]).unwrap().classic_scrollbars);
+        assert!(!args(&["--scrollbars", "overlay"]).unwrap().classic_scrollbars);
+        assert!(args(&["--scrollbars", "thin"]).is_err());
+        assert!(args(&["--scrollbars"]).is_err());
     }
 
     #[test]
