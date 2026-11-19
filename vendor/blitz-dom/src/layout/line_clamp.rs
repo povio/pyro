@@ -40,8 +40,10 @@ impl LayoutPassState<'_> {
         let standard = !clamp.webkit_legacy && {
             use style::values::specified::box_::{DisplayInside, DisplayOutside};
             let display = style.get_box().display;
-            display.outside() == DisplayOutside::Block
+            // (An inline-block is a block container too: WPT css-overflow `line-clamp-015`.)
+            (display.outside() == DisplayOutside::Block
                 && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
+                || display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::FlowRoot)
                 // (Not a multi-column container, nor a fieldset: WPT css-overflow `line-clamp-039`,
                 // `line-clamp-form-fieldset-001`.)
                 && !super::multicol::is_multicol_style(&style)
@@ -103,6 +105,28 @@ impl LayoutPassState<'_> {
         // after the clamp point is discarded), their own bottom padding and border below it, and
         // what follows them is not painted (WPT css-overflow `line-clamp-012`,
         // `line-clamp-auto-020`).
+        // pyro: the last baseline is the clamp line's, the last line kept (an inline-block sits on
+        // it: WPT css-overflow `line-clamp-015`).
+        let clamp_baseline = {
+            let scale = self.doc.viewport.scale();
+            let mut top = 0.0f32;
+            let mut at = block;
+            while at != root {
+                top += self.nodes[at].unrounded_layout().location.y;
+                match self.nodes[at].layout_parent.get() {
+                    Some(parent) => at = parent,
+                    None => break,
+                }
+            }
+            self.nodes[block].data.downcast_element().and_then(|el| el.inline_layout_data.as_deref()).and_then(|text| {
+                let kept = text.clamp.as_ref()?.lines as usize;
+                let line = text.layout.get(kept.checked_sub(1)?)?;
+                Some(top + text.line_box_top + line.metrics().baseline / scale)
+            })
+        };
+        if let Some(baseline) = clamp_baseline {
+            output.baselines.last = Some(baseline);
+        }
         let bottom = self.end_blocks_at_clamp(root, block, bottom);
         // pyro: what was discarded adds no scrollable overflow: the content ends at the clamp
         // point (and its bottom padding).
