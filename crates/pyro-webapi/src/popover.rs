@@ -308,6 +308,17 @@ fn topmost_popover_ancestor(dom: &Dom, el: NodeId, stack: PopoverStack, invoker:
 
 /// Hides the popovers of `stack` above `endpoint` (all of them when it is
 /// not in the stack), topmost first.
+///
+/// It ends whatever the page's script does (a page must never spin the browser):
+/// - The popovers are hidden without moving focus; with `focus_previous`, focus goes back once,
+///   after the last of them is hidden, to where it was before that one (the lowest) opened, if
+///   it is in one of them. A focus handler that opens another popover each time focus comes
+///   back can then open one, not keep this loop going.
+/// - Events fire for the popovers above `endpoint` when it started; one an event handler opened
+///   since is hidden without them (HTML's `repeatingHide`).
+/// - Past a budget of hides, the rest are taken out without events.
+/// - One that a handler kept showing, or that hide_popover does not act on (a node from another
+///   document, one left on the stack), is taken out regardless.
 fn close_stack_until(
     page: &Rc<PageDom>,
     stack: PopoverStack,
@@ -316,17 +327,56 @@ fn close_stack_until(
     fire_events: bool,
 ) {
     let endpoint = endpoint.filter(|e| page.dom.borrow().popover_stack(stack).contains(e));
+    let above = |page: &Rc<PageDom>| {
+        let dom = page.dom.borrow();
+        let list = dom.popover_stack(stack);
+        let from = endpoint.and_then(|e| list.iter().position(|&p| p == e)).map_or(0, |i| i + 1);
+        list[from..].to_vec()
+    };
+    let initial = above(page);
+    if initial.is_empty() {
+        return;
+    }
+    let mut budget = initial.len() * 2 + 16;
+    // The popovers hidden, and their previously focused elements (the last hidden's is where
+    // focus goes back).
+    let mut hidden: Vec<NodeId> = Vec::new();
+    let mut restore: Option<NodeId> = None;
     loop {
         let top = page.dom.borrow().popover_stack(stack).last().copied();
-        let Some(top) = top.filter(|&t| Some(t) != endpoint) else { return };
-        let _ = hide_popover(page, top, focus_previous, fire_events, false, None);
+        let Some(top) = top.filter(|&t| Some(t) != endpoint) else { break };
+        if budget == 0 {
+            // A script that keeps opening popovers as these close: the rest go without events.
+            for el in above(page).into_iter().rev() {
+                page.popover.previously_focused.borrow_mut().remove(&el);
+                page.dom.borrow_mut().drop_popover(el);
+                remove_watcher(page, el);
+                hidden.push(el);
+            }
+            break;
+        }
+        budget -= 1;
+        let fire = fire_events && initial.contains(&top);
+        let previous = page.popover.previously_focused.borrow().get(&top).copied();
+        let _ = hide_popover(page, top, false, fire, false, None);
         if page.dom.borrow().popover_stack(stack).last() == Some(&top) {
-            // An event handler kept it showing (or it is not a showing popover hide_popover
-            // acts on: a node from another document, one left on the stack): take it out
-            // regardless, rather than loop (a page must never spin the browser; WPT
-            // `content-visibility-with-popover-top-layer-*` hung other pages' runs).
             page.dom.borrow_mut().drop_popover(top);
             remove_watcher(page, top);
+        }
+        hidden.push(top);
+        if previous.is_some() {
+            restore = previous;
+        }
+    }
+    // HTML "hide popover" step: focus goes back to the previously focused element when it is
+    // in a popover hidden here (once, for the last one).
+    if let (true, Some(prev)) = (focus_previous, restore) {
+        let inside = focused(page).is_none_or(|f| {
+            let dom = page.dom.borrow();
+            hidden.iter().any(|&el| dom.contains(el, f).unwrap_or(false))
+        });
+        if inside {
+            crate::input::focus_element_with_options(page, prev, true);
         }
     }
 }
