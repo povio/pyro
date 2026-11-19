@@ -77,7 +77,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  input {
      display: inline-block;
  }
-@@ -59,37 +74,117 @@
+@@ -59,25 +74,83 @@
      display: none !important;
  }
  
@@ -149,27 +149,27 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +input {
 +    border: 2px inset #767676;
 +    padding: 1px 2px;
-+    background-color: white;
++    background-color: Field;
  }
  
 -input,
  textarea {
      border: 1px solid #999;
      padding: 2px;
-     background-color: white;
- }
- 
+-    background-color: white;
++    background-color: Field;
++}
++
 +/* Chromium's `font: -webkit-small-control`: form controls default to 13.333px. */
 +input,
 +select,
 +button,
 +textarea {
 +    font-size: 13.333px;
-+}
-+
+ }
+ 
  input,
- select,
- button {
+@@ -86,10 +159,32 @@
      font-family: system-ui, sans-serif;
  }
  
