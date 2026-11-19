@@ -1060,9 +1060,19 @@ pub(super) fn update_subgrid_track_sizes<Tree: LayoutGridContainer>(
         let mut sub_spans: Vec<(f32, f32)> = (0..count)
             .map(|k| {
                 let (start, end) = spans[k];
-                let start = if k == 0 { start + edge_start } else { start + (sub.gap - (start - spans[k - 1].1)) / 2.0 };
-                let end = if k + 1 == count { end - edge_end } else { end - (sub.gap - (spans[k + 1].0 - end)) / 2.0 };
-                (start, end)
+                let gap_start = if k == 0 { start } else { start + (sub.gap - (start - spans[k - 1].1)) / 2.0 };
+                let gap_end = if k + 1 == count { end } else { end - (sub.gap - (spans[k + 1].0 - end)) / 2.0 };
+                let start = if k == 0 { start + edge_start } else { gap_start };
+                let end = if k + 1 == count { end - edge_end } else { gap_end };
+                // pyro: an edge track that its margin, border and padding (not its gutters) cover more than whole
+                // is empty at the inset edge, not reversed (its far line resolves there: WPT css-grid
+                // `subgrid/abs-pos-002`).
+                let edge_reversed = end < start && gap_end >= gap_start;
+                match (k == 0, k + 1 == count) {
+                    (_, true) if edge_reversed => (end, end),
+                    (true, false) if edge_reversed => (start, start),
+                    _ => (start, end),
+                }
             })
             .collect();
         let content_start = spans[0].0 + edge_start;
