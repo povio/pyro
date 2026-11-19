@@ -624,6 +624,13 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                     let driven = timeline_driven_now(&style_of_target(style, &dom, el, pseudo), animation.index);
                     scripted_changed |= scripted_ids.contains(&known.id);
                     if !driven && !scripted_ids.contains(&known.id) {
+                        // (One that ended and is before its end again plays it again: its events
+                        // from `animationstart` on; WPT css-animations `animation-delay-010`.)
+                        let end = known.delay_ms + known.duration_ms * known.iterations;
+                        if known.progress.get() == ENDED && known.local_ms(now_ms) < end {
+                            known.progress.set(0);
+                            known.ended.set(false);
+                        }
                         let (local, held) = (known.local_ms(now_ms), known.paused_at.is_some());
                         plan_animation(known, local, 1.0, held, &mut planned);
                     }
