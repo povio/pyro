@@ -38322,7 +38322,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2817 @@
+@@ -0,0 +1,2862 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -38887,6 +38887,35 @@ new file mode 100644
 +/// their colours resolved ([`drop_shadow_function`]), the other functions as CSS writes them.
 +/// Lengths in CSS px without the element's `zoom` (Stylo's computed lengths have it; the
 +/// resolved value does not): the `<svg>`'s box scales its user units by it.
++/// pyro: the id of the identity filter whose result is tainted (anyrender_svg `TAINT_MARK`), which
++/// [`filter_value`] puts after a `drop-shadow()` coloured from `currentcolor` (Filter Effects:
++/// such a shadow taints the filters after it): usvg resolves the colour, and the filter it makes
++/// of the function says nothing of where its colour came from.
++const TAINT_MARK: &str = "__pyro_taint";
++
++/// pyro: whether a computed colour is `currentcolor` or made from it.
++fn uses_current_color(color: &style::values::computed::Color) -> bool {
++    use style::values::generics::color::GenericColor;
++    match color {
++        GenericColor::Absolute(_) => false,
++        GenericColor::CurrentColor => true,
++        GenericColor::ColorMix(mix) => mix.items.iter().any(|item| uses_current_color(&item.color)),
++        GenericColor::ContrastColor(color) => uses_current_color(color),
++        GenericColor::ColorFunction(function) => function.origin_color().is_some_and(uses_current_color),
++    }
++}
++
++/// pyro: whether `style`'s `filter` has a `drop-shadow()` coloured from `currentcolor`.
++fn taints_filters(style: &ComputedValues) -> bool {
++    use style::computed_values::filter::single_value::T as Filter;
++    style
++        .get_effects()
++        .filter
++        .0
++        .iter()
++        .any(|filter| matches!(filter, Filter::DropShadow(shadow) if uses_current_color(&shadow.color)))
++}
++
 +fn filter_value(style: &ComputedValues) -> String {
 +    use style::computed_values::filter::single_value::T as Filter;
 +    let current_color = style.clone_color();
@@ -38899,13 +38928,21 @@ new file mode 100644
 +    filters
 +        .iter()
 +        .map(|filter| match filter {
-+            Filter::DropShadow(shadow) => drop_shadow_function(
-+                unzoom(shadow.horizontal.px()),
-+                unzoom(shadow.vertical.px()),
-+                unzoom(shadow.blur.px()),
-+                &shadow.color,
-+                &current_color,
-+            ),
++            Filter::DropShadow(shadow) => {
++                let function = drop_shadow_function(
++                    unzoom(shadow.horizontal.px()),
++                    unzoom(shadow.vertical.px()),
++                    unzoom(shadow.blur.px()),
++                    &shadow.color,
++                    &current_color,
++                );
++                // pyro: its result tainted (`TAINT_MARK`).
++                if uses_current_color(&shadow.color) {
++                    format!("{function} url(#{TAINT_MARK})")
++                } else {
++                    function
++                }
++            }
 +            Filter::Blur(length) => format!("blur({}px)", num(unzoom(length.0.px()))),
 +            Filter::Url(_) => local_urls(&filter.to_css_string()),
 +            filter => filter.to_css_string(),
@@ -39272,6 +39309,14 @@ new file mode 100644
 +            // ([`nested_parentheses`]).
 +            if !is_root && author.contains(&LonghandId::Filter) {
 +                let value = filter_value(style);
++                if taints_filters(style) && !self.defs.contains(TAINT_MARK) {
++                    // The identity filter, over all the element can paint.
++                    let _ = write!(
++                        self.defs,
++                        "<filter id=\"{TAINT_MARK}\" filterUnits=\"userSpaceOnUse\" x=\"-1000000\" y=\"-1000000\" \
++                         width=\"2000000\" height=\"2000000\"><feOffset dx=\"0\" dy=\"0\" /></filter>"
++                    );
++                }
 +                let value = match current_color.as_deref().and_then(|c| replace_current_color(&value, c)) {
 +                    Some(replaced) => replaced,
 +                    None => value,

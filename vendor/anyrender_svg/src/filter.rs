@@ -81,8 +81,50 @@ pub(crate) fn with_notes<R>(notes: FilterNotes, f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// pyro: the id prefix of a filter whose result is tainted (blitz-dom's SVG writer puts one after
+/// a `drop-shadow()` coloured from `currentcolor`, which usvg resolves). An author's filter of
+/// such an id taints too: taint can only keep pixels from moving.
+pub(crate) const TAINT_MARK: &str = "__pyro_taint";
+
+/// pyro: whether what `group` draws may be tainted: a filter of it or of a group in it has a
+/// tainted primitive (or is a taint mark, `TAINT_MARK`), or an `feImage`, mask, pattern or nested
+/// SVG image in it draws such content. Conservative: a tainted primitive taints the whole filter's
+/// output whether or not it reaches it. A filter reading what such a group draws as its source
+/// graphic reads a tainted source (Filter Effects, "tainted filter primitives").
+pub(crate) fn group_tainted(group: &usvg::Group) -> bool {
+    group.filters().iter().any(|filter| filter_tainted(filter))
+        || group.mask().is_some_and(|mask| group_tainted(mask.root()))
+        || group.children().iter().any(node_tainted)
+}
+
+pub(crate) fn node_tainted(node: &usvg::Node) -> bool {
+    match node {
+        usvg::Node::Group(group) => group_tainted(group),
+        usvg::Node::Path(path) => {
+            let pattern = |paint: &usvg::Paint| matches!(paint, usvg::Paint::Pattern(pattern) if group_tainted(pattern.root()));
+            path.fill().is_some_and(|fill| pattern(fill.paint())) || path.stroke().is_some_and(|stroke| pattern(stroke.paint()))
+        }
+        usvg::Node::Image(image) => match image.kind() {
+            usvg::ImageKind::SVG(tree) => group_tainted(tree.root()),
+            _ => false,
+        },
+        usvg::Node::Text(text) => group_tainted(text.flattened()),
+    }
+}
+
+fn filter_tainted(filter: &usvg::filter::Filter) -> bool {
+    filter.id().starts_with(TAINT_MARK)
+        || filter.primitives().iter().enumerate().any(|(index, primitive)| {
+            notes(filter.id(), index).tainted
+                || matches!(primitive.kind(), Kind::Image(image) if group_tainted(image.root()))
+        })
+}
+
 /// What the document knows of primitive `index` of the filter `id` (nothing when it was not told).
 pub(crate) fn notes(id: &str, index: usize) -> PrimitiveNotes {
+    if id.starts_with(TAINT_MARK) {
+        return PrimitiveNotes { tainted: true, ..Default::default() };
+    }
     NOTES.with(|n| {
         n.borrow()
             .as_ref()
@@ -650,7 +692,9 @@ fn convert(
                 );
                 Value::Pixels(b.cropped(node, crop), Some(space))
             }
-            Kind::Image(_) => {
+            Kind::Image(image) => {
+                // pyro: what it draws may be tainted (`group_tainted`).
+                tainted |= group_tainted(image.root());
                 let k = images.len();
                 images.push(index);
                 let node = b.op(IMAGE_SOURCE, [k as f32, 0.0, 0.0, 0.0, 0.0, 0.0], FilterInputs::NONE);

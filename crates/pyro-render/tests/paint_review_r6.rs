@@ -104,3 +104,50 @@ fn an_inset_outline_goes_under_clipped_positioned_children_beside_an_escaping_on
     assert_eq!(pixel(&beside, 95, 95), [0, 0, 255], "the outline");
 }
 
+
+/// Taint from a `drop-shadow()` coloured from `currentcolor` on SVG content (Filter Effects,
+/// "tainted filter primitives"): an `feDisplacementMap` whose map is tainted moves nothing, so the
+/// green flood stays put over the red square. Untainted, the map (G = 1) moves the flood 50 px and
+/// the red shows at the right.
+const DISPLACE: &str = "<filter id=t color-interpolation-filters=sRGB>\
+    <feFlood flood-color=green result=g /><feDisplacementMap in=g in2=SourceGraphic xChannelSelector=G yChannelSelector=B scale=100 />\
+    </filter>";
+const TAINTING: &str = "fill='rgb(0%, 100%, 50%)' style='color: rgb(0%, 100%, 50%); filter: drop-shadow(0 0 0 color-mix(in srgb, currentcolor 99.9%, black))";
+
+fn displaced_or_not(svg: &str) -> [u8; 3] {
+    pixel(&render(&format!("<svg width=100 height=100 style='display:block'>{svg}</svg>")), 90, 50)
+}
+
+/// The shadow's own filter list: tainted although an author filter has the id and the single
+/// `feDropShadow` usvg gives the filters it makes of CSS functions (`filter1`).
+#[test]
+fn a_currentcolor_shadow_taints_beside_an_author_filter_like_a_generated_one() {
+    let svg = format!(
+        "{DISPLACE}<filter id=filter1><feDropShadow dx=0 dy=0 stdDeviation=0 /></filter>\
+         <circle r=1 cx=200 filter=url(#filter1) />\
+         <rect width=100 height=100 fill=red /><rect width=100 height=100 {TAINTING} url(#t)' />"
+    );
+    assert_eq!(displaced_or_not(&svg), [0, 128, 0]);
+}
+
+/// A tainted group inside a group whose filter displaces: the outer filter's source is tainted.
+#[test]
+fn taint_reaches_an_outer_groups_filter() {
+    let svg = format!(
+        "{DISPLACE}<rect width=100 height=100 fill=red />\
+         <g filter=url(#t)><rect width=100 height=100 {TAINTING}' /></g>"
+    );
+    assert_eq!(displaced_or_not(&svg), [0, 128, 0]);
+}
+
+/// Without taint the map moves the flood: the tests above are not passing by a filter that does
+/// nothing.
+#[test]
+fn an_untainted_map_moves_the_flood() {
+    let svg = format!(
+        "{DISPLACE}<rect width=100 height=100 fill=red />\
+         <g filter=url(#t)><rect width=100 height=100 fill='rgb(0%, 100%, 50%)' /></g>"
+    );
+    assert_eq!(displaced_or_not(&svg), [255, 0, 0]);
+}
+

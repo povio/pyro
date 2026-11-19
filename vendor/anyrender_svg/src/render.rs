@@ -381,7 +381,10 @@ fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 /// source of the next); none when one has a primitive anyrender_vello_cpu does not do (the group
 /// is then drawn unfiltered, as before; see `crate::filter`).
 fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<crate::filter::FilterGraph> {
-    let mut tainted = false;
+    // pyro: the source graphic is what the group's content draws, tainted when that is
+    // (`filter::group_tainted`: a nested group's filter, an `feImage`, a mask, a pattern).
+    let mut tainted = g.mask().is_some_and(|mask| crate::filter::group_tainted(mask.root()))
+        || g.children().iter().any(crate::filter::node_tainted);
     g.filters()
         .iter()
         .zip(filter_regions(g, ts))

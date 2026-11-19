@@ -15,10 +15,10 @@ index 14aded4..862cfe1 100644
  optional = true
 diff --git b/src/filter.rs b/src/filter.rs
 new file mode 100644
-index 0000000..256d4c7
+index 0000000..b368e58
 --- /dev/null
 +++ b/src/filter.rs
-@@ -0,0 +1,1038 @@
+@@ -0,0 +1,1082 @@
 +// Copyright 2024 the Vello Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -102,8 +102,50 @@ index 0000000..256d4c7
 +    result
 +}
 +
++/// pyro: the id prefix of a filter whose result is tainted (blitz-dom's SVG writer puts one after
++/// a `drop-shadow()` coloured from `currentcolor`, which usvg resolves). An author's filter of
++/// such an id taints too: taint can only keep pixels from moving.
++pub(crate) const TAINT_MARK: &str = "__pyro_taint";
++
++/// pyro: whether what `group` draws may be tainted: a filter of it or of a group in it has a
++/// tainted primitive (or is a taint mark, `TAINT_MARK`), or an `feImage`, mask, pattern or nested
++/// SVG image in it draws such content. Conservative: a tainted primitive taints the whole filter's
++/// output whether or not it reaches it. A filter reading what such a group draws as its source
++/// graphic reads a tainted source (Filter Effects, "tainted filter primitives").
++pub(crate) fn group_tainted(group: &usvg::Group) -> bool {
++    group.filters().iter().any(|filter| filter_tainted(filter))
++        || group.mask().is_some_and(|mask| group_tainted(mask.root()))
++        || group.children().iter().any(node_tainted)
++}
++
++pub(crate) fn node_tainted(node: &usvg::Node) -> bool {
++    match node {
++        usvg::Node::Group(group) => group_tainted(group),
++        usvg::Node::Path(path) => {
++            let pattern = |paint: &usvg::Paint| matches!(paint, usvg::Paint::Pattern(pattern) if group_tainted(pattern.root()));
++            path.fill().is_some_and(|fill| pattern(fill.paint())) || path.stroke().is_some_and(|stroke| pattern(stroke.paint()))
++        }
++        usvg::Node::Image(image) => match image.kind() {
++            usvg::ImageKind::SVG(tree) => group_tainted(tree.root()),
++            _ => false,
++        },
++        usvg::Node::Text(text) => group_tainted(text.flattened()),
++    }
++}
++
++fn filter_tainted(filter: &usvg::filter::Filter) -> bool {
++    filter.id().starts_with(TAINT_MARK)
++        || filter.primitives().iter().enumerate().any(|(index, primitive)| {
++            notes(filter.id(), index).tainted
++                || matches!(primitive.kind(), Kind::Image(image) if group_tainted(image.root()))
++        })
++}
++
 +/// What the document knows of primitive `index` of the filter `id` (nothing when it was not told).
 +pub(crate) fn notes(id: &str, index: usize) -> PrimitiveNotes {
++    if id.starts_with(TAINT_MARK) {
++        return PrimitiveNotes { tainted: true, ..Default::default() };
++    }
 +    NOTES.with(|n| {
 +        n.borrow()
 +            .as_ref()
@@ -671,7 +713,9 @@ index 0000000..256d4c7
 +                );
 +                Value::Pixels(b.cropped(node, crop), Some(space))
 +            }
-+            Kind::Image(_) => {
++            Kind::Image(image) => {
++                // pyro: what it draws may be tainted (`group_tainted`).
++                tainted |= group_tainted(image.root());
 +                let k = images.len();
 +                images.push(index);
 +                let node = b.op(IMAGE_SOURCE, [k as f32, 0.0, 0.0, 0.0, 0.0, 0.0], FilterInputs::NONE);
@@ -1314,7 +1358,7 @@ index 3370fa2..6b6ec48 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..341a52f 100644
+index 2e9e1c4..5e4745d 100644
 --- a/src/render.rs
 +++ b/src/render.rs
 @@ -2,92 +2,73 @@
@@ -1545,7 +1589,7 @@ index 2e9e1c4..341a52f 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,26 +169,1109 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,26 +169,1112 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -1764,7 +1808,10 @@ index 2e9e1c4..341a52f 100644
 +/// source of the next); none when one has a primitive anyrender_vello_cpu does not do (the group
 +/// is then drawn unfiltered, as before; see `crate::filter`).
 +fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<crate::filter::FilterGraph> {
-+    let mut tainted = false;
++    // pyro: the source graphic is what the group's content draws, tainted when that is
++    // (`filter::group_tainted`: a nested group's filter, an `feImage`, a mask, a pattern).
++    let mut tainted = g.mask().is_some_and(|mask| crate::filter::group_tainted(mask.root()))
++        || g.children().iter().any(crate::filter::node_tainted);
 +    g.filters()
 +        .iter()
 +        .zip(filter_regions(g, ts))
@@ -2658,7 +2705,7 @@ index 2e9e1c4..341a52f 100644
  fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      scene: &mut S,
      error_handler: &mut F,
-@@ -168,9 +1279,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -168,9 +1282,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2673,7 +2720,7 @@ index 2e9e1c4..341a52f 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +1296,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1299,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2682,7 +2729,7 @@ index 2e9e1c4..341a52f 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +1309,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1312,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2698,7 +2745,7 @@ index 2e9e1c4..341a52f 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +1325,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1328,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
