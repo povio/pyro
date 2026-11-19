@@ -183,6 +183,9 @@ pub struct ColumnFragments {
     /// column's content without breaking what is kept together or overflowing it: the outer
     /// container breaks before it instead.
     pub pushed: bool,
+    /// pyro: where the strip's content ends (the last fragment's real end, which shows to the
+    /// strip's end): see `BaseDocument::collect_breaks` on nested containers.
+    pub strip_end: f32,
 }
 
 /// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -1606,7 +1609,7 @@ impl LayoutPassState<'_> {
         // pyro: the baselines are where their lines are shown, in their columns (Chromium takes
         // the first baseline from the first column with a line; WPT css-multicol `baseline-001`).
         let mut baselines = strip.baselines;
-        let columns = ColumnFragments { fragments, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed };
+        let columns = ColumnFragments { fragments, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -2794,6 +2797,24 @@ impl BaseDocument {
                 if avoids_column_break_inside(&style) {
                     found.strict.push((child_top, child_bottom));
                 }
+                // pyro: what a column of it holds past its row's end (a line or a monolithic box
+                // taller than the row, held whole) stays in the outer column the row is in, which
+                // holds it whole too: the next outer column does not show it again (Chromium; WPT
+                // css-multicol `nested-with-too-tall-line`, `multicol-nested-011`). (From its last
+                // layout: the passes make it hold.)
+                if let Some(columns) = child.column_fragments().filter(|c| c.nested.is_some()) {
+                    for fragment in columns.fragments.iter().filter(|f| !f.spanner) {
+                        let start = fragment.top - fragment.offset.y;
+                        let end = if fragment.end.is_finite() { fragment.end } else { columns.strip_end };
+                        let held = end - start;
+                        if fragment.height >= 1.0 && held > fragment.height + 0.5 && held.is_finite() {
+                            let range = (child_top + fragment.top, child_top + fragment.top + held);
+                            found.strict.push(range);
+                            found.loose.push(range);
+                            found.whole.push(range);
+                        }
+                    }
+                }
             } else if !cells.is_empty() {
                 // pyro: a table with multi-column cells is fragmented with them (Chromium
                 // fragments tables): breakable through, unless it avoids breaks inside.
@@ -3242,6 +3263,7 @@ mod tests {
     #[test]
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
+            strip_end: f32::INFINITY,
             nested: None,
             pushed: false,
             fragments: vec![
@@ -3265,6 +3287,7 @@ mod tests {
         // The first column ends at 100 where a margin starts, the second starts past it at 120;
         // a third follows.
         let columns = ColumnFragments {
+            strip_end: f32::INFINITY,
             nested: None,
             pushed: false,
             fragments: vec![
@@ -3297,6 +3320,7 @@ mod tests {
             exact_x: f32::NAN,
         };
         let columns = ColumnFragments {
+            strip_end: f32::INFINITY,
             nested: None,
             pushed: false,
             fragments: vec![
