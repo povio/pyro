@@ -70,6 +70,11 @@ pub enum PseudoElement {
     // `matching_fn`). Both are styled lazily, when highlights are painted.
     TargetText,
     Highlight(u16),
+    // pyro: CSS Form Control Styling's `::picker(select)` and `::picker-icon`, and Chrome's
+    // `::-webkit-slider-thumb`: parsed (so `@supports selector()` knows them) but styled by nothing.
+    PickerSelect,
+    PickerIcon,
+    WebkitSliderThumb,
 
     // Implemented pseudos. These pseudo elements are representing the
     // elements within an UA shadow DOM, and matching the elements with
@@ -161,6 +166,9 @@ impl ToCss for PseudoElement {
                 }
                 return dest.write_char(')');
             },
+            PickerSelect => "::picker(select)",
+            PickerIcon => "::picker-icon",
+            WebkitSliderThumb => "::-webkit-slider-thumb",
             ColorSwatch => "::color-swatch",
             FileSelectorButton => "::file-selector-button",
             Placeholder => "::placeholder",
@@ -431,6 +439,9 @@ impl PseudoElement {
             | PseudoElement::ScrollButtonLeft
             | PseudoElement::ScrollButtonRight
             | PseudoElement::TargetText
+            | PseudoElement::PickerSelect
+            | PseudoElement::PickerIcon
+            | PseudoElement::WebkitSliderThumb
             | PseudoElement::Highlight(_) => PseudoElementCascadeType::Lazy,
             PseudoElement::ServoAnonymousBox
             | PseudoElement::ServoAnonymousTable
@@ -997,6 +1008,8 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "target-text" => TargetText,
             "details-content" => DetailsContent,
             "color-swatch" => ColorSwatch,
+            "picker-icon" => PickerIcon,
+            "-webkit-slider-thumb" => WebkitSliderThumb,
             "placeholder" => Placeholder,
             "-servo-text-control-inner-container" => {
                 if !self.in_user_agent_stylesheet() {
@@ -1067,6 +1080,10 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         if name.eq_ignore_ascii_case("highlight") {
             let ident = arguments.expect_ident()?;
             return Ok(Highlight(highlight_name_id(&Atom::from(ident.as_ref()))));
+        }
+        if name.eq_ignore_ascii_case("picker") {
+            arguments.expect_ident_matching("select")?;
+            return Ok(PickerSelect);
         }
         if !name.eq_ignore_ascii_case("scroll-button") {
             return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
