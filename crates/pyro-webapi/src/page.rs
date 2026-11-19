@@ -50,6 +50,14 @@ pub struct PageDom {
     pub(crate) use_hosts: RefCell<Vec<(NodeId, u64)>>,
     /// [`PageDom::detach`] ran (`dispose` sets it too).
     detached: Cell<bool>,
+    /// The document is a child frame's initial about:blank one, whose Window
+    /// its first same-origin document reuses (HTML "navigate", Window reuse):
+    /// its realm's `document` is an accessor of the page it shows, not a
+    /// constant ([`crate::adopt_window`]).
+    reusable_window: Cell<bool>,
+    /// The frame's `src` asked for about:blank, served by this document:
+    /// once loaded it counts as a committed about:blank navigation.
+    blank_requested: Cell<bool>,
     /// Navigations of the document's frame this document started (links,
     /// forms, `location`, `navigation.navigate`): a form submission whose
     /// `formdata` event started one is dropped (`form_submission`).
@@ -702,6 +710,8 @@ impl PageDom {
             disposed: Cell::new(false),
             use_hosts: RefCell::new(Vec::new()),
             detached: Cell::new(false),
+            reusable_window: Cell::new(false),
+            blank_requested: Cell::new(false),
             navigation_requests: Cell::new(0),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
@@ -936,6 +946,30 @@ impl PageDom {
             return;
         }
         self.release_activity();
+    }
+
+    /// Marks the document as an initial about:blank one whose Window the
+    /// next same-origin document may reuse; set before its realm is made.
+    pub fn set_reusable_window(&self, reusable: bool) {
+        self.reusable_window.set(reusable);
+    }
+
+    /// Whether [`PageDom::set_reusable_window`] marked the document.
+    pub fn reusable_window(&self) -> bool {
+        self.reusable_window.get()
+    }
+
+    /// The owner's `src` (empty or about:blank) navigated to about:blank,
+    /// which this initial document serves. Browsers reuse its Window only
+    /// for a navigation that starts before that load (WPT
+    /// window-reuse-in-nested-browsing-contexts).
+    pub fn note_blank_requested(&self) {
+        self.blank_requested.set(true);
+    }
+
+    /// Whether [`PageDom::note_blank_requested`] ran.
+    pub fn blank_requested(&self) -> bool {
+        self.blank_requested.get()
     }
 
     /// Whether [`PageDom::detach`] (or `dispose`) ran.

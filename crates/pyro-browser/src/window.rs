@@ -149,6 +149,17 @@ impl WindowData {
         }
     }
 
+    /// HTML Window reuse: this window's state that the realm keeps for its
+    /// next document's Window data (`FrameHost::reuse_realm`). Its event
+    /// target's listeners stay with the target key, which the new data has.
+    pub(crate) fn hand_over(&self, to: &WindowData) {
+        self.target.hand_over(&to.target);
+        *to.frame_definer.borrow_mut() = self.frame_definer.take();
+        to.frame_index_count.set(self.frame_index_count.get());
+        *to.idle_module.borrow_mut() = self.idle_module.take();
+        *to.nested_timer_call.borrow_mut() = self.nested_timer_call.take();
+        to.next_handle.set(self.next_handle.get());
+    }
     pub(crate) fn for_frame(
         sched: Scheduler<Browser>,
         nav: Rc<PageNav>,

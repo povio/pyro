@@ -455,8 +455,22 @@ pub(crate) fn after_task(page: &PageDom) {
 }
 /// `helper` converts a MutationObserverInit (install.js `mutationOptions`).
 pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: pyro_js::Value<'_>) -> JsResult<()> {
-    *page.mutations.owner.borrow_mut() = Rc::downgrade(page);
     page.mutations.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
+    bind(s, page)
+}
+
+/// The realm of `old`'s window now serves `new` (Window reuse): its helper
+/// moves along.
+pub(crate) fn adopt_realm(old: &PageDom, new: &PageDom, realm: RealmId) {
+    let helper = old.mutations.helpers.borrow_mut().remove(&realm);
+    if let Some(helper) = helper {
+        new.mutations.helpers.borrow_mut().insert(realm, helper);
+    }
+}
+
+/// The realm's native callback hooks, for `page`.
+pub(crate) fn bind(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+    *page.mutations.owner.borrow_mut() = Rc::downgrade(page);
     let weak = Rc::downgrade(page);
     s.realm().set_native_callback_hook(Some(Rc::new(move |s| {
         if let Some(page) = weak.upgrade() {

@@ -990,6 +990,34 @@ impl Realm {
         Ok(())
     }
 
+    /// Replaces the payload of the global object (`set_global_data`): a
+    /// window object reused by its browsing context's next document (HTML:
+    /// the first navigation from an initial about:blank document to a
+    /// same-origin one keeps the Window). Not from inside a callback that
+    /// borrows the old payload. Errors as `set_global_data`, and when no
+    /// payload was set.
+    pub fn replace_global_data<C: JsClass>(&self, data: C::Data) -> JsResult<()> {
+        self.inner.global_ctx()?;
+        let id = self
+            .inner
+            .engine
+            .classes
+            .borrow()
+            .id_of::<C>()
+            .ok_or_else(|| JsError::Type(format!("{} not registered", C::NAME).into()))?;
+        if self.inner.global_class != Some(id) {
+            return Err(JsError::Type(format!("realm global is not a {}", C::NAME).into()));
+        }
+        if self.inner.global_payload.get().is_null() {
+            return Err(JsError::Type("no global data to replace".into()));
+        }
+        let h = class::new_payload(&self.inner.engine, id, Kind::Instance, &self.inner, None, data);
+        let old = self.inner.global_payload.replace(h);
+        // SAFETY: the owned payload, which no scope borrows outside a callback.
+        unsafe { ((*old).drop_fn)(old) };
+        Ok(())
+    }
+
     /// Attaches embedder state reachable from callbacks via [`Scope::embedder`].
     pub fn set_embedder<T: Any>(&self, data: Rc<T>) {
         *self.inner.embedder.borrow_mut() = Some(data);
@@ -1814,6 +1842,16 @@ impl<'s> Scope<'s> {
             }
             let o = (*h).object.get();
             (!o.is_null()).then(|| Object::from_raw(self.ctx, o))
+        }
+    }
+
+    /// Forgets the wrapper of `key` in this realm: the next wrap for `key`
+    /// makes a new one (an object per document on a reused Window).
+    pub fn forget_identity(&self, key: IdentityKey) {
+        let old = self.realm.identity.borrow_mut().remove(&key);
+        if let (Some(weak), Some((_, release, _))) = (old, sys::spi::get().weak()) {
+            // SAFETY: weak handles are owned by the identity map.
+            unsafe { release(self.realm.engine.group(), weak) };
         }
     }
 

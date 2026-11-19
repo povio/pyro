@@ -1835,6 +1835,7 @@ impl Browser {
         let token =
             if inherit_url && !sandbox.opaque { inherit_from.as_ref().expect("creator").1 } else { self.next() };
         let base_url = if inherit_url { inherit_from.as_ref().expect("creator").2.clone() } else { opts.url.clone() };
+        let previous_origin = self.doc(page).map(|d| d.main_frame.origin.clone());
         {
             let mut state = self.doc_mut(page).ok_or(JsError::ContextDestroyed)?;
             state.main_frame.origin = actual_origin.clone();
@@ -1850,9 +1851,16 @@ impl Browser {
             self.forget_network_activity(page, &previous);
         }
         let scripts = self.page(page.page).ok_or(JsError::ContextDestroyed)?.init_scripts.clone();
-        let (frame_id, old, scripts, nav, old_dom) = {
+        let (frame_id, mut old, scripts, nav, old_dom, initial_same_origin) = {
             let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
             p.main_frame.network_idle = NetworkIdle::default();
+            // HTML Window reuse: the initial about:blank document of a frame,
+            // replaced by a document of its own origin.
+            let blank_loaded = p.main_frame.loaded && p.main_frame.page_dom.as_ref().is_some_and(|d| d.blank_requested());
+            let initial_same_origin = !blank_loaded
+                && p.nav.is_initial_blank()
+                && previous_origin.as_deref() == Some(actual_origin.as_str())
+                && actual_origin != "null";
             p.main_frame.origin = actual_origin.clone();
             p.main_frame.dom_content_loaded = false;
             p.main_frame.loaded = false;
@@ -1891,9 +1899,30 @@ impl Browser {
             p.nav.commit_document_at(&opts.url, entry_url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             p.nav.set_page_dom(&page_dom);
-            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
+            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced), initial_same_origin)
         };
         let (old_dom, replaced) = old_dom;
+        // A child frame's initial about:blank Window made reusable
+        // (`FrameHost::reuse_realm`) becomes the new document's: it keeps its
+        // realm, event target and what script put on it, as browsers keep
+        // the Window object.
+        let reused = match &old_dom {
+            Some(dom) if page.child.is_some() && initial_same_origin && dom.reusable_window() => {
+                let at = old.iter().position(|r| {
+                    r.world.is_none() && !r.realm.is_deferred() && !r.realm.is_disposed() && !r.realm.is_lingering()
+                });
+                match at {
+                    Some(at) if pyro_webapi::adopt_window(dom, &page_dom, old[at].realm.id()) => {
+                        let r = old.remove(at);
+                        window::cancel_timers(&r.realm);
+                        pyro_webapi::lifecycle::realm_disposed(dom, r.realm.id());
+                        Some(r.realm)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         // A child frame's previous document stays usable while script of
         // other documents holds it (its parent's, through a saved
         // `contentDocument`): HTML only makes it not fully active. Its realms
@@ -1966,7 +1995,12 @@ impl Browser {
         }
         self.sync_root(page.page);
         for world in worlds {
-            host.make_realm(page, nav.clone(), world)?;
+            match (&world, &reused) {
+                (None, Some(realm)) => host.reuse_realm(page, nav.clone(), realm)?,
+                _ => {
+                    host.make_realm(page, nav.clone(), world)?;
+                }
+            }
         }
         if page.child.is_none() {
             self.page_mut(page.page).expect("page").main_frame.realms = host.root.borrow().realms.clone();

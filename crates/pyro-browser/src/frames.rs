@@ -460,6 +460,11 @@ impl FrameHost {
         if world.is_none() {
             if let Some(child) = key.child {
                 self.keep_window_proxy(child, &realm)?;
+                // An iframe's initial about:blank Window: its first
+                // same-origin document reuses it (`reuse_realm`).
+                if nav.is_initial_blank() {
+                    dom.set_reusable_window(true);
+                }
             }
         }
         self.setup_realm(&realm, key, nav, &dom)?;
@@ -467,6 +472,37 @@ impl FrameHost {
         self.finish_realm(&realm, key, &world, &bindings, &scripts)?;
         self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
         Ok(realm)
+    }
+    /// HTML Window reuse: the main-world `realm` of the frame's initial
+    /// about:blank document becomes the realm of its new document (already
+    /// committed, same origin), whose Window target it took over
+    /// (`pyro_webapi::adopt_window`). What script put on the window (its
+    /// expandos, listeners, `onload`) stays; the bindings, frame indices and
+    /// init scripts are set up for the new document as for a new realm.
+    pub(crate) fn reuse_realm(self: &Rc<Self>, key: FrameKey, nav: Rc<PageNav>, realm: &Realm) -> Result<(), JsError> {
+        let frame = self.frame(key).ok_or(JsError::ContextDestroyed)?;
+        let dom = frame.page_dom.ok_or(JsError::ContextDestroyed)?;
+        let scripts: Vec<InitScript> =
+            self.settings.borrow().scripts.iter().filter(|s| s.world.is_none()).cloned().collect();
+        let data = WindowData::for_frame(self.sched.clone(), nav, &dom, Rc::downgrade(self), key);
+        {
+            let scope = realm.scope()?;
+            let old = scope.global_data::<Window>().ok_or(JsError::ContextDestroyed)?;
+            old.hand_over(&data);
+        }
+        realm.replace_global_data::<Window>(data)?;
+        realm.set_origin(Some(frame.origin.clone()));
+        {
+            let _setup = realm.setup_without_watchdog();
+            let scope = realm.scope()?;
+            pyro_webapi::rebind_window(&scope, dom.clone())?;
+            // Per document, not per Window: a new History object.
+            scope.forget_identity(pyro_js::IdentityKey(window::KEY_HISTORY, 0));
+        }
+        loader::install_module_fetcher(self.sched.clone(), key, realm);
+        self.push_realm(key, None, realm)?;
+        // Bindings stay installed on the global; init scripts run again.
+        self.finish_realm(realm, key, &None, &[], &scripts)
     }
     /// The frame's WindowProxy for its new main-world `realm`: the proxy of
     /// the frame's first document, which `realm` adopts, as browsers keep one
@@ -1448,6 +1484,7 @@ impl Browser {
         let result = if let Some(html) = srcdoc {
             self.begin_srcdoc(key, frame.id.clone(), html, parent.url, HistoryHandling::Replace).map(|_| ())
         } else {
+            let has_src = src.is_some();
             let raw = src.unwrap_or_default();
             let url = if raw.trim().is_empty() {
                 "about:blank".to_string()
@@ -1497,6 +1534,9 @@ impl Browser {
                 // A script that opened the initial document since (append,
                 // then `contentDocument.open()`) finishes it with `close()`.
                 if host.nav(key).map_or(true, |nav| nav.is_initial_blank()) {
+                    if let (true, Some(dom)) = (has_src, &frame.page_dom) {
+                        dom.note_blank_requested();
+                    }
                     self.finish_blank_document(key);
                 }
                 Ok(())

@@ -366,6 +366,17 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: pyro_js::Value<
     page.intersections.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
     Ok(())
 }
+/// The realm of `old`'s window now serves `new` (Window reuse).
+pub(crate) fn adopt_realm(old: &PageDom, new: &Rc<PageDom>, realm: RealmId) {
+    *new.intersections.owner.borrow_mut() = Rc::downgrade(new);
+    if new.intersections.origin.get().is_none() {
+        new.intersections.origin.set(Some(Instant::now()));
+    }
+    let helper = old.intersections.helpers.borrow_mut().remove(&realm);
+    if let Some(helper) = helper {
+        new.intersections.helpers.borrow_mut().insert(realm, helper);
+    }
+}
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<IntersectionObserver>();
     engine.register::<IntersectionObserverEntry>();

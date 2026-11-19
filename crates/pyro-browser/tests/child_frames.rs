@@ -937,3 +937,48 @@ fn object_fallback_on_failure_and_document_once_rendered() {
         "missing:error,hidden:load|doc|1"
     );
 }
+
+/// HTML Window reuse: an iframe's first document of its own origin keeps
+/// the Window of its initial about:blank document, so what the parent put on
+/// `contentWindow` right after inserting the iframe (expandos, listeners,
+/// `onload`) is there for the loaded document. A second navigation gets a
+/// new Window (another origin does too, see
+/// `child_location_navigation_keeps_parent_and_sibling_realms`).
+#[test]
+fn first_same_origin_document_reuses_the_initial_window() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("https://example.test/main", "text/html", "<body></body>", Duration::ZERO);
+    loader.insert(
+        "https://example.test/child",
+        "text/html",
+        "<p id=c>child</p><script>window.seenByChild = typeof window.marker; addEventListener('load', () => parent.order.push('child-listener'))</script>",
+        Duration::from_millis(10),
+    );
+    loader.insert("https://example.test/next", "text/html", "<p id=n>next</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.order = []; globalThis.f = document.createElement('iframe'); f.src = '/child'; \
+         document.body.appendChild(f); globalThis.w = f.contentWindow; globalThis.blankDoc = w.document; \
+         w.marker = 'set'; w.addEventListener('load', () => order.push('parent-listener')); \
+         w.onload = () => order.push('onload');",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "f.contentDocument.getElementById('c').textContent"), "child");
+    assert_eq!(eval(&root, "f.contentWindow === w"), "true");
+    assert_eq!(eval(&root, "String(w.marker) + ' ' + w.seenByChild"), "set string");
+    assert_eq!(eval(&root, "w.document === f.contentDocument && w.document !== blankDoc"), "true");
+    assert_eq!(eval(&root, "order.join(',')"), "parent-listener,onload,child-listener");
+    // A second navigation of the reusing frame makes a new Window.
+    eval(&root, "f.src = '/next'");
+    settle(&mut t);
+    assert_eq!(
+        eval(&root, "f.contentDocument.getElementById('n').textContent + ' ' + String(w.marker)"),
+        "next undefined"
+    );
+}
