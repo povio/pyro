@@ -158,6 +158,23 @@ pub(crate) struct LayoutPassState<'doc> {
 }
 
 impl<'doc> LayoutPassState<'doc> {
+    /// pyro: whether `node_id`'s writing mode differs from that of the algorithm laying it out
+    /// (its `writing-mode` value, which `text-orientation` does not change; css-writing-modes-3 §3.2).
+    fn establishes_writing_mode_root(&self, node_id: NodeId) -> bool {
+        #[cfg(feature = "writing-mode")]
+        {
+            use stylo_taffy::WritingMode as Wm;
+            let axes = Wm::VERTICAL | Wm::VERTICAL_LR | Wm::LINE_INVERTED | Wm::VERTICAL_SIDEWAYS;
+            let own = self.layout_wm_of(dom_node_id(node_id));
+            (own & axes) != (self.layout_wm & axes)
+        }
+        #[cfg(not(feature = "writing-mode"))]
+        {
+            let _ = node_id;
+            false
+        }
+    }
+
     /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
     /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
     #[inline]
@@ -2309,7 +2326,11 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
     fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
         // pyro: a multi-column container is a block formatting context root (Multi-column
         // Layout 1 §2), which its parent keeps clear of floats.
+        // pyro: so is a block container whose writing mode is not its parent's (css-writing-modes-3
+        // §3.2: it establishes an independent formatting context): an orthogonal flow beside
+        // floats is placed clear of them.
         multicol::is_multicol_node(self.node_from_id(child_node_id))
+            || self.establishes_writing_mode_root(child_node_id)
     }
 
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
