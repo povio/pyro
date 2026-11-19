@@ -498,7 +498,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1407,42 @@
+@@ -1128,37 +1407,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -569,6 +569,12 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    inset: 0;
 +    pointer-events: none !important;
 +    background-color: transparent;
++}
++
++/* pyro: preformatted and code text gets no automatic spacing between ideographs and letters
++ * (HTML § 15.3.4, as Gecko; WPT css-text `text-autospace-preformatted-001`). */
++pre, listing, plaintext, xmp, code, kbd, samp, tt {
++    text-autospace: no-autospace;
  }
 diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animation.rs
 new file mode 100644
