@@ -1914,8 +1914,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             }
 
             let fill_color = if shadows_only { Some(Color::TRANSPARENT) } else { brush_override };
+            // pyro: the `::first-line` box's `opacity` (Gecko applies it; WPT css-pseudo
+            // `first-line-opacity-001`), on its text's colour.
+            let first_line_opacity = on_first_line
+                .and_then(|id| doc.get_node(id))
+                .and_then(|node| node.primary_styles())
+                .map_or(1.0, |style| style.get_effects().opacity);
             let fill_color = fill_color.unwrap_or_else(|| {
                 let own = stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK);
+                let own = if first_line_opacity < 1.0 { own.multiply_alpha(first_line_opacity) } else { own };
                 // pyro: selected text in its highlight's colour.
                 match highlighting {
                     true => crate::highlight::highlight_of(doc, style.brush.id, highlights)
