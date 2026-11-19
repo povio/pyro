@@ -407,14 +407,11 @@ impl BaseDocument {
                 if n.primary_styles().is_some_and(|style| {
                     (matches!(style.clone_position(), Position::Absolute | Position::Fixed)
                         && matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_)))
-                        // (Not one the user scrolls, `scroll` or `auto`: a box escaping it would be
-                        // painted in its scrolled space, which a fixed box under a scrolled window
-                        // is not;
-                        // WPT css-position `position-sticky-escape-scroller-002`.)
+                        // (A scroller too: the painter does not cull one with boxes escaping it,
+                        // which lie wherever their containing block puts them; WPT css-position
+                        // `position-sticky-escape-scroller-002`.)
                         || (!matches!(style.get_box().overflow_x, style::values::computed::Overflow::Visible)
                             || !matches!(style.get_box().overflow_y, style::values::computed::Overflow::Visible))
-                            && !matches!(style.get_box().overflow_x, style::values::computed::Overflow::Scroll | style::values::computed::Overflow::Auto)
-                            && !matches!(style.get_box().overflow_y, style::values::computed::Overflow::Scroll | style::values::computed::Overflow::Auto)
                             && !n.is_root_element()
                             && !doc.body_overflow_goes_to_viewport(id)
                             && n.element_data().is_some_and(|e| e.image_data().is_none() && e.sub_doc_data().is_none())

@@ -1226,6 +1226,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 reach > 0.0 && !outside(screen_bbox.inflate(reach, reach))
             })
             && !(node.flags.is_inline_root() && self.dom.inline_root_has_relative_spans(node_id))
+            // pyro: nor one painting boxes that escape its clip (`has_clip_escapes`): they lie
+            // wherever their containing block puts them (a fixed box under a scroller scrolled out
+            // of view; WPT css-position `position-sticky-escape-scroller-002`).
+            && !has_clip_escapes(self.dom.as_ref().tree(), node)
         {
             return;
         }
