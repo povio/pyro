@@ -327,8 +327,17 @@ impl ElementCx<'_, '_> {
                 continue;
             }
             let (left, right) = if a.x <= b.x { (a, b) } else { (b, a) };
-            let center = ((left.x + left.width) as f64 + right.x as f64) / 2.0 * scale;
-            let x0 = (center - thickness / 2.0).round();
+            // pyro: centred in the gap between the columns' unsnapped edges, and snapped outwards:
+            // the content beside it is snapped from those edges in Chromium (a column box at
+            // 47.375..55.5 paints 47..56), here from its own (47..55), which would leave the gap's
+            // partial pixels bare (WPT css-multicol `equal-gap-and-rule`).
+            // (Solid rules only: a dotted or dashed one's marks are sized by its width.)
+            let exact = left.exact_x.is_finite() && right.exact_x.is_finite();
+            let (left_x, right_x) = if exact { (left.exact_x, right.exact_x) } else { (left.x, right.x) };
+            let center = ((left_x + left.width) as f64 + right_x as f64) / 2.0 * scale;
+            let outwards = exact && style == BorderStyle::Solid;
+            let x0 = if outwards { (center - thickness / 2.0).floor() } else { (center - thickness / 2.0).round() };
+            let thickness = if outwards { (center + thickness / 2.0).ceil() - x0 } else { thickness };
             let y0 = (a.top as f64 * scale).round();
             let y1 = ((a.top + a.height) as f64 * scale).round();
             if y1 <= y0 {

@@ -123,6 +123,9 @@ pub struct ColumnFragment {
     /// pyro: how much of `height` reaches past the column's own height to the end of a
     /// definite-height box's content box (its last row, for its rules): no content fills it.
     pub extended: f32,
+    /// pyro: the column box's left edge before it is snapped to device pixels (`x`): where its
+    /// rules are placed in the gaps.
+    pub exact_x: f32,
 }
 
 impl ColumnFragment {
@@ -997,6 +1000,7 @@ impl LayoutPassState<'_> {
                     offset: Point { x: x - pb.left, y: row - start },
                     spanner: false,
                     extended,
+                    exact_x: f32::NAN,
                 });
             }
         }
@@ -1047,6 +1051,7 @@ impl LayoutPassState<'_> {
                         offset: Point { x: x - pb.left, y: top - a },
                         spanner: false,
                         extended: 0.0,
+                        exact_x: f32::NAN,
                     });
                     placed += 1;
                 }
@@ -1122,6 +1127,7 @@ impl LayoutPassState<'_> {
                             offset: Point { x: x - pb.left, y: top - a },
                             spanner: false,
                             extended: 0.0,
+                            exact_x: f32::NAN,
                         });
                     }
                     top += height;
@@ -1147,6 +1153,7 @@ impl LayoutPassState<'_> {
                         offset: Point { x: pb.left - indent, y: spanner_top - start },
                         spanner: true,
                         extended: 0.0,
+                        exact_x: f32::NAN,
                     });
                     top = spanner_top + (end - start);
                     // (After the last of its content the break is after the container, the outer
@@ -1180,6 +1187,7 @@ impl LayoutPassState<'_> {
                     offset: Point { x: x - pb.left, y: snap(row_top - start) },
                     spanner: false,
                     extended: 0.0,
+                    exact_x: f32::NAN,
                 });
                 row_top += rest;
                 break;
@@ -1244,6 +1252,7 @@ impl LayoutPassState<'_> {
                             offset: Point { x: x - pb.left, y: snap(top - start) },
                             spanner: false,
                             extended: 0.0,
+                            exact_x: f32::NAN,
                         });
                     }
                     row_top = last_top + last_height;
@@ -1260,6 +1269,7 @@ impl LayoutPassState<'_> {
                             offset: Point { x: pb.left - indent, y: snap(top - start) },
                             spanner: true,
                             extended: 0.0,
+                            exact_x: f32::NAN,
                         });
                         row_top = top + (end - start);
                         // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -1330,6 +1340,7 @@ impl LayoutPassState<'_> {
                         offset: Point { x: x - pb.left, y: snap(top - start) },
                         spanner: false,
                         extended: 0.0,
+                        exact_x: f32::NAN,
                     });
                 }
                 row_top += (rows - 1) as f32 * (column_height + row_gap) + last_height;
@@ -1354,6 +1365,7 @@ impl LayoutPassState<'_> {
                     offset: Point { x: pb.left - indent, y: snap(row_top - start) },
                     spanner: true,
                     extended: 0.0,
+                    exact_x: f32::NAN,
                 });
                 row_top += end - start;
                 // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -1377,6 +1389,18 @@ impl LayoutPassState<'_> {
                 fragment.extended = height - fragment.height;
                 fragment.height = height;
             }
+        }
+        // pyro: the columns' unsnapped left edges (`ColumnFragment::exact_x`).
+        let pitch = column_width + gap;
+        for fragment in &mut fragments {
+            fragment.exact_x = if fragment.spanner || pitch <= EPSILON {
+                fragment.x
+            } else if multicol.rtl {
+                let start = pb.left + content_width - column_width;
+                start - ((start - fragment.x) / pitch).round() * pitch
+            } else {
+                pb.left + ((fragment.x - pb.left) / pitch).round() * pitch
+            };
         }
         // The first shows what lies above the strip, the last what lies below.
         if let Some(first) = fragments.first_mut() {
@@ -2747,6 +2771,7 @@ mod tests {
             offset: Point { x: offset.0, y: offset.1 },
             spanner: false,
             extended: 0.0,
+            exact_x: f32::NAN,
         }
     }
 
@@ -2805,6 +2830,7 @@ mod tests {
             offset: Point { x: 0.0, y: -100.0 },
             spanner: true,
             extended: 0.0,
+            exact_x: f32::NAN,
         };
         let columns = ColumnFragments {
             nested: None,
