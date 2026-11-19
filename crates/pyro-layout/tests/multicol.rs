@@ -228,3 +228,17 @@ fn nested_column_height_rows_follow_the_outer_columns() {
     assert_eq!(r.len(), 12, "{r:?}");
     assert_eq!(r[6], [50.0, 0.0, 25.0, 25.0], "the fourth row at the top of the second outer column");
 }
+
+/// pyro: the fragment cap is the container's, not each part's: hundreds of spanners with
+/// columns of no height left between them make no more fragments in all than the cap.
+#[test]
+fn parts_between_spanners_share_the_fragment_cap() {
+    let sections: String = (0..300)
+        .map(|i| format!("<div id=s{i} style='height:2000px'></div><div style='column-span:all;height:1px'></div>"))
+        .collect();
+    let p = page(&format!(
+        "<!doctype html><body style='margin:0'><div style='columns:2;column-gap:0;height:10px;width:200px'>{sections}</div>"
+    ));
+    let total: usize = (0..300).map(|i| p.layout.client_rects(&p.dom, p.id(&format!("s{i}"))).len()).sum();
+    assert!(total <= 10_000 + 300, "{total} pieces");
+}

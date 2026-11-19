@@ -1044,6 +1044,8 @@ impl LayoutPassState<'_> {
             if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
                 // (The part `run_start..run_end` of the strip: no copy of the breaks per part.)
                 let run = Part { breaks: &breaks, start: run_start, end: run_end };
+                // (What is left of the container's fragment cap: one cap for all its parts.)
+                let left = fragment_cap.saturating_sub(fragments.len()).max(1);
                 // pyro: rows of an explicit `column-height` (`slotted`, below).
                 if let Some(rows) = slotted {
                     let (top, available) = rows.content_start(row_top);
@@ -1059,7 +1061,7 @@ impl LayoutPassState<'_> {
                         row = (rows.next(rows.slot(top).0), rows.height);
                     }
                     if let Some(rest) = rest {
-                        for (i, (a, b)) in rest.fill(rows.height, fragment_cap).columns.into_iter().enumerate() {
+                        for (i, (a, b)) in rest.fill(rows.height, left.saturating_sub(placed.len()).max(1)).columns.into_iter().enumerate() {
                             placed.push((a, b, row.0 + (i / count.max(1)) as f32 * rows.stride, rows.height));
                         }
                     }
@@ -1071,7 +1073,7 @@ impl LayoutPassState<'_> {
                         let from = placed.iter().position(|p| p.2 == last_top).unwrap_or(0);
                         let tail = Part { breaks: &breaks, start: placed[from].0, end: run_end };
                         let height = tail.balance(count, Some(limit)).min(limit);
-                        let refilled = tail.fill(height, fragment_cap).columns;
+                        let refilled = tail.fill(height, left).columns;
                         if refilled.len() <= count {
                             placed.truncate(from);
                             placed.extend(refilled.into_iter().map(|(a, b)| (a, b, last_top, height)));
@@ -1146,7 +1148,7 @@ impl LayoutPassState<'_> {
                 // pyro: `column-wrap: wrap`: each `count` columns make a row (css-multicol-2).
                 let per_row = if fixed_height.is_some() && multicol.wrap { count.max(1) } else { usize::MAX };
                 let row_gap = multicol.row_gap(definite_height);
-                let mut columns = run.fill(column_height, fragment_cap).columns;
+                let mut columns = run.fill(column_height, left).columns;
                 let rows = columns.len().div_ceil(per_row).max(1);
                 // pyro: wrapping at the container's height (`column-height: auto`), `column-fill:
                 // balance` balances the last row (of at most `count` columns), that height its
@@ -1161,7 +1163,7 @@ impl LayoutPassState<'_> {
                 {
                     let tail = Part { breaks: &breaks, start: tail_start, end: run_end };
                     let height = tail.balance(count, Some(column_height)).min(column_height);
-                    let refilled = tail.fill(height, fragment_cap).columns;
+                    let refilled = tail.fill(height, left).columns;
                     if refilled.len() <= count {
                         columns.truncate(last_row);
                         columns.extend(refilled);

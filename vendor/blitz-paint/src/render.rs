@@ -194,6 +194,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// the columns) or all but them (`false`: each column). Its unfragmented children are the
     /// out-of-flow boxes it is the containing block of, placed against it, not in a column.
     pub(crate) multicol_pass: std::cell::Cell<Option<(NodeId, bool)>>,
+    /// pyro: the clip (screen space) of the element being painted (`render_element`): dotted and
+    /// dashed borders make their marks in it only.
+    pub(crate) paint_clip: std::cell::Cell<Rect>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -309,6 +312,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             inline_outlines: std::cell::Cell::new(0),
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
+            paint_clip: std::cell::Cell::new(Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)),
             backgrounds: true,
             fractional_text_x: false,
             composite_3d: false,
@@ -913,6 +917,19 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     /// Approaching rendering this way guarantees we have all the styles we need when rendering text with not having
     /// to traverse back to the parent for its styles, or needing to pass down styles
     fn render_element(
+        &self,
+        scene: &mut impl PaintScene,
+        node_id: NodeId,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        // pyro: the element's clip while it paints (`PaintContext::paint_clip`).
+        let outer_clip = self.paint_clip.replace(clip_rect);
+        self.render_element_clipped(scene, node_id, parent_style_transform, clip_rect);
+        self.paint_clip.set(outer_clip);
+    }
+
+    fn render_element_clipped(
         &self,
         scene: &mut impl PaintScene,
         node_id: NodeId,

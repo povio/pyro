@@ -1,7 +1,7 @@
 use anyrender::PaintScene;
 use blitz_dom::CopyStyleGetters;
 use blitz_dom::node::SpecialElementData;
-use kurbo::{BezPath, Cap, Circle, Insets, Join, Point, Rect, Shape as _, Stroke, Vec2};
+use kurbo::{Affine, BezPath, Cap, Circle, Insets, Join, Point, Rect, Shape as _, Stroke, Vec2};
 use peniko::{Color, Fill};
 use smallvec::SmallVec;
 use style::{
@@ -950,6 +950,20 @@ impl ElementCx<'_, '_> {
     /// line around the whole box, clipped to the side.
     fn draw_dotted_dashed_sides(&self, scene: &mut impl PaintScene, frame: &CssBox, sides: [Side; 4]) {
         let scale = self.scale;
+        // pyro: the part of the element's space that can show (its paint clip): a side a million
+        // pixels long makes the marks in it only (`straight_side_marks`).
+        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
+        let seen = (screen * self.transform).inverse().transform_rect_bbox(self.context.paint_clip.get());
+        let seen = (seen.x0.is_finite() && seen.y0.is_finite() && seen.x1.is_finite() && seen.y1.is_finite())
+            .then_some(seen);
+        // The visible interval of a side from `origin` along `along` (unit), when bounded.
+        let visible = |origin: Point, along: Vec2| {
+            seen.map(|r| {
+                let ds = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x0, r.y1), Point::new(r.x1, r.y1)]
+                    .map(|p| (p - origin).dot(along));
+                (ds.iter().copied().fold(f64::INFINITY, f64::min), ds.iter().copied().fold(f64::NEG_INFINITY, f64::max))
+            })
+        };
         let thickness = |edge: Edge| match edge {
             Edge::Top => frame.border_width.y0,
             Edge::Right => frame.border_width.x1,
@@ -1018,7 +1032,11 @@ impl ElementCx<'_, '_> {
                     let mut dots = BezPath::new();
                     let mut at = 0.0;
                     while at < line.length {
-                        dots.extend(Circle::new(line.point_at(at), radius).path_elements(0.1));
+                        let center = line.point_at(at);
+                        // (Only the dots that can show.)
+                        if seen.is_none_or(|r| r.inflate(radius, radius).contains(center)) {
+                            dots.extend(Circle::new(center, radius).path_elements(0.1));
+                        }
                         at += period;
                     }
                     scene.fill(Fill::NonZero, self.transform, color, None, &dots);
@@ -1058,11 +1076,11 @@ impl ElementCx<'_, '_> {
                     }
                 };
                 let (_, marks, dots) = &mut open[group];
-                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale, None);
+                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale, visible(origin, side.0.0));
                 continue;
             }
             let mut marks = BezPath::new();
-            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale, None);
+            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale, visible(origin, side.0.0));
             // The side's box, an end cut back along the corner's diagonal where
             // it is mitred. Clockwise, `before` is at the start of the top and
             // right sides and at the end of the bottom and left ones.
