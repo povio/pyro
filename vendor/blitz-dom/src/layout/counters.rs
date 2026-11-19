@@ -625,22 +625,49 @@ fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, lis
 /// that value, plus the last non-zero negated increment.
 fn reversed_initial(doc: &BaseDocument, node: NodeId, name: &Atom) -> i32 {
     let (mut num, mut last) = (0i32, 0i32);
-    scan_reversed_scope(doc, node, name, &mut num, &mut last);
+    // pyro: the counter's scope (CSS Lists 3 § 4.4): the element itself, its descendants, and
+    // its following siblings with theirs. (Not the siblings for `list-item`: the items after a
+    // nested reversed list are its parent list's, WPT css-lists `li-value-reversed-007a`.)
+    let done = scan_reversed_element(doc, node, name, &mut num, &mut last, true)
+        || (&**name != "list-item" && doc.nodes[node].parent.is_some_and(|parent| {
+            let siblings = &doc.nodes[parent].children;
+            let at = siblings.iter().position(|&id| id == node).map_or(siblings.len(), |at| at + 1);
+            siblings[at..]
+                .iter()
+                .any(|&sibling| scan_reversed_element(doc, sibling, name, &mut num, &mut last, false))
+        }));
+    let _ = done;
     num.saturating_add(last)
 }
 
 /// `true` when a box that sets the counter ended the scan.
 fn scan_reversed_scope(doc: &BaseDocument, node: NodeId, name: &Atom, num: &mut i32, last: &mut i32) -> bool {
+    doc.nodes[node]
+        .children
+        .iter()
+        .any(|&child| scan_reversed_element(doc, child, name, num, last, false))
+}
+
+/// One element of a reversed counter's scope and its descendants (`own`: the element that
+/// resets the counter); `true` when a box that sets the counter ended the scan.
+fn scan_reversed_element(
+    doc: &BaseDocument,
+    child: NodeId,
+    name: &Atom,
+    num: &mut i32,
+    last: &mut i32,
+    own: bool,
+) -> bool {
     let list_item = &**name == "list-item";
-    for &child in doc.nodes[node].children.iter() {
-        let Some(style) = doc.nodes[child].primary_styles() else { continue };
+    {
+        let Some(style) = doc.nodes[child].primary_styles() else { return false };
         let display = style.clone_display();
         if display == Display::None {
-            continue;
+            return false;
         }
         let counters = style.get_counters();
-        if counters.counter_reset.iter().any(|pair| pair.name.0 == *name) {
-            continue;
+        if !own && counters.counter_reset.iter().any(|pair| pair.name.0 == *name) {
+            return false;
         }
         if !display.is_contents() {
             let mut increments = counters.counter_increment.iter().filter(|pair| pair.name.0 == *name).peekable();
@@ -672,15 +699,11 @@ fn scan_reversed_scope(doc: &BaseDocument, node: NodeId, name: &Atom, num: &mut 
         // (CSS Contain 2 § 3.3; WPT css-contain `contain-style-ol-ordinal-reversed`).
         let contains_style = !display.is_contents()
             && style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE);
-        drop(style);
         if contains_style {
-            continue;
-        }
-        if crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last)) {
-            return true;
+            return false;
         }
     }
-    false
+    crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last))
 }
 
 /// pyro: the `value` attribute of an `li` (`node`, style `style`), a presentational hint
