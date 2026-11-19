@@ -321,6 +321,10 @@ pub enum AlignmentBaseline {
 pub enum BaselineShift {
     /// Raise the box by the given distance (in layout units). Negative values lower it.
     Length(f32),
+    /// pyro: like [`Length`](Self::Length), resolved from a percentage of the box's own line
+    /// height (`vertical-align: <percentage>`): a line that CSS `text-fit` scales scales it with
+    /// that line height.
+    LineHeight(f32),
     /// Lower the box to the proper position for subscripts of the parent span.
     Sub,
     /// Raise the box to the proper position for superscripts of the parent span.
@@ -389,7 +393,8 @@ impl VerticalAlign {
     pub(crate) fn nearly_eq(self, other: Self) -> bool {
         self.alignment == other.alignment
             && match (self.shift, other.shift) {
-                (BaselineShift::Length(a), BaselineShift::Length(b)) => nearly_eq(a, b),
+                (BaselineShift::Length(a), BaselineShift::Length(b))
+                | (BaselineShift::LineHeight(a), BaselineShift::LineHeight(b)) => nearly_eq(a, b),
                 (a, b) => a == b,
             }
     }
@@ -398,6 +403,10 @@ impl VerticalAlign {
         match self.shift {
             BaselineShift::Length(value) => Self {
                 shift: BaselineShift::Length(value * scale),
+                ..self
+            },
+            BaselineShift::LineHeight(value) => Self {
+                shift: BaselineShift::LineHeight(value * scale),
                 ..self
             },
             _ => self,

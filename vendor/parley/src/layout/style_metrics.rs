@@ -270,6 +270,12 @@ pub(crate) fn scale_style_metrics<B: Brush>(
             .scaled(scale);
         let font_size = base.font_size * scale;
         let line_height = style.line_height.resolve(font_size, &font, quantum);
+        // A percentage `vertical-align` scales with the line height.
+        let base_line_height = style.line_height.resolve(
+            base.font_size,
+            &base.font.unwrap_or_else(|| FontMetrics::fallback(base.font_size)),
+            quantum,
+        );
         let mut metrics = StyleMetrics::from_font(&font, line_height, quantum);
         metrics.font = Some(font);
         metrics.font_size = font_size;
@@ -298,6 +304,12 @@ pub(crate) fn scale_style_metrics<B: Brush>(
             } else {
                 let parent = &out[start + usize::from(base.parent).min(index - 1)];
                 let own = Some((metrics.ascent, metrics.descent, metrics.x_height));
+                let mut align = align;
+                if let BaselineShift::LineHeight(length) = &mut align.shift
+                    && base_line_height != 0.
+                {
+                    *length *= line_height / base_line_height;
+                }
                 let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
                 metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
                 metrics.baseline_offset = if quantize {
@@ -489,7 +501,7 @@ pub(crate) fn shift_from_parent(
         (AlignmentBaseline::XMiddle, Some((_, _, x_height))) => parent.x_height / 2. - x_height / 2.,
     };
     let shift = match align.shift {
-        BaselineShift::Length(length) => length,
+        BaselineShift::Length(length) | BaselineShift::LineHeight(length) => length,
         // Constants as used by WebKit and Blink.
         BaselineShift::Sub => -(parent.font_size / 5.),
         BaselineShift::Super => parent.font_size / 3.,

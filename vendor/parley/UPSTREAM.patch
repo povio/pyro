@@ -4063,7 +4063,7 @@ index 4eccc6c..9dc98a3 100644
  
          gaps
 diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
-index 7b7b147..fa256af 100644
+index 7b7b147..448091f 100644
 --- a/src/layout/style_metrics.rs
 +++ b/src/layout/style_metrics.rs
 @@ -56,7 +56,7 @@ use fontique::{Query, QueryFamily};
@@ -4228,7 +4228,7 @@ index 7b7b147..fa256af 100644
                  } else {
                      metrics.exact_baseline_offset
                  };
-@@ -173,6 +250,68 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
+@@ -173,6 +250,80 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
      }
  }
  
@@ -4252,6 +4252,12 @@ index 7b7b147..fa256af 100644
 +            .scaled(scale);
 +        let font_size = base.font_size * scale;
 +        let line_height = style.line_height.resolve(font_size, &font, quantum);
++        // A percentage `vertical-align` scales with the line height.
++        let base_line_height = style.line_height.resolve(
++            base.font_size,
++            &base.font.unwrap_or_else(|| FontMetrics::fallback(base.font_size)),
++            quantum,
++        );
 +        let mut metrics = StyleMetrics::from_font(&font, line_height, quantum);
 +        metrics.font = Some(font);
 +        metrics.font_size = font_size;
@@ -4280,6 +4286,12 @@ index 7b7b147..fa256af 100644
 +            } else {
 +                let parent = &out[start + usize::from(base.parent).min(index - 1)];
 +                let own = Some((metrics.ascent, metrics.descent, metrics.x_height));
++                let mut align = align;
++                if let BaselineShift::LineHeight(length) = &mut align.shift
++                    && base_line_height != 0.
++                {
++                    *length *= line_height / base_line_height;
++                }
 +                let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
 +                metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
 +                metrics.baseline_offset = if quantize {
@@ -4297,7 +4309,7 @@ index 7b7b147..fa256af 100644
  /// The metrics of a shaped run using `font` at `font_size`, if any: the shaper has then already
  /// computed the metrics this style needs. Only used at the font's default variation location,
  /// which covers the common non-variable-font case without re-resolving axes.
-@@ -215,31 +354,57 @@ pub(crate) struct BoxMetrics {
+@@ -215,31 +366,57 @@ pub(crate) struct BoxMetrics {
      pub(crate) over: f32,
      /// Distance from the baseline to the bottom of the line-height expanded box.
      pub(crate) under: f32,
@@ -4365,7 +4377,7 @@ index 7b7b147..fa256af 100644
          }
      }
  }
-@@ -248,8 +413,9 @@ impl StyleMetrics {
+@@ -248,8 +425,9 @@ impl StyleMetrics {
      /// The font-derived metrics of a span box: its [`BoxMetrics`] and x-height. The remaining
      /// fields describe the box's place in the style tree and are filled in by
      /// [`resolve_style_metrics`].
@@ -4377,7 +4389,7 @@ index 7b7b147..fa256af 100644
          // Fonts without an `OS/2.sxHeight` get the same estimate Gecko and Blink use
          // (`DEFAULT_XHEIGHT_FACTOR`); css-inline-3 §A.2 suggests measuring the `x` glyph or
          // `0.5em` instead, but this keeps us in line with browsers.
-@@ -258,6 +424,10 @@ impl StyleMetrics {
+@@ -258,6 +436,10 @@ impl StyleMetrics {
              ascent: box_metrics.ascent,
              descent: box_metrics.descent,
              x_height: if quantize { x_height.round() } else { x_height },
@@ -4388,7 +4400,7 @@ index 7b7b147..fa256af 100644
              over: box_metrics.over,
              under: box_metrics.under,
              baseline_offset: 0.,
-@@ -265,6 +435,31 @@ impl StyleMetrics {
+@@ -265,6 +447,31 @@ impl StyleMetrics {
              aligned_subtree_root: 0,
              parent: 0,
              font_size: 0.,
@@ -4420,7 +4432,7 @@ index 7b7b147..fa256af 100644
          }
      }
  }
-@@ -277,13 +472,21 @@ pub(crate) fn shift_from_parent(
+@@ -277,16 +484,24 @@ pub(crate) fn shift_from_parent(
      align: VerticalAlign,
      over: f32,
      under: f32,
@@ -4446,8 +4458,12 @@ index 7b7b147..fa256af 100644
 +        (AlignmentBaseline::XMiddle, Some((_, _, x_height))) => parent.x_height / 2. - x_height / 2.,
      };
      let shift = match align.shift {
-         BaselineShift::Length(length) => length,
-@@ -321,21 +524,39 @@ pub(crate) fn inline_box_placement(
+-        BaselineShift::Length(length) => length,
++        BaselineShift::Length(length) | BaselineShift::LineHeight(length) => length,
+         // Constants as used by WebKit and Blink.
+         BaselineShift::Sub => -(parent.font_size / 5.),
+         BaselineShift::Super => parent.font_size / 3.,
+@@ -321,21 +536,39 @@ pub(crate) fn inline_box_placement(
      parent_style: u16,
      style_metrics: &[StyleMetrics],
      quantize: bool,
@@ -4491,7 +4507,7 @@ index 7b7b147..fa256af 100644
          },
          ascent,
          descent,
-@@ -366,3 +587,11 @@ fn first_available_font<B: Brush>(
+@@ -366,3 +599,11 @@ fn first_available_font<B: Brush>(
          synthesis: font.synthesis,
      })
  }
@@ -5931,7 +5947,7 @@ index 0000000..e8fc4f6
 +    }
 +}
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..9650a8b 100644
+index d9977df..0338df3 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -43,6 +43,158 @@ pub enum WhiteSpaceCollapse {
@@ -6160,7 +6176,39 @@ index d9977df..9650a8b 100644
  }
  
  /// A shift applied to a span (or [`InlineBox`]) after [`AlignmentBaseline`] alignment. Mirrors
-@@ -277,6 +460,31 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -138,6 +321,10 @@ pub enum AlignmentBaseline {
+ pub enum BaselineShift {
+     /// Raise the box by the given distance (in layout units). Negative values lower it.
+     Length(f32),
++    /// pyro: like [`Length`](Self::Length), resolved from a percentage of the box's own line
++    /// height (`vertical-align: <percentage>`): a line that CSS `text-fit` scales scales it with
++    /// that line height.
++    LineHeight(f32),
+     /// Lower the box to the proper position for subscripts of the parent span.
+     Sub,
+     /// Raise the box to the proper position for superscripts of the parent span.
+@@ -206,7 +393,8 @@ impl VerticalAlign {
+     pub(crate) fn nearly_eq(self, other: Self) -> bool {
+         self.alignment == other.alignment
+             && match (self.shift, other.shift) {
+-                (BaselineShift::Length(a), BaselineShift::Length(b)) => nearly_eq(a, b),
++                (BaselineShift::Length(a), BaselineShift::Length(b))
++                | (BaselineShift::LineHeight(a), BaselineShift::LineHeight(b)) => nearly_eq(a, b),
+                 (a, b) => a == b,
+             }
+     }
+@@ -217,6 +405,10 @@ impl VerticalAlign {
+                 shift: BaselineShift::Length(value * scale),
+                 ..self
+             },
++            BaselineShift::LineHeight(value) => Self {
++                shift: BaselineShift::LineHeight(value * scale),
++                ..self
++            },
+             _ => self,
+         }
+     }
+@@ -277,6 +469,31 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -6192,7 +6240,7 @@ index d9977df..9650a8b 100644
  }
  
  /// Unresolved styles.
-@@ -334,6 +542,90 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +551,90 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -6283,7 +6331,7 @@ index d9977df..9650a8b 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +657,20 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +666,20 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),

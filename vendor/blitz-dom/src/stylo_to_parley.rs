@@ -618,7 +618,10 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
                     stylo::LineHeight::Number(num) => font_size * num.0,
                     stylo::LineHeight::Length(value) => value.0.px(),
                 };
-                lp.resolve(Length::new(line_height)).px()
+                return parley::VerticalAlign::new(
+                    alignment,
+                    parley::BaselineShift::LineHeight(lp.resolve(Length::new(line_height)).px()),
+                );
             } else {
                 lp.resolve(Length::new(0.0)).px()
             };
