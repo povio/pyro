@@ -911,12 +911,27 @@ impl Layout {
         }
         match self.html_local(dom, idx) {
             Some("html") => matches!(dom.n(parent).kind, NodeKind::Document(_)),
-            Some("body") => self.html_local(dom, parent) == Some("html") && self.is_root_idx(dom, parent),
+            // pyro: not a body with layout or paint containment (nor under a root with it), whose
+            // overflow does not go to the viewport (CSS Contain 2 § 3.2, § 3.4): it scrolls as an
+            // element does (WPT css-contain `contain-body-overflow-002`).
+            Some("body") => {
+                self.html_local(dom, parent) == Some("html")
+                    && self.is_root_idx(dom, parent)
+                    && !self.contains_layout_or_paint(dom, idx)
+                    && !self.contains_layout_or_paint(dom, parent)
+            }
             _ => false,
         }
     }
 
-    /// `Document.isQuirksMode` (Document.zig:160-171): an HTML document
+    /// Whether the element at `idx` has layout or paint containment (`contain: layout`, `paint`,
+    /// `content` or `strict`).
+    fn contains_layout_or_paint(&self, dom: &Dom, idx: u32) -> bool {
+        let contain = self.style.computed_value(dom, dom.id_of(idx), "contain").unwrap_or_default();
+        contain.split_whitespace().any(|w| matches!(w, "layout" | "paint" | "content" | "strict"))
+    }
+
+        /// `Document.isQuirksMode` (Document.zig:160-171): an HTML document
     /// without a doctype child.
     fn is_quirks(&self, dom: &Dom) -> bool {
         let Ok(d) = dom.check(self.document()) else { return false };
@@ -3272,7 +3287,16 @@ impl Layout {
             if self.is_root_container(dom, node) {
                 break;
             }
-            let axes = self.style.overflow_axes(dom, node);
+            // pyro: an `overflow: hidden` axis too (Chromium's focus scrolls it; WPT css-contain
+            // `contain-body-overflow-002`), on which the element fits: a visually hidden wrapper
+            // (a 1px overflow: hidden box around a native control) is left alone, as an action's
+            // reveal leaves it (`scroll_into_view_offset_targets`).
+            let mut axes = self.style.overflow_axes(dom, node);
+            if self.is_scroll_container(dom, node) {
+                let target = self.bounding_client_rect(dom, el);
+                axes.x = axes.x || target.width.abs() <= self.client_width(dom, node);
+                axes.y = axes.y || target.height.abs() <= self.client_height(dom, node);
+            }
             if axes.x || axes.y {
                 let target = self.bounding_client_rect(dom, el);
                 let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
