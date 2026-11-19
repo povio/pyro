@@ -1686,17 +1686,34 @@ impl BaseDocument {
     /// where each spanner's margin box starts (the container's coordinates).
     fn column_spanner_ranges(&self, container: crate::NodeId) -> Vec<(f32, f32, f32)> {
         let mut ranges: Vec<(f32, f32, f32)> = Vec::new();
+        // The previous spanner's border-box bottom and parent.
+        let mut previous_border_end = f32::NEG_INFINITY;
+        let mut previous_parent = None;
         for (id, offset) in self.column_spanners_of(container) {
             let layout = self.nodes[id].unrounded_layout();
             let y = offset.y + layout.location.y;
             let start = y - layout.margin.top.max(0.0);
             let end = y + layout.size.height + layout.margin.bottom.max(0.0);
-            let start = ranges.last().map_or(start, |&(_, previous, _)| start.max(previous));
+            // pyro: a spanner's row keeps its whole top margin, though the strip collapsed it with
+            // the bottom margin of a spanner right before it in another box (the margins of
+            // spanners in different boxes do not collapse: Chromium; WPT css-multicol
+            // `multicol-span-all-margin-nested-001`; siblings' do, `multicol-span-all-margin-001`);
+            // a row starts after the one before when content lies between them.
+            let parent = self.nodes[id].layout_parent.get();
+            let start = match ranges.last() {
+                Some(&(_, previous, _)) if start < previous => {
+                    if parent != previous_parent && start >= previous_border_end - EPSILON { start } else { previous }
+                }
+                _ => start,
+            };
+            previous_border_end = y + layout.size.height;
+            previous_parent = parent;
             // (Where its margin box starts in the strip, inside the boxes that carry it.)
             ranges.push((start, end.max(start), offset.x + layout.location.x - layout.margin.left));
         }
         ranges
     }
+
 
     /// pyro: for each of `container`'s spanners, how much of its bottom margin is the top margin
     /// of the in-flow box after it (collapsed with it in the strip): the columns after the
