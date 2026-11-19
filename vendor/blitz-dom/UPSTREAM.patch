@@ -37094,7 +37094,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      ),
                  );
              }
-@@ -1544,6 +2119,18 @@
+@@ -1544,12 +2119,27 @@
              return;
          }
  
@@ -37113,7 +37113,17 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          // Add content of "value" attribute as a text node child if:
          //   - Tag name is
          if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
-@@ -1579,6 +2166,20 @@
+             (tagname, type_attr, value)
+         {
+-            let value = value.to_string();
++            // pyro: an empty label is still a line, as in Chromium: the button is one line
++            // tall (a zero-width word joiner, which draws nothing; WPT css-inline
++            // `empty-span-size-001`).
++            let value = if value.is_empty() { "\u{2060}".to_string() } else { value.to_string() };
+             let id = self.create_text_node(&value);
+             self.append_children(target_id, &[id]);
+             return;
+@@ -1579,6 +2169,20 @@
      }
  }
  
@@ -37134,7 +37144,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2978,50 @@
+@@ -2377,6 +2981,50 @@
          }
      }
  
@@ -37185,7 +37195,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3733,254 @@
+@@ -3088,3 +3736,254 @@
          );
      }
  }

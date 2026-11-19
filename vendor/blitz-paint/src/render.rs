@@ -1261,6 +1261,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             && filter_steps.is_none()
             // pyro: what it paints outside its clip still shows (`has_clip_escapes`).
             && !has_clip_escapes(self.dom.as_ref().tree(), node)
+            // pyro: and so does its outline, around its zero-width box (an empty button's;
+            // WPT css-inline `empty-span-size-001`).
+            && !has_visible_outline(&styles)
         {
             return;
         }
@@ -7680,4 +7683,14 @@ pub(crate) fn paint_classic_scrollbar(
         Rect::new(track.x0 + start, track.y0 + inset, track.x0 + start + thumb_len, track.y1 - inset)
     };
     scene.fill(Fill::NonZero, transform, colors.thumb, None, &thumb);
+}
+
+/// pyro: whether `style` draws an outline (a width and a style other than `none`).
+fn has_visible_outline(style: &ComputedValues) -> bool {
+    use style::values::computed::OutlineStyle;
+    let outline = style.get_outline();
+    match outline.outline_style {
+        OutlineStyle::Auto => true,
+        OutlineStyle::BorderStyle(border) => !border.none_or_hidden() && outline.outline_width.0.to_f64_px() > 0.0,
+    }
 }

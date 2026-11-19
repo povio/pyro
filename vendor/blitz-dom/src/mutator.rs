@@ -2136,7 +2136,10 @@ impl<'doc> DocumentMutator<'doc> {
         if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
             (tagname, type_attr, value)
         {
-            let value = value.to_string();
+            // pyro: an empty label is still a line, as in Chromium: the button is one line
+            // tall (a zero-width word joiner, which draws nothing; WPT css-inline
+            // `empty-span-size-001`).
+            let value = if value.is_empty() { "\u{2060}".to_string() } else { value.to_string() };
             let id = self.create_text_node(&value);
             self.append_children(target_id, &[id]);
             return;

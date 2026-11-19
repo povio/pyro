@@ -571,7 +571,11 @@ impl Dom {
                         } else if ty != InputType::File {
                             let v = self.value(id).unwrap_or_default();
                             let v = if ty == InputType::Password { "•".repeat(v.chars().count()) } else { v };
-                            if !v.is_empty() {
+                            // pyro: and a button's empty label, which is still a line (blitz-dom's
+                            // mutator), where the attribute says so.
+                            let empty_label = matches!(ty, InputType::Button | InputType::Submit | InputType::Reset)
+                                && e.attr("value").is_some();
+                            if !v.is_empty() || empty_label {
                                 attrs.push(RAttr { name: plain("value"), value: Cow::Owned(v), valueless: false });
                             }
                         }
