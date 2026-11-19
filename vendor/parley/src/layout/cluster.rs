@@ -217,6 +217,11 @@ impl<'a, B: Brush> Cluster<'a, B> {
         self.first_character().flags.is_word_boundary()
     }
 
+    /// pyro: whether this cluster's `text-wrap-mode` lets lines wrap (`wrap`, not `nowrap`).
+    pub fn wraps(&self) -> bool {
+        self.run.layout.styles()[usize::from(self.style_index())].text_wrap_mode == crate::style::TextWrapMode::Wrap
+    }
+
     /// pyro: whether the line may break before this cluster (a soft wrap opportunity).
     pub fn is_soft_wrap_opportunity(&self) -> bool {
         self.first_character().flags.is_soft_wrap_opportunity()

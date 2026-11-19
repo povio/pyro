@@ -720,7 +720,7 @@ index 5f7bf13..5b77b3c 100644
              (Alignment::Justify, _) => {
                  // Justified alignment doesn't have any effect if free_space is negative or zero
 diff --git a/src/layout/cluster.rs b/src/layout/cluster.rs
-index 25f0b3b..f8ff3ed 100644
+index 25f0b3b..47860c4 100644
 --- a/src/layout/cluster.rs
 +++ b/src/layout/cluster.rs
 @@ -187,7 +187,14 @@ impl<'a, B: Brush> Cluster<'a, B> {
@@ -739,10 +739,15 @@ index 25f0b3b..f8ff3ed 100644
      }
  
      /// Returns `true` if this is a right-to-left cluster.
-@@ -210,6 +217,11 @@ impl<'a, B: Brush> Cluster<'a, B> {
+@@ -210,6 +217,16 @@ impl<'a, B: Brush> Cluster<'a, B> {
          self.first_character().flags.is_word_boundary()
      }
  
++    /// pyro: whether this cluster's `text-wrap-mode` lets lines wrap (`wrap`, not `nowrap`).
++    pub fn wraps(&self) -> bool {
++        self.run.layout.styles()[usize::from(self.style_index())].text_wrap_mode == crate::style::TextWrapMode::Wrap
++    }
++
 +    /// pyro: whether the line may break before this cluster (a soft wrap opportunity).
 +    pub fn is_soft_wrap_opportunity(&self) -> bool {
 +        self.first_character().flags.is_soft_wrap_opportunity()

@@ -2604,10 +2604,13 @@ fn truncate_line_at_soft_wrap(
                 for cluster in run.run().visual_clusters() {
                     let advance = cluster.advance();
                     let space = cluster.is_space_or_nbsp() || cluster.is_hard_line_break() || advance <= 0.0;
-                    // (Without soft wrapping, a `<wbr>` (U+200B) still is one, as Chromium has it.)
+                    // (Without soft wrapping, a `<wbr>` (U+200B) still is one, as Chromium has it;
+                    // the wrapping of the cluster before the opportunity, the one the line would
+                    // break after, decides: WPT css-overflow `line-clamp/block-ellipsis-027`.)
                     let start = cluster.text_range().start;
+                    let wraps_here = wraps && cluster.previous_logical().is_none_or(|before| before.wraps());
                     let opportunity = (cluster.is_soft_wrap_opportunity()
-                        && (wraps || text.get(..start).is_some_and(|before| before.ends_with('\u{200B}'))))
+                        && (wraps_here || text.get(..start).is_some_and(|before| before.ends_with('\u{200B}'))))
                     .then_some(start);
                     atoms.push((cluster.text_range().start as f64, x, x + advance, space, opportunity));
                     x += advance;
