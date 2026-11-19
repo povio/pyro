@@ -466,6 +466,35 @@ impl ShapedText {
         Some(metrics.ascent - metrics.descent)
     }
 
+    /// pyro: the vertical advance of the shaped cluster at `index` standing upright in the font
+    /// at `font_index` at `font_size`: the sum of its glyphs' advance heights in the font's
+    /// vertical metrics (`vmtx`), as HarfBuzz advances glyphs shaping top to bottom. `None` for a
+    /// font without them.
+    pub fn cluster_vertical_advance(&self, index: u32, font_index: usize, font_size: f32) -> Option<f32> {
+        use skrifa::raw::TableProvider;
+        let cluster = self.shaped_clusters.get(index as usize)?;
+        let font = self.fonts.get(font_index)?;
+        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        let vmtx = font_ref.vmtx().ok()?;
+        let units_per_em = f32::from(font_ref.head().ok()?.units_per_em());
+        if units_per_em == 0.0 {
+            return None;
+        }
+        let advance = |glyph: u32| vmtx.advance(skrifa::GlyphId::new(glyph)).map(f32::from);
+        let units = if cluster.has_inline_glyph() {
+            advance(cluster.glyph_offset)?
+        } else {
+            let start = cluster.glyph_offset as usize;
+            let glyphs = self.glyphs.get(start..start + usize::from(cluster.glyph_len()))?;
+            let mut sum = 0.0;
+            for glyph in glyphs {
+                sum += advance(glyph.id)?;
+            }
+            sum
+        };
+        Some(units * font_size / units_per_em)
+    }
+
     /// pyro: makes the run at `run_index` upright with glyphs advancing by `advance`
     /// ([`ShapedRun::upright_advance`]), its hyphen too.
     pub fn set_run_upright_advance(&mut self, run_index: usize, advance: f32) {

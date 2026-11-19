@@ -436,13 +436,10 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -215,9 +440,252 @@
+@@ -218,6 +443,278 @@
          }
-         for shaped_cluster in self.shaped_clusters.iter_mut() {
-             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
-+        }
-+    }
-+
+     }
+ 
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
@@ -464,6 +461,35 @@
 +            skrifa::instance::LocationRef::default(),
 +        );
 +        Some(metrics.ascent - metrics.descent)
++    }
++
++    /// pyro: the vertical advance of the shaped cluster at `index` standing upright in the font
++    /// at `font_index` at `font_size`: the sum of its glyphs' advance heights in the font's
++    /// vertical metrics (`vmtx`), as HarfBuzz advances glyphs shaping top to bottom. `None` for a
++    /// font without them.
++    pub fn cluster_vertical_advance(&self, index: u32, font_index: usize, font_size: f32) -> Option<f32> {
++        use skrifa::raw::TableProvider;
++        let cluster = self.shaped_clusters.get(index as usize)?;
++        let font = self.fonts.get(font_index)?;
++        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
++        let vmtx = font_ref.vmtx().ok()?;
++        let units_per_em = f32::from(font_ref.head().ok()?.units_per_em());
++        if units_per_em == 0.0 {
++            return None;
++        }
++        let advance = |glyph: u32| vmtx.advance(skrifa::GlyphId::new(glyph)).map(f32::from);
++        let units = if cluster.has_inline_glyph() {
++            advance(cluster.glyph_offset)?
++        } else {
++            let start = cluster.glyph_offset as usize;
++            let glyphs = self.glyphs.get(start..start + usize::from(cluster.glyph_len()))?;
++            let mut sum = 0.0;
++            for glyph in glyphs {
++                sum += advance(glyph.id)?;
++            }
++            sum
++        };
++        Some(units * font_size / units_per_em)
 +    }
 +
 +    /// pyro: makes the run at `run_index` upright with glyphs advancing by `advance`
@@ -498,7 +524,7 @@
 +        let cluster = self.shaped_clusters.get_mut(index as usize)?;
 +        if cluster.glyph_len() != 1 || (cluster.has_inline_glyph() && dx != 0.0) {
 +            return None;
-         }
++        }
 +        let advance = cluster.advance;
 +        cluster.advance += d_advance;
 +        if cluster.has_inline_glyph() {
@@ -509,8 +535,8 @@
 +        glyph.x += dx;
 +        glyph.advance += d_advance;
 +        Some((x, advance))
-     }
- 
++    }
++
 +    /// pyro: sets the justification opportunities of the character at `index` (see
 +    /// [`CharacterFlags::with_justification`](super::CharacterFlags)).
 +    #[inline]
@@ -689,7 +715,7 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +741,9 @@
+@@ -273,7 +770,9 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -700,7 +726,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +772,36 @@
+@@ -302,18 +801,36 @@
                  index
              });
  
@@ -747,7 +773,7 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -324,20 +812,23 @@
+@@ -324,20 +841,23 @@
  
          // Push all characters.
          let characters_start = self.characters.len();
@@ -777,7 +803,7 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +886,10 @@
+@@ -395,7 +915,10 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -788,7 +814,7 @@
      }
  }
  
-@@ -423,6 +917,12 @@
+@@ -423,6 +946,12 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -801,7 +827,7 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +1034,15 @@
+@@ -534,7 +1063,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -818,7 +844,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1155,16 @@
+@@ -647,9 +1184,16 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -835,7 +861,7 @@
              },
          }];
          shaper.shape_text(
-@@ -765,7 +1280,8 @@
+@@ -765,7 +1309,8 @@
  
      #[test]
      fn newlines_removed() {
@@ -845,7 +871,7 @@
              let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
  
              let index = shaped
-@@ -805,18 +1321,32 @@
+@@ -805,18 +1350,32 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,

@@ -315,7 +315,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     }
 
     // pyro: CSS `text-orientation: upright`.
-    upright::apply(layout, styles);
+    upright::apply(layout, styles, text);
     // pyro: CSS `text-autospace`.
     autospace::apply(layout, text, styles, inline_boxes);
     // pyro: CSS `text-justify`.
