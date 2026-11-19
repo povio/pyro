@@ -2799,11 +2799,12 @@ all, and a combining mark the transform removed (Greek uppercase drops the acute
   `column-height: auto` wraps at the container's definite height, its last row balanced under `column-fill: balance`.
   WPT css-multicol `column-height-*` 14 of 30 (abspos in a positioned multicol container and `column-height: 0` are
   not done). `pyro-render/tests/multicol_column_height.rs`.
-  Round 5 (`Breaks::whole`, `Breaks::fill`): a box of size containment taller than a column is not cut at the column's
-  end: the column holds it whole and it overflows (css-contain-2 § 3.1: it is monolithic). `column-height: 0` so gives
-  each such box a column (WPT `column-height-023`; `nested-past-fragmentation-line` too). Other boxes no break goes
-  into (nested multi-column containers, scroll containers, replaced elements) are still cut, which is how a nested
-  container continues in the next column.
+  Round 5 (`Breaks::whole_in_empty_columns`, `Breaks::fill`): in a container with `column-height: 0` what cannot
+  break (a line, a monolithic box) is not cut at the column's end: the column holds it whole and it overflows, so
+  each such box has a column (WPT `column-height-023`). In every other column it is still cut where the column ends,
+  as Chromium cuts monolithic content taller than its fragmentainer (WPT css-contain `contain-size-breaks-001`,
+  `contain-size-multicol-004`; `multicol-span-all-children-height-003` for the 1px columns of a container with no
+  height left). A first version kept every size-contained box whole and lost those two css-contain pages.
   `RowSlots` (a container with an explicit `column-height`, wrapping columns and spanners): the rows are a grid of
   slots `column-height + row-gap` apart, as Chromium lays them out (measured on Chrome 158). Content before a spanner
   is balanced within what is left of its slot, the spanner follows at once when it fits in the rest of the slot (or

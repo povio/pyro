@@ -196,9 +196,9 @@ struct Breaks {
     /// What no break may go through at all (unless it is taller than a column): line boxes and
     /// monolithic boxes. Merged.
     loose: Vec<(f32, f32)>,
-    /// pyro: the boxes of size containment among `loose`: never cut, even when taller than a
-    /// column. Merged.
-    whole: Vec<(f32, f32)>,
+    /// pyro: the container has `column-height: 0`: its columns hold what cannot break whole
+    /// (`fill`).
+    whole_in_empty_columns: bool,
     /// The space between consecutive in-flow blocks (their margins): a column after a break in it
     /// starts at its end. Sorted by start.
     gaps: Vec<(f32, f32)>,
@@ -335,6 +335,7 @@ impl Breaks {
     /// The strip in columns of height `height`, at most `max_columns` of them (the last takes the
     /// rest).
     fn fill(&self, height: f32, max_columns: usize) -> FillRun {
+        let no_height = self.whole_in_empty_columns && height <= EPSILON;
         let height = height.max(1.0);
         let mut run = FillRun { columns: Vec::new(), shortage: None, violations: 0 };
         let mut start = self.start;
@@ -372,13 +373,15 @@ impl Breaks {
                     let (loose, loose_short) = Self::break_before(&self.loose, start, limit);
                     note(&mut run, loose_short);
                     // Taller than a column: cut where the column ends.
-                    // pyro: but a box of size containment is not cut: the column holds it whole
-                    // and it overflows the column (css-contain-2 § 3.1, css-break-3 § 4.4: WPT
-                    // css-multicol `column-height-023`, columns of height 0). (Other boxes no break
-                    // goes into, nested multi-column containers among them, are still cut: that
-                    // is how they continue in the next column.)
-                    loose.unwrap_or_else(|| match containing(&self.whole, limit) {
-                        Some((a, b)) if a <= start + EPSILON => b,
+                    // pyro: but in columns of `column-height: 0` nothing fits a slice: what
+                    // cannot break (a line, a monolithic box) is held whole and overflows its
+                    // column (WPT css-multicol `column-height-023`). In any other column it is
+                    // cut, as Chromium cuts monolithic content taller than its fragmentainer (WPT
+                    // css-contain `contain-size-breaks-001`, `contain-size-multicol-004`), also in
+                    // the 1px columns of a container with no height left
+                    // (`multicol-span-all-children-height-003`).
+                    loose.unwrap_or_else(|| match containing(&self.loose, limit) {
+                        Some((a, b)) if no_height && a <= start + EPSILON => b,
                         _ => limit,
                     })
                 }
@@ -643,7 +646,8 @@ impl LayoutPassState<'_> {
         // `max-height` whatever the sizing mode: under either, the content's end is taken from
         // the laid-out content instead (empty space a `min-height` adds is no content to balance).
         let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-        let breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
+        let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
+        breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
         // The strip's parts: runs of columns, and the spanners between them (strip ranges).
         let spanners = match spanning {
             Some(_) => self.doc.column_spanner_ranges(dom_id),
@@ -1163,7 +1167,7 @@ impl BaseDocument {
             end,
             strict: merge(found.strict),
             loose: merge(found.loose),
-            whole: merge(found.whole),
+            whole_in_empty_columns: false,
             gaps: found.gaps,
             trims: found.trims,
             forced: found.forced,
@@ -1330,9 +1334,6 @@ impl BaseDocument {
             } else {
                 found.strict.push((child_top, child_bottom));
                 found.loose.push((child_top, child_bottom));
-                if style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE) {
-                    found.whole.push((child_top, child_bottom));
-                }
             }
         }
     }
@@ -1343,8 +1344,6 @@ impl BaseDocument {
 struct Found {
     strict: Vec<(f32, f32)>,
     loose: Vec<(f32, f32)>,
-    /// pyro: see [`Breaks::whole`].
-    whole: Vec<(f32, f32)>,
     gaps: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::trims`].
     trims: Vec<(f32, f32, f32, f32)>,
@@ -1393,7 +1392,7 @@ mod tests {
             end,
             strict: merge(strict),
             loose: merge(loose),
-            whole: Vec::new(),
+            whole_in_empty_columns: false,
             gaps: Vec::new(),
             trims: Vec::new(),
             forced: Vec::new(),
