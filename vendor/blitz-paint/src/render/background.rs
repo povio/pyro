@@ -1159,7 +1159,13 @@ impl ElementCx<'_, '_> {
             .iter()
             .map(|track| (track.start as f64 + top, track.end as f64 + top))
             .collect();
-        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows })
+        // pyro: a vertical table's grid runs its columns down the page and its rows across it, from
+        // the right in `vertical-rl` (WPT css-tables `paint/col-paint-vrl-rtl`).
+        let vertical = self.node.primary_styles().and_then(|style| {
+            let wm = style.writing_mode;
+            wm.is_vertical().then(|| (!wm.is_vertical_lr(), self.frame.border_box.width() / self.scale))
+        });
+        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows, vertical })
     }
 
     /// pyro: the background of a table part (`part`, the box its images are positioned against,
@@ -2124,6 +2130,8 @@ enum PartKind {
 struct TablePartRects {
     columns: Vec<(f64, f64)>,
     rows: Vec<(f64, f64)>,
+    /// A vertical table's: whether its block axis runs right to left, and its border box width.
+    vertical: Option<(bool, f64)>,
 }
 
 impl TablePartRects {
@@ -2161,6 +2169,10 @@ impl TablePartRects {
                 (span(&self.columns, columns.map(|(at, _)| at)).unwrap_or(all_columns), all_rows)
             }
         };
-        Rect::new(xs.0, ys.0, xs.1, ys.1)
+        match self.vertical {
+            None => Rect::new(xs.0, ys.0, xs.1, ys.1),
+            Some((false, _)) => Rect::new(ys.0, xs.0, ys.1, xs.1),
+            Some((true, width)) => Rect::new(width - ys.1, xs.0, width - ys.0, xs.1),
+        }
     }
 }

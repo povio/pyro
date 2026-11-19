@@ -3477,9 +3477,16 @@ fn collect_table_cells(
             *row += 1;
             cursor.start_row();
 
-            let height = physical_size(node).and_then(|size| {
+            // (Its block size in the table's writing mode: a vertical table's row is as wide as its
+            // `width`; WPT css-tables `paint/col-paint-vrl-rtl`.)
+            let height = if wm.is_vertical() {
+                let size = table_taffy_style(node, wm).size;
                 (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value())
-            });
+            } else {
+                physical_size(node).and_then(|size| {
+                    (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value())
+                })
+            };
             let collapsed = node.primary_styles().is_some_and(|style| {
                 style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
             });

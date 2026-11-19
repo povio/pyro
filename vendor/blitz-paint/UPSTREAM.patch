@@ -12735,7 +12735,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -249,17 +620,181 @@
+@@ -249,18 +620,182 @@
                  #[cfg(feature = "tracing")]
                  warn!("Implement image layer drawing for Image::PaintWorklet")
              }
@@ -12893,7 +12893,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                    };
 +                    self.draw_image_layer_in(scene, &inner, area, current_color);
 +                }
-+            }
+             }
 +            // pyro: `filter()`: the image it filters, drawn in a layer with the filters over the
 +            // painting area (so a `drop-shadow()` stays inside it).
 +            GenericImage::Filter(_) => {
@@ -12923,9 +12923,10 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                if filtered {
 +                    scene.pop_layer();
 +                }
-             }
++            }
          }
      }
+ 
 @@ -275,7 +810,18 @@
              return;
          };
@@ -13029,7 +13030,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,25 +969,243 @@
+@@ -367,25 +969,249 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -13235,7 +13236,13 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            .iter()
 +            .map(|track| (track.start as f64 + top, track.end as f64 + top))
 +            .collect();
-+        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows })
++        // pyro: a vertical table's grid runs its columns down the page and its rows across it, from
++        // the right in `vertical-rl` (WPT css-tables `paint/col-paint-vrl-rtl`).
++        let vertical = self.node.primary_styles().and_then(|style| {
++            let wm = style.writing_mode;
++            wm.is_vertical().then(|| (!wm.is_vertical_lr(), self.frame.border_box.width() / self.scale))
++        });
++        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows, vertical })
 +    }
 +
 +    /// pyro: the background of a table part (`part`, the box its images are positioned against,
@@ -13285,7 +13292,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,23 +1230,43 @@
+@@ -410,23 +1236,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -13334,7 +13341,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +1279,10 @@
+@@ -439,14 +1285,10 @@
              return;
          }
  
@@ -13352,7 +13359,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +1297,7 @@
+@@ -461,7 +1303,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -13361,7 +13368,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +1312,112 @@
+@@ -476,29 +1318,112 @@
              return;
          }
  
@@ -13487,7 +13494,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1428,163 @@
+@@ -509,95 +1434,163 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -13700,7 +13707,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
              origin_rect.width() / self.scale,
-@@ -629,24 +1616,50 @@
+@@ -629,24 +1622,50 @@
              bg_size.height,
          );
  
@@ -13764,7 +13771,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
              y: y.translate,
-@@ -681,35 +1694,84 @@
+@@ -681,35 +1700,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -13869,7 +13876,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1937,64 @@
+@@ -875,48 +1943,64 @@
      stride: f64,
  }
  
@@ -13963,7 +13970,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +2036,24 @@
+@@ -958,11 +2042,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -13993,7 +14000,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +2077,16 @@
+@@ -986,6 +2083,16 @@
      (count, stride)
  }
  
@@ -14010,7 +14017,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +2110,57 @@
+@@ -1009,3 +2116,63 @@
          -extend_length
      }
  }
@@ -14028,6 +14035,8 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +struct TablePartRects {
 +    columns: Vec<(f64, f64)>,
 +    rows: Vec<(f64, f64)>,
++    /// A vertical table's: whether its block axis runs right to left, and its border box width.
++    vertical: Option<(bool, f64)>,
 +}
 +
 +impl TablePartRects {
@@ -14065,7 +14074,11 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                (span(&self.columns, columns.map(|(at, _)| at)).unwrap_or(all_columns), all_rows)
 +            }
 +        };
-+        Rect::new(xs.0, ys.0, xs.1, ys.1)
++        match self.vertical {
++            None => Rect::new(xs.0, ys.0, xs.1, ys.1),
++            Some((false, _)) => Rect::new(ys.0, xs.0, ys.1, xs.1),
++            Some((true, width)) => Rect::new(width - ys.1, xs.0, width - ys.0, xs.1),
++        }
 +    }
 +}
 diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/src/render/border.rs
