@@ -587,7 +587,15 @@ impl Geometry {
                 });
             }
             // No fragment (an empty span among collapsed white space): a
-            // zero box at the content-box origin of the nearest box around it.
+            // zero box at the content-box origin of the nearest box around it,
+            // pyro: the anonymous block laying it out where there is one (an
+            // empty line between two blocks is where that block is).
+            if let Some(anon) = self.anonymous_inline_root(doc, id) {
+                if let Some(pb) = self.laid_out(doc, anon) {
+                    let (x, y) = (pb.x + pb.border[3] + pb.padding[3], pb.y + pb.border[0] + pb.padding[0]);
+                    return Some(LayoutBox { fixed: pb.fixed, ..LayoutBox::from_rect(Rect::new(x, y, x, y), pb.fixed) });
+                }
+            }
             let mut cur = doc.get_node(id).and_then(|n| n.parent);
             while let Some(p) = cur {
                 if self.in_layout_tree(doc, p) {
@@ -733,6 +741,26 @@ impl Geometry {
     /// Union of the fragments of inline element `id` in its inline root's
     /// text layout (see [`Geometry::inline_items`]), each grown by the
     /// element's block-axis border and padding: its border box.
+    /// pyro: the anonymous block that lays out inline element `id` (the first, for one split
+    /// around blocks), if `id` is not laid out by a DOM ancestor.
+    fn anonymous_inline_root(&self, doc: &BaseDocument, id: NodeId) -> Option<NodeId> {
+        let mut child = id;
+        let mut cur = doc.get_node(id)?.parent;
+        loop {
+            let n = doc.get_node(cur?)?;
+            if n.flags.is_inline_root() {
+                return None;
+            }
+            if let Some(anon) = n.anonymous_blocks.iter().copied().find(|&a| {
+                doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
+            }) {
+                return self.in_layout_tree(doc, anon).then_some(anon);
+            }
+            child = cur?;
+            cur = n.parent;
+        }
+    }
+
     fn inline_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
         let (top, bottom) = inline_block_growth(doc, id);
         let mut acc: Option<Rect> = None;
