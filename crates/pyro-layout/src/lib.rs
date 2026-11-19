@@ -408,6 +408,7 @@ impl BlitzGeometry {
         };
         let v = style.viewport();
         let snap = Snapshot {
+            frame_client_attribute: Some(pyro_dom::snapshot::frame_client_attribute().to_owned()),
             html: String::new(),
             base_url: base.text.clone(),
             sheets: sheets.into_inner(),

@@ -188,14 +188,18 @@ fn a_frame_documents_request_names_its_frame_by_id() {
     let srcdoc = |inner: &str| inner.replace('\'', "&#39;").replace('<', "&lt;").replace('>', "&gt;");
     let recorder = Arc::new(Recorder::default());
     let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    // The snapshot's own attribute name (random per process in pyro-dom); a page's
+    // `data-pyro-frame-client`, whatever its case or namespace, is just another attribute.
+    let name = "data-pyro-frame-client-0123456789abcdef";
     let snapshot = Snapshot {
         html: format!(
             "<!doctype html><body style='margin:0'>\
-             <iframe data-pyro-frame-client=F00D data-pyro-frame-url='http://test/' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
-             <iframe data-pyro-frame-url='http://test/' srcdoc='{1}' style='border:0;width:50px;height:20px'></iframe>",
+             <iframe {name}=F00D#L data-pyro-frame-url='http://test/' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-frame-client='OTHER#L' DATA-PYRO-FRAME-CLIENT='OTHER#L' data-pyro-frame-url='http://test/' srcdoc='{1}' style='border:0;width:50px;height:20px'></iframe>",
             srcdoc(&mask.replace("green.png", "a/green.png")),
             srcdoc(&mask.replace("green.png", "b/green.png")),
         ),
+        frame_client_attribute: Some(name.to_owned()),
         base_url: "http://test/".into(),
         width: 200,
         height: 100,
@@ -204,8 +208,9 @@ fn a_frame_documents_request_names_its_frame_by_id() {
     };
     Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
     let clients = recorder.1.lock().unwrap().clone();
-    assert!(clients.iter().any(|(url, c)| url.ends_with("a/green.png") && c.as_deref() == Some("F00D")), "{clients:?}");
+    assert!(clients.iter().any(|(url, c)| url.ends_with("a/green.png") && c.as_deref() == Some("F00D#L")), "{clients:?}");
     assert!(clients.iter().any(|(url, c)| url.ends_with("b/green.png") && c.as_deref() == Some("")), "{clients:?}");
+    assert!(!clients.iter().any(|(_, c)| c.as_deref().is_some_and(|c| c.contains("OTHER"))), "no spoofed client: {clients:?}");
     assert!(!clients.iter().any(|(_, c)| c.is_none()), "no frame request goes out as the page's: {clients:?}");
 }
 

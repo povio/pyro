@@ -189,6 +189,9 @@ pub struct Snapshot {
     /// attributes, `<style>` text from the style engine (CSSOM edits
     /// included), no scripts.
     pub html: String,
+    /// pyro: the name of the attribute the snapshot's frame elements carry their frame
+    /// document's client in (`pyro_dom::snapshot::frame_client_attribute`); `None`: none.
+    pub frame_client_attribute: Option<String>,
     /// Document URL; relative URLs resolve against it.
     pub base_url: String,
     /// Texts of `<link rel=stylesheet>` sheets by absolute URL, served to
@@ -1130,6 +1133,7 @@ impl Renderer {
             line_height_quirk: snap.quirks_mode || snap.limited_quirks_mode,
             content_language: snap.content_language.clone(),
             html_parser_provider: Some(Arc::new(SvgImageParser)),
+            frame_client_attribute: snap.frame_client_attribute.clone(),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation

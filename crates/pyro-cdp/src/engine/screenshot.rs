@@ -459,6 +459,7 @@ impl EngineHost {
         };
         Ok(Snapshot {
             html: String::new(),
+            frame_client_attribute: Some(pyro_dom::snapshot::frame_client_attribute().to_owned()),
             base_url,
             sheets: s.sheets,
             width: s.width,

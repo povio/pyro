@@ -26,6 +26,27 @@
 //!   their `dir` attribute and their parent in the DOM;
 //! - one element can be marked with an attribute (the clip target).
 
+
+/// pyro: the name of the attribute a frame element of the render snapshot carries its frame
+/// document's client identity in: `data-pyro-frame-client-` and 128 random bits drawn once per
+/// process. Page content cannot know it (it never sees the snapshot), so no attribute it writes,
+/// by markup, `setAttributeNS` or a sheet's text, can name a frame; the renderer reads this one
+/// name only.
+pub fn frame_client_attribute() -> &'static str {
+    static NAME: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        use std::hash::{BuildHasher, Hasher};
+        let mut bits = [0u64; 2];
+        for (i, part) in bits.iter_mut().enumerate() {
+            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+            hasher.write_usize(i);
+            hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+            *part = hasher.finish();
+        }
+        format!("data-pyro-frame-client-{:016x}{:016x}", bits[0], bits[1])
+    });
+    &NAME
+}
+
 use std::borrow::Cow;
 
 use markup5ever::{ns, QualName};
@@ -510,7 +531,7 @@ impl Dom {
                         if let Some(frame) = self.frame_documents.get(&n) {
                             // pyro: before `srcdoc`, which parses the document.
                             attrs.push(RAttr {
-                                name: plain("data-pyro-frame-client"),
+                                name: plain(frame_client_attribute()),
                                 value: Cow::Borrowed(&frame.client),
                                 valueless: false,
                             });

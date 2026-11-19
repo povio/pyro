@@ -451,7 +451,7 @@ fn a_pages_own_frame_attributes_are_left_out() {
     let html = render(&dom.borrow(), d);
     assert!(!html.contains("OTHER"), "{html}");
     assert!(!html.contains("evil.test"), "{html}");
-    assert!(html.contains("data-pyro-frame-client=\"F#L\""), "{html}");
+    assert!(html.contains(&format!("{}=\"F#L\"", pyro_dom::snapshot::frame_client_attribute())), "{html}");
 }
 
 /// The frame documents a page sets cover its own documents only: a store shared by pages (a popup
