@@ -987,6 +987,9 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         opener,
         popup: None,
         referrer_policy,
+        source: Some(el),
+        form_entries: None,
+        replace: false,
     });
 }
 
@@ -1034,7 +1037,7 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
     } else if proceed {
         let req = crate::formdata::form_submission(page, form, submitter);
         if let Some(req) = req {
-            page.navigate(req);
+            page.plan_form_navigation(form, req);
         }
     }
     page.end_submit(form);
@@ -1164,7 +1167,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     let Some(tkey) = key_of(page, target) else { return };
     // HTML activation-triggering input: a keydown other than Escape.
     if matches!(kind, KeyKind::KeyDown | KeyKind::RawKeyDown) && k.key != "Escape" {
-        page.notify_user_activation();
+        page.notify_input_activation();
     }
     match kind {
         KeyKind::KeyDown | KeyKind::RawKeyDown => {
@@ -2291,7 +2294,7 @@ pub fn dispatch_mouse_intercepting_drags(
 ) -> Result<Option<DragData>, String> {
     // HTML activation-triggering input: mousedown (and pointerup).
     if matches!(kind, MouseKind::Pressed | MouseKind::Released) {
-        page.notify_user_activation();
+        page.notify_input_activation();
     }
     dispatch_mouse_inner(page, kind, m, intercept_drags, None)
 }
@@ -2768,7 +2771,7 @@ pub fn dispatch_touch(
 ) -> Result<(), String> {
     // HTML activation-triggering input: touchend.
     if kind == TouchKind::End {
-        page.notify_user_activation();
+        page.notify_input_activation();
     }
     // A navigation since the sequence began leaves its touches behind.
     if seq.doc.is_some_and(|d| d != page.document()) {

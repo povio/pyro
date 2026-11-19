@@ -174,3 +174,86 @@ fn a_formdata_listener_that_does_not_navigate_keeps_the_submission() {
     settle(&mut t);
     assert_eq!(eval(&t, page, "location.pathname + '|' + !!document.getElementById('posted')"), "/posted|true");
 }
+
+const FORMS: &str = "<body><a id=link href='/about'>about</a>\
+    <form id=post method=post action='/other'><input name=a value=1><button id=send name=b value=2>send</button></form>\
+    <form id=get action='/other'><input name=q value=x></form>\
+    <script>window.log = [];\
+    navigation.addEventListener('navigate', e => {\
+      const data = e.formData ? [...e.formData].map(p => p.join('=')).join('&') : String(e.formData);\
+      log.push([e.navigationType, new URL(e.destination.url).pathname + new URL(e.destination.url).search, data,\
+        e.formData instanceof FormData, e.sourceElement ? e.sourceElement.id : String(e.sourceElement),\
+        e.sourceElement === null || e.sourceElement === document.getElementById(e.sourceElement.id)].join(':'));\
+      e.preventDefault();\
+    });</script></body>";
+
+/// HTML "submit" hands the navigation the form's entry list and its
+/// submitter (WPT navigation-api/navigate-event/navigate-form*.html): a POST
+/// submission's `navigate` event has them as `formData` and `sourceElement`.
+#[test]
+fn a_form_submission_fires_navigate_with_its_form_data_and_source_element() {
+    let (mut t, page, loader) = load(FORMS);
+    // The navigation is planned: its event fires from a task, not inside submit().
+    assert_eq!(eval(&t, page, "post.submit(); log.length"), "0");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "log.join('|')"), "push:/other:a=1:true:post:true");
+    eval(&t, page, "log = []; post.requestSubmit(send)");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "log.join('|')"), "push:/other:a=1&b=2:true:send:true");
+    // A GET submission has no form data; a link is its own source; script has none.
+    eval(&t, page, "log = []; get.submit()");
+    settle(&mut t);
+    eval(&t, page, "link.click(); location.href = '/other'");
+    settle(&mut t);
+    assert_eq!(
+        eval(&t, page, "log.join('|')"),
+        "push:/other?q=x:null:false:get:true|push:/about:null:false:link:true|push:/other:null:false:null:true"
+    );
+    assert!(loader.log.borrow().is_empty(), "every navigation was canceled: {:?}", loader.log.borrow());
+}
+
+/// HTML "plan to navigate": a form submitted again before its task ran
+/// navigates once, with the later submission.
+#[test]
+fn a_later_submission_replaces_the_forms_planned_navigation() {
+    let (mut t, page, _loader) = load(FORMS);
+    eval(&t, page, "post.submit(); post.a.value = 'second'; post.submit(); get.submit()");
+    settle(&mut t);
+    assert_eq!(
+        eval(&t, page, "log.join('|')"),
+        "push:/other:a=second:true:post:true|push:/other?q=x:null:false:get:true"
+    );
+}
+
+/// HTML "Location-object navigate" and form submission: a document that
+/// navigates itself before it has completely loaded (no user gesture)
+/// replaces its history entry, and the `navigate` event says so (WPT
+/// navigate-location.html, navigate-form.html).
+#[test]
+fn a_document_navigating_while_it_loads_replaces_its_entry() {
+    for (script, expected) in [
+        ("location.href = '/other'", "replace:/other"),
+        ("document.body.appendChild(document.createElement('form')).action = '/other'; document.forms[0].submit()", "replace:/other"),
+        ("location.hash = 'x'", "replace:/next#x"),
+    ] {
+        let html = format!(
+            "<body><script>window.log = []; \
+             navigation.onnavigate = e => {{ const u = new URL(e.destination.url); \
+               sessionStorage.setItem('seen', e.navigationType + ':' + u.pathname + u.search + u.hash); }}; \
+             if (location.pathname == '/next') {{ {script} }}</script></body>"
+        );
+        let (mut t, page, loader) = load("<body>start</body>");
+        loader.insert("http://site.test/next", "text/html", &html, Duration::ZERO);
+        loader.insert("http://site.test/other?", "text/html", "<p id=other>other</p>", Duration::ZERO);
+        eval(&t, page, "location.href = '/next'");
+        settle(&mut t);
+        assert_eq!(eval(&t, page, "sessionStorage.getItem('seen')"), expected, "{script}");
+        // /app, then /next whose entry the navigation it started replaced.
+        assert_eq!(eval(&t, page, "history.length"), "2", "{script}");
+    }
+    // Once loaded, the same navigations push.
+    let (mut t, page, _loader) = load(APP);
+    eval(&t, page, "location.href = '/other'");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "[location.pathname, history.length].join()"), "/other,2");
+}

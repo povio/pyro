@@ -111,7 +111,6 @@ const NAV_CROSS = "cross-window and cross-origin navigations: the static server 
 const NAV_BFCACHE = 'needs the back/forward cache';
 const NAV_OTHER = 'times out in pyro (lane F3b leftover: javascript:/srcdoc/meta refresh/history.go(0), reentrant intercepts, multi-frame traversal, sandboxed back)';
 const NAV_DOWNLOAD = 'needs downloads (anchor download attribute)';
-const NAV_FORM = 'form submission navigate events (formData, reload, traversal, targets) not done';
 const NAV_DETACH = 'an iframe removed during a traversal or navigate event: the traversal never settles';
 const NAVIGATION_API_SKIP = [
   ['navigation-api/navigate-event/cross-window/click-crossdocument-crossorigin.html', NAV_CROSS],
@@ -146,7 +145,6 @@ const NAVIGATION_API_SKIP = [
   ['navigation-api/per-entry-events/dispose-after-bfcache.html', NAV_BFCACHE],
   ['navigation-api/navigate-event/defer/tentative/defer-restore-callback-abort.html', NAV_OTHER],
   ['navigation-api/navigate-event/defer/tentative/defer-same-document.html', NAV_OTHER],
-  ['navigation-api/navigate-event/navigate-anchor-same-origin-cross-document.html', NAV_OTHER],
   ['navigation-api/navigate-event/navigate-history-go-0.html', NAV_OTHER],
   ['navigation-api/navigate-event/navigate-meta-refresh.html', NAV_OTHER],
   ['navigation-api/navigate-event/navigate-svg-anchor-fragment.html', NAV_OTHER],
@@ -173,11 +171,6 @@ const NAVIGATION_API_SKIP = [
   ['navigation-api/navigate-event/navigate-anchor-download.html', NAV_DOWNLOAD],
   ['navigation-api/ordering-and-transition/anchor-download-intercept-reject.html', NAV_DOWNLOAD],
   ['navigation-api/ordering-and-transition/anchor-download-intercept.html', NAV_DOWNLOAD],
-  ['navigation-api/navigate-event/navigate-form-reload.html', NAV_FORM],
-  ['navigation-api/navigate-event/navigate-form-requestSubmit.html', NAV_FORM],
-  ['navigation-api/navigate-event/navigate-form-traverse.html', NAV_FORM],
-  ['navigation-api/navigate-event/navigate-form-with-target.html', NAV_FORM],
-  ['navigation-api/navigate-event/navigate-form.html', NAV_FORM],
   ['navigation-api/navigation-methods/return-value/reload-detach-in-onnavigate.html', NAV_DETACH],
   ['navigation-api/navigation-methods/return-value/traverseTo-detach-cross-document-before-navigate-event.html', NAV_DETACH],
   ['navigation-api/navigation-methods/return-value/traverseTo-detach-cross-document.html', NAV_DETACH],
@@ -240,7 +233,8 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
         long = /<meta\s+name=["']?timeout["']?\s+content=["']?long/i.test(src);
       } else continue;
       const skip = TESTHARNESS_SKIP.find((x) => x.path === rel || (x.prefix && rel.startsWith(x.prefix)));
-      if (skip) { exclude(skip.why); continue; }
+      // WPT_NO_SKIP=1 (run.mjs by hand): the skipped pages run too, to measure what the list still has to hold.
+      if (skip && !process.env.WPT_NO_SKIP) { exclude(skip.why); continue; }
       if (!wptserve && /\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
       if (!testdriver && /testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
       if (!wptserve && (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code))) { exclude('needs wptserve python handler'); continue; }
@@ -422,7 +416,8 @@ export function discoverReftests(wpt, dirs, { reasons, wptserve = false, testdri
       const vs = metaOf(p.metas, 'viewport-size')[0]?.match(/^\s*(\d+)\s*x\s*(\d+)\s*$/);
       if (ps.slice(1).some((x) => refsOf('', x).length)) note('a reference has references of its own (compared one level, as wptrunner does)');
       const skip = skipReftest(rel);
-      if (skip) { exclude(skip.why); continue; }
+      // WPT_NO_SKIP=1 (run.mjs by hand): the skipped pages run too, to measure what the list still has to hold.
+      if (skip && !process.env.WPT_NO_SKIP) { exclude(skip.why); continue; }
       const long = metaOf(p.metas, 'timeout').some((c) => c.trim() === 'long');
       const variants = metaOf(p.metas, 'variant');
       for (const v of variants.length ? variants : ['']) {

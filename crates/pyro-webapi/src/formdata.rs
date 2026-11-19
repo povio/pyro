@@ -19,6 +19,18 @@ pub enum EntryValue {
     File(FileEntry),
 }
 
+/// A submitted form's entry list, as its navigation carries it. Lists
+/// compare by identity (a navigation request is equal to itself).
+#[derive(Clone, Debug)]
+pub struct FormEntries(pub Rc<Vec<(String, EntryValue)>>);
+
+impl PartialEq for FormEntries {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for FormEntries {}
+
 thread_local! {
     /// The image button whose activation is submitting its form right now,
     /// with its "selected coordinate" (page id, element, x, y). Set around
@@ -399,6 +411,9 @@ pub(crate) fn form_submission(
     let enctype = attr_override(&dom, form, submitter, "enctype", "formenctype").map(|e| e.to_ascii_lowercase());
     let target = attr_override(&dom, form, submitter, "target", "formtarget").filter(|t| !t.is_empty() && t != "_self");
     drop(dom);
+    // HTML "submit": a form that navigates its own document before it has
+    // completely loaded replaces the document's entry.
+    let replace = target.is_none() && page.navigates_by_replacing();
     if method == "GET" {
         url.set_query(Some(&urlencode(&entries, enc)));
         return Some(NavigationRequest {
@@ -410,6 +425,9 @@ pub(crate) fn form_submission(
             opener: false,
             popup: None,
             referrer_policy: None,
+            source: Some(submitter.unwrap_or(form)),
+            form_entries: None,
+            replace,
         });
     }
     let (ct, body) = match enctype.as_deref() {
@@ -436,7 +454,16 @@ pub(crate) fn form_submission(
         opener: false,
         popup: None,
         referrer_policy: None,
+        source: Some(submitter.unwrap_or(form)),
+        form_entries: Some(FormEntries(Rc::new(entries))),
+        replace,
     })
+}
+
+/// A new FormData of `s`'s realm holding `entries` (the Navigation API's
+/// `NavigateEvent.formData` for a POST form submission).
+pub fn form_data_object<'s>(s: &Scope<'s>, entries: &FormEntries) -> pyro_js::JsResult<Object<'s>> {
+    crate::form_data::with_entries(s, entries.0.to_vec())
 }
 
 /// This module's part of [`crate::thread_state::reset_thread`]: what of its

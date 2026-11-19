@@ -337,6 +337,16 @@ pub struct PageDom {
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
     /// Tasks queued through [`PageDom::post_task`] so far.
     posted_tasks: Cell<u64>,
+    /// HTML "completely loaded": the document's `load` and `pageshow` have
+    /// been dispatched. Until then a navigation its script starts without a
+    /// user gesture replaces its history entry.
+    completely_loaded: Cell<bool>,
+    /// When trusted input last reached the document (transient activation).
+    input_activation: Cell<Option<std::time::Instant>>,
+    /// HTML "planned navigation" of each form with one: the number of its
+    /// latest submission, whose queued task is the one that navigates.
+    planned_navigations: RefCell<Vec<(NodeId, u64)>>,
+    planned_navigation_seq: Cell<u64>,
     /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
     /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
     pub(crate) rejection_batch: RefCell<Option<(pyro_js::RealmId, u64, Rc<RefCell<Vec<u64>>>)>>,
@@ -463,6 +473,16 @@ pub struct NavigationRequest {
     /// The request's own referrer policy: a link's `referrerpolicy` state,
     /// no-referrer for `rel=noreferrer` (`None`: the document's policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The element the navigation comes from (Navigation API
+    /// `NavigateEvent.sourceElement`): the followed link, or the submitted
+    /// form's submitter (the form itself without one). `None` for a
+    /// navigation script started (`window.open`).
+    pub source: Option<NodeId>,
+    /// A POST form submission's entry list (`NavigateEvent.formData`).
+    pub form_entries: Option<crate::formdata::FormEntries>,
+    /// The navigation replaces the document's history entry (HTML history
+    /// handling "replace"): see [`PageDom::navigates_by_replacing`].
+    pub replace: bool,
 }
 
 /// How a blocking `alert`/`confirm`/`prompt` was answered.
@@ -842,6 +862,10 @@ impl PageDom {
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
             posted_tasks: Cell::new(0),
+            completely_loaded: Cell::new(false),
+            input_activation: Cell::new(None),
+            planned_navigations: RefCell::new(Vec::new()),
+            planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
             font_delay_since: Cell::new(None),
@@ -1100,6 +1124,55 @@ impl PageDom {
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
         self.sticky_activation.get()
+    }
+
+    /// HTML "completely finish loading": `load` and `pageshow` are done.
+    pub fn set_completely_loaded(&self) {
+        self.completely_loaded.set(true);
+    }
+    /// A navigation this document starts now replaces its own entry: HTML
+    /// has `location` and form submissions do so while the document is not
+    /// completely loaded and the user has not interacted with it (a script
+    /// that redirects while the page loads leaves no entry to go back to).
+    pub fn navigates_by_replacing(&self) -> bool {
+        !self.completely_loaded.get() && !self.has_transient_activation()
+    }
+    /// HTML "activation notification" for trusted input (a key or pointer
+    /// press): sticky activation, and transient activation for the next
+    /// five seconds (Chrome's duration). A CDP evaluation's `userGesture`
+    /// is sticky only: automation clients poll with it while a page loads.
+    pub(crate) fn notify_input_activation(&self) {
+        self.sticky_activation.set(true);
+        self.input_activation.set(Some(std::time::Instant::now()));
+    }
+    /// HTML "transient activation": trusted input within the last five seconds.
+    pub fn has_transient_activation(&self) -> bool {
+        self.input_activation.get().is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5))
+    }
+
+    /// HTML "plan to navigate" for a submitted form: a task navigates, and
+    /// a later submission of the same form before it runs takes its place.
+    pub(crate) fn plan_form_navigation(self: &Rc<Self>, form: NodeId, request: NavigationRequest) {
+        let seq = self.planned_navigation_seq.get().wrapping_add(1);
+        self.planned_navigation_seq.set(seq);
+        {
+            let mut planned = self.planned_navigations.borrow_mut();
+            planned.retain(|(f, _)| *f != form);
+            planned.push((form, seq));
+        }
+        let page = Rc::downgrade(self);
+        self.post_task(Box::new(move || {
+            let Some(page) = page.upgrade() else { return };
+            let current = {
+                let mut planned = page.planned_navigations.borrow_mut();
+                let current = planned.contains(&(form, seq));
+                planned.retain(|p| *p != (form, seq));
+                current
+            };
+            if current && !page.is_disposed() {
+                page.navigate(request);
+            }
+        }));
     }
 
     /// Flush after parser/native mutation before entering page script. Native

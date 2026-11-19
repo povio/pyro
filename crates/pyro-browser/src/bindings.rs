@@ -197,7 +197,7 @@ impl PageHooks for Hooks {
         });
     }
 
-    fn navigate(&self, request: NavigationRequest) {
+    fn navigate(&self, mut request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
         // `window.open` of a new browsing context: HTML creates its initial
@@ -241,10 +241,20 @@ impl PageHooks for Hooks {
             cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
             key.and_then(|key| host.nav(key))
         });
-        if request.method == "GET" && request.body.is_none() {
-            if nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
-                return;
-            }
+        let get = request.method == "GET" && request.body.is_none();
+        // What the `navigate` event says of where the navigation is from.
+        let source = crate::nav::NavigateSource {
+            element: request
+                .source
+                .filter(|_| !cross_origin_target)
+                .and_then(|el| Some((self.frames.upgrade()?.frame(page)?.page_dom.clone()?, el))),
+            form_entries: request.form_entries.take(),
+            replace: request.replace,
+        };
+        if get && nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment_from(&request.url, &source)) {
+            return;
+        }
+        {
             // Navigation API: the document's `navigate` event may cancel
             // or intercept the load. A cross-document navigation a
             // cross-origin document starts fires none (HTML "navigate").
@@ -253,8 +263,8 @@ impl PageHooks for Hooks {
             {
                 // HTML "navigate" with history handling "auto": a navigation
                 // to the document's own URL replaces its entry.
-                let kind = if request.url == nav.url() { "replace" } else { "push" };
-                match nav.navigate_event(kind, &request.url, true) {
+                let kind = if request.replace || request.url == nav.url() { "replace" } else { "push" };
+                match nav.navigate_event_from(kind, &request.url, &source) {
                     crate::nav::NavigateDecision::Cancel => return,
                     crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, kind),
                     crate::nav::NavigateDecision::Proceed => {}
@@ -327,7 +337,7 @@ impl PageHooks for Hooks {
                             b.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy()))
                         }),
                     },
-                    crate::HistoryHandling::Push,
+                    if request.replace { crate::HistoryHandling::Replace } else { crate::HistoryHandling::Push },
                 )
                 .map(|_| ())
             };

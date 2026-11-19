@@ -813,6 +813,9 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
             .filter_map(|f| f.split('=').next())
             .any(|f| f == "noreferrer")
             .then_some(pyro_net::ReferrerPolicy::NoReferrer),
+        source: None,
+        form_entries: None,
+        replace: false,
     });
     match popup {
         Some(popup) => {
