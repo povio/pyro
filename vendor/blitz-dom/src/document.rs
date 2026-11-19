@@ -1931,6 +1931,11 @@ impl BaseDocument {
         &self,
         mut options: blitz_traits::net::FetchOptions,
     ) -> blitz_traits::net::FetchOptions {
+        // pyro: an inline sheet's `url()` (its sheet is at the document's base URL) has the
+        // document as its referrer, the fetch's default (Blink: the document's outgoing referrer).
+        if options.referrer.as_ref().is_some_and(|referrer| *referrer == *self.base_url()) {
+            options.referrer = None;
+        }
         if !options.is_default() {
             options.client = self.request_client();
         }

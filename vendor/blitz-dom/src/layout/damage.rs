@@ -1137,6 +1137,7 @@ impl BaseDocument {
             ..Default::default()
         });
         let document_url: url::Url = (*self.url).clone();
+        let document_base: url::Url = self.base_url().clone();
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
         // borrow of `node` (held by the stylo element data guard) is released
@@ -1198,6 +1199,10 @@ impl BaseDocument {
                     // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5
                     // § 4.5.4), its response kept apart from the same URL fetched otherwise.
                     let mut options = crate::net::url_fetch_options(modifiers.as_deref());
+                    // (An inline sheet's referrer is the document: `BaseDocument::request_options`.)
+                    if options.referrer.as_ref() == Some(&document_base) {
+                        options.referrer = None;
+                    }
                     if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask)
                         && options.cors.is_none()
                         && new_url.scheme() != "data"

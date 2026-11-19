@@ -4786,7 +4786,7 @@ diff -ruN a/traversal.rs b/traversal.rs
              let cascade_inputs = ElementCascadeInputs::new_from_element_data(data);
 diff -ruN a/url/mod.rs b/url/mod.rs
 --- a/url/mod.rs	2026-11-11 19:55:57
-+++ b/url/mod.rs	2026-11-19 19:49:46
++++ b/url/mod.rs	2026-11-19 20:21:23
 @@ -4,10 +4,12 @@
  
  //! Common handling for the specified value CSS url() values.
@@ -4831,7 +4831,7 @@ diff -ruN a/url/mod.rs b/url/mod.rs
      }
  
      /// Parse a URL from a string value that is a valid CSS token for a URL,
-@@ -69,3 +88,177 @@
+@@ -69,3 +88,179 @@
          Self::parse_with_cors_mode(context, input, CorsMode::None)
      }
  }
@@ -4906,8 +4906,10 @@ diff -ruN a/url/mod.rs b/url/mod.rs
 +}
 +
 +/// pyro: the request URL modifiers of a `url()` (CSS Values 5 § 4.5.4), each at most once, and
-+/// the URL of the style sheet the `url()` was written in, the referrer of its request when that
-+/// is in CORS mode (CSS Values 4 "fetch a style resource" step 6; the fetch decides).
++/// the URL of the style sheet the `url()` was written in, the referrer of its request whatever
++/// its mode, as Blink sends it (`CSSImageValue::PrepareFetch`: the sheet for an external sheet,
++/// the document for inline style; CSS Values 4 "fetch a style resource" says the sheet only in
++/// CORS mode). Every valid `url()` has these, most with no modifier set.
 +#[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
 +pub struct RequestUrlModifiers {
 +    /// `cross-origin()`
@@ -5011,7 +5013,7 @@ diff -ruN a/url/mod.rs b/url/mod.rs
 +}
 diff -ruN a/url/servo.rs b/url/servo.rs
 --- a/url/servo.rs	2026-11-11 19:55:57
-+++ b/url/servo.rs	2026-11-19 17:13:17
++++ b/url/servo.rs	2026-11-19 20:21:23
 @@ -45,6 +45,10 @@
      /// The resolved value for the url, if valid.
      #[ignore_malloc_size_of = "Arc"]
@@ -5023,11 +5025,25 @@ diff -ruN a/url/servo.rs b/url/servo.rs
  }
  
  impl ToShmem for CssUrl {
-@@ -82,9 +86,24 @@
+@@ -79,12 +83,38 @@
+             .then(|| context.url_data.0.join(&serialization))
+             .and_then(Result::ok)
+             .map(Arc::new);
++        // pyro: every `url()` remembers the style sheet it was written in, its request's referrer
++        // (Blink `CSSImageValue::PrepareFetch`; the fetch decides for inline style), with no
++        // modifier of its own.
++        let modifiers = resolved.is_some().then(|| {
++            Arc::new(super::RequestUrlModifiers {
++                cross_origin: None,
++                integrity: None,
++                referrer_policy: None,
++                referrer: Some(context.url_data.0.clone()),
++            })
++        });
          CssUrl(Arc::new(CssUrlData {
              original: Some(serialization),
              resolved: resolved,
-+            modifiers: None,
++            modifiers,
          }))
      }
  
@@ -5048,7 +5064,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
      /// Returns true if the URL is definitely invalid. For Servo URLs, we can
      /// use its |resolved| status.
      pub fn is_invalid(&self) -> bool {
-@@ -123,6 +142,7 @@
+@@ -123,6 +153,7 @@
          CssUrl(Arc::new(CssUrlData {
              original: None,
              resolved: Some(url),
@@ -5056,7 +5072,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
          }))
      }
  
-@@ -134,6 +154,7 @@
+@@ -134,6 +165,7 @@
                  .then(|| ::url::Url::parse(url))
                  .and_then(Result::ok)
                  .map(Arc::new),
@@ -5064,7 +5080,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
          }))
      }
  }
-@@ -142,7 +163,7 @@
+@@ -142,7 +174,7 @@
      fn eq(&self, other: &Self) -> bool {
          // TODO(emilio): maybe we care about equality of the specified values if
          // present? Seems not.
@@ -5073,7 +5089,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
      }
  }
  
-@@ -166,6 +187,9 @@
+@@ -166,6 +198,9 @@
  
          dest.write_str("url(")?;
          string.to_css(dest)?;
@@ -5083,7 +5099,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
          dest.write_char(')')
      }
  }
-@@ -180,7 +204,7 @@
+@@ -180,7 +215,7 @@
      // but still return it as a ComputedUrl::Invalid
      fn to_computed_value(&self, _: &Context) -> Self::ComputedValue {
          match self.resolved {
@@ -5092,7 +5108,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
              None => match self.original {
                  Some(ref url) => ComputedUrl::Invalid(url.clone()),
                  None => {
-@@ -192,13 +216,15 @@
+@@ -192,13 +227,15 @@
  
      fn from_computed_value(computed: &ComputedUrl) -> Self {
          let data = match *computed {
@@ -5109,7 +5125,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
              },
          };
          CssUrl(Arc::new(data))
-@@ -210,18 +236,30 @@
+@@ -210,18 +247,30 @@
  pub enum ComputedUrl {
      /// The `url()` was invalid or it wasn't specified by the user.
      Invalid(#[ignore_malloc_size_of = "Arc"] Arc<String>),
@@ -5143,7 +5159,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
  }
  
  impl ToCss for ComputedUrl {
-@@ -230,12 +268,15 @@
+@@ -230,12 +279,15 @@
          W: Write,
      {
          let string = match *self {

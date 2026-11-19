@@ -51,9 +51,11 @@ pub fn is_cors_request(request: &Request) -> bool {
 
 /// pyro: what a `url()`'s request URL modifiers ask of its request (CSS Values 5 § 4.5.4):
 /// `cross-origin()` its mode and credentials, `integrity()` its integrity metadata,
-/// `referrer-policy()` its referrer policy. The style sheet the `url()` was written in is the
-/// referrer only of a request in CORS mode (CSS Values 4 "fetch a style resource" step 6);
-/// otherwise the referrer is the client, the document.
+/// `referrer-policy()` its referrer policy. The style sheet the `url()` was written in is its
+/// referrer whatever the mode, as Blink sends it (`CSSImageValue::PrepareFetch`); a sheet at the
+/// document's base URL (inline style) is left to the document ([`BaseDocument::css_options`]).
+///
+/// [`BaseDocument::css_options`]: crate::BaseDocument
 pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) -> blitz_traits::net::FetchOptions {
     use blitz_traits::net::{CorsCredentials, FetchOptions};
     use style::url::CrossOriginModifier;
@@ -66,7 +68,7 @@ pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) ->
         cors,
         integrity: modifiers.integrity.clone(),
         referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
-        referrer: cors.and(modifiers.referrer.as_ref()).map(|url| (**url).clone()),
+        referrer: modifiers.referrer.as_ref().map(|url| (**url).clone()),
         client: None,
     }
 }
@@ -78,10 +80,10 @@ pub fn asks_same_request(
     stored: &blitz_traits::net::FetchOptions,
     modifiers: Option<&style::url::RequestUrlModifiers>,
 ) -> bool {
+    // (The referrer is the sheet's, which an inline sheet's request leaves to the document.)
     let wanted = url_fetch_options(modifiers);
     stored.integrity == wanted.integrity
         && stored.referrer_policy == wanted.referrer_policy
-        && stored.referrer == wanted.referrer
         && (wanted.cors.is_none() || stored.cors == wanted.cors)
 }
 
@@ -327,7 +329,12 @@ impl ServoStylesheetLoader for StylesheetLoader {
         let url = import.url.url().unwrap().clone();
         // pyro: fetched as the `url()`'s request URL modifiers say (CSS Values 5 § 4.5.4).
         let mut request = stamped_request(url.as_ref().clone(), self.abort_signal.as_ref());
-        request.options = url_fetch_options(import.url.modifiers().map(|m| &**m));
+        // (An import without modifiers stays a plain request, served from the page's own fetch of
+        // the sheet, which sends the parent sheet as its referrer already.)
+        let modifiers = import.url.modifiers().map(|m| &**m).filter(|m| {
+            m.cross_origin.is_some() || m.integrity.is_some() || m.referrer_policy.is_some()
+        });
+        request.options = url_fetch_options(modifiers);
         // pyro: a frame document's import (nested ones too) is its frame's request.
         if !request.options.is_default() {
             request.options.client = self.client.clone();

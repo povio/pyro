@@ -209,21 +209,30 @@ fn a_frame_documents_request_names_its_frame_by_id() {
     assert!(!clients.iter().any(|(_, c)| c.is_none()), "no frame request goes out as the page's: {clients:?}");
 }
 
-/// The style sheet is the referrer of a `url()`'s request only in CORS mode (CSS Values 4 "fetch
-/// a style resource" step 6); otherwise the referrer is the client (the document), whatever its
-/// `referrer-policy()`. With any modifier the sheet was sent, so a no-cors image with
-/// `referrer-policy(unsafe-url)` could send a cross-origin sheet's path and query.
+/// A `url()`'s request has the style sheet it was written in as its referrer, whatever its mode
+/// and modifiers, as Blink sends it (`CSSImageValue::PrepareFetch` sets the referrer string to the
+/// sheet's URL unconditionally; WPT css-values `referrer-policy/unsafe-url/
+/// url-image-referrer-policy-external-stylesheet` expects it for a no-cors image); an inline
+/// sheet's leaves it to the document (the fetch's default). Plain `url()`s too.
 #[test]
-fn the_style_sheet_is_the_referrer_of_a_cors_request_only() {
+fn the_style_sheet_is_the_referrer_of_its_url_requests() {
     let recorder = Arc::new(Recorder::default());
     let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let mut sheets = std::collections::HashMap::new();
+    sheets.insert(
+        "http://sheets.test/dir/s.css".to_owned(),
+        "#a { width: 10px; height: 10px; background-image: url(\"http://test/a.png\" referrer-policy(unsafe-url)) }\
+         #b { width: 10px; height: 10px; background-image: url(\"http://test/b.png\" cross-origin(anonymous)) }\
+         #c { width: 10px; height: 10px; background-image: url(\"http://test/c.png\") }"
+            .to_owned(),
+    );
     let snapshot = Snapshot {
-        html: "<!doctype html><style>\
-               #a { width: 10px; height: 10px; background-image: url(\"a.png\" referrer-policy(unsafe-url)) }\
-               #b { width: 10px; height: 10px; background-image: url(\"b.png\" cross-origin(anonymous)) }\
-               </style><div id=a></div><div id=b></div>"
+        html: "<!doctype html><link rel=stylesheet href='http://sheets.test/dir/s.css'>\
+               <style>#d { width: 10px; height: 10px; background-image: url(\"d.png\" referrer-policy(unsafe-url)) }</style>\
+               <div id=a></div><div id=b></div><div id=c></div><div id=d></div>"
             .into(),
         base_url: "http://test/doc.html".into(),
+        sheets,
         width: 100,
         height: 50,
         device_scale_factor: 1.0,
@@ -232,8 +241,11 @@ fn the_style_sheet_is_the_referrer_of_a_cors_request_only() {
     Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
     let referrers = recorder.2.lock().unwrap().clone();
     let of = |name: &str| referrers.iter().find(|(url, _)| url.ends_with(name)).map(|(_, r)| r.clone());
-    assert_eq!(of("a.png"), Some(None), "no-cors: the document is the referrer: {referrers:?}");
-    assert_eq!(of("b.png"), Some(Some("http://test/doc.html".to_owned())), "cors: the sheet: {referrers:?}");
+    let sheet = Some(Some("http://sheets.test/dir/s.css".to_owned()));
+    assert_eq!(of("a.png"), sheet, "no-cors with referrer-policy(): the sheet: {referrers:?}");
+    assert_eq!(of("b.png"), sheet, "cors: the sheet: {referrers:?}");
+    assert_eq!(of("c.png"), sheet, "no modifier: the sheet: {referrers:?}");
+    assert_eq!(of("d.png"), Some(None), "inline style: the document: {referrers:?}");
 }
 
 /// Serves `a.css` as redirected to `http://elsewhere.test/dir/a.css`, whose body imports

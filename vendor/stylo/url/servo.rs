@@ -83,10 +83,21 @@ impl CssUrl {
             .then(|| context.url_data.0.join(&serialization))
             .and_then(Result::ok)
             .map(Arc::new);
+        // pyro: every `url()` remembers the style sheet it was written in, its request's referrer
+        // (Blink `CSSImageValue::PrepareFetch`; the fetch decides for inline style), with no
+        // modifier of its own.
+        let modifiers = resolved.is_some().then(|| {
+            Arc::new(super::RequestUrlModifiers {
+                cross_origin: None,
+                integrity: None,
+                referrer_policy: None,
+                referrer: Some(context.url_data.0.clone()),
+            })
+        });
         CssUrl(Arc::new(CssUrlData {
             original: Some(serialization),
             resolved: resolved,
-            modifiers: None,
+            modifiers,
         }))
     }
 

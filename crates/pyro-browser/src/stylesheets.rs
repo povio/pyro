@@ -565,9 +565,9 @@ impl Browser {
             return;
         };
         let Some(frame) = self.doc(page).map(|p| p.main_frame.clone()) else { return };
-        // The parent sheet is the referrer of a plain import (as before); of a modified one only
-        // in CORS mode, else the document (CSS Values 4 "fetch a style resource" step 6).
-        let referrer = if modified && !cors { frame.url.clone() } else { referrer.to_owned() };
+        // The parent sheet is the import's referrer, whatever its mode (as Blink sends a style
+        // sheet's requests).
+        let referrer = referrer.to_owned();
         let request = FetchRequest {
             post: None,
             url,
