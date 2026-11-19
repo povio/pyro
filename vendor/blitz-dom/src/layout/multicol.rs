@@ -801,6 +801,10 @@ impl LayoutPassState<'_> {
             Some(_) => self.doc.column_spanner_ranges(dom_id),
             None => Vec::new(),
         };
+        let spanner_leads = match spanning {
+            Some(_) => self.doc.column_spanner_leads(dom_id),
+            None => Vec::new(),
+        };
         // pyro: the outer fragmentation this container is nested in (see `fragmentainer`).
         let nested_ctx = (spanners.is_empty() && multicol.height.is_none() && !vertical)
             .then(|| self.nested_fragmentation.iter().find(|e| e.0 == dom_id).map(|e| e.1))
@@ -975,7 +979,7 @@ impl LayoutPassState<'_> {
                         });
                         row_top = top + (end - start);
                         // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
-                        run_start = spanners[part].1;
+                        run_start = spanners[part].1 - spanner_leads.get(part).copied().unwrap_or(0.0);
                     }
                     continue;
                 }
@@ -1066,7 +1070,7 @@ impl LayoutPassState<'_> {
                 });
                 row_top += end - start;
                 // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
-                run_start = spanners[part].1;
+                run_start = spanners[part].1 - spanner_leads.get(part).copied().unwrap_or(0.0);
             }
         }
         // pyro: in a box of a definite height the last row of columns (after the last spanner)
@@ -1459,6 +1463,35 @@ impl BaseDocument {
             ranges.push((start, end.max(start), offset.x));
         }
         ranges
+    }
+
+    /// pyro: for each of `container`'s spanners, how much of its bottom margin is the top margin
+    /// of the in-flow box after it (collapsed with it in the strip): the columns after the
+    /// spanner show it, as margins do not collapse across a spanner's row (Chromium; WPT
+    /// css-multicol `multicol-span-all-margin-bottom-001`).
+    fn column_spanner_leads(&self, container: crate::NodeId) -> Vec<f32> {
+        self.column_spanners_of(container)
+            .into_iter()
+            .map(|(id, _)| {
+                let node = &self.nodes[id];
+                let Some(parent) = node.layout_parent.get() else { return 0.0 };
+                let children = self.nodes[parent].layout_children.borrow();
+                let Some(children) = children.as_deref() else { return 0.0 };
+                let Some(at) = children.iter().position(|&c| c == id) else { return 0.0 };
+                let next = children[at + 1..].iter().map(|&c| &self.nodes[c]).find(|c| {
+                    !c.is_out_of_flow() && c.primary_styles().is_some_and(|s| !s.get_box().display.is_none())
+                });
+                match next {
+                    Some(next) if next.primary_styles().is_some_and(|s| !is_spanner_style(&s)) => next
+                        .unrounded_layout()
+                        .margin
+                        .top
+                        .max(0.0)
+                        .min(node.unrounded_layout().margin.bottom.max(0.0)),
+                    _ => 0.0,
+                }
+            })
+            .collect()
     }
 
     /// Where the strip of the multi-column container `container` may break, from its laid-out
