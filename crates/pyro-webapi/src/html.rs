@@ -1338,6 +1338,151 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     // ARIA reflection (ARIAMixin) for the attributes Playwright/Testing
     // Library read through properties.
     reflect_aria(def);
+    reflect_aria_elements(def);
+}
+
+/// ARIA element reflection state of one element's attribute (see `PageDom::aria_refs`).
+#[derive(Default)]
+pub(crate) struct AriaRefs {
+    /// The elements an IDL setter set (the content attribute then reads `""`).
+    explicit: Option<Vec<NodeId>>,
+    /// The frozen array last returned, per realm, with the elements it holds.
+    cache: Option<(pyro_js::RealmId, Vec<NodeId>, pyro_js::Persistent)>,
+}
+
+/// Whether `target` is a descendant of one of `el`'s shadow-including ancestors (HTML "reflect"
+/// for element references): its tree is `el`'s, or that of a shadow host around `el`.
+fn aria_reference_valid(dom: &Dom, el: NodeId, target: NodeId) -> bool {
+    let (Ok(target_root), Ok(mut root)) = (dom.root_node(target, false), dom.root_node(el, false)) else {
+        return false;
+    };
+    loop {
+        if root == target_root {
+            return true;
+        }
+        match dom.fragment_host(root) {
+            Ok(Some(host)) => match dom.root_node(host, false) {
+                Ok(r) => root = r,
+                Err(_) => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
+/// The elements `attr` of `el` refers to: the ones set explicitly while the attribute still reads
+/// `""`, else the first element of `el`'s tree with each id the attribute lists (`single`: the
+/// whole value is one id).
+fn aria_elements(page: &PageDom, el: NodeId, attr: &'static str, single: bool) -> Vec<NodeId> {
+    let dom = page.dom.borrow();
+    let Some(value) = dom.get_attribute(el, attr).ok().flatten().map(str::to_owned) else { return Vec::new() };
+    if value.is_empty() {
+        if let Some(explicit) = page.aria_refs.borrow().get(&(el, attr)).and_then(|r| r.explicit.clone()) {
+            return explicit
+                .into_iter()
+                .filter(|&t| dom.element(t).is_ok() && aria_reference_valid(&dom, el, t))
+                .collect();
+        }
+    }
+    let Ok(root) = dom.root_node(el, false) else { return Vec::new() };
+    let lookup = |id: &str| dom.get_element_by_id(root, id).ok().flatten();
+    if single {
+        lookup(&value).into_iter().collect()
+    } else {
+        value.split_ascii_whitespace().filter_map(lookup).collect()
+    }
+}
+
+fn set_aria_explicit(page: &PageDom, el: NodeId, attr: &'static str, elements: Option<Vec<NodeId>>) -> JsResult<()> {
+    let present = elements.is_some();
+    page.aria_refs.borrow_mut().entry((el, attr)).or_default().explicit = elements;
+    let mut dom = page.dom.borrow_mut();
+    if present {
+        dom.set_attribute(el, attr, "").js()
+    } else {
+        dom.remove_attribute(el, attr).js().map(|_| ())
+    }
+}
+
+/// An Element argument of an element-reflecting setter.
+fn aria_element_arg(s: &Scope<'_>, v: Value<'_>, page: &PageDom) -> JsResult<NodeId> {
+    let id = crate::node::node_arg(s, v, "set")?;
+    if page.dom.borrow().element(id).is_err() {
+        return Err(JsError::Type("Failed to set the property: the value is not of type 'Element'.".into()));
+    }
+    Ok(id)
+}
+
+fn reflect_aria_elements(def: &mut ClassDef<Element>) {
+    def.accessor(
+        "ariaActiveDescendantElement",
+        |s, n| {
+            let page = n.page();
+            let found = aria_elements(page, n.id, "aria-activedescendant", true).into_iter().next();
+            node_value(s, page, found)
+        },
+        |s, n, v| {
+            let page = n.page();
+            let elements = if v.is_null() || v.is_undefined() { None } else { Some(vec![aria_element_arg(s, v, page)?]) };
+            set_aria_explicit(page, n.id, "aria-activedescendant", elements)
+        },
+    );
+    macro_rules! aria_elements {
+        ($prop:literal, $attr:literal) => {
+            def.accessor(
+                $prop,
+                |s, n| aria_elements_get(s, n.page(), n.id, $attr),
+                |s, n, v| aria_elements_set(s, n.page(), n.id, $attr, v),
+            );
+        };
+    }
+    aria_elements!("ariaControlsElements", "aria-controls");
+    aria_elements!("ariaDescribedByElements", "aria-describedby");
+    aria_elements!("ariaDetailsElements", "aria-details");
+    aria_elements!("ariaErrorMessageElements", "aria-errormessage");
+    aria_elements!("ariaFlowToElements", "aria-flowto");
+    aria_elements!("ariaLabelledByElements", "aria-labelledby");
+    aria_elements!("ariaOwnsElements", "aria-owns");
+}
+
+/// `FrozenArray<Element>?` getter: null without the attribute; the same frozen array while the
+/// elements stay the same.
+fn aria_elements_get<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, attr: &'static str) -> JsResult<Value<'s>> {
+    if page.dom.borrow().get_attribute(el, attr).ok().flatten().is_none() {
+        return Ok(s.null());
+    }
+    let elements = aria_elements(page, el, attr, false);
+    let realm = s.realm_id();
+    if let Some((r, cached, array)) = page.aria_refs.borrow().get(&(el, attr)).and_then(|a| a.cache.as_ref()) {
+        if *r == realm && *cached == elements {
+            return Ok(array.get(s));
+        }
+    }
+    let mut items = Vec::with_capacity(elements.len());
+    for &e in &elements {
+        items.push(crate::node::wrap_node(s, page, e)?.value());
+    }
+    let array = s.array(&items)?.value();
+    let freeze = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("freeze")?;
+    let array = freeze.as_object().expect("Object.freeze").call(None, &[array])?;
+    page.aria_refs.borrow_mut().entry((el, attr)).or_default().cache =
+        Some((realm, elements, pyro_js::Persistent::new(s, array)));
+    Ok(array)
+}
+
+fn aria_elements_set(s: &Scope<'_>, page: &Rc<PageDom>, el: NodeId, attr: &'static str, v: Value<'_>) -> JsResult<()> {
+    if v.is_null() || v.is_undefined() {
+        return set_aria_explicit(page, el, attr, None);
+    }
+    let list = v
+        .as_object()
+        .ok_or_else(|| JsError::Type("Failed to set the property: the value is not a sequence.".into()))?;
+    let len = to_u32(list.get_atom("length")?)?;
+    let mut elements = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        elements.push(aria_element_arg(s, list.get_index(i)?, page)?);
+    }
+    set_aria_explicit(page, el, attr, Some(elements))
 }
 
 fn reflect_aria(def: &mut ClassDef<Element>) {

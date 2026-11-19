@@ -587,3 +587,35 @@ fn focus_matches_shadow_hosts_of_the_focused_element() {
         "true|true|false|true|false|true"
     );
 }
+
+/// ARIA element reflection (WPT html/dom/aria-element-reflection): ids resolve in the element's
+/// tree, explicitly set elements win while the attribute reads "", arrays are frozen and the same
+/// object while their elements stay the same, and references out of scope read as null.
+#[test]
+fn aria_element_reflection() {
+    let env = Env::new("http://aria.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              document.body.innerHTML = '<div id=l1>a</div><div id=l2>b</div><input id=in aria-labelledby="l1 missing l2" aria-activedescendant="l2">';
+              const input = document.getElementById("in"), l1 = document.getElementById("l1"), l2 = document.getElementById("l2");
+              const out = [input.ariaLabelledByElements.map(e => e.id).join(","), input.ariaActiveDescendantElement === l2,
+                           input.ariaLabelledByElements === input.ariaLabelledByElements, Object.isFrozen(input.ariaLabelledByElements),
+                           input.ariaOwnsElements, input.ariaControlsElements];
+              input.ariaActiveDescendantElement = l1;
+              l1.id = "renamed";
+              out.push(input.getAttribute("aria-activedescendant"), input.ariaActiveDescendantElement === l1);
+              l1.remove();
+              out.push(input.ariaActiveDescendantElement);
+              input.ariaDescribedByElements = [l2];
+              out.push(input.ariaDescribedByElements[0] === l2);
+              input.setAttribute("aria-describedby", "l2 l2");
+              out.push(input.ariaDescribedByElements.length);
+              input.ariaDescribedByElements = null;
+              out.push(input.hasAttribute("aria-describedby"));
+              return out.join("|");
+            })()"##
+        ),
+        "l1,l2|true|true|true||||true||true|2|false"
+    );
+}
