@@ -2604,7 +2604,13 @@ fn line_truncation<'a>(
     // The lines were broken in the unrounded box: a line as wide as the box (a
     // box sized to its text) must not count as overflowing it by a rounding.
     let width = node.unrounded_layout().content_box_width() * scale;
-    line_truncation_at(text_layout, line, index, scale, width, wraps(node))
+    // pyro: the end edge is the scrollport's, where the box is scrolled to (CSS Overflow 4
+    // `text-overflow`: the ellipsis shows at the visible edge; WPT css-overflow `text-overflow-021`).
+    // (Scroll offsets are kept in whole px: one up to half a px short of the fractional maximum
+    // still shows the content's end.)
+    let scroll_x = (node.scroll_offset().x as f32).max(0.0);
+    let scrolled = if scroll_x > 0.0 { (scroll_x + 0.5) * scale } else { 0.0 };
+    line_truncation_scrolled(text_layout, line, index, scale, width, wraps(node), scrolled)
 }
 
 /// pyro: whether the lines of the inline root `node` have soft wrap opportunities: none where
@@ -2641,6 +2647,20 @@ fn line_truncation_at<'a>(
     width: f32,
     wraps: bool,
 ) -> Option<LineTruncation<'a>> {
+    line_truncation_scrolled(text_layout, line, index, scale, width, wraps, 0.0)
+}
+
+/// pyro: [`line_truncation_at`] in a box scrolled `scrolled` device px along the line: its end
+/// edge that much further, past the line's own end (`LineMetrics::inline_max_coord`).
+fn line_truncation_scrolled<'a>(
+    text_layout: &'a blitz_dom::node::TextLayout,
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    index: usize,
+    scale: f32,
+    width: f32,
+    wraps: bool,
+    scrolled: f32,
+) -> Option<LineTruncation<'a>> {
     // pyro: the line's paragraph's direction (`unicode-bidi: plaintext`: WPT css-overflow
     // `line-clamp-with-text-overflow-string-009`).
     let rtl = line.is_rtl();
@@ -2659,7 +2679,7 @@ fn line_truncation_at<'a>(
     if let Some(clamp) = clamp.filter(|clamp| clamp.at_soft_wraps) {
         let hyphenated = &*clamp.hyphenated_ellipsis;
         if let Some((cut, x, at_hyphen)) =
-            truncate_line_at_soft_wrap(line, ellipsis, hyphenated, width, scale, rtl, wraps, &text_layout.text)
+            truncate_line_at_soft_wrap(line, ellipsis, hyphenated, width, scale, rtl, wraps, &text_layout.text, scrolled)
         {
             // (At a soft hyphen, a hyphen shows before the ellipsis.)
             return Some(match at_hyphen {
@@ -2668,7 +2688,7 @@ fn line_truncation_at<'a>(
             });
         }
     }
-    let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced)?;
+    let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced, scrolled)?;
     Some(LineTruncation { cut, x, ellipsis, text })
 }
 
@@ -2688,13 +2708,14 @@ fn truncate_line_at_soft_wrap(
     rtl: bool,
     wraps: bool,
     text: &str,
+    scrolled: f32,
 ) -> Option<(crate::text::TextCut, f32, bool)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
     let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
     let hyphenated_width = Some(hyphenated.full_width()).filter(|w| w.is_finite()).map_or(ellipsis_width, |w| w.max(0.0));
-    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
+    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width } + scrolled;
     // The line's atoms: (logical key, x0, x1, whether it is white space, the byte offset a soft
     // wrap opportunity before it breaks at). A cluster's key is its text offset; an atomic
     // inline's, that of the cluster before it in the line's direction (it has no text).
@@ -2786,13 +2807,14 @@ fn truncate_line(
     scale: f32,
     rtl: bool,
     forced: bool,
+    scrolled: f32,
 ) -> Option<(crate::text::TextCut, f32)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
     let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
     // pyro: the line's own edges where floats shorten it (Blink truncates at the line box's end).
-    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
+    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width } + scrolled;
     let start = metrics.inline_min_coord.clamp(0.0, width);
     // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
     // clamp's) keeps all of its atoms when the ellipsis fits after them.
@@ -4837,7 +4859,7 @@ impl ElementCx<'_, '_> {
                 Some((ellipsis, text)) => {
                     let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
                     for line in layout.lines() {
-                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, layout.is_rtl(), false);
+                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, layout.is_rtl(), false, 0.0);
                         draw_text_context.cut = truncation.map(|(cut, _)| cut);
                         crate::text::stroke_text(
                             scene,
