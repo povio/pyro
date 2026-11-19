@@ -1041,7 +1041,7 @@ fn compute_inner(
     // `space-evenly`, `stretch`) must invoke the single-subject fallback unconditionally —
     // which is what passing `num_items = 1` to `apply_alignment_fallback` does. The whole
     // group then shifts by one offset, with zero inter-item gap.
-    if align_content.keyword != AlignContentKeyword::Normal {
+    if align_content.keyword != AlignContentKeyword::Normal && !tree.block_container_is_fragmented(node_id) {
         let container_inner_height = container_outer_height - resolved_content_box_inset.vertical_axis_sum();
         let inflow_content_height = intrinsic_outer_height - resolved_content_box_inset.vertical_axis_sum();
         let free_space = container_inner_height - inflow_content_height;

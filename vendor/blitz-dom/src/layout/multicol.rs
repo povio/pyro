@@ -713,11 +713,13 @@ impl LayoutPassState<'_> {
         // pyro: the tops of nested containers to break before (`ColumnFragments::pushed`).
         let mut pushed_nested: Vec<f32> = Vec::new();
         let (strip, mut breaks) = loop {
+            self.multicol_strip_depth += 1;
             let strip = if inline_root {
                 self.compute_inline_layout(dom_id, strip_inputs, None)
             } else {
                 compute_block_layout(self, node_id, strip_inputs, None)
             };
+            self.multicol_strip_depth -= 1;
             // Taffy's block algorithm clamps the strip by the container's `min-height` and
             // `max-height` whatever the sizing mode: under either, the content's end is taken from
             // the laid-out content instead (empty space a `min-height` adds is no content to balance).

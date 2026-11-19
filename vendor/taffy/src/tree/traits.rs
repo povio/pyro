@@ -534,6 +534,14 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         None
     }
 
+    /// pyro: whether the container is laid out in a fragmentation context (a multi-column
+    /// container's strip), where its `align-content` does not shift its content: fragmented
+    /// alignment is undefined, and browsers lay the content out unaligned (css-align-3 § 5.1.1).
+    fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
+        let _ = node_id;
+        false
+    }
+
     /// pyro: whether a percentage-height scroll container among the container's children whose
     /// percentage cannot resolve is sized as if its height were 0 (then clamped by `min-height`)
     /// rather than `auto`: CSS Tables 3 §row-layout and Blink's restricted block size table cell

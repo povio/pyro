@@ -160,6 +160,8 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: multi-column containers nested in another's columns and the outer column height and
     /// their offset down their outer column (`layout::multicol`).
     pub(crate) nested_fragmentation: Vec<(crate::NodeId, (f32, f32))>,
+    /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
+    pub(crate) multicol_strip_depth: u32,
     /// pyro: a table cell being laid out and the border-box height its children's percentage
     /// heights resolve against: its own length `height` (`table::TableTreeWrapper::definite_height`).
     pub(crate) cell_percent_height: Option<(crate::NodeId, f32)>,
@@ -229,6 +231,7 @@ impl<'doc> LayoutPassState<'doc> {
             calc_size_results: Vec::new(),
             multicol_percent_height: None,
             nested_fragmentation: Vec::new(),
+            multicol_strip_depth: 0,
             cell_percent_height: None,
             restricted_cell: None,
             stale_lines: Vec::new(),
@@ -2374,6 +2377,15 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
 
     fn block_container_fill_height(&self, node_id: NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
         self.quirky_fill_height(dom_node_id(node_id), parent_size)
+    }
+
+    fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
+        // pyro: in a multi-column strip, but for a monolithic scroll container (`layout::multicol`)
+        self.multicol_strip_depth > 0
+            && !self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|style| {
+                let box_ = style.get_box();
+                box_.overflow_x.is_scrollable() || box_.overflow_y.is_scrollable()
+            })
     }
 
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
