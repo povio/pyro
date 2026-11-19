@@ -924,9 +924,25 @@ impl ElementCx<'_, '_> {
             }
             let transform = self.transform
                 * Affine::translate(Vec2::new((sticky.x * self.scale).round(), (sticky.y * self.scale).round()));
+            // pyro: in the cell's `border-shape`, which the backgrounds of its table parts take as
+            // the cell's own (CSS Borders 4 § 11; WPT css-backgrounds
+            // `clip-border-shape-table-part-background`).
+            let cell_shape = self.context.dom.get_node(cell.node_id).and_then(|cell_node| {
+                let layout = *cell_node.final_layout();
+                let location = Vec2::new(layout.location.x as f64, layout.location.y as f64);
+                let cell_transform = transform * Affine::translate(location * self.scale);
+                let cell_cx = self.context.element_cx(cell_node, layout, cell_transform, None);
+                cell_cx.border_shape().map(|shape| (cell_transform, shape.background_clip()))
+            });
+            if let Some((cell_transform, path)) = &cell_shape {
+                scene.push_clip_layer(Fill::NonZero, *cell_transform, path);
+            }
             if !images {
                 for color in colors {
                     scene.fill(Fill::NonZero, transform, *color, None, &shape);
+                }
+                if cell_shape.is_some() {
+                    scene.pop_layer();
                 }
                 continue;
             }
@@ -969,6 +985,9 @@ impl ElementCx<'_, '_> {
                         }
                     }
                 }
+            }
+            if cell_shape.is_some() {
+                scene.pop_layer();
             }
         }
     }
