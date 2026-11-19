@@ -1512,15 +1512,25 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // pyro: an `<svg>` paints whatever its own visibility: what in it is visible
                 // (`visibility: visible` on a child, a filter's region) is (usvg drops the hidden
                 // shapes; WPT filter-effects `svg-visibility-hidden-element-with-filter-002`).
+                // pyro: `content-visibility: hidden` skips a replaced element's content (its image,
+                // canvas, video frame, inline SVG or document; CSS Contain 2 § 4.1).
+                let skipped = cx.style.get_box().slow_clone_content_visibility()
+                    == style::values::specified::box_::ContentVisibility::Hidden;
                 #[cfg(feature = "svg")]
-                cx.draw_svg(scene);
+                if !skipped {
+                    cx.draw_svg(scene);
+                }
                 if !hidden {
-                    cx.draw_image(scene);
-                    cx.draw_selection_tint(scene);
-                    cx.draw_content_gradient(scene);
+                    if !skipped {
+                        cx.draw_image(scene);
+                        cx.draw_selection_tint(scene);
+                        cx.draw_content_gradient(scene);
+                    }
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
-                    cx.draw_sub_document(scene);
+                    if !skipped {
+                        cx.draw_sub_document(scene);
+                    }
                     cx.draw_input(scene);
                     cx.draw_text_input_text(scene, content_position);
                 }
