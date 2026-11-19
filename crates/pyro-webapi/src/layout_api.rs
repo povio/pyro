@@ -376,6 +376,21 @@ pub(crate) fn scroll_into_view_if_needed<'s>(s: &Scope<'s>, n: &NodeData, a: Arg
     Ok(s.undefined())
 }
 
+/// The viewport's scroll position (CSS px), for a history entry to persist.
+pub fn viewport_scroll(page: &Rc<PageDom>) -> (i32, i32) {
+    let layout = page.layout.borrow();
+    (layout.scroll_x() as i32, layout.scroll_y() as i32)
+}
+
+/// Scrolls the viewport back to a history entry's persisted position.
+pub fn restore_viewport_scroll(page: &Rc<PageDom>, (x, y): (i32, i32)) {
+    crate::animation_events::layout_flush(page, page.document());
+    let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), Some(x), Some(y));
+    if moved {
+        fire_scroll(page, None);
+    }
+}
+
 /// HTML "scroll to the fragment", after a same-document navigation to `fragment` (the URL's
 /// fragment, percent-encoded): the indicated part of the document is scrolled into view (block
 /// start, inline nearest), or the top of the document for an empty fragment or `top`. Nothing
@@ -387,14 +402,20 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
     crate::animation_events::layout_flush(page, doc);
     let target = {
         let dom = page.dom.borrow();
-        let by_id = |id: &str| (!id.is_empty()).then(|| dom.get_element_by_id(doc, id).ok().flatten()).flatten();
-        by_id(fragment).or_else(|| by_id(&decoded)).or_else(|| {
-            // The first `a` element whose `name` is the fragment.
-            dom.descendants(doc).ok().into_iter().flatten().find(|&n| {
-                dom.element(n).is_ok_and(|e| &*e.local_name() == "a")
-                    && dom.get_attribute(n, "name").ok().flatten().is_some_and(|name| name == fragment || name == decoded)
+        // HTML "find a potential indicated element": an element with the id, else the first `a`
+        // with the name, for the fragment as it is, then percent-decoded.
+        let find = |name: &str| {
+            if name.is_empty() {
+                return None;
+            }
+            dom.get_element_by_id(doc, name).ok().flatten().or_else(|| {
+                dom.descendants(doc).ok().into_iter().flatten().find(|&n| {
+                    dom.element(n).is_ok_and(|e| &*e.local_name() == "a")
+                        && dom.get_attribute(n, "name").ok().flatten().is_some_and(|value| value == name)
+                })
             })
-        })
+        };
+        find(fragment).or_else(|| find(&decoded))
     };
     match target {
         Some(el) => {

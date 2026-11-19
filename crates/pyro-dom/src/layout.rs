@@ -3450,7 +3450,23 @@ impl Layout {
         moved
     }
 
-    /// `offset_x` aligns the horizontal axis, `offset_y` the vertical one.
+    /// The box that scrolling `el` into view brings in: its border box grown by its
+    /// `scroll-margin` (CSS Scroll Snap 1 § 4.1, the scroll snap area, which CSSOM View's
+    /// "scroll an element into view" aligns).
+    fn scroll_margin_rect(&self, dom: &Dom, el: NodeId) -> Rect {
+        let r = self.bounding_client_rect(dom, el);
+        let margin = |side: &str| {
+            let v = self.style.computed_value(dom, el, &format!("scroll-margin-{side}")).unwrap_or_default();
+            v.trim().trim_end_matches("px").parse::<f64>().unwrap_or(0.0)
+        };
+        let (top, right, bottom, left) = (margin("top"), margin("right"), margin("bottom"), margin("left"));
+        if top == 0.0 && right == 0.0 && bottom == 0.0 && left == 0.0 {
+            return r;
+        }
+        Rect { x: r.left() - left, y: r.top() - top, width: r.width.abs() + left + right, height: r.height.abs() + top + bottom }
+    }
+
+        /// `offset_x` aligns the horizontal axis, `offset_y` the vertical one.
     fn scroll_into_view_offset_targets(
         &mut self,
         dom: &Dom,
@@ -3494,7 +3510,7 @@ impl Layout {
             let any = self.is_scroll_container(dom, node);
             let mut axes = ScrollAxes { x: any, y: any };
             let explicit = !script && self.element_scroll.contains_key(&node);
-            let target = self.bounding_client_rect(dom, el);
+            let target = self.scroll_margin_rect(dom, el);
             // From the scrollport (the padding box) in the container's own px, as
             // Blink's scroll into view measures for script and for an action's reveal alike.
             let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
@@ -3525,7 +3541,7 @@ impl Layout {
         if self.layout_box(dom, el).is_some_and(|b| b.fixed) {
             return moved;
         }
-        let target = self.bounding_client_rect(dom, el);
+        let target = self.scroll_margin_rect(dom, el);
         let left = offset_x(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0 as i64);
         let top = offset_y(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1 as i64);
         if self.window_scroll_to(dom, left, top) {
