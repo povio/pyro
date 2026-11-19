@@ -202,6 +202,10 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) flow_phase: std::cell::Cell<FlowPhase>,
     /// pyro: a box painted in the foreground phase had an outline, left for the outline phase.
     pub(crate) deferred_outlines: std::cell::Cell<bool>,
+    /// pyro: the clipping stacking-context root whose content is being painted in its clip: the
+    /// out-of-flow boxes of its context whose containing block lies outside it are left for
+    /// after the clip (`ElementCx::escapes_own_clip`).
+    pub(crate) clip_escapes_of: std::cell::Cell<Option<NodeId>>,
     /// pyro (lane H2): 3D rendering contexts being recorded (`render/three_d.rs`).
     pub(crate) three_d: three_d::State,
     /// pyro: where the scene's coordinates land in device pixels, when that is known (a
@@ -286,6 +290,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             local_raster_depth: std::cell::Cell::new(0),
             flow_phase: std::cell::Cell::new(FlowPhase::All),
             deferred_outlines: std::cell::Cell::new(false),
+            clip_escapes_of: std::cell::Cell::new(None),
             three_d: Default::default(),
             device_pixels: None,
             custom_widget_scenes,
@@ -1089,6 +1094,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             && overflow_area < 0.01
             && border_box.area() < 0.01
             && filter_steps.is_none()
+            // pyro: what it paints outside its clip still shows (`has_clip_escapes`).
+            && !has_clip_escapes(self.dom.as_ref().tree(), node)
         {
             return;
         }
@@ -1309,6 +1316,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             is_text_input,
             content_position,
             child_clip_rect,
+            clip_rect: source_rect,
         };
 
         // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
@@ -1383,6 +1391,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             is_text_input,
             content_position,
             child_clip_rect,
+            clip_rect,
         } = *element;
         let unscrolled_transform = cx.transform;
 
@@ -1444,6 +1453,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             &cx.overflow_clip_path(&cx.style)
         };
 
+        // pyro: the out-of-flow boxes of this clipping stacking context whose containing block
+        // lies outside it are not clipped by it: they are painted after its clip, in its
+        // scrolled space (Chromium clips a box by its containing-block chain; WPT css-position
+        // `position-fixed-scroll-nested-fixed`, `position-absolute-under-non-containing-stacking-context`).
+        let escapes = should_clip && cx.has_clip_escapes();
+        let outer_escapes = self.clip_escapes_of.replace(if escapes { Some(node.id) } else { None });
         // Clip layer if box requires clipping. Opacity set to 1.0
         self.layer_manager.maybe_with_layer(
             scene,
@@ -1512,6 +1527,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 }
             },
         );
+        self.clip_escapes_of.set(outer_escapes);
+        if escapes {
+            cx.transform = self.scrolled_transform(node, unscrolled_transform);
+            cx.draw_clip_escapes(scene, cx.transform, clip_rect);
+        }
         cx.transform = unscrolled_transform;
         // pyro: the borders of a collapsed table with positioned parts, after its last positioned
         // cell (`table_borders_deferred`).
@@ -1956,6 +1976,36 @@ fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> pe
 }
 
 /// pyro: an `<img>`, `<video>` or `<canvas>`: the elements the UA sheet gives `overflow: clip`.
+/// pyro: whether `child_id`, an out-of-flow box painted in the stacking context of `node_id`,
+/// has a containing block outside that element: its overflow clip does not clip it (it is not in
+/// its containing-block chain).
+fn escapes_clip_of(tree: &blitz_dom::NodeTree, node_id: NodeId, child_id: NodeId) -> bool {
+    let Some(child) = tree.get(child_id) else { return false };
+    if !child.is_out_of_flow() {
+        return false;
+    }
+    let mut cb = child.containing_block();
+    while let Some(id) = cb {
+        if id == node_id {
+            return false;
+        }
+        cb = tree.get(id).and_then(|node| node.containing_block());
+    }
+    true
+}
+
+/// pyro: whether `node` (a stacking context) paints any box of its positioned level or above
+/// whose containing block lies outside it ([`escapes_clip_of`]).
+fn has_clip_escapes(tree: &blitz_dom::NodeTree, node: &Node) -> bool {
+    let Some(sc) = &node.stacking_context else { return false };
+    sc.pos_z_hoisted_children().any(|child| escapes_clip_of(tree, node.id, child.node_id))
+        || node
+            .paint_children
+            .borrow()
+            .as_ref()
+            .is_some_and(|children| children.iter().any(|&id| escapes_clip_of(tree, node.id, id)))
+}
+
 fn is_ua_clipped_replaced(element: &ElementData) -> bool {
     // pyro: not a broken image showing its alt text: a box of text, clipped as any box.
     if element.image_broken {
@@ -4270,6 +4320,44 @@ impl ElementCx<'_, '_> {
         self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
     }
 
+    /// pyro: see [`escapes_clip_of`].
+    fn escapes_own_clip(&self, child_id: NodeId) -> bool {
+        escapes_clip_of(self.context.dom.as_ref().tree(), self.node.id, child_id)
+    }
+
+    /// pyro: see [`has_clip_escapes`].
+    fn has_clip_escapes(&self) -> bool {
+        has_clip_escapes(self.context.dom.as_ref().tree(), self.node)
+    }
+
+    /// pyro: whether `child_id` is left out of this element's clip, painted after it.
+    fn skips_clip_escape(&self, child_id: NodeId) -> bool {
+        self.context.clip_escapes_of.get() == Some(self.node.id) && self.escapes_own_clip(child_id)
+    }
+
+    /// pyro: the boxes [`Self::skips_clip_escape`] left out of this element's clip: those of its
+    /// positioned level in tree order, then those with a positive `z-index`.
+    fn draw_clip_escapes(&self, scene: &mut impl PaintScene, transform: Affine, clip_rect: Rect) {
+        let escaping: Vec<NodeId> = self
+            .node
+            .paint_children
+            .borrow()
+            .as_ref()
+            .map(|children| children.iter().copied().filter(|&id| self.escapes_own_clip(id)).collect())
+            .unwrap_or_default();
+        for id in escaping {
+            self.draw_paint_child(scene, id, transform, clip_rect);
+        }
+        if let Some(sc) = &self.node.stacking_context {
+            self.draw_hoisted_children(
+                scene,
+                sc.pos_z_hoisted_children().filter(|child| self.escapes_own_clip(child.node_id)),
+                transform,
+                clip_rect,
+            );
+        }
+    }
+
     /// pyro: whether `child_id` is left out of this pass of a multi-column container's children
     /// (`PaintContext::multicol_pass`).
     fn multicol_skips(&self, child_id: NodeId) -> bool {
@@ -4317,7 +4405,7 @@ impl ElementCx<'_, '_> {
         // transformed ancestor scrolls with it like any out-of-flow box.
         // pyro: so does one lifted here from a containing block that is no
         // layer root (a `backdrop-filter` box): it is placed by its offset.
-        if self.multicol_skips(child_id) {
+        if self.multicol_skips(child_id) || self.skips_clip_escape(child_id) {
             return;
         }
         let child = &self.context.dom.as_ref().tree()[child_id];
@@ -4610,7 +4698,7 @@ impl ElementCx<'_, '_> {
         // The clip layers open, outermost first: node, transform, whether the layer was pushed.
         let mut open: Vec<(NodeId, Affine, bool)> = Vec::new();
         for hoisted_child in children {
-            if self.multicol_skips(hoisted_child.node_id) {
+            if self.multicol_skips(hoisted_child.node_id) || self.skips_clip_escape(hoisted_child.node_id) {
                 continue;
             }
             let position = hoisted_child.position(self.node.tree(), self.node.id);
@@ -5516,6 +5604,8 @@ struct ElementPaint<'n> {
     is_text_input: bool,
     content_position: Point,
     child_clip_rect: Rect,
+    /// pyro: what the element's ancestors leave visible (its own clip not applied).
+    clip_rect: Rect,
 }
 
 /// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
