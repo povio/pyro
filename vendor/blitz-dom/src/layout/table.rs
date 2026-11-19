@@ -129,7 +129,9 @@ impl TableTreeWrapper<'_, '_> {
                 axis: taffy::RequestedAxis::Horizontal,
                 known_dimensions: taffy::Size::NONE,
                 known_dimensions_are_definite: taffy::Size { width: true, height: true },
-                parent_size: taffy::Size { width: Some(inner), height: None },
+                // pyro: a cell's percentage padding resolves against zero in the column widths
+                // (CSS Tables 3, as Blink and Gecko; `TableTreeWrapper::grid_inline_size`).
+                parent_size: taffy::Size { width: Some(0.0), height: None },
                 available_space: taffy::Size { width: space, height: taffy::AvailableSpace::MaxContent },
                 vertical_margins_are_collapsible: taffy::Line::FALSE,
             };
@@ -3636,7 +3638,16 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
         // pyro: unless the table's height or the row's is definite, the cell's height (stretched to
         // its row) is no basis for its children's percentages, nor the table for the cell's own
         // (`Self::definite_height`).
-        let (inputs, own_basis) = self.cell_basis_inputs(cell, inputs);
+        let (mut inputs, own_basis) = self.cell_basis_inputs(cell, inputs);
+        // pyro: a cell's percentage padding resolves against the table's width less its outer
+        // border spacing (the grid's), once that is known (CSS Tables 3, as Blink and Gecko; it
+        // resolved against the cell's columns; WPT css-tables `tentative/padding-percentage`).
+        // In the column widths it resolves against zero (`percent_lengths`).
+        if inputs.known_dimensions.width.is_some() && inputs.parent_size.width.is_some() {
+            if let Some(grid_width) = self.grid_inline_size().filter(|_| self.has_percent_padding(cell)) {
+                inputs.parent_size.width = Some(grid_width);
+            }
+        }
         let outer_basis = std::mem::replace(&mut self.doc.cell_percent_height, own_basis);
         let outer_restricted = std::mem::replace(&mut self.doc.restricted_cell, self.restricted.then_some(cell.node_id));
         let output = self.lay_out_cell(cell, node_id, inputs);
@@ -3647,6 +3658,32 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
 }
 
 impl TableTreeWrapper<'_, '_> {
+    /// pyro: the width of the table's grid (its columns and the spacing between them) when every
+    /// column has a length width.
+    fn grid_inline_size(&self) -> Option<f32> {
+        let style = self.style.as_ref().unwrap_or(&self.ctx.style);
+        let mut width = 0.0;
+        let mut n = 0;
+        for column in &style.grid_template_columns {
+            let taffy::GridTemplateComponent::Single(track) = column else { return None };
+            let (min, max) = (track.min.into_raw(), track.max.into_raw());
+            if min.tag() != taffy::CompactLength::LENGTH_TAG || max.tag() != taffy::CompactLength::LENGTH_TAG {
+                return None;
+            }
+            width += max.value().max(min.value());
+            n += 1;
+        }
+        let gap = style.gap.width.into_raw();
+        let gap = if gap.tag() == taffy::CompactLength::LENGTH_TAG { gap.value() } else { 0.0 };
+        (n > 0).then(|| width + gap * (n - 1) as f32)
+    }
+
+    /// pyro: whether the cell's padding has a percentage (in `calc()` too).
+    fn has_percent_padding(&self, cell: &TableCell) -> bool {
+        let padding = &cell.style.padding;
+        [padding.left, padding.right, padding.top, padding.bottom].iter().any(|p| p.into_raw().uses_percentage())
+    }
+
     /// The inputs `cell` is laid out with, and the basis of its children's percentage heights
     /// (`Self::definite_height`, `LayoutPassState::cell_percent_height`).
     fn cell_basis_inputs(
