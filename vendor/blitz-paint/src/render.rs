@@ -2572,10 +2572,17 @@ fn line_truncation_at<'a>(
     };
     // pyro: a standard line clamp's ellipsis after the last soft wrap opportunity that leaves
     // room for it (CSS Overflow 4 `block-ellipsis`; WPT css-overflow `block-ellipsis-001`).
-    if clamp.is_some_and(|clamp| clamp.at_soft_wraps)
-        && let Some((cut, x)) = truncate_line_at_soft_wrap(line, ellipsis, width, scale, rtl, wraps, &text_layout.text)
-    {
-        return Some(LineTruncation { cut, x, ellipsis, text });
+    if let Some(clamp) = clamp.filter(|clamp| clamp.at_soft_wraps) {
+        let hyphenated = &*clamp.hyphenated_ellipsis;
+        if let Some((cut, x, at_hyphen)) =
+            truncate_line_at_soft_wrap(line, ellipsis, hyphenated, width, scale, rtl, wraps, &text_layout.text)
+        {
+            // (At a soft hyphen, a hyphen shows before the ellipsis.)
+            return Some(match at_hyphen {
+                true => LineTruncation { cut, x, ellipsis: hyphenated, text: "-\u{2026}" },
+                false => LineTruncation { cut, x, ellipsis, text },
+            });
+        }
     }
     let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced)?;
     Some(LineTruncation { cut, x, ellipsis, text })
@@ -2591,16 +2598,18 @@ fn line_truncation_at<'a>(
 fn truncate_line_at_soft_wrap(
     line: &parley::Line<'_, blitz_dom::node::TextBrush>,
     ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
+    hyphenated: &parley::Layout<blitz_dom::node::TextBrush>,
     width: f32,
     scale: f32,
     rtl: bool,
     wraps: bool,
     text: &str,
-) -> Option<(crate::text::TextCut, f32)> {
+) -> Option<(crate::text::TextCut, f32, bool)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
     let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
+    let hyphenated_width = Some(hyphenated.full_width()).filter(|w| w.is_finite()).map_or(ellipsis_width, |w| w.max(0.0));
     let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
     // The line's atoms: (logical key, x0, x1, whether it is white space, the byte offset a soft
     // wrap opportunity before it breaks at). A cluster's key is its text offset; an atomic
@@ -2648,15 +2657,21 @@ fn truncate_line_at_soft_wrap(
     // Where the content walked so far ends (its far edge in the line's direction), and whether
     // the ellipsis fits beyond it.
     let mut far = if rtl { metrics.offset + metrics.advance } else { metrics.offset };
-    let fits = |far: f32| if rtl { far - ellipsis_width >= -epsilon } else { far + ellipsis_width <= width + epsilon };
-    // The last break that fits: its byte offset and where the content before it ends.
-    let mut best: Option<(usize, f32)> = None;
+    let fits_with = |far: f32, w: f32| if rtl { far - w >= -epsilon } else { far + w <= width + epsilon };
+    let fits = |far: f32| fits_with(far, ellipsis_width);
+    // (A break at a soft hyphen shows a hyphen too.)
+    let after_hyphen = |offset: usize| text.get(..offset).is_some_and(|before| before.ends_with('\u{AD}'));
+    // The last break that fits: its byte offset, where the content before it ends, and whether
+    // it is at a soft hyphen.
+    let mut best: Option<(usize, f32, bool)> = None;
     for (index, &(_, x0, x1, space, opportunity)) in atoms.iter().enumerate() {
         if index > 0
             && let Some(offset) = opportunity
-            && fits(far)
         {
-            best = Some((offset, far));
+            let hyphen = after_hyphen(offset);
+            if fits_with(far, if hyphen { hyphenated_width } else { ellipsis_width }) {
+                best = Some((offset, far, hyphen));
+            }
         }
         if !space {
             far = if rtl { far.min(x0) } else { far.max(x1) };
@@ -2667,9 +2682,9 @@ fn truncate_line_at_soft_wrap(
         return None;
     }
     let line_start = if rtl { metrics.offset + metrics.advance } else { metrics.offset };
-    let (split, end) = best.unwrap_or((line.text_range().start, line_start));
-    let x = if rtl { end - ellipsis_width } else { end };
-    Some((crate::text::TextCut { edge: end, keep_left: true, split: Some(split) }, x))
+    let (split, end, hyphen) = best.unwrap_or((line.text_range().start, line_start, false));
+    let x = if rtl { end - if hyphen { hyphenated_width } else { ellipsis_width } } else { end };
+    Some((crate::text::TextCut { edge: end, keep_left: true, split: Some(split) }, x, hyphen))
 }
 
 /// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content

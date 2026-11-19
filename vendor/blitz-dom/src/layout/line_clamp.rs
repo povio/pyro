@@ -325,7 +325,7 @@ impl LayoutPassState<'_> {
                 if let Some(text_layout) =
                     self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
                 {
-                    text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), at_soft_wraps: discards });
+                    text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), hyphenated_ellipsis: Box::default(), at_soft_wraps: discards });
                 }
             }
             return Some((bottom, id));
@@ -354,7 +354,7 @@ impl LayoutPassState<'_> {
             if let Some(text_layout) =
                 self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
             {
-                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), at_soft_wraps: discards });
+                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), hyphenated_ellipsis: Box::default(), at_soft_wraps: discards });
             }
         }
         Some((bottom, id))
@@ -446,9 +446,10 @@ impl LayoutPassState<'_> {
             .and_then(|el| el.inline_layout_data.as_ref())
             .is_some_and(|text_layout| text_layout.layout.is_rtl());
         // (`no-ellipsis`: none at all; an empty text would still shape a line.)
-        let ellipsis = if text.is_empty() {
-            Box::default()
-        } else {
+        let mut shape = |text: &str| -> Box<parley::layout::Layout<crate::node::TextBrush>> {
+            if text.is_empty() {
+                return Box::default();
+            }
             let mut font_ctx = doc.font_ctx.lock().unwrap();
             let mut builder = doc.layout_ctx.tree_builder(&mut font_ctx, scale, true, &parley_style);
             builder.set_base_direction(if rtl { parley::BaseDirection::Rtl } else { parley::BaseDirection::Ltr });
@@ -457,9 +458,11 @@ impl LayoutPassState<'_> {
             layout.break_all_lines(None);
             Box::new(layout)
         };
+        let ellipsis = shape(text);
+        let hyphenated_ellipsis = if text.is_empty() { Box::default() } else { shape(&format!("-{text}")) };
         drop(style);
         if let Some(text_layout) = doc.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut()) {
-            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, at_soft_wraps });
+            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, hyphenated_ellipsis, at_soft_wraps });
         }
     }
 }
