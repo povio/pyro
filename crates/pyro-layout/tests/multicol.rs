@@ -172,3 +172,18 @@ fn a_multicol_cell_stretched_by_its_row() {
     assert_eq!(rect(&p, "b")[1], 380.0, "the content at the bottom of the cell");
     assert_eq!(p.layout.element_from_point(&p.dom, 10.0, 390.0), Some(p.id("b")));
 }
+
+/// pyro: a box in a nested container's row in a later outer column is where paint shows it:
+/// its pieces are cut at the nested container's breaks and then at the outer one's
+/// (`getClientRects`, hit testing), as Chromium reports them.
+#[test]
+fn a_box_in_a_nested_row_is_where_it_is_painted() {
+    let p = page(
+        "<!doctype html><body style='margin:0'>\
+         <div style='columns:2;column-gap:0;column-fill:auto;height:100px;width:400px'>\
+         <div style='columns:2;column-gap:0'><div style='height:250px'></div>\
+         <div id=m style='height:20px'></div><div style='height:50px'></div></div></div>",
+    );
+    assert_eq!(rects(&p, "m"), vec![[200.0, 50.0, 100.0, 10.0], [300.0, 0.0, 100.0, 10.0]]);
+    assert_eq!(p.layout.element_from_point(&p.dom, 310.0, 5.0), Some(p.id("m")));
+}

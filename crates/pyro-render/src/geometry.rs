@@ -97,12 +97,20 @@ fn column_shift(
     scale: f64,
 ) -> Affine {
     let last = chain.len() - 1;
-    let mut below = placement(doc, chain[last], scale);
-    for j in (0..last).rev() {
-        let scroll = chain[j + 1].scroll_offset();
-        below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
+    // The box's origin in the container's strip, through the columns of any multi-column
+    // container nested between them (where those show it: their rows lie in this strip).
+    let mut origin = kurbo::Point::ZERO;
+    for j in 0..last {
+        origin = placement(doc, chain[j], scale) * origin;
+        let parent = chain[j + 1];
+        if let Some(nested) = parent.column_fragments() {
+            let (x, y) = nested.shift_at(origin.y as f32);
+            origin += kurbo::Vec2::new(x as f64, y as f64);
+        }
+        let scroll = parent.scroll_offset();
+        origin -= kurbo::Vec2::new(scroll.x, scroll.y);
     }
-    let origin = below * kurbo::Point::ZERO;
+    let origin = placement(doc, chain[last], scale) * origin;
     let (x, y) = columns.shift_at(origin.y as f32);
     Affine::translate((x as f64, y as f64))
 }
@@ -318,41 +326,71 @@ impl Geometry {
             }
             chain.push(cb);
         };
-        let columns = container.column_fragments()?;
         let scale = doc.viewport().scale_f64();
-        let last = chain.len() - 1;
-        let mut below = placement(doc, chain[last], scale);
-        for j in (0..last).rev() {
-            let scroll = chain[j + 1].scroll_offset();
-            below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
-        }
-        let l = doc.physical_unrounded_layout(id);
-        let strip = below.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
-        let (t, _) = self.transform(doc, container.id)?;
-        let scroll = container.scroll_offset();
-        let base = t * Affine::translate((-scroll.x, -scroll.y));
-        let mut out: Vec<(Rect, f64)> = Vec::new();
-        for f in &columns.fragments {
-            let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
-            let shows =
-                if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= f.start as f64 && strip.y0 < f.end as f64 };
-            if !shows {
-                continue;
+        // `chain` (leaf first, up to the container's child) places a box in the container's strip.
+        let to_strip = |chain: &[&blitz_dom::Node]| {
+            let last = chain.len() - 1;
+            let mut below = placement(doc, chain[last], scale);
+            for j in (0..last).rev() {
+                let scroll = chain[j + 1].scroll_offset();
+                below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
             }
-            out.push((
-                base.transform_rect_bbox(
-                    Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
-                ),
-                y1 - y0,
-            ));
-        }
+            below
+        };
+        // A strip rectangle cut at the container's breaks, each piece where its column shows it
+        // (the container's coordinates), with its height in the strip.
+        let cut = |columns: &blitz_dom::ColumnFragments, strip: Rect, out: &mut Vec<(Rect, f64)>| {
+            for f in &columns.fragments {
+                let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
+                let shows =
+                    if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= f.start as f64 && strip.y0 < f.end as f64 };
+                if shows {
+                    let piece = Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64);
+                    out.push((piece, y1 - y0));
+                }
+            }
+        };
+        let l = doc.physical_unrounded_layout(id);
+        let strip = to_strip(&chain).transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
+        let mut out: Vec<(Rect, f64)> = Vec::new();
+        cut(container.column_fragments()?, strip, &mut out);
         // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
         // position against the rounded break) is no fragment of it: a monolithic box a column
         // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
         if out.iter().any(|&(_, height)| height >= 1.0) {
             out.retain(|&(_, height)| height >= 1.0);
         }
-        (!out.is_empty()).then(|| out.into_iter().map(|(rect, _)| rect).collect())
+        // pyro: a container nested in another's columns has its rows there too: the pieces are cut
+        // again at the outer container's breaks, out to the outermost one (as paint shows them).
+        let mut container = container;
+        loop {
+            let mut outer_chain = vec![container];
+            let outer = loop {
+                match outer_chain.last().and_then(|n| n.containing_block()).and_then(|cb| doc.get_node(cb)) {
+                    Some(cb) if cb.column_fragments().is_some() => break Some(cb),
+                    Some(cb) => outer_chain.push(cb),
+                    None => break None,
+                }
+            };
+            let Some(outer) = outer else { break };
+            let scroll = container.scroll_offset();
+            let into = to_strip(&outer_chain) * Affine::translate((-scroll.x, -scroll.y));
+            let columns = outer.column_fragments()?;
+            let mut next = Vec::new();
+            for (piece, height) in out {
+                let before = next.len();
+                cut(columns, into.transform_rect_bbox(piece), &mut next);
+                for entry in &mut next[before..] {
+                    entry.1 = height;
+                }
+            }
+            out = next;
+            container = outer;
+        }
+        let (t, _) = self.transform(doc, container.id)?;
+        let scroll = container.scroll_offset();
+        let base = t * Affine::translate((-scroll.x, -scroll.y));
+        (!out.is_empty()).then(|| out.into_iter().map(|(rect, _)| base.transform_rect_bbox(rect)).collect())
     }
 
     /// The box Blitz lays out for `id`, before the adjustments. A node that
