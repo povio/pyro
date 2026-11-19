@@ -373,6 +373,8 @@ pub struct PageDom {
     pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
     /// A range slider being dragged (`crate::input`): the element and its value at the press.
     pub(crate) range_drag: RefCell<Option<(NodeId, String)>>,
+    /// The window's `load` event is being dispatched (`lifecycle::load`).
+    pub(crate) dispatching_load: Cell<bool>,
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
@@ -922,6 +924,7 @@ impl PageDom {
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
             range_drag: RefCell::new(None),
+            dispatching_load: Cell::new(false),
             planned_navigations: RefCell::new(Vec::new()),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
@@ -971,6 +974,10 @@ impl PageDom {
     /// document; the browser sets a child frame's ([`crate::fullscreen::allowed_in_frame`]).
     pub fn set_fullscreen_allowed(&self, allowed: bool) {
         self.fullscreen_allowed.set(allowed);
+    }
+    /// Whether the window's `load` event is being dispatched right now.
+    pub fn is_dispatching_load(&self) -> bool {
+        self.dispatching_load.get()
     }
     pub fn fullscreen_allowed(&self) -> bool {
         self.fullscreen_allowed.get()

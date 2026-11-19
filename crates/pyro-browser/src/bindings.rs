@@ -611,12 +611,33 @@ impl PageHooks for Hooks {
         }
     }
     fn iframe_disconnected(&self, node: pyro_dom::NodeId) {
-        if let Some(host) = self.frames.upgrade() {
-            if host.matches(self.page, &self.loader) {
-                if let Some(key) = host.owner(node) {
-                    host.detach(key);
-                }
+        let Some(host) = self.frames.upgrade() else { return };
+        if !host.matches(self.page, &self.loader) {
+            return;
+        }
+        let Some(key) = host.owner(node) else { return };
+        // Chrome: the removed frame's documents get `pagehide` and `visibilitychange` (the frame's,
+        // then its descendants'), and the frame itself `unload` when its container's `allow` lets it,
+        // synchronously after the removal and before the frame goes. HTML's "destroy a child
+        // navigable" fires none; pyro follows Chrome. This runs after the DOM mutation (the
+        // post-removal flush), outside any DOM borrow: a listener may re-insert the iframe (a
+        // Connected event the flush handles after this), remove other nodes, or navigate the parent.
+        let documents = host.subtree_documents(key);
+        if let Some(first) = documents.first() {
+            if first.is_dispatching_load() {
+                host.quiet_reinserts.borrow_mut().push((node, Rc::downgrade(first)));
             }
+        }
+        let unload = unload_allowed(&host, key);
+        for (i, document) in documents.iter().enumerate() {
+            pyro_webapi::lifecycle::removed(document, i == 0 && unload);
+        }
+        // The listeners may have navigated or closed this page, or the frame may be gone already.
+        if !host.matches(self.page, &self.loader) {
+            return;
+        }
+        if let Some(key) = host.owner(node).filter(|k| *k == key) {
+            host.detach(key);
         }
     }
     fn iframe_attribute_changed(&self, node: pyro_dom::NodeId, attr: pyro_webapi::IframeAttribute) {
@@ -910,6 +931,25 @@ fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &s
         container.declared_origin.as_deref(),
         child_origin.as_deref(),
     )
+}
+
+/// Whether a child frame's container lets its document fire `unload` (Chrome: only when the
+/// container's `allow` declares `unload` for the frame's origin; no declaration, no `unload`).
+fn unload_allowed(host: &crate::frames::FrameHost, key: FrameKey) -> bool {
+    let parent = host.parent_key(key);
+    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else { return false };
+    let container = frame.fullscreen_container.clone();
+    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
+    let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
+    let child_origin = frame_origin(host, key, &frame.url, frame.sandbox.opaque);
+    pyro_webapi::fullscreen::container_allows(
+        "unload",
+        container.allow.as_deref(),
+        parent_origin.as_deref(),
+        container.declared_origin.as_deref(),
+        child_origin.as_deref(),
+    )
+    .unwrap_or(false)
 }
 
 pub(crate) fn create(

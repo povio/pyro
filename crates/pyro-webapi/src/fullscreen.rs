@@ -45,26 +45,39 @@ pub fn allowed_in_frame(
     if !parent_allowed {
         return false;
     }
+    container_allows("fullscreen", allow, parent_origin, declared_origin, child_origin).unwrap_or(allowfullscreen)
+}
+
+/// A frame container's `allow` attribute on `feature` for a child document at `child_origin`:
+/// `Some(allowed)` when the attribute declares the feature (an allowlist of `*`, `'self'` (the
+/// parent's origin), `'src'` (the container's declared origin, also the default with no tokens),
+/// `'none'` and origins), `None` when it does not mention it.
+pub fn container_allows(
+    feature: &str,
+    allow: Option<&str>,
+    parent_origin: Option<&str>,
+    declared_origin: Option<&str>,
+    child_origin: Option<&str>,
+) -> Option<bool> {
     let same = |a: Option<&str>| a.is_some() && a == child_origin;
     let declared = allow.and_then(|allow| {
         allow.split(';').find_map(|directive| {
             let mut tokens = directive.split_ascii_whitespace();
-            (tokens.next()? == "fullscreen").then(|| tokens.map(str::to_owned).collect::<Vec<_>>())
+            (tokens.next()? == feature).then(|| tokens.map(str::to_owned).collect::<Vec<_>>())
         })
-    });
-    match declared {
+    })?;
+    Some(match declared {
         // `'src'`: the frame's document must be at the origin the container delegated to (its
         // `src` URL's), not wherever a redirect or a later navigation took it.
-        Some(list) if list.is_empty() => same(declared_origin),
-        Some(list) => list.iter().any(|t| match t.as_str() {
+        list if list.is_empty() => same(declared_origin),
+        list => list.iter().any(|t| match t.as_str() {
             "*" => true,
             "'self'" => same(parent_origin),
             "'src'" => same(declared_origin),
             "'none'" => false,
             origin => same(Some(origin.trim_end_matches('/'))),
         }),
-        None => allowfullscreen,
-    }
+    })
 }
 
 /// The document's fullscreen element: the topmost of its fullscreen elements that is still

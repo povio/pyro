@@ -189,6 +189,9 @@ pub(crate) struct FrameHost {
     /// (a popup takes its opener's store, see `prebuild_popup`). Their realms are siblings of this
     /// page's for node wrappers (`sibling_realms`).
     pub(crate) dom_peers: RefCell<Vec<std::rc::Weak<FrameHost>>>,
+    /// Containers whose frame was removed while that frame's document was dispatching its window
+    /// `load` (Chrome: re-inserted during that dispatch, the iframe gets a frame that does not navigate).
+    pub(crate) quiet_reinserts: RefCell<Vec<(NodeId, std::rc::Weak<pyro_webapi::PageDom>)>>,
     /// Each child frame's WindowProxy: its first main-world realm's global
     /// proxy, which every later document's realm adopts (`make_realm`), so
     /// that `iframe.contentWindow` stays one object that follows the frame.
@@ -277,6 +280,7 @@ impl FrameHost {
             opener: RefCell::new(Some(Rc::downgrade(self))),
             popup: RefCell::new(None),
             dom_peers: RefCell::new(Vec::new()),
+            quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
@@ -348,6 +352,7 @@ impl FrameHost {
             opener: RefCell::new(None),
             popup: RefCell::new(None),
             dom_peers: RefCell::new(Vec::new()),
+            quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
@@ -765,13 +770,46 @@ impl FrameHost {
                 timestamp: self.started.elapsed().as_secs_f64(),
                 unreachable_url: None,
             });
-            self.queue_attributes(key, lid);
+            // Chrome: an iframe re-inserted while the document of its previous frame is still
+            // dispatching its window `load` (moved from that document's own load listener) gets a
+            // frame that stays on its initial about:blank: it does not navigate, fires no `load` and
+            // does not hold its parent's load (else a load listener that moves its iframe loops).
+            let quiet = {
+                let mut quiet = self.quiet_reinserts.borrow_mut();
+                quiet.retain(|(_, page)| page.upgrade().is_some_and(|p| p.is_dispatching_load()));
+                quiet.iter().position(|(n, _)| *n == node).map(|i| quiet.remove(i)).is_some()
+            };
+            if quiet {
+                let mut children = self.children.borrow_mut();
+                if let Some(child) = children.get_mut(&id) {
+                    if let Some(dom) = &child.main_frame.page_dom {
+                        dom.set_ready_state(dom.document(), "complete");
+                    }
+                    child.main_frame.dom_content_loaded = true;
+                    child.main_frame.loaded = true;
+                }
+            } else {
+                self.queue_attributes(key, lid);
+            }
             Ok(())
         })();
         if result.is_err() {
             self.detach(key);
         }
         result
+    }
+
+    /// The documents of frame `key` and its descendants, the frame's first (pre-order).
+    pub fn subtree_documents(&self, key: FrameKey) -> Vec<Rc<pyro_webapi::PageDom>> {
+        let mut out = Vec::new();
+        let mut stack = vec![key];
+        while let Some(k) = stack.pop() {
+            out.extend(self.page_dom(k));
+            let mut children: Vec<FrameKey> = self.child_keys(k).into_iter().collect();
+            children.reverse();
+            stack.extend(children);
+        }
+        out
     }
     pub fn queue_attributes(&self, key: FrameKey, loader: LoaderId) {
         self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| b.process_iframe_attributes(key, &loader));
