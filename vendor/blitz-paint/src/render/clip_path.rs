@@ -1506,6 +1506,33 @@ impl ElementCx<'_, '_> {
     }
 }
 
+impl ElementCx<'_, '_> {
+    /// pyro: `paint` under the clip path of the inline element `span` (not atomic), against its
+    /// first fragment's border box as its fragments are clipped (`draw_inline_effects`): the
+    /// out-of-flow boxes it keeps in its stacking context are cut by it too (CSS Masking 1: a clip
+    /// path clips the element's descendants).
+    pub(super) fn with_inline_clip_path<S: PaintScene>(&self, scene: &mut S, span: blitz_dom::NodeId, paint: impl FnOnce(&mut S)) {
+        use style::values::computed::basic_shape::ClipPath as StyloClipPath;
+        let dom = self.context.dom;
+        let Some(node) = dom.get_node(span) else { return paint(scene) };
+        if node.primary_styles().is_none_or(|style| matches!(style.get_clip_path(), StyloClipPath::None)) {
+            return paint(scene);
+        }
+        let Some(first) = dom.inline_fragment_rects(span).and_then(|mut rects| rects.next()) else { return paint(scene) };
+        let scale = self.scale;
+        // (Fragment rects are viewport-relative CSS px: the scene's device space, scaled.)
+        let first_transform = Affine::translate((first.x * scale, first.y * scale));
+        let layout = taffy::Layout {
+            size: taffy::Size { width: first.width as f32, height: first.height as f32 },
+            ..taffy::Layout::new()
+        };
+        let span_cx = self.context.element_cx(node, layout, first_transform, None);
+        let clip = span_cx.element_clip();
+        let visible = Rect::new(-1e7, -1e7, 1e7, 1e7);
+        with_element_clip(scene, clip.as_ref(), first_transform, scale, visible, paint);
+    }
+}
+
 /// pyro: whether the inline element `id` keeps out-of-flow boxes in its stacking context
 /// (blitz-dom `restore_out_of_flow_stacking_owners`).
 pub(crate) fn owns_hoisted(dom: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {

@@ -247,3 +247,19 @@ fn a_turned_clip_over_a_blend_leaks_no_colour_at_its_edge() {
         }
     }
 }
+
+/// A relatively positioned inline with `clip-path: inset(0)` cuts the absolutely positioned box it
+/// contains to its border box (a clip path clips the element's descendants): nothing of the box
+/// shows past the inline. It reached out whole.
+#[test]
+fn an_inline_clip_path_cuts_the_positioned_box_it_keeps() {
+    let img = render(
+        "<div style='position:absolute;top:50px;left:50px;font:20px/20px monospace'>\
+         <span style='position:relative;clip-path:inset(0)'>xxxx\
+         <div style='position:absolute;top:-30px;left:-30px;width:200px;height:100px;background:green'></div></span></div>",
+    );
+    // Inside the inline's box: the green box.
+    assert_eq!(pixel(&img, 60, 55), [0, 128, 0], "inside the inline");
+    // Past it (the box reaches to x 220 and y 120): the page.
+    assert_eq!(pixel(&img, 150, 100), [255, 255, 255], "past the inline");
+}

@@ -2178,7 +2178,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         cx.draw_inline_pass(scene, pos, span_id);
         if !owned.is_empty() {
             let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
-            cx.draw_hoisted_children(scene, owned.iter(), transform, everything);
+            // pyro: under its clip path (WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
+            cx.with_inline_clip_path(scene, span_id, |scene| {
+                cx.draw_hoisted_children(scene, owned.iter(), transform, everything);
+            });
             scene.pop_layer();
         }
         // Then the atomic inline boxes in it (badges), which its root skipped (`draw_paint_child`), moved
@@ -5939,7 +5942,9 @@ impl ElementCx<'_, '_> {
                 Some(crate::layers::backdrop_root_marker()),
                 None,
             );
-            self.draw_hoisted_children(scene, owned.iter(), parent_style_transform, clip_rect);
+            self.with_inline_clip_path(scene, child_id, |scene| {
+                self.draw_hoisted_children(scene, owned.iter(), parent_style_transform, clip_rect);
+            });
             scene.pop_layer();
             if grouped {
                 scene.pop_layer();
