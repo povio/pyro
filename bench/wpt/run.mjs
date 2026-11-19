@@ -497,7 +497,7 @@ const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: opt('--dirs') === 'all' ? ['all'] : DIRS, jobs: JOBS,
-  restricted: RESTRICTED, reuseContext: REUSE, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
+  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
   wallMs, loopLagMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }

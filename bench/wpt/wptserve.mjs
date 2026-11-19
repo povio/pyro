@@ -57,6 +57,8 @@ export async function startWptserve(wpt, { log = process.stderr } = {}) {
   const cfg = path.join(dir, 'config.json');
   fs.writeFileSync(cfg, JSON.stringify(config));
   const py = pythonFor(wpt);
+  // Without the venv wptserve still starts on python3, but a handler that imports its requirements fails.
+  if (py === 'python3') log.write?.(`wptserve: no venv in ${wpt} and no WPT_PYTHON; using python3 (handlers that need tools/serve/requirements.txt fail: bench/wpt/fetch-wpt.sh --venv ${wpt})\n`);
   // `wpt serve` would make its own venv; the server needs only its requirements, so run serve.py's entry directly.
   const child = spawn(py, [path.join(wpt, 'wpt'), '--venv', path.dirname(path.dirname(py)), '--skip-venv-setup',
     'serve', '--no-h2', '--config', cfg], { cwd: wpt, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
