@@ -722,11 +722,15 @@ pub(crate) fn style(
     let font_size = font_size * adjust;
     let vertical_align = self::vertical_align(style);
 
-    let letter_spacing = itext_styles
-        .letter_spacing
-        .0
-        .resolve(Length::new(font_size))
-        .px();
+    // pyro: combined text (`text-combine-upright: all`, the horizontal box Stylo makes of it in a
+    // vertical line) is composed without letter spacing (css-writing-modes-4 §9.1.1).
+    let combined = itext_styles.text_combine_upright == style::values::computed::TextCombineUpright::All
+        && !style.writing_mode.is_vertical();
+    let letter_spacing = if combined {
+        0.0
+    } else {
+        itext_styles.letter_spacing.0.resolve(Length::new(font_size)).px()
+    };
 
     let word_spacing = itext_styles
         .word_spacing

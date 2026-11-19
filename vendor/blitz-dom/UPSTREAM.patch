@@ -46642,7 +46642,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  pub(crate) fn style(
      span_id: NodeId,
      style: &stylo::ComputedValues,
-@@ -446,11 +710,16 @@
+@@ -446,18 +710,27 @@
  
      // Convert font size and line height
      let font_size = font_styles.font_size.used_size.0.px();
@@ -46658,8 +46658,24 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
 +    let font_size = font_size * adjust;
      let vertical_align = self::vertical_align(style);
  
-     let letter_spacing = itext_styles
-@@ -477,6 +746,7 @@
+-    let letter_spacing = itext_styles
+-        .letter_spacing
+-        .0
+-        .resolve(Length::new(font_size))
+-        .px();
++    // pyro: combined text (`text-combine-upright: all`, the horizontal box Stylo makes of it in a
++    // vertical line) is composed without letter spacing (css-writing-modes-4 §9.1.1).
++    let combined = itext_styles.text_combine_upright == style::values::computed::TextCombineUpright::All
++        && !style.writing_mode.is_vertical();
++    let letter_spacing = if combined {
++        0.0
++    } else {
++        itext_styles.letter_spacing.0.resolve(Length::new(font_size)).px()
++    };
+ 
+     let word_spacing = itext_styles
+         .word_spacing
+@@ -477,6 +750,7 @@
          .families
          .list
          .iter()
@@ -46667,7 +46683,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
          .map(|family| match family {
              stylo::SingleFontFamily::FamilyName(name) => {
                  'ret: {
-@@ -513,9 +783,10 @@
+@@ -513,9 +787,10 @@
      let word_break = match itext_styles.word_break {
          stylo::WordBreak::Normal => parley::WordBreak::Normal,
          stylo::WordBreak::BreakAll => parley::WordBreak::BreakAll,
@@ -46680,7 +46696,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -541,17 +812,69 @@
+@@ -541,17 +816,69 @@
          font_style,
          font_weight,
          font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
@@ -46751,7 +46767,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +892,10 @@
+@@ -569,6 +896,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),
