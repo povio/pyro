@@ -90,6 +90,19 @@ fn tag_intrinsic_sizes(
     (IntrinsicSizes::default(), DEFAULT_OBJECT_SIZE)
 }
 
+/// pyro: HTML's rules for parsing non-negative integers: leading ASCII white space, an
+/// optional `+`, then the digits up to the first other character.
+fn parse_non_negative_integer(value: &str) -> Option<u32> {
+    let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let end = value.find(|c: char| !c.is_ascii_digit()).unwrap_or(value.len());
+    let digits = &value[..end];
+    if digits.is_empty() {
+        return None;
+    }
+    Some(digits.parse::<u64>().map_or(u32::MAX, |v| v.min(u32::MAX as u64) as u32))
+}
+
 /// pyro: whether `width` or `height` is `calc-size()` (`LayoutPassState::calc_size_inputs`).
 #[inline]
 fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
@@ -1245,13 +1258,15 @@ impl LayoutPassState<'_> {
                     // are already part of the style. They are only read here for the
                     // elements whose attributes determine their *intrinsic* size
                     // (canvas, and custom widgets on canvas tags).
+                    // pyro: a canvas's are unsigned integers (HTML's rules for parsing
+                    // non-negative integers: `40px` is 40); other elements' keep their numbers.
+                    let is_canvas = element_data.name.local == local_name!("canvas");
+                    let parse_attr = |val: &str| {
+                        if is_canvas { parse_non_negative_integer(val).map(|v| v as f32) } else { val.parse::<f32>().ok() }
+                    };
                     let attr_size = taffy::Size {
-                        width: element_data
-                            .attr(local_name!("width"))
-                            .and_then(|val| val.parse::<f32>().ok()),
-                        height: element_data
-                            .attr(local_name!("height"))
-                            .and_then(|val| val.parse::<f32>().ok()),
+                        width: element_data.attr(local_name!("width")).and_then(parse_attr),
+                        height: element_data.attr(local_name!("height")).and_then(parse_attr),
                     };
 
                     // Get the element's intrinsic dimensions and default object size
