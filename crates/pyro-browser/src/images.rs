@@ -229,7 +229,7 @@ impl Browser {
         };
         // A lazy image's concrete width, for `sizes="auto"`: laid out (the default object size's
         // 300 px while its width is `auto` and no image gave a natural width). Not rendered: its
-        // last width while rendered, else none (the `auto` entry is skipped).
+        // last width while rendered when still connected, else none (the `auto` entry is skipped).
         let _ = attr_width;
         let auto_width = if !lazy {
             None
@@ -239,8 +239,12 @@ impl Browser {
                 p.images.auto_widths.insert(node, w);
             }
             Some(w)
-        } else {
+        } else if bindings.dom.borrow().is_connected(node).unwrap_or(false) {
+            // Connected but not rendered (display: none): the last width; a disconnected image
+            // has none.
             self.doc(page).and_then(|p| p.images.auto_widths.get(&node).copied())
+        } else {
+            None
         };
         let deferred_now = lazy && rendered_width.is_none();
         let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });

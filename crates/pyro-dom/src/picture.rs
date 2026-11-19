@@ -63,7 +63,8 @@ pub fn parse_srcset(input: &str, source_width: f64) -> Vec<Candidate> {
         }
         let density = match (density, width) {
             (Some(d), _) => d,
-            (None, Some(w)) if source_width > 0.0 => f64::from(w) / source_width,
+            // A zero source size makes the density infinite (natural size 0).
+            (None, Some(w)) if source_width >= 0.0 => f64::from(w) / source_width,
             _ => 1.0,
         };
         out.push(Candidate { url: url.to_owned(), density });

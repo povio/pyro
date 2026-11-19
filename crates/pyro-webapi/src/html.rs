@@ -1872,16 +1872,27 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_str_nn!(def, "border", "border");
     // Natural size from the loaded file's header (no pixel decoding); 0
     // while loading, for broken images and for unparsed formats.
-    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(w, _)| w))));
-    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(_, h)| h))));
+    // `unsigned long`: a density-corrected size below 1 px reads 0.
+    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(w, _)| w.trunc()))));
+    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
         let viewport = n.page().viewport();
         let dom = n.page().dom.borrow();
         // The source the loader selected for the current request (a lazy image's `sizes=auto`
         // needs its layout), else a `<picture>` parent's matching `<source>`.
+        // The loader's selection when `sizes=auto` took part (it needs the layout the image had
+        // when selected): a lazy image, or one whose `sizes` (or a `<picture>` `<source>`'s) says
+        // `auto`.
         let lazy = dom.get_attribute(n.id, "loading").js()?.is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
-        let stored = if lazy { dom.image_source(n.id).map(str::to_owned) } else { None };
+        let auto = |el: NodeId| {
+            dom.get_attribute(el, "sizes").ok().flatten().is_some_and(|s| s.split(',').next().is_some_and(|f| f.trim().eq_ignore_ascii_case("auto")))
+        };
+        let in_picture_auto = dom.parent(n.id).ok().flatten().is_some_and(|p| {
+            dom.element(p).is_ok_and(|e| &*e.name.local == "picture")
+                && dom.children(p).is_ok_and(|mut kids| kids.any(|k| dom.element(k).is_ok_and(|e| &*e.name.local == "source") && auto(k)))
+        });
+        let stored = if lazy || auto(n.id) || in_picture_auto { dom.image_source(n.id).map(str::to_owned) } else { None };
         let picture = stored.or_else(|| dom.picture_source(n.id, &viewport));
         let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
         Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
