@@ -1575,6 +1575,21 @@ impl<'s> Scope<'s> {
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
 
+    /// A WindowProxy of this realm for a Window it reaches through native
+    /// functions (helpers.js `windowProxy`): `target()` answers the
+    /// Window's global object when same origin, null while there is none
+    /// (`stand_in`'s members and the proxy's own expandos answer), `true`
+    /// when cross origin; `deny(name)` throws the SecurityError of a
+    /// cross-origin access. Every WindowProxy internal method follows HTML
+    /// (CrossOriginProperties cross origin). `stand_in` and the Window are
+    /// never handed to page code through it.
+    pub fn window_proxy(&self, stand_in: Object<'_>, target: Object<'_>, deny: Object<'_>) -> JsResult<Object<'s>> {
+        let make = self.realm.cached_helper(self, "windowProxy")?;
+        make.call(None, &[stand_in.value(), target.value(), deny.value()])?
+            .as_object()
+            .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
+    }
+
     /// Whether this JavaScriptCore runs a module script in HTML's two steps
     /// ([`Scope::load_module_graph`], [`Scope::link_and_evaluate_module`];
     /// patch 0037).

@@ -143,11 +143,12 @@ fn popup_keeps_its_opener_and_a_copy_of_the_session_storage() {
     eval(
         &t,
         b,
-        "globalThis.got=[]; addEventListener('message', e => got.push([e.origin, e.data.hello, String(e.source)].join(':')))",
+        "globalThis.got=[]; addEventListener('message', e => got.push([e.origin, e.data.hello, e.source === opener].join(':')))",
     );
     assert_eq!(eval(&t, a, "const o={hello:1}; p.postMessage(o, '*'); o.hello=2; p.got.length"), "0");
     settle(&mut t);
-    assert_eq!(eval(&t, b, "got.join('|')"), "http://app.test:1:null");
+    // The source is the window that posted (HTML: the incumbent's WindowProxy).
+    assert_eq!(eval(&t, b, "got.join('|')"), "http://app.test:1:true");
     assert_eq!(
         eval(
             &t,
@@ -241,6 +242,69 @@ fn noopener_and_cross_origin_popups() {
         ),
         "false,SecurityError,SecurityError,SecurityError"
     );
+}
+
+/// The opener's popup is a WindowProxy: same origin, every property
+/// operation goes to the popup's window and its functions run with that
+/// window as `this`; cross origin, only CrossOriginProperties are there and
+/// writes, definitions and deletions throw SecurityError without changing
+/// anything.
+#[test]
+fn a_popup_is_a_window_proxy() {
+    let (mut t, events) = setup();
+    let a = open_page(&mut t, "http://app.test/a");
+    eval(&t, a, "globalThis.p = window.open('b')");
+    settle(&mut t);
+    let b = create_popup(&mut t, &events);
+    let try_ = "var t = (f) => { try { return String(f()) } catch (e) { return e.name } };";
+    assert_eq!(
+        eval(
+            &t,
+            a,
+            &format!(
+                "{try_} [
+                  t(() => {{ let hit = 0; p.addEventListener('x', () => hit++); p.dispatchEvent(new p.Event('x')); return hit }}),
+                  t(() => typeof p.setTimeout(() => {{}}, 1)),
+                  t(() => {{ Object.defineProperty(p, 'defined', {{ value: 1, configurable: true }}); return p.defined }}),
+                  t(() => {{ p.gone = 1; delete p.gone; return 'gone' in p }}),
+                  t(() => Object.getOwnPropertyDescriptor(p, 'defined').value),
+                  t(() => Reflect.ownKeys(p).includes('defined')),
+                  t(() => Reflect.defineProperty(p, 'fixed', {{ value: 1, configurable: false }})),
+                  t(() => p.window === p && p.self === p && p.top === p),
+                ].join()"
+            )
+        ),
+        "1,number,1,false,1,true,false,true"
+    );
+    assert_eq!(eval(&t, b, "[typeof defined, typeof gone].join()"), "number,undefined", "on the popup's window");
+    // Cross origin.
+    eval(&t, a, "globalThis.q = window.open('http://other.test/x')");
+    settle(&mut t);
+    let x = create_popup(&mut t, &events);
+    assert_eq!(
+        eval(
+            &t,
+            a,
+            &format!(
+                "{try_} [
+                  t(() => q.closed), t(() => q.window === q), t(() => q.length), t(() => q.opener === window),
+                  t(() => typeof q.postMessage), t(() => typeof q.then),
+                  t(() => q.document),
+                  t(() => {{ q.postMessage = 1 }}), t(() => typeof q.postMessage),
+                  t(() => {{ q.opener = null }}), t(() => q.opener === window),
+                  t(() => Object.defineProperty(q, 'x', {{ value: 1 }})),
+                  t(() => delete q.close),
+                  t(() => {{ q[0] = 1 }}),
+                  t(() => Object.getOwnPropertyDescriptor(q, 'document')),
+                  t(() => Object.getPrototypeOf(q)),
+                  t(() => Object.getOwnPropertyDescriptor(q, 'location').set !== undefined),
+                ].join()"
+            )
+        ),
+        "false,true,0,true,function,undefined,SecurityError,SecurityError,function,SecurityError,true,\
+         SecurityError,SecurityError,SecurityError,SecurityError,null,true"
+    );
+    assert_eq!(eval(&t, x, "window.opener !== null"), "true", "a refused `opener = null` changed nothing");
 }
 
 #[test]

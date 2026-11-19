@@ -63,6 +63,8 @@
   const arrayConcat = Array.prototype.concat;
   const isArray = Array.isArray;
   const toStringTag = Symbol.toStringTag;
+  const symbolHasInstance = Symbol.hasInstance;
+  const symbolIsConcatSpreadable = Symbol.isConcatSpreadable;
   const symbolIterator = Symbol.iterator;
   const objToString = O.prototype.toString;
   const fnToString = Function.prototype.toString;
@@ -627,6 +629,138 @@
       let state = 'pending', result;
       apply(promiseThen, p, [(v) => { state = 'fulfilled'; result = v; }, (e) => { state = 'rejected'; result = e; }]);
       return () => [state, result];
+    },
+    // A WindowProxy for a Window the embedder reaches through `target()`:
+    // the Window's global object when it is same origin with this realm,
+    // null while it has none (the stand-in's own members and expandos
+    // then answer), true when it is cross origin. `standIn` is the native
+    // object with the members a WindowProxy keeps whatever its Window
+    // (`closed`, `close()`, `location`, `opener`, `postMessage()`...), and
+    // `deny(name)` throws the SecurityError of a cross-origin access. HTML's
+    // WindowProxy internal methods: same origin, every one goes to the
+    // Window; cross origin, only CrossOriginProperties (the methods as
+    // functions of this realm, `location` settable) and `then` and the
+    // well-known symbols (undefined) are there, and anything else throws.
+    // Functions read through it run with the Window, not the proxy, as
+    // `this` (a WindowProxy is the Window to the bindings). Neither
+    // `standIn` nor the target is ever handed to page code.
+    windowProxy(standIn, target, deny) {
+      const ALWAYS = { __proto__: null, closed: 1, close: 1, focus: 1, blur: 1 };
+      const SELF = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1 };
+      const CROSS_GETTERS = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1 };
+      const CROSS_METHODS = { __proto__: null, close: 1, focus: 1, blur: 1, postMessage: 1 };
+      const crossKeys = () => apply(arrayConcat, [], [['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'], [toStringTag, symbolHasInstance, symbolIsConcatSpreadable]]);
+      const undefinedNames = (k) => k === 'then' || k === toStringTag || k === symbolHasInstance || k === symbolIsConcatSpreadable;
+      const isIndex = (k) => typeof k === 'string' && k !== '' && StringC(k >>> 0) === k && (k >>> 0) !== 4294967295;
+      const expandos = objectCreate(null);
+      let proxy;
+      // Functions of the Window or the stand-in, each as one function that
+      // calls it with `self` for the proxy as `this` (kept per function).
+      const wrapped = new WeakMapC();
+      const wrap = (fn, self) => {
+        if (typeof fn !== 'function') return fn;
+        let w = apply(wmGet, wrapped, [fn]);
+        if (w === undefined) {
+          w = new ProxyC(fn, { __proto__: null, apply: (f, thisArg, args) => apply(f, thisArg === proxy ? self() : thisArg, args) });
+          apply(wmSet, wrapped, [fn, w]);
+        }
+        return w;
+      };
+      const window = () => { const w = target(); return w === true ? null : w; };
+      const standInSelf = () => standIn;
+      const fromStandIn = (k) => SELF[k] ? proxy : wrap(reflectGet(standIn, k, standIn), standInSelf);
+      const crossDescriptor = (k) => {
+        if (CROSS_METHODS[k]) return { __proto__: null, value: fromStandIn(k), writable: false, enumerable: false, configurable: true };
+        if (CROSS_GETTERS[k]) {
+          const get = () => fromStandIn(k);
+          const set = k === 'location' ? (v) => { reflectSet(standIn, k, v, standIn); } : undefined;
+          return { __proto__: null, get, set, enumerable: false, configurable: true };
+        }
+        if (undefinedNames(k)) return { __proto__: null, value: undefined, writable: false, enumerable: false, configurable: true };
+        return deny(k);
+      };
+      const handler = {
+        __proto__: null,
+        get(t, k) {
+          if (ALWAYS[k]) return fromStandIn(k);
+          const w = target();
+          if (w === true) {
+            if (CROSS_METHODS[k] || CROSS_GETTERS[k]) return fromStandIn(k);
+            if (undefinedNames(k)) return undefined;
+            return deny(k);
+          }
+          if (SELF[k]) return proxy;
+          if (w === null) return k in expandos ? expandos[k] : fromStandIn(k);
+          if (k === 'opener') return fromStandIn(k);
+          return wrap(reflectGet(w, k, w), window);
+        },
+        set(t, k, v) {
+          const w = target();
+          if (w === true) {
+            if (k === 'location') return reflectSet(standIn, k, v, standIn);
+            return deny(k);
+          }
+          if (isIndex(k)) return false;
+          // `opener` and `location` keep the stand-in's state too.
+          if (k === 'opener' || k === 'location') return reflectSet(standIn, k, v, standIn);
+          if (w === null) return reflectSet(expandos, k, v, expandos);
+          return reflectSet(w, k, v, w);
+        },
+        has(t, k) {
+          const w = target();
+          if (w === true) {
+            if (CROSS_METHODS[k] || CROSS_GETTERS[k] || undefinedNames(k)) return true;
+            return deny(k);
+          }
+          if (w === null) return reflectHas(expandos, k) || ALWAYS[k] === 1 || SELF[k] === 1 || k === 'location' || k === 'opener';
+          return reflectHas(w, k);
+        },
+        deleteProperty(t, k) {
+          const w = target();
+          if (w === true) return deny(k);
+          if (w === null) return reflectDelete(expandos, k);
+          if (isIndex(k)) return !reflectHas(w, k);
+          return reflectDelete(w, k);
+        },
+        defineProperty(t, k, d) {
+          const w = target();
+          if (w === true) return deny(k);
+          if (isIndex(k)) return false;
+          // The proxy can only report configurable properties (its target
+          // holds none), so a non-configurable one is refused.
+          if (d.configurable === false) return false;
+          return reflectDefine(w === null ? expandos : w, k, d);
+        },
+        getOwnPropertyDescriptor(t, k) {
+          const w = target();
+          if (w === true) return crossDescriptor(k);
+          const d = reflectGOPD(w === null ? expandos : w, k);
+          if (d === undefined) return undefined;
+          d.configurable = true;
+          if ('value' in d) d.value = SELF[k] ? proxy : wrap(d.value, w === null ? standInSelf : window);
+          return d;
+        },
+        ownKeys() {
+          const w = target();
+          if (w === true) return crossKeys();
+          return reflectOwnKeys(w === null ? expandos : w);
+        },
+        getPrototypeOf() {
+          const w = target();
+          return w === true || w === null ? null : getPrototypeOf(w);
+        },
+        setPrototypeOf(t, v) {
+          return v === handler.getPrototypeOf();
+        },
+        isExtensible() {
+          return true;
+        },
+        preventExtensions() {
+          return false;
+        },
+      };
+      proxy = new ProxyC(objectCreate(null), handler);
+      return proxy;
     },
     // The current stack (JSC format), for console stack traces.
     stack() {
