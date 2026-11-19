@@ -1860,10 +1860,17 @@ impl BaseDocument {
         if node.parent_is_shadow_root() {
             return Some(ImplicitScopeRoot::ShadowHost(opaque(parent)));
         }
+        // A node assigned to a slot is the slot's child here: its parent in its node tree is the
+        // host of the slot's shadow tree.
+        let parent = if self.nodes[parent].is_assigned_slot() {
+            self.nodes[parent].containing_shadow_host_id()?
+        } else {
+            parent
+        };
         if !self.nodes[parent].is_element() {
             return None;
         }
-        Some(match node.containing_shadow_host_id() {
+        Some(match self.nodes[parent].containing_shadow_host_id() {
             Some(_) => ImplicitScopeRoot::InShadowTree(opaque(parent)),
             None => ImplicitScopeRoot::InLightTree(opaque(parent)),
         })
