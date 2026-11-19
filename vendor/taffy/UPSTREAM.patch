@@ -4159,7 +4159,7 @@ index 037a2d1c..aab051a4 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..2c7ab77e 100644
+index f0109c6e..1171d6ec 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -5477,7 +5477,7 @@ index f0109c6e..2c7ab77e 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +2102,156 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2102,161 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -5624,9 +5624,14 @@ index f0109c6e..2c7ab77e 100644
 +        }
 +        range
 +    };
-+    let (Some((left, right)), Some((top, bottom))) = (extent(columns, border.left), extent(rows, border.top)) else {
++    // pyro: an axis without tracks (an empty grid has no implicit rows) is its content edge: the
++    // other axis's tracks still reach (Chromium; WPT scroll-animations
++    // `responsive/repaint-after-finished`).
++    let (left, right) = extent(columns, border.left).unwrap_or((padding.left, padding.left));
++    let (top, bottom) = extent(rows, border.top).unwrap_or((padding.top, padding.top));
++    if left == right && top == bottom {
 +        return Rect::ZERO;
-+    };
++    }
 +    Rect {
 +        left: if rtl { left - padding.left } else { left },
 +        right: if rtl { right } else { right + padding.right },

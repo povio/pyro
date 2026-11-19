@@ -2245,9 +2245,14 @@ fn grid_area_overflow(columns: &[GridTrack], rows: &[GridTrack], border: Rect<f3
         }
         range
     };
-    let (Some((left, right)), Some((top, bottom))) = (extent(columns, border.left), extent(rows, border.top)) else {
+    // pyro: an axis without tracks (an empty grid has no implicit rows) is its content edge: the
+    // other axis's tracks still reach (Chromium; WPT scroll-animations
+    // `responsive/repaint-after-finished`).
+    let (left, right) = extent(columns, border.left).unwrap_or((padding.left, padding.left));
+    let (top, bottom) = extent(rows, border.top).unwrap_or((padding.top, padding.top));
+    if left == right && top == bottom {
         return Rect::ZERO;
-    };
+    }
     Rect {
         left: if rtl { left - padding.left } else { left },
         right: if rtl { right } else { right + padding.right },
