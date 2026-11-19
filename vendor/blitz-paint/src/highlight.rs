@@ -500,12 +500,33 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
             }
         };
         let rects: SmallVec<[Rect; 4]> = pieces.iter().map(rect).collect();
+        const FAR: f64 = 1e6;
+        // pyro: what the passes in and outside the stretches are clipped to: a stretch from the
+        // line's start (or to its end) reaches past it, so what its text draws beyond the text
+        // (a wavy line's ends) is drawn in the highlight's colours too, as Chromium does (WPT
+        // css-text-decor `selection-pseudo-with-decoration-invalidation-001`).
+        let metrics = line.metrics();
+        // (Its content: without the white space hanging at its end, the left in a right-to-left
+        // line.)
+        let hang = metrics.hanging_advance;
+        let (line_start, line_end) = match line.is_rtl() {
+            true => (metrics.inline_min_coord + hang, metrics.inline_min_coord + metrics.advance),
+            false => (metrics.inline_min_coord, metrics.inline_min_coord + metrics.advance - hang),
+        };
+        let clips: SmallVec<[Rect; 4]> = pieces
+            .iter()
+            .zip(&rects)
+            .map(|(piece, rect)| {
+                let x0 = if piece.x0 <= line_start + 0.5 { -FAR } else { rect.x0 };
+                let x1 = if piece.x1 >= line_end - 0.5 { FAR } else { rect.x1 };
+                Rect::new(x0, rect.y0, x1, rect.y1)
+            })
+            .collect();
         // The shadows the text casts in the stretches, under their backgrounds (as Chromium:
         // the highlights paint over the originating text's shadows).
-        const FAR: f64 = 1e6;
         if options.shadows {
             let mut inside = BezPath::new();
-            for rect in &rects {
+            for rect in &clips {
                 inside.extend(Rect::new(rect.x0, -FAR, rect.x1, FAR).path_elements(0.1));
             }
             context.highlights = std::mem::take(&mut cache);
@@ -585,7 +606,7 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
         let (mut before, mut after) = (BezPath::new(), BezPath::new());
         let rtl = line.is_rtl();
         let mut x = -FAR;
-        let mut sorted: SmallVec<[(Rect, u32); 4]> = rects.iter().copied().zip(pieces.iter().map(|p| p.mask)).collect();
+        let mut sorted: SmallVec<[(Rect, u32); 4]> = clips.iter().copied().zip(pieces.iter().map(|p| p.mask)).collect();
         sorted.sort_by(|p, q| p.0.x0.total_cmp(&q.0.x0));
         let mut gaps: SmallVec<[Rect; 4]> = SmallVec::new();
         for (rect, _) in &sorted {

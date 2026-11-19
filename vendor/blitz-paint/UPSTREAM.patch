@@ -2494,7 +2494,7 @@ diff --git a/packages/blitz-paint/src/highlight.rs b/packages/blitz-paint/src/hi
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/highlight.rs
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,723 @@
 +//! pyro: the document selection painted as Chromium paints it (CSS Pseudo-Elements 4 § 3,
 +//! highlight painting).
 +//!
@@ -2997,12 +2997,33 @@ new file mode 100644
 +            }
 +        };
 +        let rects: SmallVec<[Rect; 4]> = pieces.iter().map(rect).collect();
++        const FAR: f64 = 1e6;
++        // pyro: what the passes in and outside the stretches are clipped to: a stretch from the
++        // line's start (or to its end) reaches past it, so what its text draws beyond the text
++        // (a wavy line's ends) is drawn in the highlight's colours too, as Chromium does (WPT
++        // css-text-decor `selection-pseudo-with-decoration-invalidation-001`).
++        let metrics = line.metrics();
++        // (Its content: without the white space hanging at its end, the left in a right-to-left
++        // line.)
++        let hang = metrics.hanging_advance;
++        let (line_start, line_end) = match line.is_rtl() {
++            true => (metrics.inline_min_coord + hang, metrics.inline_min_coord + metrics.advance),
++            false => (metrics.inline_min_coord, metrics.inline_min_coord + metrics.advance - hang),
++        };
++        let clips: SmallVec<[Rect; 4]> = pieces
++            .iter()
++            .zip(&rects)
++            .map(|(piece, rect)| {
++                let x0 = if piece.x0 <= line_start + 0.5 { -FAR } else { rect.x0 };
++                let x1 = if piece.x1 >= line_end - 0.5 { FAR } else { rect.x1 };
++                Rect::new(x0, rect.y0, x1, rect.y1)
++            })
++            .collect();
 +        // The shadows the text casts in the stretches, under their backgrounds (as Chromium:
 +        // the highlights paint over the originating text's shadows).
-+        const FAR: f64 = 1e6;
 +        if options.shadows {
 +            let mut inside = BezPath::new();
-+            for rect in &rects {
++            for rect in &clips {
 +                inside.extend(Rect::new(rect.x0, -FAR, rect.x1, FAR).path_elements(0.1));
 +            }
 +            context.highlights = std::mem::take(&mut cache);
@@ -3082,7 +3103,7 @@ new file mode 100644
 +        let (mut before, mut after) = (BezPath::new(), BezPath::new());
 +        let rtl = line.is_rtl();
 +        let mut x = -FAR;
-+        let mut sorted: SmallVec<[(Rect, u32); 4]> = rects.iter().copied().zip(pieces.iter().map(|p| p.mask)).collect();
++        let mut sorted: SmallVec<[(Rect, u32); 4]> = clips.iter().copied().zip(pieces.iter().map(|p| p.mask)).collect();
 +        sorted.sort_by(|p, q| p.0.x0.total_cmp(&q.0.x0));
 +        let mut gaps: SmallVec<[Rect; 4]> = SmallVec::new();
 +        for (rect, _) in &sorted {
@@ -24530,7 +24551,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1787,860 @@
+@@ -608,152 +1787,868 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -24925,14 +24946,22 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        // WPT css-pseudo `selection-originating-decoration-color`); an underline or overline of
 +        // its own colour keeps it (css-text-decor `text-decoration-inset-marked-text-gap`).
 +        // pyro: all of them when the highlight has a decoration of its own (WPT css-pseudo
-+        // `highlight-painting-004`: an underline of its own colour turns the selection's).
++        // `highlight-painting-004`: an underline of its own colour turns the selection's), or
++        // when the decorating element has a `::selection` style of its own (Blink paints its
++        // decorations in that style's colour; WPT css-text-decor
++        // `selection-pseudo-with-decoration-invalidation-001`).
 +        if highlighting {
 +            for acc in deco_boxes.iter_mut().filter(|acc| !acc.selection) {
 +                let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) else { continue };
++                let own_style = highlight.owner == Some(acc.node_id);
 +                let recolour = acc.deco.current_color
 +                    || acc.deco.line == TextDecorationLine::LINE_THROUGH
-+                    || highlight.decoration.is_some();
-+                if let (true, Some(color)) = (recolour, highlight.color) {
++                    || highlight.decoration.is_some()
++                    || own_style;
++                // (A style of its own without a colour of its own, or `currentcolor`: the
++                // element's text colour.)
++                let color = highlight.color.or_else(|| own_style.then(|| text_fill_color(doc, acc.node_id)));
++                if let (true, Some(color)) = (recolour, color) {
 +                    acc.deco.color = color;
                  }
 +            }
@@ -25507,7 +25536,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2648,54 @@
+@@ -761,12 +2656,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -25564,7 +25593,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -804,3 +2733,239 @@
+@@ -804,3 +2741,239 @@
      }
      prev.1
  }

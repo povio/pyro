@@ -2115,14 +2115,22 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // WPT css-pseudo `selection-originating-decoration-color`); an underline or overline of
         // its own colour keeps it (css-text-decor `text-decoration-inset-marked-text-gap`).
         // pyro: all of them when the highlight has a decoration of its own (WPT css-pseudo
-        // `highlight-painting-004`: an underline of its own colour turns the selection's).
+        // `highlight-painting-004`: an underline of its own colour turns the selection's), or
+        // when the decorating element has a `::selection` style of its own (Blink paints its
+        // decorations in that style's colour; WPT css-text-decor
+        // `selection-pseudo-with-decoration-invalidation-001`).
         if highlighting {
             for acc in deco_boxes.iter_mut().filter(|acc| !acc.selection) {
                 let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) else { continue };
+                let own_style = highlight.owner == Some(acc.node_id);
                 let recolour = acc.deco.current_color
                     || acc.deco.line == TextDecorationLine::LINE_THROUGH
-                    || highlight.decoration.is_some();
-                if let (true, Some(color)) = (recolour, highlight.color) {
+                    || highlight.decoration.is_some()
+                    || own_style;
+                // (A style of its own without a colour of its own, or `currentcolor`: the
+                // element's text colour.)
+                let color = highlight.color.or_else(|| own_style.then(|| text_fill_color(doc, acc.node_id)));
+                if let (true, Some(color)) = (recolour, color) {
                     acc.deco.color = color;
                 }
             }
