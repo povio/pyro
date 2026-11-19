@@ -182,9 +182,15 @@ impl LayoutPassState<'_> {
                 let bottom = top + layout.size.height;
                 let point = ClampPoint::Box(id, bottom);
                 if clamp_line.is_none() {
+                    // (A box whose margins collapse through it adds nothing past where it is: they
+                    // collapse with the margin before it, counted already: WPT css-overflow
+                    // `line-clamp-auto-032`.)
+                    let self_collapsing = layout.size.height == 0.0
+                        && layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom == 0.0;
+                    let margin = if self_collapsing { 0.0 } else { layout.margin.bottom };
                     let end = match self.nodes[id].layout_parent.get() {
-                        Some(parent) if parent != root => self.clamp_point_end(root, parent, bottom, layout.margin.bottom),
-                        _ => bottom + layout.margin.bottom,
+                        Some(parent) if parent != root => self.clamp_point_end(root, parent, bottom, margin),
+                        _ => bottom + margin,
                     };
                     if limit.is_some_and(|limit| end > limit + 0.01) {
                         clamp_line = Some(last_lines.unwrap_or(ClampPoint::Lines(id, 0, content_top)));

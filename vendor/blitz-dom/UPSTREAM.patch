@@ -16906,7 +16906,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,535 @@
+@@ -0,0 +1,541 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -17091,9 +17091,15 @@ new file mode 100644
 +                let bottom = top + layout.size.height;
 +                let point = ClampPoint::Box(id, bottom);
 +                if clamp_line.is_none() {
++                    // (A box whose margins collapse through it adds nothing past where it is: they
++                    // collapse with the margin before it, counted already: WPT css-overflow
++                    // `line-clamp-auto-032`.)
++                    let self_collapsing = layout.size.height == 0.0
++                        && layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom == 0.0;
++                    let margin = if self_collapsing { 0.0 } else { layout.margin.bottom };
 +                    let end = match self.nodes[id].layout_parent.get() {
-+                        Some(parent) if parent != root => self.clamp_point_end(root, parent, bottom, layout.margin.bottom),
-+                        _ => bottom + layout.margin.bottom,
++                        Some(parent) if parent != root => self.clamp_point_end(root, parent, bottom, margin),
++                        _ => bottom + margin,
 +                    };
 +                    if limit.is_some_and(|limit| end > limit + 0.01) {
 +                        clamp_line = Some(last_lines.unwrap_or(ClampPoint::Lines(id, 0, content_top)));
