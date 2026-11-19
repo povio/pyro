@@ -199,8 +199,8 @@ struct Breaks {
     /// pyro: the container has `column-height: 0`: its columns hold what cannot break whole
     /// (`fill`).
     whole_in_empty_columns: bool,
-    /// pyro: monolithic boxes a column holds whole even when they are taller than it, overflowing
-    /// it (`held_whole`). Merged.
+    /// pyro: line boxes and monolithic boxes a column holds whole even when they are taller than
+    /// it, overflowing it (`held_whole`). Merged.
     whole: Vec<(f32, f32)>,
     /// The space between consecutive in-flow blocks (their margins): a column after a break in it
     /// starts at its end. Sorted by start.
@@ -409,22 +409,48 @@ impl Breaks {
         if total <= EPSILON {
             return 0.0;
         }
-        let mut height = total / count as f32;
+        // pyro: forced breaks split the content into segments, each starting a column: when there
+        // are as many as the columns or more, every column holds one segment (or one and the
+        // overflow columns after the last), so they are as tall as the tallest (Chromium; WPT
+        // css-multicol `multicol-fill-balance-002`, `-040`).
+        let mut cuts: Vec<f32> = vec![self.start];
+        cuts.extend(self.forced.iter().copied().filter(|&f| f > self.start + EPSILON && f < self.end - EPSILON));
+        cuts.push(self.end);
+        let segments = cuts.len() - 1;
+        let tallest_segment = cuts.windows(2).map(|w| w[1] - w[0]).fold(0.0, f32::max);
+        // At most this many columns fit the content whatever their height.
+        let fits = count.max(segments.min(MAX_COLUMNS));
+        let mut height = if segments >= count { tallest_segment } else { total / count as f32 };
         if let Some(limit) = limit {
             height = height.min(limit);
         }
         for _ in 0..200 {
             let run = self.fill(height, MAX_COLUMNS);
-            if run.columns.len() <= count && run.violations == 0 {
+            if run.columns.len() <= fits && run.violations == 0 {
                 break;
             }
             let Some(shortage) = run.shortage else {
                 // Nothing in the way to grow past: the columns cut through what does not fit.
-                if run.columns.len() <= count {
+                if run.columns.len() <= fits {
                     break;
                 }
-                height = total.min(limit.unwrap_or(f32::INFINITY));
-                break;
+                // pyro: the least height at which they fit (a column cut through empty space
+                // moves its break by as much as it grows).
+                let top = total.min(limit.unwrap_or(f32::INFINITY));
+                let (mut lo, mut hi) = (height, top);
+                if self.fill(hi, MAX_COLUMNS).columns.len() > fits {
+                    height = top;
+                    break;
+                }
+                for _ in 0..40 {
+                    if hi - lo <= EPSILON {
+                        break;
+                    }
+                    let mid = (lo + hi) / 2.0;
+                    if self.fill(mid, MAX_COLUMNS).columns.len() <= fits { hi = mid } else { lo = mid }
+                }
+                height = hi;
+                continue;
             };
             let next = height + shortage.max(EPSILON);
             match limit {
@@ -441,8 +467,8 @@ impl Breaks {
         }
         // The tallest column's content, not more.
         let run = self.fill(height, MAX_COLUMNS);
-        let tallest = run.columns.iter().take(count.max(1)).map(|&(a, b)| b - a).fold(0.0, f32::max);
-        if run.columns.len() <= count { tallest.min(height).max(EPSILON) } else { height }
+        let tallest = run.columns.iter().take(fits.max(1)).map(|&(a, b)| b - a).fold(0.0, f32::max);
+        if run.columns.len() <= fits { tallest.min(height).max(EPSILON) } else { height }
     }
 }
 
@@ -1288,6 +1314,8 @@ impl BaseDocument {
             }
             found.loose.extend_from_slice(&lines);
             found.strict.extend_from_slice(&lines);
+            // pyro: a line taller than a column overflows it whole, as in Chromium.
+            found.whole.extend_from_slice(&lines);
             let (orphans, widows) = node.primary_styles().map_or((2, 2), |s| {
                 let text = s.get_inherited_text();
                 (text.orphans.0.max(1) as usize, text.widows.0.max(1) as usize)
@@ -1312,6 +1340,8 @@ impl BaseDocument {
         };
         // The previous in-flow block's border-box bottom and bottom margin.
         let mut previous: Option<(f32, f32)> = None;
+        // pyro: the previous in-flow block has `break-after: avoid`.
+        let mut avoid_after = false;
         for &child_id in children {
             let child = &self.nodes[child_id];
             let Some(style) = child.primary_styles() else {
@@ -1348,6 +1378,18 @@ impl BaseDocument {
                 if forces(style.get_box().break_after) {
                     found.forced_after.push(child_bottom + layout.margin.bottom.max(0.0));
                 }
+                // pyro: `break-before: avoid` (and the previous sibling's `break-after: avoid`)
+                // keeps the break between them away where the columns can help it.
+                let avoids = |b: style::values::computed::BreakBetween| {
+                    use style::values::computed::BreakBetween as B;
+                    matches!(b, B::Avoid | B::AvoidColumn)
+                };
+                if let Some((bottom, _)) = previous
+                    && (avoids(style.get_box().break_before) || avoid_after)
+                {
+                    found.strict.push((bottom.min(child_top) - 2.0 * EPSILON, child_top + 2.0 * EPSILON));
+                }
+                avoid_after = avoids(style.get_box().break_after);
                 if let Some((bottom, margin)) = previous.filter(|&(b, _)| child_top >= b) {
                     // The collapsed margin, no more (clearance is no margin).
                     let margin = margin.max(layout.margin.top).max(0.0);
@@ -1363,6 +1405,14 @@ impl BaseDocument {
             if fragmentable(child, &style) {
                 if style.get_box().break_inside != BreakWithin::Auto {
                     found.strict.push((child_top, child_bottom));
+                }
+                // pyro: no break goes through a box's block-start border and padding: a column
+                // holds them whole, as Chromium does (WPT css-contain `contain-size-breaks-001`).
+                let head = (child_top, child_top + layout.border.top + layout.padding.top);
+                if head.1 > head.0 + EPSILON {
+                    found.strict.push(head);
+                    found.loose.push(head);
+                    found.whole.push(head);
                 }
                 crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
             } else {
@@ -1422,10 +1472,10 @@ fn fragmentable(node: &crate::Node, style: &ComputedValues) -> bool {
 }
 
 /// pyro: whether monolithic `node` is held whole by a column it is taller than: a scroll
-/// container, a replaced element or a form control, which Chromium never slices in a multi-column
-/// container (WPT css-multicol `overflow-unsplittable-*`). The other boxes pyro keeps from
-/// breaks (tables, flex and grid containers, nested multi-column containers, boxes of size
-/// containment) are fragmented by Chromium, which a cut at the column's end comes closer to.
+/// container, a replaced element, a form control or a box of size containment, which Chromium
+/// never slices in a multi-column container (WPT css-multicol `overflow-unsplittable-*`). The
+/// other boxes pyro keeps from breaks (tables, flex and grid containers, nested multi-column
+/// containers) are fragmented by Chromium, which a cut at the column's end comes closer to.
 fn held_whole(node: &crate::Node, style: &ComputedValues) -> bool {
     let Some(element) = node.element_data() else {
         return false;
@@ -1438,7 +1488,9 @@ fn held_whole(node: &crate::Node, style: &ComputedValues) -> bool {
     }
     let box_style = style.get_box();
     let scrolls = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
-    scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)
+    scrolls(box_style.overflow_x)
+        || scrolls(box_style.overflow_y)
+        || box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE)
 }
 
 #[cfg(test)]
