@@ -648,6 +648,7 @@ impl<B: Brush> ResolvedStyle<B> {
             tab_size: self.tab_size,
             soft_hyphen: self.soft_hyphen,
             text_spacing_trim: self.text_spacing_trim,
+            upright: self.upright,
             locale: self.locale,
         }
     }

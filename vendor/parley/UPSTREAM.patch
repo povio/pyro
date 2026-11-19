@@ -3606,7 +3606,7 @@ index 3c3798c..cbeb755 100644
              let mut state = BreakerState::default();
              let add_box = |state: &mut BreakerState, baseline_offset| {
 diff --git a/src/layout/mod.rs b/src/layout/mod.rs
-index 6e2baba..558c664 100644
+index 6e2baba..49dffea 100644
 --- a/src/layout/mod.rs
 +++ b/src/layout/mod.rs
 @@ -7,6 +7,7 @@ mod alignment;
@@ -3617,7 +3617,7 @@ index 6e2baba..558c664 100644
  mod run;
  mod spacing;
  pub(crate) mod style_metrics;
-@@ -68,6 +69,12 @@ pub struct Style<B: Brush> {
+@@ -68,6 +69,14 @@ pub struct Style<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Per-cluster whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -3627,6 +3627,8 @@ index 6e2baba..558c664 100644
 +    pub(crate) soft_hyphen: crate::style::SoftHyphen,
 +    /// pyro: which fullwidth punctuation of this style is set half-width at line edges.
 +    pub(crate) text_spacing_trim: crate::style::TextSpacingTrim,
++    /// pyro: upright glyphs in a vertical line (`text-orientation: upright` on this span).
++    pub upright: bool,
      /// The locale of the text, if any.
      ///
      /// This is useful for consumers exposing the text to assistive technologies,
@@ -4617,7 +4619,7 @@ index e967f50..f77853e 100644
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..89af26b 100644
+index f465832..40f0f5b 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -4789,13 +4791,14 @@ index f465832..89af26b 100644
          }
      }
  
-@@ -527,6 +645,9 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +645,10 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
 +            tab_size: self.tab_size,
 +            soft_hyphen: self.soft_hyphen,
 +            text_spacing_trim: self.text_spacing_trim,
++            upright: self.upright,
              locale: self.locale,
          }
      }

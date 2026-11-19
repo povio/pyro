@@ -162,7 +162,9 @@ impl VerticalLine {
         let metrics = run.run().font_metrics();
         // pyro: by the run's first visible character: an empty inline box's strut (U+2061) or a
         // bidi control before it decides nothing.
-        let upright = self.all_upright
+        // pyro: by the run's own `text-orientation` (a `mixed` span in an `upright` block).
+        let run_upright = run.style().upright;
+        let upright = run_upright
             || source
                 .and_then(|text| {
                     text.get(run.run().text_range())?.chars().find(|&c| {
@@ -177,7 +179,7 @@ impl VerticalLine {
         let height = (metrics.ascent + metrics.descent).max(1.0);
         // pyro: a glyph advancing by the font's height (`text-orientation: upright` in a font
         // without vertical metrics, parley's `shape::upright`) hangs from its ascent.
-        let tall = self.all_upright.then(|| {
+        let tall = run_upright.then(|| {
             use skrifa::raw::TableProvider;
             let font = run.run().font();
             let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
