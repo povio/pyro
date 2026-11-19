@@ -919,6 +919,16 @@ fn unregister(registration: &Rc<Registration>) -> bool {
 // ---------------------------------------------------------------------------
 // Register and update.
 
+/// A registration's operation from a document that is no longer fully active (its frame was
+/// removed or navigated) would settle in a task that never runs: it rejects at once instead, with
+/// Chromium's InvalidStateError.
+fn not_fully_active(page: &PageDom, what: &str) -> JsResult<()> {
+    if page.is_fully_active() {
+        return Ok(());
+    }
+    Err(JsError::dom("InvalidStateError", &format!("Failed to {what}: No associated provider is available.")))
+}
+
 /// Settles one page-side request (`register`, `update`, ...) in a task.
 #[derive(Clone)]
 struct Settle {
@@ -1527,6 +1537,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     native.set_atom("getRegistrations", f.value())?;
     let f = s.function("unregister", |s, _, a| {
         let page = crate::target::page_of(s)?;
+        not_fully_active(&page, "unregister a ServiceWorkerRegistration")?;
         let id = a.get(0).to_number()? as u64;
         let registration = same_origin_registration(&page, a.get(1).to_number()? as u64);
         let done = registration.is_some_and(|r| unregister(&r));
@@ -1536,6 +1547,7 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     native.set_atom("unregister", f.value())?;
     let f = s.function("update", |s, _, a| {
         let page = crate::target::page_of(s)?;
+        not_fully_active(&page, "update a ServiceWorkerRegistration")?;
         let id = a.get(0).to_number()? as u64;
         let settle = Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() };
         let registration = same_origin_registration(&page, a.get(1).to_number()? as u64);
