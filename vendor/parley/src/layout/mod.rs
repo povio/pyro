@@ -73,6 +73,8 @@ pub struct Style<B: Brush> {
     pub(crate) tab_size: crate::style::TabSize,
     /// pyro: see [`crate::TextStyle::wrap_avoid_depth`].
     pub(crate) wrap_avoid_depth: u8,
+    /// pyro: see [`crate::TextStyle::hanging_punctuation`].
+    pub(crate) hanging_punctuation: u8,
     /// pyro: what a soft hyphen of this style does at the end of a line.
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: which fullwidth punctuation of this style is set half-width at line edges.

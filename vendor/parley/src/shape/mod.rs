@@ -296,6 +296,20 @@ pub(crate) fn shape_text<'a, B: Brush>(
     autospace::apply(layout, text, styles, inline_boxes);
     // pyro: CSS `text-justify`.
     justify::apply(layout, text, styles, inline_boxes);
+    // pyro: CSS `hanging-punctuation` (the line breaker's `end_hang`).
+    layout.data.hang_classes.clear();
+    if styles.iter().any(|style| style.hanging_punctuation != 0) {
+        layout.data.hang_classes.extend(text.chars().map(|ch| {
+            let stop = matches!(
+                ch,
+                ',' | '.' | '\u{060C}' | '\u{06D4}' | '\u{3001}' | '\u{3002}' | '\u{FF0C}' | '\u{FF0E}' | '\u{FE50}'
+                    | '\u{FE51}' | '\u{FE52}' | '\u{FF61}' | '\u{FF64}'
+            );
+            u8::from(parley_engine::hangs_at_edge(ch, true))
+                | (u8::from(parley_engine::hangs_at_edge(ch, false)) << 1)
+                | (u8::from(stop) << 2)
+        }));
+    }
 }
 
 /// pyro: how the shaper trims a style's fullwidth punctuation (CSS `text-spacing-trim`): the

@@ -834,6 +834,13 @@ pub(crate) fn style(
         isolates: false,
         // (Set where an inline element's span is built, `inline::build`.)
         wrap_avoid_depth: 0,
+        hanging_punctuation: {
+            use style::values::computed::HangingPunctuation as H;
+            let value = itext_styles.hanging_punctuation;
+            (u8::from(value.contains(H::FORCE_END)) << 1)
+                | (u8::from(value.contains(H::ALLOW_END)) << 2)
+                | (u8::from(value.contains(H::LAST)) << 3)
+        },
         phrase_breaks: itext_styles.word_break == stylo::WordBreak::AutoPhrase,
         // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
         font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,

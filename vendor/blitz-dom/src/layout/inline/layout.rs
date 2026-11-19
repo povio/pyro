@@ -1111,6 +1111,18 @@ impl LayoutPassState<'_> {
                 });
             if later_anonymous_block { GenericTextIndent::zero() } else { text_indent }
         };
+        // pyro: the element's first formatted line is in this layout (`hanging-punctuation: first`).
+        let has_first_line = crate::layout::first_line::starts_a_block(self.doc, node_id) && {
+            let node = &self.nodes[node_id];
+            !(node.is_anonymous()
+                && node.parent.is_some_and(|parent| {
+                    self.nodes[parent]
+                        .layout_children
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|children| children.first().is_some_and(|&first| first != node_id))
+                }))
+        };
         // pyro: an initial letter box (`layout::first_letter`) starts the first line, and holds
         // the line's text indent in its width (Blink's `CalculateInitialLetterBoxInlineSize`): the
         // text after it is not indented again.
@@ -1133,8 +1145,19 @@ impl LayoutPassState<'_> {
             each_line: text_indent.each_line,
             hanging: text_indent.hanging,
         };
+        // pyro: CSS Text 3 `hanging-punctuation: first`: opening punctuation that starts the
+        // element's first line hangs outside its start edge, as a negative indent of its advance
+        // (also in the intrinsic widths), unless a box edge with width comes first.
+        let hang_first = self.nodes[node_id]
+            .primary_styles()
+            .filter(|s| {
+                s.get_inherited_text().hanging_punctuation.contains(style::values::computed::HangingPunctuation::FIRST)
+            })
+            .filter(|_| has_first_line && initial_letter.is_none() && !text_indent.each_line && !text_indent.hanging)
+            .and_then(|_| inline_layout.layout.first_cluster_hang(&inline_layout.text, |ch| parley::hangs_at_edge(ch, true)))
+            .unwrap_or(0.0);
         // Percentage indents do not contribute to intrinsic widths.
-        let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale;
+        let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale - hang_first;
         inline_layout.layout.set_text_indent(intrinsic_indent, indent_options);
 
         let pbw = container_pb.horizontal_components().sum() * scale;
@@ -1315,7 +1338,7 @@ impl LayoutPassState<'_> {
             .px();
         inline_layout
             .layout
-            .set_text_indent(resolved_text_indent * scale, indent_options);
+            .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
 
         // pyro: `::first-line` styles that change layout (`TextLayout::first_line_layout`): the
         // build gave them to the text up to where the first line ended last time (all of it at
@@ -1336,7 +1359,7 @@ impl LayoutPassState<'_> {
                 inline_layout.final_lines = None;
                 inline_layout
                     .layout
-                    .set_text_indent(resolved_text_indent * scale, indent_options);
+                    .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
             }
         }
 
@@ -1345,7 +1368,7 @@ impl LayoutPassState<'_> {
         // advances in a different order to `calculate_content_widths`. Give the line breaker a
         // few ulps of slack in that case so that the content doesn't wrap.
         let max_advance = {
-            let max_content_width = inline_layout.content_widths(resolved_text_indent * scale).max;
+            let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
             let fit_width = width.max(max_content_width);
             let rounding_error = (fit_width + pbw).abs() * 8.0 * f32::EPSILON;
             if (max_content_width - width).abs() <= rounding_error {

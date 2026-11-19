@@ -1459,6 +1459,53 @@ impl WordSpaceTransform {
     }
 }
 
+/// pyro: the `hanging-punctuation` property: which punctuation may hang outside the line box.
+///
+/// https://drafts.csswg.org/css-text-3/#hanging-punctuation-property
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToCss,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(
+    single = "none",
+    mixed = "first,force-end,allow-end,last",
+    validate_mixed = "Self::validate_mixed_flags",
+))]
+#[repr(C)]
+pub struct HangingPunctuation(u8);
+bitflags! {
+    impl HangingPunctuation: u8 {
+        /// No punctuation hangs.
+        const NONE = 0;
+        /// Opening punctuation at the start of an element's first line hangs.
+        const FIRST = 1 << 0;
+        /// Stops and commas at the end of a line hang.
+        const FORCE_END = 1 << 1;
+        /// Stops and commas at the end of a line hang when they would not fit.
+        const ALLOW_END = 1 << 2;
+        /// Closing punctuation at the end of an element's last line hangs.
+        const LAST = 1 << 3;
+    }
+}
+
+impl HangingPunctuation {
+    fn validate_mixed_flags(&self) -> bool {
+        !self.contains(Self::FORCE_END | Self::ALLOW_END)
+    }
+}
+
 /// pyro: the `wrap-inside` property: whether lines avoid breaking inside an inline box.
 ///
 /// https://drafts.csswg.org/css-text-4/#wrap-inside

@@ -274,6 +274,9 @@ pub(crate) struct LayoutData<B: Brush> {
     /// pyro: the advance of a space that `tab-size` counts in (the root style's space with its
     /// letter and word spacing), in layout units; negative while tabs keep their shaped advance.
     pub(crate) tab_space: f32,
+    /// pyro: per character, what CSS `hanging-punctuation` may hang of it: 1 opening, 2 closing
+    /// punctuation, 4 a stop or comma (empty where no style hangs punctuation).
+    pub(crate) hang_classes: Vec<u8>,
     /// pyro: the least advance of a tab (0.5ch of the root style): a tab closer than this to its
     /// stop goes on to the next one.
     pub(crate) tab_min_advance: f32,
@@ -325,6 +328,7 @@ impl<B: Brush> Default for LayoutData<B> {
             indent_amount: 0.0,
             indent_options: IndentOptions::default(),
             tab_space: -1.0,
+            hang_classes: Vec::new(),
             tab_min_advance: 0.0,
             line_height_quirk: false,
             central_baseline: false,
@@ -396,6 +400,7 @@ impl<B: Brush> LayoutData<B> {
         self.indent_amount = 0.0;
         self.indent_options = IndentOptions::default();
         self.tab_space = -1.0;
+        self.hang_classes.clear();
         self.tab_min_advance = 0.0;
         self.line_height_quirk = false;
         self.central_baseline = false;

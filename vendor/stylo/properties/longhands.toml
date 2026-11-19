@@ -2619,6 +2619,16 @@ spec = "https://drafts.csswg.org/css-text-3/#tab-size-property"
 extra_gecko_aliases = ["-moz-tab-size"]
 affects = "layout"
 
+[hanging-punctuation]
+type = "HangingPunctuation"
+initial = "computed::text::HangingPunctuation::NONE"
+struct = "inherited_text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-3/#hanging-punctuation-property"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
 [wrap-inside]
 type = "WrapInside"
 initial = "computed::text::WrapInside::Auto"

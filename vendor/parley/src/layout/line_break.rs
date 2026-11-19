@@ -148,6 +148,9 @@ struct LineState {
     /// punctuation set half-width to end the line (CSS `text-spacing-trim`): its shaped cluster
     /// and the advance taken off it. Content appended after it gives the advance back.
     end_trim: Option<(u32, f32)>,
+    /// pyro: the advance of the punctuation `hanging-punctuation` hangs at the line's end, if the
+    /// line ends with it (`end_hang`).
+    end_hang: f32,
 }
 
 impl LineState {
@@ -167,6 +170,7 @@ impl LineState {
         self.after_box = false;
         self.start_trim = None;
         self.end_trim = None;
+        self.end_hang = 0.0;
     }
 }
 
@@ -1297,6 +1301,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             // pyro: the box counts as a character of the span around it (`wraps_after`).
             self.state.line.last_char = Some((layout_box.parent_style_index, false));
             self.state.line.after_box = true;
+            self.state.line.end_hang = 0.0;
             self.state
                 .append_aligned_inline_box_to_line(next_x, inline_box, placement, quantize);
         } else {
@@ -2050,6 +2055,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         }
                         // pyro: and closing punctuation that may be set half-width to end it.
                         let end_trim = line_end_trim(&self.layout.data, &atom);
+                        // pyro: and punctuation `hanging-punctuation` hangs at the line's end:
+                        // always (`force-end`, `last`), or where it would not fit (`allow-end`).
+                        let hang = end_hang(&self.layout.data, &atom);
+                        let mut hang_now = hang.filter(|&(_, always)| always).map_or(0.0, |(advance, _)| advance);
 
                         // Compute the x position of the content being currently processed
                         let mut next_x = self.state.line.x + advance;
@@ -2128,6 +2137,26 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 );
                                 self.state.line.end_trim = Some((cluster, removed));
                             }
+                            // pyro: punctuation that hangs at the line's end stays on it when
+                            // what is before it fits and the line may end after it.
+                            else if let Some((hanging, _)) = hang
+                                && next_x - hanging <= fit_advance + FIT_TOLERANCE
+                                && self.layout.data.shaped_text.shaped_clusters().get(atom.shaped_clusters_range().end as usize).is_none_or(
+                                    |next| next.is_soft_wrap_opportunity_before() || next.whitespace() != Whitespace::None,
+                                )
+                            {
+                                if max_height_exceeded {
+                                    return self.max_height_break_data(line_height);
+                                }
+                                self.state.append_atom_to_line(
+                                    &atom,
+                                    next_x,
+                                    style_index,
+                                    &self.layout.data,
+                                    is_separator,
+                                );
+                                hang_now = hanging;
+                            }
                             // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
                             //
                             // We "take" the line-breaking opportunity by starting a new line and resetting our
@@ -2193,6 +2222,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                     is_separator,
                                 );
                             }
+                        }
+                        // pyro: the line ends with hanging punctuation until more content follows.
+                        if whitespace == Whitespace::None {
+                            self.state.line.end_hang = hang_now;
                         }
                     }
                     self.state.run_idx += 1;
@@ -2833,7 +2866,7 @@ fn commit_line<B: Brush>(
         metrics: LineMetrics {
             indent: line_indent,
             advance: state.x,
-            hanging_advance,
+            hanging_advance: hanging_advance + state.end_hang,
             collapsed_advance,
             ..Default::default()
         },
@@ -3081,6 +3114,31 @@ fn line_start_trim<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>, first: bool)
 /// `text-spacing-trim`; Chromium trims no full stop or comma there): the shaped cluster of `atom`,
 /// the advance taken off, and whether every line's last such bracket is (`trim-both`) rather than
 /// only one that does not fit.
+/// pyro: the advance of `atom` if CSS `hanging-punctuation` may hang it at a line's end, and
+/// whether it hangs there always: a stop or comma (`force-end` always, `allow-end` where it would
+/// not fit), or the closing punctuation that ends the paragraph (`last`, always).
+fn end_hang<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>) -> Option<(f32, bool)> {
+    if data.hang_classes.is_empty() || atom.shaped_clusters_range().len() != 1 {
+        return None;
+    }
+    let character = atom.characters().first()?;
+    let bits = data.styles[usize::from(character.style_index)].hanging_punctuation;
+    let class = *data.hang_classes.get(atom.char_range().start as usize)?;
+    let advance = atom.shaped_clusters().first()?.advance;
+    if class & 4 != 0 && bits & (2 | 4) != 0 {
+        return Some((advance, bits & 2 != 0));
+    }
+    if class & 2 != 0 && bits & 8 != 0 {
+        // The last content of the paragraph: nothing but white space after it.
+        let clusters = data.shaped_text.shaped_clusters();
+        let after = &clusters[(atom.shaped_clusters_range().end as usize).min(clusters.len())..];
+        if after.iter().all(|cluster| cluster.whitespace() != Whitespace::None) {
+            return Some((advance, true));
+        }
+    }
+    None
+}
+
 fn line_end_trim<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>) -> Option<(u32, f32, bool)> {
     use crate::style::TextSpacingTrim;
     let character = atom.characters().last()?;

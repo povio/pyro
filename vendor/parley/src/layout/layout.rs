@@ -222,6 +222,36 @@ impl<B: Brush> Layout<B> {
         (self.data.tab_space, self.data.tab_min_advance)
     }
 
+    /// pyro: the advance of the layout's first cluster, if it starts the content (after nothing
+    /// but zero-width span start edges and out-of-flow boxes) and `hangs` says its first character
+    /// (`text` is the layout's text) may hang (CSS `hanging-punctuation: first`).
+    pub fn first_cluster_hang(&self, text: &str, hangs: impl Fn(char) -> bool) -> Option<f32> {
+        use crate::layout::LayoutItemKind;
+        let data = &self.data;
+        for item in &data.items {
+            match item.kind {
+                LayoutItemKind::InlineBox => {
+                    let inline_box = &data.inline_boxes[item.index].inline_box;
+                    match inline_box.kind {
+                        crate::InlineBoxKind::InFlow => return None,
+                        crate::InlineBoxKind::SpanStart | crate::InlineBoxKind::SpanEnd if inline_box.width > 0.0 => {
+                            return None;
+                        }
+                        _ => {}
+                    }
+                }
+                LayoutItemKind::TextRun => {
+                    let slice = data.shaped_text.run_slice(item.index as u32);
+                    let cluster = slice.shaped_clusters().first()?;
+                    let character = slice.characters_in(cluster.chars_range()).first()?;
+                    let ch = text.get(character.text_byte_start as usize..)?.chars().next()?;
+                    return hangs(ch).then_some(cluster.advance);
+                }
+            }
+        }
+        None
+    }
+
     pub fn set_tab_stops(&mut self, space: f32, min_advance: f32) {
         self.data.tab_space = if space.is_finite() { space.max(0.0) } else { 0.0 };
         self.data.tab_min_advance = min_advance.max(0.0);

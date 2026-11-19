@@ -14225,7 +14225,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  // Vertical margins adjust the space the box reserves in the line. A box with a
                  // baseline splits that space into ascent (`margin.top + baseline`) and descent
                  // (`margin.bottom + height - baseline`), either of which may be negative. A box
-@@ -592,28 +1090,63 @@
+@@ -592,28 +1090,86 @@
          let text_indent = self.nodes[node_id]
              .primary_styles()
              .map(|s| s.slow_clone_text_indent())
@@ -14250,6 +14250,18 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                });
 +            if later_anonymous_block { GenericTextIndent::zero() } else { text_indent }
 +        };
++        // pyro: the element's first formatted line is in this layout (`hanging-punctuation: first`).
++        let has_first_line = crate::layout::first_line::starts_a_block(self.doc, node_id) && {
++            let node = &self.nodes[node_id];
++            !(node.is_anonymous()
++                && node.parent.is_some_and(|parent| {
++                    self.nodes[parent]
++                        .layout_children
++                        .borrow()
++                        .as_ref()
++                        .is_some_and(|children| children.first().is_some_and(|&first| first != node_id))
++                }))
++        };
 +        // pyro: an initial letter box (`layout::first_letter`) starts the first line, and holds
 +        // the line's text indent in its width (Blink's `CalculateInitialLetterBoxInlineSize`): the
 +        // text after it is not indented again.
@@ -14272,12 +14284,23 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              each_line: text_indent.each_line,
              hanging: text_indent.hanging,
          };
++        // pyro: CSS Text 3 `hanging-punctuation: first`: opening punctuation that starts the
++        // element's first line hangs outside its start edge, as a negative indent of its advance
++        // (also in the intrinsic widths), unless a box edge with width comes first.
++        let hang_first = self.nodes[node_id]
++            .primary_styles()
++            .filter(|s| {
++                s.get_inherited_text().hanging_punctuation.contains(style::values::computed::HangingPunctuation::FIRST)
++            })
++            .filter(|_| has_first_line && initial_letter.is_none() && !text_indent.each_line && !text_indent.hanging)
++            .and_then(|_| inline_layout.layout.first_cluster_hang(&inline_layout.text, |ch| parley::hangs_at_edge(ch, true)))
++            .unwrap_or(0.0);
          // Percentage indents do not contribute to intrinsic widths.
 -        inline_layout.layout.set_text_indent(
 -            text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale,
 -            indent_options,
 -        );
-+        let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale;
++        let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale - hang_first;
 +        inline_layout.layout.set_text_indent(intrinsic_indent, indent_options);
  
          let pbw = container_pb.horizontal_components().sum() * scale;
@@ -14299,7 +14322,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  let min_content_width = content_sizes.min;
                  let max_content_width = content_sizes.max;
  
-@@ -622,6 +1155,9 @@
+@@ -622,6 +1178,9 @@
                      AvailableSpace::MinContent => {
                          let mut width: f32 = 0.0;
                          for ibox in inline_layout.layout.inline_boxes_mut() {
@@ -14309,7 +14332,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              let (is_floated, margin) = {
                                  let style =
                                      self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-@@ -659,6 +1195,9 @@
+@@ -659,6 +1218,9 @@
                          let mut right_band: f32 = 0.0;
                          let mut width: f32 = 0.0;
                          for ibox in inline_layout.layout.inline_boxes_mut() {
@@ -14319,7 +14342,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              let (float, clear, margin) = {
                                  let style =
                                      self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-@@ -708,6 +1247,9 @@
+@@ -708,6 +1270,9 @@
                          .min(max_content_width + float_width)
                          .max(min_content_width),
                  };
@@ -14329,7 +14352,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
                  let style_width = node_size.width.map(|w| w * scale);
                  let min_width = node_min_size.width.map(|w| w * scale);
-@@ -752,7 +1294,7 @@
+@@ -752,7 +1317,7 @@
                  .inline_layout_data = Some(inline_layout);
  
              let measured_size = inputs.known_dimensions.unwrap_or(taffy::Size {
@@ -14338,10 +14361,13 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  // Height is ignored if RequestedAxis if Horizontal
                  height: 0.0,
              });
-@@ -775,12 +1317,35 @@
+@@ -773,14 +1338,37 @@
+             .px();
+         inline_layout
              .layout
-             .set_text_indent(resolved_text_indent * scale, indent_options);
- 
+-            .set_text_indent(resolved_text_indent * scale, indent_options);
++            .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
++
 +        // pyro: `::first-line` styles that change layout (`TextLayout::first_line_layout`): the
 +        // build gave them to the text up to where the first line ended last time (all of it at
 +        // first); a first line that ends elsewhere at this width builds the text again with that end.
@@ -14361,21 +14387,21 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                inline_layout.final_lines = None;
 +                inline_layout
 +                    .layout
-+                    .set_text_indent(resolved_text_indent * scale, indent_options);
++                    .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
 +            }
 +        }
-+
+ 
          // Content sized to fit exactly (e.g. shrink-to-fit) can end up a few ulps wider than
          // `width`: the width goes through round trips in CSS px, and the line breaker sums
          // advances in a different order to `calculate_content_widths`. Give the line breaker a
          // few ulps of slack in that case so that the content doesn't wrap.
          let max_advance = {
 -            let max_content_width = inline_layout.layout.calculate_content_widths().max;
-+            let max_content_width = inline_layout.content_widths(resolved_text_indent * scale).max;
++            let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
              let fit_width = width.max(max_content_width);
              let rounding_error = (fit_width + pbw).abs() * 8.0 * f32::EPSILON;
              if (max_content_width - width).abs() <= rounding_error {
-@@ -791,10 +1356,12 @@
+@@ -791,10 +1379,12 @@
          };
          #[cfg(feature = "floats")]
          let slack = max_advance - width;
@@ -14388,7 +14414,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Out-of-flow candidates bubbled up from this container and its in-flow subtree.
-@@ -808,166 +1375,472 @@
+@@ -808,166 +1398,472 @@
          let mut line_bottoms = [0.0f64; 2];
          #[cfg(feature = "floats")]
          let mut line_count_so_far = 0usize;
@@ -14712,7 +14738,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                );
 +                                continue;
 +                            }
-+
+ 
+-                        let state = breaker.state_mut();
 +                            // pyro: the initial letter box (`layout::first_letter`) is placed by
 +                            // the first line, which it starts: at the line's start (after the
 +                            // text indent, beside the floats along its whole height), its cap
@@ -14794,8 +14821,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                line_start_state = has_active_floats.then(|| breaker.state().clone());
 +                                continue;
 +                            }
- 
--                        let state = breaker.state_mut();
++
 +                            let (direction, clear, margin) = {
 +                                let style = self.child_layout_style(&self.nodes[node_id]);
 +                                // We can assume that the box is a float because we only set `break_on_box: true` for floats
@@ -14995,7 +15021,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Propagate the height consumed by floats placed within this container to the
-@@ -989,6 +1862,16 @@
+@@ -989,6 +1885,16 @@
              })
              .unwrap_or((parley::layout::Alignment::Start, None));
  
@@ -15012,7 +15038,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          inline_layout.layout.align(
              alignment,
              AlignmentOptions {
-@@ -1000,8 +1883,21 @@
+@@ -1000,8 +1906,21 @@
          // Parley lays out empty text as a single strut-height line (text-editor semantics),
          // but a line box containing no text, inline boxes or other in-flow content is a
          // zero-height line box in CSS (CSS2 §9.4.2).
@@ -15036,7 +15062,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          let mut height = if has_inline_content {
              inline_layout.layout.height()
-@@ -1047,9 +1943,43 @@
+@@ -1047,9 +1966,43 @@
              }
          }
  
@@ -15081,7 +15107,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  height = height.max(float_height_contribution * scale)
              };
          }
-@@ -1073,12 +2003,32 @@
+@@ -1073,12 +2026,32 @@
              .or(node_size)
              .unwrap_or(measured_size + content_box_inset.sum_axes())
              .maybe_clamp(node_min_size, node_max_size);
@@ -15115,7 +15141,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      .unwrap_or(0.0),
              ),
          }
-@@ -1097,8 +2047,25 @@
+@@ -1097,8 +2070,25 @@
                  final_size.height - content_box_inset.vertical_axis_sum() - measured_size.height;
              taffy::compute_block_align_content_offset(align_content, free_space)
          };
@@ -15141,7 +15167,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Store sizes and positions of inline boxes. Walking a line's items builds every
          // glyph run on it, so lines are only walked when there are boxes to find.
-@@ -1113,6 +2080,13 @@
+@@ -1113,6 +2103,13 @@
                      line_has_in_flow_content |= run.advance() > 0.0;
                  }
                  if let parley::layout::PositionedLayoutItem::InlineBox(ibox) = item {
@@ -15155,7 +15181,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      let order = ibox_order;
                      ibox_order += 1;
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -1172,7 +2146,7 @@
+@@ -1172,7 +2169,7 @@
                              .bottom
                              .maybe_resolve(container_content_size.height, resolve_calc_value),
                      };
@@ -15164,7 +15190,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      drop(style);
  
                      if is_absolute {
-@@ -1186,10 +2160,20 @@
+@@ -1186,10 +2183,20 @@
                          //   box, or below it if in-flow content precedes it on the line (its
                          //   hypothetical box would start a new line after that content).
                          let line_metrics = line.metrics();
@@ -15188,7 +15214,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              (
                                  taffy::Line { start: x, end: x },
                                  taffy::Line {
-@@ -1198,21 +2182,55 @@
+@@ -1198,21 +2205,55 @@
                                  },
                              )
                          } else {
@@ -15203,8 +15229,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                    .find(|candidate| candidate.id == ibox.id)
 +                                    .map_or(0, |candidate| candidate.index);
 +                                first_in_flow_index(&line, &inline_layout.layout).is_some_and(|first| first < at)
-                             } else {
--                                line_top
++                            } else {
 +                                line_has_in_flow_content
 +                            };
 +                            // pyro: the static-position rectangle is the line box's block
@@ -15215,7 +15240,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                            let y = if preceded { line_bottom } else { line_top };
 +                            let x = if container_direction.is_rtl() {
 +                                final_size.width - container_pb.right + span_offset.x
-+                            } else {
+                             } else {
+-                                line_top
 +                                container_pb.left + span_offset.x
                              };
                              (
@@ -15253,7 +15279,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              node: taffy::NodeId::from(ibox.id),
                              order,
                              position,
-@@ -1220,11 +2238,11 @@
+@@ -1220,11 +2261,11 @@
                                  x: AxisStaticPosition::from_alignment(
                                      justify_self.resolve_self_relative(
                                          item_direction,
@@ -15267,7 +15293,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                                  ),
                                  y: AxisStaticPosition::from_alignment(
                                      align_self.resolve_self_relative(
-@@ -1238,10 +2256,11 @@
+@@ -1238,10 +2279,11 @@
                              },
                          });
                      } else if is_floated {
@@ -15283,7 +15309,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      } else {
                          line_has_in_flow_content = true;
                          // Re-measure the box to get its border-box size (this hits the layout
-@@ -1250,6 +2269,14 @@
+@@ -1250,6 +2292,14 @@
                          let mut output =
                              self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                          let size = output.size;
@@ -15298,7 +15324,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
  
                          let is_relative = position == taffy::Position::Relative;
-@@ -1266,23 +2293,44 @@
+@@ -1266,23 +2316,44 @@
                              taffy::Point::ZERO
                          };
  
@@ -15356,7 +15382,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,20 +2345,126 @@
+@@ -1297,20 +2368,126 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -15486,7 +15512,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1360,14 +2514,19 @@
+@@ -1360,14 +2537,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -15509,7 +15535,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2543,306 @@
+@@ -1384,3 +2566,306 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }
@@ -49149,7 +49175,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -541,17 +816,72 @@
+@@ -541,17 +816,79 @@
          font_style,
          font_weight,
          font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
@@ -49172,6 +49198,13 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
 +        isolates: false,
 +        // (Set where an inline element's span is built, `inline::build`.)
 +        wrap_avoid_depth: 0,
++        hanging_punctuation: {
++            use style::values::computed::HangingPunctuation as H;
++            let value = itext_styles.hanging_punctuation;
++            (u8::from(value.contains(H::FORCE_END)) << 1)
++                | (u8::from(value.contains(H::ALLOW_END)) << 2)
++                | (u8::from(value.contains(H::LAST)) << 3)
++        },
 +        phrase_breaks: itext_styles.word_break == stylo::WordBreak::AutoPhrase,
 +        // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
 +        font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,
@@ -49223,7 +49256,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +899,10 @@
+@@ -569,6 +906,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

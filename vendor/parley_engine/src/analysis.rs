@@ -1126,6 +1126,22 @@ pub fn removes_segment_break(before: char, after: char) -> bool {
     (east_asian(before) && east_asian(after)) || punctuation(before) || punctuation(after)
 }
 
+/// pyro: punctuation that `hanging-punctuation: first` hangs at the start of a first line
+/// (`opening`: Ps, Pi, Pf, U+0027, U+0022) or `last` at the end of a last line (Pe, Pi, Pf,
+/// U+0027, U+0022) (CSS Text 3 § 8.2).
+pub fn hangs_at_edge(ch: char, opening: bool) -> bool {
+    if matches!(ch, '\'' | '"') {
+        return true;
+    }
+    let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+    match category {
+        GeneralCategory::InitialPunctuation | GeneralCategory::FinalPunctuation => true,
+        GeneralCategory::OpenPunctuation => opening,
+        GeneralCategory::ClosePunctuation => !opening,
+        _ => false,
+    }
+}
+
 fn quotation_mark_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
     if !text.chars().any(|ch| matches!(ch, '\u{2018}'..='\u{201F}')) {
         return;
