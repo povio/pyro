@@ -259,6 +259,10 @@ impl BaseDocument {
     /// `:has()` invalidation for a change of the `changed` state bits of
     /// `node_id` (made already; a snapshot holds the state before it).
     pub(crate) fn invalidate_relative_state(&self, node_id: NodeId, changed: ElementState) {
+        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
+        if !changed.is_empty() {
+            self.invalidate_has_slotted(node_id);
+        }
         let Some(node) = self.nodes.get(node_id) else { return };
         // pyro: a shadow tree's own sheets may depend on it (`relative_state_dependency` checks the
         // document's).

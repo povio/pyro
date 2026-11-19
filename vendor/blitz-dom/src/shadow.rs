@@ -177,6 +177,25 @@ impl BaseDocument {
         host.mark_ancestors_dirty();
     }
 
+    /// pyro: `:has-slotted(<selector>)` matches a slot by its assigned elements (`stylo.rs`), whose
+    /// attributes and states Stylo's invalidation does not relate to the slot: a change of one of
+    /// an element assigned to a slot restyles that slot, and the slots it is assigned to in turn
+    /// (`:has-slotted` takes flattened slottables). Assignment changes restyle the slot as a
+    /// change of its children (`restyle_for_child_list_change`).
+    pub(crate) fn invalidate_has_slotted(&self, node_id: NodeId) {
+        if !self.nodes.has_shadow_hosts {
+            return;
+        }
+        let Some(mut current) = self.nodes.get(node_id).filter(|node| node.is_element()) else { return };
+        while let Some(slot) = current.assigned_slot_id().and_then(|id| self.nodes.get(id)) {
+            if let Some(mut data) = style::dom::TElement::mutate_data(&slot) {
+                data.hint.insert(RestyleHint::RESTYLE_SELF);
+            }
+            slot.mark_ancestors_dirty();
+            current = slot;
+        }
+    }
+
     /// Sets the element's shadow flags from its marker attributes.
     pub(crate) fn sync_shadow_markers(&mut self, node_id: NodeId) {
         let Some(node) = self.nodes.get_mut(node_id) else { return };

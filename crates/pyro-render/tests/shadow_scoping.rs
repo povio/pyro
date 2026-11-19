@@ -350,3 +350,27 @@ fn list_items_in_display_contents_children_are_numbered_on() {
     );
     assert!(flat.data == wrapped.data, "the markers read 1. 2. 3. either way");
 }
+
+/// `:has-slotted(<selector>)` follows changes of the slot's assigned elements: a class set on and
+/// removed from an assigned node, and a node assigned to the slot by its `slot` attribute.
+#[test]
+fn has_slotted_follows_changes_of_assigned_nodes() {
+    let body = "<div id=h><template shadowrootmode=open><style>slot{display:block;background:red} slot:has-slotted(.on){background:green}</style><slot id=s></slot></template><span id=a>a</span></div>";
+    let on = restyled(body, &["s"], |d, doc| {
+        let a = find(d, doc, "a").unwrap();
+        d.set_attribute(a, "class", "on").unwrap();
+    });
+    assert_eq!(background(&on[0].1), GREEN, "class set");
+    let body_on = body.replace("<span id=a>", "<span id=a class=on>");
+    let off = restyled(&body_on, &["s"], |d, doc| {
+        let a = find(d, doc, "a").unwrap();
+        d.remove_attribute(a, "class").unwrap();
+    });
+    assert_eq!(background(&off[0].1), RED, "class removed");
+    let body_elsewhere = body.replace("<span id=a>", "<span id=a class=on slot=other>");
+    let assigned = restyled(&body_elsewhere, &["s"], |d, doc| {
+        let a = find(d, doc, "a").unwrap();
+        d.remove_attribute(a, "slot").unwrap();
+    });
+    assert_eq!(background(&assigned[0].1), GREEN, "assigned by its slot attribute");
+}

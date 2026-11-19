@@ -397,6 +397,8 @@ impl DocumentMutator<'_> {
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
         }
+        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
+        self.doc.invalidate_has_slotted(node_id);
     }
 
     fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
@@ -603,6 +605,8 @@ impl DocumentMutator<'_> {
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
         }
+        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
+        self.doc.invalidate_has_slotted(node_id);
     }
 
     fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
