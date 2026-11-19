@@ -1572,8 +1572,12 @@ impl ElementCx<'_, '_> {
                 None => {
                     // (Around the overflowing descendants' boxes too: that box, its corners
                     // rounded as the border box's.)
+                    // pyro: its corners shaped as the border box's (`corner-shape`), as Chromium
+                    // draws the ring along the box's edge (WPT css-borders `corner-shape-outline-auto-001`).
                     let r = self.frame.border_radii;
-                    CssBox::new(self.auto_outline_box(), Insets::ZERO, Insets::ZERO, 0.0, r).border_box_path()
+                    CssBox::new(self.auto_outline_box(), Insets::ZERO, Insets::ZERO, 0.0, r)
+                        .contoured_like(&self.frame)
+                        .border_box_path()
                 }
             };
             // (Each contour closed: an open end leaves a seam in the ring.)

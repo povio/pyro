@@ -15238,6 +15238,14 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
 -/// The `(dash, gap)` lengths of a dashed border, as multiples of the border
 -/// thickness.
+-///
+-/// Matches Chrome: borders that are at least 3px use a 2:1 dash-to-gap ratio,
+-/// while thinner borders use longer dashes and gaps (3:2) so they still read as
+-/// dashes rather than dots or a solid line. `thickness` and `scale` are in device
+-/// pixels; the 3px threshold is applied in CSS pixels.
+-fn dashed_ratios(thickness: f64, scale: f64) -> (f64, f64) {
+-    if thickness >= 3.0 * scale {
+-        (2.0, 1.0)
 +/// A box side as the dotted and dashed painting sees it: its style and colour,
 +/// or `None` for a side without a line.
 +type Side = Option<(BorderStyle, Color)>;
@@ -15263,7 +15271,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    let max_dashes = min_dashes + 1.0;
 +    let (min_gaps, max_gaps) = if closed {
 +        (min_dashes, max_dashes)
-+    } else {
+     } else {
+-        (3.0, 2.0)
 +        (min_dashes - 1.0, max_dashes - 1.0)
 +    };
 +    let min_gap = (length - min_dashes * dash) / min_gaps;
@@ -15272,20 +15281,27 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        min_gap
 +    } else {
 +        max_gap
-+    }
-+}
-+
+     }
+ }
+ 
+-/// Return `count` points spaced `spacing` apart (by arc length) along `path`,
+-/// starting at its beginning. Used to place dots along a rounded border.
+-fn sample_points_along_path(path: &BezPath, spacing: f64, count: usize) -> Vec<Point> {
+-    // Flatten to a polyline so we can walk it by arc length.
+-    let mut poly: Vec<Point> = Vec::new();
+-    kurbo::flatten(path.iter(), 0.1, |el| match el {
+-        PathEl::MoveTo(p) | PathEl::LineTo(p) => poly.push(p),
+-        PathEl::ClosePath => {
+-            if let Some(&first) = poly.first() {
+-                poly.push(first);
+-            }
+-        }
+-        _ => {}
+-    });
 +/// The `(dash, gap)` of a line Blink draws as dashes (`stroke_is_dashed`), in
 +/// CSS px, or `None` for a line too short for dashes, which is solid
 +/// (`StyledStrokeData::SetupPaintDashPathEffect`).
- ///
--/// Matches Chrome: borders that are at least 3px use a 2:1 dash-to-gap ratio,
--/// while thinner borders use longer dashes and gaps (3:2) so they still read as
--/// dashes rather than dots or a solid line. `thickness` and `scale` are in device
--/// pixels; the 3px threshold is applied in CSS pixels.
--fn dashed_ratios(thickness: f64, scale: f64) -> (f64, f64) {
--    if thickness >= 3.0 * scale {
--        (2.0, 1.0)
++///
 +/// A dash is twice the width of a line of 3px or more and three times that of
 +/// a thinner one, the gap one width and two; the gap is then adjusted to the
 +/// length. A thin dotted line has dots and gaps of exactly its width.
@@ -15307,13 +15323,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    }
 +    let gap = if dashed {
 +        select_best_dash_gap(length, dash, gap, closed)
-     } else {
--        (3.0, 2.0)
++    } else {
 +        gap
 +    };
 +    Some((dash, gap))
 +}
-+
+ 
+-    let mut points = Vec::with_capacity(count);
+-    if poly.len() < 2 {
+-        return points;
 +/// The distance between the centres of the round dots of a wide dotted line, in
 +/// CSS px (`StyledStrokeData::SetupPaintDashPathEffect`). Blink shortens it by
 +/// an epsilon so that rounding does not drop the last dot.
@@ -15323,22 +15341,17 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        return width * 2.0;
      }
 +    select_best_dash_gap(length, width, width, closed) + width - 0.01
- }
++}
  
--/// Return `count` points spaced `spacing` apart (by arc length) along `path`,
--/// starting at its beginning. Used to place dots along a rounded border.
--fn sample_points_along_path(path: &BezPath, spacing: f64, count: usize) -> Vec<Point> {
--    // Flatten to a polyline so we can walk it by arc length.
--    let mut poly: Vec<Point> = Vec::new();
--    kurbo::flatten(path.iter(), 0.1, |el| match el {
--        PathEl::MoveTo(p) | PathEl::LineTo(p) => poly.push(p),
--        PathEl::ClosePath => {
--            if let Some(&first) = poly.first() {
--                poly.push(first);
--            }
--        }
--        _ => {}
--    });
+-    let mut seg = 0;
+-    let mut seg_start = 0.0;
+-    let mut seg_len = (poly[1] - poly[0]).hypot();
+-    for i in 0..count {
+-        let target = i as f64 * spacing;
+-        while seg + 2 < poly.len() && target > seg_start + seg_len {
+-            seg_start += seg_len;
+-            seg += 1;
+-            seg_len = (poly[seg + 1] - poly[seg]).hypot();
 +/// The marks of one dotted or dashed straight side, appended to `path`, as
 +/// Blink's `GraphicsContext::DrawLine` places them.
 +///
@@ -15378,12 +15391,11 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    let mut rect = |from: f64, to: f64| {
 +        if to > from {
 +            path.extend(Rect::from_points(at(from, 0.0), at(to, thickness)).path_elements(0.1));
-+        }
+         }
+-        let t = if seg_len > 0.0 {
+-            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
 +    };
- 
--    let mut points = Vec::with_capacity(count);
--    if poly.len() < 2 {
--        return points;
++
 +    if !stroke_is_dashed(width, style) {
 +        // Round dots, the first and the last touching the ends of the side.
 +        let radius = thickness / 2.0;
@@ -15412,17 +15424,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            distance += period;
 +        }
 +        return;
-     }
- 
--    let mut seg = 0;
--    let mut seg_start = 0.0;
--    let mut seg_len = (poly[1] - poly[0]).hypot();
--    for i in 0..count {
--        let target = i as f64 * spacing;
--        while seg + 2 < poly.len() && target > seg_start + seg_len {
--            seg_start += seg_len;
--            seg += 1;
--            seg_len = (poly[seg + 1] - poly[seg]).hypot();
++    }
++
 +    let (mut start, mut end) = (0.0, len);
 +    if style == BorderStyle::Dotted {
 +        // `EnforceDotsAtEndpoints`: dots and gaps of exactly the width leave a
@@ -15434,9 +15437,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let (mut end_dot, mut end_growth) = (false, 0.0);
 +        if (width == 1.0 && mod_2 == 0.0) || (width == 3.0 && mod_6 == 0.0) {
 +            (start_dot, start_growth, start_offset) = (true, 1.0, 1.0);
-         }
--        let t = if seg_len > 0.0 {
--            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
++        }
 +        if (width == 2.0 && (mod_4 == 0.0 || mod_4 == 1.0))
 +            || (width == 3.0 && (mod_6 == 1.0 || mod_6 == 2.0))
 +        {
@@ -15820,10 +15821,13 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -341,6 +776,175 @@
-         }
-     }
- 
+@@ -338,9 +773,178 @@
+             }
+             scene.fill(Fill::NonZero, self.transform, color, None, &path);
+             start = next;
++        }
++    }
++
 +    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
 +    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
 +    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
@@ -15866,10 +15870,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                }
 +                _ => path.extend(&self.frame.border_edge_shape(edge)),
 +            }
-+        }
+         }
 +        path
-+    }
-+
+     }
+ 
 +    /// pyro: a border with square corners whose sides are all solid and opaque, in more than one
 +    /// colour, painted as Blink's `BoxBorderPainter` paints it, by overdraw: the sides go in its
 +    /// order (top, bottom, right, left), and a side reaches into a corner in full when the side
@@ -16412,7 +16416,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,44 +1226,532 @@
+@@ -589,44 +1226,536 @@
          }
      }
  
@@ -16776,8 +16780,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                None => {
 +                    // (Around the overflowing descendants' boxes too: that box, its corners
 +                    // rounded as the border box's.)
++                    // pyro: its corners shaped as the border box's (`corner-shape`), as Chromium
++                    // draws the ring along the box's edge (WPT css-borders `corner-shape-outline-auto-001`).
 +                    let r = self.frame.border_radii;
-+                    CssBox::new(self.auto_outline_box(), Insets::ZERO, Insets::ZERO, 0.0, r).border_box_path()
++                    CssBox::new(self.auto_outline_box(), Insets::ZERO, Insets::ZERO, 0.0, r)
++                        .contoured_like(&self.frame)
++                        .border_box_path()
 +                }
 +            };
 +            // (Each contour closed: an open end leaves a seam in the ring.)
