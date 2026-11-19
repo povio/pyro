@@ -156,7 +156,17 @@ impl Dom {
         Ok(())
     }
 
-    /// Whether the popover's visibility state is "showing".
+    /// Takes `el` out of the showing popovers and both popover stacks whatever its state (a node
+    /// [`Dom::set_popover_showing`] refuses, or one left on a stack while not showing), so that
+    /// "hide all popovers until" always makes progress.
+    pub fn drop_popover(&mut self, el: NodeId) {
+        if self.top_layer.popovers.remove(&el) {
+            self.bump();
+        }
+        self.top_layer.leave(el);
+    }
+
+        /// Whether the popover's visibility state is "showing".
     pub fn is_popover_showing(&self, el: NodeId) -> bool {
         self.top_layer.popovers.contains(&el)
     }
