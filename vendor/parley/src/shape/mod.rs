@@ -309,6 +309,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
                 | (u8::from(parley_engine::hangs_at_edge(ch, false)) << 1)
                 | (u8::from(stop) << 2)
         }));
+        let clusters = layout.data.shaped_text.shaped_clusters();
+        layout.data.last_content_cluster = clusters
+            .iter()
+            .rposition(|cluster| cluster.whitespace() == parley_engine::shape::Whitespace::None)
+            .unwrap_or(0) as u32;
     }
 }
 

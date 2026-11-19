@@ -3130,9 +3130,7 @@ fn end_hang<B: Brush>(data: &LayoutData<B>, atom: &Atom<'_>) -> Option<(f32, boo
     }
     if class & 2 != 0 && bits & 8 != 0 {
         // The last content of the paragraph: nothing but white space after it.
-        let clusters = data.shaped_text.shaped_clusters();
-        let after = &clusters[(atom.shaped_clusters_range().end as usize).min(clusters.len())..];
-        if after.iter().all(|cluster| cluster.whitespace() != Whitespace::None) {
+        if atom.shaped_clusters_range().start >= data.last_content_cluster {
             return Some((advance, true));
         }
     }

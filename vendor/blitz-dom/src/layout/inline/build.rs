@@ -460,16 +460,19 @@ fn push_word_spaces(builder: &mut TreeBuilder<TextBrush>, text: &str, word_space
         builder.push_text(text);
         return;
     };
+    // The zero width spaces that end the text (before a `<br>` when `before_break`), found once.
+    let trailing = text.trim_end_matches('\u{200B}').len();
     let mut rest = text;
     while let Some(at) = rest.find('\u{200B}') {
         let (head, tail) = rest.split_at(at);
+        let offset = text.len() - tail.len();
         builder.push_text(head);
         let after = &tail['\u{200B}'.len_utf8()..];
         let previous = builder.text().chars().rev().find(|&c| !is_bidi_control(c));
         let next = after.chars().next();
         let at_break = previous.is_some_and(|c| c == '\n' && (newlines || head.is_empty()))
             || (newlines && next == Some('\n'))
-            || (before_break && after.chars().all(|c| c == '\u{200B}'));
+            || (before_break && offset >= trailing);
         if at_break {
             builder.push_text("\u{200B}");
         } else {

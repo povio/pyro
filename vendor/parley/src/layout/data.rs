@@ -277,6 +277,8 @@ pub(crate) struct LayoutData<B: Brush> {
     /// pyro: per character, what CSS `hanging-punctuation` may hang of it: 1 opening, 2 closing
     /// punctuation, 4 a stop or comma (empty where no style hangs punctuation).
     pub(crate) hang_classes: Vec<u8>,
+    /// pyro: the index of the last shaped cluster that is not white space, with `hang_classes`.
+    pub(crate) last_content_cluster: u32,
     /// pyro: the least advance of a tab (0.5ch of the root style): a tab closer than this to its
     /// stop goes on to the next one.
     pub(crate) tab_min_advance: f32,
@@ -329,6 +331,7 @@ impl<B: Brush> Default for LayoutData<B> {
             indent_options: IndentOptions::default(),
             tab_space: -1.0,
             hang_classes: Vec::new(),
+            last_content_cluster: 0,
             tab_min_advance: 0.0,
             line_height_quirk: false,
             central_baseline: false,

@@ -752,7 +752,7 @@ index 25f0b3b..f8ff3ed 100644
      pub fn is_soft_line_break(&self) -> bool {
          self.is_end_of_line()
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..5778ebc 100644
+index e6ab383..23d6fd7 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -848,7 +848,7 @@ index e6ab383..5778ebc 100644
      /// The width constraint that was used to line break the layout
      pub(crate) layout_max_advance: f32,
      /// The computed width of the layout excluding hanging whitespace
-@@ -236,6 +271,30 @@ pub(crate) struct LayoutData<B: Brush> {
+@@ -236,6 +271,32 @@ pub(crate) struct LayoutData<B: Brush> {
      pub(crate) indent_amount: f32,
      /// Options controlling text-indent behavior (each-line, hanging).
      pub(crate) indent_options: IndentOptions,
@@ -858,6 +858,8 @@ index e6ab383..5778ebc 100644
 +    /// pyro: per character, what CSS `hanging-punctuation` may hang of it: 1 opening, 2 closing
 +    /// punctuation, 4 a stop or comma (empty where no style hangs punctuation).
 +    pub(crate) hang_classes: Vec<u8>,
++    /// pyro: the index of the last shaped cluster that is not white space, with `hang_classes`.
++    pub(crate) last_content_cluster: u32,
 +    /// pyro: the least advance of a tab (0.5ch of the root style): a tab closer than this to its
 +    /// stop goes on to the next one.
 +    pub(crate) tab_min_advance: f32,
@@ -879,7 +881,7 @@ index e6ab383..5778ebc 100644
  }
  
  impl<B: Brush> Default for LayoutData<B> {
-@@ -244,12 +303,17 @@ impl<B: Brush> Default for LayoutData<B> {
+@@ -244,12 +305,17 @@ impl<B: Brush> Default for LayoutData<B> {
              scale: 1.,
              quantize: true,
              base_level: BidiLevel::new(0),
@@ -897,7 +899,7 @@ index e6ab383..5778ebc 100644
              inline_boxes: Vec::new(),
              shaped_text: ShapedText::new(),
              runs: Vec::new(),
-@@ -257,19 +321,77 @@ impl<B: Brush> Default for LayoutData<B> {
+@@ -257,19 +323,78 @@ impl<B: Brush> Default for LayoutData<B> {
              lines: Vec::new(),
              line_items: Vec::new(),
              aligned_subtree_offsets: Vec::new(),
@@ -909,6 +911,7 @@ index e6ab383..5778ebc 100644
              indent_options: IndentOptions::default(),
 +            tab_space: -1.0,
 +            hang_classes: Vec::new(),
++            last_content_cluster: 0,
 +            tab_min_advance: 0.0,
 +            line_height_quirk: false,
 +            central_baseline: false,
@@ -975,7 +978,7 @@ index e6ab383..5778ebc 100644
          self.text_len = 0;
          self.width = 0.;
          self.full_width = 0.;
-@@ -277,8 +399,19 @@ impl<B: Brush> LayoutData<B> {
+@@ -277,8 +402,19 @@ impl<B: Brush> LayoutData<B> {
          self.layout_max_advance = 0.0;
          self.indent_amount = 0.0;
          self.indent_options = IndentOptions::default();
@@ -995,7 +998,7 @@ index e6ab383..5778ebc 100644
          self.inline_boxes.clear();
          self.shaped_text.clear();
          self.runs.clear();
-@@ -286,9 +419,36 @@ impl<B: Brush> LayoutData<B> {
+@@ -286,9 +422,36 @@ impl<B: Brush> LayoutData<B> {
          self.lines.clear();
          self.line_items.clear();
          self.aligned_subtree_offsets.clear();
@@ -1032,7 +1035,7 @@ index e6ab383..5778ebc 100644
      /// Push an inline box to the list of items
      pub(crate) fn push_inline_box(&mut self, index: usize, bidi_level: BidiLevel) {
          self.items.push(LayoutItem {
-@@ -319,7 +479,7 @@ impl<B: Brush> LayoutData<B> {
+@@ -319,7 +482,7 @@ impl<B: Brush> LayoutData<B> {
          let line_height = self.styles[style_index as usize].line_height.resolve(
              shaped_run.font_size,
              &shaped_run.font_metrics,
@@ -1041,7 +1044,7 @@ index e6ab383..5778ebc 100644
          );
  
          // The run's box metrics, if it's uniform across all the styles within the run. A run's box
-@@ -337,7 +497,7 @@ impl<B: Brush> LayoutData<B> {
+@@ -337,7 +500,7 @@ impl<B: Brush> LayoutData<B> {
                  run_box_metrics(
                      &self.styles[usize::from(first_style)],
                      shaped_run,
@@ -1050,7 +1053,7 @@ index e6ab383..5778ebc 100644
                  )
              } else {
                  None
-@@ -397,7 +557,69 @@ impl<B: Brush> LayoutData<B> {
+@@ -397,7 +560,69 @@ impl<B: Brush> LayoutData<B> {
      /// - min-content width: any conditionally-hanging suffix hangs in full, so all hanging
      ///   whitespace hangs in full.
      pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
@@ -1121,7 +1124,7 @@ index e6ab383..5778ebc 100644
      }
  }
  
-@@ -429,6 +651,47 @@ struct ContentWidthsMeasurer {
+@@ -429,6 +654,47 @@ struct ContentWidthsMeasurer {
      /// Indents for lines following a soft/hard wrap.
      soft_indent: f32,
      hard_indent: f32,
@@ -1169,7 +1172,7 @@ index e6ab383..5778ebc 100644
  }
  
  impl ContentWidthsMeasurer {
-@@ -445,7 +708,11 @@ impl ContentWidthsMeasurer {
+@@ -445,7 +711,11 @@ impl ContentWidthsMeasurer {
              text_wrap_mode: TextWrapMode::Wrap,
              soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
              hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
@@ -1181,7 +1184,7 @@ index e6ab383..5778ebc 100644
          }
      }
  
-@@ -457,13 +724,14 @@ impl ContentWidthsMeasurer {
+@@ -457,13 +727,14 @@ impl ContentWidthsMeasurer {
      /// indent is "hanging" (see [`IndentOptions::hanging`]).
      #[inline(always)]
      fn soft_break(&mut self, line_has_content: bool) {
@@ -1197,7 +1200,7 @@ index e6ab383..5778ebc 100644
      }
  
      /// Ends the current line at a forced break.
-@@ -485,6 +753,7 @@ impl ContentWidthsMeasurer {
+@@ -485,6 +756,7 @@ impl ContentWidthsMeasurer {
          self.line_has_content = false;
          self.running_min_width = self.hard_indent;
          self.running_max_width = self.hard_indent;
@@ -1205,7 +1208,7 @@ index e6ab383..5778ebc 100644
      }
  
      #[inline(always)]
-@@ -499,7 +768,7 @@ impl ContentWidthsMeasurer {
+@@ -499,7 +771,7 @@ impl ContentWidthsMeasurer {
                      // bidi reordering. We don't currently apply UAX #9 L1 (resetting trailing
                      // whitespace to paragraph level), so only logically-last items that match the
                      // paragraph level are guaranteed to be at that edge.
@@ -1214,7 +1217,7 @@ index e6ab383..5778ebc 100644
                      let is_rtl = item.bidi_level.is_rtl();
  
                      if run_spacing.is_zero() {
-@@ -522,6 +791,27 @@ impl ContentWidthsMeasurer {
+@@ -522,6 +794,27 @@ impl ContentWidthsMeasurer {
                  }
                  LayoutItemKind::InlineBox => {
                      let inline_box = &layout_data.inline_boxes[item.index].inline_box;
@@ -1242,7 +1245,7 @@ index e6ab383..5778ebc 100644
                      if inline_box.kind == InlineBoxKind::InFlow {
                          let next = items.as_slice().iter().find(|next| {
                              next.kind == LayoutItemKind::TextRun
-@@ -596,8 +886,15 @@ impl ContentWidthsMeasurer {
+@@ -596,8 +889,15 @@ impl ContentWidthsMeasurer {
                  skip_atom = false;
                  let prev_text_wrap_mode = self.text_wrap_mode;
                  self.text_wrap_mode = style.text_wrap_mode;
@@ -1258,7 +1261,7 @@ index e6ab383..5778ebc 100644
                          || style.overflow_wrap == OverflowWrap::Anywhere)
                  {
                      self.soft_break(i != empty_at);
-@@ -611,7 +908,15 @@ impl ContentWidthsMeasurer {
+@@ -611,7 +911,15 @@ impl ContentWidthsMeasurer {
                      continue;
                  }
                  if SPACED {
@@ -1275,7 +1278,7 @@ index e6ab383..5778ebc 100644
                  }
              } else if skip_atom {
                  // The next line starts after the whole newline atom.
-@@ -620,6 +925,15 @@ impl ContentWidthsMeasurer {
+@@ -620,6 +928,15 @@ impl ContentWidthsMeasurer {
              }
  
              let mut advance = cluster.advance;
@@ -1291,7 +1294,7 @@ index e6ab383..5778ebc 100644
              if SPACED {
                  let owns_gap = if is_rtl {
                      is_atom_start
-@@ -630,9 +944,10 @@ impl ContentWidthsMeasurer {
+@@ -630,9 +947,10 @@ impl ContentWidthsMeasurer {
                  };
                  if owns_gap {
                      advance += gap;
@@ -1303,7 +1306,7 @@ index e6ab383..5778ebc 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -657,13 +972,19 @@ impl ContentWidthsMeasurer {
+@@ -657,13 +975,19 @@ impl ContentWidthsMeasurer {
                  self.running_hanging_whitespace = 0.0;
              }
          }
@@ -1826,7 +1829,7 @@ index 1569071..541a31a 100644
                  }
                  LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..d9b6ef8 100644
+index 3c3798c..6d6d279 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -10,7 +10,8 @@ use alloc::vec::Vec;
@@ -3588,7 +3591,7 @@ index 3c3798c..d9b6ef8 100644
                      if !all_hang {
                          break 'items;
                      }
-@@ -1965,9 +3039,285 @@ fn hanging_whitespace<B: Brush>(
+@@ -1965,9 +3039,283 @@ fn hanging_whitespace<B: Brush>(
          hanging_whitespace_advance,
          justification_end_cluster,
          hanging_opportunities,
@@ -3683,9 +3686,7 @@ index 3c3798c..d9b6ef8 100644
 +    }
 +    if class & 2 != 0 && bits & 8 != 0 {
 +        // The last content of the paragraph: nothing but white space after it.
-+        let clusters = data.shaped_text.shaped_clusters();
-+        let after = &clusters[(atom.shaped_clusters_range().end as usize).min(clusters.len())..];
-+        if after.iter().all(|cluster| cluster.whitespace() != Whitespace::None) {
++        if atom.shaped_clusters_range().start >= data.last_content_cluster {
 +            return Some((advance, true));
 +        }
 +    }
@@ -3874,7 +3875,7 @@ index 3c3798c..d9b6ef8 100644
  /// Reorder items within line according to the bidi levels of the items
  fn reorder_line_items(runs: &mut [LineItemData]) {
      let run_count = runs.len();
-@@ -2015,12 +3365,7 @@ mod tests {
+@@ -2015,12 +3363,7 @@ mod tests {
  
      #[test]
      fn subtree_extents_restored_at_break_opportunities() {
@@ -5912,7 +5913,7 @@ index 0000000..ce15c33
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..bf2f7f8 100644
+index 060a32d..2547f93 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -6106,7 +6107,7 @@ index 060a32d..bf2f7f8 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -228,25 +270,144 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,25 +270,149 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // we probably shouldn't itemize on them; we should just ensure we don't ligate if
              // they're non-zero).
              run_style,
@@ -6161,6 +6162,11 @@ index 060a32d..bf2f7f8 100644
 +                | (u8::from(parley_engine::hangs_at_edge(ch, false)) << 1)
 +                | (u8::from(stop) << 2)
 +        }));
++        let clusters = layout.data.shaped_text.shaped_clusters();
++        layout.data.last_content_cluster = clusters
++            .iter()
++            .rposition(|cluster| cluster.whitespace() == parley_engine::shape::Whitespace::None)
++            .unwrap_or(0) as u32;
 +    }
 +}
 +
@@ -6263,7 +6269,7 @@ index 060a32d..bf2f7f8 100644
  }
  
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +420,15 @@ enum LastResortFont {
+@@ -259,6 +425,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -6279,7 +6285,7 @@ index 060a32d..bf2f7f8 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +454,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +459,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -6294,7 +6300,7 @@ index 060a32d..bf2f7f8 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +533,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +538,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -6333,7 +6339,7 @@ index 060a32d..bf2f7f8 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +570,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +575,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -6346,7 +6352,7 @@ index 060a32d..bf2f7f8 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -405,15 +608,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -405,15 +613,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                  return fontique::QueryStatus::Continue;
              };
  
@@ -6369,7 +6375,7 @@ index 060a32d..bf2f7f8 100644
                  },
                  self.analysis_data_sources,
              );
-@@ -473,3 +676,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +681,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }
