@@ -1,0 +1,40 @@
+//! `[SecureContext]` members added in JS modules (Web Locks, MediaDevices, Worklet): whether a window is a
+//! secure context, and their removal from one that is not, so that `'locks' in navigator` and the
+//! like are false there rather than present and undefined.
+
+use pyro_js::{JsResult, Scope};
+
+use crate::page::PageDom;
+
+/// Interface objects on the global that exist only in a secure context.
+const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet"];
+/// `Navigator` attributes that exist only in a secure context.
+const NAVIGATOR: &[&str] = &["locks", "mediaDevices"];
+
+/// A secure context: the realm's origin or its document's URL is potentially trustworthy (a
+/// sandboxed https document, whose origin is opaque, is still a secure context).
+pub(crate) fn secure(s: &Scope<'_>, page: &PageDom) -> bool {
+    let trustworthy = |url: &str| pyro_net::Url::parse(url).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u));
+    s.realm().origin().is_some_and(|o| trustworthy(&o))
+        || page.dom.borrow().document_data(page.document()).ok().is_some_and(|d| trustworthy(&d.url.to_string()))
+}
+
+/// Removes the `[SecureContext]` members above from a window that is not a secure context. Run
+/// when the realm is set up.
+pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
+    if secure(s, page) {
+        return Ok(());
+    }
+    let global = s.global();
+    for name in GLOBALS {
+        global.delete(name)?;
+    }
+    if let Some(navigator) = global.get_atom("Navigator")?.as_object() {
+        if let Some(proto) = navigator.get_atom("prototype")?.as_object() {
+            for name in NAVIGATOR {
+                proto.delete(name)?;
+            }
+        }
+    }
+    Ok(())
+}

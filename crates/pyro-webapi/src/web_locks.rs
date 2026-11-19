@@ -41,7 +41,7 @@ where
                 $name,
                 |s, w| {
                     let page = crate::window::WindowHost::page(w);
-                    if !secure(s, page) {
+                    if !crate::secure_context::secure(s, page) {
                         return Ok(s.undefined());
                     }
                     MODULE.global(s, page, $name)
@@ -58,36 +58,10 @@ pub(crate) fn locks<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>
     if page.is_disposed() {
         return Err(JsError::ContextDestroyed);
     }
-    if !secure(s, page) {
+    if !crate::secure_context::secure(s, page) {
         return Ok(s.undefined());
     }
     MODULE.module(s, page)?.get("locks")
-}
-
-/// A secure context: the realm's origin or its document's URL is potentially trustworthy (a
-/// sandboxed https document, whose origin is opaque, is still a secure context: there the API
-/// is present and throws SecurityError).
-fn secure(s: &Scope<'_>, page: &PageDom) -> bool {
-    let trustworthy = |url: &str| pyro_net::Url::parse(url).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u));
-    s.realm().origin().is_some_and(|o| trustworthy(&o))
-        || page.dom.borrow().document_data(page.document()).ok().is_some_and(|d| trustworthy(&d.url.to_string()))
-}
-
-/// `[SecureContext]`: in a window that is not a secure context `navigator.locks`, `LockManager`
-/// and `Lock` do not exist (`'locks' in navigator` is false). Run when the realm is set up.
-pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
-    if secure(s, page) {
-        return Ok(());
-    }
-    let global = s.global();
-    global.delete("LockManager")?;
-    global.delete("Lock")?;
-    if let Some(navigator) = global.get_atom("Navigator")?.as_object() {
-        if let Some(proto) = navigator.get_atom("prototype")?.as_object() {
-            proto.delete("locks")?;
-        }
-    }
-    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

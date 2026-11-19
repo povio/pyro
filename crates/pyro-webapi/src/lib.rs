@@ -48,6 +48,9 @@ pub mod form_data;
 pub mod formdata;
 pub mod fullscreen;
 mod web_locks;
+mod media_devices;
+mod paint_worklet;
+mod secure_context;
 pub mod handlers;
 pub mod headers;
 pub mod highlights;
@@ -361,7 +364,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     form_data::install(scope, helpers.get_atom("formData")?)?;
     fetch::install(scope)?;
     structured_clone::install(scope, &page, helpers.get_atom("structuredClone")?)?;
-    web_locks::hide_if_insecure(scope, &page)?;
+    secure_context::hide_if_insecure(scope, &page)?;
     if let Some(define) =
         scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
     {

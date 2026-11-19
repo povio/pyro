@@ -184,6 +184,8 @@ where
     crate::editing_globals::define_globals(def);
     crate::font_loading::define_globals(def);
     crate::web_locks::define_globals(def);
+    crate::media_devices::define_globals(def);
+    crate::paint_worklet::define_globals(def);
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
@@ -410,6 +412,7 @@ impl JsClass for Navigator {
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
+        def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
@@ -738,6 +741,10 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     o.set_atom("registerProperty", register.value())?;
     let page = crate::target::page_of(s)?;
     o.set_atom("highlights", crate::highlights::member(s, &page, "highlights")?)?;
+    // CSS Painting API: `paintWorklet` ([SecureContext]).
+    if let Some(worklet) = crate::paint_worklet::paint_worklet(s, &page)? {
+        o.set_atom("paintWorklet", worklet)?;
+    }
     Ok(o.value())
 }
 

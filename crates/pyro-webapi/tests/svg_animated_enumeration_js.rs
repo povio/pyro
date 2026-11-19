@@ -624,11 +624,39 @@ fn web_locks_queue_query_and_steal() {
     );
 }
 
-/// Web Locks are `[SecureContext]`: absent, not undefined, in a window that is not secure.
+/// Web Locks, MediaDevices and the paint worklet are `[SecureContext]`: absent, not undefined, in a
+/// window that is not secure.
 #[test]
 fn web_locks_absent_in_insecure_contexts() {
     let env = Env::new("http://locks.test/");
     assert_eq!(env.eval(r#"['locks' in navigator, 'LockManager' in globalThis, 'Lock' in globalThis].join()"#), "false,false,false");
+    assert_eq!(
+        env.eval(r#"['mediaDevices' in navigator, 'MediaDevices' in globalThis, 'Worklet' in globalThis, 'paintWorklet' in CSS].join()"#),
+        "false,false,false,false"
+    );
+}
+
+/// navigator.mediaDevices: pyro has no capture device, so none is listed and getUserMedia() finds
+/// none; constraints are still checked.
+#[test]
+fn media_devices_list_no_device() {
+    let env = Env::new("https://media.test/");
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const md = navigator.mediaDevices;
+              const out = [md === navigator.mediaDevices, md instanceof EventTarget, Object.prototype.toString.call(md)];
+              out.push(JSON.stringify(await md.enumerateDevices()));
+              out.push(await md.getUserMedia({ video: true }).then(() => "ok", (e) => e.name));
+              out.push(await md.getUserMedia({}).then(() => "ok", (e) => e.name));
+              out.push(typeof CSS.paintWorklet.addModule, 'Worklet' in globalThis);
+              globalThis.mediaDone = out.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.mediaDone !== undefined");
+    assert_eq!(env.eval("mediaDone"), "true|true|[object MediaDevices]|[]|NotFoundError|TypeError|function|true");
 }
 
 /// A class change on an element above a `:has()` anchor restyles the anchor when a complex selector

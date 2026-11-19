@@ -347,6 +347,8 @@ pub struct PageDom {
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
     fullscreen_allowed: Cell<bool>,
+    /// The paint worklet global (`crate::paint_worklet`), made on the first `addModule()`.
+    pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
@@ -871,6 +873,7 @@ impl PageDom {
             input_activation: Cell::new(None),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
+            paint_worklet: RefCell::new(None),
             planned_navigations: RefCell::new(Vec::new()),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
@@ -1047,6 +1050,7 @@ impl PageDom {
         crate::worker::dispose(self);
         crate::message_channel::dispose(self);
         crate::web_locks::dispose(self);
+        drop(self.paint_worklet.take());
         crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         crate::media::dispose(self);
