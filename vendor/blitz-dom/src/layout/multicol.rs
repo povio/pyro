@@ -1717,11 +1717,15 @@ impl BaseDocument {
                 || b.slow_clone_perspective() != style::values::computed::Perspective::None
                 || b.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
                 || !style.get_effects().filter.0.is_empty();
+            // pyro: an inline split by block-level boxes (block-in-inline) carries them too
+            // (WPT css-multicol `spanner-in-child-after-parallel-flow-003`).
+            let split_inline = node.is_split_inline() || node.is_inline_with_only_block_children();
             !contained
                 && style.clone_float() == Float::None
-                && style.clone_display().inside() == DisplayInside::Flow
-                && style.clone_display().outside() == DisplayOutside::Block
-                && fragmentable(node, &style)
+                && (split_inline
+                    || (style.clone_display().inside() == DisplayInside::Flow
+                        && style.clone_display().outside() == DisplayOutside::Block
+                        && fragmentable(node, &style)))
         })
     }
 
