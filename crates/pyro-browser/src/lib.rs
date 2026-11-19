@@ -82,6 +82,11 @@ fn subresource_request(frame: &Frame, page: PageId, url: String, kind: ResourceK
     subresource_request_with(frame, page, url, kind, &options)
 }
 
+/// pyro: the client id of `frame`'s current document (`SubresourceOptions::client`).
+pub fn document_client(frame: &Frame) -> String {
+    format!("{}#{}", frame.id.0, frame.loader_id.0)
+}
+
 /// pyro: what a renderer's sub-resource request carries beyond its URL, as a CSS `url()`'s
 /// request URL modifiers ask (CSS Values 5 § 4.5.4). The defaults are a sub-resource's: no-cors,
 /// no integrity metadata, the document as referrer with its policy.
@@ -96,8 +101,10 @@ pub struct SubresourceOptions {
     pub referrer: Option<String>,
     /// The request's referrer policy; `None`: the document's.
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
-    /// The id of the frame whose document the request is made for (`None`: the page's
-    /// document): the request is that frame's, with its origin (opaque in a sandboxed frame).
+    /// The document the request is made for, as `"<frame id>#<loader id>"` (`None`: the page's
+    /// current document): the request is that frame's, with its origin (opaque in a sandboxed
+    /// frame), and only while that document is the frame's (a request of a document since
+    /// navigated away from is not sent).
     pub client: Option<String>,
 }
 
@@ -661,9 +668,9 @@ impl Page {
         keys.sort_by(|a, b| b.0.cmp(&a.0));
         let mut documents = Vec::new();
         for (_, key) in keys {
-            let Some((owner, page_dom, base_url, url, client)) = self
-                .frames
-                .with_frame(key, |f| (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), f.id.0.clone()))
+            let Some((owner, page_dom, base_url, url, client)) = self.frames.with_frame(key, |f| {
+                (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
+            })
             else {
                 continue;
             };
@@ -1266,10 +1273,15 @@ impl Browser {
                 p.main_frame.origin.clone(),
             )),
             Some(client) => {
-                let key = p.frames.key_of(client)?;
-                p.frames.with_frame(key, |f| {
-                    (subresource_request_with(f, page, url.clone(), kind, &options), f.origin.clone())
-                })
+                let (frame_id, loader) = client.split_once('#')?;
+                let key = p.frames.key_of(frame_id)?;
+                p.frames
+                    .with_frame(key, |f| {
+                        (f.loader_id.0 == loader).then(|| {
+                            (subresource_request_with(f, page, url.clone(), kind, &options), f.origin.clone())
+                        })
+                    })
+                    .flatten()
             }
         });
         let Some((request, origin)) = built else {

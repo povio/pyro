@@ -427,3 +427,29 @@ fn render_tree_keeps_event_handler_attributes_markup_drops() {
     }
     assert!(render(&dom.borrow(), d).contains("<p id=\"p\" title=\"t\">x</p>"));
 }
+
+/// A frame's snapshot attributes (`data-pyro-frame-client`, `-url`, `-scroll`) are the
+/// snapshot's own: the page's copy of one is left out, so it can neither name another frame's
+/// document as the client of the renderer's requests (the parser keeps the first of duplicate
+/// attributes, and the page's came first) nor stand in when the frame has no document.
+#[test]
+fn a_pages_own_frame_attributes_are_left_out() {
+    let (dom, d) = doc(
+        "<iframe id=f data-pyro-frame-client='OTHER#doc' data-pyro-frame-url='http://evil.test/'></iframe>\
+         <iframe id=g data-pyro-frame-client='OTHER#doc'></iframe>",
+    );
+    let f = find(&dom.borrow(), d, "#f");
+    dom.borrow_mut().set_frame_document(
+        f,
+        Some(FrameDocument {
+            html: "<p>x</p>".into(),
+            url: "http://test/frame".into(),
+            scroll: (0.0, 0.0),
+            client: "F#L".into(),
+        }),
+    );
+    let html = render(&dom.borrow(), d);
+    assert!(!html.contains("OTHER"), "{html}");
+    assert!(!html.contains("evil.test"), "{html}");
+    assert!(html.contains("data-pyro-frame-client=\"F#L\""), "{html}");
+}

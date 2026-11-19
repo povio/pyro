@@ -174,18 +174,27 @@ impl Renders {
 }
 
 /// Fetches what the renderer asks for through `page`'s loader, on the browser thread.
+/// pyro: every request is a document's: the one the renderer names (a frame document's), else
+/// the page's document of the snapshot (`client`); one whose document is no longer its frame's is
+/// not sent.
 struct PageFetcher {
     handle: LoopHandle<Browser>,
     page: PageId,
+    /// The page's document when the snapshot was taken (`pyro_browser::document_client`).
+    client: String,
 }
 
 impl Fetcher for PageFetcher {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        self.load(url, false, done)
+        self.request(url, &pyro_render::FetchOptions::default(), body_only(done))
     }
 
     fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        self.load(url, true, done)
+        let options = pyro_render::FetchOptions {
+            cors: Some(pyro_render::CorsCredentials::SameOrigin),
+            ..Default::default()
+        };
+        self.request(url, &options, body_only(done))
     }
 
     /// pyro: with the response's URL after redirects, against which an imported sheet resolves
@@ -196,7 +205,7 @@ impl Fetcher for PageFetcher {
         options: &pyro_render::FetchOptions,
         done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
     ) {
-        self.load_final(url, options, done)
+        self.request(url, options, done)
     }
 
     fn fetch_with(
@@ -205,34 +214,21 @@ impl Fetcher for PageFetcher {
         options: &pyro_render::FetchOptions,
         done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
     ) {
-        let page = self.page;
-        let kind = kind_of(&url);
-        let options = subresource_options(options);
-        let _ = self.handle.post(move |b| {
-            let environment = b.document_encoding(page);
-            b.fetch_subresource_options(
-                page,
-                url,
-                kind,
-                options,
-                Box::new(move |_, result| {
-                    done(result.and_then(|r| {
-                        if (200..300).contains(&r.status) {
-                            Ok(r.render_body(environment.as_slice()))
-                        } else {
-                            Err(format!("HTTP {}", r.status))
-                        }
-                    }))
-                }),
-            );
-        });
+        self.request(url, options, body_only(done))
     }
 }
 
+/// `done` for the body alone.
+fn body_only(
+    done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+) -> Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send> {
+    Box::new(move |result| done(result.map(|(body, _)| body)))
+}
+
 impl PageFetcher {
-    /// pyro: `url` fetched as `options` say, `done` getting the body of a 2xx response and the
-    /// response's URL after redirects.
-    fn load_final(
+    /// `url` fetched as `options` say, for the document they name (else the snapshot's page
+    /// document); `done` gets the body of a 2xx response and its URL after redirects.
+    fn request(
         &self,
         url: String,
         options: &pyro_render::FetchOptions,
@@ -241,7 +237,8 @@ impl PageFetcher {
         let page = self.page;
         // A CORS fetch without other options is an image's (`shape-outside`, `mask-image`).
         let kind = if pyro_render::is_plain_cors(options) { ResourceKind::Image } else { kind_of(&url) };
-        let options = subresource_options(options);
+        let mut options = subresource_options(options);
+        options.client.get_or_insert_with(|| self.client.clone());
         // A closed loop drops `done`: the render stops waiting at its deadline.
         let _ = self.handle.post(move |b| {
             // An imported sheet without a charset of its own decodes as the document.
@@ -278,34 +275,6 @@ pub(super) fn subresource_options(options: &pyro_render::FetchOptions) -> pyro_b
         referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
         referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
         client: options.client.clone(),
-    }
-}
-
-impl PageFetcher {
-    /// With `cors`, an image in CORS mode ("anonymous").
-    fn load(&self, url: String, cors: bool, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        let page = self.page;
-        let kind = if cors { ResourceKind::Image } else { kind_of(&url) };
-        // A closed loop drops `done`: the render stops waiting at its deadline.
-        let _ = self.handle.post(move |b| {
-            // An imported sheet without a charset of its own decodes as the document.
-            let environment = b.document_encoding(page);
-            b.fetch_subresource_with(
-                page,
-                url,
-                kind,
-                cors,
-                Box::new(move |_, result| {
-                    done(result.and_then(|r| {
-                        if (200..300).contains(&r.status) {
-                            Ok(r.render_body(environment.as_slice()))
-                        } else {
-                            Err(format!("HTTP {}", r.status))
-                        }
-                    }))
-                }),
-            );
-        });
     }
 }
 
@@ -524,7 +493,13 @@ impl EngineHost {
     }
 
     fn fetcher(&self, pid: PageId) -> Arc<dyn Fetcher> {
-        Arc::new(PageFetcher { handle: self.thread.handle(), page: pid })
+        let client = self
+            .thread
+            .browser
+            .page(pid)
+            .map(|p| pyro_browser::document_client(&p.main_frame))
+            .unwrap_or_default();
+        Arc::new(PageFetcher { handle: self.thread.handle(), page: pid, client })
     }
 
     /// `Page.captureScreenshot`: replied to from `flush_renders`.

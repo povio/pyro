@@ -455,6 +455,10 @@ impl Dom {
                                 ("option", "selected") => html,
                                 ("link", "href") => href.is_some(),
                                 ("iframe" | "frame", "src" | "srcdoc") => html,
+                                // pyro: the frame attributes are the snapshot's own (the frame
+                                // document's URL, scroll position and client identity): a page's
+                                // copy of one would come first and win.
+                                ("iframe" | "frame" | "object" | "embed", n) if n.starts_with("data-pyro-frame-") => html,
                                 // An `<object>` showing a frame document: its `data` is not an image.
                                 ("object", "data" | "srcdoc") | ("embed", "src" | "srcdoc") => {
                                     html && self.frame_documents.contains_key(&n)

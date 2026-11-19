@@ -27,6 +27,11 @@ pub trait NetProvider: Send + Sync + 'static {
     fn is_noop(&self) -> bool {
         false
     }
+
+    /// pyro: the document `doc_id` is a frame's, whose requests name `client`
+    /// ([`FetchOptions::client`]): a provider that sends requests as a document's gives every
+    /// request of `doc_id` that names no client this one.
+    fn document_client(&self, _doc_id: usize, _client: String) {}
 }
 
 /// A type that parses raw bytes from a network request into a Data and then calls

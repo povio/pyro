@@ -110,18 +110,33 @@ struct Provider {
     cache: Cache,
     /// pyro: the URL after redirects of a cached response that was redirected, by cache key.
     finals: Arc<Mutex<HashMap<String, String>>>,
+    /// pyro: the client of each frame document's requests, by document id
+    /// (`NetProvider::document_client`).
+    clients: Mutex<HashMap<usize, String>>,
     tx: Sender<Delivery>,
     outstanding: Arc<AtomicUsize>,
 }
 
 impl NetProvider for Provider {
-    fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+    fn document_client(&self, doc_id: usize, client: String) {
+        if let Ok(mut clients) = self.clients.lock() {
+            clients.insert(doc_id, client);
+        }
+    }
+
+    fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.to_string();
-        let options = request.options;
+        let mut options = request.options;
+        // pyro: every request of a frame's document is that document's (the fetcher sends one
+        // that names none as the page's).
+        if options.client.is_none() {
+            options.client = self.clients.lock().ok().and_then(|c| c.get(&doc_id).cloned());
+        }
         // A CORS fetch's body (or one fetched with other options) is cached apart: one fetched
         // without CORS never stands in for it.
         let key = options.cache_key(&url);
-        let plain = options.is_default();
+        // (A frame document's own sheets come with the snapshot too.)
+        let plain = blitz_traits::net::FetchOptions { client: None, ..options.clone() }.is_default();
         self.outstanding.fetch_add(1, Ordering::AcqRel);
         // A data: URL holds its body: neither the sheets nor the cache (keyed
         // by the whole, possibly megabytes long, URL) can hold it for less.
@@ -137,7 +152,7 @@ impl NetProvider for Provider {
                 .lock()
                 .ok()
                 .and_then(|s| s.get(&url).map(|text| Bytes::from(utf8_sheet(text))))
-                .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&url).cloned()))
+                .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&key).cloned()))
         };
         if let Some(bytes) = ready {
             let final_url = self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| url.clone());
@@ -198,6 +213,7 @@ impl Bridge {
             sheets: Mutex::new(snap.sheets.clone()),
             cache,
             finals: Arc::default(),
+            clients: Mutex::default(),
             tx,
             outstanding: outstanding.clone(),
         });

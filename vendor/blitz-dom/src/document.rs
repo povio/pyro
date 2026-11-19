@@ -751,6 +751,13 @@ impl BaseDocument {
         static ID_GENERATOR: AtomicUsize = AtomicUsize::new(1);
 
         let id = ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+        // pyro: a frame's document names its frame as the client of every request it makes
+        // (`BaseDocument::request_client`), unmodified ones included.
+        if config.subdocument_depth > 0 {
+            if let Some(net) = config.net_provider.as_ref() {
+                net.document_client(id, config.frame_client.clone().unwrap_or_default());
+            }
+        }
 
         let font_ctx = config
             .font_ctx

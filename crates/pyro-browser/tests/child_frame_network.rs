@@ -274,13 +274,18 @@ fn a_renderer_request_is_the_frame_its_client_names() {
         let r = result.borrow_mut().take().expect("the fetch completes");
         r
     };
-    let _ = fetch(&mut t, "/img?sandboxed", Some(sandboxed.id.0.clone()));
-    let _ = fetch(&mut t, "/img?plain", Some(plain.id.0.clone()));
-    let unknown = fetch(&mut t, "/img?unknown", Some("not-a-frame".into()));
+    let client = |f: &&&pyro_browser::FrameInfo| format!("{}#{}", f.id.0, f.loader_id.0);
+    let _ = fetch(&mut t, "/img?sandboxed", Some(client(&sandboxed)));
+    let _ = fetch(&mut t, "/img?plain", Some(client(&plain)));
+    let unknown = fetch(&mut t, "/img?unknown", Some("not-a-frame#x".into()));
     assert!(unknown.is_err(), "a client naming no frame sends nothing");
+    // A document the frame has since navigated away from (another loader id) sends nothing.
+    let stale = fetch(&mut t, "/img?stale", Some(format!("{}#not-its-document", plain.id.0)));
+    assert!(stale.is_err(), "a client of a replaced document sends nothing");
     let seen = server.take();
     let origin_of = |query: &str| seen.iter().find(|r| r.path.ends_with(query)).map(|r| r.get("origin").map(str::to_owned));
     assert_eq!(origin_of("?sandboxed"), Some(Some("null".to_owned())), "{seen:?}");
     assert_ne!(origin_of("?plain"), Some(Some("null".to_owned())), "{seen:?}");
     assert_eq!(origin_of("?unknown"), None, "{seen:?}");
+    assert_eq!(origin_of("?stale"), None, "{seen:?}");
 }
