@@ -629,6 +629,109 @@ diff -ruN a/matching.rs b/matching.rs
  
          if data.styles.pseudos.is_empty() && old_styles.pseudos.is_empty() {
              // This is the common case; no need to examine pseudos here.
+diff -ruN a/properties/cascade.rs b/properties/cascade.rs
+--- a/properties/cascade.rs	2026-11-11 19:55:57
++++ b/properties/cascade.rs	2026-11-19 21:28:19
+@@ -976,7 +976,6 @@
+             },
+             FontSize => {
+                 if self.seen.longhands.contains(LonghandId::MathDepth) {
+-                    #[cfg(feature = "gecko")]
+                     Self::recompute_math_font_size_if_needed(context);
+                 }
+                 if self.seen.longhands.contains(LonghandId::XLang)
+@@ -1504,6 +1503,43 @@
+             return;
+         }
+         builder.mutate_font().set_font_size(new_size);
++    }
++
++    /// pyro: `font-size: math` for servo (MathML Core § 3.1.2): the parent's size scaled by the
++    /// change of `math-depth`, by the first available font's MATH script scale-downs or else
++    /// 0.71 a level (no `script-min-size` clamping, as Blink).
++    #[cfg(feature = "servo")]
++    fn recompute_math_font_size_if_needed(context: &mut computed::Context) {
++        use crate::values::computed::font::FontSize;
++        use crate::values::specified::font::QueryFontMetricsFlags;
++        use crate::values::specified::length::FontBaseSize;
++        use crate::font_metrics::FontMetricsOrientation;
++        if context.builder.get_font().slow_clone_font_size().keyword_info.kw != specified::FontSizeKeyword::Math {
++            return;
++        }
++        let parent_depth = context.builder.get_parent_font().math_depth as i32;
++        let depth = context.builder.get_font().math_depth as i32;
++        if parent_depth == depth {
++            return;
++        }
++        let metrics = context.query_font_metrics(
++            FontBaseSize::InheritedStyle,
++            FontMetricsOrientation::Horizontal,
++            QueryFontMetricsFlags::NEEDS_MATH_SCALES,
++        );
++        let scale = math_depth_scale_factor(
++            parent_depth,
++            depth,
++            metrics.script_percent_scale_down,
++            metrics.script_script_percent_scale_down,
++        );
++        let parent = context.builder.get_parent_font().slow_clone_font_size();
++        let size = FontSize {
++            computed_size: crate::values::generics::NonNegative(parent.computed_size.0.scale_by(scale)),
++            used_size: crate::values::generics::NonNegative(parent.used_size.0.scale_by(scale)),
++            keyword_info: context.builder.get_font().slow_clone_font_size().keyword_info,
++        };
++        context.builder.mutate_font().set_font_size(size);
+     }
+ 
+     /// Special handling of font-size: math (used for MathML).
+@@ -2783,5 +2819,47 @@
+             &mut self_ref,
+             &mut Default::default(),
+         );
++    }
++}
++
++/// pyro: the font-size scale factor for a `math-depth` change from `parent_math_depth` to
++/// `computed_math_depth` (MathML Core § 3.1.2), the gecko cascade's algorithm, for servo.
++#[cfg(feature = "servo")]
++fn math_depth_scale_factor(
++    parent_math_depth: i32,
++    computed_math_depth: i32,
++    parent_script_percent_scale_down: Option<f32>,
++    parent_script_script_percent_scale_down: Option<f32>,
++) -> f32 {
++    let mut a = parent_math_depth;
++    let mut b = computed_math_depth;
++    let c = 0.71_f32;
++    let scale_between_0_and_1 = parent_script_percent_scale_down.unwrap_or(c);
++    let scale_between_0_and_2 = parent_script_script_percent_scale_down.unwrap_or(c * c);
++    let mut s = 1.0;
++    let mut invert_scale_factor = false;
++    if a == b {
++        return s;
+     }
++    if b < a {
++        std::mem::swap(&mut a, &mut b);
++        invert_scale_factor = true;
++    }
++    let mut e = b - a;
++    if a <= 0 && b >= 2 {
++        s *= scale_between_0_and_2;
++        e -= 2;
++    } else if a == 1 {
++        s *= scale_between_0_and_2 / scale_between_0_and_1;
++        e -= 1;
++    } else if b == 1 {
++        s *= scale_between_0_and_1;
++        e -= 1;
++    }
++    s *= c.powi(e);
++    if invert_scale_factor {
++        1.0 / s.max(f32::MIN_POSITIVE)
++    } else {
++        s
++    }
+ }
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -7233,8 +7336,34 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 --- a/values/specified/font.rs	2026-11-11 19:55:57
-+++ b/values/specified/font.rs	2026-11-16 15:05:29
-@@ -1642,44 +1642,154 @@
++++ b/values/specified/font.rs	2026-11-19 21:27:50
+@@ -515,7 +515,7 @@
+     XXXLarge,
+     /// Indicate whether to apply font-size: math is specified so that extra
+     /// scaling due to math-depth changes is applied during the cascade.
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (MathML Core `font-size: math`, scaled in the cascade).
+     Math,
+     #[css(skip)]
+     None,
+@@ -529,16 +529,9 @@
+     }
+ 
+     /// Returns true if the font size is the math keyword
+-    #[cfg(feature = "gecko")]
+     pub fn is_math(self) -> bool {
+         matches!(self, Self::Math)
+     }
+-
+-    /// Returns true if the font size is the math keyword
+-    #[cfg(feature = "servo")]
+-    pub fn is_math(self) -> bool {
+-        false
+-    }
+ }
+ 
+ #[derive(
+@@ -1642,44 +1635,154 @@
  #[derive(
      Clone,
      Debug,
@@ -7407,7 +7536,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
              } else {
                  Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent))
              },
-@@ -1687,12 +1797,34 @@
+@@ -1687,12 +1790,34 @@
      }
  }
  

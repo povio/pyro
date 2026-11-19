@@ -515,7 +515,7 @@ pub enum FontSizeKeyword {
     XXXLarge,
     /// Indicate whether to apply font-size: math is specified so that extra
     /// scaling due to math-depth changes is applied during the cascade.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (MathML Core `font-size: math`, scaled in the cascade).
     Math,
     #[css(skip)]
     None,
@@ -529,15 +529,8 @@ impl FontSizeKeyword {
     }
 
     /// Returns true if the font size is the math keyword
-    #[cfg(feature = "gecko")]
     pub fn is_math(self) -> bool {
         matches!(self, Self::Math)
-    }
-
-    /// Returns true if the font size is the math keyword
-    #[cfg(feature = "servo")]
-    pub fn is_math(self) -> bool {
-        false
     }
 }
 
