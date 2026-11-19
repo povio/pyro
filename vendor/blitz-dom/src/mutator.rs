@@ -1332,6 +1332,19 @@ impl DocumentMutator<'_> {
                 self.process_added_subtree(child_id);
             } else if !new_parent_is_in_document && child_was_in_doc {
                 self.process_removed_subtree(child_id);
+            } else if new_parent_is_in_document {
+                // pyro: a moved `<style>` with `@scope` rules has a new implicit scope root (its new
+                // parent: `BaseDocument::process_style_element`): its sheet is parsed again.
+                let mut moved_styles = Vec::new();
+                self.doc.iter_subtree_mut(child_id, |id, doc| {
+                    let node = &doc.nodes[id];
+                    if node.data.is_element_with_tag_name(&local_name!("style"))
+                        && crate::document::sheet_has_scope_rules(&node.text_content())
+                    {
+                        moved_styles.push(id);
+                    }
+                });
+                self.style_nodes.extend(moved_styles);
             }
         }
         // pyro: the `:has()` anchors that can see the new positions,

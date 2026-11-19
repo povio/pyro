@@ -1831,7 +1831,7 @@ impl BaseDocument {
         // scope root of its prelude-less ones (CSS Cascade 6 § 2.5: the element's parent, or the
         // shadow host when the element is at its shadow tree's top), not shared with other
         // elements or shadow trees (WPT css-cascade `scope-part`, `scope-shadow-sharing`).
-        let implicit_scope_root = css.contains("@scope").then(|| self.implicit_scope_root_of(target_id));
+        let implicit_scope_root = sheet_has_scope_rules(&css).then(|| self.implicit_scope_root_of(target_id));
         let sheet = match (self.node_media_list(target_id), implicit_scope_root) {
             (media, Some(root)) => {
                 let mut sheet =
@@ -5510,4 +5510,9 @@ impl BaseDocument {
 /// pyro: `url` without its fragment.
 pub(crate) fn without_fragment(url: &str) -> &str {
     url.split_once('#').map_or(url, |(before, _)| before)
+}
+
+/// pyro: whether a sheet's text may hold `@scope` rules (at-rule names are ASCII case-insensitive).
+pub(crate) fn sheet_has_scope_rules(css: &str) -> bool {
+    css.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"@scope"))
 }

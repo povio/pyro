@@ -21,6 +21,7 @@ mod fetch;
 mod file_urls;
 mod frame_focus;
 mod has_state;
+mod scope_move;
 mod history_rewrite;
 mod images;
 mod link_fragment;
