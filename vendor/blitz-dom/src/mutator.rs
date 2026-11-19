@@ -1981,9 +1981,6 @@ impl<'doc> DocumentMutator<'doc> {
                         });
                     }
                 }
-                if !crate::net::cors_checked(&src, &self.doc.url) {
-                    options = Default::default();
-                }
                 let options = self.doc.request_options(options);
                 let key = options.cache_key(src.as_str());
                 let src_string = key.as_str();

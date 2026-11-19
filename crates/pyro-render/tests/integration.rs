@@ -100,6 +100,7 @@ mod pdf_variable_fonts;
 mod phantom_line_boxes;
 mod profiling_timers;
 mod render;
+mod request_identity;
 mod sampled_animations;
 mod scroll_markers;
 mod selection_highlight;

@@ -694,7 +694,10 @@ pub(crate) fn references_out_of_sync(
     }
     std::iter::zip(candidates, element.reference_images.iter()).any(|(candidate, stored)| {
         match (candidate, stored) {
-            (ReferenceCandidate::Url(url, _), Some(data)) => **url != *data.url,
+            // pyro: or another request for it (its modifiers changed).
+            (ReferenceCandidate::Url(url, modifiers), Some(data)) => {
+                **url != *data.url || !crate::net::asks_same_request(&data.options, modifiers)
+            }
             (ReferenceCandidate::Url(..), None) => true,
             // Resolved against the document's base: the stored URL ends with what is written.
             (ReferenceCandidate::Attr(raw), Some(data)) => {

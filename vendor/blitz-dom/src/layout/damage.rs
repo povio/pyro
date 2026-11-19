@@ -1064,24 +1064,34 @@ impl BaseDocument {
                 new.push(None);
                 continue;
             };
-            if let Some(kept) = old.get(idx).and_then(Option::as_ref).filter(|kept| *kept.url == *url) {
+            // pyro: kept only for the same request (URL, mode, integrity, referrer policy, client):
+            // a changed `integrity()` asks again, and its response alone goes in.
+            let options = self.request_options(options);
+            if let Some(kept) = old.get(idx).and_then(Option::as_ref).filter(|kept| kept.is_request(&url, &options)) {
                 new.push(Some(kept.clone()));
                 continue;
             }
             // An element of this document: nothing to load.
             if own.contains(&document(url.as_str())) {
-                new.push(Some(ImageResourceData { url, status: Status::Ok, image: ImageData::None }));
+                new.push(Some(
+                    ImageResourceData { url, status: Status::Ok, image: ImageData::None, options: Default::default() }
+                        .with_options(options),
+                ));
                 continue;
             }
-            let options = self.request_options(options);
             let key = options.cache_key(url.as_str());
             let url_str = key.as_str();
             let kind = ImageType::Reference(idx);
             if let Some(cached_image) = self.image_cache.get(url_str) {
-                new.push(Some(ImageResourceData { url: url.clone(), status: Status::Ok, image: cached_image.clone() }));
+                new.push(Some(ImageResourceData {
+                    url: url.clone(),
+                    status: Status::Ok,
+                    image: cached_image.clone(),
+                    options: options.clone(),
+                }));
             } else if let Some(waiting_list) = self.pending_images.get_mut(url_str) {
                 waiting_list.push((node_id, kind));
-                new.push(Some(ImageResourceData::new(url.clone())));
+                new.push(Some(ImageResourceData::new(url.clone()).with_options(options.clone())));
             } else {
                 self.pending_images.insert(url_str.to_string(), vec![(node_id, kind)]);
                 let mut request = crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref());
@@ -1094,10 +1104,10 @@ impl BaseDocument {
                         doc_id,
                         None,
                         self.shell_provider.clone(),
-                        ImageHandler::new(kind).options(options).document(&self.url),
+                        ImageHandler::new(kind).options(options.clone()).document(&self.url),
                     ),
                 );
-                new.push(Some(ImageResourceData::new(url.clone())));
+                new.push(Some(ImageResourceData::new(url.clone()).with_options(options)));
             }
         }
         let loaded = new.iter().flatten().any(|data| !matches!(data.image, ImageData::None));
@@ -1174,35 +1184,33 @@ impl BaseDocument {
             let style_image = slots[idx];
             let new_image = match style_image {
                 StyloImage::Url(ComputedUrl::Valid(new_url, modifiers)) => {
-                    let old_image = elem_images[idx].as_ref();
-                    let old_image_url = old_image.map(|data| &data.url);
-                    if old_image_url.is_some_and(|old_url| **new_url == **old_url) {
-                        continue;
-                    }
 
                     // pyro: a `shape-outside` image is fetched with CORS (anonymous), and a
                     // cross-origin one kept apart from the same URL fetched without (CSS Shapes 1
                     // § 4.1): one that fails the CORS check is no shape (`none`), and one loaded
-                    // for an `<img>` never stands in for it. A same-origin (or `data:`) one is
-                    // the same response either way, and shares the cache. So is a `mask-image`
+                    // for an `<img>` never stands in for it. The mode holds for the whole fetch,
+                    // redirects included (a same-origin URL may redirect to another origin without
+                    // CORS permission), so a same-origin one is kept apart too; only a `data:` URL,
+                    // which cannot redirect, is the same response either way. So is a `mask-image`
                     // (CSS Masking 1 § 6.2: a potentially CORS-enabled fetch in "Anonymous" mode):
                     // a cross-origin mask the CORS check does not pass is no mask image.
                     //
                     // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5
                     // § 4.5.4), its response kept apart from the same URL fetched otherwise.
                     let mut options = crate::net::url_fetch_options(modifiers.as_deref());
-                    if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask) && options.cors.is_none() {
-                        options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
-                    }
-                    if options.cors.is_some()
-                        && options.integrity.is_none()
-                        && options.referrer_policy.is_none()
-                        && !crate::net::cors_checked(new_url, &self.url)
+                    if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask)
+                        && options.cors.is_none()
+                        && new_url.scheme() != "data"
                     {
-                        options = Default::default();
+                        options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
                     }
                     if !options.is_default() {
                         options.client = client_options.client.clone();
+                    }
+                    // pyro: kept only for the same request (URL, mode, integrity, referrer policy,
+                    // client): a changed `integrity()` asks again, and its response alone goes in.
+                    if elem_images[idx].as_ref().is_some_and(|data| data.is_request(new_url, &options)) {
+                        continue;
                     }
                     let key = options.cache_key(new_url.as_str());
                     // Check cache first
@@ -1214,13 +1222,14 @@ impl BaseDocument {
                             url: new_url.clone(),
                             status: Status::Ok,
                             image: cached_image.clone(),
+                            options: options.clone(),
                         })
                     } else if let Some(waiting_list) = self.pending_images.get_mut(url_str) {
                         // Image is already being fetched, queue this node
                         #[cfg(feature = "tracing")]
                         tracing::info!("Image {url_str} already pending, queueing node {node_id}");
                         waiting_list.push((node_id, kind.image_type(idx)));
-                        Some(ImageResourceData::new(new_url.clone()))
+                        Some(ImageResourceData::new(new_url.clone()).with_options(options.clone()))
                     } else {
                         // Start fetch and track as pending
                         #[cfg(feature = "tracing")]
@@ -1239,11 +1248,11 @@ impl BaseDocument {
                                 doc_id,
                                 None, // Don't pass node_id, we'll handle via pending_images
                                 self.shell_provider.clone(),
-                                ImageHandler::new(kind.image_type(idx)).options(options).document(&document_url),
+                                ImageHandler::new(kind.image_type(idx)).options(options.clone()).document(&document_url),
                             ),
                         );
 
-                        Some(ImageResourceData::new(new_url.clone()))
+                        Some(ImageResourceData::new(new_url.clone()).with_options(options))
                     }
                 }
                 _ => None,

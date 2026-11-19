@@ -2480,9 +2480,13 @@ impl BaseDocument {
                 }
                 // pyro: a document an element's `clip-path`, `filter` or `mask` references an
                 // element of: the box is painted, and an inline `<svg>` written, with it.
+                // pyro: into the slot only while it still holds this request (a late completion of
+                // a request the slot no longer names is not its image).
                 ImageType::Reference(idx) => {
-                    if let Some(Some(reference)) =
-                        node.element_data_mut().and_then(|el| el.reference_images.get_mut(idx))
+                    if let Some(Some(reference)) = node
+                        .element_data_mut()
+                        .and_then(|el| el.reference_images.get_mut(idx))
+                        .filter(|slot| slot.as_ref().is_some_and(|slot| slot.request_key() == url))
                     {
                         reference.status = Status::Ok;
                         reference.image = image.clone();
@@ -2498,7 +2502,7 @@ impl BaseDocument {
                     let Some(Some(shape)) = node.element_data_mut().and_then(|el| el.shape_images.get_mut(idx)) else {
                         continue;
                     };
-                    if shape.url.as_str() != url && crate::net::cors_image_key(shape.url.as_str()) != url {
+                    if shape.request_key() != url {
                         continue;
                     }
                     shape.status = Status::Ok;
@@ -2527,6 +2531,8 @@ impl BaseDocument {
                         };
                         images.get_mut(idx)
                     });
+                    // pyro: into the slot only while it still holds this request.
+                    let layer_image = layer_image.filter(|slot| slot.as_ref().is_some_and(|slot| slot.request_key() == url));
                     if let Some(Some(layer_image)) = layer_image {
                         layer_image.status = Status::Ok;
                         layer_image.image = image.clone();

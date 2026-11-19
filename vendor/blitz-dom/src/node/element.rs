@@ -1140,6 +1140,10 @@ pub struct ImageResourceData {
     pub status: Status,
     /// The image data
     pub image: ImageData,
+    /// pyro: how the image was requested (a `url()`'s request URL modifiers, the CORS mode of a
+    /// mask or shape, the frame document it is for): with `url`, the identity of the request
+    /// the slot holds the response of. A response to another request never goes in it.
+    pub options: blitz_traits::net::FetchOptions,
 }
 
 impl ImageResourceData {
@@ -1148,7 +1152,24 @@ impl ImageResourceData {
             url,
             status: Status::Loading,
             image: ImageData::None,
+            options: Default::default(),
         }
+    }
+
+    /// pyro: this slot for the request made with `options`.
+    pub fn with_options(mut self, options: blitz_traits::net::FetchOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// pyro: whether this slot holds the response to the request for `url` made with `options`.
+    pub fn is_request(&self, url: &Url, options: &blitz_traits::net::FetchOptions) -> bool {
+        *self.url == *url && self.options == *options
+    }
+
+    /// pyro: the key the response to this slot's request is cached and delivered under.
+    pub fn request_key(&self) -> String {
+        self.options.cache_key(self.url.as_str())
     }
 }
 

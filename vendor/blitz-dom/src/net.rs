@@ -69,18 +69,26 @@ pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) ->
     }
 }
 
+/// pyro: whether a slot's request (`stored`) is the one a `url()` with `modifiers` asks for, as
+/// far as the modifiers say: a mask's or shape's own CORS mode and the frame client are not
+/// theirs.
+pub fn asks_same_request(
+    stored: &blitz_traits::net::FetchOptions,
+    modifiers: Option<&style::url::RequestUrlModifiers>,
+) -> bool {
+    let wanted = url_fetch_options(modifiers);
+    stored.integrity == wanted.integrity
+        && stored.referrer_policy == wanted.referrer_policy
+        && stored.referrer == wanted.referrer
+        && (wanted.cors.is_none() || stored.cors == wanted.cors)
+}
+
 /// pyro: whether a CORS fetch of `url` from the document at `document` is checked (and so may
 /// differ from a fetch without CORS): a cross-origin URL, not `data:` (whose response is the same).
 pub(crate) fn cors_checked(url: &Url, document: &Url) -> bool {
     url.scheme() != "data" && url.origin() != document.origin()
 }
 
-/// pyro: the key of an image fetched in CORS mode ([`mark_cors`], a `shape-outside` image) in
-/// the document's image cache and pending loads: a response fetched without CORS (an `<img>`'s)
-/// never stands in for it, nor it for one. (A space is never in a serialized URL.)
-pub(crate) fn cors_image_key(url: &str) -> String {
-    format!("cors-anonymous {url}")
-}
 
 /// Carries `@font-face` descriptors from CSS parsing through to font
 /// registration so `parley::Collection::register_fonts` can alias the bytes
