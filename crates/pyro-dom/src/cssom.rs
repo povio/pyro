@@ -249,7 +249,19 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         _ => return None,
     };
     if lower == "namespace" {
-        namespaces.push(parse_namespace(&prelude)?);
+        let (prefix, url) = parse_namespace(&prelude)?;
+        // CSSOM "serialize a CSS rule": `@namespace`, the prefix, `url()` with the URL as a
+        // string (an unterminated string keeps its closing quote: WPT css-namespaces `syntax-013`).
+        let mut text = String::from("@namespace ");
+        if !prefix.is_empty() {
+            cssparser::serialize_identifier(&prefix, &mut text).ok()?;
+            text.push(' ');
+        }
+        text.push_str("url(");
+        cssparser::serialize_string(&url, &mut text).ok()?;
+        text.push_str(");");
+        namespaces.push((prefix, url));
+        return Some(ParsedRule::Other { rule_type: 10, text });
     }
     // `@name prelude {block}`, without a second space when the prelude is empty.
     let prelude = collapse(&prelude);
@@ -517,7 +529,7 @@ mod tests {
         assert_eq!(ns, [("x".to_owned(), "a".to_owned())]);
         assert_eq!(
             rules,
-            [ParsedRule::Other { rule_type: 10, text: "@namespace x 'a';".into() }, style("[x|foo=\"\" i]", "")]
+            [ParsedRule::Other { rule_type: 10, text: "@namespace x url(\"a\");".into() }, style("[x|foo=\"\" i]", "")]
         );
     }
 }
