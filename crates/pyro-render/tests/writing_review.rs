@@ -314,3 +314,33 @@ fn a_focused_text_control_scrolls_to_its_caret() {
     let differing = at_start.chunks(4).zip(at_end.chunks(4)).filter(|(a, b)| a != b).count();
     assert!(differing > 200, "the text did not follow the caret ({differing} px differ)");
 }
+
+#[test]
+fn mixed_vertical_text_keeps_a_grapheme_in_one_shaping_run() {
+    // A ZWJ emoji sequence and an ideograph with a variation selector: one cluster each, which
+    // takes its base's orientation (UTR #50), so mixed text shapes them as upright text does.
+    for text in ["\u{1F469}\u{200D}\u{1F4BB}", "\u{845B}\u{E0100}\u{845B}"] {
+        let page = |orientation: &str| {
+            format!(
+                "<!doctype html><style>body{{margin:0}}div{{writing-mode:vertical-rl;text-orientation:{orientation};font:30px serif}}</style>\
+                 <div>{text}</div>"
+            )
+        };
+        assert!(same_pixels(&page("mixed"), &page("upright")), "{text:?} shaped apart in mixed text");
+    }
+}
+
+#[test]
+fn a_vertical_controls_caret_takes_its_caret_shape() {
+    let page = |shape: &str| {
+        format!(
+            "<!doctype html><style>body{{margin:0}}input{{writing-mode:vertical-rl;font:16px monospace;height:120px;caret-shape:{shape}}}</style>\
+             <input id=i value=abcdef>"
+        )
+    };
+    let bar = control_pixels(&page("bar"), "i", Some((2, 2)));
+    let block = control_pixels(&page("block"), "i", Some((2, 2)));
+    let underscore = control_pixels(&page("underscore"), "i", Some((2, 2)));
+    assert!(block != bar, "a block caret drawn as a bar");
+    assert!(underscore != bar, "an underscore caret drawn as a bar");
+}

@@ -188,9 +188,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         || isolating_span(styles, style_index) != isolating_span(styles, item_style_index);
                 }
 
+                // (Only at a grapheme cluster's start: a cluster takes its base's orientation,
+                // UTR #50, so a ZWJ sequence or a variation selector stays with it.)
                 if !split
                     && item_style.vertical
                     && !item_style.upright
+                    && analysis.char_info().get(char_index).is_some_and(|info| info.is_grapheme_start())
                     && let Some(&(_, (_, c))) = chars.peek()
                 {
                     split = Some(crate::upright_in_vertical(c)) != item_upright;

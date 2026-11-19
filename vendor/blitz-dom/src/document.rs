@@ -4103,16 +4103,20 @@ impl BaseDocument {
     /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
     /// remains visible within the input's content box.
     pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
-        let Some(node) = self.nodes.get_mut(node_id) else {
+        if self.nodes.get(node_id).is_none() {
             return;
-        };
-
-        // (The unrounded box: text that fits it exactly is not scrolled by a rounding remainder.)
-        let mut content_box_width = node.unrounded_layout().content_box_width();
-        let mut content_box_height = node.unrounded_layout().content_box_height();
+        }
+        // pyro: the content box's physical size, unrounded (text that fits it exactly is not
+        // scrolled by a rounding remainder): `unrounded_layout` is in the axes of the box that
+        // placed the control, which a vertical parent swaps.
+        let (_, layout) = self.physical_unrounded_geometry(node_id);
+        let mut content_box_width = layout.content_box_width();
+        let mut content_box_height = layout.content_box_height();
+        let node = &mut self.nodes[node_id];
         // pyro: the editor's layout is logical: in a vertical writing mode its inline size (the
-        // single line's scroll axis) is the content box's height.
-        if node.vertical_block_axis().is_some() {
+        // single line's scroll axis) is the content box's height. (The control's own writing
+        // mode, from its style: a horizontal control in a vertical line is not turned.)
+        if node.primary_styles().is_some_and(|style| style.writing_mode.is_vertical()) {
             core::mem::swap(&mut content_box_width, &mut content_box_height);
         }
 
