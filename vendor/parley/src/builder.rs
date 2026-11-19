@@ -78,6 +78,8 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
             inline_box,
             parent_style_index: 0,
             baseline_offset: 0.,
+            glued_before: false,
+            glued_after: false,
         });
     }
 
@@ -182,6 +184,8 @@ impl<'b, B: Brush> StyleRunBuilder<'b, B> {
             inline_box,
             parent_style_index: 0,
             baseline_offset: 0.,
+            glued_before: false,
+            glued_after: false,
         });
     }
 
@@ -342,6 +346,8 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
             inline_box,
             parent_style_index,
             baseline_offset: 0.,
+            glued_before: false,
+            glued_after: false,
         });
         if matches!(kind, InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd) {
             // pyro: white space pending before a span's edge goes before the edge if it is kept.
@@ -507,6 +513,23 @@ fn build_into_layout<B: Brush>(
     // TODO: consider dropping the sort and requiring `push_inline_box` callers to push boxes in text index order
     // (as `TreeBuilder` already does).
     lcx.inline_boxes.sort_by_key(|b| b.inline_box.index);
+    // pyro: glue characters next to in-flow boxes (`LayoutInlineBox::glued_before`).
+    // Of the in-flow boxes at one text position, the first is after the text before them and
+    // the last before the text after them.
+    let in_flow: alloc::vec::Vec<usize> = (0..lcx.inline_boxes.len())
+        .filter(|&i| lcx.inline_boxes[i].inline_box.kind == InlineBoxKind::InFlow)
+        .collect();
+    for (k, &i) in in_flow.iter().enumerate() {
+        let index = lcx.inline_boxes[i].inline_box.index.min(text.len());
+        if !text.is_char_boundary(index) {
+            continue;
+        }
+        let first = k == 0 || lcx.inline_boxes[in_flow[k - 1]].inline_box.index != lcx.inline_boxes[i].inline_box.index;
+        let last = k + 1 == in_flow.len()
+            || lcx.inline_boxes[in_flow[k + 1]].inline_box.index != lcx.inline_boxes[i].inline_box.index;
+        lcx.inline_boxes[i].glued_before = first && text[..index].chars().next_back().is_some_and(is_line_break_glue);
+        lcx.inline_boxes[i].glued_after = last && text[index..].chars().next().is_some_and(is_line_break_glue);
+    }
 
     {
         super::shape::shape_text(
@@ -542,6 +565,18 @@ fn build_into_layout<B: Brush>(
     if let Some(key) = cache_key {
         lcx.build_cache.insert(key, &layout.data);
     }
+}
+
+/// pyro: a character of UAX #14 class GL (no-break spaces and hyphen, the combining grapheme
+/// joiner, Tibetan and Mongolian glue), WJ or ZWJ: no line break on either side of it. Not
+/// U+00A0, which browsers break beside an atomic inline (WPT css-text `line-breaking-replaced-001`,
+/// `line-breaking-atomic-001`).
+fn is_line_break_glue(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{034F}' | '\u{035C}'..='\u{0362}' | '\u{0F08}' | '\u{0F0C}' | '\u{0F12}' | '\u{0FD9}'
+            | '\u{0FDA}' | '\u{180E}' | '\u{2007}' | '\u{2011}' | '\u{202F}' | '\u{2060}' | '\u{FEFF}' | '\u{200D}'
+    )
 }
 
 fn resolve_range(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {

@@ -51,6 +51,11 @@ pub(crate) struct LayoutInlineBox {
     /// sizes may change between building and line breaking). Unused for out-of-flow and
     /// `vertical-align: top | bottom` boxes.
     pub(crate) baseline_offset: f32,
+    /// pyro: a glue character (UAX #14 classes GL, WJ, ZWJ) directly before / after an in-flow
+    /// box forbids the soft wrap opportunity there: the box is an object replacement character
+    /// (U+FFFC) in line breaking (CSS Text 3 § 5.1).
+    pub(crate) glued_before: bool,
+    pub(crate) glued_after: bool,
 }
 
 /// Whether a box is in-flow (takes up space in the layout) or out-of-flow (e.g. absolutely positioned)

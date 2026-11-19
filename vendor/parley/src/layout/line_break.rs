@@ -1808,6 +1808,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     // pyro: a glued box (`InlineBox::glue`) is a letter of the text around it: the
                     // line wraps at the opportunity before it, if any, and none follows it.
                     let glue = inline_box.glue;
+                    // pyro: glue characters next to the box (`LayoutInlineBox::glued_before`): one
+                    // before it keeps it on the line of the text before it, one after it keeps the
+                    // opportunity after it from being taken.
+                    let glued_before = self.layout.data.inline_boxes[item.index].glued_before;
+                    let glued_after = self.layout.data.inline_boxes[item.index].glued_after;
                     // If the box fits on the current line (or we are at the start of the current line)
                     // then simply move on to the next item
                     if next_x <= fit_advance || !wraps_before
@@ -1817,19 +1822,23 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                         // There is a soft wrap opportunity after an inline box, unless wrapping
                         // is disabled
-                        if glue {
+                        if glue || glued_after {
                             self.state.line.after_box = false;
                         } else if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                             self.state.mark_line_break_opportunity();
                         }
-                    } else if glue && self.state.line.x != 0.0 && self.state.line.has_inline_content {
+                    } else if (glue || glued_before) && self.state.line.x != 0.0 && self.state.line.has_inline_content {
                         if let Some(prev) = self.state.prev_boundary.take() {
                             self.state.reset_to(prev);
                             return self.start_new_line(BreakReason::Regular, max_advance, line_indent);
                         }
                         self.append_layout_inline_box(item.index, next_x);
                         self.state.line.text_wrap_mode = box_wrap_mode;
-                        self.state.line.after_box = false;
+                        if glue || glued_after {
+                            self.state.line.after_box = false;
+                        } else if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
+                            self.state.mark_line_break_opportunity();
+                        }
                     } else if self.state.line.x == 0.0 || !self.state.line.has_inline_content {
                         // pyro: at the start of the line (after nothing but span edges: a 200px
                         // start margin in a 200px block, WPT css-text `text-indent-overflow-ref`)
