@@ -647,6 +647,12 @@ impl Layout {
         self.external.as_ref().is_some_and(|s| s.fonts_pending())
     }
 
+    /// pyro: whether the CSS images the last completed layout asked for are still loading
+    /// (`GeometrySource::images_pending`), never running layout.
+    pub fn images_pending_as_laid_out(&self) -> bool {
+        self.external.as_ref().is_some_and(|s| s.images_pending())
+    }
+
     /// [`Self::fonts_pending`] as of the last completed layout, never running layout: the loads
     /// that layout started (a face is loaded when layout first needs it). For readiness checks
     /// made at every microtask checkpoint (the load event).

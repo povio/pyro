@@ -779,6 +779,15 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn images_pending(&self) -> bool {
+        let loader = self.loader.borrow();
+        let Some(loader) = loader.as_ref() else { return false };
+        let Some(asked) = loader.asked_images() else { return false };
+        let bodies = loader.bodies().lock();
+        // An empty entry is a load in flight (`LocalFiles::network`); a failed one is removed.
+        asked.iter().any(|key| bodies.get(key).is_some_and(|body| body.is_empty()))
+    }
+
     fn font_url_state(&self, url: &str) -> Option<bool> {
         let loader = self.loader.borrow();
         let bodies = loader.as_ref()?.bodies().lock();

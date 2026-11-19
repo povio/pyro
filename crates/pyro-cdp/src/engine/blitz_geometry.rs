@@ -136,6 +136,8 @@ impl LocalFiles {
                     let path = url.path().to_ascii_lowercase();
                     if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
                         loader.font_asked(url.as_str());
+                    } else if !path.ends_with(".css") {
+                        loader.image_asked(&key);
                     }
                     return None;
                 }
@@ -156,6 +158,10 @@ impl LocalFiles {
         } else {
             SubresourceKind::Image
         };
+        // pyro: a CSS image this document's layout asked for: its `load` waits for it.
+        if matches!(kind, SubresourceKind::Image | SubresourceKind::CorsImage) {
+            loader.image_asked(&fetch.key);
+        }
         loader.load_with(
             url.as_str().to_owned(),
             kind,

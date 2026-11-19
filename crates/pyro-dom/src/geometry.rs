@@ -223,6 +223,13 @@ pub trait SubresourceLoader: Send + Sync {
     fn asked_fonts(&self) -> Option<Vec<String>> {
         None
     }
+    /// pyro: this document's layout asked for the CSS image kept under `key` in [`Self::bodies`].
+    fn image_asked(&self, _key: &str) {}
+    /// pyro: the CSS images this document's layout asked for ([`Self::image_asked`]), `None` when
+    /// the loader does not keep track.
+    fn asked_images(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 /// Sub-resource bodies loaded from the network for the layouts of the
@@ -409,6 +416,12 @@ pub trait GeometrySource {
     /// pyro: whether a web font the engine asked its network for has not arrived yet
     /// (`document.fonts`: `status`, `ready`).
     fn fonts_pending(&self) -> bool {
+        false
+    }
+    /// pyro: whether a CSS image (a background, mask, border, list or shape image) the engine's
+    /// layout asked its network for has not arrived yet: the document's `load` waits for it, as
+    /// Chrome's style resolution starts those fetches and they delay `load`.
+    fn images_pending(&self) -> bool {
         false
     }
     /// pyro: whether the engine has the font at `url` (`Some(true)`), is loading it

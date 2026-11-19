@@ -390,6 +390,8 @@ pub struct PageDom {
     /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
     pub(crate) font_loads: Cell<u32>,
     font_delay_since: Cell<Option<std::time::Instant>>,
+    /// pyro: when the load gate laid the document out (`css_images_delay_load`), once per load.
+    load_layout_since: Cell<Option<std::time::Instant>>,
     /// The font families elements name, as of a DOM version (`used_face_loading`).
     used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
@@ -941,6 +943,7 @@ impl PageDom {
             rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
             font_delay_since: Cell::new(None),
+            load_layout_since: Cell::new(None),
             used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
@@ -1484,6 +1487,27 @@ impl PageDom {
         let since = *self.font_delay_since.get().get_or_insert_with(std::time::Instant::now);
         self.font_delay_since.set(Some(since));
         since.elapsed() < std::time::Duration::from_secs(10)
+    }
+
+    /// pyro: whether the document's CSS images (backgrounds, masks, border and list images,
+    /// shapes) still delay its `load` event, as in Chrome, whose style resolution starts their
+    /// fetches before `load`. Called once every other blocker of `load` is clear: the first call
+    /// lays the document out once (which starts those fetches through the document's network);
+    /// then `load` waits while one is in flight, at most 10 s from that layout.
+    pub fn css_images_delay_load(&self) -> bool {
+        let since = match self.load_layout_since.get() {
+            Some(since) => since,
+            None => {
+                let now = std::time::Instant::now();
+                self.load_layout_since.set(Some(now));
+                if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
+                    layout.synced_geometry_source(&dom);
+                }
+                now
+            }
+        };
+        let pending = self.try_layout().is_some_and(|layout| layout.images_pending_as_laid_out());
+        pending && since.elapsed() < std::time::Duration::from_secs(10)
     }
 
     /// Whether a face of the document's sheets that the layout engine is still fetching has a

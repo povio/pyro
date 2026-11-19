@@ -2254,6 +2254,18 @@ impl Browser {
         {
             return;
         }
+        // pyro: the document's CSS images, once everything else is in (Chrome's style resolution
+        // starts them before `load`, which waits for them).
+        if let Some(page_dom) = state.main_frame.page_dom.clone() {
+            if state.load.as_ref().is_none_or(|load| load.async_pending == 0 && load.dcl_fired) {
+                drop(state);
+                if page_dom.css_images_delay_load() {
+                    return;
+                }
+                let Some(new_state) = self.doc_mut(page) else { return };
+                state = new_state;
+            }
+        }
         if let Some(load) = &mut state.load {
             if load.async_pending > 0 || !load.dcl_fired {
                 return;
