@@ -560,3 +560,30 @@ fn enabled_disabled_and_default_in_style_matching() {
         "rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(0, 128, 0)|true|rgb(0, 0, 255)"
     );
 }
+
+/// `:focus` matches the shadow hosts whose shadow trees hold the focused element, at any depth
+/// (WPT shadow-dom/focus/focus-pseudo-matches-on-shadow-host).
+#[test]
+fn focus_matches_shadow_hosts_of_the_focused_element() {
+    let env = Env::new("http://focus.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              const outer = document.createElement("div");
+              document.body.appendChild(outer);
+              const inner = document.createElement("div");
+              outer.attachShadow({ mode: "open" }).appendChild(inner);
+              const input = document.createElement("input");
+              inner.attachShadow({ mode: "closed" }).appendChild(input);
+              const other = document.createElement("input");
+              document.body.appendChild(other);
+              input.focus();
+              const out = [outer.matches(":focus"), inner.matches(":focus"), document.body.matches(":focus"), document.querySelector(":focus") === outer];
+              other.focus();
+              out.push(outer.matches(":focus"), other.matches(":focus"));
+              return out.join("|");
+            })()"##
+        ),
+        "true|true|false|true|false|true"
+    );
+}
