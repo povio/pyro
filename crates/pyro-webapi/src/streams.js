@@ -7,9 +7,10 @@
 // object in a private field, so page code cannot reach the internals.
 //
 // The internal slots are not private fields but WeakMaps the engine shares
-// among the agent's realms (`natives.slot(name)`, streams.rs), so a stream
-// made in another window passes this realm's brand checks and works with its
-// operations, as the spec's platform objects do whatever their realm.
+// among the agent's realms of one origin (`natives.slot`, streams.rs), so a
+// stream made in another same-origin window passes this realm's brand checks
+// and works with its operations, as the spec's platform objects do whatever
+// their realm.
 //
 // Byte streams are simplified: chunks are copied rather than transferred, and
 // `byobRequest` views a private buffer whose bytes are enqueued on respond().
@@ -30,6 +31,10 @@
   const Uint8ArrayC = Uint8Array;
   const DataViewC = DataView;
   const isView = ArrayBuffer.isView;
+  // Whether `v` is a Uint8Array of any realm (its [[TypedArrayName]], which
+  // %TypedArray%.prototype[@@toStringTag] reads), as WebIDL's conversion checks.
+  const typedArrayName = Object.getOwnPropertyDescriptor(getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get;
+  const isUint8Array = (v) => isView(v) && apply(typedArrayName, v, []) === 'Uint8Array';
   const transferBuffer = ArrayBuffer.prototype.transfer;
   const parseJSON = JSON.parse;
   const BlobC = Blob;
@@ -58,21 +63,23 @@
     port2Of = own(MessageChannel.prototype, 'port2').get;
     MessageChannelC = MessageChannel;
   } catch (_) {}
-  // An internal slot of one interface: `get` throws for an object without
-  // it, as reading a missing private field would.
-  const weakGet = WeakMap.prototype.get;
-  const weakSet = WeakMap.prototype.set;
-  const weakHas = WeakMap.prototype.has;
+  // An internal slot of one interface (`natives.slot`, streams.rs: the root
+  // context's functions over a map the realms of this origin share).
+  // `get` throws for an object without the slot, as reading a missing
+  // private field would. The functions stay in this closure: handed to page
+  // code they would give it the root context.
   const slot = (name) => {
-    const map = natives.slot(name);
+    const s = natives.slot(natives.origin, name);
+    const has = s.has;
+    const get = s.get;
     return {
-      has: (o) => apply(weakHas, map, [o]),
+      has,
       get: (o) => {
-        const v = apply(weakGet, map, [o]);
-        if (v === undefined && !apply(weakHas, map, [o])) throw new TypeErrorC('Illegal invocation');
+        const v = get(o);
+        if (v === undefined && !has(o)) throw new TypeErrorC('Illegal invocation');
         return v;
       },
-      set: (o, v) => { apply(weakSet, map, [o, v]); },
+      set: s.set,
     };
   };
   const asyncIterator = Symbol.asyncIterator;
@@ -1735,7 +1742,7 @@
     const step = () => {
       readerRead(rd, {
         chunk(value) {
-          if (!(value instanceof Uint8ArrayC)) {
+          if (!isUint8Array(value)) {
             const e = new TypeErrorC('Received non-Uint8Array chunk');
             d.reject(e);
             then(rsCancel(st, e), undefined, noop);

@@ -56,6 +56,7 @@ mod style_load;
 mod promise_rejections;
 mod stylesheets;
 mod stylesheets_http;
+mod streams_realms;
 mod subresources;
 mod user_agent;
 mod viewport;
