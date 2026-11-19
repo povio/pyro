@@ -227,3 +227,23 @@ fn an_inline_stacking_context_keeps_its_positioned_child() {
     );
     assert_eq!(pixel(&img, 50, 50), [0, 128, 0], "the z-index 1 box over the inline's child");
 }
+
+/// A box turned 45 degrees that clips a blending box is drawn in its own unturned space: the
+/// overlay blend of red over its lime background is lime up to the clip's edge, and no red shows
+/// where the edge is anti-aliased (once, as the turned surface is drawn). Red leaked there.
+#[test]
+fn a_turned_clip_over_a_blend_leaks_no_colour_at_its_edge() {
+    let img = render(
+        "<div style='width:100px;height:100px;background:lime;overflow:hidden'>\
+         <div style='width:100px;height:100px;transform:rotate(45deg)'>\
+         <div style='width:100px;height:100px;background:lime;overflow:hidden'>\
+         <div style='width:100px;height:100px;background:red;transform:rotate(-45deg);mix-blend-mode:overlay;will-change:transform'></div>\
+         </div></div></div>",
+    );
+    for y in 0..100 {
+        for x in 0..100 {
+            let [r, _, _] = pixel(&img, x, y);
+            assert!(r <= 2, "no red at ({x}, {y}): {:?}", pixel(&img, x, y));
+        }
+    }
+}

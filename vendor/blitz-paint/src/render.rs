@@ -1513,8 +1513,19 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // `mix-blend-mode-parent-with-3D-transform`). A box with no element in it shares no edge
         // with another: it keeps its own edges, with none of a resampled image's rounding.
         // Its own blend mode applies to that image; its effects, inside, in its plane.
+        // pyro: so is a box turned by a 2D transform (a rotation, a skew) holding a box that blends
+        // (`mix-blend-mode`): Chromium draws it as a surface in its own unturned space, where its
+        // background and its overflow clip are whole pixels, and turns the surface: the blend sees
+        // an opaque backdrop up to the clip's edge, which is anti-aliased once, when the surface is
+        // drawn (WPT compositing `mix-blend-mode-rotated-clip`).
+        let turned_blending = || {
+            node.transform().as_deref().is_some_and(|t| {
+                let [_, b, c, _, _, _] = t.as_coeffs();
+                b.abs() > 1e-9 || c.abs() > 1e-9
+            }) && self.has_blending_descendant(node)
+        };
         let local_raster_pushed = self.composite_3d
-            && node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D)
+            && (node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D) || turned_blending())
             && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()))
             // pyro (lane H2): a plane drawn through a perspective is rasterized in its plane already.
             && !(self.three_d.depth.get() > 0 && node.plane_3d().is_some_and(|plane| plane.is_projective()));
@@ -2053,6 +2064,22 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             scene.pop_layer();
         }
         self.layer_manager.maybe_pop_layer(scene, pushed);
+    }
+
+    /// pyro: whether a box in `node`'s subtree (`node` left out) has a `mix-blend-mode` other than
+    /// `normal`.
+    fn has_blending_descendant(&self, node: &Node) -> bool {
+        let mut stack: Vec<NodeId> = node.children.to_vec();
+        while let Some(id) = stack.pop() {
+            let Some(child) = self.dom.get_node(id) else { continue };
+            if child.primary_styles().is_some_and(|style| {
+                style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal
+            }) {
+                return true;
+            }
+            stack.extend(child.children.iter().copied());
+        }
+        false
     }
 
     fn render_node(
