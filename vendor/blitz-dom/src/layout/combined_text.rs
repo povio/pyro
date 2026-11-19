@@ -68,7 +68,11 @@ pub(crate) fn prepare(doc: &mut BaseDocument, root: NodeId) {
             doc.create_node(NodeData::AnonymousBlock(Box::new(ElementData::new(NAME, Vec::new()))))
         });
         set_box_style(doc, box_id, &style);
-        set_box_text(doc, root, box_id, content.trim());
+        // pyro: preserved white space stays in the composition (`white-space: pre`: `1. ` is as
+        // wide as three characters, as in Blink; WPT css-pseudo `marker-text-combine-upright-ref`).
+        let preserved = style.get_inherited_text().white_space_collapse
+            != style::computed_values::white_space_collapse::T::Collapse;
+        set_box_text(doc, root, box_id, if preserved { content.as_str() } else { content.trim() });
         {
             let mut children = doc.nodes[root].layout_children.borrow_mut();
             let children = children.get_or_insert_with(Default::default);

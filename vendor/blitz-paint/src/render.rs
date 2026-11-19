@@ -5233,6 +5233,7 @@ impl ElementCx<'_, '_> {
         let line_height = marker_height;
         let x = local.x0 + (local.width() - width * squeeze) / 2.0;
         let y = local.y0 + (local.height() - line_height) / 2.0 - f64::from(marker_metrics.block_min_coord);
+        if std::env::var_os("PYRO_DBG_CM").is_some() { eprintln!("cmarker local={local:?} x={x} y={y} line_block={}..{} base={} mh={marker_height} masc={marker_ascent} em={em} scale={scale}", metrics.block_min_coord, metrics.block_max_coord, metrics.baseline); }
         let transform = self.transform * Affine::translate((x, y)) * Affine::scale_non_uniform(squeeze, 1.0);
         let mut draw_text_context = self.context.draw_text_context.borrow_mut();
         crate::text::stroke_text(
