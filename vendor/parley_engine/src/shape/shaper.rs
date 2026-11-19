@@ -582,7 +582,9 @@ fn shape_segment(
             // pyro: a no-break space is shaped as a space, as Blink normalizes it before shaping:
             // it kerns as the space does (macOS Times kerns space-T, not no-break-space-T).
             let ch = match ch {
-                '\t' | '\u{a0}' => ' ',
+                // pyro: and so are the line and paragraph separators, which CSS displays as a
+                // space (WPT css-fonts `separators`): in the space's font, not a fallback's.
+                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
                 '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
                 ch => ch,
             };

@@ -283,14 +283,10 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -128,10 +225,125 @@
-             strikethrough_size,
-             x_height: metrics.x_height,
-             cap_height: metrics.cap_height,
-+        }
-+    }
-+}
-+
+@@ -132,6 +229,121 @@
+     }
+ }
+ 
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -382,10 +378,10 @@
 +            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
 +                .with_face_metrics(font.synthesis.face_metrics(), font_size),
 +            hyphen,
-         }
-     }
- }
- 
++        }
++    }
++}
++
 +/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
 +#[derive(Clone, Debug, PartialEq)]
 +struct RunMetricsEntry {
@@ -427,13 +423,10 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -215,9 +431,252 @@
+@@ -218,6 +434,249 @@
          }
-         for shaped_cluster in self.shaped_clusters.iter_mut() {
-             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
-+        }
-+    }
-+
+     }
+ 
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
@@ -489,7 +482,7 @@
 +        let cluster = self.shaped_clusters.get_mut(index as usize)?;
 +        if cluster.glyph_len() != 1 || (cluster.has_inline_glyph() && dx != 0.0) {
 +            return None;
-         }
++        }
 +        let advance = cluster.advance;
 +        cluster.advance += d_advance;
 +        if cluster.has_inline_glyph() {
@@ -500,8 +493,8 @@
 +        glyph.x += dx;
 +        glyph.advance += d_advance;
 +        Some((x, advance))
-     }
- 
++    }
++
 +    /// pyro: sets the justification opportunities of the character at `index` (see
 +    /// [`CharacterFlags::with_justification`](super::CharacterFlags)).
 +    #[inline]
@@ -826,7 +819,17 @@
              },
          }];
          shaper.shape_text(
-@@ -805,18 +1311,32 @@
+@@ -765,7 +1271,8 @@
+ 
+     #[test]
+     fn newlines_removed() {
+-        for newline in ["\n", "\r", "\u{2028}", "\u{2029}"] {
++        // pyro: not U+2028 or U+2029, which are shown as a space (`Whitespace::from_char`).
++        for newline in ["\n", "\r"] {
+             let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
+ 
+             let index = shaped
+@@ -805,18 +1312,32 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -1246,7 +1249,7 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,6 +573,19 @@
+@@ -340,6 +573,21 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -1259,14 +1262,16 @@
 +            // pyro: a no-break space is shaped as a space, as Blink normalizes it before shaping:
 +            // it kerns as the space does (macOS Times kerns space-T, not no-break-space-T).
 +            let ch = match ch {
-+                '\t' | '\u{a0}' => ' ',
++                // pyro: and so are the line and paragraph separators, which CSS displays as a
++                // space (WPT css-fonts `separators`): in the space's font, not a fallback's.
++                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
 +                '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
 +                ch => ch,
 +            };
              buffer.add(ch, i as u32);
          }
  
-@@ -356,11 +602,11 @@
+@@ -356,11 +604,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1281,7 +1286,7 @@
              text,
              range,
              segment,
-@@ -370,15 +616,24 @@
+@@ -370,15 +618,24 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -1308,7 +1313,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -395,6 +650,8 @@
+@@ -395,6 +652,8 @@
      // The end of the previous grapheme.
      let mut byte_end = text_range.start;
      let mut char_end = char_range.start;
@@ -1317,7 +1322,7 @@
  
      for grapheme_length in grapheme_lengths {
          let (byte_start, char_start) = (byte_end, char_end);
-@@ -409,26 +666,152 @@
+@@ -409,26 +668,152 @@
              .select_font(segment, options, char_cluster)
              .ok_or(())?;
  
@@ -1358,8 +1363,8 @@
      }
  
      Ok(())
-+}
-+
+ }
+ 
 +/// pyro: whether Blink shapes text in `font` word by word (`Font::CanShapeWordByWord`): its
 +/// OpenType lookups never take the space glyph. Only fonts without `GSUB` and `GPOS` are
 +/// recognized (their lookups take nothing); `fonts` keeps the answers of the segment.
@@ -1378,8 +1383,8 @@
 +    });
 +    fonts.push((id, index, answer));
 +    answer
- }
- 
++}
++
 +/// pyro: the trimming data of `font` in `language` (`han_font_data`), from `fonts` or probed
 +/// and kept there.
 +fn han_data<'a>(
@@ -2804,25 +2809,41 @@
  pub(crate) use data::ShapedClusterFlags;
 --- a/src/shape/cluster.rs
 +++ b/src/shape/cluster.rs
-@@ -434,8 +434,11 @@
+@@ -132,8 +132,11 @@
+                 Self::OtherSpaceSeparator
+             }
+             '\t' => Self::Tab,
+-            // Newline, carriage return, line separator, paragraph separator.
+-            '\n' | '\r' | '\u{2028}' | '\u{2029}' => Self::Newline,
++            // Newline, carriage return.
++            '\n' | '\r' => Self::Newline,
++            // pyro: the line and paragraph separators are displayed as a space, without a forced
++            // break, as in Chromium (WPT css-fonts `separators`).
++            '\u{2028}' | '\u{2029}' => Self::Space,
+             // Vertical tab, form feed, next line. These are `White_Space` that CSS says to render
+             // as control characters.
+             '\u{000b}' | '\u{000c}' | '\u{0085}' => Self::ControlWhitespace,
+@@ -434,8 +437,12 @@
  
              // Variation selectors don't impact font coverage, and are default ignorable.
              // TODO: Is there a default ignorable flag we should be using instead?
+-            let contributes_to_shaping =
+-                info.contributes_to_shaping() && !is_emoji_presentation_selector;
 +            // pyro: a tab is shaped as a space (`shaper.rs`), so a font is chosen for it as for
 +            // a space: one without a space would draw its missing glyph (WPT css-text
 +            // `tab-size-integer-005`).
-             let contributes_to_shaping =
--                info.contributes_to_shaping() && !is_emoji_presentation_selector;
-+                (info.contributes_to_shaping() || ch == '\t') && !is_emoji_presentation_selector;
++            // pyro: and the line and paragraph separators, shaped as a space (`shaper.rs`).
++            let contributes_to_shaping = (info.contributes_to_shaping() || matches!(ch, '\t' | '\u{2028}' | '\u{2029}'))
++                && !is_emoji_presentation_selector;
              if contributes_to_shaping {
                  map_len = map_len.saturating_add(1);
              }
-@@ -535,7 +538,7 @@
+@@ -535,7 +542,7 @@
      fn coverage(&self, covers: &impl Fn(char) -> bool) -> Coverage {
          let mut mapped: u8 = 0;
          for c in self.chars.iter() {
 -            if c.contributes_to_shaping && covers(c.ch) {
-+            if c.contributes_to_shaping && covers(if c.ch == '\t' { ' ' } else { c.ch }) {
++            if c.contributes_to_shaping && covers(if matches!(c.ch, '\t' | '\u{2028}' | '\u{2029}') { ' ' } else { c.ch }) {
                  mapped = mapped.saturating_add(1);
              }
          }

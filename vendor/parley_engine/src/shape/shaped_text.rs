@@ -1271,7 +1271,8 @@ mod tests {
 
     #[test]
     fn newlines_removed() {
-        for newline in ["\n", "\r", "\u{2028}", "\u{2029}"] {
+        // pyro: not U+2028 or U+2029, which are shown as a space (`Whitespace::from_char`).
+        for newline in ["\n", "\r"] {
             let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
 
             let index = shaped
