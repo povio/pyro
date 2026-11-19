@@ -812,7 +812,15 @@ pub(crate) fn analyze_text(
                 // `line-break: anywhere`: an opportunity around every grapheme.
                 prev_char.is_some() && is_grapheme_start
             } else {
-                is_icu_line || after_break_space
+                // pyro: no break after an exclamation mark before an ASCII letter or digit
+                // (`!seven`), as in Chromium's line break table (`kAsciiLineBreakTable`), where
+                // UAX #14 has one (`EX ÷ AL`); and always one after a space, as in Chromium
+                // (`LazyLineBreakIterator::NextBreakablePosition`), where UAX #14 LB13 has none
+                // before an exclamation mark (`six, !seven`); not before a closing bracket, which
+                // LB13 keeps on the line (`Yes )`).
+                (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
+                    || (prev_char == Some(' ') && !matches!(ch, ' ' | ')' | ']' | '}'))
+                    || after_break_space
             };
             // Consumers can override soft wrap opportunities, except around a mandatory
             // break.
