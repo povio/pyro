@@ -141,37 +141,44 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    /// One column rule in `rect` (device px, the element's space).
+    /// One column rule in `rect` (device px, the element's space), painted as Chromium paints
+    /// it: as the left side of a box (`BoxBorderPainter::DrawLineForBoxSide`), its style the one
+    /// a collapsed table border would have (`inset` as `ridge`, `outset` as `groove`).
     fn draw_rule(&self, scene: &mut impl PaintScene, rect: Rect, style: BorderStyle, color: peniko::Color) {
+        use super::border::{grooved_edge_colors, straight_side_marks};
+        use crate::kurbo_css::Edge;
         let t = rect.width();
+        let style = match style {
+            BorderStyle::Inset => BorderStyle::Ridge,
+            BorderStyle::Outset => BorderStyle::Groove,
+            style => style,
+        };
+        let fill = |scene: &mut _, color, r: &Rect| PaintScene::fill(scene, Fill::NonZero, self.transform, color, None, r);
         match style {
             BorderStyle::Double if t >= 3.0 => {
-                let line = (t / 3.0).round().max(1.0);
-                for r in [
-                    Rect::new(rect.x0, rect.y0, rect.x0 + line, rect.y1),
-                    Rect::new(rect.x1 - line, rect.y0, rect.x1, rect.y1),
-                ] {
-                    scene.fill(Fill::NonZero, self.transform, color, None, &r);
-                }
+                fill(scene, color, &Rect::new(rect.x0, rect.y0, rect.x0 + t / 3.0, rect.y1));
+                fill(scene, color, &Rect::new(rect.x1 - t / 3.0, rect.y0, rect.x1, rect.y1));
+            }
+            BorderStyle::Groove | BorderStyle::Ridge if t >= 2.0 => {
+                let (outer, inner) = grooved_edge_colors(color, Edge::Left, style == BorderStyle::Ridge);
+                let half = rect.x0 + t / 2.0;
+                fill(scene, outer, &Rect::new(rect.x0, rect.y0, half, rect.y1));
+                fill(scene, inner, &Rect::new(half, rect.y0, rect.x1, rect.y1));
             }
             BorderStyle::Dashed | BorderStyle::Dotted => {
-                // Dashes three times as long as the rule is wide (dots as long), gaps alike, the
-                // pattern stretched to end on a dash.
-                let dash = if style == BorderStyle::Dashed { 3.0 * t } else { t };
-                let length = rect.height();
-                let count = ((length + dash) / (2.0 * dash)).floor().max(1.0);
-                let pitch = if count > 1.0 { (length - dash) / (count - 1.0) } else { 0.0 };
-                for i in 0..count as usize {
-                    let y = rect.y0 + i as f64 * pitch;
-                    let piece = Rect::new(rect.x0, y, rect.x1, (y + dash).min(rect.y1));
-                    if style == BorderStyle::Dotted {
-                        scene.fill(Fill::NonZero, self.transform, color, None, &kurbo::Ellipse::from_rect(piece));
-                    } else {
-                        scene.fill(Fill::NonZero, self.transform, color, None, &piece);
-                    }
-                }
+                let mut marks = kurbo::BezPath::new();
+                straight_side_marks(
+                    &mut marks,
+                    &mut Vec::new(),
+                    style,
+                    Point::new(rect.x0, rect.y0),
+                    (Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0)),
+                    (rect.height(), t),
+                    self.scale,
+                );
+                scene.fill(Fill::NonZero, self.transform, color, None, &marks);
             }
-            _ => scene.fill(Fill::NonZero, self.transform, color, None, &rect),
+            _ => fill(scene, color, &rect),
         }
     }
 }

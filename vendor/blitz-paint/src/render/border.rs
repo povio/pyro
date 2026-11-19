@@ -91,7 +91,7 @@ fn beveled_edge_color(color: Color, edge: Edge, inset: bool) -> Color {
 ///
 /// A `groove` looks carved into the page: its outer half is shaded like `inset`
 /// and its inner half like `outset`. `ridge` is the reverse (raised).
-fn grooved_edge_colors(color: Color, edge: Edge, ridge: bool) -> (Color, Color) {
+pub(super) fn grooved_edge_colors(color: Color, edge: Edge, ridge: bool) -> (Color, Color) {
     let outer = beveled_edge_color(color, edge, !ridge);
     let inner = beveled_edge_color(color, edge, ridge);
     (outer, inner)
@@ -187,7 +187,7 @@ fn dot_period(length: f64, width: f64, closed: bool) -> f64 {
 /// `dots` holds the round dots already in `path`: two sides alike each have a
 /// dot in the corner they share, and the same dot twice in one fill would come
 /// out bolder than the others (the coverage of its edge adds up).
-fn straight_side_marks(
+pub(super) fn straight_side_marks(
     path: &mut BezPath,
     dots: &mut Vec<(Point, f64)>,
     style: BorderStyle,
