@@ -150,9 +150,11 @@ impl LayoutPassState<'_> {
         let mut clamped = false;
         // The last block whose lines all stay, how many it has and the last one's bottom.
         let mut last_lines: Option<(NodeId, u32, f32)> = None;
-        // Blocks to visit (last first) with their top from the root's border box.
-        let mut stack: Vec<(NodeId, f32)> = vec![(root, 0.0)];
-        while let Some((id, top)) = stack.pop() {
+        // Blocks to visit (last first) with their top from the root's border box, and what the
+        // blocks around them (in the root) add below their content: bottom padding, border and
+        // margin, which must fit under a clamp line of `line-clamp: auto` too.
+        let mut stack: Vec<(NodeId, f32, f32)> = vec![(root, 0.0, 0.0)];
+        while let Some((id, top, below)) = stack.pop() {
             if self.nodes[id].flags.is_inline_root() {
                 let node = &mut self.nodes[id];
                 let Some(text_layout) = node.data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
@@ -178,7 +180,7 @@ impl LayoutPassState<'_> {
                     // that ends past the limit.
                     let mut kept = (max_lines - count).min(lines);
                     if let Some(limit) = limit {
-                        kept = (0..kept).find(|&index| line_bottom(index) > limit + 0.01).unwrap_or(kept);
+                        kept = (0..kept).find(|&index| line_bottom(index) + below > limit + 0.01).unwrap_or(kept);
                     }
                     if kept == 0 {
                         // The clamp point is before this block's first line: after the last line
@@ -230,7 +232,9 @@ impl LayoutPassState<'_> {
                                 && matches!(box_style.overflow_y, Overflow::Visible | Overflow::Clip)
                         });
                 if in_context && (child.flags.is_inline_root() || child.layout_children.borrow().is_some()) {
-                    stack.push((child_id, top + child.unrounded_layout().location.y));
+                    let layout = child.unrounded_layout();
+                    let below = below + layout.padding.bottom + layout.border.bottom + layout.margin.bottom;
+                    stack.push((child_id, top + layout.location.y, below));
                 }
             }
             stack[first..].reverse();
