@@ -234,11 +234,13 @@ fn nested_column_height_rows_follow_the_outer_columns() {
 #[test]
 fn parts_between_spanners_share_the_fragment_cap() {
     let sections: String = (0..300)
-        .map(|i| format!("<div id=s{i} style='height:2000px'></div><div style='column-span:all;height:1px'></div>"))
+        .map(|_| "<div style='height:2000px'></div><div style='column-span:all;height:1px'></div>")
         .collect();
     let p = page(&format!(
-        "<!doctype html><body style='margin:0'><div style='columns:2;column-gap:0;height:10px;width:200px'>{sections}</div>"
+        "<!doctype html><body style='margin:0'><div style='columns:2;column-gap:0;height:10px;width:200px'>\
+         <div id=all>{sections}</div></div>"
     ));
-    let total: usize = (0..300).map(|i| p.layout.client_rects(&p.dom, p.id(&format!("s{i}"))).len()).sum();
-    assert!(total <= 10_000 + 300, "{total} pieces");
+    // (One piece of the box around everything per fragment it is in: the spanners' rows too.)
+    let total = p.layout.client_rects(&p.dom, p.id("all")).len();
+    assert!(total > 1000 && total <= 10_000, "{total} fragments");
 }

@@ -1043,12 +1043,33 @@ impl LayoutPassState<'_> {
             if nested_ctx.is_some() || nested_rows_ctx.is_some() {
                 break;
             }
+            // pyro: once the cap is reached (a part and a spanner need room), the rest of the
+            // strip, spanners and all, is one last fragment (`MAX_FRAGMENTS`).
+            if fragments.len() + 2 >= fragment_cap {
+                let x = column_x(0);
+                let start = snap(run_start);
+                let rest = (breaks.end - run_start).max(0.0);
+                fragments.push(ColumnFragment {
+                    start,
+                    end: f32::INFINITY,
+                    x,
+                    width: column_width,
+                    top: row_top,
+                    height: rest,
+                    offset: Point { x: x - pb.left, y: snap(row_top - start) },
+                    spanner: false,
+                    extended: 0.0,
+                });
+                row_top += rest;
+                break;
+            }
             let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
             if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
                 // (The part `run_start..run_end` of the strip: no copy of the breaks per part.)
                 let run = Part { breaks: &breaks, start: run_start, end: run_end };
                 // (What is left of the container's fragment cap: one cap for all its parts.)
-                let left = fragment_cap.saturating_sub(fragments.len()).max(1);
+                // (Two kept: for the spanner after it, and for a last fragment after that.)
+                let left = fragment_cap.saturating_sub(fragments.len() + 2).max(1);
                 // pyro: rows of an explicit `column-height` (`slotted`, below).
                 if let Some(rows) = slotted {
                     let (top, available) = rows.content_start(row_top);
