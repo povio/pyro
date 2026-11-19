@@ -26088,7 +26088,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  // Deliberately not `Clone`: `style` may hold raw pointers into `calc_values`.
-@@ -44,470 +528,2663 @@
+@@ -44,470 +528,2687 @@
      /// Absolutely positioned descendants of the table's row groups and rows (and of the
      /// table itself). They take no part in the table grid.
      pub oof_children: Vec<(NodeId, taffy::Position)>,
@@ -26723,10 +26723,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    }
 +}
 +
-+/// The grid area (rows, columns) each cell ends up in: the first free columns of its row,
-+/// which is how the grid's dense auto placement places it.
++/// The grid area (rows, columns) each cell ends up in: the column the HTML table model gives it
++/// (`ColumnCursor`, `TableCell::column`: the first slot of its row no cell covers), which is where
++/// `place_cells` puts it, overlapping or not.
 +fn cell_areas(cells: &[TableCell], nrows: usize, ncols: usize) -> Vec<(usize, usize, usize, usize)> {
-+    let mut taken = vec![false; nrows * ncols];
 +    cells
 +        .iter()
 +        .map(|cell| {
@@ -26736,15 +26736,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            };
 +            let r0 = cell.row as usize;
 +            let r1 = (r0 + rowspan).min(nrows);
-+            let colspan = cell.colspan as usize;
-+            let free = |c: usize| (c..(c + colspan).min(ncols)).all(|c| !taken[r0 * ncols + c]);
-+            let c0 = if r0 < nrows { (0..ncols).find(|&c| free(c)).unwrap_or(ncols) } else { ncols };
-+            let c1 = (c0 + colspan).min(ncols);
-+            for r in r0..r1 {
-+                for c in c0..c1 {
-+                    taken[r * ncols + c] = true;
-+                }
-+            }
++            let c0 = if r0 < nrows { (cell.column as usize).min(ncols) } else { ncols };
++            let c1 = (c0 + cell.colspan as usize).min(ncols);
 +            (r0, c0, r1, c1)
 +        })
 +        .collect()
@@ -26938,7 +26931,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        let (Line(start), Span(rowspan)) = (&cell.style.grid_row.start, &cell.style.grid_row.end) else {
 +            return None;
 +        };
-+        let (Auto, Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
++        let (Auto | Line(_), Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
 +            return None;
 +        };
 +        let (start, rowspan, colspan) = (start.as_i16(), *rowspan, *colspan);
@@ -26947,7 +26940,17 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        }
 +        let r0 = (start - 1) as u16;
 +        let r1 = r0.checked_add(rowspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
-+        let columns = occupied.place(r0..r1, colspan)?;
++        // pyro: the HTML table model places a cell in the first slot of its row that no cell covers
++        // (`ColumnCursor`, `TableCell::column`), whatever its span then overlaps (a table model error
++        // browsers lay out overlapping; WPT css-tables `tentative/border-collapse-spanning-cells-004`).
++        // Without overlaps that is where the grid's `row dense` placement puts it.
++        let columns = if r0 == cell.row {
++            let c1 = cell.column.checked_add(colspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
++            occupied.occupy(r0..r1, cell.column..c1);
++            cell.column..c1
++        } else {
++            occupied.place(r0..r1, colspan)?
++        };
 +        extent.width = extent.width.max(columns.end);
 +        extent.height = extent.height.max(r1);
 +        areas.push(taffy::Size {
@@ -26966,7 +26969,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    let (Line(start), Span(1)) = (&cell.style.grid_row.start, &cell.style.grid_row.end) else {
 +        return None;
 +    };
-+    let (Auto, Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
++    let (Auto | Line(_), Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
 +        return None;
 +    };
 +    if start.as_i16() != cell.row as i16 + 1 || *colspan == 0 {
@@ -26987,6 +26990,25 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +}
 +
 +impl OccupiedColumns {
++    /// pyro: occupies `columns` in `rows`, whatever they overlap (`place_cells`).
++    fn occupy(&mut self, rows: Range<u16>, columns: Range<u16>) {
++        if self.rows.len() < rows.end as usize {
++            self.rows.resize_with(rows.end as usize, Vec::new);
++        }
++        for row in &mut self.rows[rows.start as usize..rows.end as usize] {
++            row.push(columns.clone());
++            row.sort_by_key(|range| range.start);
++            let mut merged: Vec<Range<u16>> = Vec::with_capacity(row.len());
++            for range in row.drain(..) {
++                match merged.last_mut() {
++                    Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
++                    _ => merged.push(range),
++                }
++            }
++            *row = merged;
++        }
++    }
++
 +    /// Occupies, in `rows`, the first `colspan` columns from the first that are free in all of them, and
 +    /// returns them; `None` past [`PLACEMENT_LINE_LIMIT`].
 +    fn place(&mut self, rows: Range<u16>, colspan: u16) -> Option<Range<u16>> {
@@ -27105,8 +27127,10 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        // pyro: `start_row` counts a row down before the next row looks: the rows after this one
 +        // that the cell still occupies are `rowspan - 1`, so `rowspan` before that count (a cell
 +        // after a two-row cell went into its column).
++        // pyro: a cell overlapping a slot a cell from an earlier row still covers (an HTML table
++        // model error) leaves that cell its rows (`place_cells`).
 +        for remaining in &mut self.rowspans[self.col as usize..end as usize] {
-+            *remaining = rowspan;
++            *remaining = (*remaining).max(rowspan);
 +        }
 +        self.col = end;
 +        self.num_columns = self.num_columns.max(end);
@@ -27837,7 +27861,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    }
 +    !edges.is_empty() && edges.uniform() != Some(gap) || (edges.is_empty() && gap != (0.0, 0.0))
 +}
-+
+ 
+-    drop(stylo_styles);
 +/// The table's border: half of the widest collapsed border on each of its sides.
 +fn collapsed_table_border(edges: &CollapsedEdges) -> taffy::Rect<taffy::LengthPercentage> {
 +    let half_max = |it: &mut dyn Iterator<Item = f32>| it.fold(0.0f32, f32::max) / 2.0;
@@ -28139,8 +28164,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            matches!(&element.special_data, SpecialElementData::TableRoot(ctx) if ctx.incremental)
 +        })
 +}
- 
--    drop(stylo_styles);
++
 +/// pyro: brings the table's `TableContext` up to date when only some of its rows changed
 +/// (a cell's content or style, rows added to or removed from a row group): those rows are collected
 +/// again and the collapsed borders around them resolved again; the other rows and cells stay as they
@@ -28207,14 +28231,14 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        let Some(display) = node.display_style() else {
 +            if own {
 +                return None;
-             }
++            }
 +            continue;
 +        };
 +        let absolute = node.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned());
 +        if display.outside() == DisplayOutside::None || absolute {
 +            if own {
 +                return None;
-+            }
+             }
 +            continue;
          }
 -    }
@@ -28823,14 +28847,14 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        taffy::CompactLength::PERCENT_TAG => style_helpers::percent(style.size.width.value()),
 +        // Browsers treat calc() widths on columns as auto
 +        _ => style_helpers::auto(),
-     };
++    };
 +    // A definite `min-width` on a column acts as a floor on its width
 +    let column = match style.min_size.width.into_raw().tag() {
 +        taffy::CompactLength::LENGTH_TAG if column.max.is_auto() => {
 +            style_helpers::minmax(style_helpers::length(style.min_size.width.into_raw().value()), style_helpers::auto())
 +        }
 +        _ => column,
-+    };
+     };
 +    for _ in 0..span {
 +        columns.push(TableColumn { node_id: node.id, group: None });
 +        column_sizes.push(column);
@@ -28886,7 +28910,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            node.insert_damage(super::damage::ALL_DAMAGE);
 +            node.clear_layout_cache();
 +        }
-     }
++    }
 +    // The children the table ignored (captions, columns, empty row groups): no pass built their
 +    // subtrees (`collect_table_cells` drops their damage), which are boxes now.
 +    let children = doc.nodes[node_id].children.clone();
@@ -28894,7 +28918,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        if doc.nodes[child].is_element() && !row_parts.contains(&child) {
 +            enter_layout_tree(doc, child);
 +        }
-+    }
+     }
 +    release_former_cells(doc, node_id, &ctx.cells, &[]);
 +}
  
@@ -29111,7 +29135,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -526,10 +3203,12 @@
+@@ -526,10 +3227,12 @@
      columns: &mut Vec<TrackSizingFunction>,
      first_cell_border: &mut Option<ServoArc<Border>>,
      percent_columns: &mut Vec<(u16, f32, f32)>,
@@ -29125,7 +29149,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          return;
      }
  
-@@ -548,6 +3227,8 @@
+@@ -548,6 +3251,8 @@
      // block rather than as part of the table grid.
      let position = node.primary_styles().unwrap().clone_position();
      if position.is_absolutely_positioned() {
@@ -29134,7 +29158,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          oof_children.push((node_id, stylo_taffy::convert::position(position)));
          return;
      }
-@@ -557,11 +3238,27 @@
+@@ -557,11 +3262,27 @@
          | DisplayInside::TableHeaderGroup
          | DisplayInside::TableFooterGroup
          | DisplayInside::Contents => {
@@ -29166,7 +29190,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  collect_table_cells(
                      doc,
                      child_id,
-@@ -576,10 +3273,14 @@
+@@ -576,10 +3297,14 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -29182,7 +29206,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  for row in &mut rows[first_row..] {
                      row.group.get_or_insert(node_id);
                  }
-@@ -590,19 +3291,32 @@
+@@ -590,19 +3315,32 @@
              *row += 1;
              cursor.start_row();
  
@@ -29220,7 +29244,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  collect_table_cells(
                      doc,
                      child_id,
-@@ -617,24 +3331,71 @@
+@@ -617,24 +3355,71 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -29299,7 +29323,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  
              // In the collapsed borders model the borders are laid out as gutters between
              // the cells (see the table's `gap`) rather than as part of the cells
-@@ -653,34 +3414,35 @@
+@@ -653,34 +3438,35 @@
                  style.min_size.width = style_helpers::length(0.0);
              }
  
@@ -29355,7 +29379,33 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                              // Resolved in `build_table_context` once the column count is known
                              percent_columns.push((col, style.size.width.value(), extra));
                              style_helpers::percent(style.size.width.value())
-@@ -726,11 +3488,80 @@
+@@ -707,15 +3493,17 @@
+             // The margin properties do not apply to table-internal elements
+             style.margin = taffy::Rect::ZERO.map(style_helpers::length);
+ 
+-            // Let Taffy auto-place the column. Combined with
+-            // `grid_auto_flow: RowDense` set on the table root, each cell
+-            // scans from the first track in its row for a free position,
+-            // which makes cells automatically skip columns occupied by
+-            // rowspan cells from earlier rows.
+-            style.grid_column = taffy::Line {
+-                start: style_helpers::auto(),
+-                end: style_helpers::span(colspan),
++            // pyro: the column the HTML table model gives the cell (`ColumnCursor`: the first slot of
++            // its row that no cell covers), whatever its span then overlaps (WPT css-tables
++            // `tentative/border-collapse-spanning-cells-004`). The grid's `row dense` auto-placement
++            // moved such a cell past the cells it would overlap. (`colspan` 0, which is no span the
++            // table places, is left to it.)
++            let start = if colspan > 0 && col < PLACEMENT_LINE_LIMIT {
++                style_helpers::line(col as i16 + 1)
++            } else {
++                style_helpers::auto()
+             };
++            style.grid_column = taffy::Line { start, end: style_helpers::span(colspan) };
+             style.grid_row = taffy::Line {
+                 start: style_helpers::line(*row as i16),
+                 end: style_helpers::span(rowspan),
+@@ -726,11 +3514,80 @@
                  }
              }
  
@@ -29436,7 +29486,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  style,
              });
  
-@@ -740,7 +3571,9 @@
+@@ -740,7 +3597,9 @@
          | DisplayInside::FlowRoot
          | DisplayInside::Flex
          | DisplayInside::Grid
@@ -29447,7 +29497,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
              // Probably a table caption: ignore
              // println!(
-@@ -801,7 +3634,7 @@
+@@ -801,7 +3660,7 @@
      type CustomIdent = Atom;
  
      fn get_core_container_style(&self, _node_id: taffy::NodeId) -> &taffy::Style<Atom> {
@@ -29456,7 +29506,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -809,7 +3642,9 @@
+@@ -809,7 +3668,9 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
@@ -29467,7 +29517,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          self.doc.set_unrounded_layout(node_id, layout)
      }
  
-@@ -818,9 +3653,119 @@
+@@ -818,9 +3679,119 @@
          node_id: taffy::NodeId,
          inputs: taffy::tree::LayoutInput,
      ) -> taffy::LayoutOutput {
@@ -29589,7 +29639,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -843,6 +3788,117 @@
+@@ -843,6 +3814,117 @@
          &self.ctx.cells[usize::from(child_node_id)].style
      }
  
@@ -29707,7 +29757,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn set_detailed_grid_info(
          &mut self,
          _node_id: taffy::NodeId,
-@@ -851,3 +3907,496 @@
+@@ -851,3 +3933,496 @@
          *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
      }
  }

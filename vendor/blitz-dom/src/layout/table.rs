@@ -1041,10 +1041,10 @@ fn offer_edge(
     }
 }
 
-/// The grid area (rows, columns) each cell ends up in: the first free columns of its row,
-/// which is how the grid's dense auto placement places it.
+/// The grid area (rows, columns) each cell ends up in: the column the HTML table model gives it
+/// (`ColumnCursor`, `TableCell::column`: the first slot of its row no cell covers), which is where
+/// `place_cells` puts it, overlapping or not.
 fn cell_areas(cells: &[TableCell], nrows: usize, ncols: usize) -> Vec<(usize, usize, usize, usize)> {
-    let mut taken = vec![false; nrows * ncols];
     cells
         .iter()
         .map(|cell| {
@@ -1054,15 +1054,8 @@ fn cell_areas(cells: &[TableCell], nrows: usize, ncols: usize) -> Vec<(usize, us
             };
             let r0 = cell.row as usize;
             let r1 = (r0 + rowspan).min(nrows);
-            let colspan = cell.colspan as usize;
-            let free = |c: usize| (c..(c + colspan).min(ncols)).all(|c| !taken[r0 * ncols + c]);
-            let c0 = if r0 < nrows { (0..ncols).find(|&c| free(c)).unwrap_or(ncols) } else { ncols };
-            let c1 = (c0 + colspan).min(ncols);
-            for r in r0..r1 {
-                for c in c0..c1 {
-                    taken[r * ncols + c] = true;
-                }
-            }
+            let c0 = if r0 < nrows { (cell.column as usize).min(ncols) } else { ncols };
+            let c1 = (c0 + cell.colspan as usize).min(ncols);
             (r0, c0, r1, c1)
         })
         .collect()
@@ -1256,7 +1249,7 @@ fn place_cells(cells: &[TableCell]) -> Option<CellPlacement> {
         let (Line(start), Span(rowspan)) = (&cell.style.grid_row.start, &cell.style.grid_row.end) else {
             return None;
         };
-        let (Auto, Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
+        let (Auto | Line(_), Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
             return None;
         };
         let (start, rowspan, colspan) = (start.as_i16(), *rowspan, *colspan);
@@ -1265,7 +1258,17 @@ fn place_cells(cells: &[TableCell]) -> Option<CellPlacement> {
         }
         let r0 = (start - 1) as u16;
         let r1 = r0.checked_add(rowspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
-        let columns = occupied.place(r0..r1, colspan)?;
+        // pyro: the HTML table model places a cell in the first slot of its row that no cell covers
+        // (`ColumnCursor`, `TableCell::column`), whatever its span then overlaps (a table model error
+        // browsers lay out overlapping; WPT css-tables `tentative/border-collapse-spanning-cells-004`).
+        // Without overlaps that is where the grid's `row dense` placement puts it.
+        let columns = if r0 == cell.row {
+            let c1 = cell.column.checked_add(colspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
+            occupied.occupy(r0..r1, cell.column..c1);
+            cell.column..c1
+        } else {
+            occupied.place(r0..r1, colspan)?
+        };
         extent.width = extent.width.max(columns.end);
         extent.height = extent.height.max(r1);
         areas.push(taffy::Size {
@@ -1284,7 +1287,7 @@ fn unspanned_cell_area(cell: &TableCell) -> Option<taffy::Size<taffy::Line<u16>>
     let (Line(start), Span(1)) = (&cell.style.grid_row.start, &cell.style.grid_row.end) else {
         return None;
     };
-    let (Auto, Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
+    let (Auto | Line(_), Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
         return None;
     };
     if start.as_i16() != cell.row as i16 + 1 || *colspan == 0 {
@@ -1305,6 +1308,25 @@ struct OccupiedColumns {
 }
 
 impl OccupiedColumns {
+    /// pyro: occupies `columns` in `rows`, whatever they overlap (`place_cells`).
+    fn occupy(&mut self, rows: Range<u16>, columns: Range<u16>) {
+        if self.rows.len() < rows.end as usize {
+            self.rows.resize_with(rows.end as usize, Vec::new);
+        }
+        for row in &mut self.rows[rows.start as usize..rows.end as usize] {
+            row.push(columns.clone());
+            row.sort_by_key(|range| range.start);
+            let mut merged: Vec<Range<u16>> = Vec::with_capacity(row.len());
+            for range in row.drain(..) {
+                match merged.last_mut() {
+                    Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+                    _ => merged.push(range),
+                }
+            }
+            *row = merged;
+        }
+    }
+
     /// Occupies, in `rows`, the first `colspan` columns from the first that are free in all of them, and
     /// returns them; `None` past [`PLACEMENT_LINE_LIMIT`].
     fn place(&mut self, rows: Range<u16>, colspan: u16) -> Option<Range<u16>> {
@@ -1423,8 +1445,10 @@ impl ColumnCursor {
         // pyro: `start_row` counts a row down before the next row looks: the rows after this one
         // that the cell still occupies are `rowspan - 1`, so `rowspan` before that count (a cell
         // after a two-row cell went into its column).
+        // pyro: a cell overlapping a slot a cell from an earlier row still covers (an HTML table
+        // model error) leaves that cell its rows (`place_cells`).
         for remaining in &mut self.rowspans[self.col as usize..end as usize] {
-            *remaining = rowspan;
+            *remaining = (*remaining).max(rowspan);
         }
         self.col = end;
         self.num_columns = self.num_columns.max(end);
@@ -3469,15 +3493,17 @@ fn collect_table_cells(
             // The margin properties do not apply to table-internal elements
             style.margin = taffy::Rect::ZERO.map(style_helpers::length);
 
-            // Let Taffy auto-place the column. Combined with
-            // `grid_auto_flow: RowDense` set on the table root, each cell
-            // scans from the first track in its row for a free position,
-            // which makes cells automatically skip columns occupied by
-            // rowspan cells from earlier rows.
-            style.grid_column = taffy::Line {
-                start: style_helpers::auto(),
-                end: style_helpers::span(colspan),
+            // pyro: the column the HTML table model gives the cell (`ColumnCursor`: the first slot of
+            // its row that no cell covers), whatever its span then overlaps (WPT css-tables
+            // `tentative/border-collapse-spanning-cells-004`). The grid's `row dense` auto-placement
+            // moved such a cell past the cells it would overlap. (`colspan` 0, which is no span the
+            // table places, is left to it.)
+            let start = if colspan > 0 && col < PLACEMENT_LINE_LIMIT {
+                style_helpers::line(col as i16 + 1)
+            } else {
+                style_helpers::auto()
             };
+            style.grid_column = taffy::Line { start, end: style_helpers::span(colspan) };
             style.grid_row = taffy::Line {
                 start: style_helpers::line(*row as i16),
                 end: style_helpers::span(rowspan),
