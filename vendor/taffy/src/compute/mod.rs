@@ -344,9 +344,25 @@ fn compute_in_flow_root_layout(
     // The root's margin box is placed at the origin of the initial containing block
     // pyro: a root floated right is placed against the right edge (`root_float_is_right`)
     let on_right = style.root_float_is_right().unwrap_or(is_rtl);
+    // pyro: `auto` horizontal margins of an in-flow root narrower than the initial containing
+    // block take the space left (CSS 2.1 § 10.3.3): a root table with `margin: 0 auto` is centred
+    // (WPT CSS2 `box-display/root-box-002`). A floated root's are zero.
+    let auto_margins = {
+        let raw = style.margin();
+        (raw.left.is_auto(), raw.right.is_auto())
+    };
+    let free = available_space
+        .width
+        .into_option()
+        .filter(|_| style.root_float_is_right().is_none())
+        .map(|available| available - output.size.width - margin.left - margin.right)
+        .filter(|free| *free > 0.0);
     let mut location = Point {
-        x: match (on_right, available_space.width.into_option()) {
-            (true, Some(available_width)) => available_width - output.size.width - margin.right,
+        x: match (free, auto_margins, on_right, available_space.width.into_option()) {
+            (Some(free), (true, true), _, _) => margin.left + free / 2.0,
+            (Some(free), (true, false), _, _) => margin.left + free,
+            (Some(_), (false, true), _, _) => margin.left,
+            (_, _, true, Some(available_width)) => available_width - output.size.width - margin.right,
             _ => margin.left,
         },
         y: margin.top,
