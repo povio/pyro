@@ -284,7 +284,10 @@
   const endTime = t => Math.max(t.delay + activeDuration(t) + t.endDelay, 0);
 
   // The effect's computed timing at `localTime` for playback `rate`.
-  function computeTiming(t, localTime, rate) {
+  // (`bounds`: on a progress-based timeline, whether its scroll position is at the start and at the
+  // end of its range, where the active interval's boundary on that side is inclusive: Web
+  // Animations 2, "at progress timeline boundary".)
+  function computeTiming(t, localTime, rate, bounds) {
     const active = activeDuration(t);
     const end = endTime(t);
     const fill = t.fill === 'auto' ? 'none' : t.fill;
@@ -293,8 +296,10 @@
     const backwards = rate < 0;
     const beforeActive = Math.max(Math.min(t.delay, end), 0);
     const activeAfter = Math.max(Math.min(t.delay + active, end), 0);
-    if (localTime < beforeActive || (backwards && localTime === beforeActive)) out.phase = 'before';
-    else if (localTime > activeAfter || (!backwards && localTime === activeAfter)) out.phase = 'after';
+    const [atStart, atEnd] = bounds || [false, false];
+    const at = (a, b) => (atStart || atEnd ? Math.abs(a - b) < 1e-9 : a === b);
+    if (localTime < beforeActive || (backwards && at(localTime, beforeActive) && !atStart)) out.phase = 'before';
+    else if (localTime > activeAfter || (!backwards && at(localTime, activeAfter) && !atEnd)) out.phase = 'after';
     else out.phase = 'active';
     let activeTime = null;
     if (out.phase === 'before') {
@@ -845,7 +850,13 @@
     const anim = effect.animation;
     const localTime = anim ? currentTimeOf(anim) : null;
     const rate = anim ? anim.rate : 1;
-    const c = computeTiming(timingOn(effect), localTime, rate);
+    let bounds = null;
+    if (anim && progressBased(anim)) {
+      const st = timelines.get(anim.timeline);
+      const state = stateOf(st);
+      if (state) bounds = [state[0] <= 0, st.subject === null && state[0] >= state[2]];
+    }
+    const c = computeTiming(timingOn(effect), localTime, rate, bounds);
     c.localTime = localTime;
     return c;
   }

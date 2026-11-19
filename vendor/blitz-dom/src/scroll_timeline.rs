@@ -45,7 +45,10 @@ struct Scroll {
 /// The progress of the animation at `index` of `node`'s style (`style`: the node's, or its
 /// pseudo-element's) through its attachment range: 0 at the range's start, 1 at its end (outside
 /// it below 0 or above 1). `None` when its timeline is `auto` (time-based) or inactive.
-pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues, index: usize) -> Option<f64> {
+/// pyro: and whether the timeline is at its end (its scroll container scrolled to the end of its
+/// range), where an animation's active end is inclusive (Web Animations 2, the "at progress
+/// timeline boundary" of the after phase).
+pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues, index: usize) -> Option<(f64, bool)> {
     let ui = style.get_ui();
     let count = ui.animation_timeline_count();
     if count == 0 {
@@ -74,7 +77,7 @@ pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues,
     if !(end - start).is_finite() || end - start <= 0.0 {
         return None;
     }
-    Some((scroll.offset - start) / (end - start))
+    Some(((scroll.offset - start) / (end - start), scroll.offset >= scroll.max))
 }
 
 /// One inset of a script-made view progress timeline (`ViewTimeline` `inset`): `auto`, a length

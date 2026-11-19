@@ -561,7 +561,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,1365 @@
+@@ -0,0 +1,1372 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -706,7 +706,10 @@ new file mode 100644
 +impl TimelineDriven {
 +    /// The iteration progress at `p` through the attachment range, and the before flag; `None`
 +    /// outside the range without a fill that covers it.
-+    fn iteration_progress(&self, p: f64) -> Option<(f64, bool)> {
++    /// pyro: `at_end`: the timeline is at the end of its range, where the active end is inclusive;
++    /// elsewhere progress at the active end is past it, in the after phase (Web Animations 2; WPT
++    /// scroll-animations `view-timelines/range-boundary.tentative`).
++    fn iteration_progress(&self, p: f64, at_end: bool) -> Option<(f64, bool)> {
 +        let n = if self.iterations.is_finite() { self.iterations.max(0.0) } else { 1.0 };
 +        let backwards = self.fill & 2 != 0;
 +        let forwards = self.fill & 1 != 0;
@@ -726,7 +729,11 @@ new file mode 100644
 +                return None;
 +            }
 +            0.0
-+        } else if local > active || (active == 0.0 && local >= 0.0) || (active == 0.0 && p >= 0.0) {
++        } else if local > active
++            || (!at_end && active > 0.0 && (local - active).abs() < 1e-9)
++            || (active == 0.0 && local >= 0.0)
++            || (active == 0.0 && p >= 0.0)
++        {
 +            if !forwards {
 +                return None;
 +            }
@@ -1272,8 +1279,8 @@ new file mode 100644
 +                    None => Some(e.clone()),
 +                    Some(t) => {
 +                        let style = style_of(t.pseudo)?;
-+                        let p = crate::scroll_timeline::progress(self, id, &style, t.index)?;
-+                        let (progress, before) = t.iteration_progress(p)?;
++                        let (p, at_end) = crate::scroll_timeline::progress(self, id, &style, t.index)?;
++                        let (progress, before) = t.iteration_progress(p, at_end)?;
 +                        Some(Effect { progress, before, ..e.clone() })
 +                    }
 +                })
@@ -44596,7 +44603,7 @@ diff --git a/packages/blitz-dom/src/scroll_timeline.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/scroll_timeline.rs
-@@ -0,0 +1,468 @@
+@@ -0,0 +1,471 @@
 +//! pyro: scroll-driven animations (CSS Scroll-driven Animations 1). An animation whose
 +//! `animation-timeline` is `scroll()`, `view()` or a timeline name takes its progress from a scroll
 +//! position, not from time: this module resolves the timeline (its scroll container, axis and, for a
@@ -44644,7 +44651,10 @@ new file mode 100644
 +/// The progress of the animation at `index` of `node`'s style (`style`: the node's, or its
 +/// pseudo-element's) through its attachment range: 0 at the range's start, 1 at its end (outside
 +/// it below 0 or above 1). `None` when its timeline is `auto` (time-based) or inactive.
-+pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues, index: usize) -> Option<f64> {
++/// pyro: and whether the timeline is at its end (its scroll container scrolled to the end of its
++/// range), where an animation's active end is inclusive (Web Animations 2, the "at progress
++/// timeline boundary" of the after phase).
++pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues, index: usize) -> Option<(f64, bool)> {
 +    let ui = style.get_ui();
 +    let count = ui.animation_timeline_count();
 +    if count == 0 {
@@ -44673,7 +44683,7 @@ new file mode 100644
 +    if !(end - start).is_finite() || end - start <= 0.0 {
 +        return None;
 +    }
-+    Some((scroll.offset - start) / (end - start))
++    Some(((scroll.offset - start) / (end - start), scroll.offset >= scroll.max))
 +}
 +
 +/// One inset of a script-made view progress timeline (`ViewTimeline` `inset`): `auto`, a length

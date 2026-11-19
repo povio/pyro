@@ -142,7 +142,10 @@ pub struct TimelineDriven {
 impl TimelineDriven {
     /// The iteration progress at `p` through the attachment range, and the before flag; `None`
     /// outside the range without a fill that covers it.
-    fn iteration_progress(&self, p: f64) -> Option<(f64, bool)> {
+    /// pyro: `at_end`: the timeline is at the end of its range, where the active end is inclusive;
+    /// elsewhere progress at the active end is past it, in the after phase (Web Animations 2; WPT
+    /// scroll-animations `view-timelines/range-boundary.tentative`).
+    fn iteration_progress(&self, p: f64, at_end: bool) -> Option<(f64, bool)> {
         let n = if self.iterations.is_finite() { self.iterations.max(0.0) } else { 1.0 };
         let backwards = self.fill & 2 != 0;
         let forwards = self.fill & 1 != 0;
@@ -162,7 +165,11 @@ impl TimelineDriven {
                 return None;
             }
             0.0
-        } else if local > active || (active == 0.0 && local >= 0.0) || (active == 0.0 && p >= 0.0) {
+        } else if local > active
+            || (!at_end && active > 0.0 && (local - active).abs() < 1e-9)
+            || (active == 0.0 && local >= 0.0)
+            || (active == 0.0 && p >= 0.0)
+        {
             if !forwards {
                 return None;
             }
@@ -708,8 +715,8 @@ impl BaseDocument {
                     None => Some(e.clone()),
                     Some(t) => {
                         let style = style_of(t.pseudo)?;
-                        let p = crate::scroll_timeline::progress(self, id, &style, t.index)?;
-                        let (progress, before) = t.iteration_progress(p)?;
+                        let (p, at_end) = crate::scroll_timeline::progress(self, id, &style, t.index)?;
+                        let (progress, before) = t.iteration_progress(p, at_end)?;
                         Some(Effect { progress, before, ..e.clone() })
                     }
                 })
