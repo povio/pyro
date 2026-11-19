@@ -4641,8 +4641,10 @@ impl ElementCx<'_, '_> {
         let (baseline, line_x) = self.marker_baseline(marker_layout);
         let item_layout = self.node.final_layout();
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
+        // The room after the image (`ListItemLayout::image_gap`).
+        let gap = self.list_item.map_or(7.0, |item| item.image_gap);
         let mut x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
-            - f64::from(width + 7.0);
+            - f64::from(width + gap);
         let mut y = pos.y + f64::from(subpixel.y + baseline - height);
         // pyro: in a vertical writing mode the marker goes before the item's inline-start edge
         // (its top; the bottom in `sideways-lr`), centred on its first line in the block axis.
@@ -4663,9 +4665,9 @@ impl ElementCx<'_, '_> {
             let block = if block_lr { center } else { content_width - center };
             x = pos.x + block - f64::from(width) / 2.0;
             y = if sideways_lr {
-                pos.y + content_height + f64::from(item_layout.padding.bottom + item_layout.border.bottom) + 7.0
+                pos.y + content_height + f64::from(item_layout.padding.bottom + item_layout.border.bottom) + f64::from(gap)
             } else {
-                pos.y - f64::from(item_layout.padding.top + item_layout.border.top + height + 7.0)
+                pos.y - f64::from(item_layout.padding.top + item_layout.border.top + height + gap)
             };
         }
         let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));

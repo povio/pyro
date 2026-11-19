@@ -1103,7 +1103,13 @@ impl BaseDocument {
 
     /// Flush a CSS image layer list (`background-image` or `mask-image`) from style
     /// to dedicated storage on the node, fetching any images which are not yet loaded.
-    fn flush_image_layers_from_style(&mut self, node_id: NodeId, kind: ImageLayerKind) {
+    pub(crate) fn flush_image_layers_from_style(&mut self, node_id: NodeId, kind: ImageLayerKind) {
+        // pyro: a list item's `::marker` whose `content` is one image shows that image instead of
+        // its `list-style-image` (CSS Lists 3 § 3.2): it loads in the list-style slot.
+        let marker_image = match kind {
+            ImageLayerKind::ListStyle => super::list::marker_content_image(self, node_id),
+            _ => None,
+        };
         let doc_id = self.id();
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
@@ -1133,7 +1139,7 @@ impl BaseDocument {
             // pyro: `mask-border-source` loads as the second border image.
             ImageLayerKind::BorderImage => (&border_sources[..], &mut elem.border_images),
             ImageLayerKind::ListStyle => (
-                std::slice::from_ref(&style.get_list().list_style_image),
+                std::slice::from_ref(marker_image.as_ref().unwrap_or(&style.get_list().list_style_image)),
                 &mut elem.list_style_images,
             ),
             ImageLayerKind::Shape => (shape_image(&style), &mut elem.shape_images),

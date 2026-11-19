@@ -1195,6 +1195,9 @@ pub struct ListItemLayout {
     /// sheet: `::marker { unicode-bidi: isolate }`), unless a `::marker` rule declares
     /// `unicode-bidi: normal`.
     pub isolate: bool,
+    /// pyro: the room after an image marker: Blink's 7px after a `list-style-image`, none after
+    /// a `::marker`'s `content` image (inline content of the marker).
+    pub image_gap: f32,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.

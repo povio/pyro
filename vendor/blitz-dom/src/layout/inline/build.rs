@@ -429,7 +429,8 @@ pub(crate) fn build_inline_layout_into(
     // under it (WPT css-sizing `intrinsic-percent-replaced-006`).
     let marker = outside_marker(&nodes[inline_context_root_node_id]);
     if (marker || (text_layout.layout.inline_boxes().len() > 0 && !nodes.line_height_quirk))
-        && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c))
+        // (The zero-width span an outside image marker adds to the first line is no text.)
+        && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c) || c == '\u{2060}')
     {
         build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[], bidi);
     }
@@ -555,6 +556,7 @@ fn build_inline_layout_with(
         position: ListItemLayoutPosition::Inside,
         tabular_nums,
         isolate,
+        image_gap,
         ..
     }) = root_node
         .element_data()
@@ -624,7 +626,7 @@ fn build_inline_layout_with(
                 let mut marker_style = parley_style.clone();
                 marker_style.font_size = 0.01;
                 marker_style.line_height = parley::LineHeight::Absolute(*height);
-                marker_style.letter_spacing = *width + 7.0;
+                marker_style.letter_spacing = *width + *image_gap;
                 marker_style.vertical_align = parley::VerticalAlign {
                     alignment: parley::AlignmentBaseline::Baseline,
                     shift: parley::BaselineShift::Length(*height / 2.0),
@@ -676,11 +678,15 @@ fn build_inline_layout_with(
         && text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
     if marker_line {
         builder.push_text("\u{2060}");
-        // pyro: an image marker is an inline replaced box on that line, its bottom on the
-        // baseline: the line is as tall as it above the baseline (WPT css-lists
-        // `outside-marker-taller-than-content`).
-        if let Some(Marker::Image { height, .. }) =
+    }
+    // pyro: an outside image marker is an inline replaced box on the item's first line, its
+    // bottom on the baseline: the line is as tall as it above the baseline (WPT css-lists
+    // `outside-marker-taller-than-content`), also where the line has text (WPT css-pseudo
+    // `marker-content-012`).
+    if (marker_line || (outside_marker(root_node) && !strut_build))
+        && let Some(Marker::Image { height, .. }) =
             root_node.element_data().and_then(|el| el.list_item_data.as_deref()).map(|item| &item.marker)
+    {
         {
             let mut marker_style = parley_style.clone();
             marker_style.font_size = 0.01;

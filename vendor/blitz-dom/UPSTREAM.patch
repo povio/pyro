@@ -9271,10 +9271,8 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                    continue;
 +                }
 +                crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(*child));
-             }
-         }
--        if let Some(before_id) = before {
--            self.clear_damage_and_dirty_flags(before_id);
++            }
++        }
 +        for pseudo_id in [before, after].into_iter().flatten() {
 +            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(pseudo_id));
 +            // pyro: a pseudo-element's children are what its content generates (text, the box
@@ -9286,15 +9284,17 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                    self.clear_damage_and_dirty_flags(child);
 +                }
 +                index += 1;
-+            }
+             }
          }
--        if let Some(after_id) = after {
--            self.clear_damage_and_dirty_flags(after_id);
+-        if let Some(before_id) = before {
+-            self.clear_damage_and_dirty_flags(before_id);
 +
 +        for pseudo_id in scroll_pseudos {
 +            crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(pseudo_id));
 +            self.clear_generated_children_flags(pseudo_id);
-+        }
+         }
+-        if let Some(after_id) = after {
+-            self.clear_damage_and_dirty_flags(after_id);
 +        if is_scroll_group {
 +            for &marker in children.iter() {
 +                crate::util::ensure_stack(|| self.clear_damage_and_dirty_flags(marker));
@@ -9604,7 +9604,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      /// Flush the image layers of nodes whose style changed during the last
      /// style traversal (or whose pseudo-element boxes were (re)constructed).
      pub(crate) fn flush_pending_style_images(&mut self) {
-@@ -552,6 +1004,100 @@
+@@ -552,12 +1004,112 @@
              }
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
@@ -9705,7 +9705,20 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          }
      }
  
-@@ -577,19 +1123,28 @@
+     /// Flush a CSS image layer list (`background-image` or `mask-image`) from style
+     /// to dedicated storage on the node, fetching any images which are not yet loaded.
+-    fn flush_image_layers_from_style(&mut self, node_id: NodeId, kind: ImageLayerKind) {
++    pub(crate) fn flush_image_layers_from_style(&mut self, node_id: NodeId, kind: ImageLayerKind) {
++        // pyro: a list item's `::marker` whose `content` is one image shows that image instead of
++        // its `list-style-image` (CSS Lists 3 § 3.2): it loads in the list-style slot.
++        let marker_image = match kind {
++            ImageLayerKind::ListStyle => super::list::marker_content_image(self, node_id),
++            _ => None,
++        };
+         let doc_id = self.id();
+         let node = self.nodes.get_mut(node_id).unwrap();
+         // Clone the primary style `Arc` into an owned value so the immutable
+@@ -577,19 +1129,28 @@
              return;
          };
  
@@ -9720,7 +9733,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +            // pyro: `mask-border-source` loads as the second border image.
 +            ImageLayerKind::BorderImage => (&border_sources[..], &mut elem.border_images),
 +            ImageLayerKind::ListStyle => (
-+                std::slice::from_ref(&style.get_list().list_style_image),
++                std::slice::from_ref(marker_image.as_ref().unwrap_or(&style.get_list().list_style_image)),
 +                &mut elem.list_style_images,
 +            ),
 +            ImageLayerKind::Shape => (shape_image(&style), &mut elem.shape_images),
@@ -9736,7 +9749,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
              let new_image = match style_image {
                  StyloImage::Url(ComputedUrl::Valid(new_url)) => {
                      let old_image = elem_images[idx].as_ref();
-@@ -598,8 +1153,15 @@
+@@ -598,8 +1159,15 @@
                          continue;
                      }
  
@@ -9753,7 +9766,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                      if let Some(cached_image) = self.image_cache.get(url_str) {
                          #[cfg(feature = "tracing")]
                          tracing::info!("Loading image {url_str} from cache");
-@@ -621,18 +1183,20 @@
+@@ -621,18 +1189,20 @@
                          self.pending_images
                              .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
  
@@ -9779,7 +9792,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                              ),
                          );
  
-@@ -647,3 +1211,153 @@
+@@ -647,3 +1217,153 @@
          }
      }
  }
@@ -11624,7 +11637,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  pub(crate) fn build_inline_layout_into(
      nodes: &crate::NodeTree,
      layout_ctx: &mut LayoutContext<TextBrush>,
-@@ -29,6 +413,53 @@
+@@ -29,6 +413,54 @@
      scale: f32,
      inline_context_root_node_id: NodeId,
  ) {
@@ -11644,7 +11657,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    // under it (WPT css-sizing `intrinsic-percent-replaced-006`).
 +    let marker = outside_marker(&nodes[inline_context_root_node_id]);
 +    if (marker || (text_layout.layout.inline_boxes().len() > 0 && !nodes.line_height_quirk))
-+        && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c))
++        // (The zero-width span an outside image marker adds to the first line is no text.)
++        && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c) || c == '\u{2060}')
 +    {
 +        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[], bidi);
 +    }
@@ -11678,7 +11692,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Get the inline context's root node's text styles
      let root_node = &nodes[inline_context_root_node_id];
      let root_node_style = root_node.primary_styles().or_else(|| {
-@@ -36,8 +467,12 @@
+@@ -36,8 +468,12 @@
              .parent
              .and_then(|parent_id| nodes[parent_id].primary_styles())
      });
@@ -11692,7 +11706,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          .as_ref()
          .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
          .unwrap_or_else(|| parley::TextStyle {
-@@ -45,12 +480,46 @@
+@@ -45,12 +481,46 @@
              ..Default::default()
          });
  
@@ -11741,7 +11755,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          ));
      }
  
-@@ -59,15 +528,68 @@
+@@ -59,15 +529,69 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -11772,6 +11786,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          position: ListItemLayoutPosition::Inside,
 +        tabular_nums,
 +        isolate,
++        image_gap,
          ..
      }) = root_node
          .element_data()
@@ -11810,7 +11825,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -76,54 +598,501 @@
+@@ -76,54 +600,505 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -11840,7 +11855,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                let mut marker_style = parley_style.clone();
 +                marker_style.font_size = 0.01;
 +                marker_style.line_height = parley::LineHeight::Absolute(*height);
-+                marker_style.letter_spacing = *width + 7.0;
++                marker_style.letter_spacing = *width + *image_gap;
 +                marker_style.vertical_align = parley::VerticalAlign {
 +                    alignment: parley::AlignmentBaseline::Baseline,
 +                    shift: parley::BaselineShift::Length(*height / 2.0),
@@ -11892,11 +11907,15 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        && text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
 +    if marker_line {
 +        builder.push_text("\u{2060}");
-+        // pyro: an image marker is an inline replaced box on that line, its bottom on the
-+        // baseline: the line is as tall as it above the baseline (WPT css-lists
-+        // `outside-marker-taller-than-content`).
-+        if let Some(Marker::Image { height, .. }) =
++    }
++    // pyro: an outside image marker is an inline replaced box on the item's first line, its
++    // bottom on the baseline: the line is as tall as it above the baseline (WPT css-lists
++    // `outside-marker-taller-than-content`), also where the line has text (WPT css-pseudo
++    // `marker-content-012`).
++    if (marker_line || (outside_marker(root_node) && !strut_build))
++        && let Some(Marker::Image { height, .. }) =
 +            root_node.element_data().and_then(|el| el.list_item_data.as_deref()).map(|item| &item.marker)
++    {
 +        {
 +            let mut marker_style = parley_style.clone();
 +            marker_style.font_size = 0.01;
@@ -12273,12 +12292,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    /// `node_id`'s box) placed them already (`scroll_markers::siblings_of`).
 +    #[allow(clippy::too_many_arguments)]
      fn build_inline_layout_recursive(
-+        builder: &mut TreeBuilder<TextBrush>,
-+        text_transformer: &mut TextTransformer,
-+        nodes: &crate::NodeTree,
+         builder: &mut TreeBuilder<TextBrush>,
+         text_transformer: &mut TextTransformer,
+         nodes: &crate::NodeTree,
 +        container: NodeId,
-+        node_id: NodeId,
-+        parent_text_transform: &CaseTransform,
+         node_id: NodeId,
+         parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -12304,11 +12323,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +
 +    #[allow(clippy::too_many_arguments)]
 +    fn build_inline_layout_node(
-         builder: &mut TreeBuilder<TextBrush>,
-         text_transformer: &mut TextTransformer,
-         nodes: &crate::NodeTree,
-         node_id: NodeId,
-         parent_text_transform: &CaseTransform,
++        builder: &mut TreeBuilder<TextBrush>,
++        text_transformer: &mut TextTransformer,
++        nodes: &crate::NodeTree,
++        node_id: NodeId,
++        parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -12318,7 +12337,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1112,49 @@
+@@ -143,6 +1118,49 @@
                      }
                  }
  
@@ -12368,7 +12387,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1173,44 @@
+@@ -161,41 +1179,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -12435,7 +12454,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1225,182 @@
+@@ -210,66 +1231,182 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -12639,7 +12658,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,17 +1415,131 @@
+@@ -284,17 +1421,131 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -12774,7 +12793,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1548,314 @@
+@@ -303,3 +1554,314 @@
          }
      }
  }
@@ -16138,7 +16157,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  ) -> Option<ListItemLayout> {
      let node = &doc.nodes[child_id];
  
-@@ -71,17 +147,116 @@
+@@ -71,17 +147,139 @@
          return None;
      };
  
@@ -16154,8 +16173,9 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +    let resolution = crate::util::image_resolution(&styles.get_list().list_style_image);
 +    // pyro: a marker image without a natural size (a gradient, an SVG without `width` and
 +    // `height`) is, as Blink's `ListMarker`, a square of half the font's ascent.
++    let font_ctx = doc.font_ctx.clone();
 +    let default_size = || {
-+        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: doc.font_ctx.clone() };
++        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: font_ctx.clone() };
 +        let font = styles.get_font();
 +        let ascent = provider.metrics_for(font, font.font_size.computed_size(), ' ').ascent.px();
 +        Marker::Image { width: ascent / 2.0, height: ascent / 2.0 }
@@ -16191,10 +16211,32 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +        None => None,
 +    };
 +    let from_content = content.is_some();
++    // pyro: a `content` image (`marker_content_image`), loaded in the list-style slot: nothing
++    // until it has loaded.
++    let content_image = rule_style.as_ref().and_then(|style| single_content_image(style));
++    if let Some(url) = &content_image {
++        let stored = doc.nodes[child_id]
++            .element_data()
++            .and_then(|element| element.list_style_images.first().cloned().flatten())
++            .map(|data| data.url.as_str().to_string());
++        if stored.as_deref() != Some(url.as_str()) {
++            doc.flush_image_layers_from_style(child_id, crate::util::ImageLayerKind::ListStyle);
++        }
++    }
++    let image = match &content_image {
++        Some(_) => doc.nodes[child_id].element_data().and_then(|element| image_marker(element, 1.0)).map(
++            |marker| match marker {
++                Marker::Image { width, height } if width.is_nan() || height.is_nan() => default_size(),
++                marker => marker,
++            },
++        ),
++        None => image,
++    };
 +    let style_node = marker_style_node(doc, child_id, marker_style.clone());
 +    let mut marker = match (content, image) {
 +        (Some(text), _) => Marker::String(text),
 +        (None, Some(image)) => image,
++        (None, None) if content_image.is_some() => Marker::String(String::new()),
 +        (None, None) => match custom_counter_marker(doc, child_id, list_style_type, number) {
 +            Some(marker) => marker,
 +            None => marker_for_style(list_style_type, number)?,
@@ -16260,7 +16302,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  parley_style.font_family = font_family;
              }
  
-@@ -93,18 +268,34 @@
+@@ -93,18 +291,34 @@
                  true,
                  &parley_style,
              );
@@ -16295,7 +16337,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  
              ListItemLayoutPosition::Outside(Box::new(layout))
          }
-@@ -112,14 +303,314 @@
+@@ -112,14 +326,350 @@
  
      Some(ListItemLayout {
          marker,
@@ -16303,11 +16345,47 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          position,
 +        tabular_nums,
 +        isolate,
++        image_gap: if content_image.is_some() { 0.0 } else { 7.0 },
          content_box_subpixel_offset: taffy::Point::ZERO,
 +        annotations,
      })
  }
  
++/// pyro: the URL of the one image a `::marker` style's `content` is, if it is one.
++fn single_content_image(style: &style::properties::ComputedValues) -> Option<String> {
++    use style::values::computed::{Content, ContentItem};
++    match &style.get_counters().content {
++        Content::Items(items) => match &items.items[..] {
++            [ContentItem::Image(image)] => match crate::util::unfiltered_image(image) {
++                style::values::computed::Image::Url(style::url::ComputedUrl::Valid(url)) => Some(url.as_str().to_string()),
++                _ => None,
++            },
++            _ => None,
++        },
++        _ => None,
++    }
++}
++
++/// pyro: the image a list item's `::marker` `content` is, which it shows instead of its
++/// `list-style-image` (`flush_image_layers_from_style` loads it in the list-style slot).
++pub(crate) fn marker_content_image(doc: &BaseDocument, node_id: NodeId) -> Option<style::values::computed::Image> {
++    use style::values::computed::{Content, ContentItem};
++    let node = doc.nodes.get(node_id)?;
++    let style = node.primary_styles()?;
++    if !style.get_box().display.is_list_item() {
++        return None;
++    }
++    let style = style::servo_arc::Arc::clone(&*style);
++    let marker = marker_pseudo_style(doc, node_id, &style)?;
++    match &marker.get_counters().content {
++        Content::Items(items) => match &items.items[..] {
++            [ContentItem::Image(image)] => Some(image.clone()),
++            _ => None,
++        },
++        _ => None,
++    }
++}
++
 +/// pyro: the marker an item's `list-style-image` makes once it has loaded: its natural size.
 +fn image_marker(element: &crate::node::ElementData, resolution: f32) -> Option<Marker> {
 +    use crate::node::{ImageData, Status};
@@ -16611,7 +16689,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          CounterStyle::None => return None,
          CounterStyle::Name(name) => match &*name.0 {
              "lower-alpha" => {
-@@ -132,13 +623,34 @@
+@@ -132,13 +682,34 @@
                  build_alpha_marker(index, &mut marker);
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
@@ -16648,7 +16726,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          },
          CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
          CounterStyle::Symbols { symbols, .. } => {
-@@ -149,7 +661,7 @@
+@@ -149,7 +720,7 @@
                  Marker::Char('•')
              } else {
                  // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
@@ -16657,7 +16735,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  // Symbol is String or Ident variant, extract the string value
                  let sym = &syms[idx];
                  let marker_str = match sym {
-@@ -171,6 +683,36 @@
+@@ -171,6 +742,36 @@
      None
  }
  
@@ -16694,7 +16772,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  const ALPHABET: [char; 26] = [
      'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
      't', 'u', 'v', 'w', 'x', 'y', 'z',
-@@ -204,24 +746,24 @@
+@@ -204,24 +805,24 @@
  
      #[test]
      fn test_marker_for_disc() {
@@ -16726,7 +16804,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
-@@ -230,10 +772,10 @@
+@@ -230,10 +831,10 @@
  
      #[test]
      fn test_marker_for_upper_alpha() {
@@ -34238,7 +34316,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -953,11 +1184,23 @@
+@@ -953,11 +1184,26 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -34253,6 +34331,9 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +    /// sheet: `::marker { unicode-bidi: isolate }`), unless a `::marker` rule declares
 +    /// `unicode-bidi: normal`.
 +    pub isolate: bool,
++    /// pyro: the room after an image marker: Blink's 7px after a `list-style-image`, none after
++    /// a `::marker`'s `content` image (inline content of the marker).
++    pub image_gap: f32,
      /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
      /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
      /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
@@ -34262,7 +34343,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //We seperate chars from strings in order to optimise rendering - ie not needing to
-@@ -966,6 +1209,9 @@
+@@ -966,6 +1212,9 @@
  pub enum Marker {
      Char(char),
      String(String),
