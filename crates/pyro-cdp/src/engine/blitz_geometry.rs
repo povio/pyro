@@ -117,6 +117,13 @@ impl LocalFiles {
                 url.as_str()
             )
         };
+        // pyro: a body loaded with other than the defaults (a CORS response passed for this
+        // document's origin) is this document's alone: the frames sharing the bodies do not reuse
+        // it without their own check.
+        let key = match loader.document().filter(|_| *options != SubresourceOptions::default()) {
+            Some(document) => format!("document={document} {key}"),
+            None => key,
+        };
         if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
             return None;
         }
@@ -277,4 +284,55 @@ pub(crate) fn paint_pdf(
     opts: &pyro_render::PdfOptions,
 ) -> Option<Result<pyro_render::PdfPaint, String>> {
     pyro_layout::paint_pdf(&page_dom.dom.borrow(), &page_dom.layout(), opts)
+}
+
+#[cfg(test)]
+mod document_bodies_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// One document's network over shared bodies: answers every load at once with "ok",
+    /// recording (document, URL).
+    struct Loader {
+        document: &'static str,
+        bodies: Arc<SubresourceBodies>,
+        log: Arc<Mutex<Vec<(&'static str, String)>>>,
+    }
+    impl SubresourceLoader for Loader {
+        fn load(&self, url: String, _kind: SubresourceKind, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.log.lock().unwrap().push((self.document, url));
+            done(Ok(b"ok".to_vec()));
+        }
+        fn bodies(&self) -> &Arc<SubresourceBodies> {
+            &self.bodies
+        }
+        fn document(&self) -> Option<String> {
+            Some(self.document.to_owned())
+        }
+    }
+
+    /// A body loaded in CORS mode for one document (whose origin the server allowed) is not
+    /// served to another document sharing the bodies (a sandboxed or cross-origin sibling frame),
+    /// which makes its own request and check; a plain body is shared. The bodies were keyed by
+    /// URL and modifiers alone (security review cycle 1, HIGH 2).
+    #[test]
+    fn a_cors_body_is_its_documents_alone() {
+        let bodies = Arc::new(SubresourceBodies::default());
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let files = |document: &'static str| LocalFiles {
+            statics: pyro_net::StaticFiles::default(),
+            loader: Some(Arc::new(Loader { document, bodies: bodies.clone(), log: log.clone() }) as Arc<dyn SubresourceLoader>),
+            failed: Arc::default(),
+        };
+        let (a, b) = (files("A"), files("B"));
+        let cors = SubresourceOptions { crossorigin: Some("anonymous".into()), ..Default::default() };
+        let url = pyro_net::Url::parse("http://img.test/shape.png").unwrap();
+        assert_eq!(a.network(&url, &cors), None, "the first load starts");
+        assert_eq!(a.network(&url, &cors), Some(b"ok".to_vec()), "A reuses its own");
+        assert_eq!(b.network(&url, &cors), None, "B asks for itself");
+        assert_eq!(log.lock().unwrap().iter().filter(|(d, _)| *d == "B").count(), 1);
+        let plain = SubresourceOptions::default();
+        assert_eq!(a.network(&url, &plain), None);
+        assert_eq!(b.network(&url, &plain), Some(b"ok".to_vec()), "a plain body is shared");
+    }
 }

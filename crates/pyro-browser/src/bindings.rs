@@ -75,6 +75,11 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
         &self.bodies
     }
 
+    /// pyro: the document's loader id (unique per document).
+    fn document(&self) -> Option<String> {
+        Some(self.loader.0.clone())
+    }
+
     fn font_asked(&self, url: &str) {
         if let Ok(mut asked) = self.asked_fonts.lock() {
             asked.insert(url.to_owned());

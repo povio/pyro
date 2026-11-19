@@ -205,6 +205,12 @@ pub trait SubresourceLoader: Send + Sync {
     /// The bodies loaded for the documents that go out with this one's
     /// network identity, which they reuse ([`SubresourceBodies`]).
     fn bodies(&self) -> &std::sync::Arc<SubresourceBodies>;
+    /// pyro: this document's identity among those sharing [`Self::bodies`]: a body loaded with
+    /// other than the defaults (a CORS response checked against this document's origin, a
+    /// referrer) is kept under it, never served to another document (`None`: no others).
+    fn document(&self) -> Option<String> {
+        None
+    }
     /// pyro: this document's layout asked for the font at `url` (its fetch may be shared with the
     /// identity's other documents).
     fn font_asked(&self, _url: &str) {}
