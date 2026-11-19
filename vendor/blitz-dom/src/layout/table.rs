@@ -1522,6 +1522,20 @@ impl OccupiedColumns {
     }
 }
 
+impl TableContext {
+    /// pyro: whether cell `node_id` lies in collapsed columns only (`visibility: collapse` on its
+    /// columns): such a cell is not rendered (CSS 2.1 § 17.5.5; WPT CSS2 `tables/column-visibility-004`).
+    pub fn cell_in_collapsed_columns(&self, node_id: NodeId) -> bool {
+        if self.style.collapsed_columns.is_empty() {
+            return false;
+        }
+        self.cells.iter().find(|cell| cell.node_id == node_id).is_some_and(|cell| {
+            let span = cell.colspan.max(1);
+            (cell.column..cell.column.saturating_add(span)).all(|column| self.style.collapsed_columns.contains(&column))
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TableCell {
     // kind: TableItemKind,
