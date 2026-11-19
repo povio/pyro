@@ -7484,3 +7484,20 @@ fn script_scroll_offsets_of_a_zoomed_element_are_in_its_own_css_px() {
     assert_eq!(eval(&e.main, "s.scrollTop=0;s.scrollTop=100;String(document.elementFromPoint(10,10).id)"), "b");
     e.page.dispose();
 }
+
+#[test]
+fn a_dialog_closing_through_an_overlay_transition_stays_laid_out_as_modal() {
+    // css-position-4 § 4.1: an `overlay` and `display` transition keep a closed modal dialog in
+    // the top layer and shown; the UA sheet keeps laying it out as a modal dialog while it is
+    // there (WPT css-position `overlay/overlay-transition-dialog`), and `:modal` no longer matches.
+    let e = env(
+        "<body><style>dialog.animate{transition:overlay 2s allow-discrete, display 2s allow-discrete}</style><dialog>dialog</dialog></body>",
+    );
+    let result = eval(
+        &e.main,
+        "const d=document.querySelector('dialog');d.showModal();d.classList.add('animate');d.close();\
+         const s=getComputedStyle(d);[s.display,s.position,d.matches(':modal')].join(',')",
+    );
+    assert_eq!(result, "block,fixed,false");
+    e.page.dispose();
+}

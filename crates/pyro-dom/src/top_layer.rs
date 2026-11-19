@@ -123,6 +123,20 @@ impl Dom {
         self.top_layer.modal.contains(&el)
     }
 
+    /// pyro: whether the element at `idx` is a dialog in the top layer: modal, or kept there
+    /// after closing for its `overlay` transition ([`Dom::keep_in_top_layer`]). The UA sheet
+    /// lays such a dialog out as a modal one (`:-moz-topmost-modal`, Chromium's
+    /// `:-internal-dialog-in-top-layer`; WPT css-position `overlay/overlay-transition-dialog`).
+    pub(crate) fn is_dialog_in_top_layer_idx(&self, idx: u32) -> bool {
+        let tl = &self.top_layer;
+        if tl.modal.is_empty() && tl.pending.is_empty() {
+            return false;
+        }
+        let id = self.id_of(idx);
+        let dialog = self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == "dialog");
+        dialog && (tl.modal.contains(&id) || tl.pending.contains(&id))
+    }
+
     pub(crate) fn is_modal_idx(&self, idx: u32) -> bool {
         !self.top_layer.modal.is_empty() && self.top_layer.modal.contains(&self.id_of(idx))
     }

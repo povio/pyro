@@ -81,6 +81,9 @@ pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
             "default" => ElementState::DEFAULT,
             "open" => ElementState::OPEN,
             "modal" => ElementState::MODAL,
+            // pyro: a dialog in the top layer, modal or kept there for its `overlay` transition
+            // (`:-moz-topmost-modal` in the UA sheet).
+            "dialog-in-top-layer" => ElementState::TOPMOST_MODAL,
             "popover-open" => ElementState::POPOVER_OPEN,
             "in-range" => ElementState::INRANGE,
             "out-of-range" => ElementState::OUTOFRANGE,

@@ -926,6 +926,14 @@ impl Dom {
                 out.push_str(name);
             }
         }
+        // pyro: a dialog in the top layer, modal or kept there for its `overlay` transition: the
+        // UA sheet lays it out as a modal dialog (`:-moz-topmost-modal`).
+        if self.is_dialog_in_top_layer_idx(n) {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str("dialog-in-top-layer");
+        }
         // The top layer's paint order: renderers paint these elements above
         // the document by rank (one empty check without a top layer).
         if let Some(rank) = self.top_layer_rank(self.id_of(n)) {

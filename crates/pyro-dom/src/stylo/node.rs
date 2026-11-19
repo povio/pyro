@@ -503,6 +503,7 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Invalid => self.matches(PseudoClass::Invalid),
             N::Open => self.matches(PseudoClass::Open),
             N::Modal => self.matches(PseudoClass::Modal),
+            N::MozTopmostModal => self.cx().dom.is_dialog_in_top_layer_idx(self.i()),
             N::PopoverOpen => self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen),
             N::InRange => self.matches(PseudoClass::InRange),
             N::OutOfRange => self.matches(PseudoClass::OutOfRange),
@@ -675,6 +676,9 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         set(PseudoClass::UserInvalid, ElementState::USER_INVALID);
         if self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen) {
             s |= ElementState::POPOVER_OPEN;
+        }
+        if self.cx().dom.is_dialog_in_top_layer_idx(self.i()) {
+            s |= ElementState::TOPMOST_MODAL;
         }
         s
     }

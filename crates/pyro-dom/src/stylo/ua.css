@@ -1046,7 +1046,9 @@ dialog:not([open]) {
     display: none;
 }
 
-dialog:modal {
+/* pyro: and a dialog kept in the top layer for its overlay transition (-moz-topmost-modal:
+   Chromium's :-internal-dialog-in-top-layer). */
+dialog:modal, dialog:-moz-topmost-modal {
     -moz-top-layer: top !important;
     position: fixed;
     overflow: auto;
