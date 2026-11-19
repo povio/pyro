@@ -232,6 +232,16 @@ impl ColumnFragments {
     /// it in the inline axis (a gap split down its middle). Above a column other than the first
     /// and below one other than the last nothing of the strip is shown: the point is moved past
     /// the strip's end.
+    /// pyro: the columns that show a box hoisted out of this container (a stacking context
+    /// painted by an ancestor) whose strip range is `top..bottom`: those its range reaches, not
+    /// spanners' rows, in strip order. Paint shows it in each (blitz-paint
+    /// `draw_hoisted_children`), and hit testing finds it there only (`Node::hoisted_hit_points`).
+    pub fn hoisted_columns(&self, top: f32, bottom: f32) -> impl DoubleEndedIterator<Item = &ColumnFragment> {
+        let first = self.fragments.partition_point(|f| f.end <= top);
+        let last = self.fragments.partition_point(|f| f.start < bottom).max(first);
+        self.fragments[first..last].iter().filter(move |f| !f.spanner && top < f.end && bottom > f.start)
+    }
+
     pub fn columns_to_strip(&self, point: Point<f32>) -> Point<f32> {
         let (Some(first), Some(last)) = (self.fragments.first(), self.fragments.last()) else {
             return point;
@@ -1932,25 +1942,35 @@ impl Node {
         Some((container, origin, top, top + bottom_extent))
     }
 
-    /// pyro: the point (`x`, `y`: CSS px, this box's) in the space `hoisted_child`, a stacking
-    /// context hoisted to this box, is hit in. One shown in each column of a multi-column container
-    /// below that it is in (`multicol_between`, as paint shows it) is hit through the column under
-    /// the point, at its place in the strip.
-    pub(crate) fn hoisted_hit_point(&self, hoisted_child: &crate::HoistedPaintChild, x: f32, y: f32) -> (f32, f32) {
+    /// pyro: the points (in the space `hoisted_child`, a stacking context hoisted to this box, is
+    /// hit in) to hit it at for the point `x`, `y` (CSS px, this box's), in order. One shown in each
+    /// column of a multi-column container below that it is in (`multicol_between`) is hit through
+    /// each column paint shows it in (`ColumnFragments::hoisted_columns`), the last painted first,
+    /// at its place in the strip, where the point is in that column's range; nowhere else.
+    pub(crate) fn hoisted_hit_points(&self, hoisted_child: &crate::HoistedPaintChild, x: f32, y: f32) -> Vec<(f32, f32)> {
         let tree = self.tree();
-        let in_columns = self.multicol_between(hoisted_child.node_id).and_then(|(container, origin, _, _)| {
+        let in_columns = self.multicol_between(hoisted_child.node_id).and_then(|(container, origin, top, bottom)| {
             let columns = tree.get(container)?.column_fragments()?;
-            (columns.fragments.len() > 1).then_some((container, origin, columns))
+            (columns.fragments.len() > 1).then_some((container, origin, top, bottom, columns))
         });
         match in_columns {
-            Some((container, origin, columns)) => {
-                let at = columns.columns_to_strip(Point { x: x - origin.x, y: y - origin.y });
+            Some((container, origin, top, bottom, columns)) => {
                 let pos = super::paint_tree::hoisted_child_strip_position(tree, self.id, hoisted_child.node_id, container);
-                (at.x + origin.x - pos.x, at.y + origin.y - pos.y)
+                columns
+                    .hoisted_columns(top, bottom)
+                    .rev()
+                    .filter_map(|fragment| {
+                        // The point in the container's strip, as this column shows it.
+                        let strip_x = x - origin.x - fragment.offset.x;
+                        let strip_y = y - origin.y - fragment.offset.y;
+                        (strip_y >= fragment.start && strip_y < fragment.end)
+                            .then(|| (strip_x + origin.x - pos.x, strip_y + origin.y - pos.y))
+                    })
+                    .collect()
             }
             None => {
                 let pos = hoisted_child.position(tree, self.id);
-                (x - pos.x, y - pos.y)
+                vec![(x - pos.x, y - pos.y)]
             }
         }
     }
@@ -2997,6 +3017,29 @@ mod tests {
         assert_eq!(hit(&mut doc, 50.0, 60.0), Some(z), "its piece in the first column");
         assert_eq!(hit(&mut doc, 150.0, 30.0), Some(z), "its piece in the second column");
         assert_ne!(hit(&mut doc, 50.0, 120.0), Some(z), "not below the container, where the strip has it");
+    }
+
+    /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
+    /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
+    #[test]
+    fn a_hoisted_box_is_not_hit_in_a_spanners_row() {
+        // Two columns of 50px, then the spanner's row (50..80), then two columns of 25px: the box
+        // runs from the first columns through the spanner into the last ones.
+        let mut doc = laid_out(vec![div(
+            "columns:2;column-gap:0;width:200px",
+            vec![div(
+                "position:relative;z-index:1",
+                vec![div("height:100px", vec![]), div("column-span:all;height:30px", vec![]), div("height:50px", vec![])],
+            )],
+        )]);
+        let ids: Vec<crate::NodeId> = doc.nodes.iter().map(|(id, _)| id).collect();
+        let z = ids[ids.len() - 4];
+        let inside: Vec<crate::NodeId> = ids[ids.len() - 4..].to_vec();
+        let hit = |doc: &mut BaseDocument, x: f32, y: f32| doc.hit(x, y).map(|h| h.node_id);
+        assert!(hit(&mut doc, 150.0, 25.0).is_some_and(|h| inside.contains(&h)), "its second column");
+        assert!(hit(&mut doc, 150.0, 95.0).is_some_and(|h| inside.contains(&h)), "its last row's second column");
+        let over_spanner = hit(&mut doc, 150.0, 65.0);
+        assert!(!over_spanner.is_some_and(|h| inside.contains(&h)), "not over the spanner's row, where it is not painted: {over_spanner:?} (box {z:?})");
     }
 
     /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.

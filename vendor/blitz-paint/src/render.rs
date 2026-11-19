@@ -5998,12 +5998,8 @@ impl ElementCx<'_, '_> {
         {
             let scale = self.scale;
             self.context.hoisted_in_column.set(true);
-            // (The columns its range reaches only: they are in strip order.)
-            let first = columns.fragments.partition_point(|f| f.end <= child_top);
-            for fragment in columns.fragments[first..].iter().take_while(|f| f.start < child_bottom) {
-                if !(child_top < fragment.end && child_bottom > fragment.start) || fragment.spanner {
-                    continue;
-                }
+            // (The columns its range reaches, not spanners' rows: `ColumnFragments::hoisted_columns`.)
+            for fragment in columns.hoisted_columns(child_top, child_bottom) {
                 let range = Rect::new(
                     -1e7,
                     ((origin.y + fragment.start as f64) * scale).max(-1e7),
@@ -6506,12 +6502,8 @@ impl ElementCx<'_, '_> {
                 let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id, container);
                 let child_node = &self.node.tree()[hoisted_child.node_id];
                 let pos = kurbo::Vec2 { x: (strip.x + sticky.x) as f64 * self.scale, y: (strip.y + sticky.y) as f64 * self.scale };
-                // (The columns its range reaches only: they are in strip order.)
-                let first = columns.fragments.partition_point(|f| f.end <= child_top);
-                for fragment in columns.fragments[first..].iter().take_while(|f| f.start < child_bottom) {
-                    if fragment.spanner || !(child_top < fragment.end && child_bottom > fragment.start) {
-                        continue;
-                    }
+                // (The columns its range reaches, not spanners' rows: as hit testing finds it.)
+                for fragment in columns.hoisted_columns(child_top, child_bottom) {
                     let range = Rect::new(
                         -1e7,
                         ((origin.y + fragment.start as f64) * scale).max(-1e7),

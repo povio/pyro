@@ -21743,7 +21743,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3232 @@
+@@ -0,0 +1,3275 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -21978,6 +21978,16 @@ new file mode 100644
 +    /// it in the inline axis (a gap split down its middle). Above a column other than the first
 +    /// and below one other than the last nothing of the strip is shown: the point is moved past
 +    /// the strip's end.
++    /// pyro: the columns that show a box hoisted out of this container (a stacking context
++    /// painted by an ancestor) whose strip range is `top..bottom`: those its range reaches, not
++    /// spanners' rows, in strip order. Paint shows it in each (blitz-paint
++    /// `draw_hoisted_children`), and hit testing finds it there only (`Node::hoisted_hit_points`).
++    pub fn hoisted_columns(&self, top: f32, bottom: f32) -> impl DoubleEndedIterator<Item = &ColumnFragment> {
++        let first = self.fragments.partition_point(|f| f.end <= top);
++        let last = self.fragments.partition_point(|f| f.start < bottom).max(first);
++        self.fragments[first..last].iter().filter(move |f| !f.spanner && top < f.end && bottom > f.start)
++    }
++
 +    pub fn columns_to_strip(&self, point: Point<f32>) -> Point<f32> {
 +        let (Some(first), Some(last)) = (self.fragments.first(), self.fragments.last()) else {
 +            return point;
@@ -23678,25 +23688,35 @@ new file mode 100644
 +        Some((container, origin, top, top + bottom_extent))
 +    }
 +
-+    /// pyro: the point (`x`, `y`: CSS px, this box's) in the space `hoisted_child`, a stacking
-+    /// context hoisted to this box, is hit in. One shown in each column of a multi-column container
-+    /// below that it is in (`multicol_between`, as paint shows it) is hit through the column under
-+    /// the point, at its place in the strip.
-+    pub(crate) fn hoisted_hit_point(&self, hoisted_child: &crate::HoistedPaintChild, x: f32, y: f32) -> (f32, f32) {
++    /// pyro: the points (in the space `hoisted_child`, a stacking context hoisted to this box, is
++    /// hit in) to hit it at for the point `x`, `y` (CSS px, this box's), in order. One shown in each
++    /// column of a multi-column container below that it is in (`multicol_between`) is hit through
++    /// each column paint shows it in (`ColumnFragments::hoisted_columns`), the last painted first,
++    /// at its place in the strip, where the point is in that column's range; nowhere else.
++    pub(crate) fn hoisted_hit_points(&self, hoisted_child: &crate::HoistedPaintChild, x: f32, y: f32) -> Vec<(f32, f32)> {
 +        let tree = self.tree();
-+        let in_columns = self.multicol_between(hoisted_child.node_id).and_then(|(container, origin, _, _)| {
++        let in_columns = self.multicol_between(hoisted_child.node_id).and_then(|(container, origin, top, bottom)| {
 +            let columns = tree.get(container)?.column_fragments()?;
-+            (columns.fragments.len() > 1).then_some((container, origin, columns))
++            (columns.fragments.len() > 1).then_some((container, origin, top, bottom, columns))
 +        });
 +        match in_columns {
-+            Some((container, origin, columns)) => {
-+                let at = columns.columns_to_strip(Point { x: x - origin.x, y: y - origin.y });
++            Some((container, origin, top, bottom, columns)) => {
 +                let pos = super::paint_tree::hoisted_child_strip_position(tree, self.id, hoisted_child.node_id, container);
-+                (at.x + origin.x - pos.x, at.y + origin.y - pos.y)
++                columns
++                    .hoisted_columns(top, bottom)
++                    .rev()
++                    .filter_map(|fragment| {
++                        // The point in the container's strip, as this column shows it.
++                        let strip_x = x - origin.x - fragment.offset.x;
++                        let strip_y = y - origin.y - fragment.offset.y;
++                        (strip_y >= fragment.start && strip_y < fragment.end)
++                            .then(|| (strip_x + origin.x - pos.x, strip_y + origin.y - pos.y))
++                    })
++                    .collect()
 +            }
 +            None => {
 +                let pos = hoisted_child.position(tree, self.id);
-+                (x - pos.x, y - pos.y)
++                vec![(x - pos.x, y - pos.y)]
 +            }
 +        }
 +    }
@@ -24743,6 +24763,29 @@ new file mode 100644
 +        assert_eq!(hit(&mut doc, 50.0, 60.0), Some(z), "its piece in the first column");
 +        assert_eq!(hit(&mut doc, 150.0, 30.0), Some(z), "its piece in the second column");
 +        assert_ne!(hit(&mut doc, 50.0, 120.0), Some(z), "not below the container, where the strip has it");
++    }
++
++    /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
++    /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
++    #[test]
++    fn a_hoisted_box_is_not_hit_in_a_spanners_row() {
++        // Two columns of 50px, then the spanner's row (50..80), then two columns of 25px: the box
++        // runs from the first columns through the spanner into the last ones.
++        let mut doc = laid_out(vec![div(
++            "columns:2;column-gap:0;width:200px",
++            vec![div(
++                "position:relative;z-index:1",
++                vec![div("height:100px", vec![]), div("column-span:all;height:30px", vec![]), div("height:50px", vec![])],
++            )],
++        )]);
++        let ids: Vec<crate::NodeId> = doc.nodes.iter().map(|(id, _)| id).collect();
++        let z = ids[ids.len() - 4];
++        let inside: Vec<crate::NodeId> = ids[ids.len() - 4..].to_vec();
++        let hit = |doc: &mut BaseDocument, x: f32, y: f32| doc.hit(x, y).map(|h| h.node_id);
++        assert!(hit(&mut doc, 150.0, 25.0).is_some_and(|h| inside.contains(&h)), "its second column");
++        assert!(hit(&mut doc, 150.0, 95.0).is_some_and(|h| inside.contains(&h)), "its last row's second column");
++        let over_spanner = hit(&mut doc, 150.0, 65.0);
++        assert!(!over_spanner.is_some_and(|h| inside.contains(&h)), "not over the spanner's row, where it is not painted: {over_spanner:?} (box {z:?})");
 +    }
 +
 +    /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.
@@ -40452,7 +40495,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,35 +2131,157 @@
+@@ -1161,37 +2131,159 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -40535,9 +40578,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
 +            style.natural_ratio = natural_ratio;
 +            style
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// The half collapsed borders of a cell in a table without uniform ones.
 +    pub(crate) fn collapsed_border(&self) -> Option<[f32; 4]> {
 +        match &self.data {
@@ -40571,7 +40614,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
 +        if self.collapsed_border() == collapsed_border {
 +            return;
-         }
++        }
 +        self.layout_data_mut().collapsed_border = collapsed_border;
 +        self.clear_layout_cache();
 +        let Some(stylo) = self.try_stylo_element_data_mut() else {
@@ -40612,9 +40655,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    #[inline]
 +    pub(crate) fn is_fieldset(&self) -> bool {
 +        self.data.downcast_element().is_some_and(|el| el.name.local == local_name!("fieldset"))
-     }
- 
++    }
++
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
+     /// mode of the box laying this node out). Used for the child-style getters.
+     #[cfg(feature = "writing-mode")]
 @@ -1234,6 +2326,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
@@ -40882,7 +40927,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,16 +2800,49 @@
+@@ -1556,16 +2800,50 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -40890,9 +40935,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 -                    let x = x - pos.x;
 -                    let y = y - pos.y;
 -                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
-+                    let (x, y) = self.hoisted_hit_point(hoisted_child, x, y);
-+                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
-                         return Some(hit);
+-                        return Some(hit);
++                    for (x, y) in self.hoisted_hit_points(hoisted_child, x, y) {
++                        if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
++                            return Some(hit);
++                        }
                      }
                  }
              }
@@ -40936,7 +40983,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).
          for child_id in self.paint_children.borrow().iter().flatten().rev() {
              let Some(child) = self.tree().get(*child_id) else {
-@@ -1574,12 +2851,18 @@
+@@ -1574,12 +2852,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -40957,7 +41004,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2873,7 @@
+@@ -1590,7 +2874,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -40966,7 +41013,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1602,10 +2885,8 @@
+@@ -1602,11 +2886,10 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -40974,12 +41021,15 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 -                    let x = x - pos.x;
 -                    let y = y - pos.y;
 -                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
-+                    let (x, y) = self.hoisted_hit_point(hoisted_child, x, y);
-+                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
-                         return Some(hit);
+-                        return Some(hit);
++                    for (x, y) in self.hoisted_hit_points(hoisted_child, x, y) {
++                        if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
++                            return Some(hit);
++                        }
                      }
                  }
-@@ -1716,7 +2997,7 @@
+             }
+@@ -1716,7 +2999,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -40988,7 +41038,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3022,13 @@
+@@ -1741,8 +3024,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -41003,7 +41053,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3104,28 @@
+@@ -1818,8 +3106,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -41034,7 +41084,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3183,36 @@
+@@ -1877,11 +3185,36 @@
                  }
              }
  
