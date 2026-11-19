@@ -1198,6 +1198,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 }
                 item.y_position = old.y_position;
                 item.height = old.height;
+                item.content_bottom = old.height - old.layout.padding.bottom - old.layout.border.bottom;
                 item.baseline = old.baseline;
                 item.last_baseline = old.last_baseline;
                 item.dominant_baseline = old.dominant_baseline;
@@ -1254,6 +1255,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         let overflow_contribution = placed.contribution;
         item.y_position = placed.y_position;
         item.height = placed.height;
+        item.content_bottom = placed.height - placed.layout.padding.bottom - placed.layout.border.bottom;
         item.baseline = placed.baseline;
         item.last_baseline = placed.last_baseline;
         item.dominant_baseline = placed.dominant_baseline;
@@ -1471,7 +1473,21 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         } else {
             first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
         };
-        let first = item.y_position + item.baseline.unwrap_or(item.height);
+        let mut first = item.y_position + item.baseline.unwrap_or(item.height);
+        // pyro: a table's is its first row's: the lowest baseline of its baseline-aligned cells that have one,
+        // else the bottom of the lowest content box of its cells (css-tables-3 § 3.10, CSS 2.1 § 17.5.3).
+        if table_rows {
+            let row_cells = || {
+                items.iter().filter(|item| item.row_indexes.start == first_row && item.span(AbstractAxis::Block) == 1)
+            };
+            let lowest = |values: &mut dyn Iterator<Item = f32>| values.reduce(f32::max);
+            let aligned = lowest(&mut row_cells()
+                .filter(|item| item.table_baseline)
+                .filter_map(|item| item.baseline.map(|baseline| item.y_position + baseline)));
+            if let Some(baseline) = aligned.or_else(|| lowest(&mut row_cells().map(|item| item.y_position + item.content_bottom))) {
+                first = baseline;
+            }
+        }
         // pyro: and in the item's dominant baseline, where it has one (a cell of a vertical table).
         // (A grid keeps its alphabetic baseline, as in Blink; a table exports its cells'.)
         let dominant = item.dominant_baseline.filter(|_| table_rows).map(|baseline| item.y_position + baseline);

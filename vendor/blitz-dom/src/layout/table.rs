@@ -4094,7 +4094,18 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
         if let Some(baseline) = output.baselines.first {
             return Some(baseline - offset);
         }
-        // No line box: the bottom of its content box, when it has content.
+        // No line box: the bottom of its content box, when it has in-flow content (a cell without any,
+        // however tall, takes no part in its row's baseline, as in Chromium; WPT css-align
+        // `baseline-rules/synthesized-baseline-table-cell-001`).
+        let has_content = node.layout_children.borrow().as_ref().is_some_and(|children| {
+            children.iter().any(|&child| {
+                let child = &self.doc.nodes[child];
+                !child.is_out_of_flow() && !child.is_whitespace_node()
+            })
+        });
+        if !has_content {
+            return None;
+        }
         use taffy::CoreStyle as _;
         let style = node.layout_style();
         let parent = inputs.parent_size.width;

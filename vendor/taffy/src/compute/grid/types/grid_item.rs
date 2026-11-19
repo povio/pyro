@@ -136,6 +136,9 @@ pub(in super::super) struct GridItem {
     pub y_position: f32,
     /// Final height. Used to compute baseline alignment for the container.
     pub height: f32,
+    /// pyro: the final bottom of its content box from the top of its border box (a table's synthesized row
+    /// baseline, css-tables-3 § 3.10).
+    pub content_bottom: f32,
 
     /// Out-of-flow candidates bubbled out of this item's subtree (anchors relative to the
     /// container's border box)
@@ -221,6 +224,7 @@ impl GridItem {
             inline_contribution_consumed: false,
             y_position: 0.0,
             height: 0.0,
+            content_bottom: 0.0,
             oof_candidates: OofCandidates::NONE,
             subgrid: Size { width: false, height: false },
             excluded: Size { width: false, height: false },

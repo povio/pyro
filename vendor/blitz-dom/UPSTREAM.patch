@@ -30949,14 +30949,14 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        taffy::CompactLength::PERCENT_TAG => style_helpers::percent(style.size.width.value()),
 +        // Browsers treat calc() widths on columns as auto
 +        _ => style_helpers::auto(),
-+    };
+     };
 +    // A definite `min-width` on a column acts as a floor on its width
 +    let column = match style.min_size.width.into_raw().tag() {
 +        taffy::CompactLength::LENGTH_TAG if column.max.is_auto() => {
 +            style_helpers::minmax(style_helpers::length(style.min_size.width.into_raw().value()), style_helpers::auto())
 +        }
 +        _ => column,
-     };
++    };
 +    for _ in 0..span {
 +        columns.push(TableColumn { node_id: node.id, group: None });
 +        column_sizes.push(column);
@@ -30975,9 +30975,16 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    match &doc.nodes[table].data.downcast_element()?.special_data {
 +        SpecialElementData::TableRoot(ctx) => Some(Arc::clone(ctx)),
 +        _ => None,
-+    }
+     }
 +}
-+
+ 
+-    let layout_children = cells
+-        .iter()
+-        .map(|cell| cell.node_id)
+-        .chain(oof_children.iter().map(|(node_id, _)| *node_id))
+-        .collect();
+-    let root_node = &mut doc.nodes[table_root_node_id];
+-    root_node.children = children;
 +/// The row groups and rows (and the `display: contents` boxes between them and the table) of a table
 +/// that is now built as another box: built as boxes in their turn (`collect_layout_children_with_wrap`).
 +/// They are those of the table's last `TableContext`, whatever their `display` is now (a row group of
@@ -31020,40 +31027,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        if doc.nodes[child].is_element() && !row_parts.contains(&child) {
 +            enter_layout_tree(doc, child);
 +        }
-     }
++    }
 +    release_former_cells(doc, node_id, &ctx.cells, &[]);
-+}
-+
-+/// pyro: a cell collected while no container lists it (`Node::layout_child_of`): new, or
-+/// back from outside the layout tree (its row was `display: contents`, it was a block the table
-+/// ignored). Stylo styled it meanwhile and `clear_damage_and_dirty_flags` cleared the damage that no
-+/// pass consumed (no pass reached it), so what its subtree built before is stale: built again, as a
-+/// fresh build does.
-+fn enter_layout_tree(doc: &mut BaseDocument, node_id: NodeId) {
-+    doc.iter_subtree_mut(node_id, |id, doc| {
-+        let node = &mut doc.nodes[id];
-+        if node.is_element() {
-+            node.insert_damage(super::damage::ALL_DAMAGE);
-+        }
-+        node.clear_layout_cache();
-+    });
-+}
- 
--    let layout_children = cells
--        .iter()
--        .map(|cell| cell.node_id)
--        .chain(oof_children.iter().map(|(node_id, _)| *node_id))
--        .collect();
--    let root_node = &mut doc.nodes[table_root_node_id];
--    root_node.children = children;
-+/// pyro: a node that is no longer one of a table's cells (a box of its own, out of flow, or
-+/// its table gone) has no half collapsed borders (its layout style and paint, which draws a node's
-+/// own borders only without them, follow) and no index into the table's cells.
-+fn release_cell(doc: &mut BaseDocument, node_id: NodeId) {
-+    let Some(node) = doc.nodes.get_mut(node_id) else { return };
-+    node.set_collapsed_border(None);
-+    node.layout_data_mut().table_cell_index = u32::MAX;
-+    set_cell_baseline_offset(node, 0.0);
 +}
  
 -    (
@@ -31070,12 +31045,19 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 -        },
 -        layout_children,
 -    )
-+/// pyro: whether a table cell styled `style` is aligned on its row's baseline: its `vertical-align` is
-+/// none of `top`, `middle` and `bottom` (CSS 2.1 §17.5.3: the other values act as `baseline`) and its
-+/// `align-content` is `normal`.
-+fn is_baseline_aligned(style: &style::properties::ComputedValues) -> bool {
-+    style.get_position().align_content.primary() == style::values::specified::align::AlignFlags::NORMAL
-+        && stylo_taffy::convert::table_cell_vertical_align(style).is_none()
++/// pyro: a cell collected while no container lists it (`Node::layout_child_of`): new, or
++/// back from outside the layout tree (its row was `display: contents`, it was a block the table
++/// ignored). Stylo styled it meanwhile and `clear_damage_and_dirty_flags` cleared the damage that no
++/// pass consumed (no pass reached it), so what its subtree built before is stale: built again, as a
++/// fresh build does.
++fn enter_layout_tree(doc: &mut BaseDocument, node_id: NodeId) {
++    doc.iter_subtree_mut(node_id, |id, doc| {
++        let node = &mut doc.nodes[id];
++        if node.is_element() {
++            node.insert_damage(super::damage::ALL_DAMAGE);
++        }
++        node.clear_layout_cache();
++    });
  }
  
 -/// Collect `<col>` elements (and `display: table-column` elements) along with their
@@ -31090,6 +31072,24 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 -) {
 -    let node = &doc.nodes[node_id];
 -    if !node.is_element() {
++/// pyro: a node that is no longer one of a table's cells (a box of its own, out of flow, or
++/// its table gone) has no half collapsed borders (its layout style and paint, which draws a node's
++/// own borders only without them, follow) and no index into the table's cells.
++fn release_cell(doc: &mut BaseDocument, node_id: NodeId) {
++    let Some(node) = doc.nodes.get_mut(node_id) else { return };
++    node.set_collapsed_border(None);
++    node.layout_data_mut().table_cell_index = u32::MAX;
++    set_cell_baseline_offset(node, 0.0);
++}
++
++/// pyro: whether a table cell styled `style` is aligned on its row's baseline: its `vertical-align` is
++/// none of `top`, `middle` and `bottom` (CSS 2.1 §17.5.3: the other values act as `baseline`) and its
++/// `align-content` is `normal`.
++fn is_baseline_aligned(style: &style::properties::ComputedValues) -> bool {
++    style.get_position().align_content.primary() == style::values::specified::align::AlignFlags::NORMAL
++        && stylo_taffy::convert::table_cell_vertical_align(style).is_none()
++}
++
 +/// pyro: sets how far down a table cell's content is laid out in its box (`shift_cell_content`). A
 +/// change clears the cell's layout cache: the next layout of the cell lays its content out again.
 +fn set_cell_baseline_offset(node: &mut crate::Node, offset: f32) {
@@ -31781,7 +31781,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -843,6 +4011,117 @@
+@@ -843,6 +4011,128 @@
          &self.ctx.cells[usize::from(child_node_id)].style
      }
  
@@ -31868,7 +31868,18 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        if let Some(baseline) = output.baselines.first {
 +            return Some(baseline - offset);
 +        }
-+        // No line box: the bottom of its content box, when it has content.
++        // No line box: the bottom of its content box, when it has in-flow content (a cell without any,
++        // however tall, takes no part in its row's baseline, as in Chromium; WPT css-align
++        // `baseline-rules/synthesized-baseline-table-cell-001`).
++        let has_content = node.layout_children.borrow().as_ref().is_some_and(|children| {
++            children.iter().any(|&child| {
++                let child = &self.doc.nodes[child];
++                !child.is_out_of_flow() && !child.is_whitespace_node()
++            })
++        });
++        if !has_content {
++            return None;
++        }
 +        use taffy::CoreStyle as _;
 +        let style = node.layout_style();
 +        let parent = inputs.parent_size.width;
@@ -31899,7 +31910,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn set_detailed_grid_info(
          &mut self,
          _node_id: taffy::NodeId,
-@@ -851,3 +4130,535 @@
+@@ -851,3 +4141,535 @@
          *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
      }
  }
