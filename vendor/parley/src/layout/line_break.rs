@@ -1752,6 +1752,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         let max_advance = max_advance - line_indent;
         // pyro: what fits is also bounded by the wrap limit (`BreakerState::set_wrap_limit`).
         let fit_advance = max_advance.min(self.state.wrap_limit - line_indent) - self.state.wrap_reduction;
+        // pyro: where the first line ends at the latest (`Layout::set_first_line_limit`).
+        let first_line_end = self.layout.data.first_line_limit.filter(|_| self.lines.lines.is_empty());
 
         // Iterate over remaining runs in the Layout
         let item_count = self.layout.data.items.len();
@@ -2090,7 +2092,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // If the content fits (the x position does NOT exceed max_advance)
                         //
                         // We simply append the atom to the current line
-                        if next_x - autospace <= fit_advance + FIT_TOLERANCE {
+                        let past_first_line = first_line_end.is_some_and(|end| {
+                            self.state.line.has_inline_content
+                                && atom.characters()[0].text_byte_start as usize >= end
+                                && atom.characters()[0].whitespace == Whitespace::None
+                        });
+                        if next_x - autospace <= fit_advance + FIT_TOLERANCE && !past_first_line {
                             if max_height_exceeded {
                                 return self.max_height_break_data(line_height);
                             }
@@ -2140,6 +2147,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                         && index.checked_sub(1).is_some_and(|i| clusters[i].whitespace() == Whitespace::None)
                                 };
                             if !wraps_before_ideographic_spaces
+                                && !past_first_line
                                 && (all_hang || next_x - hanging <= fit_advance + FIT_TOLERANCE)
                             {
                                 if max_height_exceeded {

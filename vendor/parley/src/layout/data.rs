@@ -269,6 +269,9 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) alignment: Option<super::Alignment>,
     /// The text-indent amount in layout units.
     pub(crate) indent_amount: f32,
+    /// pyro: the text index the first line ends at the latest, when set
+    /// ([`Layout::set_first_line_limit`]).
+    pub(crate) first_line_limit: Option<usize>,
     /// Options controlling text-indent behavior (each-line, hanging).
     pub(crate) indent_options: IndentOptions,
     /// pyro: the advance of a space that `tab-size` counts in (the root style's space with its
@@ -328,6 +331,7 @@ impl<B: Brush> Default for LayoutData<B> {
             alignment: None,
             layout_max_advance: 0.0,
             indent_amount: 0.0,
+            first_line_limit: None,
             indent_options: IndentOptions::default(),
             tab_space: -1.0,
             hang_classes: Vec::new(),

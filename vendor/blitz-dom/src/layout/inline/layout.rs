@@ -268,7 +268,7 @@ impl LayoutPassState<'_> {
 /// one that breaks `layout` into as many lines as `max_advance` does. `None` when there is
 /// nothing to balance (one line) or too much (more than Blink's six lines).
 fn balanced_wrap_limit(
-    layout: &mut parley::Layout<crate::node::TextBrush>,
+    mut break_at: impl FnMut(f32) -> (usize, usize, usize),
     max_advance: f32,
     scale: f32,
     max_lines: usize,
@@ -277,20 +277,7 @@ fn balanced_wrap_limit(
     if !max_advance.is_finite() || max_advance <= 0.0 {
         return None;
     }
-    // Lines that overflow or end at an emergency break (`overflow-wrap`) are no balance.
-    let breaks = |layout: &parley::Layout<crate::node::TextBrush>, width: f32| {
-        let mut emergency = 0;
-        let mut overflows = 0;
-        for line in layout.lines() {
-            let metrics = line.metrics();
-            emergency += usize::from(line.break_reason() == parley::layout::BreakReason::Emergency);
-            overflows +=
-                usize::from(metrics.indent + metrics.advance - metrics.hanging_advance > width + 0.01 * scale);
-        }
-        (layout.len(), emergency, overflows)
-    };
-    layout.break_all_lines(Some(max_advance));
-    let (lines, emergency, overflows) = breaks(layout, max_advance);
+    let (lines, emergency, overflows) = break_at(max_advance);
     if !(2..=MAX_LINES.min(max_lines)).contains(&lines) {
         return None;
     }
@@ -298,8 +285,7 @@ fn balanced_wrap_limit(
     // To a quarter of a CSS pixel.
     while high - low > 0.25 * scale {
         let middle = (low + high) / 2.0;
-        layout.break_all_lines(Some(middle));
-        let now = breaks(layout, middle);
+        let now = break_at(middle);
         if now.0 <= lines && now.1 <= emergency && now.2 <= overflows {
             high = middle;
         } else {
@@ -307,6 +293,20 @@ fn balanced_wrap_limit(
         }
     }
     (high < max_advance).then_some(high)
+}
+
+/// pyro: `layout` broken at `width`: its lines, and those that end at an emergency break
+/// (`overflow-wrap`) or overflow it, which are no balance (`balanced_wrap_limit`).
+fn break_counts(layout: &mut parley::Layout<crate::node::TextBrush>, width: f32, scale: f32) -> (usize, usize, usize) {
+    layout.break_all_lines(Some(width));
+    let mut emergency = 0;
+    let mut overflows = 0;
+    for line in layout.lines() {
+        let metrics = line.metrics();
+        emergency += usize::from(line.break_reason() == parley::layout::BreakReason::Emergency);
+        overflows += usize::from(metrics.indent + metrics.advance - metrics.hanging_advance > width + 0.01 * scale);
+    }
+    (layout.len(), emergency, overflows)
 }
 
 /// pyro: `text-wrap: balance` beside floats, as in Blink: every line's room to wrap in is
@@ -427,6 +427,45 @@ fn wider_line_slot(block_ctx: &BlockContext, slot: &ContentSlot, line: &LineBrea
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: `::first-line` styles that change layout, for lines broken at `width`: its first line
+    /// ends where it ends with all of the text in those styles (as Chromium lays out the first line
+    /// in them), the text up to there is built in them, and the line may not take the (unstyled)
+    /// text after it (`Layout::set_first_line_limit`). The rest is the root's own.
+    fn plan_first_line(
+        &mut self,
+        node_id: NodeId,
+        inline_layout: &mut crate::node::TextLayout,
+        width: f32,
+        indent: f32,
+        indent_options: IndentOptions,
+    ) {
+        let rebuild = |state: &mut Self, inline_layout: &mut crate::node::TextLayout, end: Option<usize>| {
+            inline_layout.first_line_end = end;
+            let crate::BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = &mut **state;
+            let mut font_ctx = font_ctx.lock().unwrap();
+            super::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, inline_layout, viewport.scale(), node_id);
+            drop(font_ctx);
+            inline_layout.last_break = None;
+            inline_layout.final_lines = None;
+            inline_layout.layout.set_text_indent(indent, indent_options);
+        };
+        if inline_layout.first_line_end.is_some() {
+            rebuild(self, inline_layout, None);
+        }
+        inline_layout.layout.set_first_line_limit(None);
+        inline_layout.layout.break_all_lines(Some(width));
+        let (end, wrapped) = match (inline_layout.layout.len(), inline_layout.layout.lines().next()) {
+            (2.., Some(line)) => (line.text_range().end, line.break_reason() != parley::layout::BreakReason::Explicit),
+            _ => return,
+        };
+        rebuild(self, inline_layout, Some(end));
+        // (A forced break ends it there anyway.)
+        if !wrapped {
+            return;
+        }
+        inline_layout.layout.set_first_line_limit(Some(end));
+    }
+
     /// Place a float laid out by inline layout at or below `min_y` (content-box relative)
     #[cfg(feature = "floats")]
     fn place_inline_float(
@@ -1514,23 +1553,7 @@ impl LayoutPassState<'_> {
         // build gave them to the text up to where the first line ended last time (all of it at
         // first); a first line that ends elsewhere at this width builds the text again with that end.
         if inline_layout.first_line_layout {
-            for _ in 0..2 {
-                inline_layout.layout.break_all_lines(Some(width));
-                let end = inline_layout.layout.lines().next().map(|line| line.text_range().end);
-                if end.is_none() || end == inline_layout.first_line_end {
-                    break;
-                }
-                inline_layout.first_line_end = end;
-                let crate::BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = &mut **self;
-                let mut font_ctx = font_ctx.lock().unwrap();
-                super::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut inline_layout, viewport.scale(), node_id);
-                drop(font_ctx);
-                inline_layout.last_break = None;
-                inline_layout.final_lines = None;
-                inline_layout
-                    .layout
-                    .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
-            }
+            self.plan_first_line(node_id, &mut inline_layout, width, resolved_text_indent * scale - hang_first, indent_options);
         }
 
         // Content sized to fit exactly (e.g. shrink-to-fit) can end up a few ulps wider than
@@ -1654,7 +1677,7 @@ impl LayoutPassState<'_> {
                 // pyro: and so are those an ancestor's line clamp cuts: only the lines it leaves
                 // this block balance (WPT css-overflow `line-clamp/line-clamp-balance-002`).
                 let ancestor_left = self.clamp_lines_left(node_id);
-                let balance_clamp = || {
+                let balance_clamp = {
                     self.nodes[node_id]
                         .primary_styles()
                         .and_then(|s| s.slow_clone_line_clamp().max_lines.lines_value().map(|lines| lines.0))
@@ -1662,9 +1685,30 @@ impl LayoutPassState<'_> {
                         .map_or(usize::MAX, |lines| lines as usize)
                         .min(ancestor_left.unwrap_or(usize::MAX))
                 };
-                let balance_limit = (balance_wanted && !floats_involved)
-                    .then(|| balanced_wrap_limit(&mut inline_layout.layout, max_advance, scale, balance_clamp()))
-                    .flatten();
+                let balance_limit = if balance_wanted && !floats_involved {
+                    let clamp = balance_clamp;
+                    // pyro: with layout-changing `::first-line` styles each width tried has its
+                    // own first line, built again for it (`plan_first_line`).
+                    let first_line = inline_layout.first_line_layout;
+                    let indent = resolved_text_indent * scale - hang_first;
+                    let limit = balanced_wrap_limit(
+                        |width| {
+                            if first_line {
+                                self.plan_first_line(node_id, &mut inline_layout, width, indent, indent_options);
+                            }
+                            break_counts(&mut inline_layout.layout, width, scale)
+                        },
+                        max_advance,
+                        scale,
+                        clamp,
+                    );
+                    if first_line {
+                        self.plan_first_line(node_id, &mut inline_layout, limit.unwrap_or(width), indent, indent_options);
+                    }
+                    limit
+                } else {
+                    None
+                };
                 // pyro: CSS `text-fit` (CSS Text 5), not beside floats or with an initial letter,
                 // as in Blink. `consistent` scales every line by what the widest (narrowest) line
                 // needs, measured on the lines broken without it.
@@ -1687,7 +1731,7 @@ impl LayoutPassState<'_> {
                     snapshot: block_ctx.float_snapshot(),
                     placed_floats: self.inline_placed_floats.len(),
                     br_clear_floor,
-                    max_lines: FloatBalance::MAX_LINES.min(balance_clamp()),
+                    max_lines: FloatBalance::MAX_LINES.min(balance_clamp),
                     first: None,
                     low: 0.0,
                     high: max_advance,

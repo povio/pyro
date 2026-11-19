@@ -218,6 +218,13 @@ impl<B: Brush> Layout<B> {
         self.data.indent_options = options;
     }
 
+    /// pyro: the text index the first line ends at the latest: content that starts there or after
+    /// it does not fit on it (a `::first-line` style that changes layout ends the line where it
+    /// ends in that style); `None` by default. Like the indent, set before the lines are broken.
+    pub fn set_first_line_limit(&mut self, end: Option<usize>) {
+        self.data.first_line_limit = end;
+    }
+
     /// pyro: makes the layout's preserved tabs go to tab stops, one every `tab-size` of the
     /// tab's style ([`TabSize`](crate::TabSize)) from the start edge of the lines' container.
     /// `space` is the advance that a number of spaces counts in, in layout units; a tab closer
