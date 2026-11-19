@@ -39,6 +39,8 @@ pyro-canvas = { workspace = true }
 # way. Vendored for `VelloCpuImageRenderer::with_threads` (vendor/anyrender_vello_cpu).
 anyrender_vello_cpu = { version = "0.18.0", features = ["multithreading"] }
 anyrender_vello = { version = "0.15.0", optional = true }
+# Draws SVG images for `shape-outside` (`svg_shape_alpha`), as blitz-paint draws them.
+anyrender_svg = "0.15.0"
 peniko = "0.6.0"
 kurbo = "0.13.1"
 parley = { version = "0.12", default-features = false, features = ["std"] }

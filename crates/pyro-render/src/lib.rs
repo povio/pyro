@@ -832,8 +832,24 @@ impl Default for Renderer {
     }
 }
 
+/// The alpha of an SVG image's tree drawn at `width` by `height` (each pixel's, row by row), for
+/// blitz-dom's `shape-outside` image shapes: as the image paints, strokes, clips, masks and
+/// opacity included.
+fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32) -> Option<Vec<u8>> {
+    let size = tree.size();
+    if width == 0 || height == 0 || width > u16::MAX as u32 || height > u16::MAX as u32 || !(size.width() > 0.0 && size.height() > 0.0) {
+        return None;
+    }
+    let scale = kurbo::Affine::scale_non_uniform(width as f64 / size.width() as f64, height as f64 / size.height() as f64);
+    let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(width, height);
+    let mut rgba = Vec::new();
+    anyrender::ImageRenderer::render_to_vec(&mut renderer, |scene| anyrender_svg::render_svg_tree(scene, tree, scale), &mut rgba);
+    Some(rgba.chunks_exact(4).map(|px| px[3]).collect())
+}
+
 impl Renderer {
     pub fn new() -> Self {
+        blitz_dom::set_svg_rasterizer(svg_shape_alpha);
         Self {
             font_ctx: process_fonts(),
             blob_hashes: HashMap::new(),
@@ -3892,5 +3908,36 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
             }
         }
         Box::new(doc)
+    }
+}
+
+#[cfg(test)]
+mod svg_shape_alpha_tests {
+    use super::svg_shape_alpha;
+    use anyrender_svg::usvg;
+
+    fn alpha(svg: &str, w: u32, h: u32) -> Vec<u8> {
+        let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).expect("svg");
+        svg_shape_alpha(&tree, w, h).expect("alpha")
+    }
+
+    /// A stroke-only SVG is opaque along its stroke (the filled paths alone gave nothing), and
+    /// a masked fill transparent where the mask is.
+    #[test]
+    fn strokes_and_masks_count() {
+        let a = alpha(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect x="10" y="10" width="80" height="80" fill="none" stroke="black" stroke-width="10"/></svg>"#,
+            100,
+            100,
+        );
+        assert!(a[50 * 100 + 10] > 200, "on the stroke");
+        assert_eq!(a[50 * 100 + 50], 0, "inside the stroke");
+        let a = alpha(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><mask id="m"><rect width="50" height="100" fill="white"/></mask><rect width="100" height="100" fill="black" mask="url(#m)"/></svg>"#,
+            200,
+            100,
+        );
+        assert!(a[50 * 200 + 40] > 200, "left half, scaled to 200px wide");
+        assert_eq!(a[50 * 200 + 150], 0, "masked out");
     }
 }

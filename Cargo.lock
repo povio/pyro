@@ -2936,6 +2936,7 @@ name = "pyro-render"
 version = "0.0.17"
 dependencies = [
  "anyrender",
+ "anyrender_svg",
  "anyrender_vello",
  "anyrender_vello_cpu",
  "app_units",
