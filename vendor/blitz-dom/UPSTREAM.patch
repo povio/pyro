@@ -18903,7 +18903,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -322,73 +1203,220 @@
+@@ -322,73 +1203,223 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -18986,7 +18986,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          }
                      }
 -                    return output;
-+                    if let Some(line) = select_line {
++                    // pyro: layout containment leaves it no baseline (css-contain-2 § 3.2; WPT
++                    // css-contain `contain-layout-suppress-baseline-002`).
++                    if let Some(line) = select_line.filter(|_| !style.contain().suppresses_baseline()) {
 +                        let parent = inputs.parent_size.width;
 +                        let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
 +                        let border = style.border().resolve_or_zero(parent, resolve_calc_value);
@@ -19120,7 +19122,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              );
 +                            // Its baseline is its text's, the line centred in the content
 +                            // box (Chromium), not its bottom edge.
-+                            if let Some(line) = line {
++                            // (None with layout containment.)
++                            if let Some(line) = line.filter(|_| !style.contain().suppresses_baseline()) {
 +                                let parent = inputs.parent_size.width;
 +                                let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
 +                                let border = style.border().resolve_or_zero(parent, resolve_calc_value);
@@ -19163,7 +19166,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1435,50 @@
+@@ -407,39 +1438,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -19235,7 +19238,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1511,90 @@
+@@ -472,6 +1514,90 @@
                          _ => unreachable!(),
                      };
  
@@ -19326,7 +19329,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1611,551 @@
+@@ -488,126 +1614,551 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -19964,7 +19967,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2215,11 @@
+@@ -667,7 +2218,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19977,7 +19980,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2227,15 @@
+@@ -675,6 +2230,15 @@
      }
  
      #[inline(always)]
@@ -19993,7 +19996,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2259,26 @@
+@@ -698,17 +2262,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -20022,7 +20025,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2291,7 @@
+@@ -721,6 +2294,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -20030,7 +20033,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2303,122 @@
+@@ -732,6 +2306,122 @@
      }
  }
  
@@ -20153,7 +20156,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2426,12 @@
+@@ -739,10 +2429,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -20170,7 +20173,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2441,11 @@
+@@ -752,9 +2444,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -20185,7 +20188,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2473,193 @@
+@@ -782,16 +2476,193 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -20383,7 +20386,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2712,30 @@
+@@ -844,6 +2715,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -20414,7 +20417,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2744,19 @@
+@@ -852,7 +2747,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20435,7 +20438,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2772,30 @@
+@@ -868,6 +2775,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -20466,7 +20469,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2900,192 @@
+@@ -972,3 +2903,192 @@
          })
      }
  }

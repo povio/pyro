@@ -1281,7 +1281,9 @@ impl LayoutPassState<'_> {
                             output = compute_leaf_layout(wider, &style, resolve_calc_value, |_known_size, _available_space| content);
                         }
                     }
-                    if let Some(line) = select_line {
+                    // pyro: layout containment leaves it no baseline (css-contain-2 § 3.2; WPT
+                    // css-contain `contain-layout-suppress-baseline-002`).
+                    if let Some(line) = select_line.filter(|_| !style.contain().suppresses_baseline()) {
                         let parent = inputs.parent_size.width;
                         let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                         let border = style.border().resolve_or_zero(parent, resolve_calc_value);
@@ -1384,7 +1386,8 @@ impl LayoutPassState<'_> {
                             );
                             // Its baseline is its text's, the line centred in the content
                             // box (Chromium), not its bottom edge.
-                            if let Some(line) = line {
+                            // (None with layout containment.)
+                            if let Some(line) = line.filter(|_| !style.contain().suppresses_baseline()) {
                                 let parent = inputs.parent_size.width;
                                 let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                                 let border = style.border().resolve_or_zero(parent, resolve_calc_value);
