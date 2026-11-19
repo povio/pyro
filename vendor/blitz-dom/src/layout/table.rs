@@ -367,7 +367,7 @@ impl TableTreeWrapper<'_, '_> {
                             }
                             taffy::BoxSizing::BorderBox => 0.0,
                         };
-                        hi.max(cell.length_width.unwrap_or(width.value() + box_extra))
+                        hi.max(cell.min_width.or(cell.length_width).unwrap_or(width.value() + box_extra))
                     }
                     _ => hi,
                 };
@@ -393,8 +393,10 @@ impl TableTreeWrapper<'_, '_> {
                         taffy::BoxSizing::BorderBox => 0.0,
                     };
                     fixed[column] = true;
-                    // (`length_width`: its border box, no wider than a length `max-width` says)
-                    max[column] = max[column].max(cell.length_width.unwrap_or(width.value() + box_extra));
+                    // (`min_width`: its border box with its halves of collapsed borders, no wider
+                    // than a length `max-width` says, `length_width` before the collapsed borders)
+                    max[column] = max[column]
+                        .max(cell.min_width.or(cell.length_width).unwrap_or(width.value() + box_extra));
                 }
                 // pyro: a column with a length width (its `<col>`'s) keeps it as its max-content
                 // width: its auto cells' content widens it only to their min-content width (Blink;
