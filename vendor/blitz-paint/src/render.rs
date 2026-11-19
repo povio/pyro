@@ -736,7 +736,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let is_internal_table_box_other_than_cell = display.outside()
                 == DisplayOutside::InternalTable
                 && display.inside() != DisplayInside::TableCell;
-            !display.is_inline_flow() && !is_internal_table_box_other_than_cell
+            // (A replaced element is an atomic inline: paint containment applies to it. WPT
+            // css-overflow `paint-containment-svg`.)
+            (!display.is_inline_flow() || node.element_data().is_some_and(|e| e.image_data().is_some()))
+                && !is_internal_table_box_other_than_cell
         };
         let element = node.element_data();
         // pyro: an SVG clips its content at its viewport itself, at its content box and only
@@ -4960,6 +4963,7 @@ impl ElementCx<'_, '_> {
         // show in the rest of the box (Chromium draws the image into that rect, clipped). A
         // second cut, only where the content reaches past a rect that leaves some of the box.
         let mut object_clip = None;
+        let mut margin_clip: Option<kurbo::BezPath> = None;
         let (visible_x, visible_y) = {
             let b = self.style.get_box();
             (matches!(b.overflow_x, Overflow::Visible), matches!(b.overflow_y, Overflow::Visible))
@@ -4987,6 +4991,16 @@ impl ElementCx<'_, '_> {
             if reaches_past(ink(), object) {
                 object_clip = Some(object);
             }
+            ReplacedClip::Never
+        } else if inline && !document_root && {
+            use style::values::generics::box_::OverflowClipMarginBox;
+            let margin = &self.style.get_margin().overflow_clip_margin;
+            margin.offset.px() != 0.0 || margin.visual_box != OverflowClipMarginBox::ContentBox
+        } {
+            // pyro: an inline `<svg>` whose author moved its `overflow-clip-margin` off the UA
+            // sheet's `content-box` is cut there (Chromium applies the margin to a replaced
+            // element that `overflow: hidden` clips; WPT css-overflow `overflow-clip-margin-svg`).
+            margin_clip = Some(box_shadow::margin_clip_path(&self.frame, &self.style, self.scale, true, true));
             ReplacedClip::Never
         } else {
             let content = self.frame.content_box;
@@ -5023,6 +5037,9 @@ impl ElementCx<'_, '_> {
                 let isolate = !inline && anyrender_svg::has_blend_modes(&svg.tree);
                 if let Some(object) = object_clip {
                     scene.push_clip_layer(Fill::NonZero, self.transform, &object);
+                }
+                if let Some(clip) = &margin_clip {
+                    scene.push_clip_layer(Fill::NonZero, self.transform, clip);
                 }
                 if isolate {
                     scene.push_layer(
@@ -5066,6 +5083,9 @@ impl ElementCx<'_, '_> {
                     None => anyrender_svg::render_svg_tree_with(scene, &svg.tree, transform, &mut handler),
                 }
                 if isolate {
+                    scene.pop_layer();
+                }
+                if margin_clip.is_some() {
                     scene.pop_layer();
                 }
                 if object_clip.is_some() {

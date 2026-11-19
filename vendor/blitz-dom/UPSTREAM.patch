@@ -367,16 +367,18 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,6 +1034,31 @@
+@@ -838,6 +1034,33 @@
      border-radius: 0 ! important;
  }
  
 +/* pyro: an inline <svg> clips its content at its viewport, as Chromium's UA sheet
 + * has it (svg.css). The clip is blitz-paint's (`draw_svg`), at the content box
-+ * (`overflow-clip-margin: content-box`); in layout the overflow of a replaced
++ * (`overflow-clip-margin: content-box`, which an author's margin moves out:
++ * WPT css-overflow `overflow-clip-margin-svg`); in layout the overflow of a replaced
 + * element is ignored (stylo_taffy). */
 +svg|svg:not(:root) {
 +    overflow: hidden;
++    overflow-clip-margin: content-box;
 +}
 +
 +/* pyro: so does a <foreignObject> at its box (Chromium's svg.css), which holds its HTML
@@ -399,7 +401,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe {
      border: 2px inset;
  }
-@@ -851,8 +1072,18 @@
+@@ -851,8 +1074,18 @@
      user-select: none;
  }
  
@@ -418,7 +420,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1117,15 @@
+@@ -886,14 +1119,15 @@
      display: none;
  }
  
@@ -437,7 +439,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -1128,37 +1360,42 @@
+@@ -1128,37 +1362,42 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

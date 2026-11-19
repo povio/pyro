@@ -1036,10 +1036,12 @@ frame {
 
 /* pyro: an inline <svg> clips its content at its viewport, as Chromium's UA sheet
  * has it (svg.css). The clip is blitz-paint's (`draw_svg`), at the content box
- * (`overflow-clip-margin: content-box`); in layout the overflow of a replaced
+ * (`overflow-clip-margin: content-box`, which an author's margin moves out:
+ * WPT css-overflow `overflow-clip-margin-svg`); in layout the overflow of a replaced
  * element is ignored (stylo_taffy). */
 svg|svg:not(:root) {
     overflow: hidden;
+    overflow-clip-margin: content-box;
 }
 
 /* pyro: so does a <foreignObject> at its box (Chromium's svg.css), which holds its HTML

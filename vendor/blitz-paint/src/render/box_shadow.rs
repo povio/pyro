@@ -65,7 +65,6 @@ fn spread_radii(
 pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::ComputedValues, scale: f64) -> kurbo::BezPath {
     use kurbo::Shape as _;
     use style::values::computed::Overflow;
-    use style::values::generics::box_::OverflowClipMarginBox;
     let box_style = style.get_box();
     let (visible_x, visible_y) = (box_style.overflow_x == Overflow::Visible, box_style.overflow_y == Overflow::Visible);
     // Paint containment clips as `overflow: clip` does, on both axes.
@@ -77,6 +76,22 @@ pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::Comp
     if !(clip_x || clip_y) || !(clip_x || visible_x) || !(clip_y || visible_y) {
         return frame.padding_box_path();
     }
+    margin_clip_path(frame, style, scale, clip_x, clip_y)
+}
+
+/// pyro: the clip of a box that clips on `clip_x` and/or `clip_y` as `overflow: clip` does, at
+/// its `overflow-clip-margin` (see [`overflow_clip_path`]). Also the viewport clip of an inline
+/// `<svg>` (a replaced element, which `overflow: hidden` clips as `clip` does: Chromium's
+/// `LayoutReplaced` applies the margin to it; WPT css-overflow `overflow-clip-margin-svg`).
+pub(super) fn margin_clip_path(
+    frame: &CssBox,
+    style: &style::properties::ComputedValues,
+    scale: f64,
+    clip_x: bool,
+    clip_y: bool,
+) -> kurbo::BezPath {
+    use kurbo::Shape as _;
+    use style::values::generics::box_::OverflowClipMarginBox;
     let clip_margin = &style.get_margin().overflow_clip_margin;
     // (A negative margin moves the edge inwards, to the box's middle at most.)
     let margin = f64::from(clip_margin.offset.px()) * scale;
