@@ -3989,7 +3989,7 @@ index 037a2d1c..aab051a4 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..87ca99d0 100644
+index f0109c6e..bfc2b6ce 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -4298,7 +4298,39 @@ index f0109c6e..87ca99d0 100644
 +        if let Some(context) = &own_subgrid {
 +            subgrid::clamp_placements(&mut placements, context);
 +        }
-+
+ 
+-    // 5. Grid Item Placement
+-    // Match items (children) to a definite grid position (row start/end and column start/end position)
+-    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
+-    // `items` is in document order from here on (placement only fills in each item's grid area). The track
+-    // sizing and baseline passes sort references to the items rather than the items themselves.
+-    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
+-
+-    // Extract track counts from previous step (auto-placement can expand the number of tracks)
+-    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
+-    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
+-
+-    // 5. Initialize Tracks
+-    // Initialize (explicit and implicit) grid tracks (and gutters)
+-    // This resolves the min and max track sizing functions for all tracks and gutters
+-    let mut columns = GridTrackVec::new();
+-    let mut rows = GridTrackVec::new();
+-    initialize_grid_tracks(
+-        &mut columns,
+-        final_col_counts,
+-        &style,
+-        AbsoluteAxis::Horizontal,
+-        col_auto_repetition_count,
+-        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
+-    );
+-    initialize_grid_tracks(
+-        &mut rows,
+-        final_row_counts,
+-        &style,
+-        AbsoluteAxis::Vertical,
+-        row_auto_repetition_count,
+-        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
+-    );
 +        // 4. Implicit Grid: Estimate Track Counts
 +        // 5. Grid Item Placement
 +        // Match items (children) to a definite grid position (row start/end and column start/end position).
@@ -4394,39 +4426,7 @@ index f0109c6e..87ca99d0 100644
 +            }
 +        }
  
--    // 5. Grid Item Placement
--    // Match items (children) to a definite grid position (row start/end and column start/end position)
--    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
--    // `items` is in document order from here on (placement only fills in each item's grid area). The track
--    // sizing and baseline passes sort references to the items rather than the items themselves.
--    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
--
--    // Extract track counts from previous step (auto-placement can expand the number of tracks)
--    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
--    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
--
--    // 5. Initialize Tracks
--    // Initialize (explicit and implicit) grid tracks (and gutters)
--    // This resolves the min and max track sizing functions for all tracks and gutters
--    let mut columns = GridTrackVec::new();
--    let mut rows = GridTrackVec::new();
--    initialize_grid_tracks(
--        &mut columns,
--        final_col_counts,
--        &style,
--        AbsoluteAxis::Horizontal,
--        col_auto_repetition_count,
--        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
--    );
--    initialize_grid_tracks(
--        &mut rows,
--        final_row_counts,
--        &style,
--        AbsoluteAxis::Vertical,
--        row_auto_repetition_count,
--        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
--    );
- 
++
 +        // 6. Track Sizing
 +
 +        // Convert grid placements in origin-zero coordinates to indexes into the GridTrack (rows and columns) vectors
@@ -5025,7 +5025,14 @@ index f0109c6e..87ca99d0 100644
                  node: child,
                  order,
                  position,
-@@ -869,19 +1391,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -865,23 +1387,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+ 
+     let absolute_position_area = container_border_box - padding_box_inset.sum_axes();
+     let absolute_position_offset = Point { x: padding_box_inset.left, y: padding_box_inset.top };
++    // pyro: (before the tracks go to the detailed grid info below)
++    #[cfg(feature = "content_size")]
++    let grid_area_rect = grid_area_overflow(&columns, &rows, border, padding, direction.is_rtl());
+     // Store the detailed grid info before the out-of-flow positioning pass so that the pass can
      // resolve the grid areas of out-of-flow boxes whose containing block is this grid
      let areas =
          name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
@@ -5053,7 +5060,28 @@ index f0109c6e..87ca99d0 100644
              items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
              areas,
          },
-@@ -926,25 +1446,41 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -897,12 +1420,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+             let client_width =
+                 (container_border_box.width - border.horizontal_axis_sum() - scrollbar_gutter.x).max(0.0);
+             let overflow_rect = if is_scroll_container {
+-                item_overflow_rect.union(Rect {
+-                    left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
+-                    right: if direction.is_rtl() { client_width } else { padding.right },
+-                    top: 0.0,
+-                    bottom: padding.bottom,
+-                })
++                item_overflow_rect
++                    .union(Rect {
++                        left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
++                        right: if direction.is_rtl() { client_width } else { padding.right },
++                        top: 0.0,
++                        bottom: padding.bottom,
++                    })
++                    .union(grid_area_rect)
+             } else {
+                 item_overflow_rect
+                     .union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
+@@ -926,25 +1451,41 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return output;
      }
  
@@ -5102,7 +5130,28 @@ index f0109c6e..87ca99d0 100644
      };
  
      // A scroll container's own padding at the end of the content is part of its scrollable
-@@ -976,13 +1512,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -954,12 +1495,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+     let scrollable_overflow_rect = {
+         let client_width = (container_border_box.width - border.horizontal_axis_sum() - scrollbar_gutter.x).max(0.0);
+         let overflow_rect = if is_scroll_container {
+-            item_overflow_rect.union(Rect {
+-                left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
+-                right: if direction.is_rtl() { client_width } else { padding.right },
+-                top: 0.0,
+-                bottom: padding.bottom,
+-            })
++            item_overflow_rect
++                .union(Rect {
++                    left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
++                    right: if direction.is_rtl() { client_width } else { padding.right },
++                    top: 0.0,
++                    bottom: padding.bottom,
++                })
++                .union(grid_area_rect)
+         } else {
+             item_overflow_rect.union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
+         };
+@@ -976,13 +1519,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let mut output = LayoutOutput::from_sizes_and_baselines(
          container_border_box,
          scrollable_overflow_rect,
@@ -5190,7 +5239,7 @@ index f0109c6e..87ca99d0 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1907,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1914,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -5201,7 +5250,7 @@ index f0109c6e..87ca99d0 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +1950,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +1957,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -5209,7 +5258,7 @@ index f0109c6e..87ca99d0 100644
          }
      }
  
-@@ -1380,6 +1994,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +2001,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -5226,7 +5275,7 @@ index f0109c6e..87ca99d0 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +2078,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2085,156 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -5356,6 +5405,31 @@ index f0109c6e..87ca99d0 100644
 +        let (beside, _) = layout(vec![auto(), fr(1.0)], &[item, (Leaf::Text, min_width_zero())]);
 +        assert_eq!(alone, vec![50.0]);
 +        assert_eq!(beside, vec![50.0, 150.0]);
++    }
++}
++
++/// pyro: what a scroll container's grid adds to its scrollable overflow: its tracks (the grid area,
++/// empty tracks too) and the padding at their end (css-grid-2 § 5.3; WPT css-grid
++/// `grid-overflow-001`), in the padding-box frame of the container (track offsets are from its
++/// border edge).
++#[cfg(feature = "content_size")]
++fn grid_area_overflow(columns: &[GridTrack], rows: &[GridTrack], border: Rect<f32>, padding: Rect<f32>, rtl: bool) -> Rect<f32> {
++    let extent = |tracks: &[GridTrack], start_border: f32| -> Option<(f32, f32)> {
++        let mut range: Option<(f32, f32)> = None;
++        for track in tracks.iter().filter(|track| track.kind == types::GridTrackKind::Track && !track.is_collapsed) {
++            let (a, b) = (track.offset - start_border, track.offset - start_border + track.base_size);
++            range = Some(range.map_or((a, b), |(lo, hi)| (lo.min(a), hi.max(b))));
++        }
++        range
++    };
++    let (Some((left, right)), Some((top, bottom))) = (extent(columns, border.left), extent(rows, border.top)) else {
++        return Rect::ZERO;
++    };
++    Rect {
++        left: if rtl { left - padding.left } else { left },
++        right: if rtl { right } else { right + padding.right },
++        top,
++        bottom: bottom + padding.bottom,
 +    }
 +}
 diff --git a/src/compute/grid/subgrid.rs b/src/compute/grid/subgrid.rs

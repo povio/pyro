@@ -1387,6 +1387,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     let absolute_position_area = container_border_box - padding_box_inset.sum_axes();
     let absolute_position_offset = Point { x: padding_box_inset.left, y: padding_box_inset.top };
+    // pyro: (before the tracks go to the detailed grid info below)
+    #[cfg(feature = "content_size")]
+    let grid_area_rect = grid_area_overflow(&columns, &rows, border, padding, direction.is_rtl());
     // Store the detailed grid info before the out-of-flow positioning pass so that the pass can
     // resolve the grid areas of out-of-flow boxes whose containing block is this grid
     let areas =
@@ -1417,12 +1420,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             let client_width =
                 (container_border_box.width - border.horizontal_axis_sum() - scrollbar_gutter.x).max(0.0);
             let overflow_rect = if is_scroll_container {
-                item_overflow_rect.union(Rect {
-                    left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
-                    right: if direction.is_rtl() { client_width } else { padding.right },
-                    top: 0.0,
-                    bottom: padding.bottom,
-                })
+                item_overflow_rect
+                    .union(Rect {
+                        left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
+                        right: if direction.is_rtl() { client_width } else { padding.right },
+                        top: 0.0,
+                        bottom: padding.bottom,
+                    })
+                    .union(grid_area_rect)
             } else {
                 item_overflow_rect
                     .union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
@@ -1490,12 +1495,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let scrollable_overflow_rect = {
         let client_width = (container_border_box.width - border.horizontal_axis_sum() - scrollbar_gutter.x).max(0.0);
         let overflow_rect = if is_scroll_container {
-            item_overflow_rect.union(Rect {
-                left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
-                right: if direction.is_rtl() { client_width } else { padding.right },
-                top: 0.0,
-                bottom: padding.bottom,
-            })
+            item_overflow_rect
+                .union(Rect {
+                    left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
+                    right: if direction.is_rtl() { client_width } else { padding.right },
+                    top: 0.0,
+                    bottom: padding.bottom,
+                })
+                .union(grid_area_rect)
         } else {
             item_overflow_rect.union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
         };
@@ -2204,5 +2211,30 @@ mod rerun_tests {
         let (beside, _) = layout(vec![auto(), fr(1.0)], &[item, (Leaf::Text, min_width_zero())]);
         assert_eq!(alone, vec![50.0]);
         assert_eq!(beside, vec![50.0, 150.0]);
+    }
+}
+
+/// pyro: what a scroll container's grid adds to its scrollable overflow: its tracks (the grid area,
+/// empty tracks too) and the padding at their end (css-grid-2 § 5.3; WPT css-grid
+/// `grid-overflow-001`), in the padding-box frame of the container (track offsets are from its
+/// border edge).
+#[cfg(feature = "content_size")]
+fn grid_area_overflow(columns: &[GridTrack], rows: &[GridTrack], border: Rect<f32>, padding: Rect<f32>, rtl: bool) -> Rect<f32> {
+    let extent = |tracks: &[GridTrack], start_border: f32| -> Option<(f32, f32)> {
+        let mut range: Option<(f32, f32)> = None;
+        for track in tracks.iter().filter(|track| track.kind == types::GridTrackKind::Track && !track.is_collapsed) {
+            let (a, b) = (track.offset - start_border, track.offset - start_border + track.base_size);
+            range = Some(range.map_or((a, b), |(lo, hi)| (lo.min(a), hi.max(b))));
+        }
+        range
+    };
+    let (Some((left, right)), Some((top, bottom))) = (extent(columns, border.left), extent(rows, border.top)) else {
+        return Rect::ZERO;
+    };
+    Rect {
+        left: if rtl { left - padding.left } else { left },
+        right: if rtl { right } else { right + padding.right },
+        top,
+        bottom: bottom + padding.bottom,
     }
 }

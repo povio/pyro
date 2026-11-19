@@ -625,6 +625,19 @@ impl BaseDocument {
         if let Some(base) = columns_base {
             overflow = base.union(self.columns_rect(node_id, overflow, scale));
         }
+        // pyro: a scroll container's grid reaches as far as its tracks and the padding after them,
+        // empty tracks too (css-grid-2 § 5.3; Taffy's grid overflow, in the padding-box frame;
+        // WPT css-grid `grid-overflow-001`).
+        if scroll_padding.is_some() && self.nodes[node_id].taffy_display() == taffy::Display::Grid {
+            let grid = layout.scrollable_overflow_rect.rect();
+            let (bl, bt) = (layout.border.left as f64, layout.border.top as f64);
+            overflow = overflow.union(Rect::new(
+                (grid.left as f64 + bl) * scale,
+                (grid.top as f64 + bt) * scale,
+                (grid.right as f64 + bl) * scale,
+                (grid.bottom as f64 + bt) * scale,
+            ));
+        }
 
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
         *self.nodes[node_id].layout_children.get_mut() = layout_children;
