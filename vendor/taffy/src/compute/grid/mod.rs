@@ -761,7 +761,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         &mut rows,
         &mut columns,
         &mut items,
-        |track: &GridTrack, _, _| Some(track.base_size),
+        |track: &GridTrack, _, _| Some(track.measured_size()),
         baseline_params(true),
         table_rows,
         replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
@@ -961,7 +961,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                         &rows,
                         &columns,
                         inner_node_size,
-                        |track: &GridTrack, _| Some(track.base_size),
+                        |track: &GridTrack, _| Some(track.measured_size()),
                         &|val, basis| tree.calc(val, basis),
                     );
                     let available_space = grid_area_size.with(AbstractAxis::Block, None);
@@ -999,7 +999,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             &mut rows,
             &mut columns,
             &mut items,
-            |track: &GridTrack, _, _| Some(track.base_size),
+            |track: &GridTrack, _, _| Some(track.measured_size()),
             baseline_params(true),
             table_rows,
             None,
