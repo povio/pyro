@@ -83,6 +83,12 @@ pub(crate) fn object_loads_image(element: &ElementData) -> bool {
     match element.attr(local_name!("type")).map(str::trim) {
         Some(mime) if !mime.is_empty() => mime.get(..6).is_some_and(|m| m.eq_ignore_ascii_case("image/")),
         _ => element.attr(local_name!("data")).is_some_and(|data| {
+            // pyro: a `data:` URL says its type (HTML "the object element" takes the resource's
+            // type): `data:image/...` is an image (WPT css-contain `contain-size-replaced-001`).
+            let trimmed = data.trim_start();
+            if trimmed.get(..5).is_some_and(|p| p.eq_ignore_ascii_case("data:")) {
+                return trimmed[5..].trim_start().get(..6).is_some_and(|m| m.eq_ignore_ascii_case("image/"));
+            }
             let path = data.split(['?', '#']).next().unwrap_or_default();
             let extension = path.rsplit_once('.').map_or("", |(_, ext)| ext);
             ["svg", "svgz", "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"]
