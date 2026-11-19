@@ -77,6 +77,12 @@ pub struct DocumentData {
     pub(crate) ids: crate::tree_scope::ScopeIndex,
     /// Owner of `<template>` contents created while parsing this document.
     pub(crate) inert_doc: u32,
+    /// HTML "scripting is enabled" for the nodes of this document: it has a
+    /// browsing context whose sandbox allows scripts. The embedder sets it
+    /// (`Dom::set_document_scripting`); documents made by script, by
+    /// DOMParser or XHR, clones and template contents owners keep it off.
+    /// The fragment parser and the fragment serializer read it (`noscript`).
+    pub(crate) scripting: bool,
     /// Number of live nodes (including itself) whose owner document is this.
     pub(crate) owned: u32,
     /// How many of those nodes have an external reference (`Node::ext_refs`

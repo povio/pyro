@@ -724,6 +724,7 @@ pub trait PageHooks {
 impl PageDom {
     pub fn new(dom: DomRef, document: NodeId) -> Rc<PageDom> {
         dom.borrow_mut().watch_iframes(document).expect("page document");
+        dom.borrow_mut().set_document_scripting(document, true).expect("page document");
         Rc::new_cyclic(|this| PageDom {
             this: this.clone(),
             frame_sized: Cell::new(false),
@@ -1089,6 +1090,7 @@ impl PageDom {
         }
         self.connected_iframes.borrow_mut().clear();
         self.document.set(doc);
+        self.note_document_scripting();
         self.opaque_storage.clear();
         // Object URLs belong to the replaced document.
         drop(self.blob_urls.take());
@@ -1101,6 +1103,14 @@ impl PageDom {
     /// unaffected; parser, dynamic-script and timer checks belong to the embedder.
     pub fn set_scripting_disabled(&self, disabled: bool) {
         self.scripting_disabled.set(disabled);
+        self.note_document_scripting();
+    }
+    /// HTML "scripting is enabled" for the page's document: a page is a
+    /// browsing context, so its document has it unless the sandbox forbids
+    /// scripts. Kept on the document for the fragment parser and serializer
+    /// (`noscript`), next to what the document's parser is told.
+    fn note_document_scripting(&self) {
+        let _ = self.dom.borrow_mut().set_document_scripting(self.document(), !self.scripting_disabled());
     }
     pub fn scripting_disabled(&self) -> bool {
         self.scripting_disabled.get()

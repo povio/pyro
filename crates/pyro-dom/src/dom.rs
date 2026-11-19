@@ -906,6 +906,7 @@ impl Dom {
             url_target: url_target(url),
             ids: Default::default(),
             inert_doc: NIL,
+            scripting: false,
             owned: 0,
             held: 0,
             active: false,
@@ -1561,6 +1562,29 @@ impl Dom {
         self.shadow_disabled.push(name.into());
     }
 
+    /// HTML "scripting is enabled" for the nodes of `doc`: set for a document
+    /// of a browsing context whose sandbox allows scripts, and to the same
+    /// value as the `scripting` its `DocumentParser` gets.
+    pub fn set_document_scripting(&mut self, doc: NodeId, scripting: bool) -> DomResult<()> {
+        let i = self.check(doc)?;
+        match &mut self.n_mut(i).kind {
+            NodeKind::Document(d) => d.scripting = scripting,
+            _ => return Err(DomError::Type("not a document")),
+        }
+        Ok(())
+    }
+    /// Whether scripting is enabled for the nodes of `doc` (see `set_document_scripting`).
+    pub fn document_scripting(&self, doc: NodeId) -> DomResult<bool> {
+        let i = self.check(doc)?;
+        match &self.n(i).kind {
+            NodeKind::Document(d) => Ok(d.scripting),
+            _ => Err(DomError::Type("not a document")),
+        }
+    }
+    /// `document_scripting` of the document at index `doc`.
+    pub(crate) fn scripting_of(&self, doc: u32) -> bool {
+        self.doc_data(doc).scripting
+    }
     pub fn set_allow_declarative_shadow_roots(&mut self, doc: NodeId, allow: bool) -> DomResult<()> {
         let d = self.owner_for(doc)?;
         self.doc_data_mut(d).allow_declarative_shadow_roots = allow;

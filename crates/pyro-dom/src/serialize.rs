@@ -408,13 +408,17 @@ impl Dom {
                     }
                     NodeKind::Text(s) | NodeKind::CData(s) => {
                         let p = self.n(n).parent;
+                        // `noscript` text is raw only where scripting is
+                        // enabled for the node: not in a DOMParser, XHR or
+                        // script-created document, nor in template contents.
                         let raw = p != NIL
                             && self.n(p).element().is_some_and(|e| {
                                 e.is_html()
-                                    && matches!(
-                                        &*e.name.local,
-                                        "style" | "script" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext" | "noscript"
-                                    )
+                                    && match &*e.name.local {
+                                        "style" | "script" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext" => true,
+                                        "noscript" => self.scripting_of(self.n(n).owner_doc),
+                                        _ => false,
+                                    }
                             });
                         if raw {
                             out.push_str(s);
