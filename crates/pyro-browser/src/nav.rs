@@ -619,6 +619,7 @@ impl PageNav {
             NavigateDecision::Proceed => {}
         }
         self.same_document(target.as_str(), None, kind);
+        self.scroll_to_fragment(&target);
         self.navigation_committed(navigation_type);
         self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
@@ -641,7 +642,15 @@ impl PageNav {
         }
     }
 
-    /// Queues `hashchange` at the window when a same-document navigation
+    /// HTML "scroll to the fragment" of a same-document navigation to `target`.
+    fn scroll_to_fragment(&self, target: &Url) {
+        let Some(fragment) = target.fragment() else { return };
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            pyro_webapi::layout_api::scroll_to_fragment(&page, fragment);
+        }
+    }
+
+        /// Queues `hashchange` at the window when a same-document navigation
     /// changed only the fragment.
     fn queue_hashchange(&self, old_url: &str, new_url: &str) {
         let (Ok(old), Ok(new)) = (Url::parse(old_url), Url::parse(new_url)) else { return };
@@ -1088,6 +1097,7 @@ fn navigate_to(nav: &PageNav, mut target: Url, replace: bool) -> bool {
             // HTML "navigate": the document's own URL is a replace.
             let kind = if replace || same_url { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
+            nav.scroll_to_fragment(&target);
             nav.navigation_committed(navigation_type);
             nav.fire_fragment_popstate();
             nav.queue_hashchange(cur.as_str(), target.as_str());

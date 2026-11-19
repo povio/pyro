@@ -376,6 +376,46 @@ pub(crate) fn scroll_into_view_if_needed<'s>(s: &Scope<'s>, n: &NodeData, a: Arg
     Ok(s.undefined())
 }
 
+/// HTML "scroll to the fragment", after a same-document navigation to `fragment` (the URL's
+/// fragment, percent-encoded): the indicated part of the document is scrolled into view (block
+/// start, inline nearest), or the top of the document for an empty fragment or `top`. Nothing
+/// moves when no element is indicated.
+pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
+    use pyro_dom::layout::ScrollAlign;
+    let doc = page.document();
+    let decoded = percent_encoding::percent_decode_str(fragment).decode_utf8_lossy().into_owned();
+    crate::animation_events::layout_flush(page, doc);
+    let target = {
+        let dom = page.dom.borrow();
+        let by_id = |id: &str| (!id.is_empty()).then(|| dom.get_element_by_id(doc, id).ok().flatten()).flatten();
+        by_id(fragment).or_else(|| by_id(&decoded)).or_else(|| {
+            // The first `a` element whose `name` is the fragment.
+            dom.descendants(doc).ok().into_iter().flatten().find(|&n| {
+                dom.element(n).is_ok_and(|e| &*e.local_name() == "a")
+                    && dom.get_attribute(n, "name").ok().flatten().is_some_and(|name| name == fragment || name == decoded)
+            })
+        })
+    };
+    match target {
+        Some(el) => {
+            let moved = page.layout.borrow_mut().scroll_into_view_aligned_script_targets(
+                &page.dom.borrow(),
+                el,
+                ScrollAlign::Start,
+                ScrollAlign::Nearest,
+            );
+            fire_scroll_targets(page, moved);
+        }
+        None if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
+            let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), Some(0), Some(0));
+            if moved {
+                fire_scroll(page, None);
+            }
+        }
+        None => {}
+    }
+}
+
 fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<pyro_dom::layout::ScrollTarget>) {
     for target in moved {
         fire_scroll(
