@@ -477,6 +477,7 @@ impl EngineHost {
             quirks_mode: s.quirks_mode,
             limited_quirks_mode: s.limited_quirks_mode,
             content_language: s.content_language,
+            registered_properties: s.registered_properties,
             // The document selection, highlighted as Chromium paints it.
             selection: s.selection.map(|(start, end)| pyro_render::TextSelection { start, end }),
             // Custom highlights and the target text, under the selection.

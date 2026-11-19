@@ -62,6 +62,9 @@ pub struct RenderSnapshot {
     /// The document's HTTP `Content-Language`
     /// (`pyro_dom::Dom::content_language`), in every form.
     pub content_language: Option<String>,
+    /// The document's `CSS.registerProperty()` registrations, in order, in every form: name,
+    /// syntax, inherits, initial value.
+    pub registered_properties: Vec<(String, String, bool, Option<String>)>,
     /// The document selection as a renderer paints it, in every form: from
     /// the start to the end, each a text node's render key and an offset in
     /// UTF-16 code units of its data (`text_selection`).
@@ -250,6 +253,12 @@ fn snapshot_of(
             quirks_mode: dom.is_quirks_mode(document),
             limited_quirks_mode: dom.is_limited_quirks_mode(document),
             content_language: dom.content_language(document).map(str::to_owned),
+            registered_properties: layout
+                .style()
+                .registered_properties()
+                .iter()
+                .map(|p| (p.name.clone(), p.syntax.clone(), p.inherits, p.initial_value.clone()))
+                .collect(),
             selection: None,
             highlights: Vec::new(),
             control_selection: None,

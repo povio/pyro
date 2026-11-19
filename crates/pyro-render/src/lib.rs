@@ -249,6 +249,10 @@ pub struct Snapshot {
     /// fallback for `:lang()`. A [`Live`] document whose value changes is
     /// built anew.
     pub content_language: Option<String>,
+    /// The document's `CSS.registerProperty()` registrations, in order: name, syntax, inherits,
+    /// initial value. Registered on the document before it is styled (a registration made since
+    /// a [`Live`] document's last frame restyles it).
+    pub registered_properties: Vec<(String, String, bool, Option<String>)>,
     /// The page's selection, painted highlighted in screenshots of a [`Live`]
     /// document ([`Renderer::paint`]; PDFs show none).
     pub selection: Option<TextSelection>,
@@ -1359,6 +1363,10 @@ impl Renderer {
                 (doc, &*bridge, clip)
             }
         };
+        // `CSS.registerProperty()` registrations (one registered already is left as it is).
+        for (name, syntax, inherits, initial) in &snap.registered_properties {
+            doc.register_custom_property(name, syntax, *inherits, initial.as_deref());
+        }
         let profiling = profiling::on();
         let mirrored = profiling.then(|| started.elapsed());
         let (fetch, passes, resolved_latest) =

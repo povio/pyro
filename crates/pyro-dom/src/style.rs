@@ -1158,6 +1158,11 @@ impl StyleEngine {
         true
     }
 
+    /// The document's `CSS.registerProperty()` registrations, in order.
+    pub fn registered_properties(&self) -> &[RegisteredProperty] {
+        &self.registered_properties
+    }
+
     /// The registration of custom property `name`, if script made one.
     pub fn registered_property(&self, name: &str) -> Option<&RegisteredProperty> {
         self.registered_properties.iter().find(|p| p.name == name)

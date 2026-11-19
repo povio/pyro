@@ -438,6 +438,11 @@ impl BlitzGeometry {
             quirks_mode: dom.is_quirks_mode(style.document()),
             limited_quirks_mode: dom.is_limited_quirks_mode(style.document()),
             content_language: dom.content_language(style.document()).map(str::to_owned),
+            registered_properties: style
+                .registered_properties()
+                .iter()
+                .map(|p| (p.name.clone(), p.syntax.clone(), p.inherits, p.initial_value.clone()))
+                .collect(),
             selection: None,
             highlights: Vec::new(),
             control_selection: None,
