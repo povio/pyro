@@ -1248,6 +1248,31 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         }
     }
 
+    /// pyro: `backface-visibility: hidden` on an element participating in a 3D rendering context
+    /// (its layout parent `preserve-3d`) makes it the containing block of its absolutely and
+    /// fixed positioned descendants, as in Chromium (WPT css-transforms
+    /// `backface-visibility-hidden-003`, `-004`): marked as `will-change` of such a property
+    /// marks it (`WillChangeBits::FIXPOS_CB_NON_SVG`), which every containing block check reads.
+    /// Not on a non-atomic inline box, to which `backface-visibility` does not apply.
+    #[cfg(feature = "servo")]
+    fn adjust_for_backface_in_3d_context(&mut self, layout_parent_style: &ComputedValues) {
+        use crate::computed_values::backface_visibility::T as BackfaceVisibility;
+        use crate::computed_values::transform_style::T as TransformStyle;
+        use crate::values::specified::box_::WillChangeBits;
+        let box_style = self.style.get_box();
+        if box_style.backface_visibility != BackfaceVisibility::Hidden
+            || layout_parent_style.get_box().transform_style != TransformStyle::Preserve3d
+            || box_style.will_change.bits.contains(WillChangeBits::FIXPOS_CB_NON_SVG)
+        {
+            return;
+        }
+        let display = *box_style.get_display();
+        if display.is_none() || display.is_contents() || display.is_inline_flow() {
+            return;
+        }
+        self.style.mutate_box().will_change.bits |= WillChangeBits::FIXPOS_CB_NON_SVG;
+    }
+
     /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
     #[allow(unused_variables)]
     pub fn adjust<E>(
@@ -1326,6 +1351,7 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             self.adjust_for_content_visibility();
             self.adjust_for_scroll_marker_group();
             self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
+            self.adjust_for_backface_in_3d_context(layout_parent_style);
         }
         if !try_tactic.is_empty() {
             self.adjust_for_try_tactic(try_tactic);

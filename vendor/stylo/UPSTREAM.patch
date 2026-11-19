@@ -3471,13 +3471,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-19 00:13:04
-@@ -184,8 +184,86 @@
-         self.style
-             .mutate_box()
++++ b/style_adjuster.rs	2026-11-19 12:33:31
+@@ -186,6 +186,84 @@
              .set_adjusted_display(new_display, false);
-+    }
-+
+     }
+ 
 +    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
 +    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
 +    /// are clamped, as in Blink and Gecko (above); the style keeps that in
@@ -3538,8 +3536,8 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        if clamps {
 +            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
 +        }
-     }
- 
++    }
++
 +    /// pyro: a child of a legacy horizontal `-webkit-box` (laid out as flex) flexes by
 +    /// `-webkit-box-flex`, growing and shrinking alike, and its `align-self` does nothing (the
 +    /// box's `-webkit-box-align` aligns it): Blink's `LayoutDeprecatedFlexibleBox`.
@@ -3559,10 +3557,13 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      /// CSS 2.1 section 9.7:
      ///
      ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
-@@ -406,6 +484,48 @@
-         }
-     }
- 
+@@ -403,7 +481,49 @@
+             } else {
+                 self.style.mutate_box().set_display(Display::InlineBlock);
+             }
++        }
++    }
++
 +    /// pyro: `text-combine-upright: all` on an inline box in a vertical (not sideways) line: its
 +    /// text is combined into one upright 1em square (CSS Writing Modes 4 § 9.1.1). Laid out as an
 +    /// inline-block of `horizontal-tb` writing (`adjust_for_writing_mode` below makes it one), 1em
@@ -3589,7 +3590,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            crate::values::computed::TextEmphasisStyle::None
 +        ) {
 +            return;
-+        }
+         }
 +        let em = self.style.get_font().slow_clone_font_size().computed_size();
 +        self.style.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
 +        self.style.writing_mode = crate::logical_geometry::WritingMode::new(self.style.get_inherited_box());
@@ -3603,11 +3604,9 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        self.style
 +            .mutate_font()
 +            .set_line_height(crate::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
-+    }
-+
+     }
+ 
      /// CSS overflow-x and overflow-y require some fixup as well in some cases.
-     /// https://drafts.csswg.org/css-overflow-3/#overflow-properties
-     /// "Computed value: as specified, except with `visible`/`clip` computing to
 @@ -419,9 +539,16 @@
          }
  
@@ -3723,7 +3722,40 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1064,7 +1280,20 @@
+@@ -1029,7 +1245,32 @@
+             pos.set_align_self(flipped);
+         } else {
+             pos.set_justify_self(flipped);
++        }
++    }
++
++    /// pyro: `backface-visibility: hidden` on an element participating in a 3D rendering context
++    /// (its layout parent `preserve-3d`) makes it the containing block of its absolutely and
++    /// fixed positioned descendants, as in Chromium (WPT css-transforms
++    /// `backface-visibility-hidden-003`, `-004`): marked as `will-change` of such a property
++    /// marks it (`WillChangeBits::FIXPOS_CB_NON_SVG`), which every containing block check reads.
++    /// Not on a non-atomic inline box, to which `backface-visibility` does not apply.
++    #[cfg(feature = "servo")]
++    fn adjust_for_backface_in_3d_context(&mut self, layout_parent_style: &ComputedValues) {
++        use crate::computed_values::backface_visibility::T as BackfaceVisibility;
++        use crate::computed_values::transform_style::T as TransformStyle;
++        use crate::values::specified::box_::WillChangeBits;
++        let box_style = self.style.get_box();
++        if box_style.backface_visibility != BackfaceVisibility::Hidden
++            || layout_parent_style.get_box().transform_style != TransformStyle::Preserve3d
++            || box_style.will_change.bits.contains(WillChangeBits::FIXPOS_CB_NON_SVG)
++        {
++            return;
+         }
++        let display = *box_style.get_display();
++        if display.is_none() || display.is_contents() || display.is_inline_flow() {
++            return;
++        }
++        self.style.mutate_box().will_change.bits |= WillChangeBits::FIXPOS_CB_NON_SVG;
+     }
+ 
+     /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
+@@ -1064,7 +1305,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -3744,7 +3776,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
          {
-@@ -1084,12 +1313,20 @@
+@@ -1084,12 +1338,21 @@
          }
          self.adjust_for_justify_items();
          self.adjust_for_table_text_align();
@@ -3761,6 +3793,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            self.adjust_for_content_visibility();
 +            self.adjust_for_scroll_marker_group();
 +            self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
++            self.adjust_for_backface_in_3d_context(layout_parent_style);
 +        }
          if !try_tactic.is_empty() {
              self.adjust_for_try_tactic(try_tactic);

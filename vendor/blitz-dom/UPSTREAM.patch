@@ -33183,7 +33183,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1175,23 +2124,117 @@
+@@ -1175,21 +2124,115 @@
              if el.is_button_input() {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
              }
@@ -33229,9 +33229,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        match &self.data {
 +            NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
 +            _ => None,
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: rewrite the layout styles derived from the node's primary style
 +    /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
 +    /// traversal, and when a cell's collapsed borders change.
@@ -33257,7 +33257,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
 +        if self.collapsed_border() == collapsed_border {
 +            return;
-+        }
+         }
 +        self.layout_data_mut().collapsed_border = collapsed_border;
 +        self.clear_layout_cache();
 +        let Some(stylo) = self.try_stylo_element_data_mut() else {
@@ -33298,11 +33298,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    #[inline]
 +    pub(crate) fn is_fieldset(&self) -> bool {
 +        self.data.downcast_element().is_some_and(|el| el.name.local == local_name!("fieldset"))
-+    }
-+
+     }
+ 
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
-     /// mode of the box laying this node out). Used for the child-style getters.
-     #[cfg(feature = "writing-mode")]
 @@ -1234,6 +2277,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
@@ -33332,7 +33330,33 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1358,10 +2414,27 @@
+@@ -1327,6 +2383,25 @@
+             .unwrap_or(0)
+     }
+ 
++    /// pyro: whether this element participates in a 3D rendering context: its parent (in the
++    /// flat tree, through no `display: contents` element) has `transform-style: preserve-3d`.
++    pub fn participates_in_3d_context(&self) -> bool {
++        let tree = self.tree();
++        let mut parent = self.layout_parent.get().or(self.parent);
++        while let Some(id) = parent {
++            let node = &tree[id];
++            let Some(style) = node.primary_styles() else {
++                return false;
++            };
++            if style.clone_display().is_contents() {
++                parent = node.layout_parent.get().or(node.parent);
++                continue;
++            }
++            return style.get_box().transform_style == style::computed_values::transform_style::T::Preserve3d;
++        }
++        false
++    }
++
+     // https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Stacking_context#features_creating_stacking_contexts
+     pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
+         let Some(style) = self.primary_styles() else {
+@@ -1358,10 +2433,37 @@
              return true;
          }
  
@@ -33342,6 +33366,16 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            box_style.perspective,
 +            style::values::generics::box_::GenericPerspective::None
 +        ) || box_style.transform_style == style::computed_values::transform_style::T::Preserve3d
++        {
++            return true;
++        }
++
++        // pyro: so does `backface-visibility: hidden` on an element participating in a 3D
++        // rendering context (its parent `preserve-3d`), as in Chromium: its fixed positioned
++        // descendants then paint (and hide) with it (WPT css-transforms
++        // `backface-visibility-hidden-004`).
++        if box_style.backface_visibility == style::computed_values::backface_visibility::T::Hidden
++            && self.participates_in_3d_context()
 +        {
 +            return true;
 +        }
@@ -33360,7 +33394,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2442,38 @@
+@@ -1369,7 +2471,38 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -33400,7 +33434,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2501,14 @@
+@@ -1397,12 +2530,14 @@
              return true;
          }
  
@@ -33421,7 +33455,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1435,6 +2541,12 @@
+@@ -1435,6 +2570,12 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -33434,7 +33468,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2612,15 @@
+@@ -1500,11 +2641,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -33450,7 +33484,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2649,7 @@
+@@ -1533,6 +2678,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -33458,7 +33492,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2676,7 @@
+@@ -1559,7 +2705,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -33467,7 +33501,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2691,18 @@
+@@ -1574,12 +2720,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -33488,7 +33522,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2713,7 @@
+@@ -1590,7 +2742,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -33497,7 +33531,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2728,7 @@
+@@ -1605,7 +2757,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -33506,7 +33540,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2839,7 @@
+@@ -1716,7 +2868,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -33515,7 +33549,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2864,13 @@
+@@ -1741,8 +2893,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -33530,7 +33564,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2946,28 @@
+@@ -1818,8 +2975,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -33561,7 +33595,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3025,36 @@
+@@ -1877,11 +3054,36 @@
                  }
              }
  

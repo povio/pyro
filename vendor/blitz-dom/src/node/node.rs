@@ -2383,6 +2383,25 @@ impl Node {
             .unwrap_or(0)
     }
 
+    /// pyro: whether this element participates in a 3D rendering context: its parent (in the
+    /// flat tree, through no `display: contents` element) has `transform-style: preserve-3d`.
+    pub fn participates_in_3d_context(&self) -> bool {
+        let tree = self.tree();
+        let mut parent = self.layout_parent.get().or(self.parent);
+        while let Some(id) = parent {
+            let node = &tree[id];
+            let Some(style) = node.primary_styles() else {
+                return false;
+            };
+            if style.clone_display().is_contents() {
+                parent = node.layout_parent.get().or(node.parent);
+                continue;
+            }
+            return style.get_box().transform_style == style::computed_values::transform_style::T::Preserve3d;
+        }
+        false
+    }
+
     // https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Stacking_context#features_creating_stacking_contexts
     pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
         let Some(style) = self.primary_styles() else {
@@ -2420,6 +2439,16 @@ impl Node {
             box_style.perspective,
             style::values::generics::box_::GenericPerspective::None
         ) || box_style.transform_style == style::computed_values::transform_style::T::Preserve3d
+        {
+            return true;
+        }
+
+        // pyro: so does `backface-visibility: hidden` on an element participating in a 3D
+        // rendering context (its parent `preserve-3d`), as in Chromium: its fixed positioned
+        // descendants then paint (and hide) with it (WPT css-transforms
+        // `backface-visibility-hidden-004`).
+        if box_style.backface_visibility == style::computed_values::backface_visibility::T::Hidden
+            && self.participates_in_3d_context()
         {
             return true;
         }
