@@ -33,6 +33,11 @@ impl ElementCx<'_, '_> {
             },
         };
         let base = self.transform;
+        // pyro: `pos` is the content box less the scroll offset, which `self.transform` (scrolled
+        // for the content) applies already: the columns' content takes it once (WPT css-overflow
+        // `scroll-markers/column-scroll-marker-007`).
+        let scroll = *self.node.scroll_offset();
+        let pos = Point { x: pos.x + scroll.x, y: pos.y + scroll.y };
         let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
         let scale = self.scale;
         let single = columns.fragments.len() == 1;

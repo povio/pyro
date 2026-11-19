@@ -625,6 +625,22 @@ impl BaseDocument {
         }
         if let Some(base) = columns_base {
             overflow = base.union(self.columns_rect(node_id, overflow, scale));
+            // pyro: a scroll container's column boxes are its scrollable overflow whole, the last
+            // one past its content too (Chromium: the columns are the fragments of its content
+            // box; WPT css-overflow `scroll-markers/column-scroll-marker-007`).
+            if scroll_padding.is_some()
+                && let Some(columns) = self.nodes[node_id].column_fragments()
+            {
+                for f in columns.fragments.iter().filter(|f| !f.spanner) {
+                    let column = Rect::new(
+                        f.x as f64 * scale,
+                        f.top as f64 * scale,
+                        (f.x + f.width) as f64 * scale,
+                        (f.top + f.height) as f64 * scale,
+                    );
+                    overflow = overflow.union(column);
+                }
+            }
         }
         // pyro: a scroll container's grid reaches as far as its tracks and the padding after them,
         // empty tracks too (css-grid-2 § 5.3; Taffy's grid overflow, in the padding-box frame;

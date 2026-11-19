@@ -19739,7 +19739,7 @@ diff --git a/packages/blitz-paint/src/render/multicol.rs b/packages/blitz-paint/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/multicol.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,323 @@
 +//! pyro: multi-column containers (blitz-dom `layout/multicol.rs`).
 +//!
 +//! A multi-column container's content is laid out in one strip a column wide; each column shows
@@ -19775,6 +19775,11 @@ new file mode 100644
 +            },
 +        };
 +        let base = self.transform;
++        // pyro: `pos` is the content box less the scroll offset, which `self.transform` (scrolled
++        // for the content) applies already: the columns' content takes it once (WPT css-overflow
++        // `scroll-markers/column-scroll-marker-007`).
++        let scroll = *self.node.scroll_offset();
++        let pos = Point { x: pos.x + scroll.x, y: pos.y + scroll.y };
 +        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
 +        let scale = self.scale;
 +        let single = columns.fragments.len() == 1;
