@@ -1089,13 +1089,14 @@ impl StyleEngine {
         &self,
         source: Option<NodeId>,
         subject: Option<NodeId>,
+        pseudo: u8,
         axis: u8,
         inset: [(u8, f64); 2],
     ) -> Option<(f64, f64, f64)> {
         let external = self.external.borrow();
         let (engine, _) = external.as_ref()?;
         let key = crate::snapshot::render_key;
-        engine.timeline_state(source.map(key), subject.map(key), axis, inset).map(|(o, s, e, ..)| (o, s, e))
+        engine.timeline_state(source.map(key), subject.map(key), pseudo, axis, inset).map(|(o, s, e, ..)| (o, s, e))
     }
 
     /// The animated values for a sync of the layout engine, now; `None`

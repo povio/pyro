@@ -473,10 +473,12 @@ pub trait GeometrySource {
     /// generate.
     /// A script scroll or view progress timeline's state as of the last sync
     /// (`pyro_render::Renderer::timeline_state`): scroll offset, start, end, scroll container key.
+    /// `pseudo`: the subject's pseudo-element (2 `::before`, 3 `::after`; 0 the element).
     fn timeline_state(
         &self,
         _source: Option<u64>,
         _subject: Option<u64>,
+        _pseudo: u8,
         _axis: u8,
         _inset: [(u8, f64); 2],
     ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {

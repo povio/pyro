@@ -1761,6 +1761,7 @@ impl Renderer {
         page: u64,
         source: Option<u64>,
         subject: Option<u64>,
+        pseudo: u8,
         axis: u8,
         inset: [(u8, f64); 2],
     ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
@@ -1774,6 +1775,12 @@ impl Renderer {
         let subject = match subject {
             Some(key) => Some(m.node(key)?),
             None => None,
+        };
+        // (A pseudo-element subject: its box; none generated, inactive.)
+        let subject = match (subject, pseudo) {
+            (Some(id), 2) => Some(m.doc.get_node(id)?.before()?),
+            (Some(id), 3) => Some(m.doc.get_node(id)?.after()?),
+            (subject, _) => subject,
         };
         let axis = match axis {
             1 => ScrollAxis::Inline,

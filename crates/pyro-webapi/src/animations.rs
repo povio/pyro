@@ -179,6 +179,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             (a.get(3).to_number()? as u8, a.get(4).to_number()?),
             (a.get(5).to_number()? as u8, a.get(6).to_number()?),
         ];
+        // (2 `::before`, 3 `::after`: the subject's pseudo-element.)
+        let pseudo = if a.len() > 7 { a.get(7).to_number()? as u8 } else { 0 };
         let state = {
             let dom = page.dom.borrow();
             let layout = page.layout();
@@ -186,7 +188,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             layout.push_scroll_if_due(page.timeline_now_ms());
             let Some(geometry) = layout.synced_geometry_source(&dom) else { return Ok(s.null()) };
             let key = |id: pyro_dom::NodeId| pyro_dom::snapshot::render_key(id);
-            let state = geometry.timeline_state(source.map(key), subject.map(key), axis, inset);
+            let state = geometry.timeline_state(source.map(key), subject.map(key), pseudo, axis, inset);
             state.map(|(offset, start, end, src, contain, size)| {
                 (offset, start, end, src.and_then(|k| pyro_dom::geometry::node_of(&dom, k)), contain, size)
             })
@@ -289,6 +291,7 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
                     axis: n(2)? as u8,
                     inset: [(n(3)? as u8, n(4)?), (n(5)? as u8, n(6)?)],
                     inactive: n(7)? != 0.0,
+                    pseudo: if r.get_index(8)?.is_undefined() { 0 } else { n(8)? as u8 },
                 })
             }
         },

@@ -641,7 +641,7 @@
   function stateOf(st) {
     const [[sk, sv], [ek, ev]] = st.inset;
     if (st.subject === null && st.source === null) return null;
-    return timelineState(st.subject === null ? st.source : null, st.subject, AXES.indexOf(st.axis), sk, sv, ek, ev);
+    return timelineState(st.subject === null ? st.source : null, st.subject, AXES.indexOf(st.axis), sk, sv, ek, ev, st.subjectPseudo || 0);
   }
   // ----- animation ranges (rangeStart / rangeEnd) -------------------------
 
@@ -1274,7 +1274,7 @@
     const t = timingOn(e);
     const tst = a.timeline !== null ? timelines.get(a.timeline) : null;
     const scrollRef = tst && tst.scroll
-      ? [tst.subject === null ? tst.source : null, tst.subject, AXES.indexOf(tst.axis), tst.inset[0][0], tst.inset[0][1], tst.inset[1][0], tst.inset[1][1], tst.subject === null && tst.source === null ? 1 : 0]
+      ? [tst.subject === null ? tst.source : null, tst.subject, AXES.indexOf(tst.axis), tst.inset[0][0], tst.inset[0][1], tst.inset[1][0], tst.inset[1][1], tst.subject === null && tst.source === null ? 1 : 0, tst.subjectPseudo || 0]
       : null;
     // A CSS animation's or transition's own effect has no keyframes (the
     // engine's are the CSS ones); one script gave it has.
@@ -1700,7 +1700,11 @@
     m = /^view\((.*)\)$/.exec(t);
     if (m) {
       const args = m[1].replace(/\b(block|inline|x|y)\b/, '').trim();
-      return new ViewTimeline({ subject: target, axis: axisIn(m[1]), inset: args === '' ? 'auto' : args });
+      const timeline = new ViewTimeline({ subject: target, axis: axisIn(m[1]), inset: args === '' ? 'auto' : args });
+      // (A pseudo-element's `view()`: the pseudo-element's box is the subject; 2 `::before`, 3 `::after`.)
+      const code = ({ '::before': 2, ':before': 2, '::after': 3, ':after': 3 })[pseudo];
+      if (code) timelines.get(timeline).subjectPseudo = code;
+      return timeline;
     }
     if (t.startsWith('--')) {
       for (let el = target; el !== null; el = el.parentElement) {

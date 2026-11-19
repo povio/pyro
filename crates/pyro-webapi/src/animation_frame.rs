@@ -240,6 +240,8 @@ pub(crate) struct ScrollRef {
     pub inset: [(u8, f64); 2],
     /// A scroll timeline whose source is null: never active.
     pub inactive: bool,
+    /// A view timeline's subject's pseudo-element: 2 `::before`, 3 `::after` (0: the element).
+    pub pseudo: u8,
 }
 
 /// A progress-based timeline's current time now (a percentage), from the engine's last layout;
@@ -249,7 +251,7 @@ fn scroll_time(page: &PageDom, r: &ScrollRef) -> Option<f64> {
         return None;
     }
     let layout = page.try_layout()?;
-    let (offset, start, end) = layout.style().timeline_state(r.source, r.subject, r.axis, r.inset)?;
+    let (offset, start, end) = layout.style().timeline_state(r.source, r.subject, r.pseudo, r.axis, r.inset)?;
     if end > start {
         Some((offset - start) / (end - start) * 100.0)
     } else if r.subject.is_some() {
@@ -266,7 +268,7 @@ fn scroll_bounds(page: &PageDom, r: &ScrollRef) -> (bool, bool) {
         return (false, false);
     }
     let Some(layout) = page.try_layout() else { return (false, false) };
-    let Some((offset, _, end)) = layout.style().timeline_state(r.source, r.subject, r.axis, r.inset) else {
+    let Some((offset, _, end)) = layout.style().timeline_state(r.source, r.subject, r.pseudo, r.axis, r.inset) else {
         return (false, false);
     };
     (offset <= 0.0, r.subject.is_none() && offset >= end)

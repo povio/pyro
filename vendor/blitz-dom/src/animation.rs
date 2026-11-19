@@ -731,7 +731,15 @@ impl BaseDocument {
                     None => Some(e.clone()),
                     Some(t) => {
                         let style = style_of(t.pseudo)?;
-                        let (p, at_end) = crate::scroll_timeline::progress(self, id, &style, t.index)?;
+                        // (A pseudo-element's timeline from its own box: its nearest scroll
+                        // container may be its originating element, and it is a `view()`'s
+                        // subject; WPT scroll-animations `responsive/repaint-after-finished`.)
+                        let at = match t.pseudo {
+                            0 => id,
+                            1 => node.and_then(|n| n.before()).unwrap_or(id),
+                            _ => node.and_then(|n| n.after()).unwrap_or(id),
+                        };
+                        let (p, at_end) = crate::scroll_timeline::progress(self, at, &style, t.index)?;
                         let (progress, before) = t.iteration_progress(p, at_end)?;
                         Some(Effect { progress, before, ..e.clone() })
                     }

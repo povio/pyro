@@ -562,7 +562,7 @@ fn scroll_offsets_told_for_timelines_survive_a_document_rebuild() {
     let key = pyro_dom::snapshot::render_key(page.find("#s"));
     let mut r = Renderer::new();
     let s = page.snapshot(1, page.tree());
-    let offset = |r: &Renderer| r.timeline_state(1, Some(key), None, 0, [(0, 0.0); 2]).map(|t| (t.0, t.1, t.2));
+    let offset = |r: &Renderer| r.timeline_state(1, Some(key), None, 0, 0, [(0, 0.0); 2]).map(|t| (t.0, t.1, t.2));
     r.sync_layout(&s, &fetcher()).unwrap();
     assert_eq!(offset(&r), Some((0.0, 0.0, 900.0)));
     r.set_timeline_scroll(1, vec![(key, (0.0, 450.0))], (0.0, 0.0));
