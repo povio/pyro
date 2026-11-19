@@ -402,6 +402,7 @@ impl EngineHost {
             control_selection: s.control_selection,
             selected_replaced: s.selected_replaced,
             caret: s.caret,
+            url_target: s.url_target,
         })
     }
 

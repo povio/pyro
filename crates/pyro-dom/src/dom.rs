@@ -968,7 +968,14 @@ impl Dom {
         Ok(())
     }
 
-    pub fn document_data(&self, doc: NodeId) -> DomResult<&DocumentData> {
+    /// The element `:target` matches in document `doc` (`DocumentData::url_target`): the first
+    /// in tree order whose id is the URL's fragment, in the document tree.
+    pub fn url_target_element(&self, doc: NodeId) -> Option<NodeId> {
+        let id = self.document_data(doc).ok()?.url_target.clone()?;
+        self.get_element_by_id(doc, &id).ok().flatten()
+    }
+
+        pub fn document_data(&self, doc: NodeId) -> DomResult<&DocumentData> {
         match &self.node(doc)?.kind {
             NodeKind::Document(d) => Ok(d),
             _ => Err(DomError::Type("not a document")),
@@ -983,15 +990,22 @@ impl Dom {
     }
     pub fn set_document_url(&mut self, doc: NodeId, url: &str) -> DomResult<()> {
         let i = self.check(doc)?;
-        match &mut self.n_mut(i).kind {
+        let retargeted = match &mut self.n_mut(i).kind {
             NodeKind::Document(d) => {
                 d.url = url.into();
                 d.parsed_url.take();
-                d.url_target = url_target(url);
+                let target = url_target(url);
+                let retargeted = d.url_target != target;
+                d.url_target = target;
+                retargeted
             }
             _ => return Err(DomError::Type("not a document")),
-        }
+        };
         self.html_base_changed(i);
+        // `:target` matches another element: styles start over.
+        if retargeted {
+            self.bump();
+        }
         Ok(())
     }
     /// What `doc`'s `<base>` resolves to may have changed: a `<base>` came

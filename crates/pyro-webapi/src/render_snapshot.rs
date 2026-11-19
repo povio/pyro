@@ -80,6 +80,8 @@ pub struct RenderSnapshot {
     /// an offset in UTF-16 code units of its data, or of an element with no text at the caret
     /// and 0 (`caret_point`).
     pub caret: Option<(u64, u32)>,
+    /// The element `:target` matches (its render key), in every form.
+    pub url_target: Option<u64>,
 }
 
 /// How a snapshot carries the document.
@@ -165,6 +167,7 @@ impl PageDom {
             control_selection,
             selected_replaced,
             caret,
+            url_target: dom.url_target_element(self.document()).map(pyro_dom::snapshot::render_key),
             ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
         }
     }
@@ -235,6 +238,7 @@ fn snapshot_of(
             control_selection: None,
             selected_replaced: Vec::new(),
             caret: None,
+            url_target: None,
         }
     }
 }

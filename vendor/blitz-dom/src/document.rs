@@ -635,6 +635,8 @@ pub struct BaseDocument {
     pub(crate) dom_selection: Option<crate::DomSelection>,
     /// pyro: the embedder's caret (`dom_caret`), painted in its editing host.
     pub(crate) dom_caret: Option<(NodeId, usize)>,
+    /// pyro: the element `:target` matches (`set_url_target`).
+    pub(crate) url_target: Option<NodeId>,
     /// pyro: the replaced elements the selection holds (painted with its tint).
     pub(crate) selected_replaced: Vec<NodeId>,
     /// pyro: the embedder's highlights (custom highlights and the target text), bottom first
@@ -897,6 +899,7 @@ impl BaseDocument {
             first_line_changed: Vec::new(),
             dom_selection: None,
             dom_caret: None,
+            url_target: None,
             selected_replaced: Vec::new(),
             dom_highlights: Vec::new(),
             first_line_reparented: Default::default(),
@@ -3183,7 +3186,33 @@ impl BaseDocument {
     /// Puts `:hover` on `node` and its ancestors (and off the previous
     /// ones), as a pointer over it would: for an embedder that tracks the
     /// pointer itself. `None` clears hover.
-    pub fn set_hover_node(&mut self, node: Option<NodeId>) -> bool {
+    /// pyro: the element `:target` matches from now on (the embedder's indicated element, from
+    /// the document URL's fragment): its `URLTARGET` state. Whether it changed.
+    pub fn set_url_target(&mut self, node: Option<NodeId>) -> bool {
+        if node == self.url_target {
+            return false;
+        }
+        if let Some(old) = self.url_target.filter(|&id| self.nodes.get(id).is_some_and(Node::is_element)) {
+            self.snapshot_node_and(old, ElementState::URLTARGET, |node| {
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.remove(ElementState::URLTARGET);
+                }
+                node.mark_ancestors_dirty();
+            });
+        }
+        if let Some(new) = node.filter(|&id| self.nodes.get(id).is_some_and(Node::is_element)) {
+            self.snapshot_node_and(new, ElementState::URLTARGET, |node| {
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.insert(ElementState::URLTARGET);
+                }
+                node.mark_ancestors_dirty();
+            });
+        }
+        self.url_target = node;
+        true
+    }
+
+        pub fn set_hover_node(&mut self, node: Option<NodeId>) -> bool {
         let node = node.and_then(|id| self.nearest_non_anonymous_ancestor(id));
         if node == self.hover_node_id {
             return false;

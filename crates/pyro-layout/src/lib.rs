@@ -435,6 +435,8 @@ impl BlitzGeometry {
             control_selection: None,
             selected_replaced: Vec::new(),
             caret: None,
+            // `:target` for computed styles too.
+            url_target: dom.url_target_element(style.document()).map(pyro_dom::snapshot::render_key),
         };
         if let Some(t) = t {
             SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);

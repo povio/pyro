@@ -263,6 +263,8 @@ pub struct Snapshot {
     /// units of its data, or an element's key and 0 (no text at the caret), painted in
     /// screenshots of a [`Live`] document.
     pub caret: Option<(u64, u32)>,
+    /// The element `:target` matches (its key).
+    pub url_target: Option<u64>,
 }
 
 /// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
@@ -1143,6 +1145,8 @@ impl Renderer {
                             .filter(|_| selection_paint)
                             .and_then(|(key, offset)| Some((m.node(key)?, offset as usize)));
                         m.doc.set_dom_caret(caret);
+                        let target = snap.url_target.and_then(|key| m.node(key));
+                        m.doc.set_url_target(target);
                         // The focused text control's selection.
                         control = snap
                             .control_selection
