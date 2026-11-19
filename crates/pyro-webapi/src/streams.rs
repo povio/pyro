@@ -13,6 +13,22 @@ use crate::window::WindowHost;
 /// a worker's realm has the same names on its global.
 const KEY: &str = "lpStreams";
 
+/// Run in the engine's root context ([`Scope::agent_value`]): the internal
+/// slots of every realm's streams, one WeakMap per slot name, so that the
+/// agent's realms recognise each other's streams. Made there, the maps keep
+/// no page's realm alive.
+const SLOTS: &str = r"(() => {
+  const maps = new Map();
+  return (name) => {
+    let map = maps.get(name);
+    if (!map) {
+      map = new WeakMap();
+      maps.set(name, map);
+    }
+    return map;
+  };
+})()";
+
 macro_rules! lazy_globals {
     ($def:ident, $($name:literal),+ $(,)?) => {
         $($def.global_value_accessor(
@@ -84,6 +100,7 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     }
     let natives = s.object();
     natives.set_atom("zlib", crate::compression::zlib_function(s)?.value())?;
+    natives.set_atom("slot", s.agent_value("streams.slot", SLOTS)?)?;
     let natives = pyro_js::Persistent::new(s, natives.value());
     let factory = s.eval(include_str!("streams.js"), Some("pyro://internal/streams.js"), 1)?;
     let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[natives.get(s)])?;

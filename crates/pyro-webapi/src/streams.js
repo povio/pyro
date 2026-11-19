@@ -6,6 +6,11 @@
 // operations and keep their names, shortened; public classes hold a state
 // object in a private field, so page code cannot reach the internals.
 //
+// The internal slots are not private fields but WeakMaps the engine shares
+// among the agent's realms (`natives.slot(name)`, streams.rs), so a stream
+// made in another window passes this realm's brand checks and works with its
+// operations, as the spec's platform objects do whatever their realm.
+//
 // Byte streams are simplified: chunks are copied rather than transferred, and
 // `byobRequest` views a private buffer whose bytes are enqueued on respond().
 (function (natives) {
@@ -53,6 +58,23 @@
     port2Of = own(MessageChannel.prototype, 'port2').get;
     MessageChannelC = MessageChannel;
   } catch (_) {}
+  // An internal slot of one interface: `get` throws for an object without
+  // it, as reading a missing private field would.
+  const weakGet = WeakMap.prototype.get;
+  const weakSet = WeakMap.prototype.set;
+  const weakHas = WeakMap.prototype.has;
+  const slot = (name) => {
+    const map = natives.slot(name);
+    return {
+      has: (o) => apply(weakHas, map, [o]),
+      get: (o) => {
+        const v = apply(weakGet, map, [o]);
+        if (v === undefined && !apply(weakHas, map, [o])) throw new TypeErrorC('Illegal invocation');
+        return v;
+      },
+      set: (o, v) => { apply(weakSet, map, [o, v]); },
+    };
+  };
   const asyncIterator = Symbol.asyncIterator;
   const iterator = Symbol.iterator;
   const AsyncIteratorPrototype = getPrototypeOf(getPrototypeOf((async function* () {}).prototype));
@@ -540,15 +562,15 @@
 
   let rsOf;
   let isRS;
+  const ReadableStream$s = slot('ReadableStream.s');
   class ReadableStream {
-    #s;
     static {
-      rsOf = (v) => v.#s;
-      isRS = (v) => isObject(v) && #s in v;
+      rsOf = (v) => ReadableStream$s.get(v);
+      isRS = (v) => ReadableStream$s.has(v);
     }
     constructor(source = undefined, strategy = undefined) {
       if (source === token) {
-        this.#s = strategy;
+        ReadableStream$s.set(this, strategy);
         return;
       }
       const strat = strategyOf(strategy, 'ReadableStream');
@@ -572,7 +594,7 @@
       const hwm = highWaterMark(strat, byte ? 0 : 1);
       const st = rsNew();
       st.wrapper = this;
-      this.#s = st;
+      ReadableStream$s.set(this, st);
       const startAlg = (w) => (start ? apply(start, d, [w]) : undefined);
       rcSetup(
         st,
@@ -587,12 +609,12 @@
     }
     get locked() {
       if (!isRS(this)) throw invalid('ReadableStream', 'locked');
-      return rsLocked(this.#s);
+      return rsLocked(ReadableStream$s.get(this));
     }
     cancel(reason = undefined) {
       if (!isRS(this)) return rejected(invalid('ReadableStream', 'cancel'));
-      if (rsLocked(this.#s)) return rejected(new TypeErrorC('Cannot cancel a locked stream'));
-      return rsCancel(this.#s, reason);
+      if (rsLocked(ReadableStream$s.get(this))) return rejected(new TypeErrorC('Cannot cancel a locked stream'));
+      return rsCancel(ReadableStream$s.get(this), reason);
     }
     getReader(options = undefined) {
       if (!isRS(this)) throw invalid('ReadableStream', 'getReader');
@@ -611,9 +633,9 @@
       const writable = pair.writable;
       if (!isWS(writable)) throw new TypeErrorC("Failed to execute 'pipeThrough' on 'ReadableStream': writable is not a WritableStream");
       const o = pipeOptions(options);
-      if (rsLocked(this.#s)) throw new TypeErrorC('Cannot pipe a locked stream');
+      if (rsLocked(ReadableStream$s.get(this))) throw new TypeErrorC('Cannot pipe a locked stream');
       if (wsOf(writable).writer) throw new TypeErrorC('Cannot pipe to a locked stream');
-      handled(rsPipe(this.#s, wsOf(writable), o.preventClose, o.preventAbort, o.preventCancel, o.signal));
+      handled(rsPipe(ReadableStream$s.get(this), wsOf(writable), o.preventClose, o.preventAbort, o.preventCancel, o.signal));
       return readable;
     }
     pipeTo(destination, options = undefined) {
@@ -625,21 +647,21 @@
       } catch (e) {
         return rejected(e);
       }
-      if (rsLocked(this.#s)) return rejected(new TypeErrorC('Cannot pipe a locked stream'));
+      if (rsLocked(ReadableStream$s.get(this))) return rejected(new TypeErrorC('Cannot pipe a locked stream'));
       if (wsOf(destination).writer) return rejected(new TypeErrorC('Cannot pipe to a locked stream'));
-      return rsPipe(this.#s, wsOf(destination), o.preventClose, o.preventAbort, o.preventCancel, o.signal);
+      return rsPipe(ReadableStream$s.get(this), wsOf(destination), o.preventClose, o.preventAbort, o.preventCancel, o.signal);
     }
     tee() {
       if (!isRS(this)) throw invalid('ReadableStream', 'tee');
-      if (rsLocked(this.#s)) throw new TypeErrorC('Cannot tee a locked stream');
-      return rsTee(this.#s);
+      if (rsLocked(ReadableStream$s.get(this))) throw new TypeErrorC('Cannot tee a locked stream');
+      return rsTee(ReadableStream$s.get(this));
     }
     values(options = undefined) {
       if (!isRS(this)) throw invalid('ReadableStream', 'values');
       const d = dictionary(options, 'values');
       const preventCancel = !!d.preventCancel;
-      if (rsLocked(this.#s)) throw new TypeErrorC('Cannot iterate a locked stream');
-      const rd = newReader(this.#s);
+      if (rsLocked(ReadableStream$s.get(this))) throw new TypeErrorC('Cannot iterate a locked stream');
+      const rd = newReader(ReadableStream$s.get(this));
       const it = Object.create(StreamIteratorPrototype);
       iterators.set(it, { rd, preventCancel, finished: false, ongoing: undefined });
       return it;
@@ -743,81 +765,81 @@
     [Symbol.toStringTag]: { value: 'ReadableStream AsyncIterator', configurable: true },
   });
 
+  const ReadableStreamDefaultController$c = slot('ReadableStreamDefaultController.c');
   class ReadableStreamDefaultController {
-    #c;
     constructor(t, c) {
       if (t !== token) throw illegal();
-      this.#c = c;
+      ReadableStreamDefaultController$c.set(this, c);
     }
     get desiredSize() {
-      return rcDesired(this.#c);
+      return rcDesired(ReadableStreamDefaultController$c.get(this));
     }
     close() {
-      if (!rcCanClose(this.#c)) throw new TypeErrorC('Cannot close a readable stream that is closed, errored or already closing');
-      rcClose(this.#c);
+      if (!rcCanClose(ReadableStreamDefaultController$c.get(this))) throw new TypeErrorC('Cannot close a readable stream that is closed, errored or already closing');
+      rcClose(ReadableStreamDefaultController$c.get(this));
     }
     enqueue(chunk = undefined) {
-      if (!rcCanClose(this.#c)) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
-      rcEnqueue(this.#c, chunk);
+      if (!rcCanClose(ReadableStreamDefaultController$c.get(this))) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
+      rcEnqueue(ReadableStreamDefaultController$c.get(this), chunk);
     }
     error(e = undefined) {
-      rcError(this.#c, e);
+      rcError(ReadableStreamDefaultController$c.get(this), e);
     }
   }
   const viewBytes = (view) => new Uint8ArrayC(view.buffer, view.byteOffset, view.byteLength);
+  const ReadableByteStreamController$c = slot('ReadableByteStreamController.c');
   class ReadableByteStreamController {
-    #c;
     constructor(t, c) {
       if (t !== token) throw illegal();
-      this.#c = c;
+      ReadableByteStreamController$c.set(this, c);
     }
     get byobRequest() {
-      return bcRequest(this.#c);
+      return bcRequest(ReadableByteStreamController$c.get(this));
     }
     get desiredSize() {
-      return rcDesired(this.#c);
+      return rcDesired(ReadableByteStreamController$c.get(this));
     }
     close() {
-      if (!rcCanClose(this.#c)) throw new TypeErrorC('Cannot close a readable stream that is closed, errored or already closing');
-      bcClose(this.#c);
+      if (!rcCanClose(ReadableByteStreamController$c.get(this))) throw new TypeErrorC('Cannot close a readable stream that is closed, errored or already closing');
+      bcClose(ReadableByteStreamController$c.get(this));
     }
     enqueue(chunk) {
       if (!isView(chunk)) throw new TypeErrorC("Failed to execute 'enqueue' on 'ReadableByteStreamController': parameter 1 is not of type 'ArrayBufferView'.");
       if (chunk.byteLength === 0) throw new TypeErrorC('chunk must have a non-zero byteLength');
       if (chunk.buffer.byteLength === 0) throw new TypeErrorC('chunk has a detached buffer');
-      if (!rcCanClose(this.#c)) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
-      bcEnqueue(this.#c, viewBytes(chunk).slice());
+      if (!rcCanClose(ReadableByteStreamController$c.get(this))) throw new TypeErrorC('Cannot enqueue a chunk into a readable stream that is closed, errored or closing');
+      bcEnqueue(ReadableByteStreamController$c.get(this), viewBytes(chunk).slice());
     }
     error(e = undefined) {
-      rcError(this.#c, e);
+      rcError(ReadableByteStreamController$c.get(this), e);
     }
   }
+  const ReadableStreamBYOBRequest$c = slot('ReadableStreamBYOBRequest.c');
+  const ReadableStreamBYOBRequest$view = slot('ReadableStreamBYOBRequest.view');
   class ReadableStreamBYOBRequest {
-    #c;
-    #view;
     constructor(t, c, view) {
       if (t !== token) throw illegal();
-      this.#c = c;
-      this.#view = view;
+      ReadableStreamBYOBRequest$c.set(this, c);
+      ReadableStreamBYOBRequest$view.set(this, view);
     }
     get view() {
-      return this.#c && this.#c.byobRequest === this ? this.#view : null;
+      return ReadableStreamBYOBRequest$c.get(this) && ReadableStreamBYOBRequest$c.get(this).byobRequest === this ? ReadableStreamBYOBRequest$view.get(this) : null;
     }
     respond(bytesWritten) {
-      const c = this.#c;
+      const c = ReadableStreamBYOBRequest$c.get(this);
       if (c.byobRequest !== this) throw new TypeErrorC('This BYOB request has been invalidated');
       const n = NumberC(bytesWritten);
-      if (n > this.#view.length) throw new RangeErrorC('bytesWritten out of range');
+      if (n > ReadableStreamBYOBRequest$view.get(this).length) throw new RangeErrorC('bytesWritten out of range');
       if (c.stream.state === 'closed') {
         if (n !== 0) throw new TypeErrorC('bytesWritten must be 0 when calling respond() on a closed stream');
         c.byobRequest = null;
         return;
       }
       if (!(n > 0)) throw new TypeErrorC('bytesWritten must be greater than 0 when calling respond() on a readable stream');
-      bcEnqueue(c, this.#view.slice(0, n));
+      bcEnqueue(c, ReadableStreamBYOBRequest$view.get(this).slice(0, n));
     }
     respondWithNewView(view) {
-      const c = this.#c;
+      const c = ReadableStreamBYOBRequest$c.get(this);
       if (c.byobRequest !== this) throw new TypeErrorC('This BYOB request has been invalidated');
       if (!isView(view)) throw new TypeErrorC("Failed to execute 'respondWithNewView' on 'ReadableStreamBYOBRequest': parameter 1 is not of type 'ArrayBufferView'.");
       if (c.stream.state === 'closed') {
@@ -826,33 +848,33 @@
         return;
       }
       if (view.byteLength === 0) throw new TypeErrorC('The view must not be empty');
-      if (view.byteLength > this.#view.length) throw new RangeErrorC('The view is larger than the request');
+      if (view.byteLength > ReadableStreamBYOBRequest$view.get(this).length) throw new RangeErrorC('The view is larger than the request');
       bcEnqueue(c, viewBytes(view).slice());
     }
   }
+  const ReadableStreamDefaultReader$r = slot('ReadableStreamDefaultReader.r');
   class ReadableStreamDefaultReader {
-    #r;
-    static #is = (v) => isObject(v) && #r in v;
+    static #is = (v) => ReadableStreamDefaultReader$r.has(v);
     constructor(stream) {
       if (!isRS(stream)) throw new TypeErrorC("Failed to construct 'ReadableStreamDefaultReader': parameter 1 is not of type 'ReadableStream'.");
       const st = rsOf(stream);
       if (rsLocked(st)) throw new TypeErrorC('ReadableStream is locked');
-      this.#r = newReader(st);
+      ReadableStreamDefaultReader$r.set(this, newReader(st));
     }
     get closed() {
       if (!ReadableStreamDefaultReader.#is(this)) return rejected(invalid('ReadableStreamDefaultReader', 'closed'));
-      return this.#r.closed.promise;
+      return ReadableStreamDefaultReader$r.get(this).closed.promise;
     }
     cancel(reason = undefined) {
       if (!ReadableStreamDefaultReader.#is(this)) return rejected(invalid('ReadableStreamDefaultReader', 'cancel'));
-      if (!this.#r.stream) return rejected(released('cancel'));
-      return rsCancel(this.#r.stream, reason);
+      if (!ReadableStreamDefaultReader$r.get(this).stream) return rejected(released('cancel'));
+      return rsCancel(ReadableStreamDefaultReader$r.get(this).stream, reason);
     }
     read() {
       if (!ReadableStreamDefaultReader.#is(this)) return rejected(invalid('ReadableStreamDefaultReader', 'read'));
-      if (!this.#r.stream) return rejected(released('read from'));
+      if (!ReadableStreamDefaultReader$r.get(this).stream) return rejected(released('read from'));
       const d = defer();
-      readerRead(this.#r, {
+      readerRead(ReadableStreamDefaultReader$r.get(this), {
         chunk: (v) => d.resolve(result(v, false)),
         close: () => d.resolve(result(undefined, true)),
         error: (e) => d.reject(e),
@@ -861,28 +883,28 @@
     }
     releaseLock() {
       if (!ReadableStreamDefaultReader.#is(this)) throw invalid('ReadableStreamDefaultReader', 'releaseLock');
-      if (this.#r.stream) readerRelease(this.#r);
+      if (ReadableStreamDefaultReader$r.get(this).stream) readerRelease(ReadableStreamDefaultReader$r.get(this));
     }
   }
+  const ReadableStreamBYOBReader$r = slot('ReadableStreamBYOBReader.r');
   class ReadableStreamBYOBReader {
-    #r;
-    static #is = (v) => isObject(v) && #r in v;
+    static #is = (v) => ReadableStreamBYOBReader$r.has(v);
     constructor(stream) {
       if (!isRS(stream)) throw new TypeErrorC("Failed to construct 'ReadableStreamBYOBReader': parameter 1 is not of type 'ReadableStream'.");
       const st = rsOf(stream);
       if (rsLocked(st)) throw new TypeErrorC('ReadableStream is locked');
       if (!st.controller.byte) throw new TypeErrorC('Cannot construct a ReadableStreamBYOBReader for a stream not constructed with a byte source');
-      this.#r = newReader(st);
-      this.#r.byob = true;
+      ReadableStreamBYOBReader$r.set(this, newReader(st));
+      ReadableStreamBYOBReader$r.get(this).byob = true;
     }
     get closed() {
       if (!ReadableStreamBYOBReader.#is(this)) return rejected(invalid('ReadableStreamBYOBReader', 'closed'));
-      return this.#r.closed.promise;
+      return ReadableStreamBYOBReader$r.get(this).closed.promise;
     }
     cancel(reason = undefined) {
       if (!ReadableStreamBYOBReader.#is(this)) return rejected(invalid('ReadableStreamBYOBReader', 'cancel'));
-      if (!this.#r.stream) return rejected(released('cancel'));
-      return rsCancel(this.#r.stream, reason);
+      if (!ReadableStreamBYOBReader$r.get(this).stream) return rejected(released('cancel'));
+      return rsCancel(ReadableStreamBYOBReader$r.get(this).stream, reason);
     }
     read(view, options = undefined) {
       if (!ReadableStreamBYOBReader.#is(this)) return rejected(invalid('ReadableStreamBYOBReader', 'read'));
@@ -900,7 +922,7 @@
       const element = view.BYTES_PER_ELEMENT || 1;
       const elements = view.byteLength / element;
       if (min > elements) return rejected(new RangeErrorC('options.min must be less than or equal to view\'s length'));
-      const rd = this.#r;
+      const rd = ReadableStreamBYOBReader$r.get(this);
       if (!rd.stream) return rejected(released('read from'));
       const st = rd.stream;
       st.disturbed = true;
@@ -927,7 +949,7 @@
     }
     releaseLock() {
       if (!ReadableStreamBYOBReader.#is(this)) throw invalid('ReadableStreamBYOBReader', 'releaseLock');
-      if (this.#r.stream) readerRelease(this.#r);
+      if (ReadableStreamBYOBReader$r.get(this).stream) readerRelease(ReadableStreamBYOBReader$r.get(this));
     }
   }
 
@@ -1170,15 +1192,15 @@
 
   let wsOf;
   let isWS;
+  const WritableStream$s = slot('WritableStream.s');
   class WritableStream {
-    #s;
     static {
-      wsOf = (v) => v.#s;
-      isWS = (v) => isObject(v) && #s in v;
+      wsOf = (v) => WritableStream$s.get(v);
+      isWS = (v) => WritableStream$s.has(v);
     }
     constructor(sink = undefined, strategy = undefined) {
       if (sink === token) {
-        this.#s = strategy;
+        WritableStream$s.set(this, strategy);
         return;
       }
       const strat = strategyOf(strategy, 'WritableStream');
@@ -1195,7 +1217,7 @@
       const hwm = highWaterMark(strat, 1);
       const st = wsNew();
       st.wrapper = this;
-      this.#s = st;
+      WritableStream$s.set(this, st);
       wsSetup(
         st,
         (w) => (start ? apply(start, d, [w]) : undefined),
@@ -1208,18 +1230,18 @@
     }
     get locked() {
       if (!isWS(this)) throw invalid('WritableStream', 'locked');
-      return this.#s.writer !== undefined;
+      return WritableStream$s.get(this).writer !== undefined;
     }
     abort(reason = undefined) {
       if (!isWS(this)) return rejected(invalid('WritableStream', 'abort'));
-      if (this.#s.writer) return rejected(new TypeErrorC('Cannot abort a locked stream'));
-      return wsAbort(this.#s, reason);
+      if (WritableStream$s.get(this).writer) return rejected(new TypeErrorC('Cannot abort a locked stream'));
+      return wsAbort(WritableStream$s.get(this), reason);
     }
     close() {
       if (!isWS(this)) return rejected(invalid('WritableStream', 'close'));
-      if (this.#s.writer) return rejected(new TypeErrorC('Cannot close a locked stream'));
-      if (wsCloseQueued(this.#s)) return rejected(new TypeErrorC('Cannot close a stream that is already closing'));
-      return wsClose(this.#s);
+      if (WritableStream$s.get(this).writer) return rejected(new TypeErrorC('Cannot close a locked stream'));
+      if (wsCloseQueued(WritableStream$s.get(this))) return rejected(new TypeErrorC('Cannot close a stream that is already closing'));
+      return wsClose(WritableStream$s.get(this));
     }
     getWriter() {
       if (!isWS(this)) throw invalid('WritableStream', 'getWriter');
@@ -1232,39 +1254,39 @@
     wsSetup(st, start, writeAlg, closeAlg, abortAlg, hwm, size);
     return st;
   };
+  const WritableStreamDefaultController$c = slot('WritableStreamDefaultController.c');
   class WritableStreamDefaultController {
-    #c;
     constructor(t, c) {
       if (t !== token) throw illegal();
-      this.#c = c;
+      WritableStreamDefaultController$c.set(this, c);
     }
     get signal() {
-      return apply(signalOf, this.#c.abortController, []);
+      return apply(signalOf, WritableStreamDefaultController$c.get(this).abortController, []);
     }
     error(e = undefined) {
-      if (this.#c.stream.state === 'writable') wcErrorIfNeeded(this.#c, e);
+      if (WritableStreamDefaultController$c.get(this).stream.state === 'writable') wcErrorIfNeeded(WritableStreamDefaultController$c.get(this), e);
     }
   }
+  const WritableStreamDefaultWriter$w = slot('WritableStreamDefaultWriter.w');
   class WritableStreamDefaultWriter {
-    #w;
-    static #is = (v) => isObject(v) && #w in v;
+    static #is = (v) => WritableStreamDefaultWriter$w.has(v);
     constructor(stream) {
       if (!isWS(stream)) throw new TypeErrorC("Failed to construct 'WritableStreamDefaultWriter': parameter 1 is not of type 'WritableStream'.");
       const st = wsOf(stream);
       if (st.writer) throw new TypeErrorC('WritableStream is locked');
-      this.#w = newWriter(st);
+      WritableStreamDefaultWriter$w.set(this, newWriter(st));
     }
     get closed() {
       if (!WritableStreamDefaultWriter.#is(this)) return rejected(invalid('WritableStreamDefaultWriter', 'closed'));
-      return this.#w.closed.promise;
+      return WritableStreamDefaultWriter$w.get(this).closed.promise;
     }
     get ready() {
       if (!WritableStreamDefaultWriter.#is(this)) return rejected(invalid('WritableStreamDefaultWriter', 'ready'));
-      return this.#w.ready.promise;
+      return WritableStreamDefaultWriter$w.get(this).ready.promise;
     }
     get desiredSize() {
       if (!WritableStreamDefaultWriter.#is(this)) throw invalid('WritableStreamDefaultWriter', 'desiredSize');
-      const st = this.#w.stream;
+      const st = WritableStreamDefaultWriter$w.get(this).stream;
       if (!st) throw new TypeErrorC('Writer was released');
       if (st.state === 'errored' || st.state === 'erroring') return null;
       if (st.state === 'closed') return 0;
@@ -1272,24 +1294,24 @@
     }
     abort(reason = undefined) {
       if (!WritableStreamDefaultWriter.#is(this)) return rejected(invalid('WritableStreamDefaultWriter', 'abort'));
-      if (!this.#w.stream) return rejected(new TypeErrorC('Writer was released'));
-      return wsAbort(this.#w.stream, reason);
+      if (!WritableStreamDefaultWriter$w.get(this).stream) return rejected(new TypeErrorC('Writer was released'));
+      return wsAbort(WritableStreamDefaultWriter$w.get(this).stream, reason);
     }
     close() {
       if (!WritableStreamDefaultWriter.#is(this)) return rejected(invalid('WritableStreamDefaultWriter', 'close'));
-      const st = this.#w.stream;
+      const st = WritableStreamDefaultWriter$w.get(this).stream;
       if (!st) return rejected(new TypeErrorC('Writer was released'));
       if (wsCloseQueued(st)) return rejected(new TypeErrorC('Cannot close a stream that is already closing'));
       return wsClose(st);
     }
     releaseLock() {
       if (!WritableStreamDefaultWriter.#is(this)) throw invalid('WritableStreamDefaultWriter', 'releaseLock');
-      if (this.#w.stream) writerRelease(this.#w);
+      if (WritableStreamDefaultWriter$w.get(this).stream) writerRelease(WritableStreamDefaultWriter$w.get(this));
     }
     write(chunk = undefined) {
       if (!WritableStreamDefaultWriter.#is(this)) return rejected(invalid('WritableStreamDefaultWriter', 'write'));
-      if (!this.#w.stream) return rejected(new TypeErrorC('Writer was released'));
-      return writerWrite(this.#w, chunk);
+      if (!WritableStreamDefaultWriter$w.get(this).stream) return rejected(new TypeErrorC('Writer was released'));
+      return writerWrite(WritableStreamDefaultWriter$w.get(this), chunk);
     }
   }
 
@@ -1419,37 +1441,37 @@
     }
     return ts;
   }
+  const TransformStreamDefaultController$c = slot('TransformStreamDefaultController.c');
   class TransformStreamDefaultController {
-    #c;
     constructor(t, c) {
       if (t !== token) throw illegal();
-      this.#c = c;
+      TransformStreamDefaultController$c.set(this, c);
     }
     get desiredSize() {
-      return rcDesired(this.#c.stream.readable.controller);
+      return rcDesired(TransformStreamDefaultController$c.get(this).stream.readable.controller);
     }
     enqueue(chunk = undefined) {
-      tcEnqueue(this.#c, chunk);
+      tcEnqueue(TransformStreamDefaultController$c.get(this), chunk);
     }
     error(reason = undefined) {
-      tsError(this.#c.stream, reason);
+      tsError(TransformStreamDefaultController$c.get(this).stream, reason);
     }
     terminate() {
-      tcTerminate(this.#c);
+      tcTerminate(TransformStreamDefaultController$c.get(this));
     }
   }
   let tsOf;
   let isTS;
+  const TransformStream$s = slot('TransformStream.s');
   class TransformStream {
-    #s;
     static {
-      tsOf = (v) => v.#s;
-      isTS = (v) => isObject(v) && #s in v;
+      tsOf = (v) => TransformStream$s.get(v);
+      isTS = (v) => TransformStream$s.has(v);
     }
     constructor(transformer = undefined, writableStrategy = undefined, readableStrategy = undefined) {
       // A transferred TransformStream: its two sides, made by `transferIn`.
       if (transformer === token) {
-        this.#s = writableStrategy;
+        TransformStream$s.set(this, writableStrategy);
         return;
       }
       const wStrat = strategyOf(writableStrategy, 'TransformStream');
@@ -1492,13 +1514,13 @@
         rHwm,
         sizeAlgorithm(rStrat),
       );
-      this.#s = ts;
+      TransformStream$s.set(this, ts);
     }
     get readable() {
-      return this.#s.readable.wrapper;
+      return TransformStream$s.get(this).readable.wrapper;
     }
     get writable() {
-      return this.#s.writable.wrapper;
+      return TransformStream$s.get(this).writable.wrapper;
     }
   }
 
@@ -1513,37 +1535,37 @@
   const byteLengthSize = { size(chunk) { return chunk.byteLength; } }.size;
   defineProperty(byteLengthSize, 'name', { value: 'size' });
   const countSize = { size() { return 1; } }.size;
+  const ByteLengthQueuingStrategy$hwm = slot('ByteLengthQueuingStrategy.hwm');
   class ByteLengthQueuingStrategy {
-    #hwm;
     constructor(init) {
-      this.#hwm = strategyInit(init, 'ByteLengthQueuingStrategy');
+      ByteLengthQueuingStrategy$hwm.set(this, strategyInit(init, 'ByteLengthQueuingStrategy'));
     }
     get highWaterMark() {
-      return this.#hwm;
+      return ByteLengthQueuingStrategy$hwm.get(this);
     }
     get size() {
-      if (!(#hwm in this)) throw new TypeErrorC('Illegal invocation');
+      if (!ByteLengthQueuingStrategy$hwm.has(this)) throw new TypeErrorC('Illegal invocation');
       return byteLengthSize;
     }
   }
+  const CountQueuingStrategy$hwm = slot('CountQueuingStrategy.hwm');
   class CountQueuingStrategy {
-    #hwm;
     constructor(init) {
-      this.#hwm = strategyInit(init, 'CountQueuingStrategy');
+      CountQueuingStrategy$hwm.set(this, strategyInit(init, 'CountQueuingStrategy'));
     }
     get highWaterMark() {
-      return this.#hwm;
+      return CountQueuingStrategy$hwm.get(this);
     }
     get size() {
-      if (!(#hwm in this)) throw new TypeErrorC('Illegal invocation');
+      if (!CountQueuingStrategy$hwm.has(this)) throw new TypeErrorC('Illegal invocation');
       return countSize;
     }
   }
 
   // ----- Encoding streams ------------------------------------------------
 
+  const TextEncoderStream$t = slot('TextEncoderStream.t');
   class TextEncoderStream {
-    #t;
     constructor() {
       const encoder = new TextEncoderC();
       let pending = '';
@@ -1551,7 +1573,7 @@
         const bytes = apply(encode, encoder, [text]);
         if (bytes.length > 0) tcEnqueue(c, bytes);
       };
-      this.#t = makeTransform(undefined, (chunk) => {
+      TextEncoderStream$t.set(this, makeTransform(undefined, (chunk) => {
         try {
           let text = pending + `${chunk}`;
           pending = '';
@@ -1560,7 +1582,7 @@
             pending = text[text.length - 1];
             text = text.slice(0, -1);
           }
-          if (text !== '') encodeOut(this.#t.controller, text);
+          if (text !== '') encodeOut(TextEncoderStream$t.get(this).controller, text);
           return resolved();
         } catch (e) {
           return rejected(e);
@@ -1569,36 +1591,36 @@
         try {
           if (pending !== '') {
             pending = '';
-            encodeOut(this.#t.controller, '�');
+            encodeOut(TextEncoderStream$t.get(this).controller, '�');
           }
           return resolved();
         } catch (e) {
           return rejected(e);
         }
-      }, () => resolved(), 1, () => 1, 0, () => 1);
+      }, () => resolved(), 1, () => 1, 0, () => 1));
     }
     get encoding() {
       return 'utf-8';
     }
     get readable() {
-      return this.#t.readable.wrapper;
+      return TextEncoderStream$t.get(this).readable.wrapper;
     }
     get writable() {
-      return this.#t.writable.wrapper;
+      return TextEncoderStream$t.get(this).writable.wrapper;
     }
   }
+  const TextDecoderStream$t = slot('TextDecoderStream.t');
+  const TextDecoderStream$decoder = slot('TextDecoderStream.decoder');
   class TextDecoderStream {
-    #t;
-    #decoder;
     constructor(label = undefined, options = undefined) {
       const decoder = new TextDecoderC(label, options);
-      this.#decoder = decoder;
+      TextDecoderStream$decoder.set(this, decoder);
       const out = (text) => {
-        if (text !== '') tcEnqueue(this.#t.controller, text);
+        if (text !== '') tcEnqueue(TextDecoderStream$t.get(this).controller, text);
       };
       const streaming = { stream: true };
       Object.setPrototypeOf(streaming, null);
-      this.#t = makeTransform(undefined, (chunk) => {
+      TextDecoderStream$t.set(this, makeTransform(undefined, (chunk) => {
         try {
           out(apply(decode, decoder, [chunk, streaming]));
           return resolved();
@@ -1612,22 +1634,22 @@
         } catch (e) {
           return rejected(e);
         }
-      }, () => resolved(), 1, () => 1, 0, () => 1);
+      }, () => resolved(), 1, () => 1, 0, () => 1));
     }
     get encoding() {
-      return this.#decoder.encoding;
+      return TextDecoderStream$decoder.get(this).encoding;
     }
     get fatal() {
-      return this.#decoder.fatal;
+      return TextDecoderStream$decoder.get(this).fatal;
     }
     get ignoreBOM() {
-      return this.#decoder.ignoreBOM;
+      return TextDecoderStream$decoder.get(this).ignoreBOM;
     }
     get readable() {
-      return this.#t.readable.wrapper;
+      return TextDecoderStream$t.get(this).readable.wrapper;
     }
     get writable() {
-      return this.#t.writable.wrapper;
+      return TextDecoderStream$t.get(this).writable.wrapper;
     }
   }
 
@@ -1662,30 +1684,30 @@
     }, () => resolved(), 1, () => 1, 0, () => 1);
     return t;
   };
+  const CompressionStream$t = slot('CompressionStream.t');
   class CompressionStream {
-    #t;
     constructor(format) {
       if (arguments.length < 1) throw new TypeErrorC("Failed to construct 'CompressionStream': 1 argument required, but only 0 present.");
-      this.#t = codecTransform('CompressionStream', format, true);
+      CompressionStream$t.set(this, codecTransform('CompressionStream', format, true));
     }
     get readable() {
-      return this.#t.readable.wrapper;
+      return CompressionStream$t.get(this).readable.wrapper;
     }
     get writable() {
-      return this.#t.writable.wrapper;
+      return CompressionStream$t.get(this).writable.wrapper;
     }
   }
+  const DecompressionStream$t = slot('DecompressionStream.t');
   class DecompressionStream {
-    #t;
     constructor(format) {
       if (arguments.length < 1) throw new TypeErrorC("Failed to construct 'DecompressionStream': 1 argument required, but only 0 present.");
-      this.#t = codecTransform('DecompressionStream', format, false);
+      DecompressionStream$t.set(this, codecTransform('DecompressionStream', format, false));
     }
     get readable() {
-      return this.#t.readable.wrapper;
+      return DecompressionStream$t.get(this).readable.wrapper;
     }
     get writable() {
-      return this.#t.writable.wrapper;
+      return DecompressionStream$t.get(this).writable.wrapper;
     }
   }
 
