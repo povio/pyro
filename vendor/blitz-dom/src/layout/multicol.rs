@@ -985,6 +985,10 @@ impl LayoutPassState<'_> {
                     height.max(0.0)
                 } else if spanners.is_empty() && fill_auto {
                     definite_height.unwrap_or(0.0)
+                } else if let Some(max) = limit.filter(|_| spanners.is_empty() && matches!(multicol.fill, ColumnFill::Auto)) {
+                    // pyro: `column-fill: auto` under a `max-height` fills the columns in turn up
+                    // to it (Chromium; WPT css-multicol `columnfill-auto-max-height-*`).
+                    max.min((breaks.end - breaks.start).max(0.0))
                 } else if fill_auto && part == spanners.len() {
                     // pyro: `column-fill: auto` fills the columns after the last spanner to the
                     // end of the container's height, unbalanced (only content followed by a
@@ -1194,8 +1198,40 @@ impl LayoutPassState<'_> {
             };
             (output.size.width - pb_width).max(0.0)
         };
+        // pyro: the columns are measured without the spanners (as wide as nothing), which are
+        // measured on their own: a spanner's widths are the container's at least, not
+        // multiplied by the column count (Chromium; WPT css-multicol `intrinsic-size-002`).
+        let dom_id = dom_node_id(node_id);
+        let spanners: Vec<crate::NodeId> =
+            if inline_root { Vec::new() } else { self.doc.column_spanners_of(dom_id).into_iter().map(|(id, _)| id).collect() };
+        let outer_spanners = std::mem::replace(&mut self.column_spanners, (!spanners.is_empty()).then_some((dom_id, 0.0)));
         let mut min = measure(self, AvailableSpace::MinContent);
         let mut max = measure(self, AvailableSpace::MaxContent);
+        self.column_spanners = outer_spanners;
+        let (mut spanner_min, mut spanner_max) = (0.0f32, 0.0f32);
+        for id in spanners {
+            let child = crate::taffy_node_id(id);
+            let margins = {
+                let ls = self.nodes[id].layout_style();
+                let margin = ls.margin().resolve_or_zero(None, resolve_calc_value);
+                margin.left + margin.right
+            };
+            for (available, slot) in [(AvailableSpace::MinContent, &mut spanner_min), (AvailableSpace::MaxContent, &mut spanner_max)] {
+                let input = LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: RequestedAxis::Horizontal,
+                    known_dimensions: Size::NONE,
+                    known_dimensions_are_definite: Size { width: true, height: true },
+                    parent_size: inputs.parent_size,
+                    available_space: Size { width: available, height: AvailableSpace::MaxContent },
+                    vertical_margins_are_collapsible: Line::FALSE,
+                };
+                use taffy::LayoutPartialTree as _;
+                let width = self.compute_child_layout(child, input).size.width + margins;
+                *slot = slot.max(width);
+            }
+        }
         if let Some(width) = multicol.width {
             min = min.min(width);
             max = max.max(width).max(min);
@@ -1206,7 +1242,7 @@ impl LayoutPassState<'_> {
             min = min * count + gaps;
         }
         max = max * count + gaps;
-        (min, max)
+        (min.max(spanner_min), max.max(spanner_max).max(min.max(spanner_min)))
     }
 }
 
