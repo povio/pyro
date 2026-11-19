@@ -90,6 +90,18 @@ fn start_server() -> Server {
                             &[("Location", format!("http://localhost:{port}/back"))],
                             b"",
                         ),
+                        (_, "/away-cookie") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://localhost:{port}/back-cookie"))],
+                            b"",
+                        ),
+                        (_, "/back-cookie") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://127.0.0.1:{port}/cookie"))],
+                            b"",
+                        ),
                         (_, "/back") => respond(
                             &mut stream,
                             "302 Found",
@@ -617,6 +629,27 @@ fn a_no_cors_redirect_chain_through_another_origin_is_opaque() {
     let mut r = Request::get(url(&s, "/plain"), Destination::Image);
     r.origin = Some(url(&s, "/").origin().ascii_serialization());
     assert_eq!(collect(&c, r).1.expect("a response").kind, ResponseKind::Basic);
+}
+/// Fetch: credentials mode "same-origin" includes credentials only while the response tainting
+/// is "basic". A no-cors request whose chain went to another origin and back sends no cookie on
+/// its last, same-origin hop (as Chrome); the hop's origin alone decided.
+#[test]
+fn same_origin_credentials_follow_the_response_tainting() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    collect(&c, Request::get(url(&s, "/set-cookie"), Destination::Document));
+    let origin = url(&s, "/").origin().ascii_serialization();
+    let mut direct = Request::get(url(&s, "/cookie"), Destination::Image);
+    direct.origin = Some(origin.clone());
+    direct.credentials = Credentials::SameOrigin;
+    assert_eq!(String::from_utf8(collect(&c, direct).2).unwrap(), "sid=abc; theme=dark");
+    let mut detour = Request::get(url(&s, "/away-cookie"), Destination::Image);
+    detour.origin = Some(origin);
+    detour.credentials = Credentials::SameOrigin;
+    let (kinds, head, body, e) = collect(&c, detour);
+    assert_eq!(e, None, "{kinds:?}");
+    assert_eq!(head.expect("a response").url.host_str(), Some("127.0.0.1"));
+    assert_eq!(String::from_utf8(body).unwrap(), "", "no cookie once the tainting is opaque");
 }
 #[test]
 fn regression_data_body_cap() {

@@ -486,6 +486,8 @@ impl Shared {
         origin_url: Option<&Url>,
         cors_cross: bool,
         site: FetchSite,
+        // pyro: the hop is same-origin and the response's tainting is "basic" (no hop of a no-cors
+        // request went to another origin): Fetch includes credentials for "same-origin" then only.
         same_origin: bool,
     ) -> HeaderMap {
         // Read under the lock: the settings are a header map and strings a
@@ -1908,7 +1910,7 @@ impl Io {
                         origin_url.as_ref(),
                         cors_cross,
                         site,
-                        same_origin,
+                        basic_tainting,
                     ),
                     None,
                 ),
@@ -2046,7 +2048,7 @@ impl Io {
             // serves a response only to a request of the same kind (`HttpCache::lookup`).
             let credentialed = match req.credentials {
                 Credentials::Include => true,
-                Credentials::SameOrigin => same_origin,
+                Credentials::SameOrigin => basic_tainting,
                 Credentials::Omit => false,
             } || headers.contains_key(header::AUTHORIZATION);
             let mut revalidating = None;
