@@ -901,6 +901,10 @@ impl BreakerState {
         self.item_idx += 1;
         self.line.items.end += 1;
         self.line.x = next_x;
+        // pyro: an atomic inline is in-flow content whatever its size: its line is no invisible
+        // line box (CSS Inline 3 § 4.1), it has its strut (WPT CSS2 `floats-clear/floats-031`: an
+        // empty `inline-block` alone on a line).
+        self.line.box_metrics.has_content = true;
         if inline_box.vertical_align.is_line_relative() {
             self.line.box_metrics.add_line_relative_inline_box(
                 inline_box.vertical_align,
