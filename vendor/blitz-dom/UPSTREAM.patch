@@ -25525,7 +25525,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// Rebuild `paint_children` and `stacking_context` for the tree rooted at
      /// `root_id` from the laid-out box tree.
      ///
-@@ -210,11 +370,213 @@
+@@ -210,11 +370,221 @@
      /// (sorted by paint order) or, when they have a non-zero `z-index` and are
      /// positioned or flex/grid items, in the nearest ancestor stacking context.
      ///
@@ -25632,20 +25632,26 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            }
 +            None
 +        };
-+        let inline_owners: Vec<(NodeId, NodeId)> = self
++        // (By box: one lookup each, however many boxes and owners there are.)
++        let inline_owners: std::collections::HashMap<NodeId, NodeId> = self
 +            .oof_hoisted
 +            .iter()
 +            .filter(|&&id| self.nodes.get(id).is_some_and(|n| n.flags.is_in_document()))
 +            .filter_map(|&id| Some((id, inline_owner_of(self, id)?)))
 +            .collect();
-+        for &(_, owner) in &inline_owners {
++        // (Each owner once, in tree slot order, for the entries below.)
++        let mut owners: Vec<NodeId> = inline_owners.values().copied().collect();
++        owners.sort_unstable_by_key(|id| id.as_u64() as u32);
++        owners.dedup();
++        for &owner in &owners {
 +            if self.nodes[owner].stacking_context.is_none() {
 +                self.nodes[owner].stacking_context = Some(Box::new(StackingContext::from_children(ThinVec::new())));
 +            }
 +        }
 +        let mut clip_owners: Vec<NodeId> = Vec::new();
++        let mut clip_owner_set: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
 +        let mut moves: Vec<_> = self.oof_hoisted.iter().filter_map(|&id| {
-+            if let Some(&(_, owner)) = inline_owners.iter().find(|(moved, _)| *moved == id) {
++            if let Some(&owner) = inline_owners.get(&id) {
 +                return Some((id, owner));
 +            }
 +            let node = &self.nodes[id];
@@ -25656,7 +25662,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                && let Some(owner) = clip_owner_of(self, box_parent)
 +                && !contains(self, owner, Some(cb))
 +            {
-+                if !clip_owners.contains(&owner) {
++                if clip_owner_set.insert(owner) {
 +                    clip_owners.push(owner);
 +                }
 +                return Some((id, owner));
@@ -25669,19 +25675,21 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        // 0): the painter paints them there (blitz-paint `draw_paint_child`), above the in-flow
 +        // content around (WPT filter-effects `filtered-inline-is-container`). A positioned inline
 +        // listed in the paint tree is there already.
-+        for &(_, owner) in &inline_owners {
-+            if self.nodes[owner].flags.contains(NodeFlags::INLINE_PASS_ENTRY) || moves.iter().any(|(moved, _)| *moved == owner) {
++        let mut moved: std::collections::HashSet<NodeId> = moves.iter().map(|(id, _)| *id).collect();
++        for &owner in &owners {
++            if self.nodes[owner].flags.contains(NodeFlags::INLINE_PASS_ENTRY) || moved.contains(&owner) {
 +                continue;
 +            }
 +            let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, owner);
 +            moves.push((owner, context_of(self, box_parent)));
++            moved.insert(owner);
 +        }
 +        // The positioned boxes nested in the clip owners that took an escaping box join it there.
 +        for &owner in &clip_owners {
 +            let mut nested = Vec::new();
 +            nested_positioned(self, owner, owner, &mut nested);
 +            for id in nested {
-+                if !moves.iter().any(|(moved, _)| *moved == id) {
++                if moved.insert(id) {
 +                    moves.push((id, owner));
 +                }
 +            }
@@ -25741,7 +25749,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      }
  
      /// `stacking_context` is the entry list of the nearest ancestor stacking
-@@ -238,7 +600,23 @@
+@@ -238,7 +608,23 @@
              // node itself, so the role the caller resolved must match the one
              // this node was last built with.
              let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
@@ -25765,7 +25773,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  && !node
                      .damage()
                      .unwrap_or(ALL_DAMAGE)
-@@ -252,6 +630,17 @@
+@@ -252,6 +638,17 @@
              }
          }
  
@@ -25783,7 +25791,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let Some(display) = self.nodes[node_id].display_style() else {
              return;
          };
-@@ -318,33 +707,78 @@
+@@ -318,33 +715,78 @@
  
              let is_layer_root =
                  stacking_context.is_none() || self.nodes[node_id].is_paint_layer_root();
@@ -25868,7 +25876,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                      } else {
                          self.scratch.keyed_children.push((paint_order, child_id));
                      }
-@@ -352,10 +786,16 @@
+@@ -352,10 +794,16 @@
                      // Positioned descendants lifted out of the static boxes of
                      // this child's subtree join this node's positioned paint
                      // level, in tree order after the child.
@@ -25887,7 +25895,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                                  self.scratch
                                      .keyed_children
                                      .push(((2, paint_order.1), entry.node_id));
-@@ -369,15 +809,51 @@
+@@ -369,15 +817,51 @@
                  while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                      && anchor == index
                  {
@@ -25941,7 +25949,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  
              let mut paint_children = self.nodes[node_id]
                  .paint_children
-@@ -392,9 +868,14 @@
+@@ -392,9 +876,14 @@
                      .map(|(_, id)| id),
              );
  
@@ -25956,7 +25964,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          }
  
          let node = &mut self.nodes[node_id];
-@@ -408,6 +889,229 @@
+@@ -408,6 +897,229 @@
          }
      }
  
@@ -26186,7 +26194,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The layout child of `node_id` whose subtree contains `id`, following
      /// `layout_parent`.
      fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
-@@ -426,15 +1130,20 @@
+@@ -426,15 +1138,20 @@
      /// the enclosing stacking context like any other z-indexed positioned
      /// child, the rest join `paint_children` at the same paint level as other
      /// positioned boxes (the caller's stable sort keeps tree order).
@@ -26208,7 +26216,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  true => None,
                  false => Some(entries),
              },
-@@ -443,11 +1152,112 @@
+@@ -443,11 +1160,112 @@
          let z_index = self.nodes[child_id].z_index();
          if z_index != 0 {
              entries.push(HoistedPaintChild::new(child_id, z_index));
@@ -26321,7 +26329,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1281,283 @@
+@@ -471,22 +1289,283 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -26612,7 +26620,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1567,21 @@
+@@ -496,6 +1575,21 @@
      }
  }
  
@@ -26634,7 +26642,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1625,143 @@
+@@ -539,3 +1633,143 @@
          )
      }
  }

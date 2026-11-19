@@ -281,3 +281,14 @@ fn a_huge_curve_with_an_arc_in_view_paints_in_bounded_time() {
     assert_eq!(pixel(&img, 200, 200), [0, 128, 0], "inside the ellipse");
     assert_eq!(pixel(&img, 200, 100), [255, 255, 255], "above it");
 }
+
+/// Thousands of inline stacking contexts each keeping an absolutely positioned child build their
+/// paint tree in bounded time: the owner of each box is looked up by key (it was searched from the
+/// start of a list for each box). Review cycle 3, finding 2.
+#[test]
+fn many_inline_owners_build_their_paint_tree_in_bounded_time() {
+    let spans: String = (0..3000).map(|_| "<span style='opacity:.9'>x<b style='position:absolute'></b></span>").collect();
+    let start = std::time::Instant::now();
+    let _ = render(&format!("<div style='font:10px/10px monospace;width:390px'>{spans}</div>"));
+    assert!(start.elapsed() < std::time::Duration::from_secs(20), "took {:?}", start.elapsed());
+}

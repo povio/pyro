@@ -471,20 +471,26 @@ impl BaseDocument {
             }
             None
         };
-        let inline_owners: Vec<(NodeId, NodeId)> = self
+        // (By box: one lookup each, however many boxes and owners there are.)
+        let inline_owners: std::collections::HashMap<NodeId, NodeId> = self
             .oof_hoisted
             .iter()
             .filter(|&&id| self.nodes.get(id).is_some_and(|n| n.flags.is_in_document()))
             .filter_map(|&id| Some((id, inline_owner_of(self, id)?)))
             .collect();
-        for &(_, owner) in &inline_owners {
+        // (Each owner once, in tree slot order, for the entries below.)
+        let mut owners: Vec<NodeId> = inline_owners.values().copied().collect();
+        owners.sort_unstable_by_key(|id| id.as_u64() as u32);
+        owners.dedup();
+        for &owner in &owners {
             if self.nodes[owner].stacking_context.is_none() {
                 self.nodes[owner].stacking_context = Some(Box::new(StackingContext::from_children(ThinVec::new())));
             }
         }
         let mut clip_owners: Vec<NodeId> = Vec::new();
+        let mut clip_owner_set: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
         let mut moves: Vec<_> = self.oof_hoisted.iter().filter_map(|&id| {
-            if let Some(&(_, owner)) = inline_owners.iter().find(|(moved, _)| *moved == id) {
+            if let Some(&owner) = inline_owners.get(&id) {
                 return Some((id, owner));
             }
             let node = &self.nodes[id];
@@ -495,7 +501,7 @@ impl BaseDocument {
                 && let Some(owner) = clip_owner_of(self, box_parent)
                 && !contains(self, owner, Some(cb))
             {
-                if !clip_owners.contains(&owner) {
+                if clip_owner_set.insert(owner) {
                     clip_owners.push(owner);
                 }
                 return Some((id, owner));
@@ -508,19 +514,21 @@ impl BaseDocument {
         // 0): the painter paints them there (blitz-paint `draw_paint_child`), above the in-flow
         // content around (WPT filter-effects `filtered-inline-is-container`). A positioned inline
         // listed in the paint tree is there already.
-        for &(_, owner) in &inline_owners {
-            if self.nodes[owner].flags.contains(NodeFlags::INLINE_PASS_ENTRY) || moves.iter().any(|(moved, _)| *moved == owner) {
+        let mut moved: std::collections::HashSet<NodeId> = moves.iter().map(|(id, _)| *id).collect();
+        for &owner in &owners {
+            if self.nodes[owner].flags.contains(NodeFlags::INLINE_PASS_ENTRY) || moved.contains(&owner) {
                 continue;
             }
             let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, owner);
             moves.push((owner, context_of(self, box_parent)));
+            moved.insert(owner);
         }
         // The positioned boxes nested in the clip owners that took an escaping box join it there.
         for &owner in &clip_owners {
             let mut nested = Vec::new();
             nested_positioned(self, owner, owner, &mut nested);
             for id in nested {
-                if !moves.iter().any(|(moved, _)| *moved == id) {
+                if moved.insert(id) {
                     moves.push((id, owner));
                 }
             }
