@@ -169,8 +169,7 @@ pub enum TransitionValue {
 
 /// The value of `longhand` a CSS transition from the style `before` to `after` gives at iteration
 /// progress `progress` (before `easing`, CSS text; `None`: `ease`; `before_flag` for step easings).
-/// Values that do not interpolate flip halfway; at the ends the value is the end's own (not one
-/// interpolation normalized, as a `rotate3d()` axis or a `calc()` of a percentage and a length).
+/// Values that do not interpolate flip halfway; a transform's ends are the ends' own lists.
 pub fn transition_value(
     longhand: &str,
     before: &crate::timing::StyleSnapshot,
@@ -206,10 +205,19 @@ pub fn transition_value(
         }));
     }
     let discrete = || if eased < 0.5 { from.clone() } else { to.clone() };
-    let value = if eased == 1.0 {
-        to.clone()
-    } else if eased == 0.0 {
+    // A transform at an end is that end's own list (a `rotate3d()` axis not normalized), unless it
+    // is `none`, which interpolates as the identity (`matrix(1, 0, 0, 1, 0, 0)`), as in Chromium;
+    // any other property interpolates at its ends too (`blur(0px)` from `none`, `calc(0% + 16px)`).
+    let own_end = |style: &crate::timing::StyleSnapshot| {
+        // (Origins too: Chromium resolves them to lengths, never `calc(0% + 20px)`.)
+        use style::properties::LonghandId as L;
+        matches!(id, L::TransformOrigin | L::PerspectiveOrigin)
+            || (matches!(id, L::Transform) && style.computed_value_to_string(physical) != "none")
+    };
+    let value = if eased == 0.0 && own_end(before) {
         from.clone()
+    } else if eased == 1.0 && own_end(after) {
+        to.clone()
     } else {
         match from.animate(&to, Procedure::Interpolate { progress: eased }) {
             // A transform interpolation Stylo defers (a matrix it cannot decompose) is discrete,
@@ -221,10 +229,27 @@ pub fn transition_value(
     };
     let mut style = (**after).clone();
     value.set_longhand_in_style(&mut style);
-    // A computed opacity is clamped to [0, 1] (an easing can overshoot).
-    if matches!(id, style::properties::LonghandId::Opacity) {
-        let opacity = style.get_effects().opacity.clamp(0.0, 1.0);
-        style.mutate_effects().set_opacity(opacity);
+    // A computed `<opacity-value>` is clamped to [0, 1] (an easing can overshoot), as the
+    // cascade clamps an animation's value.
+    use style::properties::LonghandId as L;
+    match id {
+        L::Opacity => {
+            let v = style.get_effects().opacity.clamp(0.0, 1.0);
+            style.mutate_effects().set_opacity(v);
+        }
+        L::ShapeImageThreshold => {
+            let v = style.get_box().shape_image_threshold.clamp(0.0, 1.0);
+            style.mutate_box().set_shape_image_threshold(v);
+        }
+        L::FloodOpacity => {
+            let v = style.get_svg().flood_opacity.clamp(0.0, 1.0);
+            style.mutate_svg().set_flood_opacity(v);
+        }
+        L::StopOpacity => {
+            let v = style.get_svg().stop_opacity.clamp(0.0, 1.0);
+            style.mutate_svg().set_stop_opacity(v);
+        }
+        _ => {}
     }
     Some(TransitionValue::Style(style::servo_arc::Arc::new(style)))
 }
@@ -245,6 +270,35 @@ fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction
         PropertyDeclaration::AnimationTimingFunction(v) => v.0.iter().next().map(|f| f.to_computed_value_without_context()),
         _ => None,
     })
+}
+
+/// The longhands of the shorthand `name` (`None`: a longhand, `all` or unknown).
+pub fn shorthand_longhands(name: &str) -> Option<Vec<&'static str>> {
+    let id = crate::stylo::property_id(name)?;
+    let shorthand = id.as_shorthand().ok()?;
+    if shorthand == style::properties::ShorthandId::All {
+        return None;
+    }
+    let longhands: Vec<&'static str> = shorthand.longhands().map(|l| l.name()).collect();
+    Some(longhands)
+}
+
+/// `into` with `longhand` set to its value in `from` (the physical longhand, as
+/// [`transition_value`] sets it).
+pub fn with_longhand_of(
+    into: crate::timing::StyleSnapshot,
+    from: &crate::timing::StyleSnapshot,
+    longhand: &str,
+) -> crate::timing::StyleSnapshot {
+    use style::properties::animated_properties::AnimationValue;
+    use style::properties::PropertyDeclarationId;
+    let Some(id) = crate::stylo::property_id(longhand) else { return into };
+    let Some(PropertyDeclarationId::Longhand(id)) = id.as_shorthand().err() else { return into };
+    let physical = PropertyDeclarationId::Longhand(id.to_physical(from.writing_mode));
+    let Some(value) = AnimationValue::from_computed_values(physical, from) else { return into };
+    let mut style = (*into).clone();
+    value.set_longhand_in_style(&mut style);
+    style::servo_arc::Arc::new(style)
 }
 
 /// Whether `longhand` has the same computed value in the styles `a` and `b`.

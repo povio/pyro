@@ -839,6 +839,19 @@ impl Source {
         pseudo: Option<pyro_dom::style::PseudoElement>,
         longhand: &str,
     ) -> Option<pyro_dom::animation::TransitionValue> {
+        // A shorthand: its longhands' running transitions, together.
+        if let Some(longhands) = pyro_dom::animation::shorthand_longhands(longhand) {
+            let mut out: Option<pyro_dom::timing::StyleSnapshot> = None;
+            for l in longhands {
+                if let Some(pyro_dom::animation::TransitionValue::Style(s)) = self.transition_value_of(el, pseudo, l) {
+                    out = Some(match out {
+                        None => s,
+                        Some(into) => pyro_dom::animation::with_longhand_of(into, &s, l),
+                    });
+                }
+            }
+            return out.map(pyro_dom::animation::TransitionValue::Style);
+        }
         let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
         let now = self.now(&page);
         let state = &page.animation_events;
