@@ -62,10 +62,15 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels its previous run.
-concurrency:
-  group: wpt-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Concurrency is per job, not per run, and nothing that started is cancelled:
+# - every job that runs on a shared runner (jsc, build, build-linux, and each test job: wpt, client, crashtest,
+#   reftest per shard, wpt-linux per shard) has its own group, wpt-<job>[-<shard>]-<PR or ref>, with
+#   cancel-in-progress false. GitHub keeps one running and one waiting job per group, and a newer push replaces the
+#   waiting one, so the newest commit always gets the next full run.
+# - Cancelling builds in progress (the first design) meant nothing finished while 3-4 workers pushed every 15-30
+#   minutes: each push cancelled the macOS build before its tests began, and no #399 run completed on 2026-11-18.
+# A run whose waiting jobs were replaced ends with its later jobs and gates skipped (they check that no needed job
+# was cancelled), not failed.
 
 env:
   FULL: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.full) }}
@@ -86,12 +91,18 @@ jobs:
       browser-cached: ${{ steps.keys.outputs.browser-cached }}
       reftest-runner: ${{ steps.reftest.outputs.runner }}
       reftest-shards: ${{ steps.reftest.outputs.shards }}
+      linux-jsc-key: ${{ steps.keys.outputs.linux-jsc-key }}
+      linux-browser-key: ${{ steps.keys.outputs.linux-browser-key }}
+      linux-browser-cached: ${{ steps.keys.outputs.linux-browser-cached }}
+      linux-baseline: ${{ steps.keys.outputs.linux-baseline }}
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
             crates/pyro-jsc-sys/webkit
             scripts/jsc
+            scripts/linux
+            bench/wpt
       - name: Cache keys
         id: keys
         env:
@@ -117,11 +128,23 @@ jobs:
             echo "browser-key=$browser_key"
             echo "browser-cached=$(cached "$browser_key")"
           } | tee -a "$GITHUB_OUTPUT"
-      # The reftest shards run on the self-hosted runner (lp-m1), as every other macOS job: one shard there, since it
-      # runs one job at a time and more would only add their setup to its queue. A manual run can pick GitHub's macos-15
-      # runners (four shards side by side, about the two shards' time each before the layout directories doubled the
-      # reftests; billed as macOS minutes); their results matched lp-m1's but for one animation page's timing
-      # (bench/wpt/README.md, "Reftests"). None for `suites: testharness`.
+          # The Linux x64 browser for the testharness pages (jsc.yml's linux job keys its JavaScriptCore the same way).
+          linux_jsc_key="patched-jsc-static-linux-x64-$jsc_dir-$(sha256sum scripts/linux/setup.sh | cut -c1-8)"
+          linux_browser_key="wpt-browser-linux-x64-$(printf '%s\n' "$inputs" "${toolchain%% *}" "$linux_jsc_key" ubuntu-24.04 | sha256sum | cut -c1-16)"
+          # Once bench/wpt/baseline-linux.json is committed, the testharness gate runs on Linux only (see `wpt-linux`).
+          linux_baseline=false
+          if [ -f bench/wpt/baseline-linux.json ]; then linux_baseline=true; fi
+          {
+            echo "linux-jsc-key=$linux_jsc_key"
+            echo "linux-browser-key=$linux_browser_key"
+            echo "linux-browser-cached=$(cached "$linux_browser_key")"
+            echo "linux-baseline=$linux_baseline"
+          } | tee -a "$GITHUB_OUTPUT"
+      # The reftest shards run on the self-hosted runner (lp-m1), as every other macOS job: two shards, one per lp-m1
+      # machine (worker-2-air, worker-3-m1), balanced by the baseline's durations as the testharness shards are. A
+      # manual run can pick GitHub's macos-15 runners (four shards side by side; billed as macOS minutes); their
+      # results matched lp-m1's but for one animation page's timing (bench/wpt/README.md, "Reftests"). None for
+      # `suites: testharness`.
       - name: Reftest shards
         id: reftest
         env:
@@ -132,13 +155,16 @@ jobs:
           if [ "$runner" = default ]; then runner=lp-m1; fi
           if [ "$SUITES" = testharness ] || [ "$SUITES" = crashtest ]; then shards='[]'
           elif [ "$runner" = macos-15 ]; then shards='[0, 1, 2, 3]'
-          else shards='[0]'; fi
+          else shards='[0, 1]'; fi
           { echo "runner=$runner"; echo "shards=$shards"; } | tee -a "$GITHUB_OUTPUT"
 
   # The patched JavaScriptCore, built (about 7 minutes) only when neither it nor the browser is cached.
   jsc:
     needs: prepare
     if: needs.prepare.outputs.browser-cached != 'true' && needs.prepare.outputs.jsc-cached != 'true'
+    concurrency:
+      group: wpt-jsc-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     uses: ./.github/workflows/jsc.yml
 
   build:
@@ -146,6 +172,9 @@ jobs:
     if: ${{ !cancelled() && !failure() && needs.prepare.outputs.browser-cached != 'true' }}
     # The self-hosted Apple Silicon runner (label lp-m1), as the jsc job.
     runs-on: lp-m1
+    concurrency:
+      group: wpt-build-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     timeout-minutes: 45
     env:
       JSC_DIR: ${{ needs.prepare.outputs.jsc-dir }}
@@ -173,25 +202,33 @@ jobs:
       # their own entries would evict it from the repository's cache budget.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: wpt-release-fast
+          shared-key: wpt-wptiter
           # Its post step deletes binaries it does not know from ~/.cargo/bin, rustup among them, which
           # broke the Rust install of the self-hosted runner (lp-m1).
           cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # release-fast: the release profile with pyro-cdp and pyro-dom split into more codegen units (Cargo.toml), so the
-      # end of the build is not one core's work.
+          # Also the integration pull requests (integration/*), whose runs rebuild most often.
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.head_ref, 'integration/') }}
+      # wptiter: release-fast (Cargo.toml) without LTO and with 16 codegen units, defined here so Cargo.toml and the
+      # release workflows keep their profiles. Same reftest results as release-fast (2026-11-18, at 1363c0eb9: the 792
+      # css-backgrounds and compositing reftests, 774 pass and 18 fail with either binary) and a much faster build,
+      # since every workspace and vendored crate rebuilds each run.
       - name: Build the browser against the patched JavaScriptCore
+        env:
+          CARGO_PROFILE_WPTITER_INHERITS: release-fast
+          CARGO_PROFILE_WPTITER_LTO: 'false'
+          CARGO_PROFILE_WPTITER_CODEGEN_UNITS: '16'
+          CARGO_PROFILE_WPTITER_INCREMENTAL: 'false'
         run: |
           export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
           if [ -d patched-jsc ]; then
             mkdir -p "$(dirname "$PYRO_JSC_DIR")"
             mv patched-jsc "$PYRO_JSC_DIR"
           fi
-          cargo +stable build --locked --profile release-fast --package pyro
+          cargo +stable build --locked --profile wptiter --package pyro
       - name: Stage and check the browser
         run: |
           mkdir browser
-          cp target/release-fast/pyro browser/
+          cp target/wptiter/pyro browser/
           # The patched JavaScriptCore is inside the browser (a static archive): no library of that name is loaded.
           if otool -L browser/pyro | grep -F JavaScriptCore; then exit 1; fi
           codesign --verify --strict browser/pyro
@@ -215,9 +252,12 @@ jobs:
 
   wpt:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.prepare.outputs.linux-baseline != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
     runs-on: lp-m1
     timeout-minutes: 30
+    concurrency:
+      group: wpt-wpt-${{ matrix.shard }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -291,9 +331,12 @@ jobs:
   # (`pyro run`), which no other pull request job runs. ffmpeg (Playwright's build) lets the video tests run.
   client:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
     runs-on: lp-m1
     timeout-minutes: 25
+    concurrency:
+      group: wpt-client-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: packages/pyro
@@ -332,7 +375,7 @@ jobs:
 
   gate:
     needs: [prepare, jsc, build, wpt]
-    if: ${{ !cancelled() && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !contains(needs.*.result, 'cancelled') && needs.prepare.outputs.linux-baseline != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -412,12 +455,274 @@ jobs:
           retention-days: 30
           overwrite: true
 
+  # ---------- The testharness pages on GitHub's Linux runners (x64), off the two lp-m1 Macs ----------
+  # Testharness compares no pixels, so its gate does not need macOS. bench/wpt/baseline-linux.json is the Linux
+  # baseline, bootstrapped from this job's CI output (the `wpt-linux-baseline` artifact), never edited by hand. Until it
+  # is committed, these jobs only report (gate.mjs bootstrap: every page twice) and the macOS `wpt`/`gate` jobs keep
+  # gating; once it is committed, prepare's `linux-baseline` turns the macOS testharness jobs off. Pages whose results
+  # differ between the platforms are listed, with the reason, in bench/wpt/README.md ("Linux and macOS").
+  build-linux:
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.outputs.linux-browser-cached != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    # Ubuntu 24.04, as jsc.yml's linux job and linux-build.yml: the cached JavaScriptCore archive was compiled against
+    # that release's ICU 74 (symbols u_tolower_74, ...), and ubuntu-latest's newer image has ICU 78, so linking there
+    # fails. The browser then carries ICU 74 beside it (bundle-icu-linux.sh).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    concurrency:
+      group: wpt-build-linux-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    env:
+      CC: clang
+      CXX: clang++
+      JSC_DIR: ${{ needs.prepare.outputs.jsc-dir }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scratch disk
+        run: |
+          # Hosted runners mount a temporary disk at /mnt, larger than what the image leaves on /.
+          if mountpoint -q /mnt; then
+            sudo mkdir -p /mnt/pyro-target && sudo chown "$(id -u):$(id -g)" /mnt/pyro-target && ln -s /mnt/pyro-target target
+          fi
+          df -h . /mnt 2>/dev/null || df -h .
+      - name: Install build dependencies
+        run: scripts/linux/setup.sh
+      # The patched JavaScriptCore (jsc.yml's linux job saves it on main); built here only on a miss (~28 minutes).
+      - uses: actions/cache/restore@v4
+        id: jsc-cache
+        with:
+          path: ~/.cache/pyro/jsc/${{ needs.prepare.outputs.jsc-dir }}
+          key: ${{ needs.prepare.outputs.linux-jsc-key }}
+      - name: Build patched JavaScriptCore
+        if: steps.jsc-cache.outputs.cache-hit != 'true'
+        env:
+          JOBS: '4'
+        run: scripts/jsc/build.sh
+      - uses: actions/cache/save@v4
+        if: steps.jsc-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/pyro/jsc/${{ needs.prepare.outputs.jsc-dir }}
+          key: ${{ needs.prepare.outputs.linux-jsc-key }}
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wpt-linux-x64-wptiter
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.head_ref, 'integration/') }}
+      # sccache on the Actions cache: the vendored crates are path dependencies, which rust-cache does not keep.
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Build the browser (profile wptiter)
+        env:
+          SCCACHE_GHA_ENABLED: 'true'
+          RUSTC_WRAPPER: sccache
+          # wptiter: release-fast without LTO, 16 codegen units (as ~/Library/Caches/lightningpanda/bin/pyro-build
+          # --iter, minus incremental, which sccache cannot cache). Defined here so Cargo.toml and release builds stay.
+          CARGO_PROFILE_WPTITER_INHERITS: release-fast
+          CARGO_PROFILE_WPTITER_LTO: 'false'
+          CARGO_PROFILE_WPTITER_CODEGEN_UNITS: '16'
+          CARGO_PROFILE_WPTITER_INCREMENTAL: 'false'
+          CARGO_PROFILE_WPTITER_DEBUG: 'false'
+        run: |
+          export PYRO_JSC_DIR="$HOME/.cache/pyro/jsc/$JSC_DIR"
+          cargo +stable build --locked --profile wptiter --package pyro
+          sccache --show-stats || true
+      - name: Stage and check the browser
+        run: |
+          mkdir browser
+          cp target/wptiter/pyro browser/
+          scripts/release/bundle-icu-linux.sh browser
+          if ldd browser/pyro | grep -E 'not found|libJavaScriptCore'; then exit 1; fi
+          browser/pyro version | grep -q 'fork: true'
+          browser/pyro eval -e 'console.log("ok")' | grep -Fx ok
+          tar -czf browser-linux.tgz browser
+      - uses: actions/cache/save@v4
+        with:
+          path: browser-linux.tgz
+          key: ${{ needs.prepare.outputs.linux-browser-key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wpt-browser-linux
+          path: browser-linux.tgz
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  wpt-linux:
+    needs: [prepare, build-linux]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    concurrency:
+      group: wpt-linux-${{ matrix.shard }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        # Three shards side by side (billed Linux minutes, nothing queues), balanced by the Linux baseline's durations.
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install the runner's dependencies
+        working-directory: bench
+        run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        id: wpt-cache
+        with:
+          path: wpt
+          key: wpt-linux-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
+      - name: Fetch WPT
+        if: steps.wpt-cache.outputs.cache-hit != 'true'
+        run: bench/wpt/fetch-wpt.sh wpt
+      - uses: actions/download-artifact@v4
+        if: needs.build-linux.result == 'success'
+        with:
+          name: wpt-browser-linux
+      - uses: actions/cache/restore@v4
+        if: needs.build-linux.result != 'success'
+        with:
+          path: browser-linux.tgz
+          key: ${{ needs.prepare.outputs.linux-browser-key }}
+          fail-on-cache-miss: true
+      - run: tar -xzf browser-linux.tgz && browser/pyro version
+      - name: Server tests
+        run: bun test bench/wpt/pipes.test.mjs
+      - name: Run shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
+        env:
+          SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
+          RUNNER_ARGS: ${{ inputs.runner-args }}
+          # One page per CPU of the 4-CPU runner. At --jobs 8 (68b8650ff) three render-blocking subtests and one
+          # transition subtest flipped in 9 of 9 runs (flaky-linux.json); the baseline is recorded at this --jobs.
+          JOBS: '4'
+          OUT: wpt-linux-shard-${{ strategy.job-index }}.json
+        run: |
+          echo "$(nproc) CPUs, $(free -g | awk '/^Mem:/{print $2}') GB, $(. /etc/os-release && echo "$PRETTY_NAME")"
+          read -r -a extra <<< "$RUNNER_ARGS"
+          full=()
+          if [ "$FULL" = true ]; then full=(--full); fi
+          # flaky.json plus the Linux-only entries (flaky-linux.json): macOS keeps gating what only Linux's timing breaks.
+          merge_flaky() { bun -e 'const fs = require("fs"); const r = (f) => (fs.existsSync(f) && fs.statSync(f).size ? JSON.parse(fs.readFileSync(f)).tests : {});
+            fs.writeFileSync(process.argv[3], JSON.stringify({ tests: { ...r(process.argv[1]), ...r(process.argv[2]) } }));' "$@"; }
+          merge_flaky bench/wpt/flaky.json bench/wpt/flaky-linux.json "$RUNNER_TEMP/flaky.json"
+          bun bench/wpt/gate.mjs run "${extra[@]}" --baseline bench/wpt/baseline-linux.json --flaky "$RUNNER_TEMP/flaky.json" \
+            --wpt wpt --bin browser/pyro --jobs "$JOBS" --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wpt-linux-shard-${{ strategy.job-index }}
+          path: wpt-linux-shard-${{ strategy.job-index }}.json
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
+  # As `gate`, against bench/wpt/baseline-linux.json: fails on a lost subtest or completion and on gains the baseline
+  # does not record. Also writes the Linux/macOS comparison (bench/wpt/platform-diff.mjs) into the summary.
+  gate-linux:
+    needs: [prepare, build-linux, wpt-linux]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # the wpt-accept-loss label
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: bench
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wpt-linux-shard-*
+          merge-multiple: true
+      - name: Check coverage against bench/wpt/baseline-linux.json
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          JOBS_BEFORE: 'prepare: ${{ needs.prepare.result }}, build-linux: ${{ needs.build-linux.result }}, shards: ${{ needs.wpt-linux.result }}'
+        run: |
+          shopt -s nullglob
+          files=(wpt-linux-shard-*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            msg="No Linux shard results, so nothing was checked: the jobs before this one failed or did not run ($JOBS_BEFORE). See their logs."
+            echo "::error title=WPT gate (Linux)::$msg"
+            printf '## WPT coverage gate (Linux): FAIL\n\n%s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "verdict=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          # flaky.json plus the Linux-only entries (flaky-linux.json): macOS keeps gating what only Linux's timing breaks.
+          merge_flaky() { bun -e 'const fs = require("fs"); const r = (f) => (fs.existsSync(f) && fs.statSync(f).size ? JSON.parse(fs.readFileSync(f)).tests : {});
+            fs.writeFileSync(process.argv[3], JSON.stringify({ tests: { ...r(process.argv[1]), ...r(process.argv[2]) } }));' "$@"; }
+          merge_flaky bench/wpt/flaky.json bench/wpt/flaky-linux.json "$RUNNER_TEMP/flaky.json"
+          args=(--baseline bench/wpt/baseline-linux.json --flaky "$RUNNER_TEMP/flaky.json" --artifact wpt-linux-baseline)
+          if [ "$EVENT" = pull_request ]; then
+            if git show HEAD^1:bench/wpt/baseline-linux.json > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+              args+=(--base-baseline "$RUNNER_TEMP/base-baseline.json")
+              git show HEAD^1:bench/wpt/flaky.json > "$RUNNER_TEMP/base-flaky-mac.json" 2>/dev/null || true
+              git show HEAD^1:bench/wpt/flaky-linux.json > "$RUNNER_TEMP/base-flaky-linux.json" 2>/dev/null || true
+              merge_flaky "$RUNNER_TEMP/base-flaky-mac.json" "$RUNNER_TEMP/base-flaky-linux.json" "$RUNNER_TEMP/base-flaky.json"
+              args+=(--base-flaky "$RUNNER_TEMP/base-flaky.json")
+            fi
+            if labels="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.labels[].name')"; then
+              if grep -qx wpt-accept-loss <<< "$labels"; then args+=(--accept-loss); fi
+            else
+              echo "::warning title=WPT gate (Linux)::could not read the pull request's labels; checking as if it had none"
+            fi
+          fi
+          bun bench/wpt/gate.mjs check "${files[@]}" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+      - name: Refresh the baseline
+        id: refresh
+        if: ${{ !cancelled() && contains(fromJSON('["pass", "stale", "bootstrap", "rebaseline"]'), steps.check.outputs.verdict) }}
+        env:
+          DURATIONS: ${{ inputs.durations }}
+        run: |
+          flags=()
+          if [ "$DURATIONS" = true ]; then flags+=(--durations); fi
+          bun bench/wpt/gate.mjs update wpt-linux-shard-*.json --baseline bench/wpt/baseline-linux.json --flaky "$RUNNER_TEMP/flaky.json" \
+            --out baseline-linux.json "${flags[@]}"
+          if [ -f bench/wpt/baseline-linux.json ] && cmp -s baseline-linux.json bench/wpt/baseline-linux.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "The refreshed Linux baseline is the \`wpt-linux-baseline\` artifact: \`gh run download $GITHUB_RUN_ID -n wpt-linux-baseline -D bench/wpt\`." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # Fails when a page passes less on Linux than in the macOS baseline and platform-split.json does not say why.
+      - name: Linux and macOS
+        if: ${{ !cancelled() && steps.refresh.outcome == 'success' }}
+        run: bun bench/wpt/platform-diff.mjs bench/wpt/baseline.json baseline-linux.json --flaky bench/wpt/flaky-linux.json --strict --summary "$GITHUB_STEP_SUMMARY" --out platform-diff.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.refresh.outputs.changed == 'true' }}
+        with:
+          name: wpt-linux-baseline
+          path: baseline-linux.json
+          retention-days: 30
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.refresh.outcome == 'success' }}
+        with:
+          name: wpt-platform-diff
+          path: platform-diff.json
+          retention-days: 30
+          overwrite: true
+
   # The paint reftests: bench/wpt/gate.mjs run --kind reftest, the browser and the WPT checkout as the shards above.
   reftest:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && needs.prepare.outputs.reftest-shards != '[]' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.prepare.outputs.reftest-shards != '[]' }}
     runs-on: ${{ needs.prepare.outputs.reftest-runner }}
     timeout-minutes: 30
+    concurrency:
+      group: wpt-reftest-${{ matrix.shard }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -457,6 +762,9 @@ jobs:
           key: ${{ needs.prepare.outputs.browser-key }}
           fail-on-cache-miss: true
       - run: tar -xzf browser.tgz
+      # Power mode, thermal state, memory pressure, swap and load before, during (every 5 s) and after the shard.
+      - name: Machine diagnostics (before)
+        run: bench/wpt/ci-diag.sh start
       - name: Run reftest shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
         env:
           SHARD: ${{ strategy.job-index }}/${{ strategy.job-total }}
@@ -467,9 +775,19 @@ jobs:
           read -r -a extra <<< "$RUNNER_ARGS"
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
-          # Rendering is CPU-bound: one page per CPU. Earlier arguments win, so reftest-args can override --jobs.
-          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(sysctl -n hw.ncpu)" \
+          # Two pages per CPU: a reftest page mostly waits (2026-11-18, per-page stages: settle 69 ms of 100, mostly
+          # the two real 60 Hz frames, capture 22 ms), so at one per CPU the M1s ran at 30%. Measured on both lp-m1
+          # machines (runs 44292757214, 44295604936, 44298843277): --jobs 8 130 s per shard, 30% of 8 CPUs; 12 101-111 s,
+          # 40%, same results; 16 88-89 s, 47%, same results but one first-run timeout that its reruns passed; no
+          # swap growth, no thermal limit, Low Power Mode off. Earlier arguments win, so reftest-args can override.
+          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
+          # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
+          bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
+            console.log(`utilization: ${(100 * (r.browserCpuS + r.runnerCpuS) / (r.wallMs / 1000 * n)).toFixed(0)}% of ${n} CPUs over ${(r.wallMs / 1000).toFixed(0)} s at --jobs ${r.jobs} (browser ${r.browserCpuS.toFixed(0)} s, runner ${r.runnerCpuS.toFixed(0)} s); event loop lag ${JSON.stringify(r.loopLagMs ?? {})}`)' "$OUT"
+      - name: Machine diagnostics (after)
+        if: ${{ always() }}
+        run: bench/wpt/ci-diag.sh stop
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -482,7 +800,7 @@ jobs:
   # The reftest gate: as `gate`, with --kind reftest (bench/wpt/reftest-baseline.json and reftest-flaky.json).
   reftest-gate:
     needs: [prepare, jsc, build, reftest]
-    if: ${{ !cancelled() && inputs.suites != 'testharness' && inputs.suites != 'crashtest' }}
+    if: ${{ !cancelled() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'testharness' && inputs.suites != 'crashtest' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -562,9 +880,12 @@ jobs:
   # takes a second, and lp-m1 has git, bun and gh for the base branch's files and the label.
   crashtest:
     needs: [prepare, build]
-    if: ${{ !cancelled() && !failure() && inputs.suites != 'testharness' && inputs.suites != 'reftest' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && inputs.suites != 'testharness' && inputs.suites != 'reftest' }}
     runs-on: lp-m1
     timeout-minutes: 30
+    concurrency:
+      group: wpt-crashtest-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: read # the wpt-accept-loss label
@@ -605,16 +926,28 @@ jobs:
       - run: tar -xzf browser.tgz
       - name: Discovery tests
         run: bun test bench/wpt/crashtest.test.mjs
+      - name: Machine diagnostics (before)
+        run: bench/wpt/ci-diag.sh start
       - name: Run the crashtests
         env:
           RUNNER_ARGS: ${{ inputs.crashtest-args }}
+          OUT: wpt-crashtest-shard-0.json
         run: |
           read -r -a extra <<< "$RUNNER_ARGS"
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
-          # One page per CPU (layout and paint are CPU-bound). Earlier arguments win, so crashtest-args can override.
-          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(sysctl -n hw.ncpu)" \
+          # Two pages per CPU, as the reftests: at one per CPU the M1s ran at 36%. Measured 2026-11-18 (runs 44305495715,
+          # A runner can cap its share with PYRO_CI_CPUS in its .env (the Mac Studio runner uses 4).
+          # 44307460716): --jobs 8 21.0 s, 36% of 8 CPUs; --jobs 16 15.5 s, 59%; all 1,979 pages pass in both, no reruns,
+          # no swap growth, no thermal limit. Earlier arguments win, so crashtest-args can override.
+          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             "${full[@]}" --out wpt-crashtest-shard-0.json --no-check
+          # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
+          bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
+            console.log(`utilization: ${(100 * (r.browserCpuS + r.runnerCpuS) / (r.wallMs / 1000 * n)).toFixed(0)}% of ${n} CPUs over ${(r.wallMs / 1000).toFixed(0)} s at --jobs ${r.jobs} (browser ${r.browserCpuS.toFixed(0)} s, runner ${r.runnerCpuS.toFixed(0)} s); event loop lag ${JSON.stringify(r.loopLagMs ?? {})}`)' "$OUT"
+      - name: Machine diagnostics (after)
+        if: ${{ always() }}
+        run: bench/wpt/ci-diag.sh stop
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -677,8 +1010,9 @@ jobs:
   # branch as runs/<sha>.json.gz plus index.json, and Chrome stable's results when the WPT revision is new to it. The
   # site rebuilds when this workflow completes (docs.yml, workflow_run).
   status:
-    needs: [gate, reftest-gate, crashtest]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.gate.result == 'success' && needs.reftest-gate.result == 'success' && needs.crashtest.result == 'success' }}
+    needs: [gate, gate-linux, reftest-gate, crashtest]
+    # The testharness gate is gate-linux once bench/wpt/baseline-linux.json exists, the macOS `gate` until then.
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.gate.result == 'success' || (needs.gate.result == 'skipped' && needs.gate-linux.result == 'success')) && needs.reftest-gate.result == 'success' && needs.crashtest.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

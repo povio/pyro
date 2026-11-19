@@ -616,10 +616,10 @@ fn css_rule_values_survive_reentrant_gc() {
             r#"
       const sh=document.getElementById('s').sheet;
       for(let i=0;i<200;i++)sh.insertRule('.r'+i+'{}',i);
-      window.before=sh.cssRules.every((r,i)=>r.cssText==='.r'+i+' { }');
+      window.before=[...sh.cssRules].every((r,i)=>r.cssText==='.r'+i+' { }');
       Object.defineProperty(Object.prototype,'cssText',{set(v){reviewGC(); Object.defineProperty(this,'cssText',{value:v});}, configurable:true});
       const rr=sh.cssRules; delete Object.prototype.cssText;
-      before && rr.length === 200 && rr.every((r,i)=>r.cssText==='.r'+i+' { }')
+      before && rr.length === 200 && [...rr].every((r,i)=>r.cssText==='.r'+i+' { }')
     "#
         ),
         "true"
@@ -2714,7 +2714,7 @@ fn global_event_handler_attributes() {
     // First/last entries of each single-source family: IDL accessor and
     // content-attribute recognition agree.
     assert_eq!(
-        eval(r, "['abort','transitioncancel'].every(t=>{const x=document.createElement('p'); x.setAttribute('on'+t,'1'); return ('on'+t) in x && typeof x['on'+t]==='function'}) && ['afterprint','unload'].every(t=>('on'+t) in window) && ['readystatechange','visibilitychange'].every(t=>('on'+t) in document) && !('onunload' in document.body)"),
+        eval(r, "['abort','transitioncancel'].every(t=>{const x=document.createElement('p'); x.setAttribute('on'+t,'1'); return ('on'+t) in x && typeof x['on'+t]==='function'}) && ['afterprint','unload'].every(t=>('on'+t) in window) && ['readystatechange','visibilitychange'].every(t=>('on'+t) in document) && ('onunload' in document.body) && document.body.onunload === null"),
         "true"
     );
     let out = eval(
@@ -3509,8 +3509,8 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
     e.page.set_hooks(Some(tasks.clone()));
     let r = &e.main;
     let base = e.page.pinned_count();
-    // These fail before a worker exists; `SharedWorker` stays absent (`ServiceWorker` is the
-    // service worker interface, made on first use).
+    // These fail before a worker exists (`ServiceWorker` is the service worker interface,
+    // made on first use).
     assert_eq!(
         eval(
             r,
@@ -3520,9 +3520,9 @@ fn worker_constructor_checks_and_load_failure_without_a_network() {
               err(() => new Worker('https://example.test/w.js')), typeof SharedWorker, 'ServiceWorker' in window].join()",
         ),
         if pyro_js::Capabilities::detect().modules {
-            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,undefined,true"
+            "SyntaxError,TypeError,TypeError,ok,TypeError,SecurityError,function,true"
         } else {
-            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,undefined,true"
+            "SyntaxError,TypeError,TypeError,NotSupportedError,TypeError,SecurityError,function,true"
         }
     );
     assert_eq!(e.page.pinned_count(), base, "a rejected construction leaves nothing behind");
@@ -6449,6 +6449,190 @@ fn invalid_urls_throw_from_send_beacon_and_window_open_and_response_form_data_pa
     eval(&e.main, "globalThis.got='';new Response('a=1&b=%F0%9F%90%BC+c&a',{headers:{'Content-Type':'application/x-www-form-urlencoded;charset=shift_jis'}}).formData().then(f=>{got=[...f].join('|')+'|'+(f instanceof FormData)});new Response('a=1').formData().catch(x=>{got2=x.name})");
     assert_eq!(eval(&e.main, "got"), "a,1|b,\u{1F43C} c|a,|true");
     assert_eq!(eval(&e.main, "got2"), "TypeError");
+    e.page.dispose();
+}
+
+/// `<body>`'s WindowEventHandlers and window-reflecting handlers forward to
+/// the Window; a windowless body's are null and ignore sets
+/// (html/webappapis/scripting/events/event-handler-attributes-*body*).
+#[test]
+fn body_window_event_handlers_forward_to_the_window() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const f = () => 0, g = () => 1; document.body.onpopstate = f; window.onload = g;
+             const wb = document.implementation.createHTMLDocument('').body; wb.onmessage = f; wb.onload = f;
+             [window.onpopstate === f, document.body.onload === g, wb.onmessage, wb.onload,
+              document.createElement('div').onload === null].join()"
+        ),
+        "true,true,,,true"
+    );
+    e.page.dispose();
+}
+
+/// Rules wrap as their CSSOM interfaces (all CSSRule subclasses), `cssRules`
+/// is a live CSSRuleList, and `media` of `@media`/`@import` is a MediaList
+/// serialized by the style engine (css/cssom CSSRule-type, MediaList-parsing).
+#[test]
+fn css_rule_interfaces_rule_lists_and_rule_media() {
+    let e = env(concat!(
+        "<style id=s>@import url(x.css) layer(L) SCREEN; @namespace svg url(http://www.w3.org/2000/svg);",
+        " a{} @media PRINT { b{} } @supports (display:grid) {} @keyframes k {} @layer x, y; @page :first {}</style>"
+    ));
+    assert_eq!(
+        eval(
+            &e.main,
+            "const rs = document.getElementById('s').sheet.cssRules;
+             [rs instanceof CSSRuleList, rs.length, rs.item(0) === rs[0],
+              [...rs].map(r => r.constructor.name + ':' + (r instanceof CSSRule)).join(' '),
+              rs[0].href, rs[0].layerName, rs[0].media.mediaText, rs[1].prefix, rs[1].namespaceURI,
+              rs[3].media.mediaText, rs[3].media === rs[3].media, rs[6].nameList.join(), rs[7].selectorText,
+              CSSRule.MEDIA_RULE, rs[3].MEDIA_RULE, document.getElementById('s').sheet instanceof StyleSheet].join('|')"
+        ),
+        "true|8|true|CSSImportRule:true CSSNamespaceRule:true CSSStyleRule:true CSSMediaRule:true CSSSupportsRule:true \
+         CSSKeyframesRule:true CSSLayerStatementRule:true CSSPageRule:true|x.css|L|screen|svg|http://www.w3.org/2000/svg|\
+         print|true|x,y|:first|4|4|true"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "rs[3].media.mediaText = '  NOT  PRINT , bad$ '; rs[0].media.mediaText = 'tv';
+             rs[7].selectorText = 'named:FIRST'; rs[7].selectorText = 'bad::x';
+             [rs[3].media.mediaText, rs[3].conditionText, rs[0].cssText, rs[7].selectorText].join('|')"
+        ),
+        "not print, not all|not print, not all|@import url(\"x.css\") layer(L) tv;|named:first"
+    );
+    e.page.dispose();
+}
+
+/// `outerHTML` of an element of an XML document is its XML serialization
+/// (html/syntax/serializing-xml-fragments/outerHTML.html).
+#[test]
+fn outer_html_of_an_xml_document_element_is_xml() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const doc = document.implementation.createDocument(null, ''); const ns = 'http://www.w3.org/1999/xhtml';
+             [doc.createElementNS(ns, 'p').outerHTML, doc.createElementNS(ns, 'br').outerHTML, document.createElement('br').outerHTML].join('|')"
+        ),
+        "<p xmlns=\"http://www.w3.org/1999/xhtml\"></p>|<br xmlns=\"http://www.w3.org/1999/xhtml\" />|<br>"
+    );
+    e.page.dispose();
+}
+
+/// Blob and File take `blobParts` as a Web IDL sequence, `endings` and
+/// clamped slice bounds (FileAPI/blob/Blob-constructor*.html, Blob-slice);
+/// CSSContainerRule exposes its conditions and insertRule parses exactly one
+/// rule where CSSOM allows it (css/css-conditional).
+#[test]
+fn blob_parts_endings_slice_container_rules_and_insert_rule_checks() {
+    let e = env("<body><style id=s>@import url(a.css); @container card (width > 1px) {} @media all {}</style></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const out = [];
+             const it = { *[Symbol.iterator]() { yield 'ab'; yield new Uint16Array([1]); } };
+             out.push(new Blob(it).size, new Blob(['a\\r\\nb\\rc'], { endings: 'native' }).size);
+             for (const bad of [new Date(), 1, { length: 1, 0: 'x' }]) { try { new Blob(bad); out.push('none'); } catch (x) { out.push(x.name); } }
+             try { new Blob([], { endings: 'NATIVE' }); out.push('none'); } catch (x) { out.push(x.name); }
+             const b = new Blob(['abcdef']); out.push(b.slice(1.5, 3.5).size, b.slice(0, 1, 'te\\txt').type);
+             const sh = document.getElementById('s').sheet, c = sh.cssRules[1];
+             out.push(c.containerName, c.containerQuery, c.conditions.length, c.conditionText);
+             for (const [rule, i] of [['b {} junk', 2], ['@import url(b.css);', 2], ['b {}', 0]]) { try { sh.insertRule(rule, i); out.push('ok'); } catch (x) { out.push(x.name); } }
+             try { sh.cssRules[2].insertRule('@import url(c.css);'); out.push('ok'); } catch (x) { out.push(x.name); }
+             out.join('|')"
+        ),
+        "4|5|TypeError|TypeError|TypeError|TypeError|2||card|(width > 1px)|1|card (width > 1px)|SyntaxError|HierarchyRequestError|HierarchyRequestError|HierarchyRequestError"
+    );
+    e.page.dispose();
+}
+
+/// A body's blob() type comes from its container's current Content-Type,
+/// lowercased (fetch/api/body/mime-type.any.html, response-consume.html).
+#[test]
+fn body_blob_type_follows_the_current_content_type() {
+    let e = env("<body></body>");
+    eval(
+        &e.main,
+        "globalThis.types = [];
+         const r = new Response('x', { headers: { 'Content-Type': 'text/plain' } }); r.headers.set('Content-Type', 'Test/TEST');
+         r.blob().then(b => types.push(b.type));
+         const q = new Request('about:blank', { method: 'POST', body: new URLSearchParams('a=1') }); q.headers.delete('Content-Type');
+         q.blob().then(b => types.push(b.type || 'empty')); 0",
+    );
+    assert_eq!(eval(&e.main, "types.join()"), "test/test,empty");
+    e.page.dispose();
+}
+
+/// ImageData is structured-cloneable (html/webappapis/structured-clone).
+#[test]
+fn image_data_structured_clones() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const d = new ImageData(new Uint8ClampedArray([1, 2, 3, 4]), 1, 1); const c = structuredClone(d);
+             [c instanceof ImageData, c !== d, c.data !== d.data, c.width, c.height, c.colorSpace, [...c.data]].join('|')"
+        ),
+        "true|true|true|1|1|srgb|1,2,3,4"
+    );
+    e.page.dispose();
+}
+
+/// `@page` rules expose their declarations as CSSPageDescriptors and their
+/// margin rules as CSSMarginRules, edits write back into the page rule, and
+/// a removed rule has no parent sheet (css/cssom/idlharness.html,
+/// cssom-pagerule.html, page-descriptors.html).
+#[test]
+fn page_rules_have_descriptors_and_margin_rules() {
+    let e = env("<style id=s>@page :first { margin: 1in; @top-left { content: 'a' } }</style>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const sh = document.getElementById('s').sheet, page = sh.cssRules[0], m = page.cssRules[0]; const out = [];
+             out.push(Object.prototype.toString.call(page.style), page.style.marginTop, page.cssRules.length,
+                      m.constructor.name, m.name, m.type, m.parentRule === page, m === page.cssRules[0], m.style.getPropertyValue('content'));
+             page.style.marginTop = '2px'; m.style.color = 'red';
+             out.push(page.cssText, m.cssText);
+             sh.deleteRule(0); out.push(page.parentStyleSheet === null ? '' : 'attached');
+             out.join('|')"
+        ),
+        "[object CSSPageDescriptors]|1in|1|CSSMarginRule|top-left|9|true|true|\"a\"|\
+         @page :first { margin: 2px 1in 1in; @top-left { content: 'a'; color: red; } }|\
+         @top-left { content: 'a'; color: red; }|"
+    );
+    e.page.dispose();
+}
+
+/// CSSOM interface shapes (css/cssom/idlharness.html): StyleSheet carries the
+/// sheet attributes, styles are CSSStyleProperties, required arguments are
+/// required (a bare `deleteRule()` must not delete rule 0), and an `@import`
+/// serializes its URL as `url("...")` with its layer and supports() parts.
+#[test]
+fn cssom_interface_shapes_and_import_parts() {
+    let e = env(concat!(
+        "<style id=s>@import \"a.css\" layer(x.y) supports(display: grid) SCREEN; @page {} b { color: red }",
+        " @import url(c.css) layer() print;</style>"
+    ));
+    assert_eq!(
+        eval(
+            &e.main,
+            "const sh = document.getElementById('s').sheet, rs = sh.cssRules; const out = [];
+             out.push(['type','href','ownerNode','title','media','disabled','parentStyleSheet'].every(k => Object.getOwnPropertyDescriptor(StyleSheet.prototype, k)));
+             out.push(Object.prototype.toString.call(rs[2].style), Object.prototype.toString.call(document.body.style),
+                      Object.prototype.toString.call(getComputedStyle(document.body)), 'cssFloat' in CSSStyleProperties.prototype);
+             for (const f of [() => sh.deleteRule(), () => rs.item(), () => sh.media.item(), () => rs[2].style.setProperty('color')]) {
+               try { f(); out.push('none'); } catch (x) { out.push(x.name); }
+             }
+             out.push(rs.length, rs[0].cssText, rs[0].layerName, rs[0].supportsText, rs[0].media.mediaText, rs[1].cssText,
+                      rs[2] instanceof CSSGroupingRule, rs[1].cssRules.length, CSS.escape.length);
+             out.join('|')"
+        ),
+        "true|[object CSSStyleProperties]|[object CSSStyleProperties]|[object CSSStyleProperties]|true|TypeError|TypeError|TypeError|TypeError|3|\
+         @import url(\"a.css\") layer(x.y) supports(display: grid) screen;|x.y|display: grid|screen|@page { }|true|0|1"
+    );
     e.page.dispose();
 }
 

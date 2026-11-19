@@ -257,7 +257,8 @@ impl WorkerRuntime {
                     preview: p.generate_preview,
                     group: p.object_group,
                 };
-                let evaluated = scope.eval(&p.expression, None, 1);
+                // Exempt from Trusted Types eval checks, as DevTools evaluation is in Chrome.
+                let evaluated = scope.compile_exempt(|| scope.eval(&p.expression, None, 1));
                 self.finish(&scope, evaluated, p.await_promise, options);
                 Ok(None)
             }
@@ -292,7 +293,7 @@ impl WorkerRuntime {
                     preview: p.generate_preview,
                     group: p.object_group.or(inherited),
                 };
-                let called = scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args);
+                let called = scope.compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args));
                 self.finish(&scope, called, p.await_promise, options);
                 Ok(None)
             }

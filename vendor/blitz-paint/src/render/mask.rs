@@ -79,7 +79,7 @@ impl ElementCx<'_, '_> {
     /// to be drawn into. Returns whether a layer was pushed, which should later be
     /// passed to [`maybe_pop_css_mask_layer`](Self::maybe_pop_css_mask_layer).
     pub(super) fn maybe_push_css_mask_layer(&self, scene: &mut impl PaintScene) -> bool {
-        if !self.has_css_mask() {
+        if !self.has_css_mask() && !self.has_mask_border() {
             return false;
         }
 
@@ -90,11 +90,21 @@ impl ElementCx<'_, '_> {
             Mix::Normal,
             ALMOST_OPAQUE,
             self.transform,
-            &self.mask_painting_area(),
+            &self.mask_area(),
             None,
             None,
         );
         true
+    }
+
+    /// pyro: the area masks leave anything in: the mask painting area of the `mask-image`
+    /// layers, else the `mask-border` image area.
+    fn mask_area(&self) -> BezPath {
+        if self.has_css_mask() {
+            self.mask_painting_area()
+        } else {
+            kurbo::Shape::to_path(&self.mask_border_area(), 0.1)
+        }
     }
 
     /// Apply the CSS mask to the content drawn since the corresponding
@@ -107,18 +117,43 @@ impl ElementCx<'_, '_> {
 
         // The `DestIn` layer covers the whole isolation layer: where a destructive layer
         // draws nothing, it leaves what is under it.
-        let area = self.mask_painting_area();
-        scene.push_layer(
-            Fill::NonZero,
-            BlendMode::new(Mix::Normal, Compose::DestIn),
-            1.0,
-            self.transform,
-            &area,
-            None,
-            None,
-        );
-        self.draw_css_mask(scene, &area);
-        scene.pop_layer(); // Mask (DestIn) layer
+        let area = self.mask_area();
+        if self.has_css_mask() {
+            scene.push_layer(
+                Fill::NonZero,
+                BlendMode::new(Mix::Normal, Compose::DestIn),
+                1.0,
+                self.transform,
+                &area,
+                None,
+                None,
+            );
+            self.draw_css_mask(scene, &area);
+            scene.pop_layer(); // Mask (DestIn) layer
+        }
+        // pyro: `mask-border` (css-masking-1 §8): its nine-piece image is a mask of its own, by
+        // its alpha or (`mask-border-mode: luminance`) its luminance; an image not loaded masks
+        // nothing.
+        if self.has_mask_border() {
+            let mut recording = Scene::new();
+            if self.draw_mask_border(&mut recording) {
+                use style::values::specified::svg::MaskType;
+                if self.style.get_svg().mask_border_mode == MaskType::Luminance {
+                    luminance_to_alpha(&mut recording);
+                }
+                scene.push_layer(
+                    Fill::NonZero,
+                    BlendMode::new(Mix::Normal, Compose::DestIn),
+                    1.0,
+                    self.transform,
+                    &area,
+                    None,
+                    None,
+                );
+                scene.append_scene(recording, Affine::IDENTITY);
+                scene.pop_layer();
+            }
+        }
         scene.pop_layer(); // Isolation layer
     }
 

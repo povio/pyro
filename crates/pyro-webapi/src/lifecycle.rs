@@ -197,9 +197,17 @@ pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
     }
     page.error_reporting.set(true);
     page.error_event_world.set(Some((ev.id, s.realm_id())));
-    let not_canceled = fire(&page, target, &ev);
+    // Every listener runs before the microtasks they queue (the error is
+    // reported inside the script's run, before its clean-up checkpoint).
+    let not_canceled = {
+        let (p, e) = (page.clone(), ev.clone());
+        s.in_script_frame(move |_s| fire(&p, target, &e)).unwrap_or_else(|_| fire(&page, target, &ev))
+    };
     page.error_event_world.set(None);
     page.error_reporting.set(false);
+    if not_canceled {
+        page.reported_errors.set(page.reported_errors.get().saturating_add(1));
+    }
     !not_canceled
 }
 
@@ -218,6 +226,14 @@ pub fn popstate(page: &Rc<PageDom>, state: Option<Persistent>) {
     let Some(w) = page.window_target() else { return };
     let ev = EventCore::trusted(page, EventInterface::PopStateEvent, "popstate", false, false);
     ev.fields.borrow_mut().state = state;
+    fire(page, w, &ev);
+}
+
+/// HTML "focus update steps" for a document entering (`focus`) or leaving (`blur`) the page's
+/// focus chain: a FocusEvent at its Window, which does not bubble.
+pub fn window_focus(page: &Rc<PageDom>, focused: bool) {
+    let Some(w) = page.window_target() else { return };
+    let ev = EventCore::trusted(page, EventInterface::FocusEvent, if focused { "focus" } else { "blur" }, false, false);
     fire(page, w, &ev);
 }
 
@@ -242,6 +258,16 @@ pub fn resource_loaded(page: &Rc<PageDom>, el: NodeId, ok: bool) {
 /// Forgets per-realm state of a disposed realm (navigation, world removal):
 /// window listener holder and pinned wrappers.
 pub fn realm_disposed(page: &PageDom, realm: RealmId) {
+    realm_detached(page, realm);
+    page.unregister_realm(realm);
+    page.forget_realm_wrappers(realm);
+}
+
+/// `realm_disposed` for a realm that lingers after its document was
+/// detached ([`PageDom::detach`]): its loads and observers end and the
+/// bindings drop their roots into it, but its wrappers stay registered, so
+/// a node keeps its wrapper while script still reaches the document.
+pub fn realm_detached(page: &PageDom, realm: RealmId) {
     crate::fetch::cancel_realm(page, realm);
     crate::websocket::cancel_realm(realm);
     crate::xhr::cancel_realm(page, realm);
@@ -249,8 +275,8 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     crate::mutation_observer::cancel_realm(page, realm);
     crate::intersection_observer::cancel_realm(page, realm);
     crate::resize_observer::cancel_realm(page, realm);
-    page.unregister_realm(realm);
     page.data_view_readers.borrow_mut().remove(&realm);
+    page.blob_parts.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
     page.url_params_helpers.borrow_mut().remove(&realm);
     crate::custom::realm_disposed(page, realm);
@@ -260,7 +286,6 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     drop(page.define_properties.borrow_mut().remove(&realm));
     drop(page.event_unforgeables.borrow_mut().remove(&realm));
     page.pinned.borrow_mut().retain(|(r, _), _| *r != realm);
-    page.forget_realm_wrappers(realm);
 }
 
 /// The loader fetched the parser-blocking script `node` written to the

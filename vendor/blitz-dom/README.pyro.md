@@ -1173,10 +1173,21 @@ matches by it, as the page a browser shows is in its history (WPT `css-color/cur
 Chromium treats every link there as unvisited (`MatchingContext::relative_selector_anchor`; WPT
 `css/selectors/invalidation/link-pseudo-in-has.html`, `css/selectors/has-visited.html`). There is no history, so other
 links stay unvisited, and the user agent sheet keeps one link colour (`a[href]`): only a page's own `:visited` rules
-change what such a link looks like. Limits: Stylo here computes no separate visited style
-(`visited_styles_enabled: false`), so those rules apply in full rather than to colours alone, `getComputedStyle`
-reports them (Chromium reports the unvisited values), a `:link` rule after a `:visited` one of the same specificity
-wins, and the state is decided when the element is created or its `href` changes, not again when `pushState` changes
+change what such a link looks like. Since lane F1 (run 12) Stylo computes visited styles as Gecko and Blink do
+(`visited_styles_enabled: true`; `is_visited_link` is the `VISITED` state; only a visited link and its contents get
+one, stylo `style_resolver.rs`): the element's style matches every link as unvisited (`:link` matches, `:visited`
+does not), its visited style matches the relevant link as visited, and a visited link and its contents paint only
+the visited-dependent colours (`color`, `background-color`, border, outline, column-rule, text-decoration and
+text-emphasis colours, `fill`, `stroke`, `caret-color`) from the visited style (stylo
+`StyleBuilder::pyro_take_visited_dependent`). `accent-color` and every other property of a `:visited` rule do nothing,
+and a `:link` rule's colours do not reach a visited link (WPT css-ui `accent-color-visited`, css-cascade
+`all-prop-unset-visited`, selectors `is-where-visited`). `getComputedStyle` reports the unvisited values (stylo
+`ComputedValues::pyro_unvisited_view`, read by pyro-dom `StyleManager::stylo_style`; WPT css-cascade
+`scope-visited-cssom`). Inside `:has()` every link is unvisited; `:has()` invalidation still matches `:visited` by
+the state (`matching_for_invalidation`; WPT `link-pseudo-in-has`). Highlight pseudo-elements of a visited link:
+`::selection` is computed lazily with it taken as visited (blitz-paint `highlight.rs`), lazy probes keep a style
+whose rules match only as visited (stylo `lazy_pseudo_rules`), and `style_declares` reads the visited style's rules
+for the visited-dependent colours (WPT css-pseudo `selection-link-001`, `target-text-008`). The state is decided when the element is created or its `href` changes, not again when `pushState` changes
 the document's URL. Tests: `a_link_to_the_document_itself_is_visited` in pyro-render's `background_images_and_edges.rs`,
 `a_link_to_the_document_is_a_link_and_unvisited_inside_has` in `src/stylo.rs`.
 
@@ -1254,6 +1265,9 @@ and a `content-box` local background reached the scrollport's edge at the end (W
   `first_letter::origin` passes anonymous blocks (whose anonymous style computes `display: inline`) and inlines split
   around blocks on to their container, so a first line or first letter in a block-in-inline's first piece is styled.
   The `::first-letter` and `::first-line` nodes load their background images (`pending_style_image_nodes`).
+  An anonymous box inside another one (a `::first-letter` box in a `::first-line` box) has the outer box as its
+  originating element (`pseudo_element_originating_element` in `src/stylo.rs`), so reparenting it reaches an element
+  instead of panicking in Stylo's `ultimate_originating_element` (WPT text-decoration-first-line-layer-crash).
 - `src/dom_selection.rs` (new), `src/document.rs`, `src/lib.rs`: the embedder's selection (`DomSelection`, text
   nodes and UTF-16 offsets; pyro-render sets pyro-webapi's for a screenshot) replaces blitz's own in
   `get_text_selection_ranges`: the text nodes from the start to the end in tree order, mapped through each inline
@@ -1970,6 +1984,11 @@ Covered by `crates/pyro-render/tests/phantom_line_boxes.rs`.
   sideways glyphs), an exclusion from the line's top to its margin box's bottom; raised and sunken letters move
   the line's text down (not under `text-box-trim` at the start). A block with an initial letter starts below the
   earlier ones.
+  A raise's shift is room the first line's annotations take before its text moves further
+  (`BreakerState::set_annotation_space`, Blink's `BlockStartAnnotationSpace`); when the line's annotations push
+  its text down beyond that room (`LineMetrics::annotation_overflow` less `annotation_shift`), the letter and its
+  exclusion move down as much once the line ends (`letter_on_line`), so its cap height stays on the text (WPT
+  css-inline `initial-letter-block-position-*-ruby*`).
 - `src/font_metrics.rs`: `BlitzFontMetricsProvider::extents_for` (ascent, descent, line gap, cap height).
 
 Covered by `crates/pyro-render/tests/initial_letter.rs`.
@@ -2644,3 +2663,145 @@ Round 4 lane G:
 - Round 4 lane F, `dom_selection.rs`/`stylo.rs`: a visited link's `::selection` style is resolved with `:link` not matching it (`LINKS_AS_VISITED`, Chromium's visited style; WPT css-pseudo `selection-link-002`). `layout/list.rs`: `image(<color>)` markers (what `light-dark(none, none)` computes to) take the default size like gradients (css-color `light-dark-image-none`).
 - Round 4 lane F, `layout/inline/relative.rs`: `inline_span_positioned_chain` (the positioned inline boxes a node's content paints with). `stylo_to_parley.rs`: `upright` for `text-orientation: upright` in vertical modes; `font_metrics.rs`: upright `ch` without `vmtx` is the font's height (WPT css-values `ch-unit-002`, `-011`).
 - Round 4 lane F, `layout/inline/build.rs`: ruby annotation layouts take no tall upright advances (`upright = false`): `draw_annotation` centres them by width and draws their glyphs em-wide, as emphasis marks.
+- `resolve.rs`: when query containers change size, only their subtrees restyle and lay out again
+  (`restyle_container_subtrees`: full restyle hint on each, layout cache cleared and full damage for every node under
+  it, ancestors' layout caches cleared); before, any change restyled the whole document, cleared every layout cache
+  and damaged every node. Danex's lab canvas page view: elements restyled over 250 syncs 18,997 → 10,963, matched
+  8,860 → 4,226.
+- Round 4 lane F, `document.rs`: `set_text_input_selection` (UTF-16 range of a text input's value, as the page DOM has it: pyro-render applies the focused control's selection once laid out).
+- Round 4 lane F, `dom_selection.rs`/`node/svg_css.rs`: `inline_svg_with_selection` serializes an inline `<svg>` again with its selected text wrapped in `<tspan>`s carrying the `::selection` `fill`/`stroke`/`stroke-width`, read from the declarations (`declared_css`: stylo's cascade keeps only colours for highlight pseudo-elements) (WPT css-pseudo `textpath-selection-011`). `svg_css` is `pub(crate)` for it.
+- Round 4 lane F, `layout/first_letter.rs`: an Indic conjunct (consonant, virama, consonant…, Unicode 15.1 grapheme rule GB9c) is one first letter (WPT css-pseudo `first-letter-hi-001`, `-002`).
+- Round 4 lane G, sideways `vertical-lr` lines (`layout/inline/layout.rs` `sideways_inverted_lines`): `vertical-lr` with
+  `text-orientation: sideways` has its line-over side (the glyphs' tops) at block-end, so its alphabetic baseline and
+  line-under side are toward the left. Paint already turned such lines within their slot; now layout turns them the
+  same way: in-flow inline boxes go to the other side of their line, an atomic inline's baseline is taken from its
+  line-over side (`margin box − alphabetic`), and the root's first and last baselines are exported turned
+  (`block_min + block_max − baseline`). Before, boxes and exported baselines kept horizontal geometry: an inline-block
+  synthesized at its right edge, and a zero-height line holding one had its baseline 10px from the left (WPT
+  css-flexbox `baseline-synthesis-003`, css-grid `grid-self-baseline-004`, `-horiz-007`, `-vertical-lr-002/-007`).
+  `crates/pyro-render/tests/sideways_vertical_lr_baselines.rs`.
+- Round 4 lane F, `dom_selection.rs`: `set_selected_replaced` / `is_selected_replaced` (the replaced elements a selection holds, from the page: pyro-render passes them on).
+- Round 4 lane G, last baseline (`layout/inline/layout.rs` `last_line_index`): a root's last baseline is that of its
+  last line box that is not a phantom one (`LineMetrics::invisible`, CSS Inline 3 § 4.1): a line after a `<br>` holding
+  only a float and collapsed white space gave an inline-block the bottom of its first line as baseline (WPT
+  css-flexbox `flexbox-baseline-multi-line-vert-001/-002`). `crates/pyro-render/tests/phantom_last_line_baseline.rs`.
+- Round 4 lane F, `node/svg_css.rs`: unused `paint_value` removed (selection fill/stroke read from declarations).
+- Round 4 lane G, positioned inline boxes in the paint tree (`layout/paint_tree.rs` `positioned_inline_spans`,
+  `push_inline_span_entry`, `NodeFlags::INLINE_PASS_ENTRY`): each relative or sticky inline box that is not atomic, whose
+  content an inline root lays out, is listed as a positioned entry (z-sorted with a `z-index`, otherwise at the
+  nearest layer root's positioned level) in tree order with the positioned boxes around it (not a split inline, whose
+  own box paints itself), as CSS 2.1 Appendix E
+  step 8 paints them. Step 1 of 2: the entries paint nothing yet (blitz-paint skips them; the inline root still paints
+  their content after its in-flow content) and hit testing passes over them. `crates/pyro-render/src/lib.rs`
+  `positioned_inline_spans_are_paint_tree_entries_in_tree_order`.
+- Round 4 lane F, `document.rs` `show_image_alt_text` + `ElementData::image_broken`: an `<img>` that fails to load or has no usable source, with non-empty `alt`, is laid out as a non-replaced box holding its alt text (an anonymous text child; `replaced::is_replaced` false unless a `content` image replaces it); a later usable `src` makes it an image again (`mutator::load_image`). WPT css-overflow `overflow-img-scroll-non-replaced`.
+- Round 4 lane F, `ElementData::image_failed`: an `<img>` whose load failed; with alt text, `show_image_alt_text` puts a 16px inline-block span (marked `pyro-broken-image-icon`) before the text for blitz-paint's broken-image icon.
+  `merge_inline_span_entries`, `order_inline_span_entries`, `NodeFlags::INLINE_PASS_ENTRY`): each relative or sticky
+  inline box that is not atomic, whose text an inline root lays out (not a split inline, whose own box paints itself),
+  is listed as a positioned entry: z-sorted with a `z-index`, otherwise at the nearest layer root's positioned level, in
+  tree order with the positioned boxes around it, also those lifted to the layer root past their parents (CSS 2.1
+  Appendix E step 8). blitz-paint paints its content there (`draw_inline_pass_entry`); hit testing passes over the
+  entry (the root hit-tests its text). `Node::inline_sticky_containing_block_offset`: an absolutely positioned box whose
+  containing block is a sticky inline box moves with it when painted (not memoised with the hoisted position: it
+  changes on scroll). A box whose only content is an atomic inline box (a badge) is listed too (its chain is followed
+from the atomic box's parent). The tree-order walks take `::before` and `::after` boxes in their place
+(`tree_order_children`): a positioned pseudo-element's content (an image in `content`) paints at its entry like a
+span's (WPT CSS2 `before-after-positioned-001`, whose reference uses spans).
+  WPT css-position `position-sticky-inline`, `position-sticky-nested-inline`; `crates/pyro-render/src/lib.rs`
+  `positioned_inline_spans_are_paint_tree_entries_in_tree_order`, `tests/positioned_inline_paint_order.rs`.
+- Round 4 lane F, `light-dark()` in SVG images: usvg does not parse it (the paint fell back to black). An SVG image is parsed with each `light-dark(a, b)` as `a` (`svg_refs::resolve_light_dark`); `SvgImageData::for_color_scheme` parses the dark variant, which a border image draws when the element's used colour scheme is dark and the image's own `color-scheme` allows dark (blitz-paint `ElementCx::dark_color_scheme`). WPT css-borders `border-image-color-scheme`.
+- Round 4 lane F, effects on `::before`/`::after` (`animation::ElementEffects::pseudos`, `PseudoEffects`): resolved against the pseudo-element's style without sampled values (`remove_animation_rules` + `cascade_pseudo`), sampled into `ElementData::sampled_pseudos` and, after the element's restyle in `process_preorder`, cascaded into its eager pseudo styles at the transitions and animations levels (`cascade_sampled_pseudos`), so box construction, paint and `getComputedStyle(el, '::before')` see them. Step 1 of pseudo-element animations: Web Animations with `pseudoElement`; CSS animations and transitions on pseudo-elements follow.
+  Keyframe values of a pseudo-element's effects cascade as the pseudo-element (`BaseKey::pseudo`, `cascade_pseudo`): `1em`, `100%` and `inherit` resolve against the originating element (WPT css-animations `inheritance-pseudo-element`).
+- Round 4 lane F, `StyleChange::pseudo`: while style changes are tracked, a replaced `::before`/`::after` style (both before and after the restyle) is recorded too (1, 2; 0 for the element's own), before its sampled values are cascaded in; `style_change_index` keys by (node, pseudo). Step 3 of pseudo-element animations: CSS transitions on pseudo-elements.
+- Lane F2 (scroll-driven animations), `scroll_timeline.rs` + `animation.rs` (`Effect::timeline`, `TimelineDriven`, `ElementState::given`, `BaseDocument::drive`, `resample_scroll_driven`) + `resolve.rs` + `document.rs` (`timeline_scroll`, `set_timeline_scroll`): a CSS animation with an `animation-timeline` other than `auto` takes its progress from a scroll position: `scroll()` (nearest/root/self), `view()` (subject, insets) and named `scroll-timeline`/`view-timeline` (ancestor-or-self, scroll before view on one element), through its `animation-range` (normal, the view ranges cover/contain/entry/exit/entry-crossing/exit-crossing, length-percentages); delay and duration are shares of the timeline (Web Animations 2), `auto` fills it. Sampled at each resolve with the page's scroll offsets (`timeline_scroll`; a capture document's own offsets) and again after layout (a new document has no scroll range before it).
+- Lane F2, `scroll_timeline::timeline_state` + `InsetValue`: a script `ScrollTimeline`'s or `ViewTimeline`'s scroll offset, start and end offsets (scroll range; cover range with insets) and scroll container, for pyro-webapi's timeline objects.
+- Lane F1 (CSS Shapes), `layout/shape_outside.rs`: `shape-outside` of floats (inline and block-level) as rows of the margin box with the float area's extent. Covers `circle()`, `ellipse()`, `inset()` (corners square), `polygon()` and the box keywords, in their reference box and grown by `shape-margin`; `path()` and `shape()` too (`shape_path.rs`, the path converter moved from blitz-paint `clip_path.rs`); images keep the margin box. Taffy's float context wraps line boxes around them.
+- Lane F1 (scroll snap), `layout/scroll_markers.rs` `mandatory_snap_positions`: a scroll button of a container that snaps its axis mandatorily is `:disabled` when no snap position lies further in its direction (as Chromium), not only at the scroll extent.
+- Lane F2, `scroll_timeline::timeline_ranges` (`TimelineRanges`: contain range, subject size) for script animations' `rangeStart`/`rangeEnd`; a script timeline's `<body>` source that is not a scroll container of its own (the quirks-mode `document.scrollingElement`) is the viewport.
+- Lane F1, `node/svg_css.rs`: author CSS `stop-color`, `stop-opacity`, `paint-order`, `marker-start/-mid/-end`, `flood-color`, `flood-opacity`, `lighting-color`, `clip-rule`, `shape-rendering`, `text-anchor` and `color-interpolation-filters` are written for usvg too (`paint-order`, `clip-rule` and `text-anchor` also inherited from the HTML parent of the `<svg>`). `vector-effect: non-scaling-stroke` is not rendered (usvg lacks it).
+- Lane F1, `stylo_to_kurbo.rs` `offset_transform`: `offset-path: path()` with `offset-distance` (closed paths wrap, open ones clamp) and `offset-rotate` (`auto`/`reverse` follow the tangent) moves a box in the 2D transform chain after `scale` and before `transform` (CSS Motion Path 1): the path is in the box's coordinates and the anchor point (`offset-anchor`, `auto`: the transform origin) goes to the point along it (Chrome; run 12 fixed an offset by the transform origin). The root's contained boxes use the viewport as containing block. `ray()` (`ray_transform`, run 12) too, as Blink's `ApplyMotionPathTransform` (checked against Chrome): the ray starts at its `at` position, else at `offset-position` (`auto`: the box's top-left corner, `normal`: the centre of the containing block's coord box), a percentage `offset-distance` is of the ray's length by its size keyword against that box, the anchor point (`offset-anchor`, `auto`: the transform origin) goes to the point along the ray and the box turns by `offset-rotate` (`auto`: the ray's direction). The containing block's geometry comes from `TransformContext` (`cb_size`, `cb_border`, `cb_padding`) through the thread-local `MOTION_CONTAINING_BLOCK` set around `resolve_transform` in `Node::set_transform` (the box's location is taken relative to it). Basic shapes too (`shape_transform`, `MotionFrame`, measured on Chrome): laid out in the containing block's coord box, `circle()`/`ellipse()` from their rightmost point and `inset()`/`rect()`/`xywh()` from the top-left corner after its radius (`rounded_rect_path`), both clockwise, `polygon()` closed, `shape()` as written; a shape without a position is centred at `offset-position`; the anchor point goes to the point along it. `path()` goes through `shape_path::svg_path_to_bezpath` now. A shape centred by `offset-position: auto` is centred at the box's top-left corner. `offset-path: <coord-box>` alone is that box of the containing block with its border radii (`coord_box_transform`; `TransformContext::cb_radii`). `ray(... contain)` keeps half the box's larger side from the ray's end when the box fits in the ray's circle, and otherwise lengthens the ray to the shortest it fits in (as Chrome, measured). `offset-path: url()` (pref `layout.css.motion-path-url.enabled`, `document.rs`) to an SVG `path`, `rect`, `circle`, `ellipse`, `line`, `polyline` or `polygon` lays that geometry out as a basic shape (resolve.rs `motion_url_path`, thread-local `MOTION_URL_PATH`); anything else moves nothing. 3D transforms do not use the offset yet. WPT css/motion `offset-path-ray-*`, `offset-path-shape-*`, `offset-path-coord-box-*`, `offset-path-url-*`, `offset-rotate-001/002` (86 of 98). WPT css/motion `offset-distance-*`, `offset-path-string-*`, `offset-rotate-003`.
+- Lane F2, `BaseDocument::has_scroll_driven_animations`: pyro-render's style-only resolves (style reads) lay the document out when a scroll-driven animation is sampled, since its values depend on the layout (a view timeline subject inserted since the last layout sampled no geometry: WPT `animation-timeline-view-functional-notation` flaked on the Linux gate).
+- Round 4 lane S4, `layout/writing_mode.rs` `compute_orthogonal_child_layout`: an orthogonal box whose containing
+  block's size in the box's inline axis is indefinite resolves its percentages in that axis against the initial
+  containing block (css-writing-modes-3 §7.3; the parent size passed down is the ICB's), and its auto inline size is the
+  available size less its margins in that axis (percentages of the containing block's inline size). WPT
+  css-writing-modes `sizing-orthog-prct-*` and `sizing-orthogonal-percentage-margin-*` (24). Both in block flow only:
+  a grid or flex item's area is left unknown on purpose by intrinsic sizing passes, and an out-of-flow box's available
+  space already excludes its margins (css-grid `grid-item-percentage-sizes-*`, `orthogonal-positioned-grid-items-*`).
+  `pyro-render/tests/vertical_align_orthogonal_sizes.rs`.
+- Lane F1, `assets/default.css` + `layout/mod.rs`: checkboxes, radios, ranges, progress bars and meters have `appearance: auto` (Chromium's html.css; it was the initial `none`), checkboxes and radios no padding or border of their own, and a checkbox or radio of `appearance: none` no natural size (Chrome: 0x0). `<input type=range>` is 129x16 by nature with a 2px margin and no padding, border or field background; `<progress>` is 10em x 1em and `<meter>` 5em x 1em, `vertical-align: -0.2em` (Chromium's html.css). blitz-paint `draw_bar_widget` paints them.
+
+## SVG images: a zero height beside a ratio (WPT round 4, lane S1)
+
+`src/node/svg.rs` (`SvgImageData::intrinsic_height`, `zero_beside_ratio`): a root `<svg>` with a zero `height`
+beside a non-zero `width` and a `viewBox` has no natural height, as in Blink: the ratio gives it
+(`width="20px" height="0px" viewBox="0 0 50 100"` is 20x40; WPT css-grid `grid-item-aspect-ratio-stretch-4`). A zero
+`width` beside a height stays (`-stretch-3`). Covered by `crates/pyro-render/tests/svg_image_natural_size.rs`.
+
+## Inline containing blocks across directions (WPT round 4, lane S1)
+
+`src/layout/inline/layout.rs` (`span_padding_box`): the containing block an inline box makes for absolutely positioned
+boxes (CSS 2.1 § 10.1 4.1) takes the start edge of its first fragment and the end edge of its last in the lines'
+direction (the block container's), not the span's own, as Blink: an `rtl` span in an `ltr` line contains from the left
+of its first fragment to the right of its last. The collapsible white space hanging past the end of a left-to-right
+line (`LineMetrics::collapsed_advance`) is in no fragment. WPT css-position `multicol/{vlr,vrl}-{ltr-rtl,rtl-ltr}-in-multicols`.
+Covered by `an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction` in
+`crates/pyro-render/tests/split_inline_containing_block.rs`.
+- Round 4 lane S4, `assets/default.css`: buttons (`button`, button `input`s, `::file-selector-button`) no longer have
+  `border-radius: 1px`: they are `-moz-default-appearance: button; appearance: auto`, and blitz-paint rounds those of
+  native appearance (Chromium's computed radius is 0 too). An author-styled button and one of `appearance: none` are
+  square alike, as css-ui-4's appearance-disabling properties make them (WPT css-ui `compute-kind-widget-generated/*`).
+- Round 4 lane S4, `layout/construct.rs` (`collect_layout_children_with_wrap`): an element of `content-visibility:
+  hidden` gets no layout children, so its contents are neither laid out nor painted (CSS Contain 2 § 4.1; Stylo adds
+  size, layout, style and paint containment). Not for form controls (their contents are their own), non-atomic inline
+  boxes or `display: contents` (containment does not apply). Top-layer descendants of a skipped subtree are not shown.
+  WPT css-contain `content-visibility/*` (+38). `pyro-render/tests/content_visibility_hidden.rs`.
+
+## Selections over transformed text (WPT round 4, lane S1)
+
+`src/dom_selection.rs` (`produced_offset`, `is_combining_mark`): a selection's DOM offsets map to the laid-out text
+across `text-transform` case mappings that change the length: a character mapped to several (`ß` to `SS`) covers them
+all, and a combining mark the transform removed (Greek uppercase drops the acute) covers none (WPT css-text
+`text-transform-upperlower-105`, `-106`). Covered by `offsets_follow_case_mappings_that_change_the_length`.
+- Round 4 lane S4, `node/svg.rs` (`root_background_painted`): an SVG image whose root `<svg>` has a CSS background
+  colour in its `style` attribute paints it over the whole canvas (a full-size `<rect>` under its content; usvg draws
+  none). WPT css-ui `box-sizing-*` (19 pages).
+- Round 4 lane S4, `resolve.rs` `overflow_contribution`: a box of layout or paint containment (not a non-atomic inline)
+  contributes only its border box to its ancestors' scrollable overflow (CSS Contain 2 § 3.2, § 3.4). WPT css-contain
+  `contain-layout-ink-overflow-*`.
+- Round 4 lane S4, `layout/counters.rs` (`Walk::barriers`, `Walk::read`): style containment scopes counters and quotes
+  to the element's subtree, its `::before`/`::after` included (CSS Contain 2 § 3.3): an increment or set there of a
+  counter made outside makes a new counter (`counter()` and `counters()` still read the outer one), and the quote
+  depth is restored after the subtree. WPT css-contain `contain-style-counters-*`, `counter-scoping-*`,
+  `quote-scoping-*`. `pyro-render/tests/containment_and_svg_background.rs`.
+- Round 4 lane S4, `layout/multicol.rs`: css-multicol-2 `column-height` and `column-wrap`. A `column-height` is every
+  column's height (no balancing); with `column-wrap: wrap` (or `auto` beside a `column-height`) each `count` columns
+  make a row, rows `row-gap` apart (`normal` 0), the container's auto height covering them. `column-wrap: wrap` with
+  `column-height: auto` wraps at the container's definite height, its last row balanced under `column-fill: balance`.
+  WPT css-multicol `column-height-*` 14 of 30 (abspos in a positioned multicol container and `column-height: 0` are
+  not done). `pyro-render/tests/multicol_column_height.rs`.
+- Round 4 lane S4, `layout/multicol.rs` `fragmentable`: a box of size containment is monolithic (CSS Contain 2 § 3.1),
+  so balancing does not split it (a `contain: size` float in columns). WPT css-multicol `multicol-fill-balance-*`,
+  css-contain `contain-size-multicol-*`.
+
+## `<style media>` and `<link media>` (WPT round 4, lane S1)
+
+`src/document.rs` (`process_style_element`, `node_media_list`, `parse_stylesheet_with_media`, the `Resource::Css`
+arm), `src/mutator.rs` (`set_attribute_impl`, `clear_attribute_impl`): a `<style>` or `<link>` element's `media`
+attribute is its sheet's media list, so a sheet whose media do not match the device applies nothing (a
+`<style media=print>` applied on screen before). A `<style>` with one parses its own sheet (not the shared sheet of its
+text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style>`'s `media` processes its sheet again
+(WPT css/cssom `medialist-dynamic-001`). Covered by `a_style_element_media_attribute_limits_its_sheet` in
+`crates/pyro-render/tests/render.rs`.
+- Lane F1, `document.rs` `init_stylo_prefs`: `layout.css.text-wrap-style.pretty.enabled` (`text-wrap: pretty` lays out as `auto`); pyro-dom sets it, `motion-path-url` and `text-wrap-style.balance` as well, for declarations script parses before the engine starts.
+- Round 4 lane S4, `layout/multicol.rs`: a run of columns between or after column spanners balances within what is
+  left of a definite container height (more columns take the overflow). WPT css-multicol `multicol-span-all-012` and
+  2 more.
+- Round 4 lane S4, `node/node.rs` `is_stacking_context_root`: layout and paint containment make a stacking context
+  (CSS Contain 2 § 3.2, § 3.4) on a box they apply to (not a non-atomic inline, `display: contents`, or an internal
+  table box other than a cell). WPT css-contain `contain-paint-stacking-context-001a`,
+  `contain-layout-stacking-context-001`. `pyro-render/tests/containment_and_svg_background.rs`.
+- Lane F1: offset-path points are exact to about 1e-6 px (arc lengths at 1e-7, circle and ellipse paths at 1e-6 tolerance), and an offset rotation within 1e-4 rad of a quarter turn is that quarter turn (`MotionFrame::place`).
+- Lane F2, `mask-border`: `mask-border-source` loads as the element's second `border_images` entry
+  (`layout/damage.rs` `border_image_sources`, also the stylo.rs out-of-sync check); a `mask-border` makes a stacking
+  context (`node.rs`), as `mask-image` does.

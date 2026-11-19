@@ -252,6 +252,62 @@ fn references<'a>(node: roxmltree::Node<'a, '_>, property: &str) -> Vec<(&'a str
     found
 }
 
+/// The first position of `needle` in `haystack`.
+pub(crate) fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// pyro: `source` with each `light-dark(a, b)` (which usvg does not parse: the paint fell back to
+/// black) replaced by `a`, or by `b` when `dark`. `None` when there is none.
+pub(crate) fn resolve_light_dark(source: &[u8], dark: bool) -> Option<Vec<u8>> {
+    const NAME: &[u8] = b"light-dark(";
+    find_bytes(source, NAME)?;
+    let mut out = Vec::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(at) = find_bytes(rest, NAME) {
+        out.extend_from_slice(&rest[..at]);
+        let args = &rest[at + NAME.len()..];
+        // The top-level comma and the closing parenthesis.
+        let (mut depth, mut comma, mut end) = (0usize, None, None);
+        for (i, &b) in args.iter().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' if depth == 0 => {
+                    end = Some(i);
+                    break;
+                }
+                b')' => depth -= 1,
+                b',' if depth == 0 && comma.is_none() => comma = Some(i),
+                _ => {}
+            }
+        }
+        let (Some(comma), Some(end)) = (comma, end) else {
+            out.extend_from_slice(&rest[at..]);
+            rest = &[];
+            break;
+        };
+        let chosen = if dark { &args[comma + 1..end] } else { &args[..comma] };
+        out.extend_from_slice(chosen.trim_ascii());
+        rest = &args[end + 1..];
+    }
+    out.extend_from_slice(rest);
+    Some(out)
+}
+
+/// pyro: whether an SVG image's own `color-scheme` (on its root, as a property) lets it be dark.
+pub(crate) fn allows_dark_scheme(source: &[u8]) -> bool {
+    let mut rest = source;
+    while let Some(at) = find_bytes(rest, b"color-scheme") {
+        let tail = &rest[at + 12..];
+        let value = &tail[..tail.iter().position(|&b| matches!(b, b';' | b'"' | b'\'' | b'}')).unwrap_or(tail.len())];
+        if find_bytes(value, b"dark").is_some() {
+            return true;
+        }
+        rest = tail;
+    }
+    false
+}
+
 /// pyro: `source` with the `divisor` of each `feConvolveMatrix` that is zero (an error, which
 /// Chromium reads as the default) set to the default, the sum of the kernel's values (1 when that
 /// is zero); usvg leaves such a primitive out of its filter. `None` when there is none.
@@ -303,6 +359,18 @@ fn url_id(value: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn light_dark_picks_one_colour() {
+        let src = b"<rect fill='light-dark(rgb(1, 2, 3), blue)' style='stroke: light-dark(red,green)'/>";
+        let light = super::resolve_light_dark(src, false).unwrap();
+        assert_eq!(light, b"<rect fill='rgb(1, 2, 3)' style='stroke: red'/>".to_vec());
+        let dark = super::resolve_light_dark(src, true).unwrap();
+        assert_eq!(dark, b"<rect fill='blue' style='stroke: green'/>".to_vec());
+        assert!(super::resolve_light_dark(b"<rect fill='red'/>", true).is_none());
+        assert!(super::allows_dark_scheme(b"<svg style='color-scheme: light dark'>"));
+        assert!(!super::allows_dark_scheme(b"<svg style='color-scheme: light'>"));
+    }
+
     use super::break_reference_cycles;
 
     fn broken(svg: &str) -> String {

@@ -928,6 +928,13 @@ pub(crate) fn install(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     }
     Ok(())
 }
+/// The realm of `old`'s window now serves `new` (Window reuse).
+pub(crate) fn adopt_realm(old: &PageDom, new: &PageDom, realm: RealmId) {
+    let timers = old.xhr_state.timers.borrow_mut().remove(&realm);
+    if let Some(timers) = timers {
+        new.xhr_state.timers.borrow_mut().insert(realm, timers);
+    }
+}
 /// Makes a parked synchronous request of `page` poll `closing`: once it
 /// returns true the request fails with a NetworkError instead of waiting on.
 pub(crate) fn set_sync_watch(page: &PageDom, closing: Box<dyn Fn() -> bool>) {

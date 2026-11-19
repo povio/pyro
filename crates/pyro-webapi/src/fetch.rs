@@ -1012,6 +1012,17 @@ impl Body {
     /// A complete in-memory body for script-constructed Responses
     /// (`new Response(body)`, `Response.json`, `Response.error`). `None` is a
     /// null body. Not tied to a page, request or network budget.
+    /// Fetch "get the MIME type" of a body: its container's current
+    /// `Content-Type` (headers may have changed since the body was made);
+    /// ASCII-lowercased for a Blob's type (`lower`), kept as written for
+    /// formData() (a multipart boundary is case-sensitive).
+    pub(crate) fn refresh_mime(&self, pairs: &[(String, String)], lower: bool) {
+        let values: Vec<&str> =
+            pairs.iter().filter(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.as_str()).collect();
+        let value = values.join(", ");
+        *self.mime.borrow_mut() = if lower { value.to_ascii_lowercase() } else { value };
+    }
+
     pub(crate) fn constructed(s: &Scope<'_>, bytes: Option<Bytes>, mime: String) -> Rc<Body> {
         Body::constructed_chunks(s, bytes.map(|b| vec![b]), mime)
     }

@@ -48,6 +48,8 @@ where
         "AnimationPlaybackEvent",
         "CSSAnimation",
         "CSSTransition",
+        "ScrollTimeline",
+        "ViewTimeline",
     );
 }
 
@@ -165,6 +167,55 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.number(key as f64))
     })?;
     natives.set_atom("reportKey", report_key.value())?;
+    // `timelineState(source, subject, axis, insetStartKind, insetStart, insetEndKind, insetEnd)`: a
+    // script ScrollTimeline's (`subject` null) or ViewTimeline's `[offset, start, end, source]` now
+    // (`source` the scroll container, null for the viewport), or null when inactive.
+    let timeline_state = s.function("timelineState", |s, _this, a| {
+        let page = page_of(s)?;
+        let source = crate::node::opt_node_arg(s, a.get(0), "source")?;
+        let subject = crate::node::opt_node_arg(s, a.get(1), "subject")?;
+        let axis = a.get(2).to_number()? as u8;
+        let inset = [
+            (a.get(3).to_number()? as u8, a.get(4).to_number()?),
+            (a.get(5).to_number()? as u8, a.get(6).to_number()?),
+        ];
+        let state = {
+            let dom = page.dom.borrow();
+            let layout = page.layout();
+            // (A frame's time without a frame: the scroll offsets of now.)
+            layout.push_scroll_if_due(page.timeline_now_ms());
+            let Some(geometry) = layout.synced_geometry_source(&dom) else { return Ok(s.null()) };
+            let key = |id: pyro_dom::NodeId| pyro_dom::snapshot::render_key(id);
+            let state = geometry.timeline_state(source.map(key), subject.map(key), axis, inset);
+            state.map(|(offset, start, end, src, contain, size)| {
+                (offset, start, end, src.and_then(|k| pyro_dom::geometry::node_of(&dom, k)), contain, size)
+            })
+        };
+        let Some((offset, start, end, src, contain, size)) = state else { return Ok(s.null()) };
+        let src = crate::node::node_value(s, &page, src)?;
+        Ok(s.array(&[
+            s.number(offset),
+            s.number(start),
+            s.number(end),
+            src,
+            s.number(contain.0),
+            s.number(contain.1),
+            s.number(size),
+        ])?
+        .value())
+    })?;
+    natives.set_atom("timelineState", timeline_state.value())?;
+    // `pushScroll()`: scroll timelines take the scroll position of now (after a frame passed).
+    let push_scroll = s.function("pushScroll", |s, _this, _a| {
+        let page = page_of(s)?;
+        if let Some(layout) = page.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(page.timeline_now_ms());
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("pushScroll", push_scroll.value())?;
     Ok(natives)
 }
 
@@ -227,7 +278,20 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
         easing: text(at(14)?)?.map(|e| std::sync::Arc::from(e.as_str())),
         composite: pyro_dom::animation::Composite::parse(&at(15)?.to_string()?).unwrap_or_default(),
         gone: num(16)? != 0.0,
-        marker: num(17)? != 0.0,
+        pseudo: crate::animation_frame::Pseudo::from_code(num(17)?),
+        scroll: match at(18)?.as_object() {
+            None => None,
+            Some(r) => {
+                let n = |i: u32| -> JsResult<f64> { r.get_index(i)?.to_number() };
+                Some(crate::animation_frame::ScrollRef {
+                    source: crate::node::opt_node_arg(s, r.get_index(0)?, "report")?,
+                    subject: crate::node::opt_node_arg(s, r.get_index(1)?, "report")?,
+                    axis: n(2)? as u8,
+                    inset: [(n(3)? as u8, n(4)?), (n(5)? as u8, n(6)?)],
+                    inactive: n(7)? != 0.0,
+                })
+            }
+        },
     })
 }
 
@@ -263,6 +327,15 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                 s.string(&run.fill),
                 s.string(&run.easing),
                 run.paused_at.map_or_else(|| s.null(), |t| s.number(t)),
+                match run.pseudo {
+                    None => s.null(),
+                    Some(pyro_dom::style::PseudoElement::Before) => s.string("::before"),
+                    Some(pyro_dom::style::PseudoElement::After) => s.string("::after"),
+                },
+                match &run.timeline {
+                    Some((text, start, end)) => s.array(&[s.string(text), s.string(start), s.string(end)])?.value(),
+                    None => s.null(),
+                },
             ])?
             .value(),
         );

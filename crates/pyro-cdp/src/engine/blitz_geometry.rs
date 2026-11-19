@@ -103,7 +103,14 @@ impl LocalFiles {
             let mut cache = bodies.lock();
             match cache.get(&key) {
                 Some(b) if !b.is_empty() => return Some(b.to_vec()),
-                Some(_) => return None,
+                Some(_) => {
+                    // pyro: in flight for another document of the identity: this one waits on it too.
+                    let path = url.path().to_ascii_lowercase();
+                    if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
+                        loader.font_asked(url.as_str());
+                    }
+                    return None;
+                }
                 // An empty entry marks the fetch in flight.
                 None => cache.insert(key.clone(), Arc::new(Vec::new())),
             };
@@ -112,6 +119,7 @@ impl LocalFiles {
         let fetch = InFlight { bodies, failed: self.failed.clone(), key };
         let path = url.path().to_ascii_lowercase();
         let kind = if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
+            loader.font_asked(url.as_str());
             SubresourceKind::Font
         } else if path.ends_with(".css") || url.host_str() == Some("fonts.googleapis.com") {
             SubresourceKind::Style

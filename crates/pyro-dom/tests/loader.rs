@@ -185,3 +185,41 @@ fn regression_resource_queue_pins_nodes() {
     d.collect_garbage();
     assert!(!d.is_alive(s), "drained resource queue retained detached script");
 }
+
+/// HTML "prescan a byte stream" and "get an XML encoding"
+/// (html/syntax/charset/meta-*.html, html/syntax/xmldecl/): comments are
+/// skipped, attributes parse as the prescan reads them, `content` needs
+/// `http-equiv=content-type`, a `<meta>` beats an XML declaration, and an
+/// XML declaration's encoding applies when no `<meta>` declares one.
+#[test]
+fn prescan_follows_the_html_algorithm() {
+    let name = |bytes: &[u8]| prescan_charset(bytes).map(|e| e.name());
+    assert_eq!(name(b"<!--<meta charset=\"ISO-8859-8\">--><meta charset  =\n \"ISO-8859-5\"/>"), Some("ISO-8859-5"));
+    assert_eq!(name(b"<meta content=\"text/html; charset=ISO-8859-5\" http-equiv=\"Content-Type\">"), Some("ISO-8859-5"));
+    assert_eq!(name(b"<meta content=\"text/html; charset=ISO-8859-5\">"), None);
+    assert_eq!(name(b"<meta charset=x-user-defined>"), Some("windows-1252"));
+    assert_eq!(name(b"<meta charset=utf-16le>"), Some("UTF-8"));
+    assert_eq!(name(b"<p title=\"<meta charset=windows-1251>\"><meta charset=windows-1253>"), Some("windows-1253"));
+    assert_eq!(name(b"<?xml version=\"1.0\" encoding=\"windows-1251\"?><p>"), Some("windows-1251"));
+    assert_eq!(name(b"<?xml version=\"1.0\" encoding=\"windows-1251\"?>\n<meta charset=\"windows-1253\">"), Some("windows-1253"));
+    assert_eq!(name(b"<?xml version=\"1.0\" <meta charset=\"windows-1253\" encoding=\"windows-1251\"?>"), Some("windows-1251"));
+    assert_eq!(name(b"<?XML encoding=\"windows-1251\"?>"), None);
+    assert_eq!(name(b"<?xml encoding=windows-1251?>"), None);
+}
+
+/// With no declared encoding, a document takes the fallback its embedder
+/// sets (a same-origin parent document's), not UTF-8
+/// (html/syntax/charset/with-inheritance.html).
+#[test]
+fn an_undeclared_encoding_falls_back_to_the_inherited_one() {
+    let d: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = d.borrow_mut().create_document(DocumentKind::Html, "http://test/");
+    let mut p = DocumentParser::new(d.clone(), doc, false).unwrap();
+    p.set_fallback_charset(Some("windows-1251"));
+    p.feed_bytes(b"<p id=x>\xe6</p>");
+    p.finish_bytes();
+    p.end();
+    let d = d.borrow();
+    let x = d.get_element_by_id(doc, "x").unwrap().unwrap();
+    assert_eq!(d.text_content(x).unwrap().unwrap(), "ж");
+}

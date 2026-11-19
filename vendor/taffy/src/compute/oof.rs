@@ -805,6 +805,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
         }
     }
 
+    // pyro: a height known before the box's content is measured (its `height`, both insets, a ratio)
+    // is definite; one its content gives is not, so its children's percentage heights behave as
+    // `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`).
+    let height_is_definite = known_dimensions.height.is_some();
     let final_size = match (known_dimensions.width, known_dimensions.height) {
         (Some(width), Some(height)) => Size { width, height },
         // pyro: an automatic width and height with a preferred aspect ratio: the shrink-to-fit width between
@@ -862,7 +866,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
 
     let layout_input = LayoutInput {
         known_dimensions: final_size.map(Some),
-        known_dimensions_are_definite: Size { width: true, height: true },
+        known_dimensions_are_definite: Size { width: true, height: height_is_definite },
         parent_size: area_size.map(Some),
         available_space,
         sizing_mode: SizingMode::ContentSize,

@@ -2,6 +2,7 @@
 //! whole renderer (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod abspos_percentage_heights;
 mod alignment_baseline;
 mod aspect_ratio;
 mod backdrop_filter;
@@ -28,9 +29,17 @@ mod filter_drop_shadow;
 mod filter_image_function;
 mod first_line;
 mod flex_collapse;
+mod font_coverage_hidden;
+mod inline_negative_margin_order;
+mod object_document;
 mod quirky_body_and_ratio_keywords;
 mod grid_flex_round4;
 mod flex_content_sizes;
+mod phantom_last_line_baseline;
+mod positioned_inline_paint_order;
+mod ruby_annotation_space;
+mod sideways_vertical_lr_baselines;
+mod subgrid_edge_tracks;
 mod table_part_containing_blocks;
 mod table_cell_percent_heights;
 mod flex_gaps;
@@ -65,6 +74,7 @@ mod input_placeholder;
 mod intrinsic_percentages;
 mod lang_pseudo_class;
 mod media_features;
+mod meta_color_scheme_fields;
 mod line_break_resume;
 mod line_clamp;
 mod hoisted_clip_layers;
@@ -143,5 +153,11 @@ mod transform_3d;
 mod unicode_bidi;
 mod vertical_text_decorations;
 mod vertical_writing_mode;
+mod vertical_align_orthogonal_sizes;
+mod button_native_corners;
+mod content_visibility_hidden;
+mod text_combine_upright;
+mod containment_and_svg_background;
+mod multicol_column_height;
 mod viewport_overflow;
 mod vertical_lines_and_controls;

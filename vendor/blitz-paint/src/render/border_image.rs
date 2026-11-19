@@ -110,6 +110,36 @@ struct Piece {
     corner: bool,
 }
 
+/// pyro: what a nine-piece image is drawn from: `border-image-*` or `mask-border-*`, and the
+/// index of its source's image in the element's `border_images`.
+struct NinePiece<'a> {
+    source: &'a style::values::computed::Image,
+    image: usize,
+    outset: &'a style::values::computed::NonNegativeLengthOrNumberRect,
+    slice: &'a style::values::computed::BorderImageSlice,
+    width: &'a style::values::computed::BorderImageWidth,
+    repeat: &'a style::values::computed::BorderImageRepeat,
+}
+
+/// The border image area: the border box grown by the outsets, on whole pixels.
+fn image_area(
+    bb: Rect,
+    widths: kurbo::Insets,
+    scale: f64,
+    outsets: &style::values::computed::NonNegativeLengthOrNumberRect,
+) -> Rect {
+    let outset = |value: &style::values::computed::NonNegativeLengthOrNumber, width: f64| match value {
+        GenericLengthOrNumber::Number(n) => n.0 as f64 * width,
+        GenericLengthOrNumber::Length(l) => l.0.px() as f64 * scale,
+    };
+    Rect::new(
+        (bb.x0 - outset(&outsets.3, widths.x0)).round(),
+        (bb.y0 - outset(&outsets.0, widths.y0)).round(),
+        (bb.x1 + outset(&outsets.1, widths.x1)).round(),
+        (bb.y1 + outset(&outsets.2, widths.y1)).round(),
+    )
+}
+
 /// A rect from its origin and size, with negative sizes taken as zero (gfx::SizeF's).
 fn rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
     Rect::new(x, y, x + width.max(0.0), y + height.max(0.0))
@@ -121,11 +151,55 @@ impl ElementCx<'_, '_> {
     /// are then drawn as usual.
     pub(super) fn draw_border_image(&self, scene: &mut impl PaintScene) -> bool {
         let border = self.style.get_border();
+        self.draw_nine_piece(
+            scene,
+            NinePiece {
+                source: &border.border_image_source,
+                image: 0,
+                outset: &border.border_image_outset,
+                slice: &border.border_image_slice,
+                width: &border.border_image_width,
+                repeat: &border.border_image_repeat,
+            },
+        )
+    }
+
+    /// pyro: the element's `mask-border` image (css-masking-1 §8), drawn as a border image is
+    /// (its grid, outset and tiling) into the scene it masks with. Returns false when there is
+    /// none (`mask-border-source: none`, or an image not loaded).
+    pub(super) fn draw_mask_border(&self, scene: &mut impl PaintScene) -> bool {
+        let svg = self.style.get_svg();
+        self.draw_nine_piece(
+            scene,
+            NinePiece {
+                source: &svg.mask_border_source,
+                image: 1,
+                outset: &svg.mask_border_outset,
+                slice: &svg.mask_border_slice,
+                width: &svg.mask_border_width,
+                repeat: &svg.mask_border_repeat,
+            },
+        )
+    }
+
+    /// pyro: whether the element has a `mask-border` image.
+    pub(super) fn has_mask_border(&self) -> bool {
+        !matches!(self.style.get_svg().mask_border_source, GenericImage::None)
+    }
+
+    /// pyro: the `mask-border` image area (the border box grown by `mask-border-outset`), in
+    /// device px.
+    pub(super) fn mask_border_area(&self) -> Rect {
+        let outsets = &self.style.get_svg().mask_border_outset;
+        image_area(self.frame.border_box, self.frame.border_width, self.scale, outsets)
+    }
+
+    fn draw_nine_piece(&self, scene: &mut impl PaintScene, values: NinePiece<'_>) -> bool {
         // pyro: a `filter()` source is the image it filters, drawn in a layer with the filters
         // over the border image area. Other sources (almost every element: `none`) cost nothing.
-        let (source_image, filter) = match &border.border_image_source {
+        let (source_image, filter) = match values.source {
             GenericImage::Filter(_) => crate::filters::image_filter(
-                &border.border_image_source,
+                values.source,
                 self.scale,
                 &self.style.clone_color(),
                 self.dom,
@@ -135,10 +209,12 @@ impl ElementCx<'_, '_> {
         // pyro: `image-orientation: none`: the pixels were turned by the EXIF orientation when
         // decoded; the border image slices the image as stored.
         let unturned;
+        #[cfg(feature = "svg")]
+        let schemed;
         let source = match source_image {
             GenericImage::None => return false,
             GenericImage::Gradient(gradient) => Source::Gradient(gradient),
-            GenericImage::Url(_) => match self.element.border_images.first() {
+            GenericImage::Url(_) => match self.element.border_images.get(values.image) {
                 Some(Some(data)) => match &data.image {
                     ImageData::Raster(raster)
                         if raster.orientation != 1 && blitz_dom::util::image_unoriented(&self.style) =>
@@ -149,7 +225,14 @@ impl ElementCx<'_, '_> {
                     ImageData::Raster(raster) => Source::Raster(raster),
                     #[cfg(feature = "svg")]
                     ImageData::Svg(svg) if !svg.intrinsic_dimensions.degenerate_view_box => {
-                        Source::Svg(svg)
+                        // pyro: `light-dark()` in the image follows this element's colour scheme.
+                        match svg.for_color_scheme(self.dark_color_scheme()) {
+                            Some(dark) => {
+                                schemed = dark;
+                                Source::Svg(&schemed)
+                            }
+                            None => Source::Svg(svg),
+                        }
                     }
                     _ => return false,
                 },
@@ -162,18 +245,7 @@ impl ElementCx<'_, '_> {
         let widths = self.frame.border_width;
 
         // The border image area: the border box grown by `border-image-outset`, on whole pixels.
-        let outset =
-            |value: &style::values::computed::NonNegativeLengthOrNumber, width: f64| match value {
-                GenericLengthOrNumber::Number(n) => n.0 as f64 * width,
-                GenericLengthOrNumber::Length(l) => l.0.px() as f64 * scale,
-            };
-        let outsets = &border.border_image_outset;
-        let area = Rect::new(
-            (bb.x0 - outset(&outsets.3, widths.x0)).round(),
-            (bb.y0 - outset(&outsets.0, widths.y0)).round(),
-            (bb.x1 + outset(&outsets.1, widths.x1)).round(),
-            (bb.y1 + outset(&outsets.2, widths.y1)).round(),
-        );
+        let area = image_area(bb, widths, scale, values.outset);
         if !(area.width() > 0.0 && area.height() > 0.0) {
             return true;
         }
@@ -194,7 +266,7 @@ impl ElementCx<'_, '_> {
             return true;
         }
 
-        let slices = &border.border_image_slice;
+        let slices = values.slice;
         let slice = |value: &NumberOrPercentage, extent: f64| {
             let resolved = match value {
                 NumberOrPercentage::Number(n) => *n as f64 * numbers,
@@ -211,7 +283,7 @@ impl ElementCx<'_, '_> {
                 }
             }
         };
-        let widths_style = &border.border_image_width;
+        let widths_style = values.width;
         let mut top = Edge {
             slice: slice(&slices.offsets.0.0, image_h),
             ..Edge::default()
@@ -243,7 +315,7 @@ impl ElementCx<'_, '_> {
             }
         }
 
-        let repeat = &border.border_image_repeat;
+        let repeat = values.repeat;
         let (horizontal, vertical_rule) = (repeat.0, repeat.1);
         let (iw, ih) = (image_w, image_h);
         let middle_source = (iw - left.slice - right.slice, ih - top.slice - bottom.slice);

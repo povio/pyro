@@ -408,6 +408,14 @@ impl DocumentMutator<'_> {
             self.restyle_siblings_for_attribute_change(node_id, &name, Some(value));
         }
 
+        // pyro: a `<style>`'s `media` is its sheet's media list (`process_style_element`).
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("style"))
+        {
+            self.style_nodes.insert(node_id);
+        }
+
         if name.local == local_name!("id") && node_is_in_document {
             if let Some(old_id) = self.doc.nodes[node_id]
                 .element_data()
@@ -553,6 +561,8 @@ impl DocumentMutator<'_> {
             self.load_linked_stylesheet(node_id);
         } else if (tag, attr) == tag_and_attr!("iframe", "src")
             || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
+            || (tag, attr) == tag_and_attr!("object", "srcdoc")
+            || (tag, attr) == tag_and_attr!("embed", "srcdoc")
         {
             self.load_iframe(node_id);
         }
@@ -594,6 +604,14 @@ impl DocumentMutator<'_> {
 
             self.restyle_for_attribute_change(node_id, &name.local);
             self.restyle_siblings_for_attribute_change(node_id, &name, None);
+        }
+
+        // pyro: without its `media`, a `<style>`'s sheet is for all media again.
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("style"))
+        {
+            self.style_nodes.insert(node_id);
         }
 
         if name.local == local_name!("id") && node_is_in_document {
@@ -698,6 +716,10 @@ impl DocumentMutator<'_> {
         } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
             // Fall back to loading from the `src` attribute (if any)
             self.load_iframe(node_id);
+        } else if (tag, attr) == tag_and_attr!("object", "srcdoc") || (tag, attr) == tag_and_attr!("embed", "srcdoc") {
+            // pyro: the object's frame document is gone: its image or fallback again.
+            self.remove_sub_document(node_id);
+            self.load_image(node_id);
         } else if (tag, attr) == tag_and_attr!("object", "data") || (tag, attr) == tag_and_attr!("object", "type") {
             // pyro: an `<object>` without its image shows its fallback again (`load_image`).
             self.load_image(node_id);
@@ -1591,6 +1613,12 @@ impl<'doc> DocumentMutator<'doc> {
                 }
                 _ if has_custom_widget => {}
                 "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
+                // pyro: candidates for `<meta name=color-scheme>` (`update_page_color_scheme`).
+                "meta" => {
+                    if !doc.meta_nodes.contains(&node_id) {
+                        doc.meta_nodes.push(node_id);
+                    }
+                }
                 "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
                 // pyro: a `<video>` paints its poster image (no
                 // video frame is ever decoded).
@@ -1604,14 +1632,24 @@ impl<'doc> DocumentMutator<'doc> {
                         .push(SpecialOp::ProcessButtonInput(node_id));
                     self.form_nodes.insert(node_id);
                 }
-                // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does (nested
-                // documents and plugins in it are not done).
+                // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does, or the frame
+                // document the render snapshot gives it (`srcdoc`) as an iframe does (plugins are
+                // not done).
+                "embed" if element.attr(local_name!("srcdoc")).is_some() => {
+                    self.eager_op_queue.push(SpecialOp::LoadIframe(node_id))
+                }
                 "embed" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
                 "iframe" => self.eager_op_queue.push(SpecialOp::LoadIframe(node_id)),
                 // pyro: an `<object>` loads the image its `data` names (`load_image`), and is a
                 // form-associated element like those below.
                 "object" => {
-                    self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+                    // pyro: an `<object>` the render snapshot gives a frame document (`srcdoc`)
+                    // shows it as an iframe does.
+                    if element.attr(local_name!("srcdoc")).is_some() {
+                        self.eager_op_queue.push(SpecialOp::LoadIframe(node_id));
+                    } else {
+                        self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+                    }
                     self.eager_op_queue
                         .push(SpecialOp::ProcessButtonInput(node_id));
                     self.form_nodes.insert(node_id);
@@ -1839,10 +1877,12 @@ impl<'doc> DocumentMutator<'doc> {
         } else {
             local_name!("src")
         };
-        if object.is_some_and(|e| {
+        let object_without_image = object.is_some_and(|e| {
             !crate::layout::replaced::object_loads_image(e)
                 || e.attr(local_name!("data")).is_none_or(|data| data.trim().is_empty())
-        }) {
+        });
+        let object = object.is_some();
+        if object_without_image {
             let node = &mut self.doc.nodes[target_id];
             let had_image = match node.element_data_mut() {
                 Some(element) if matches!(element.special_data, SpecialElementData::Image(_)) => {
@@ -1871,6 +1911,27 @@ impl<'doc> DocumentMutator<'doc> {
             }
             return;
         }
+        // pyro: an `<img>` showing its alt text (`ElementData::image_broken`) is an image again
+        // while it loads a new source; one with no usable source shows its alt text.
+        let is_img = node.element_data().is_some_and(|e| e.name.local == local_name!("img"));
+        let usable = node.attr(attr.clone()).filter(|src| !src.is_empty()).is_some_and(|src| self.doc.resolve_url(src).is_some());
+        if is_img && node.element_data().is_some_and(|e| e.image_broken) && usable {
+            let alt_children = std::mem::take(&mut self.doc.nodes[target_id].children);
+            for child in alt_children {
+                self.doc.remove_node_from_tree(child);
+            }
+            if let Some(element) = self.doc.nodes[target_id].element_data_mut() {
+                element.image_broken = false;
+                element.image_failed = false;
+            }
+            self.doc.nodes[target_id].clear_layout_cache();
+            self.doc.nodes[target_id].insert_damage(ALL_DAMAGE);
+        }
+        if is_img && !usable {
+            self.doc.show_image_alt_text(target_id);
+            return;
+        }
+        let node = &self.doc.nodes[target_id];
         if let Some(raw_src) = node.attr(attr) {
             if !raw_src.is_empty() {
                 let Some(src) = self.doc.resolve_url(raw_src) else {
@@ -1883,7 +1944,7 @@ impl<'doc> DocumentMutator<'doc> {
                     #[cfg(feature = "tracing")]
                     tracing::info!("Loading image {src_string} from cache");
                     // pyro: an `<object>` shows only some images (`replaced::object_shows_image`).
-                    if object.is_some() && !crate::layout::replaced::object_shows_image(cached_image) {
+                    if object && !crate::layout::replaced::object_shows_image(cached_image) {
                         return;
                     }
                     let node = &mut self.doc.nodes[target_id];

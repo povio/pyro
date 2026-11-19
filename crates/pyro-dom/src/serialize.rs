@@ -378,6 +378,15 @@ impl Dom {
                             escape(out, &a.value, true);
                             out.push('"');
                         }
+                        // HTML fragment serialization: an is value without an `is` attribute is
+                        // written as one.
+                        if let Some(is) = &e.is_value {
+                            if !e.attrs.iter().any(|a| a.name.ns == ns!() && &*a.name.local == "is") {
+                                out.push_str(" is=\"");
+                                escape(out, is, true);
+                                out.push('"');
+                            }
+                        }
                         out.push('>');
                         if e.is_html() && is_void(&e.name.local) {
                             continue;

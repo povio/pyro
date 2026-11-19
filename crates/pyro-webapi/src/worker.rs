@@ -26,9 +26,9 @@
 //! reply during template boot waits until then.
 //!
 //! Gaps (explicit): `{type: 'module'}` throws NotSupportedError on the system
-//! JavaScriptCore framework (module workers need the patched build); `SharedWorker`
-//! and `ServiceWorker` are undefined so feature detection takes the no-worker
-//! path; workers cannot start workers. ArrayBuffers and MessagePorts transfer. See
+//! JavaScriptCore framework (module workers need the patched build);
+//! workers cannot start workers. `SharedWorker` is `shared_worker`, on this
+//! machinery. ArrayBuffers and MessagePorts transfer. See
 //! docs/webapi/WORKER.md.
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -58,7 +58,7 @@ pub(crate) const MAX_QUEUED_BYTES: usize = 64 * 1024 * 1024;
 
 /// A template process: workers wait for the fork (see the module docs).
 static HOLD: AtomicBool = AtomicBool::new(false);
-static NEXT_WORKER: AtomicU64 = AtomicU64::new(1);
+pub(crate) static NEXT_WORKER: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
     /// This browser thread's live workers, for tasks posted back to it.
@@ -165,7 +165,7 @@ pub(crate) struct Shared {
     /// Set by the worker thread once its VM exists.
     pub(crate) terminate: Mutex<Option<TerminateHandle>>,
     /// Message bytes on their way to the worker and to the page.
-    down_bytes: AtomicUsize,
+    pub(crate) down_bytes: AtomicUsize,
     pub(crate) up_bytes: AtomicUsize,
 }
 
@@ -173,6 +173,8 @@ pub(crate) struct Shared {
 pub(crate) enum Early {
     Message(WireMessage),
     Inspect(InspectTask),
+    /// A document connects to a shared worker (its port in the message).
+    Connect(WireMessage),
 }
 
 /// Runs on the worker's thread between its tasks.
@@ -279,6 +281,7 @@ impl WorkerInner {
                     let _ = handle.post(move |state| match item {
                         Early::Message(message) => state.receive(message),
                         Early::Inspect(task) => state.inspect(task),
+                        Early::Connect(message) => state.connect(message),
                     });
                 }
                 *self.state.borrow_mut() = State::Running(handle);
@@ -394,13 +397,15 @@ pub(crate) fn fire_message(s: &Scope<'_>, page: &Rc<PageDom>, target: TargetKey,
 /// Runs on the page's thread, as a task of its loop.
 pub(crate) fn deliver_up(id: u64, up: Up) {
     let worker = LIVE.with(|live| live.borrow().get(&id).and_then(Weak::upgrade));
-    if let Some(worker) = worker {
-        worker.receive(up);
+    match worker {
+        Some(worker) => worker.receive(up),
+        None => crate::shared_worker::deliver_up(id, up),
     }
 }
 
 /// `PageDom::dispose`: the document's workers end with it.
 pub(crate) fn dispose(page: &PageDom) {
+    crate::shared_worker::dispose(page);
     if page.workers.borrow().is_empty() {
         return;
     }
@@ -416,7 +421,7 @@ fn origin_of(url: &pyro_net::Url) -> String {
 
 /// HTML "run a worker" fetches same-origin scripts only; `data:` runs with an
 /// opaque origin and a `blob:` URL carries its creator's.
-fn check_script_url(page: &PageDom, s: &Scope<'_>, input: &str, url: &pyro_net::Url) -> JsResult<()> {
+pub(crate) fn check_script_url(page: &PageDom, s: &Scope<'_>, input: &str, url: &pyro_net::Url) -> JsResult<()> {
     let document = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
     let document = pyro_net::Url::parse(&document).ok();
     let scheme = url.scheme();

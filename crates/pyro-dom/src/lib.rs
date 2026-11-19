@@ -4,12 +4,14 @@
 
 pub mod animation;
 mod attr_node;
+pub mod color_well;
 pub mod computed;
 pub mod direction;
 pub mod dom;
 pub mod error;
 pub mod events;
 mod flow_font;
+pub mod font_face;
 mod focus_nav;
 pub mod forms;
 pub(crate) mod gecko_only;
@@ -23,6 +25,7 @@ pub mod custom;
 mod internals;
 mod moving;
 mod nonce;
+pub use nonce::CspPolicy;
 pub mod picture;
 pub mod prescan;
 mod details;

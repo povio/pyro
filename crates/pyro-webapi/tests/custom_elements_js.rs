@@ -344,3 +344,63 @@ fn define_upgrades_the_elements_of_shadow_trees() {
         "true:true"
     );
 }
+
+/// A `connectedCallback` that connects another element of its own kind nests without end in
+/// HTML (each insertion runs its reactions before it returns); it ends as on a browser's stack
+/// overflow, at a fixed depth, instead of running forever (WPT many-slots-crash).
+#[test]
+fn self_inserting_connected_callbacks_end() {
+    let e = env(PAGE);
+    let r = &e.main;
+    let calls = eval(
+        r,
+        "var calls = 0; customElements.define('x-rec', class extends HTMLElement { \
+           connectedCallback() { calls++; this.attachShadow({ mode: 'open' }).appendChild(document.createElement('x-rec')); } \
+         }); document.body.appendChild(document.createElement('x-rec')); calls",
+    );
+    assert_eq!(calls, "256");
+}
+
+/// Customized built-in elements: `define(name, C, {extends})`, `new C()`, `createElement(local,
+/// {is})` (an is value, no `is` attribute; serialized as one), upgrade of an element whose is value
+/// names the definition, the HTML element constructor checks, and the autonomous definition of a
+/// local name winning over an is value.
+#[test]
+fn customized_built_in_elements() {
+    let e = env("<!doctype html><html><body><button is=x-late id=late></button></body></html>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            "class XB extends HTMLButtonElement { constructor() { super(); this.made = true; } }; \
+             customElements.define('x-b', XB, { extends: 'button' }); \
+             const a = new XB(); const b = document.createElement('button', { is: 'x-b' }); \
+             [a.localName, a instanceof XB, a instanceof HTMLButtonElement, a.outerHTML, b instanceof XB, b.made, \
+              b.hasAttribute('is'), b.outerHTML].join('|')"
+        ),
+        "button|true|true|<button is=\"x-b\"></button>|true|true|false|<button is=\"x-b\"></button>"
+    );
+    // The wrong interface's constructor, `extends` naming a custom or unknown element.
+    assert_eq!(
+        eval(
+            r,
+            "class Bad extends HTMLDivElement {}; customElements.define('x-bad', Bad, { extends: 'button' }); \
+             const out = []; try { new Bad(); out.push('no throw'); } catch (e) { out.push(e.name); } \
+             for (const x of ['x-other', 'bogus']) { try { customElements.define('x-' + x + '-c', class extends HTMLElement {}, { extends: x }); out.push('ok'); } catch (e) { out.push(e.name); } } \
+             out.join('|')"
+        ),
+        "TypeError|NotSupportedError|NotSupportedError"
+    );
+    // Upgrade on definition; an autonomous definition of the local name comes first.
+    assert_eq!(
+        eval(
+            r,
+            "class Late extends HTMLButtonElement {}; customElements.define('x-late', Late, { extends: 'button' }); \
+             class Auto extends HTMLElement {}; class IsC extends HTMLElement {}; \
+             customElements.define('x-auto', Auto); customElements.define('x-isc', IsC); \
+             const el = document.createElement('x-auto', { is: 'x-isc' }); \
+             [document.getElementById('late') instanceof Late, el instanceof Auto].join('|')"
+        ),
+        "true|true"
+    );
+}

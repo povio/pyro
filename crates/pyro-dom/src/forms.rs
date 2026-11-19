@@ -131,14 +131,7 @@ fn sanitize(ty: InputType, v: &str) -> String {
         DateTimeLocal => {
             datetime::parse_local_datetime(v).and_then(datetime::format_local_datetime).unwrap_or_default()
         }
-        Color => {
-            let t = v;
-            if t.len() == 7 && t.starts_with('#') && t[1..].bytes().all(|b| b.is_ascii_hexdigit()) {
-                t.to_ascii_lowercase()
-            } else {
-                "#000000".to_owned()
-            }
-        }
+        Color => crate::color_well::sanitize(v, false, false),
         _ => v.to_owned(),
     }
 }
@@ -728,9 +721,13 @@ impl Dom {
                         // depends on min/max/step: sanitized on read.
                         Some(v) if ty.has_length_limits() => v.clone(),
                         Some(v) if ty == InputType::Range => self.range_value(i, v),
+                        Some(v) if ty == InputType::Color => self.color_value(i, v),
                         Some(v) => sanitize(ty, v),
                         None if ty == InputType::Range => {
                             self.range_value(i, e.attr_local(&local_name!("value")).unwrap_or(""))
+                        }
+                        None if ty == InputType::Color => {
+                            self.color_value(i, e.attr_local(&local_name!("value")).unwrap_or(""))
                         }
                         None => sanitize(ty, e.attr_local(&local_name!("value")).unwrap_or("")),
                     },
@@ -769,7 +766,11 @@ impl Dom {
                 let ty = self.input_type_idx(i);
                 match ty.value_mode() {
                     ValueMode::Value => {
-                        let v = if ty == InputType::Range { self.range_value(i, v) } else { sanitize(ty, v) };
+                        let v = match ty {
+                            InputType::Range => self.range_value(i, v),
+                            InputType::Color => self.color_value(i, v),
+                            _ => sanitize(ty, v),
+                        };
                         let changed = self.value(id)? != v;
                         let end = utf16_len(&v);
                         let c = self.control_state_mut(id)?;
@@ -865,6 +866,16 @@ impl Dom {
             _ => min.or_else(|| self.attr_number(i, ty, &local_name!("value"))).unwrap_or(default_base),
         };
         StepRange { min, max, step, base }
+    }
+
+    /// Color's value sanitization: in the element's `colorspace`, with
+    /// its alpha channel when it has an `alpha` attribute. Sanitized on read
+    /// too, so changing either attribute changes the value.
+    fn color_value(&self, i: u32, raw: &str) -> String {
+        let Some(e) = self.n(i).element() else { return sanitize(InputType::Color, raw) };
+        let alpha = e.attr_local(&LocalName::from("alpha")).is_some();
+        let p3 = e.attr_local(&LocalName::from("colorspace")).is_some_and(|c| c.eq_ignore_ascii_case("display-p3"));
+        crate::color_well::sanitize(raw, alpha, p3)
     }
 
     /// Range's value sanitization: a valid floating-point number (else the
@@ -1446,21 +1457,42 @@ impl Dom {
         Ok(())
     }
 
-    /// `ValidityState` flags (constraint validation, HTML §4.10.20.1).
+    /// `ValidityState` flags (constraint validation, HTML §4.10.20.1) of a
+    /// candidate for constraint validation: none for an element that is
+    /// barred from it (`:invalid`, `checkValidity()`).
     pub fn validity(&self, id: NodeId) -> DomResult<Validity> {
-        let mut v = Validity::default();
         if !self.will_validate(id)? {
-            return Ok(v);
+            return Ok(Validity::default());
         }
+        self.validity_flags(id)
+    }
+
+    /// The flags a `ValidityState` object reports: computed for a disabled,
+    /// read-only or `<datalist>` control too (it suffers from a mismatch
+    /// whether or not it is barred), except that only a mutable control
+    /// suffers from being missing.
+    pub fn validity_flags(&self, id: NodeId) -> DomResult<Validity> {
+        let mut v = Validity::default();
         let i = self.check(id)?;
         if self.is_face_idx(i) {
-            return Ok(self.face_validity_idx(i));
+            return Ok(if self.will_validate(id)? { self.face_validity_idx(i) } else { v });
+        }
+        let Some(local) = self.html_local(i) else { return Ok(v) };
+        let listed = match &**local {
+            "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
+            "select" | "textarea" => true,
+            "button" => self.button_type_is_submit_idx(i),
+            _ => false,
+        };
+        if !listed {
+            return Ok(v);
         }
         let e = self.n(i).element().unwrap();
+        let mutable = !self.is_disabled_idx(i) && !(e.attr_local(&local_name!("readonly")).is_some() && &**local != "select");
         let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
         v.custom_error =
             e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
-        let required = e.attr_local(&local_name!("required")).is_some();
+        let required = mutable && e.attr_local(&local_name!("required")).is_some();
         let value = self.value(id)?;
         match local.as_str() {
             "input" => {
@@ -1585,5 +1617,125 @@ pub struct Validity {
 impl Validity {
     pub fn valid(&self) -> bool {
         *self == Validity::default()
+    }
+}
+
+/// A field name's autofill category and the most tokens an `autocomplete`
+/// value ending in it may hold (HTML "determine a field's category").
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AutofillCategory {
+    Off,
+    Automatic,
+    Normal,
+    Contact,
+    Credential,
+}
+
+fn autofill_category(field: &str) -> Option<(AutofillCategory, usize)> {
+    use AutofillCategory::*;
+    Some(match field {
+        "off" => (Off, 1),
+        "on" => (Automatic, 1),
+        "name" | "honorific-prefix" | "given-name" | "additional-name" | "family-name" | "honorific-suffix"
+        | "nickname" | "organization-title" | "username" | "new-password" | "current-password" | "one-time-code"
+        | "organization" | "street-address" | "address-line1" | "address-line2" | "address-line3"
+        | "address-level4" | "address-level3" | "address-level2" | "address-level1" | "country"
+        | "country-name" | "postal-code" | "cc-name" | "cc-given-name" | "cc-additional-name" | "cc-family-name"
+        | "cc-number" | "cc-exp" | "cc-exp-month" | "cc-exp-year" | "cc-csc" | "cc-type"
+        | "transaction-currency" | "transaction-amount" | "language" | "bday" | "bday-day" | "bday-month"
+        | "bday-year" | "sex" | "url" | "photo" => (Normal, 3),
+        "tel" | "tel-country-code" | "tel-national" | "tel-area-code" | "tel-local" | "tel-local-prefix"
+        | "tel-local-suffix" | "tel-extension" | "email" | "impp" => (Contact, 4),
+        "webauthn" => (Credential, 5),
+        _ => return None,
+    })
+}
+
+/// The IDL-exposed autofill value of an `autocomplete` attribute (what the
+/// `autocomplete` IDL attribute of `input`, `select` and `textarea` returns):
+/// its tokens lowercased and validated by the autofill processing model, or
+/// "" when they are not a valid autofill detail. `anchor` is true for an
+/// `<input type=hidden>`, whose attribute wears the autofill anchor mantle
+/// (`on` and `off` are not allowed).
+pub fn autofill_idl_value(attr: Option<&str>, anchor: bool) -> String {
+    use AutofillCategory::*;
+    let tokens: Vec<String> =
+        attr.unwrap_or("").split(|c: char| c.is_ascii_whitespace()).filter(|t| !t.is_empty()).map(str::to_ascii_lowercase).collect();
+    let Some(mut index) = tokens.len().checked_sub(1) else { return String::new() };
+    let Some((mut category, max)) = autofill_category(&tokens[index]) else { return String::new() };
+    if tokens.len() > max {
+        return String::new();
+    }
+    match category {
+        Off | Automatic if anchor => return String::new(),
+        Off => return "off".into(),
+        Automatic => return "on".into(),
+        _ => {}
+    }
+    let mut credential = false;
+    if category == Credential {
+        credential = true;
+        if index == 0 {
+            return String::new();
+        }
+        index -= 1;
+        match autofill_category(&tokens[index]) {
+            Some((c @ (Normal | Contact), _)) => category = c,
+            _ => return String::new(),
+        }
+    }
+    let mut parts = vec![tokens[index].as_str()];
+    let mut rest = &tokens[..index];
+    if category == Contact {
+        if let Some((last, before)) = rest.split_last() {
+            if matches!(last.as_str(), "home" | "work" | "mobile" | "fax" | "pager") {
+                parts.push(last);
+                rest = before;
+            }
+        }
+    }
+    if let Some((last, before)) = rest.split_last() {
+        if matches!(last.as_str(), "shipping" | "billing") {
+            parts.push(last);
+            rest = before;
+        }
+    }
+    if let Some((last, before)) = rest.split_last() {
+        if last.starts_with("section-") {
+            parts.push(last);
+            rest = before;
+        }
+    }
+    if !rest.is_empty() {
+        return String::new();
+    }
+    parts.reverse();
+    if credential {
+        parts.push("webauthn");
+    }
+    parts.join(" ")
+}
+
+#[cfg(test)]
+mod autofill_tests {
+    use super::autofill_idl_value as v;
+
+    #[test]
+    fn autofill_idl_value_follows_the_processing_model() {
+        assert_eq!(v(None, false), "");
+        assert_eq!(v(Some("  \n"), false), "");
+        assert_eq!(v(Some(" ON\t"), false), "on");
+        assert_eq!(v(Some("off"), true), "");
+        assert_eq!(v(Some("foobar"), false), "");
+        assert_eq!(v(Some(" HOME\ntel"), false), "home tel");
+        assert_eq!(v(Some("billing  work  email"), false), "billing work email");
+        assert_eq!(v(Some("  section-FOO  bday"), false), "section-foo bday");
+        assert_eq!(v(Some("work name"), false), "");
+        assert_eq!(v(Some("foo section-foo billing name"), false), "");
+        assert_eq!(v(Some("\tusername webauthn"), false), "username webauthn");
+        assert_eq!(v(Some("  section-LOGIN  shipping work tel webauthn "), false), "section-login shipping work tel webauthn");
+        assert_eq!(v(Some("foo section-bar billing work tel webauthn"), false), "");
+        assert_eq!(v(Some("webauthn"), false), "");
+        assert_eq!(v(Some("on webauthn"), false), "");
     }
 }

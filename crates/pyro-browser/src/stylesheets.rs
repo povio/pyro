@@ -49,6 +49,9 @@ struct StyleImports {
     script_blocking: bool,
     /// Dropping one stops its request.
     cancels: Vec<Option<ResourceCancellation>>,
+    /// The sheet is a `<link rel=stylesheet>`'s: any import that fails or is not CSS, however
+    /// deep, makes its event `error` (as browsers do for links).
+    link: bool,
 }
 
 #[derive(Default)]
@@ -273,6 +276,7 @@ impl Browser {
     ) {
         self.drain_dom_resources(page);
         let Some(mut state) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
+        let document_url = state.main_frame.url.clone();
         let sheets = &mut state.stylesheets;
         let Some(sheet) = sheets.entries.get_mut(&node).filter(|s| s.generation == generation && s.pending) else {
             return;
@@ -282,11 +286,13 @@ impl Browser {
         }
         sheet.pending = false;
         let environment = link_environment(bindings, node);
+        let quirks = bindings.dom.borrow().is_quirks_mode(bindings.document());
+        let sheet_url = result.as_ref().map(|r| r.url.clone()).unwrap_or_default();
         let text = result
             .ok()
             .filter(|r| {
                 (200..300).contains(&r.status)
-                    && r.mime.eq_ignore_ascii_case("text/css")
+                    && stylesheet_mime_ok(r, quirks, &document_url)
                     && r.body.len() <= MAX_SHEET_BYTES
             })
             .map(|r| {
@@ -295,6 +301,12 @@ impl Browser {
             });
         let text = text.filter(|t| t.len() <= MAX_SHEET_BYTES && t.len() <= MAX_DOCUMENT_BYTES - sheets.bytes);
         let ok = text.is_some();
+        // The `@import`s the sheet starts with: its event waits for them (HTML: a sheet's
+        // critical subresources).
+        let imports: Vec<String> = text.as_deref().map_or_else(Vec::new, |text| {
+            let base = url::Url::parse(&sheet_url).ok();
+            pyro_dom::cssom::leading_imports(text).iter().filter_map(|href| Some(base.as_ref()?.join(href).ok()?.to_string())).collect()
+        });
         if let Some(text) = text {
             sheet.bytes = text.len();
             sheets.bytes += text.len();
@@ -304,6 +316,36 @@ impl Browser {
         }
         drop(state);
         bindings.unblock_rendering(node);
+        if !imports.is_empty() && bindings.dom.borrow_mut().add_ref(node).is_ok() {
+            let hold = Rc::new(ResourceNode { dom: bindings.dom.clone(), node });
+            let generation = {
+                let Some(mut doc) = self.doc_mut(page) else { return };
+                let sheets = &mut doc.stylesheets;
+                sheets.generation += 1;
+                let generation = sheets.generation;
+                sheets.style_imports.insert(
+                    node,
+                    StyleImports {
+                        _node: hold,
+                        generation,
+                        pending: 0,
+                        started: 0,
+                        failed: false,
+                        script_blocking: false,
+                        cancels: Vec::new(),
+                        link: true,
+                    },
+                );
+                generation
+            };
+            let environment = document_encoding(bindings).unwrap_or_default();
+            for url in imports {
+                self.fetch_style_import(page, loader, node, generation, url, 1, &sheet_url, &environment);
+            }
+            self.style_imports_settled(page, loader, node);
+            self.stylesheets_changed(page);
+            return;
+        }
         // This callback is already a later owner-thread task. No DOM/state
         // borrow survives dispatch into JavaScript.
         pyro_webapi::lifecycle::resource_loaded(bindings, node, ok);
@@ -440,6 +482,7 @@ impl Browser {
                     failed: false,
                     script_blocking,
                     cancels: Vec::new(),
+                    link: false,
                 },
             );
             generation
@@ -551,6 +594,8 @@ impl Browser {
         let ok = result.as_ref().is_ok_and(|r| (200..300).contains(&r.status));
         {
             let Some(mut doc) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
+            let quirks = doc.main_frame.page_dom.as_ref().is_some_and(|b| b.dom.borrow().is_quirks_mode(b.document()));
+            let document_url = doc.main_frame.url.clone();
             let Some(entry) = doc.stylesheets.style_imports.get_mut(&node).filter(|e| e.generation == generation)
             else {
                 return;
@@ -559,11 +604,21 @@ impl Browser {
                 cancel.disarm();
             }
             entry.pending -= 1;
-            // Chromium: a failed import of an imported sheet still loads it.
-            entry.failed |= !ok && depth == 1;
+            // Chromium: a failed import of an imported sheet still loads a `<style>`; a link's
+            // fails with any import that fails or is not CSS.
+            let css = result.as_ref().is_ok_and(|r| stylesheet_mime_ok(r, quirks, &document_url));
+            // A `<style>`'s own import also fails on a type that is not CSS (a text/plain sheet).
+            entry.failed |= if entry.link { !ok || !css } else { (!ok || !css) && depth == 1 };
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
+            // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
+            if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
+                bindings.provide_imported_sheet(url, &text);
+                if r.url != url {
+                    bindings.provide_imported_sheet(&r.url, &text);
+                }
+            }
             // The page's layouts take this sheet rather than fetching it
             // again (they read `file:` and `data:` URLs themselves), decoded
             // (they cannot know its environment encoding).
@@ -628,4 +683,24 @@ impl Browser {
             b.stylesheets_changed(page);
         });
     }
+}
+
+/// Whether a `<link rel=stylesheet>` response may be a style sheet (HTML "process the linked
+/// resource", as browsers apply it): `text/css`; with `X-Content-Type-Options: nosniff` only
+/// that. Without nosniff, a missing or unparsable Content-Type is taken as CSS, and another
+/// valid type only by a quirks-mode document for a same-origin sheet.
+fn stylesheet_mime_ok(r: &Resource, quirks: bool, document_url: &str) -> bool {
+    let mime = r.mime.trim();
+    if mime.eq_ignore_ascii_case("text/css") {
+        return true;
+    }
+    if r.nosniff {
+        return false;
+    }
+    let valid = mime.split_once('/').is_some_and(|(t, s)| !t.trim().is_empty() && !s.trim().is_empty());
+    if !valid {
+        return true;
+    }
+    let origin = |u: &str| url::Url::parse(u).ok().map(|u| u.origin());
+    quirks && origin(&r.url).is_some_and(|o| Some(o) == origin(document_url))
 }

@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..0bfbc31d 100644
+index 3cd3e713..0bcdac64 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -13,10 +13,32 @@ index 3cd3e713..0bfbc31d 100644
  };
  use crate::tree::{Baselines, CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, RunMode, SizingMode};
  use crate::util::debug::debug_log;
-@@ -202,6 +202,25 @@ impl BlockContext<'_> {
+@@ -202,6 +202,47 @@ impl BlockContext<'_> {
          pos
      }
  
++    /// pyro: [`Self::place_floated_box`] for a float with a `shape-outside` float area: `bands`
++    /// as for [`FloatContext::shape_float`] (rows of the margin box with the shape's horizontal
++    /// extent in each).
++    #[allow(clippy::too_many_arguments)]
++    pub fn place_shaped_floated_box(
++        &mut self,
++        id: u64,
++        floated_box: Size<f32>,
++        min_y: f32,
++        direction: FloatDirection,
++        clear: Clear,
++        adjoins_unresolved_strut: bool,
++        bands: &[(f32, f32, Option<(f32, f32)>)],
++    ) -> Point<f32> {
++        let before = self.bfc.float_context.line_insets_between(min_y + self.y_offset, f32::INFINITY, direction);
++        let pos = self.place_floated_box(id, floated_box, min_y, direction, clear, adjoins_unresolved_strut);
++        let abs = Point { x: pos.x + self.insets.left, y: pos.y + self.y_offset };
++        let cb_inset = self.content_box_insets[direction];
++        self.bfc.float_context.shape_float(abs, floated_box, direction, bands, &before, cb_inset);
++        pos
++    }
++
 +    /// pyro: put the margin box of an initial letter into the context (see
 +    /// [`FloatContext::place_initial_letter`]); `location` is its top-left corner relative to
 +    /// this block, as positions returned by [`Self::place_floated_box`] are.
@@ -39,7 +61,7 @@ index 3cd3e713..0bfbc31d 100644
      /// A mark of the floats placed in the Block Formatting Context so far, for [`Self::floats_placed_since`]
      pub fn float_mark(&self) -> FloatMark {
          let float_context = &self.bfc.float_context;
-@@ -366,6 +385,22 @@ struct BlockItem {
+@@ -366,6 +407,22 @@ struct BlockItem {
  
      /// The base size of this item
      size: Size<Option<f32>>,
@@ -62,7 +84,7 @@ index 3cd3e713..0bfbc31d 100644
      /// The minimum allowable size of this item
      min_size: Size<Option<f32>>,
      /// The maximum allowable size of this item
-@@ -403,6 +438,15 @@ struct BlockItem {
+@@ -403,6 +460,15 @@ struct BlockItem {
      /// The computed "static position" of this item. The static position is the position
      /// taking into account padding, border, margins, and scrollbar_gutters but not inset
      static_position: Point<f32>,
@@ -78,7 +100,7 @@ index 3cd3e713..0bfbc31d 100644
      /// Whether margins can be collapsed through this item
      can_be_collapsed_through: bool,
  
-@@ -415,6 +459,85 @@ struct BlockItem {
+@@ -415,6 +481,85 @@ struct BlockItem {
      oof_candidates: OofCandidates,
  }
  
@@ -164,7 +186,7 @@ index 3cd3e713..0bfbc31d 100644
  /// Computes the layout of [`LayoutPartialTree`] according to the block layout algorithm
  pub fn compute_block_layout(
      tree: &mut impl LayoutBlockContainer,
-@@ -443,23 +566,18 @@ pub fn compute_block_layout(
+@@ -443,23 +588,18 @@ pub fn compute_block_layout(
      let box_sizing_adjustment =
          if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
  
@@ -200,7 +222,7 @@ index 3cd3e713..0bfbc31d 100644
      } else {
          Size::NONE
      };
-@@ -472,6 +590,19 @@ pub fn compute_block_layout(
+@@ -472,6 +612,19 @@ pub fn compute_block_layout(
          _ => None,
      });
  
@@ -220,7 +242,7 @@ index 3cd3e713..0bfbc31d 100644
      let styled_based_known_dimensions =
          known_dimensions.or(min_max_definite_size).or(clamped_style_size).maybe_max(padding_border_size);
  
-@@ -497,18 +628,15 @@ pub fn compute_block_layout(
+@@ -497,18 +650,15 @@ pub fn compute_block_layout(
              tree,
              node_id,
              LayoutInput { known_dimensions: styled_based_known_dimensions, ..inputs },
@@ -246,7 +268,7 @@ index 3cd3e713..0bfbc31d 100644
      };
  
      // Layout containment suppresses the box's baseline for baseline-alignment purposes
-@@ -519,11 +647,29 @@ pub fn compute_block_layout(
+@@ -519,11 +669,29 @@ pub fn compute_block_layout(
      output
  }
  
@@ -276,7 +298,7 @@ index 3cd3e713..0bfbc31d 100644
      #[allow(unused_mut)] mut block_ctx: &mut BlockContext<'_>,
  ) -> LayoutOutput {
      let LayoutInput {
-@@ -537,7 +683,9 @@ fn compute_inner(
+@@ -537,7 +705,9 @@ fn compute_inner(
      let aspect_ratio = style.aspect_ratio();
      let padding = raw_padding.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
      let border = raw_border.resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
@@ -287,7 +309,7 @@ index 3cd3e713..0bfbc31d 100644
  
      // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
      // However, the axis are switched (transposed) because a node that scrolls vertically needs
-@@ -562,21 +710,54 @@ fn compute_inner(
+@@ -562,21 +732,54 @@ fn compute_inner(
  
      let box_sizing_adjustment =
          if style.box_sizing() == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
@@ -357,7 +379,7 @@ index 3cd3e713..0bfbc31d 100644
  
      // css-sizing-4: a definite size in one axis transfers through `aspect-ratio`
      // to make the other definite. Deriving it from `known_dimensions` self-gates
-@@ -585,13 +766,38 @@ fn compute_inner(
+@@ -585,13 +788,38 @@ fn compute_inner(
      // while probing intrinsic sizes, so measure passes stay content-based. Only a
      // newly-filled axis is adopted (and clamped); an incoming known size is left
      // as the parent resolved it (re-clamping would undo padding/border overrides).
@@ -399,7 +421,7 @@ index 3cd3e713..0bfbc31d 100644
      };
      let container_content_box_size = percentage_basis_dimensions.maybe_sub(content_box_inset.sum_axes());
  
-@@ -631,8 +837,12 @@ fn compute_inner(
+@@ -631,8 +859,12 @@ fn compute_inner(
          || border.bottom > 0.0;
  
      let text_align = style.text_align();
@@ -412,7 +434,7 @@ index 3cd3e713..0bfbc31d 100644
      drop(style);
  
      // 1. Generate items
-@@ -641,9 +851,30 @@ fn compute_inner(
+@@ -641,9 +873,30 @@ fn compute_inner(
      // 2. Compute container width
      let container_outer_width = known_dimensions.width.unwrap_or_else(|| {
          let available_width = available_space.width.maybe_sub(content_box_inset.horizontal_axis_sum());
@@ -445,7 +467,7 @@ index 3cd3e713..0bfbc31d 100644
      });
  
      // Short-circuit if computing size and both dimensions known
-@@ -656,13 +887,35 @@ fn compute_inner(
+@@ -656,13 +909,35 @@ fn compute_inner(
          return LayoutOutput::from_outer_size(Size { width: container_outer_width, height: 0.0 });
      }
  
@@ -482,7 +504,7 @@ index 3cd3e713..0bfbc31d 100644
  
      // 3. Perform final item layout and return content height
      //
-@@ -683,6 +936,8 @@ fn compute_inner(
+@@ -683,6 +958,8 @@ fn compute_inner(
          first_child_top_margin_set,
          last_child_bottom_margin_set,
          mut first_baseline,
@@ -491,7 +513,7 @@ index 3cd3e713..0bfbc31d 100644
      ) = perform_final_layout_on_in_flow_children(
          tree,
          run_mode,
-@@ -695,10 +950,12 @@ fn compute_inner(
+@@ -695,10 +972,12 @@ fn compute_inner(
          #[cfg(feature = "content_size")]
          resolved_padding,
          text_align,
@@ -504,7 +526,7 @@ index 3cd3e713..0bfbc31d 100644
          #[cfg(feature = "content_size")]
          is_scroll_container,
          block_ctx,
-@@ -714,8 +971,29 @@ fn compute_inner(
+@@ -714,8 +993,29 @@ fn compute_inner(
  
      let container_outer_height = known_dimensions
          .height
@@ -536,7 +558,7 @@ index 3cd3e713..0bfbc31d 100644
      let final_outer_size = Size { width: container_outer_width, height: container_outer_height };
  
      // CSS2 §8.3.1: the bottom margin of a block with `height: auto` collapses with its last
-@@ -741,6 +1019,8 @@ fn compute_inner(
+@@ -741,6 +1041,8 @@ fn compute_inner(
          let free_space = container_inner_height - inflow_content_height;
          let group_offset = compute_block_align_content_offset(align_content, free_space);
          first_baseline = first_baseline.map(|baseline| baseline + group_offset);
@@ -545,7 +567,7 @@ index 3cd3e713..0bfbc31d 100644
          for item in items.iter_mut() {
              if let Some(layout) = item.final_layout.as_mut() {
                  layout.location.y += group_offset;
-@@ -803,7 +1083,11 @@ fn compute_inner(
+@@ -803,7 +1105,11 @@ fn compute_inner(
          size: final_outer_size,
          #[cfg(feature = "content_size")]
          scrollable_overflow_rect: crate::tree::ScrollableOverflow::ZERO,
@@ -558,7 +580,7 @@ index 3cd3e713..0bfbc31d 100644
          top_margin: if own_margins_collapse_with_children.start {
              first_child_top_margin_set
          } else {
-@@ -837,6 +1121,32 @@ fn compute_inner(
+@@ -837,6 +1143,32 @@ fn compute_inner(
          }
      }
  
@@ -591,7 +613,7 @@ index 3cd3e713..0bfbc31d 100644
      // 4. Collect out-of-flow candidates in document order (direct out-of-flow children plus
      // candidates bubbled from in-flow children's subtrees). These are laid out by the
      // out-of-flow positioning pass (`compute_oof_layout`), which runs after this algorithm.
-@@ -848,9 +1158,13 @@ fn compute_inner(
+@@ -848,9 +1180,13 @@ fn compute_inner(
              // child's hypothetical position in the block axis. The child's self-alignment
              // properties determine how it is aligned within that rectangle.
              // <https://www.w3.org/TR/css-position-3/#staticpos-rect>
@@ -608,7 +630,7 @@ index 3cd3e713..0bfbc31d 100644
              };
              let block_area = Line { start: item.static_position.y, end: item.static_position.y };
              // A `justify_self` of `None` takes the container's `justify-items`. Block containers have
-@@ -859,7 +1173,7 @@ fn compute_inner(
+@@ -859,7 +1195,7 @@ fn compute_inner(
                  item.justify_self.unwrap_or(justify_items).resolve_self_relative(item.direction, direction, true);
              let align_self =
                  item.align_self.unwrap_or(AlignItems::NORMAL).resolve_self_relative(item.direction, direction, false);
@@ -617,7 +639,7 @@ index 3cd3e713..0bfbc31d 100644
                  node: item.node_id,
                  order: item.order,
                  position: item.position,
-@@ -931,7 +1245,9 @@ fn compute_inner(
+@@ -931,7 +1267,9 @@ fn compute_inner(
  }
  
  /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
@@ -628,7 +650,7 @@ index 3cd3e713..0bfbc31d 100644
  fn generate_item_list(
      tree: &impl LayoutBlockContainer,
      node: NodeId,
-@@ -962,10 +1278,42 @@ fn generate_item_list(
+@@ -962,10 +1300,42 @@ fn generate_item_list(
              #[cfg(not(feature = "float_layout"))]
              let is_not_floated = true;
  
@@ -673,7 +695,7 @@ index 3cd3e713..0bfbc31d 100644
                  let calc = |val, basis| tree.calc(val, basis);
                  let width = child_style.size().width.maybe_resolve(Some(0.0), calc);
                  let max_width = child_style.max_size().width.maybe_resolve(Some(0.0), calc);
-@@ -982,7 +1330,9 @@ fn generate_item_list(
+@@ -982,7 +1352,9 @@ fn generate_item_list(
                  && is_not_floated
                  && !is_scroll_container
                  && !contain.establishes_independent_formatting_context()
@@ -684,7 +706,7 @@ index 3cd3e713..0bfbc31d 100644
  
              BlockItem {
                  node_id: child_node_id,
-@@ -990,27 +1340,40 @@ fn generate_item_list(
+@@ -990,27 +1362,40 @@ fn generate_item_list(
                  is_table,
                  is_compressible_replaced,
                  min_content_width_cap,
@@ -741,7 +763,7 @@ index 3cd3e713..0bfbc31d 100644
                  overflow,
                  contain,
                  scrollbar_width: child_style.scrollbar_width(),
-@@ -1027,6 +1390,9 @@ fn generate_item_list(
+@@ -1027,6 +1412,9 @@ fn generate_item_list(
                  // Fields to be computed later (for now we initialise with dummy values)
                  computed_size: Size::zero(),
                  static_position: Point::zero(),
@@ -751,7 +773,7 @@ index 3cd3e713..0bfbc31d 100644
                  can_be_collapsed_through: false,
                  final_layout: None,
                  oof_candidates: OofCandidates::new(),
-@@ -1091,35 +1457,62 @@ fn resolve_relative_offset(
+@@ -1091,35 +1479,62 @@ fn resolve_relative_offset(
  }
  
  /// Compute the content-based width in the case that the width of the container is not known
@@ -820,7 +842,7 @@ index 3cd3e713..0bfbc31d 100644
                  Size { width: item_available_width, height: available_space.height },
                  SizingMode::InherentSize,
                  crate::AbsoluteAxis::Horizontal,
-@@ -1136,7 +1529,31 @@ fn determine_content_based_container_width(
+@@ -1136,7 +1551,31 @@ fn determine_content_based_container_width(
                  _ => width,
              }
          });
@@ -852,7 +874,7 @@ index 3cd3e713..0bfbc31d 100644
          let width = f32_max(width, item.padding_border_sum.width) + item_x_margin_sum;
  
          #[cfg(feature = "float_layout")]
-@@ -1156,6 +1573,95 @@ fn determine_content_based_container_width(
+@@ -1156,6 +1595,95 @@ fn determine_content_based_container_width(
      max_child_width
  }
  
@@ -948,7 +970,7 @@ index 3cd3e713..0bfbc31d 100644
  /// Resolve the known dimensions an in-flow block-level item is laid out with
  #[allow(clippy::too_many_arguments)]
  fn block_item_known_dimensions(
-@@ -1172,7 +1678,13 @@ fn block_item_known_dimensions(
+@@ -1172,7 +1700,13 @@ fn block_item_known_dimensions(
  ) -> Size<Option<f32>> {
      // Unless stretched, tables and compressible replaced elements resolve their own width
      // <https://www.w3.org/TR/CSS22/visudet.html#block-replaced-width>
@@ -963,7 +985,7 @@ index 3cd3e713..0bfbc31d 100644
          Size::NONE
      } else {
          // The automatic width of a block-level box whose `justify-self` is neither `normal` nor `stretch`
-@@ -1211,17 +1723,100 @@ fn block_item_known_dimensions(
+@@ -1211,17 +1745,100 @@ fn block_item_known_dimensions(
              children_margins_adjoin_own_edges,
          );
  
@@ -1067,7 +1089,7 @@ index 3cd3e713..0bfbc31d 100644
      }
  }
  
-@@ -1239,13 +1834,15 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1239,13 +1856,15 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      resolved_border: Rect<f32>,
      #[cfg(feature = "content_size")] resolved_padding: Rect<f32>,
      text_align: TextAlign,
@@ -1084,7 +1106,7 @@ index 3cd3e713..0bfbc31d 100644
      // Resolve container_inner_width for sizing child nodes using initial content_box_inset
      let container_inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
      #[cfg(feature = "content_size")]
-@@ -1294,10 +1891,24 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1294,10 +1913,24 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
      let mut active_collapsible_margin_set = CollapsibleMarginSet::ZERO;
      let mut is_collapsing_with_first_margin_set = true;
      let mut first_baseline: Option<f32> = None;
@@ -1109,7 +1131,7 @@ index 3cd3e713..0bfbc31d 100644
  
      #[cfg(feature = "float_layout")]
      let mut has_active_floats = block_ctx.has_active_floats(committed_y_offset);
-@@ -1310,11 +1921,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1310,11 +1943,41 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  Direction::Ltr => resolved_content_box_inset.left,
                  Direction::Rtl => container_outer_width - resolved_content_box_inset.right,
              };
@@ -1153,7 +1175,42 @@ index 3cd3e713..0bfbc31d 100644
              let item_non_auto_margin = item_margin.map(|m| m.unwrap_or(0.0));
              let item_non_auto_x_margin_sum = item_non_auto_margin.horizontal_axis_sum();
  
-@@ -1518,14 +2159,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1377,14 +2040,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+                     committed_y_offset + active_collapsible_margin_set.resolve()
+                 };
+ 
+-                let mut location = block_ctx.place_floated_box(
+-                    item.node_id.into(),
+-                    margin_box,
+-                    y_offset_for_float,
+-                    float_direction,
+-                    item.clear,
+-                    adjoins_unresolved_strut,
+-                );
++                // pyro: a float with a `shape-outside` float area
++                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin) {
++                    Some(bands) => block_ctx.place_shaped_floated_box(
++                        item.node_id.into(),
++                        margin_box,
++                        y_offset_for_float,
++                        float_direction,
++                        item.clear,
++                        adjoins_unresolved_strut,
++                        &bands,
++                    ),
++                    None => block_ctx.place_floated_box(
++                        item.node_id.into(),
++                        margin_box,
++                        y_offset_for_float,
++                        float_direction,
++                        item.clear,
++                        adjoins_unresolved_strut,
++                    ),
++                };
+ 
+                 // Ensure that content that appears after a float does not get positioned before/above the float
+                 //
+@@ -1518,14 +2193,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                          // for the item's border box, which must not overlap any float
                          // The item's height isn't known until it is laid out, so only its styled
                          // (minimum) height is checked against floats below its top edge
@@ -1181,7 +1238,7 @@ index 3cd3e713..0bfbc31d 100644
                          let slot = loop {
                              let slot = block_ctx.find_bfc_slot(
                                  min_y,
-@@ -1536,15 +2189,52 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1536,15 +2223,52 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                                  slot_segment,
                              );
                              let Some(segment_id) = slot.segment_id else { break slot };
@@ -1218,7 +1275,8 @@ index 3cd3e713..0bfbc31d 100644
 +                            if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
 +                                slot_segment = Some(segment_id);
 +                                continue;
-+                            }
+                             }
+-                            slot_segment = Some(segment_id);
 +                            // pyro: the item must not overlap the floats beside any of its height,
 +                            // which it has once laid out in the slot: taller than the slot stays as
 +                            // wide, it is placed again beside the floats of its height (WPT
@@ -1236,13 +1294,12 @@ index 3cd3e713..0bfbc31d 100644
 +                                    height_retries += 1;
 +                                    continue;
 +                                }
-                             }
--                            slot_segment = Some(segment_id);
++                            }
 +                            break slot;
                          };
  
                          // If the item had to move down to avoid floats then it "separates from the
-@@ -1577,6 +2267,12 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1577,6 +2301,12 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
              #[cfg(feature = "float_layout")]
              let clear_threshold = block_ctx.cleared_threshold(item.clear);
@@ -1255,7 +1312,7 @@ index 3cd3e713..0bfbc31d 100644
              #[cfg(feature = "float_layout")]
              let clear_pos = clear_threshold.unwrap_or(f32::NEG_INFINITY);
              #[cfg(not(feature = "float_layout"))]
-@@ -1621,6 +2317,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1621,6 +2351,18 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
              item.oof_candidates = item_layout.oof_candidates.take();
              let final_size = item_layout.size;
  
@@ -1274,7 +1331,7 @@ index 3cd3e713..0bfbc31d 100644
              let top_margin_set = item_layout.top_margin.collapse_with_margin(item_margin.top.unwrap_or(0.0));
              let bottom_margin_set = item_layout.bottom_margin.collapse_with_margin(item_margin.bottom.unwrap_or(0.0));
  
-@@ -1674,7 +2382,6 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1674,7 +2416,6 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                      // adjoining the margin-collapse strut that the item's top margin would collapse into:
                      // if the margins were allowed to collapse they would pull the float down with the item,
                      // so clearance is inserted to separate the two, placing the item just below the float.
@@ -1282,7 +1339,7 @@ index 3cd3e713..0bfbc31d 100644
                      if forced_clearance || hypothetical_y < threshold {
                          has_clearance = true;
                          // Clearance stops the item's top margin collapsing with preceding margins. If those
-@@ -1791,7 +2498,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1791,7 +2532,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  };
                  let align_to_end = match keyword {
                      AlignItemsKeyword::Center => None,
@@ -1295,7 +1352,7 @@ index 3cd3e713..0bfbc31d 100644
                      _ => Some(false),
                  };
                  let offset = match align_to_end {
-@@ -1825,6 +2536,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1825,6 +2570,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  let child_baseline =
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
@@ -1334,7 +1391,7 @@ index 3cd3e713..0bfbc31d 100644
              }
  
              // Used auto margins include float-avoidance offsets, unlike the alignment margins above.
-@@ -1908,6 +2651,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1908,6 +2685,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                  y_offset_for_absolute = committed_y_offset + item_layout.size.height + y_margin_offset;
              } else {
                  committed_y_offset = location.y - inset_offset.y + item_layout.size.height;
@@ -1342,7 +1399,7 @@ index 3cd3e713..0bfbc31d 100644
                  // A self-collapsing item with clearance is not collapsed through (its margins do not collapse
                  // with margins of preceding siblings), but its top and bottom margins still collapse with each
                  // other and with the margins of following siblings.
-@@ -1931,6 +2675,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1931,6 +2709,38 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
          }
      }
  
@@ -1381,7 +1438,7 @@ index 3cd3e713..0bfbc31d 100644
      // The margins of a self-collapsing element with clearance do not collapse with the bottom
      // margin of the parent block: they extend the parent's content height instead of escaping it
      let last_child_bottom_margin_set =
-@@ -1947,5 +2723,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
+@@ -1947,5 +2757,5 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
  
      committed_y_offset += resolved_content_box_inset.bottom + bottom_y_margin_offset;
      let content_height = f32_max(0.0, committed_y_offset);
@@ -1448,7 +1505,7 @@ index 86f630aa..45e5cc51 100644
      let keyword_width = if known_dimensions.width.is_none() {
          resolve_sizing_keyword(size_style.width, Some(stretch_size.width), Some(area_size.width), |val, basis| {
 diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
-index a8dbbcf2..e60844cb 100644
+index a8dbbcf2..abac260d 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
 @@ -3,6 +3,7 @@ use crate::compute::common::alignment::{
@@ -2534,7 +2591,7 @@ index a8dbbcf2..e60844cb 100644
                      // For some reason this particular usage of max_width is an exception to the rule that max_width's transfer
                      // using the aspect_ratio (if set). Both Chrome and Firefox agree on this. And reading the spec, it seems like
                      // a reasonable interpretation. Although it seems to me that the spec *should* apply aspect_ratio here.
-@@ -2309,11 +2868,42 @@ fn determine_used_cross_size(
+@@ -2309,11 +2868,46 @@ fn determine_used_cross_size(
                          .max_size()
                          .maybe_resolve(constants.node_inner_size, |val, basis| tree.calc(val, basis))
                          .maybe_add(box_sizing_adjustment);
@@ -2549,9 +2606,13 @@ index a8dbbcf2..e60844cb 100644
 -                        child.min_size.cross(constants.dir),
 -                        max_size_ignoring_aspect_ratio.cross(constants.dir),
 -                    )
++                    // pyro: the stretched size never falls below the item's padding and border, so an
++                    // item overflowing its line aligns by the size it lays out at (WPT css-flexbox
++                    // `flexbox-align-self-vert-rtl-004`)
 +                    (line_cross_size - child.margin.cross_axis_sum(constants.dir))
 +                        .max(0.0)
 +                        .maybe_clamp(child.min_size.cross(constants.dir), max_cross)
++                        .max((child.padding + child.border).cross_axis_sum(constants.dir))
 +                } else if !constants.is_row
 +                    && constants.is_wrap
 +                    && child.size_style.cross(constants.dir).is_auto()
@@ -2581,7 +2642,7 @@ index a8dbbcf2..e60844cb 100644
                  } else {
                      child.hypothetical_inner_size.cross(constants.dir)
                  },
-@@ -2382,7 +2972,16 @@ fn distribute_remaining_free_space(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2382,7 +2976,16 @@ fn distribute_remaining_free_space(flex_lines: &mut [FlexLine], constants: &Algo
          let num_items = line.items.len();
          let layout_reverse = constants.dir.is_reverse();
          let gap = constants.gap.main(constants.dir);
@@ -2599,7 +2660,7 @@ index a8dbbcf2..e60844cb 100644
  
          let justify_item = |(i, child): (usize, &mut FlexItem)| {
              child.offset_main =
-@@ -2420,6 +3019,19 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2420,6 +3023,27 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
              .filter(|child| child.participates_in_baseline_alignment(constants.dir))
              .map(|child| child.outer_target_size.cross(constants.dir) - child.baseline)
              .fold(0.0, |acc, x| acc.max(x));
@@ -2608,6 +2669,14 @@ index a8dbbcf2..e60844cb 100644
 +            .iter()
 +            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
 +            .map(|child| child.last_baseline_descent)
++            .fold(0.0, |acc, x| acc.max(x));
++        // pyro: in a wrap-reverse row, the last-baseline group's largest distance from its cross end (the
++        // top) to its last baseline (`align_flex_items_along_cross_axis`)
++        let max_last_ascent: f32 = line
++            .items
++            .iter()
++            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
++            .map(|child| child.outer_target_size.cross(constants.dir) - child.last_baseline_descent)
 +            .fold(0.0, |acc, x| acc.max(x));
 +        // pyro: in a column, the widest `baseline` item's outer cross size (`align_flex_items_along_cross_axis`)
 +        let max_baseline_cross: f32 = line
@@ -2619,33 +2688,37 @@ index a8dbbcf2..e60844cb 100644
  
          for child in line.items.iter_mut() {
              let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
-@@ -2451,6 +3063,8 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
+@@ -2451,6 +3075,9 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                      free_space,
                      max_baseline,
                      max_baseline_to_bottom_distance,
 +                    max_last_descent,
++                    max_last_ascent,
 +                    max_baseline_cross,
                      constants,
                  );
              }
-@@ -2470,6 +3084,8 @@ fn align_flex_items_along_cross_axis(
+@@ -2470,6 +3097,9 @@ fn align_flex_items_along_cross_axis(
      free_space: f32,
      max_baseline: f32,
      max_baseline_to_bottom_distance: f32,
 +    max_last_descent: f32,
++    max_last_ascent: f32,
 +    max_baseline_cross: f32,
      constants: &AlgoConstants,
  ) -> f32 {
      let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
-@@ -2528,13 +3144,29 @@ fn align_flex_items_along_cross_axis(
+@@ -2528,13 +3158,36 @@ fn align_flex_items_along_cross_axis(
                  // Until we support vertical writing modes, baseline alignment only makes sense if
                  // the constants.direction is row, so we treat it as flex-start alignment in columns.
                  let baseline_column_should_reverse = cross_axis_should_reverse && !constants.is_wrap;
 -                if constants.is_wrap_reverse ^ baseline_column_should_reverse {
-+                if baseline_column_should_reverse && !constants.is_wrap_reverse {
++                if (baseline_column_should_reverse && !constants.is_wrap_reverse)
++                    || (constants.is_wrap_reverse && !cross_axis_should_reverse)
++                {
 +                    // pyro: the items share a baseline synthesized at their line-left edges, and their
 +                    // group goes to the cross start, the right (Chromium; WPT css-flexbox
-+                    // `flexbox-align-self-vert-rtl-*`)
++                    // `flexbox-align-self-vert-rtl-*`, and `align-baseline` for an ltr wrap-reverse column)
 +                    free_space - (max_baseline_cross - child.outer_target_size.cross(constants.dir)).max(0.0)
 +                } else if constants.is_wrap_reverse ^ baseline_column_should_reverse {
                      free_space
@@ -2659,6 +2732,11 @@ index a8dbbcf2..e60844cb 100644
 +        AlignItemsKeyword::LastBaseline => {
 +            if constants.is_row && !constants.is_wrap_reverse {
 +                free_space - (max_last_descent - child.last_baseline_descent).max(0.0)
++            } else if constants.is_row {
++                // pyro: wrap-reverse puts the cross end at the top: the group aligns its last baselines
++                // from there (WPT css-flexbox `flexbox-align-self-baseline-horiz-001b`)
++                (max_last_ascent - (child.outer_target_size.cross(constants.dir) - child.last_baseline_descent))
++                    .max(0.0)
 +            } else if cross_axis_should_reverse {
 +                0.0
 +            } else {
@@ -2668,7 +2746,7 @@ index a8dbbcf2..e60844cb 100644
          AlignItemsKeyword::Stretch => {
              if constants.is_wrap_reverse ^ cross_axis_should_reverse {
                  free_space
-@@ -2562,6 +3194,7 @@ fn align_flex_items_along_cross_axis(
+@@ -2562,6 +3215,7 @@ fn align_flex_items_along_cross_axis(
  fn determine_container_cross_size(
      flex_lines: &[FlexLine],
      node_size: Size<Option<f32>>,
@@ -2676,7 +2754,7 @@ index a8dbbcf2..e60844cb 100644
      constants: &mut AlgoConstants,
  ) -> f32 {
      let total_cross_axis_gap = sum_axis_gaps(constants.gap.cross(constants.dir), flex_lines.len());
-@@ -2571,9 +3204,20 @@ fn determine_container_cross_size(
+@@ -2571,9 +3225,20 @@ fn determine_container_cross_size(
      let cross_scrollbar_gutter = constants.scrollbar_gutter.cross(constants.dir);
      let min_cross_size = constants.min_size.cross(constants.dir);
      let max_cross_size = constants.max_size.cross(constants.dir);
@@ -2698,7 +2776,7 @@ index a8dbbcf2..e60844cb 100644
          .maybe_clamp(min_cross_size, max_cross_size)
          .max(padding_border_sum - cross_scrollbar_gutter);
      let inner_container_size = f32_max(outer_container_size - padding_border_sum, 0.0);
-@@ -2672,6 +3316,12 @@ fn calculate_flex_item(
+@@ -2672,6 +3337,12 @@ fn calculate_flex_item(
          let baseline_offset_cross =
              total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
          item.baseline = baseline_offset_cross + inner_baseline;
@@ -2711,7 +2789,7 @@ index a8dbbcf2..e60844cb 100644
      } else {
          let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
          item.baseline = baseline_offset_main + inner_baseline;
-@@ -2994,14 +3644,20 @@ fn collect_oof_candidates(
+@@ -2994,14 +3665,20 @@ fn collect_oof_candidates(
          let cross_edge_for = |keyword: AlignItemsKeyword| {
              let start_position = match keyword {
                  AlignItemsKeyword::Start | AlignItemsKeyword::Baseline => !cross_is_rtl,
@@ -2734,7 +2812,7 @@ index a8dbbcf2..e60844cb 100644
                      if start_position {
                          AxisStaticEdge::Start
                      } else {
-@@ -3032,7 +3688,7 @@ fn collect_oof_candidates(
+@@ -3032,7 +3709,7 @@ fn collect_oof_candidates(
          let main = AxisStaticPosition { area: main_area, align: AxisStaticAlign::from_keyword(main_edge) };
  
          let static_position = if constants.is_row { Point { x: main, y: cross } } else { Point { x: cross, y: main } };
@@ -2743,7 +2821,7 @@ index a8dbbcf2..e60844cb 100644
      }
  }
  
-@@ -3588,3 +4244,17 @@ impl AlgoConstants {
+@@ -3588,3 +4265,17 @@ impl AlgoConstants {
          Point { x: x ^ self.layout_direction.is_rtl(), y }
      }
  }
@@ -2762,20 +2840,23 @@ index a8dbbcf2..e60844cb 100644
 +        .maybe_add(ratio_inset)
 +}
 diff --git a/src/compute/float.rs b/src/compute/float.rs
-index 82d0bd0a..6643f071 100644
+index 82d0bd0a..96713914 100644
 --- a/src/compute/float.rs
 +++ b/src/compute/float.rs
-@@ -104,6 +104,9 @@ struct Segment {
+@@ -104,6 +104,12 @@ struct Segment {
      /// The insets of a segment created for a float are seeded with the float's containing
      /// block insets on both sides, so a non-zero inset alone does not imply a float.
      has_float: [bool; 2],
 +    /// pyro: whether a float of some width occupies the left (slot 0) / right (slot 1) inset (a
 +    /// zero-width float sets `has_float` only).
 +    has_wide_float: [bool; 2],
++    /// pyro: the insets line boxes take here when a float's `shape-outside` leaves them more room
++    /// than its margin box (`None`: `insets`). Floats are placed by their margin boxes alone.
++    shape: Option<FloatInsets>,
  }
  
  impl Segment {
-@@ -124,6 +127,8 @@ impl Segment {
+@@ -124,6 +130,8 @@ impl Segment {
      fn union(&mut self, other: &Segment) {
          self.insets = self.insets.max(other.insets);
          self.has_float = [self.has_float[0] || other.has_float[0], self.has_float[1] || other.has_float[1]];
@@ -2784,7 +2865,7 @@ index 82d0bd0a..6643f071 100644
      }
  
      /// Whether this segment is narrower than `other` on either side: a larger inset, or a float
-@@ -270,6 +275,9 @@ pub struct FloatContext {
+@@ -270,6 +278,9 @@ pub struct FloatContext {
      /// The topmost y position allowed for a new float (CSS2 float rule 5), including
      /// the tops of zero-sized floats (which occupy no segment)
      float_ceiling: Option<f32>,
@@ -2794,7 +2875,7 @@ index 82d0bd0a..6643f071 100644
      // Left hwm in slot 0. Right hwm in slot 1.
      // high_water_marks: [usize; 2],
      // left_float_high_water_mark: usize,
-@@ -287,6 +295,7 @@ impl Default for FloatContext {
+@@ -287,6 +298,7 @@ impl Default for FloatContext {
              last_placed_floats: [0..0, 0..0], // high_water_marks: [0, 0],
              clear_bottoms: [None, None],
              float_ceiling: None,
@@ -2802,7 +2883,7 @@ index 82d0bd0a..6643f071 100644
          }
      }
  }
-@@ -329,7 +338,12 @@ impl FloatContext {
+@@ -329,7 +341,13 @@ impl FloatContext {
      fn subdivide_segment(&mut self, idx: usize, divide_at_y: f32) {
          let old_segment = &mut self.segments[idx];
          let new_segment =
@@ -2811,12 +2892,13 @@ index 82d0bd0a..6643f071 100644
 +                insets: old_segment.insets,
 +                has_float: old_segment.has_float,
 +                has_wide_float: old_segment.has_wide_float,
++                shape: old_segment.shape,
 +                y: divide_at_y..old_segment.y.end,
 +            };
          if !old_segment.y.contains(&divide_at_y) || old_segment.y.start == divide_at_y {
              debug_log!("old_segment", dbg:&mut *old_segment);
              debug_log!("divide_at_y", dbg:divide_at_y);
-@@ -355,6 +369,73 @@ impl FloatContext {
+@@ -355,6 +373,77 @@ impl FloatContext {
          self.last_placed_floats[slot].end = self.last_placed_floats[slot].end.max(placement.end);
      }
  
@@ -2846,7 +2928,8 @@ index 82d0bd0a..6643f071 100644
 +            return;
 +        }
 +        self.has_floats = true;
-+        let empty = |y: Range<f32>| Segment { y, insets: FloatInsets::ZERO, has_float: [false; 2], has_wide_float: [false; 2] };
++        let empty =
++            |y: Range<f32>| Segment { y, insets: FloatInsets::ZERO, has_float: [false; 2], has_wide_float: [false; 2], shape: None };
 +        // The segments cover the letter's extent.
 +        match (self.segments.first().map(|first| first.y.start), self.segments.last().map(|last| last.y.end)) {
 +            (Some(first), Some(last)) => {
@@ -2872,6 +2955,9 @@ index 82d0bd0a..6643f071 100644
 +        };
 +        for segment in self.segments.iter_mut().filter(|segment| segment.y.start >= y && segment.y.end <= end_y) {
 +            segment.insets[direction] = segment.insets[direction].max(edge);
++            if let Some(shape) = &mut segment.shape {
++                shape[direction] = shape[direction].max(edge);
++            }
 +            segment.has_float[slot] = true;
 +            segment.has_wide_float[slot] |= size.width > 0.0;
 +        }
@@ -2890,7 +2976,66 @@ index 82d0bd0a..6643f071 100644
      /// Position a floated box with the context, returning the (x, y) coordinates.
      /// `id` is stored with the placed box and is not otherwise interpreted.
      pub fn place_floated_box(
-@@ -403,7 +484,10 @@ impl FloatContext {
+@@ -385,6 +474,58 @@ impl FloatContext {
+         pos
+     }
+ 
++    /// pyro: the float area of a float just placed by [`Self::place_floated_box`] at `pos` (its
++    /// margin box's top-left) with margin box `size`, from its `shape-outside`: `bands` are
++    /// `(top, bottom, extent)` rows relative to the margin box, `extent` the shape's
++    /// `(left, right)` in that row (`None`: the shape is not in that row). Line boxes beside the
++    /// float then wrap around the shape instead of the margin box (CSS Shapes 1 § 3); later
++    /// floats are still placed by its margin box. `insets_before` are the line insets on the
++    /// float's side before it was placed, by y range (`containing_block_inset` where none was).
++    pub fn shape_float(
++        &mut self,
++        pos: Point<f32>,
++        size: Size<f32>,
++        direction: FloatDirection,
++        bands: &[(f32, f32, Option<(f32, f32)>)],
++        insets_before: &[(Range<f32>, f32)],
++        containing_block_inset: f32,
++    ) {
++        let (top, bottom) = (pos.y, pos.y + size.height);
++        let cuts: Vec<f32> = bands.iter().flat_map(|b| [top + b.0, top + b.1]).filter(|&y| y > top && y < bottom).collect();
++        for at in cuts {
++            if let Some(idx) = self.segments.iter().position(|segment| segment.y.start < at && at < segment.y.end) {
++                self.subdivide_segment(idx, at);
++                self.shift_last_placed_floats(idx);
++            }
++        }
++        let before = |y: f32| insets_before.iter().find(|(r, _)| r.start <= y && y < r.end).map(|(_, v)| *v);
++        for segment in self.segments.iter_mut().filter(|segment| segment.y.start >= top && segment.y.end <= bottom) {
++            let mid = (segment.y.start + segment.y.end) / 2.0 - top;
++            let extent = bands.iter().find(|b| b.0 <= mid && mid < b.1).and_then(|b| b.2);
++            let base = before(segment.y.start).unwrap_or(containing_block_inset).max(containing_block_inset);
++            let edge = match (extent, direction) {
++                (None, _) => base,
++                (Some((_, right)), FloatDirection::Left) => base.max(pos.x + right.max(0.0)),
++                (Some((left, _)), FloatDirection::Right) => {
++                    base.max(self.available_width - (pos.x + left.min(size.width)))
++                }
++            };
++            let mut shape = segment.shape.unwrap_or(segment.insets);
++            shape[direction] = edge.min(segment.insets[direction]);
++            segment.shape = Some(shape);
++        }
++    }
++
++    /// pyro: the line insets on `direction`'s side over `top..bottom` by segment (for
++    /// [`Self::shape_float`], taken before the float is placed).
++    pub fn line_insets_between(&self, top: f32, bottom: f32, direction: FloatDirection) -> Vec<(Range<f32>, f32)> {
++        self.segments
++            .iter()
++            .filter(|segment| segment.y.end > top && segment.y.start < bottom)
++            .map(|segment| (segment.y.clone(), segment.shape.unwrap_or(segment.insets)[direction]))
++            .collect()
++    }
++
+     /// Inner implementation of float placement, split into a separate function so that it can early-return
+     fn place_floated_box_inner(
+         &mut self,
+@@ -403,7 +544,10 @@ impl FloatContext {
          // relevant side, regardless of their width)
          let min_y = min_y
              .max(self.float_ceiling.unwrap_or(f32::NEG_INFINITY))
@@ -2902,7 +3047,7 @@ index 82d0bd0a..6643f071 100644
  
          // Ensure that float:
          //    - Starts at or after the last placed float in either direction (CSS2 float rule 5:
-@@ -412,18 +496,22 @@ impl FloatContext {
+@@ -412,18 +556,22 @@ impl FloatContext {
          //    - Respects "clear"
          let float_start = self.last_placed_floats[0].start.max(self.last_placed_floats[1].start);
          let hwm = match clear {
@@ -2928,26 +3073,33 @@ index 82d0bd0a..6643f071 100644
              }
              Clear::None => float_start,
          };
-@@ -522,6 +610,7 @@ impl FloatContext {
+@@ -522,6 +670,8 @@ impl FloatContext {
                      y: last_y_end..start_y,
                      insets: FloatInsets::ZERO,
                      has_float: [false; 2],
 +                    has_wide_float: [false; 2],
++                    shape: None,
                  });
              }
  
-@@ -531,7 +620,9 @@ impl FloatContext {
+@@ -531,7 +681,15 @@ impl FloatContext {
              insets[direction] += floated_box.width;
              let mut has_float = [false; 2];
              has_float[slot] = true;
 -            self.segments.push(Segment { y: start_y..(start_y + floated_box.height), insets, has_float });
 +            let mut has_wide_float = [false; 2];
 +            has_wide_float[slot] = floated_box.width > 0.0;
-+            self.segments.push(Segment { y: start_y..(start_y + floated_box.height), insets, has_float, has_wide_float });
++            self.segments.push(Segment {
++                y: start_y..(start_y + floated_box.height),
++                insets,
++                has_float,
++                has_wide_float,
++                shape: None,
++            });
  
              // Update last_placed_float
              let start_idx = self.segments.len() - 1;
-@@ -577,7 +668,12 @@ impl FloatContext {
+@@ -577,7 +735,13 @@ impl FloatContext {
                  let end_y = start_y + floated_box.height;
                  if end_y > last_y_end {
                      let insets = containing_block_insets;
@@ -2957,19 +3109,24 @@ index 82d0bd0a..6643f071 100644
 +                        insets,
 +                        has_float: [false; 2],
 +                        has_wide_float: [false; 2],
++                        shape: None,
 +                    });
                  }
                  self.segments.len() - 1
              }
-@@ -609,6 +705,7 @@ impl FloatContext {
+@@ -608,7 +772,11 @@ impl FloatContext {
+         let placed_inset_plus_width = placed_inset + floated_box.width;
          for segment in &mut self.segments[start_idx..=end_idx] {
              segment.insets[direction] = placed_inset_plus_width;
++            if let Some(shape) = &mut segment.shape {
++                shape[direction] = shape[direction].max(placed_inset_plus_width);
++            }
              segment.has_float[slot] = true;
 +            segment.has_wide_float[slot] |= floated_box.width > 0.0;
          }
  
          // Update last_placed_float
-@@ -675,7 +772,7 @@ impl FloatContext {
+@@ -675,7 +843,7 @@ impl FloatContext {
  
          // The min starting segment index
          let at_least = after.map(|idx| idx + 1).unwrap_or(0);
@@ -2978,7 +3135,26 @@ index 82d0bd0a..6643f071 100644
  
          let start_idx = self
              .segments
-@@ -775,7 +872,7 @@ impl FloatContext {
+@@ -690,12 +858,15 @@ impl FloatContext {
+ 
+                 // Combine the insets of every segment beside the content's height, then extend
+                 // the slot down over any further segments that don't narrow it
+-                let mut insets = containing_block_insets.max(segment.insets);
++                // pyro: line boxes wrap around a float's shape (`Segment::shape`)
++                let line_insets = |segment: &Segment| segment.shape.unwrap_or(segment.insets);
++                let mut insets = containing_block_insets.max(line_insets(segment));
+                 let mut slot_height = f32::INFINITY;
+                 for segment in &self.segments[start_idx + 1..] {
++                    let segment_insets = line_insets(segment);
+                     if segment.y.start < end_y {
+-                        insets = insets.max(segment.insets);
+-                    } else if segment.insets.left > insets.left || segment.insets.right > insets.right {
++                        insets = insets.max(segment_insets);
++                    } else if segment_insets.left > insets.left || segment_insets.right > insets.right {
+                         slot_height = segment.y.start - y;
+                         break;
+                     }
+@@ -775,7 +946,7 @@ impl FloatContext {
  
          // The min starting segment index
          let at_least = after.map(|idx| idx + 1).unwrap_or(0);
@@ -2987,7 +3163,7 @@ index 82d0bd0a..6643f071 100644
  
          let start_idx = self
              .segments
-@@ -796,15 +893,20 @@ impl FloatContext {
+@@ -796,29 +967,52 @@ impl FloatContext {
                  let slot_height = lower_segments
                      .find(|seg| seg.is_narrower_than(&combined))
                      .map_or(f32::INFINITY, |seg| seg.y.start - y);
@@ -3008,9 +3184,50 @@ index 82d0bd0a..6643f071 100644
 +                let any_wide = has_wide_float[0] || has_wide_float[1];
 +                let has_lead_float = has_float[lead as usize] && any_wide;
 +                let has_trail_float = has_float[trail as usize] && any_wide;
++                // pyro: beside a float, a negative margin on a side with no float does not widen the
++                // space for the border box (it would prop it up into the float's way): the box is no
++                // wider than the space, and one that its negative margins make wider moves down
++                // (Chromium, measured; WPT CSS2 `floats-wrap-bfc-with-margin-001`, `-002`)
++                let beside_float = has_lead_float || has_trail_float;
                  let mut fit_insets = FloatInsets::ZERO;
                  let mut stretch_insets = FloatInsets::ZERO;
-                 fit_insets[lead] =
+-                fit_insets[lead] =
+-                    if has_lead_float { insets[lead].max(margin_insets[lead]) } else { margin_insets[lead] };
++                fit_insets[lead] = if has_lead_float {
++                    insets[lead].max(margin_insets[lead])
++                } else if beside_float {
++                    margin_insets[lead].max(containing_block_insets[lead])
++                } else {
++                    margin_insets[lead]
++                };
+                 stretch_insets[lead] = fit_insets[lead];
+                 fit_insets[trail] = if has_trail_float {
+                     insets[trail].max(containing_block_insets[trail])
++                } else if beside_float {
++                    // (no float on this side: its segment inset is no edge)
++                    containing_block_insets[trail]
+                 } else {
+                     // A positive trailing margin may overflow the containing block edge (it does
+                     // not affect fit), but a negative one widens the space for the border box
+                     margin_insets[trail].min(containing_block_insets[trail])
+                 };
+-                stretch_insets[trail] =
+-                    if has_trail_float { insets[trail].max(margin_insets[trail]) } else { margin_insets[trail] };
++                stretch_insets[trail] = if has_trail_float {
++                    insets[trail].max(margin_insets[trail])
++                } else if beside_float {
++                    margin_insets[trail].max(containing_block_insets[trail])
++                } else {
++                    margin_insets[trail]
++                };
+                 BfcSlot {
+                     segment_id: Some(start_idx),
+                     x: fit_insets.left,
+@@ -889,3 +1083,4 @@ impl FloatIntrinsicWidthCalculator {
+         }
+     }
+ }
++
 diff --git a/src/compute/grid/alignment.rs b/src/compute/grid/alignment.rs
 index b84e8751..c2ff3566 100644
 --- a/src/compute/grid/alignment.rs
@@ -3676,7 +3893,7 @@ index 037a2d1c..88347ca7 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..25730d6c 100644
+index f0109c6e..5ef35b16 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -4203,7 +4420,7 @@ index f0109c6e..25730d6c 100644
 +
 +    // pyro: the heights of the items of subgrids in their columns only, in their own rows.
 +    if has_subgrid_items && replay.is_none() {
-+        subgrid::resolve_standalone_heights(tree, &mut items, own_item_count);
++        subgrid::resolve_standalone_heights(tree, &mut items, own_item_count, &rows);
 +    }
  
      // Run track sizing algorithm for Inline axis
@@ -5038,10 +5255,10 @@ index f0109c6e..25730d6c 100644
 +}
 diff --git a/src/compute/grid/subgrid.rs b/src/compute/grid/subgrid.rs
 new file mode 100644
-index 00000000..c3c0a54b
+index 00000000..b93c7648
 --- /dev/null
 +++ b/src/compute/grid/subgrid.rs
-@@ -0,0 +1,1120 @@
+@@ -0,0 +1,1168 @@
 +//! pyro: subgrids (css-grid-2 §9).
 +//!
 +//! A grid item whose `grid-template-columns` or `grid-template-rows` is `subgrid`, and which is no
@@ -5503,7 +5720,9 @@ index 00000000..c3c0a54b
 +        *context.axis_mut(own) = Some(SubgridAxisContext {
 +            track_count,
 +            line_names,
-+            gap: subgrid_gap(tree, node, own, parent.gap.get_abs(axis), parent.percent_basis),
++            // (A percentage gap counts as zero while the parent sizes its tracks: the subgrid's size it resolves
++            // against is not known yet; `update_subgrid_track_sizes` resolves it once it is)
++            gap: subgrid_gap(tree, node, own, parent.gap.get_abs(axis), None),
 +            reversed,
 +            track_sizes,
 +            track_spans,
@@ -5680,7 +5899,25 @@ index 00000000..c3c0a54b
 +                }
 +            }
 +            let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
++            let before = out.len();
 +            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
++            // pyro: a nested subgrid in both its axes has no tracks of its own: its items belong to this subgrid's
++            // tracks, at its lines here (`resolve_standalone_heights`; WPT css-grid `subgrid/standalone-axis-size-013`)
++            if item.subgrid.width && item.subgrid.height && !relative.horizontal.reversed && !relative.vertical.reversed {
++                let shift = |lines: Line<OriginZeroLine>, by: OriginZeroLine| Line {
++                    start: OriginZeroLine(lines.start.0 + by.0),
++                    end: OriginZeroLine(lines.end.0 + by.0),
++                };
++                for virtual_item in &mut out[before..] {
++                    if virtual_item.subgrid_owner == Some(item.node) {
++                        virtual_item.subgrid_owner = Some(node);
++                        virtual_item.owner_lines = Size {
++                            width: shift(virtual_item.owner_lines.width, local.horizontal.start),
++                            height: shift(virtual_item.owner_lines.height, local.vertical.start),
++                        };
++                    }
++                }
++            }
 +            stretch_subgrid_item(&mut item, nested);
 +            excluded.width |= nested.width;
 +            excluded.height |= nested.height;
@@ -5710,8 +5947,9 @@ index 00000000..c3c0a54b
 +        };
 +        let span = area.get(axis);
 +        let (edge_start, edge_end) = edge_margins(axis);
-+        if !out[first_new..].iter().any(|item| !excluded_in(item)) {
-+            // An empty subgrid: its margin, border and padding over its tracks
++        // A zero-size item over `lines` of the subgrid's tracks that carries its margin, border and padding
++        // (`start`, `end`) into track sizing
++        let spacer_over = |lines: Line<OriginZeroLine>, start: f32, end: f32| {
 +            let mut spacer = GridItem::new_with_style_and_order(
 +                node,
 +                tree.get_grid_child_style(node),
@@ -5723,13 +5961,13 @@ index 00000000..c3c0a54b
 +            match axis {
 +                AbsoluteAxis::Horizontal => {
 +                    spacer.size.width = Dimension::length(0.0);
-+                    spacer.column = span;
++                    spacer.column = lines;
 +                    spacer.row = area.vertical;
 +                    spacer.excluded = Size { width: false, height: true };
 +                }
 +                AbsoluteAxis::Vertical => {
 +                    spacer.size.height = Dimension::length(0.0);
-+                    spacer.row = span;
++                    spacer.row = lines;
 +                    spacer.column = area.horizontal;
 +                    spacer.excluded = Size { width: true, height: false };
 +                }
@@ -5748,54 +5986,33 @@ index 00000000..c3c0a54b
 +            spacer.is_virtual = true;
 +            spacer.subgrid_owner = Some(node);
 +            let mut extra = Rect::ZERO;
-+            set_extra(&mut extra, axis, edge_start, edge_end);
++            set_extra(&mut extra, axis, start, end);
 +            spacer.extra_margin = extra;
-+            out.push(spacer);
-+            continue;
-+        }
-+        // The edge items: where no item of the subgrid starts at its start (ends at its end), its items at
-+        // the edge-most occupied track, stretched to the edge with the subgrid's margin, border and padding there
++            spacer
++        };
++        // Where no item of the subgrid starts at its start (ends at its end), its margin, border and padding
++        // there go into its edge track alone, not across the empty tracks between it and the edge-most item;
++        // an empty subgrid has both in its edge tracks (Chromium; WPT css-grid `subgrid/grid-gap-002`,
++        // `orthogonal-writing-mode-002`, `-003`)
++        let empty = !out[first_new..].iter().any(|item| !excluded_in(item));
 +        let own: Vec<usize> = direct.iter().copied().filter(|&index| !excluded_in(&out[index])).collect();
-+        if own.is_empty() {
++        if own.is_empty() && !empty {
 +            continue;
 +        }
-+        let first = own.iter().map(|&index| lines_of(&out[index]).start.0).min().unwrap();
-+        let last = own.iter().map(|&index| lines_of(&out[index]).end.0).max().unwrap();
-+        for (at_start, edge, edge_line, extra_at_edge) in
-+            [(true, first, span.start.0, edge_start), (false, last, span.end.0, edge_end)]
-+        {
-+            if edge == edge_line || extra_at_edge == 0.0 {
-+                continue;
-+            }
-+            for &index in &own {
-+                let lines = lines_of(&out[index]);
-+                if (at_start && lines.start.0 != edge) || (!at_start && lines.end.0 != edge) {
-+                    continue;
-+                }
-+                let mut stretched = out[index].clone();
-+                let new_lines = if at_start {
-+                    Line { start: span.start, end: lines.end }
-+                } else {
-+                    Line { start: lines.start, end: span.end }
-+                };
-+                match axis {
-+                    AbsoluteAxis::Horizontal => stretched.column = new_lines,
-+                    AbsoluteAxis::Vertical => stretched.row = new_lines,
-+                }
-+                let mut extra = stretched.extra_margin;
-+                let (old_start, old_end) = match axis {
-+                    AbsoluteAxis::Horizontal if rtl => (extra.right, extra.left),
-+                    AbsoluteAxis::Horizontal => (extra.left, extra.right),
-+                    AbsoluteAxis::Vertical => (extra.top, extra.bottom),
-+                };
-+                if at_start {
-+                    set_extra(&mut extra, axis, extra_at_edge, old_end);
-+                } else {
-+                    set_extra(&mut extra, axis, old_start, extra_at_edge);
-+                }
-+                stretched.extra_margin = extra;
-+                out.push(stretched);
-+            }
++        let first = own.iter().map(|&index| lines_of(&out[index]).start.0).min().unwrap_or(span.end.0);
++        let last = own.iter().map(|&index| lines_of(&out[index]).end.0).max().unwrap_or(span.start.0);
++        if span.span() == 1 && first != span.start.0 && last != span.end.0 {
++            // (one track holds both edges)
++            out.push(spacer_over(span, edge_start, edge_end));
++            continue;
++        }
++        if first != span.start.0 && edge_start != 0.0 {
++            let lines = Line { start: span.start, end: OriginZeroLine(span.start.0 + 1) };
++            out.push(spacer_over(lines, edge_start, 0.0));
++        }
++        if last != span.end.0 && edge_end != 0.0 {
++            let lines = Line { start: OriginZeroLine(span.end.0 - 1), end: span.end };
++            out.push(spacer_over(lines, 0.0, edge_end));
 +        }
 +    }
 +}
@@ -5837,15 +6054,45 @@ index 00000000..c3c0a54b
 +    tree: &mut Tree,
 +    items: &mut [GridItem],
 +    own_item_count: usize,
++    rows: &[GridTrack],
 +) {
 +    if !items[own_item_count..].iter().any(|item| item.excluded.height && item.subgrid_owner.is_some()) {
 +        return;
 +    }
 +    // The subgrid children in their columns only: laid out, each sizes its own rows and those of the subgrids
 +    // nested in it (`record_own_rows`)
-+    let owners: Vec<NodeId> =
-+        items[..own_item_count].iter().filter(|item| item.subgrid.width && !item.subgrid.height).map(|item| item.node).collect();
-+    for owner in owners {
++    // pyro: an owner stretched over rows of fixed sizes is laid out at their height (css-grid-2 §9: its own rows are
++    // sized at the height it gets), not at its max-content height (WPT css-grid `subgrid/standalone-axis-size-011`)
++    let fixed_rows_height = |item: &GridItem| -> Option<f32> {
++        if !matches!(item.align_self.keyword, crate::AlignItemsKeyword::Stretch | crate::AlignItemsKeyword::Normal) {
++            return None;
++        }
++        let (start, end) = (item.row_indexes.start as usize + 1, item.row_indexes.end as usize);
++        if start >= end || end > rows.len() {
++            return None;
++        }
++        let calc = |val, basis| tree.calc(val, basis);
++        let mut sum = 0.0;
++        for track in &rows[start..end] {
++            let min = track.min_track_sizing_function.definite_value(None, calc)?;
++            let max = track.max_track_sizing_function.definite_value(None, calc)?;
++            if (min - max).abs() > f32::EPSILON {
++                return None;
++            }
++            sum += min;
++        }
++        let margin = item.margin.map(|margin| margin.resolve_to_option(0.0, calc));
++        if margin.top.is_none() || margin.bottom.is_none() {
++            return None;
++        }
++        Some((sum - margin.top.unwrap_or(0.0) - margin.bottom.unwrap_or(0.0)).max(0.0))
++    };
++    let owners: Vec<(NodeId, Option<f32>)> = items[..own_item_count]
++        .iter()
++        .filter(|item| item.subgrid.width && !item.subgrid.height)
++        .map(|item| (item.node, fixed_rows_height(item)))
++        .collect();
++    for (owner, stretched_height) in owners {
 +        let style = tree.get_grid_child_style(owner);
 +        // (an orthogonal subgrid's own columns are this grid's rows: not handled)
 +        if style.subgrid_axis(AbsoluteAxis::Vertical) != AbsoluteAxis::Vertical {
@@ -5862,6 +6109,7 @@ index 00000000..c3c0a54b
 +            }
 +        });
 +        drop(style);
++        let height = height.or(stretched_height);
 +        tree.measure_child_size(
 +            owner,
 +            Size { width: None, height },
@@ -6080,6 +6328,23 @@ index 00000000..c3c0a54b
 +            .collect();
 +        let content_start = spans[0].0 + edge_start;
 +        let content_end = spans[count - 1].1 - edge_end;
++        // pyro: a percentage gap resolves against the subgrid's content box, now that the parent's tracks give it
++        // (Chromium: the tracks were sized with it as zero, so items can overflow; WPT css-grid
++        // `subgrid/grid-gap-003`)
++        let gap_changed = {
++            let style = tree.get_grid_container_style(item.node);
++            let gap = (!style.gap_is_normal().get_abs(own)).then(|| style.gap().get_abs(own));
++            drop(style);
++            match gap {
++                Some(gap) if gap.0.uses_percentage() => {
++                    let resolved = gap.resolve_or_zero(Some((content_end - content_start).max(0.0)), |val, basis| tree.calc(val, basis));
++                    let changed = resolved != sub.gap;
++                    sub.gap = resolved;
++                    changed
++                }
++                _ => false,
++            }
++        };
 +        for span in &mut sub_spans {
 +            *span = if sub.reversed {
 +                (content_end - span.1, content_end - span.0)
@@ -6091,7 +6356,7 @@ index 00000000..c3c0a54b
 +            sub_spans.reverse();
 +        }
 +        let sizes: Vec<f32> = sub_spans.iter().map(|(start, end)| (end - start).max(0.0)).collect();
-+        if sub.track_sizes.as_ref() != Some(&sizes) || sub.track_spans.as_ref() != Some(&sub_spans) {
++        if gap_changed || sub.track_sizes.as_ref() != Some(&sizes) || sub.track_spans.as_ref() != Some(&sub_spans) {
 +            sub.track_sizes = Some(sizes);
 +            sub.track_spans = Some(sub_spans);
 +            tree.set_subgrid_context(item.node, Some(context));
@@ -6732,7 +6997,7 @@ index 00000000..9f036648
 +        })
 +}
 diff --git a/src/compute/grid/track_sizing.rs b/src/compute/grid/track_sizing.rs
-index 18063621..0cc6a474 100644
+index 18063621..cbe0442e 100644
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
 @@ -1,12 +1,12 @@
@@ -6768,7 +7033,7 @@ index 18063621..0cc6a474 100644
          item.crosses_flexible_column =
              item.track_range_excluding_lines(AbstractAxis::Inline).any(|i| columns[i].is_flexible());
          item.crosses_intrinsic_column =
-@@ -268,12 +272,24 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -268,12 +272,31 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
      other_axis_tracks: &mut [GridTrack],
      items: &mut [GridItem],
      get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
@@ -6784,18 +7049,25 @@ index 18063621..0cc6a474 100644
      // Initialize each track’s base size and growth limit.
      let percentage_basis = inner_node_size.get(axis).or(axis_min_size);
 -    initialize_track_sizes(tree, axis_tracks, percentage_basis);
++    // pyro: a percentage gutter resolves against the container's size alone, not its minimum: while it sizes
++    // itself the gap counts as zero (Chromium, measured; WPT css-grid `subgrid/grid-gap-003`)
++    let gutter_basis = inner_node_size.get(axis);
++    let initialize = |tree: &mut Tree, track: &mut GridTrack| {
++        let basis = if track.kind == super::types::GridTrackKind::Gutter { gutter_basis } else { percentage_basis };
++        initialize_track_sizes(tree, core::slice::from_mut(track), basis);
++    };
 +    match only_tracks {
-+        None => initialize_track_sizes(tree, axis_tracks, percentage_basis),
++        None => axis_tracks.iter_mut().for_each(|track| initialize(tree, track)),
 +        Some(only) => {
 +            for (track, _) in axis_tracks.iter_mut().zip(only).filter(|(_, only)| **only) {
-+                initialize_track_sizes(tree, core::slice::from_mut(track), percentage_basis);
++                initialize(tree, track);
 +            }
 +        }
 +    }
  
      // Resolve fit-content() limits against the container's inner size (these are fixed for the rest of this pass)
      let axis_inner_node_size = inner_node_size.get(axis);
-@@ -282,15 +298,32 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -282,15 +305,32 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
      }
  
      // 11.5.1 Shim item baselines
@@ -6831,7 +7103,7 @@ index 18063621..0cc6a474 100644
          track.base_size == track.growth_limit
              && track
                  .min_track_sizing_function
-@@ -328,7 +361,13 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
+@@ -328,7 +368,13 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
          available_grid_space.get(axis),
          inner_node_size,
          get_track_size_estimate,
@@ -6845,7 +7117,7 @@ index 18063621..0cc6a474 100644
  
      // 11.6. Maximise Tracks
      // Distributes free space (if any) to tracks with FINITE growth limits, up to their limits.
-@@ -429,6 +468,18 @@ fn initialize_track_sizes(
+@@ -429,6 +475,18 @@ fn initialize_track_sizes(
              .min_track_sizing_function
              .definite_value(axis_inner_node_size, |val, basis| tree.calc(val, basis))
              .unwrap_or(0.0);
@@ -6864,7 +7136,7 @@ index 18063621..0cc6a474 100644
  
          // For each track, if the track’s max track sizing function is:
          // - A fixed sizing function
-@@ -449,95 +500,15 @@ fn initialize_track_sizes(
+@@ -449,95 +507,15 @@ fn initialize_track_sizes(
      }
  }
  
@@ -6969,7 +7241,7 @@ index 18063621..0cc6a474 100644
  }
  
  /// 11.5 Resolve Intrinsic Track Sizes
-@@ -551,7 +522,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -551,7 +529,21 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      axis_available_grid_space: AvailableSpace,
      inner_node_size: Size<Option<f32>>,
      get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
@@ -6991,7 +7263,7 @@ index 18063621..0cc6a474 100644
      // Step 1. Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
  
      // Already done at this point. See resolve_item_baselines function.
-@@ -565,9 +550,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -565,9 +557,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
      // Items that cross a flexible track are all processed together in a single batch (regardless of their span), so
      // they only need to be moved to the end of the list. And the order in which items within a batch are processed
      // does not affect the result, so the remaining items only need to be sorted if any of them span more than one track.
@@ -7009,7 +7281,7 @@ index 18063621..0cc6a474 100644
          if item.crosses_flexible_track(axis) {
              partitioned_items.push_back(item);
          } else {
-@@ -601,6 +592,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -601,6 +599,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
          // consider the items in it with a span of 1:
          let batch_span = batch[0].placement(axis).span();
@@ -7025,7 +7297,7 @@ index 18063621..0cc6a474 100644
          if !is_flex && batch_span == 1 {
              for item in batch.iter_mut() {
                  let track_index = item.placement_indexes(axis).start + 1;
-@@ -740,7 +740,13 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -740,7 +747,13 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
                      // a definite size still spreads over `0fr` tracks in full. This is what lets a `0fr`
                      // track holding a `min-height: 0` item collapse to zero, which the
                      // `grid-template-rows: 0fr` to `1fr` collapse animation pattern relies on.
@@ -7040,7 +7312,7 @@ index 18063621..0cc6a474 100644
                          let spanned_tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
                          let inflexible_sizes: f32 = spanned_tracks
                              .iter()
-@@ -998,6 +1004,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -998,6 +1011,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          .for_each(|track| track.growth_limit = track.base_size);
  }
  
@@ -7097,7 +7369,7 @@ index 18063621..0cc6a474 100644
  /// The sum of the flex factors of the flexible tracks in an item's spanned track range
  #[inline(always)]
  fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
-@@ -1295,7 +1351,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1295,7 +1358,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
                  // that the item crosses and a space to fill of the item’s max-content contribution.
                  items
                      .iter_mut()
@@ -7106,7 +7378,7 @@ index 18063621..0cc6a474 100644
                      .map(|item| {
                          let max_content_contribution = item_sizer.max_content_contribution(item, axis_tracks);
                          let tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
-@@ -1334,9 +1390,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1334,9 +1397,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
  
      // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
      // than the track’s base size, set its base size to that product.
@@ -7871,7 +8143,7 @@ index bb954acf..eb14e801 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..95e91b3a 100644
+index 2c6179a4..7359caa4 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -7966,7 +8238,7 @@ index 2c6179a4..95e91b3a 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,8 +708,144 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +708,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -8067,6 +8339,10 @@ index 2c6179a4..95e91b3a 100644
 +        }
 +    }
 +
++    // pyro: a height known before the box's content is measured (its `height`, both insets, a ratio)
++    // is definite; one its content gives is not, so its children's percentage heights behave as
++    // `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`).
++    let height_is_definite = known_dimensions.height.is_some();
      let final_size = match (known_dimensions.width, known_dimensions.height) {
          (Some(width), Some(height)) => Size { width, height },
 +        // pyro: an automatic width and height with a preferred aspect ratio: the shrink-to-fit width between
@@ -8111,7 +8387,16 @@ index 2c6179a4..95e91b3a 100644
          _ => {
              let measured_size = tree.measure_child_size_both(
                  candidate.node,
-@@ -828,7 +981,8 @@ pub(crate) fn perform_oof_layout(
+@@ -709,7 +866,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+ 
+     let layout_input = LayoutInput {
+         known_dimensions: final_size.map(Some),
+-        known_dimensions_are_definite: Size { width: true, height: true },
++        known_dimensions_are_definite: Size { width: true, height: height_is_definite },
+         parent_size: area_size.map(Some),
+         available_space,
+         sizing_mode: SizingMode::ContentSize,
+@@ -828,7 +985,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
@@ -8121,7 +8406,7 @@ index 2c6179a4..95e91b3a 100644
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1005,21 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1009,21 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -8154,7 +8439,7 @@ index 2c6179a4..95e91b3a 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1029,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1033,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {
@@ -8780,7 +9065,7 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..9b808f00 100644
+index 7d4adf22..07fd15a8 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -239,6 +239,16 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
@@ -8917,7 +9202,7 @@ index 7d4adf22..9b808f00 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +479,80 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +479,94 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
@@ -8926,6 +9211,20 @@ index 7d4adf22..9b808f00 100644
 +    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
 +        let _ = child_node_id;
 +        false
++    }
++
++    /// pyro: the float area of a floated child with the given margin box size and margins, from
++    /// its `shape-outside`, as rows of the margin box with the area's horizontal extent in each
++    /// (see `FloatContext::shape_float`); `None` when it is the margin box.
++    #[allow(clippy::type_complexity)]
++    fn float_shape_bands(
++        &self,
++        child_node_id: NodeId,
++        margin_box: crate::geometry::Size<f32>,
++        margin: crate::geometry::Rect<f32>,
++    ) -> Option<Vec<(f32, f32, Option<(f32, f32)>)>> {
++        let _ = (child_node_id, margin_box, margin);
++        None
 +    }
 +
 +    /// pyro: whether a block-level child that is a block container by its style establishes a

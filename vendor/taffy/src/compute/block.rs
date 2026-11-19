@@ -202,6 +202,28 @@ impl BlockContext<'_> {
         pos
     }
 
+    /// pyro: [`Self::place_floated_box`] for a float with a `shape-outside` float area: `bands`
+    /// as for [`FloatContext::shape_float`] (rows of the margin box with the shape's horizontal
+    /// extent in each).
+    #[allow(clippy::too_many_arguments)]
+    pub fn place_shaped_floated_box(
+        &mut self,
+        id: u64,
+        floated_box: Size<f32>,
+        min_y: f32,
+        direction: FloatDirection,
+        clear: Clear,
+        adjoins_unresolved_strut: bool,
+        bands: &[(f32, f32, Option<(f32, f32)>)],
+    ) -> Point<f32> {
+        let before = self.bfc.float_context.line_insets_between(min_y + self.y_offset, f32::INFINITY, direction);
+        let pos = self.place_floated_box(id, floated_box, min_y, direction, clear, adjoins_unresolved_strut);
+        let abs = Point { x: pos.x + self.insets.left, y: pos.y + self.y_offset };
+        let cb_inset = self.content_box_insets[direction];
+        self.bfc.float_context.shape_float(abs, floated_box, direction, bands, &before, cb_inset);
+        pos
+    }
+
     /// pyro: put the margin box of an initial letter into the context (see
     /// [`FloatContext::place_initial_letter`]); `location` is its top-left corner relative to
     /// this block, as positions returned by [`Self::place_floated_box`] are.
@@ -2018,14 +2040,26 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                     committed_y_offset + active_collapsible_margin_set.resolve()
                 };
 
-                let mut location = block_ctx.place_floated_box(
-                    item.node_id.into(),
-                    margin_box,
-                    y_offset_for_float,
-                    float_direction,
-                    item.clear,
-                    adjoins_unresolved_strut,
-                );
+                // pyro: a float with a `shape-outside` float area
+                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin) {
+                    Some(bands) => block_ctx.place_shaped_floated_box(
+                        item.node_id.into(),
+                        margin_box,
+                        y_offset_for_float,
+                        float_direction,
+                        item.clear,
+                        adjoins_unresolved_strut,
+                        &bands,
+                    ),
+                    None => block_ctx.place_floated_box(
+                        item.node_id.into(),
+                        margin_box,
+                        y_offset_for_float,
+                        float_direction,
+                        item.clear,
+                        adjoins_unresolved_strut,
+                    ),
+                };
 
                 // Ensure that content that appears after a float does not get positioned before/above the float
                 //

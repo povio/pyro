@@ -93,7 +93,15 @@ macro_rules! handler_accessors {
     };
 }
 
+/// Fullscreen API handlers, on Document and Element.
+macro_rules! fullscreen_events {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!($($args)* ["fullscreenchange", "fullscreenerror"])
+    };
+}
+
 pub(crate) const GLOBAL: &[&str] = global_events!(event_list!());
+pub(crate) const FULLSCREEN: &[&str] = fullscreen_events!(event_list!());
 pub(crate) const WINDOW: &[&str] = window_events!(event_list!());
 pub(crate) const DOCUMENT: &[&str] = document_events!(event_list!());
 
@@ -105,7 +113,7 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
     }
     // The first two bytes are ASCII: a char boundary follows them.
     let ty = &local[2..];
-    GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).find(|t| t.eq_ignore_ascii_case(ty)).copied()
+    GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).chain(FULLSCREEN).find(|t| t.eq_ignore_ascii_case(ty)).copied()
 }
 
 /// Elements and Document: GlobalEventHandlers.
@@ -115,6 +123,15 @@ where
     C::Data: HasTarget,
 {
     global_events!(handler_accessors!(def, <C::Data as HasTarget>::event_target_data,));
+}
+
+/// Fullscreen API: `onfullscreenchange` and `onfullscreenerror` (Document and Element).
+pub(crate) fn define_fullscreen<C>(def: &mut ClassDef<C>)
+where
+    C: JsClass,
+    C::Data: HasTarget,
+{
+    fullscreen_events!(handler_accessors!(def, <C::Data as HasTarget>::event_target_data,));
 }
 
 /// Document-only handlers (plus GlobalEventHandlers via `define_global`).
@@ -140,6 +157,46 @@ where
     window_events!(handler_accessors!(def, window_target::<W::Data>,));
 }
 
+/// The Window's handlers for a `<body>`/`<frameset>` of the page's document;
+/// `None` for one in a document without a browsing context.
+fn body_window(n: &crate::node::NodeData) -> Option<EventTargetData> {
+    let page = n.page();
+    if page.dom.borrow().node_document(n.id).ok() != Some(page.document()) {
+        return None;
+    }
+    page.window_target().map(|w| EventTargetData::window(page, w))
+}
+
+macro_rules! window_reflecting_accessors {
+    ($def:expr, [$($ty:literal),* $(,)?]) => {
+        $(
+            $def.accessor(
+                concat!("on", $ty),
+                |s, n| match body_window(n) {
+                    Some(target) => event_handler(s, &target, $ty),
+                    None => Ok(s.null()),
+                },
+                |s, n, v| match body_window(n) {
+                    Some(target) => set_event_handler(s, &target, $ty, v),
+                    None => Ok(()),
+                },
+            );
+        )*
+    };
+}
+
+/// `<body>` and `<frameset>`: WindowEventHandlers and the Window-reflecting
+/// body element event handler set (blur, error, focus, load, resize,
+/// scroll) shadow the element's own handlers and forward to the Window; in a
+/// document without one they are null and setting them does nothing.
+pub(crate) fn define_window_reflecting<C>(def: &mut ClassDef<C>)
+where
+    C: JsClass<Data = crate::node::NodeData>,
+{
+    window_reflecting_accessors!(def, ["blur", "error", "focus", "load", "resize", "scroll"]);
+    window_events!(window_reflecting_accessors!(def,));
+}
+
 /// `setAttribute('on<type>', body)` on an element: compiles and installs the
 /// handler; `None` (removeAttribute) clears it.
 pub(crate) fn content_attribute_changed(
@@ -158,8 +215,16 @@ pub(crate) fn content_attribute_changed(
             // document, form owner and element are on the scope chain.
             let scoped =
                 format!("with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{{body}\n}}}}}}");
-            let f =
-                ctor.as_object().expect("Function constructor").construct(&[s.string("event"), s.string(&scoped)])?;
+            // An SVG element's handler names its argument `evt` (SVG 2, as browsers do).
+            let svg = {
+                let dom = target.page.dom.borrow();
+                dom.key_node(target.key).and_then(|n| dom.element(n).ok()).is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg")
+            };
+            let param = if svg { "evt" } else { "event" };
+            // The body passed the Trusted Types attribute check already.
+            let f = s.compile_exempt(|| {
+                ctor.as_object().expect("Function constructor").construct(&[s.string(param), s.string(&scoped)])
+            })?;
             f.value()
         }
         None => s.null(),

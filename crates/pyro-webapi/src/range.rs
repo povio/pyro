@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use pyro_dom::live_range::{LiveRange, Point};
 use pyro_dom::{position, Dom, NodeId, NodeType};
-use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
+use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::collections::NodeHold;
 use crate::node::{node_arg, wrap_node, Node};
@@ -469,8 +469,9 @@ pub struct Range;
 impl JsClass for Range {
     const NAME: &'static str = "Range";
     type Data = RangeData;
-    type Parent = NoParent;
+    type Parent = AbstractRange;
     fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|_d: &RangeData| &());
         def.constructor(0, |s, nt, _a| {
             let page = crate::target::page_of(s)?;
             let doc = page.document();
@@ -479,14 +480,6 @@ impl JsClass for Range {
         for (n, v) in [("START_TO_START", 0.0), ("START_TO_END", 1.0), ("END_TO_END", 2.0), ("END_TO_START", 3.0)] {
             def.constant(n, v);
         }
-        def.getter("startContainer", |s, r| Ok(wrap_node(s, &r.page(), points(r).0)?.value()));
-        def.getter("startOffset", |s, r| Ok(s.number(points(r).1 as f64)));
-        def.getter("endContainer", |s, r| Ok(wrap_node(s, &r.page(), points(r).2)?.value()));
-        def.getter("endOffset", |s, r| Ok(s.number(points(r).3 as f64)));
-        def.getter("collapsed", |s, r| {
-            let (a, b, c, d) = points(r);
-            Ok(s.boolean(a == c && b == d))
-        });
         def.getter("commonAncestorContainer", |s, r| {
             let page = r.page();
             let (sn, _, en, _) = points(r);
@@ -689,12 +682,52 @@ impl StaticRangeData {
     }
 }
 
+/// DOM `AbstractRange`: the boundary points both `Range` (live) and `StaticRange` have. Its
+/// members read the receiver as either.
+pub struct AbstractRange;
+impl JsClass for AbstractRange {
+    const NAME: &'static str = "AbstractRange";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter_this("startContainer", |s, _d, this| {
+            let (page, (start, _), _) = abstract_points(s, this)?;
+            Ok(wrap_node(s, &page, start)?.value())
+        });
+        def.getter_this("startOffset", |s, _d, this| Ok(s.number(abstract_points(s, this)?.1.1 as f64)));
+        def.getter_this("endContainer", |s, _d, this| {
+            let (page, _, (end, _)) = abstract_points(s, this)?;
+            Ok(wrap_node(s, &page, end)?.value())
+        });
+        def.getter_this("endOffset", |s, _d, this| Ok(s.number(abstract_points(s, this)?.2.1 as f64)));
+        def.getter_this("collapsed", |s, _d, this| {
+            let (_, start, end) = abstract_points(s, this)?;
+            Ok(s.boolean(start == end))
+        });
+    }
+}
+
+/// The page and boundary points of a `Range` or `StaticRange` receiver.
+#[allow(clippy::type_complexity)]
+fn abstract_points(s: &Scope<'_>, this: Object<'_>) -> JsResult<(Rc<PageDom>, (NodeId, u32), (NodeId, u32))> {
+    if let Some(r) = s.unwrap::<Range>(this.value()) {
+        let (a, b, c, d) = points(&r);
+        return Ok((r.page(), (a, b), (c, d)));
+    }
+    if let Some(r) = s.unwrap::<StaticRange>(this.value()) {
+        let (start, end) = r.points();
+        return Ok((r.start.page.clone(), start, end));
+    }
+    Err(JsError::Type("Illegal invocation".into()))
+}
+
 pub struct StaticRange;
 impl JsClass for StaticRange {
     const NAME: &'static str = "StaticRange";
     type Data = StaticRangeData;
-    type Parent = NoParent;
+    type Parent = AbstractRange;
     fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|_d: &StaticRangeData| &());
         def.constructor(1, |s, nt, a| {
             a.require(1, "StaticRange")?;
             let page = crate::target::page_of(s)?;
@@ -705,11 +738,6 @@ impl JsClass for StaticRange {
             let (end, end_offset) = static_point(s, &page, &init, "endContainer", "endOffset")?;
             s.wrap_new::<StaticRange>(StaticRangeData { start, start_offset, end, end_offset }, nt, None)
         });
-        def.getter("startContainer", |s, r| Ok(wrap_node(s, &r.start.page, r.start.id)?.value()));
-        def.getter("startOffset", |s, r| Ok(s.number(r.start_offset as f64)));
-        def.getter("endContainer", |s, r| Ok(wrap_node(s, &r.end.page, r.end.id)?.value()));
-        def.getter("endOffset", |s, r| Ok(s.number(r.end_offset as f64)));
-        def.getter("collapsed", |s, r| Ok(s.boolean(r.start.id == r.end.id && r.start_offset == r.end_offset)));
     }
 }
 
@@ -973,6 +1001,7 @@ pub fn get_selection<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<AbstractRange>();
     engine.register::<Range>();
     engine.register::<StaticRange>();
     engine.register::<Selection>();

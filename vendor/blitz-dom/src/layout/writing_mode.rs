@@ -148,12 +148,22 @@ impl LayoutPassState<'_> {
         inputs: LayoutInput,
         parent_wm: WritingMode,
     ) -> LayoutOutput {
+        let cb_inline = inputs.parent_size.width;
         let percent_basis = self.orthogonal_percent_basis.replace((
             dom_node_id(node_id),
             inputs.parent_size.width.unwrap_or(0.0),
         ));
 
         let mut inputs = inputs.transpose();
+
+        // pyro: css-writing-modes-3 §7.3: where the containing block's size in the orthogonal
+        // box's inline axis (its block size) is indefinite, the box's percentages in that axis
+        // resolve against the initial containing block's (nearest fixed-size scroll container not
+        // implemented), as its auto inline size does below. Block flow only (below).
+        let icb_inline = {
+            let viewport = self.stylist.device().au_viewport_size();
+            if parent_wm.is_vertical() { viewport.width.to_f32_px() } else { viewport.height.to_f32_px() }
+        };
 
         // A block container stretches its in-flow children's inline size and passes it as a known
         // dimension. For an orthogonal child that is its block size, which is content-sized.
@@ -165,6 +175,11 @@ impl LayoutPassState<'_> {
                 .get()
                 .map(|parent| self.nodes[parent].taffy_display() == taffy::Display::Block)
                 .unwrap_or(true);
+        // (Only in block flow: a grid or flex item's containing block is its area, whose size an
+        // intrinsic sizing pass leaves unknown on purpose, and an out-of-flow box's is definite.)
+        if placed_by_block_container && inputs.parent_size.width.is_none() {
+            inputs.parent_size.width = Some(icb_inline);
+        }
         if placed_by_block_container
             && taffy::CoreStyle::size(&node.layout_style())
                 .height
@@ -196,15 +211,18 @@ impl LayoutPassState<'_> {
                 let available = match (inputs.available_space.width, inputs.parent_size.width) {
                     (AvailableSpace::Definite(size), _) => size,
                     (_, Some(size)) => size,
-                    _ => {
-                        let viewport = self.stylist.device().au_viewport_size();
-                        if parent_wm.is_vertical() {
-                            viewport.width.to_f32_px()
-                        } else {
-                            viewport.height.to_f32_px()
-                        }
-                    }
+                    _ => icb_inline,
                 };
+                // pyro: in block flow, less the box's margins in that axis (percentages of the
+                // containing block's inline size; `auto` is zero), as a block's stretched size is
+                // (an out-of-flow box's available space is already its inset-modified containing
+                // block less its margins).
+                use taffy::MaybeResolve as _;
+                let margin = taffy::CoreStyle::margin(&self.nodes[dom_node_id(node_id)].layout_style());
+                let basis = Some(cb_inline.unwrap_or(0.0));
+                let margins = margin.left.maybe_resolve(basis, resolve_calc_value).unwrap_or(0.0)
+                    + margin.right.maybe_resolve(basis, resolve_calc_value).unwrap_or(0.0);
+                let available = if placed_by_block_container { (available - margins).max(0.0) } else { available };
                 let measure = |doc: &mut Self, available_space: AvailableSpace| {
                     let measure_inputs = LayoutInput {
                         run_mode: RunMode::ComputeSize,

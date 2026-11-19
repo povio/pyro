@@ -85,13 +85,15 @@ fn a_change_inside_a_root_abspos_box_leaves_the_root_layout_cached() {
 
 #[test]
 fn the_boundary_relays_only_the_box() {
-    // Ancestors keep their layout: the box and its paragraphs are the only
-    // layout algorithm runs, none of the in-flow page's seven boxes.
+    // Ancestors keep their layout: the box and the appended paragraph are the
+    // only layout algorithm runs, none of the in-flow page's seven boxes. (The
+    // box's auto height is no percentage basis, so its first paragraph is laid
+    // out at the inputs it was measured at and comes from its cache.)
     let (runs, root) = check("only the box", &page("#m{position:absolute;top:0;left:300px;width:200px}"), &|p| {
         append_paragraph(p, "#m", "appended");
     });
     assert_eq!(root, 0);
-    assert_eq!(runs, 3, "the container and its two paragraphs");
+    assert_eq!(runs, 2, "the container and the appended paragraph");
 }
 
 #[test]

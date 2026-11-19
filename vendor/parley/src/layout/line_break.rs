@@ -228,6 +228,10 @@ struct SubtreeExtents {
     ///
     /// Like [`Self::line_box`], these are in block flow direction.
     content_box: Extents,
+    /// pyro: [`Self::line_box`] without the room annotations take.
+    bare_box: Extents,
+    /// pyro: the content extents with the annotations drawn beyond them.
+    marks_box: Extents,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -285,6 +289,8 @@ impl SubtreeExtents {
             root,
             line_box: Extents::default(),
             content_box: Extents::default(),
+            bare_box: Extents::default(),
+            marks_box: Extents::default(),
         }
     }
 
@@ -295,6 +301,10 @@ impl SubtreeExtents {
             .add(baseline_offset, metrics.over, metrics.under);
         self.content_box
             .add(baseline_offset, metrics.ascent, metrics.descent);
+        self.bare_box
+            .add(baseline_offset, metrics.bare[0], metrics.bare[1]);
+        self.marks_box
+            .add(baseline_offset, metrics.marks[0], metrics.marks[1]);
     }
 }
 
@@ -431,12 +441,7 @@ impl LineBoxMetrics {
             let Some(metrics) = style_metrics.get(usize::from(index)) else {
                 return;
             };
-            let span_box = BoxMetrics {
-                ascent: metrics.ascent,
-                descent: metrics.descent,
-                over: metrics.over,
-                under: metrics.under,
-            };
+            let span_box = BoxMetrics::span(metrics);
             self.add_box(
                 metrics.aligned_subtree_root,
                 metrics.baseline_offset,
@@ -515,12 +520,7 @@ impl LineBoxMetrics {
             if !contributed.contains(&style_index) {
                 contributed.push(style_index);
                 if let Some(metrics) = data.style_metrics.get(usize::from(style_index)) {
-                    let span_box = BoxMetrics {
-                        ascent: metrics.ascent,
-                        descent: metrics.descent,
-                        over: metrics.over,
-                        under: metrics.under,
-                    };
+                    let span_box = BoxMetrics::span(metrics);
                     self.add_box(metrics.aligned_subtree_root, metrics.baseline_offset, span_box, subtrees);
                 }
             }
@@ -573,12 +573,7 @@ impl LineBoxMetrics {
         if (ascent != 0. || descent != 0.) && ascent.is_finite() && descent.is_finite() {
             self.has_content = true;
         }
-        let inline_box = BoxMetrics {
-            ascent,
-            descent,
-            over: ascent,
-            under: descent,
-        };
+        let inline_box = BoxMetrics::new(ascent, descent, ascent, descent);
         self.add_box(aligned_subtree_root, baseline_offset, inline_box, subtrees);
     }
 
@@ -704,6 +699,11 @@ pub struct BreakerState {
     /// The y coordinate of the top/start of the current line
     /// Use of f64 here is important. f32 causes test failures due to accumulated error
     line_y: f64,
+    /// pyro: what the previous line leaves for the next line's annotations (Blink's
+    /// `BlockStartAnnotationSpace`): positive, room under its content an annotation over the
+    /// next line's text can take; negative, how far its annotations overflow its line box
+    /// downwards, which room over the next line's content takes back.
+    annotation_space: f32,
 
     /// The max advance of the entire layout.
     layout_max_advance: f32,
@@ -745,6 +745,7 @@ impl Default for BreakerState {
             cluster_idx: 0,
             line_x: 0.0,
             line_y: 0.0,
+            annotation_space: 0.0,
             layout_max_advance: 0.0,
             line_max_advance: 0.0,
             line_max_height: f32::MAX,
@@ -977,6 +978,7 @@ impl BreakerState {
             text_wrap_mode: self.line.text_wrap_mode,
             line_x: self.line_x,
             line_y: self.line_y,
+            annotation_space: self.annotation_space,
             layout_max_advance: self.layout_max_advance,
             line_max_advance: self.line_max_advance,
             line_max_height: self.line_max_height,
@@ -1060,6 +1062,14 @@ impl BreakerState {
     #[inline(always)]
     pub fn set_line_y(&mut self, y: f64) {
         self.line_y = y;
+    }
+
+    /// pyro: room over the current line that an annotation over its text takes before the line
+    /// moves down: the space an initial letter's raise leaves above the first line (Blink treats
+    /// it as the line's `BlockStartAnnotationSpace`). See [`LineMetrics::annotation_shift`].
+    #[inline(always)]
+    pub fn set_annotation_space(&mut self, space: f32) {
+        self.annotation_space = space;
     }
 
     /// pyro: the index of the layout item to be laid out next: after a line break, the first item
@@ -1157,6 +1167,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             && inputs.indent_amount.to_bits() == data.indent_amount.to_bits()
             && inputs.indent_options == data.indent_options
             && starts[0].line_y.to_bits() == self.state.line_y.to_bits()
+            && starts[0].annotation_space.to_bits() == self.state.annotation_space.to_bits()
             && self.state.same_geometry(&starts[0])
             && starts[1..].iter().all(|start| {
                 start.line_x.to_bits() == line_x.to_bits()
@@ -1179,6 +1190,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         state.line.text_wrap_mode = start.text_wrap_mode;
         state.line_x = start.line_x;
         state.line_y = start.line_y;
+        state.annotation_space = start.annotation_space;
         state.line_max_advance = start.line_max_advance;
         state.items = self.lines.line_items.len();
         state.lines = kept;
@@ -1544,8 +1556,6 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         } else {
             self.state.line.box_metrics.line_height()
         };
-        let line_y_start = self.state.line_y;
-
         self.state.items = self.lines.line_items.len();
         self.state.lines = self.lines.lines.len();
         self.line_open = false;
@@ -1557,6 +1567,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         // it must run before we reset the per-line running state. It may grow the line (e.g. the
         // trailing line after a final newline), so use the returned height.
         let line_height = self.finish_line(self.lines.lines.len() - 1, line_height, invisible);
+        // pyro: `finish_line` may move the line up or down for annotations.
+        let line_y_start = self.state.line_y;
         self.reset_line();
 
         self.state.line_y += line_height as f64;
@@ -2447,6 +2459,33 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             );
         }
 
+        // pyro: annotations that overflow the line box (CSS Ruby 1 § 4.4) take the room the
+        // neighbouring line leaves free beyond its content on that side, as Blink's
+        // `InlineLayoutAlgorithm` does with `BlockStartAnnotationSpace`: an annotation under the
+        // previous line's text takes the half-leading over this line's, and one over this line's
+        // text the half-leading under the previous line's (or the room an initial letter's raise
+        // leaves, `BreakerState::set_annotation_space`). The line box still holds its annotations.
+        if !invisible {
+            let root = self.state.line.box_metrics.root;
+            let (line_over, line_under) = (root.line_box.or_zero().over, root.line_box.or_zero().under);
+            let bare = root.bare_box.or_zero();
+            let marks = root.marks_box.or_zero();
+            let overflow = [(line_over - bare.over).max(0.), (line_under - bare.under).max(0.)];
+            let free = [
+                (line_box_extents.over - marks.over).max(0.),
+                (line_box_extents.under - marks.under).max(0.),
+            ];
+            let space = self.state.annotation_space;
+            let mut shift = if space < 0. { (-space).min(free[0]) } else { overflow[0].min(space) };
+            if quantize {
+                shift = shift.round();
+            }
+            self.state.line_y -= f64::from(shift);
+            self.state.annotation_space = if overflow[1] > 0. { -overflow[1] } else { free[1] };
+            line.metrics.annotation_overflow = overflow;
+            line.metrics.annotation_shift = shift;
+        }
+
         let top = if quantize {
             self.state.line_y.round() as f32
         } else {
@@ -2494,6 +2533,8 @@ impl<B: Brush> Drop for BreakLines<'_, B> {
             layout_full_width = layout_full_width.max(line_max);
             layout_width = layout_width.max(line_max - line.metrics.hanging_advance);
             height += line.metrics.line_height as f64;
+            // pyro: a line moved up for annotations overlaps the previous line's box by as much.
+            height -= line.metrics.annotation_shift as f64;
         }
 
         // If laying out with infinite width constraint, then set all lines' "max_width"
@@ -3181,12 +3222,7 @@ mod tests {
 
     #[test]
     fn subtree_extents_restored_at_break_opportunities() {
-        let metrics = BoxMetrics {
-            ascent: 6.,
-            descent: 2.,
-            over: 6.,
-            under: 2.,
-        };
+        let metrics = BoxMetrics::new(6., 2., 6., 2.);
         for emergency in [false, true] {
             let mut state = BreakerState::default();
             let add_box = |state: &mut BreakerState, baseline_offset| {

@@ -282,11 +282,18 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
     // 11.4 Initialise Track sizes
     // Initialize each track’s base size and growth limit.
     let percentage_basis = inner_node_size.get(axis).or(axis_min_size);
+    // pyro: a percentage gutter resolves against the container's size alone, not its minimum: while it sizes
+    // itself the gap counts as zero (Chromium, measured; WPT css-grid `subgrid/grid-gap-003`)
+    let gutter_basis = inner_node_size.get(axis);
+    let initialize = |tree: &mut Tree, track: &mut GridTrack| {
+        let basis = if track.kind == super::types::GridTrackKind::Gutter { gutter_basis } else { percentage_basis };
+        initialize_track_sizes(tree, core::slice::from_mut(track), basis);
+    };
     match only_tracks {
-        None => initialize_track_sizes(tree, axis_tracks, percentage_basis),
+        None => axis_tracks.iter_mut().for_each(|track| initialize(tree, track)),
         Some(only) => {
             for (track, _) in axis_tracks.iter_mut().zip(only).filter(|(_, only)| **only) {
-                initialize_track_sizes(tree, core::slice::from_mut(track), percentage_basis);
+                initialize(tree, track);
             }
         }
     }

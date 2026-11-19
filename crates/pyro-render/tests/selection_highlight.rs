@@ -85,6 +85,8 @@ fn render_highlighted(body: &str, selection: Option<Ends>, highlights: &[(Option
         live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
         selection,
         highlights,
+        control_selection: None,
+        selected_replaced: Vec::new(),
         ..Default::default()
     };
     let fetcher: Arc<dyn Fetcher> = Arc::new(AhemFetch);
@@ -163,11 +165,14 @@ fn the_selection_style_draws_its_own_decoration() {
         ("a", 0, "a", 8),
         "<p style='background:#ff0;display:inline-block;text-decoration:underline #00f 2px'>Selected</p>",
     );
-    // Only over the selected stretch, next to the element's own line.
+    // Only over the selected stretch, next to the element's own line, which takes the
+    // selection's colour there: a highlight with a decoration of its own recolours the
+    // originating decorations under it (Chrome 2026-11: the blue underline turns green under the
+    // selection; WPT css-pseudo `highlight-painting-004`).
     matches(
         "<style>p::selection{color:#0a0;text-decoration:overline}</style><p id=a style='text-decoration:underline #00f'>Selected</p>",
         ("a", 2, "a", 6),
-        "<p style='text-decoration:underline #00f'>Se<span style='color:#0a0;text-decoration:overline'>lect</span>ed</p>",
+        "<p style='text-decoration:underline #00f'>Se<span style='color:#0a0;text-decoration:underline overline'>lect</span>ed</p>",
     );
 }
 

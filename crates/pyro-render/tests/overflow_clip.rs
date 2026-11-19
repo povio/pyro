@@ -109,3 +109,20 @@ fn inline_svg_visible_on_one_axis_is_cut_on_the_other_alone() {
     let clipped = svg("clip visible");
     assert!(green(&clipped, 101, 101) && green(&clipped, 198, 198), "square corners");
 }
+
+/// The clip edge's corners are the padding box's moved out (or in) to it, as Chromium shapes them
+/// (Blink `FloatRoundedRect::OutsetWithCornerCorrection`): a content box without a radius of its
+/// own (40px border radius, 20px border and padding) gets one back from a 10px margin (20px
+/// padding radius, 10px in). They were square: the box's own zero radius only grew as a
+/// shadow's spread does, which keeps it zero.
+#[test]
+fn a_clip_margin_edge_takes_the_padding_box_corners_moved_to_it() {
+    let img = render(
+        "<div class=box style='overflow:clip;padding:20px;border:20px solid transparent;border-radius:40px;\
+         overflow-clip-margin:content-box 10px'><div class=child></div></div>",
+    );
+    // The edge runs 130..250 on both axes; its top-left corner is a 10px arc about (140, 140).
+    assert!(green(&img, 133, 160), "inside the edge, beside the corner");
+    assert!(green(&img, 137, 137), "inside the corner's arc");
+    assert!(!green(&img, 131, 131), "outside the corner's arc: the corner is rounded");
+}

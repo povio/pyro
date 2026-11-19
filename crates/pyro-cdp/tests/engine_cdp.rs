@@ -3883,7 +3883,8 @@ fn window_open_returns_a_minimal_popup_object() {
     let mut seen = Vec::new();
 
     let expr = "globalThis.w = window.open('data:text/html,<title>first</title>'); [typeof w, w.closed, typeof w.document, typeof w.opener, w.location.href, typeof PopupWindow].join()";
-    assert_eq!(value(&mut h, expr), json!("object,false,undefined,object,about:blank,undefined"));
+    // The initial about:blank document exists as soon as window.open returns (HTML).
+    assert_eq!(value(&mut h, expr), json!("object,false,object,object,about:blank,undefined"));
     let attached = attached_popup(&mut h, &mut seen);
     assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener));
     assert_eq!(attached["params"]["targetInfo"]["canAccessOpener"], json!(true));
@@ -3926,6 +3927,11 @@ fn window_open_returns_a_minimal_popup_object() {
 
     // The client closing the popup reads as closed too.
     assert_eq!(value(&mut h, "globalThis.x = window.open(); x.closed"), json!(false));
+    // Its initial about:blank document is there at once and is the one the popup keeps.
+    assert_eq!(
+        value(&mut h, "x.document.body.innerHTML = '<p id=kept>kept</p>'; [x.document.URL, typeof x.ReadableStream, x.document.readyState].join()"),
+        json!("about:blank,function,complete")
+    );
     let attached = attached_popup(&mut h, &mut seen);
     let target = attached["params"]["targetInfo"]["targetId"].clone();
     // A popup with no URL still commits about:blank when resumed; Playwright's
@@ -3940,6 +3946,12 @@ fn window_open_returns_a_minimal_popup_object() {
         None => h.until_event(is_navigated),
     };
     assert_eq!(navigated["params"]["frame"]["url"], json!("about:blank"));
+    let r = h.call(Some(&blank), "Runtime.evaluate", json!({ "expression": "document.getElementById('kept').textContent + ':' + (window.opener !== null)", "returnByValue": true }));
+    assert_eq!(
+        r["result"]["result"]["value"],
+        json!("kept:true")
+    );
+    assert_eq!(value(&mut h, "x.document.getElementById('kept').textContent"), json!("kept"));
     h.call(None, "Target.closeTarget", json!({ "targetId": target }));
     assert_eq!(value(&mut h, "x.closed"), json!(true));
 
@@ -10719,6 +10731,119 @@ fn custom_property_changes_reach_descendants_that_skip_the_cascade() {
     assert_eq!(reads["c"], json!(["", "10px", "0px", "rgb(1, 2, 3)", ""]), "{r}");
 }
 
+#[test]
+fn a_resized_query_container_restyles_its_subtree_and_leaves_the_rest() {
+    // Only a resized container's descendants restyle for its size: @container
+    // rules and cq units follow, nested containers too, and elements outside it
+    // keep their values (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+.c{container-type:inline-size} #a{width:300px} #b{width:300px}
+.k{color:rgb(0, 0, 0)} @container (min-width: 400px){.k{color:rgb(0, 128, 0)}}
+.u{width:50cqw;height:10px}
+#inner{width:50%} @container (min-width: 300px){#deep{color:rgb(0, 0, 255)}}
+</style>
+<div id=a class=c><p id=ka class=k>a</p><div id=ua class=u></div><div id=inner class=c><span id=deep>d</span></div></div>
+<div id=b class=c><p id=kb class=k>b</p><div id=ub class=u></div></div>"#,
+    );
+    let read = "(() => { const s = id => getComputedStyle(document.getElementById(id)); return [s('ka').color, document.getElementById('ua').getBoundingClientRect().width, s('deep').color, s('kb').color, document.getElementById('ub').getBoundingClientRect().width]; })()";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "before"}},
+            {"eval": {"expression": "document.getElementById('a').style.width = '600px'; null"}},
+            {"eval": {"expression": read, "as": "wide"}},
+            {"eval": {"expression": "document.getElementById('a').style.width = '300px'; null"}},
+            {"eval": {"expression": read, "as": "back"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["before"], json!(["rgb(0, 0, 0)", 150, "rgb(0, 0, 0)", "rgb(0, 0, 0)", 150]), "{r}");
+    assert_eq!(reads["wide"], json!(["rgb(0, 128, 0)", 300, "rgb(0, 0, 255)", "rgb(0, 0, 0)", 150]), "{r}");
+    assert_eq!(reads["back"], json!(["rgb(0, 0, 0)", 150, "rgb(0, 0, 0)", "rgb(0, 0, 0)", 150]), "{r}");
+}
+
+#[test]
+fn styling_detached_clones_between_reads_keeps_layout_and_observers_right() {
+    // modern-screenshot reads each element's computed style and writes it onto a detached clone.
+    // Writes outside the document must not change what reads see, a clone inserted afterwards
+    // must lay out with its styles, and two observers of one target both get their records
+    // (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body style="margin:0"><div id=src style="width:120px;height:30px;color:rgb(1, 2, 3)">a</div><div id=host></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "window.recs = []; for (const k of ['one', 'two']) new MutationObserver(l => recs.push(k + ':' + l.length)).observe(host, {childList: true}); null"}},
+            {"eval": {"as": "copy", "expression": "(() => { const src = document.getElementById('src'); const clone = src.cloneNode(true); const out = []; for (let i = 0; i < 50; i++) { const cs = getComputedStyle(src); out.push(cs.width + ' ' + cs.color); clone.style.setProperty('width', (200 + i) + 'px'); clone.style.setProperty('color', cs.color); } window.clone = clone; return [out[0], out[49], src.getBoundingClientRect().width]; })()"}},
+            {"eval": {"as": "inserted", "expression": "(() => { host.appendChild(clone); const r = clone.getBoundingClientRect(); return [r.width, getComputedStyle(clone).color]; })()"}},
+            {"eval": {"as": "recs", "expression": "new Promise(r => setTimeout(() => r(recs.slice().sort()), 0))"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["copy"], json!(["120px rgb(1, 2, 3)", "120px rgb(1, 2, 3)", 120]), "{r}");
+    assert_eq!(reads["inserted"], json!([249, "rgb(1, 2, 3)"]), "{r}");
+    assert_eq!(reads["recs"], json!(["one:1", "two:1"]), "{r}");
+}
+
+#[test]
+fn a_clone_given_an_animation_while_detached_animates_once_inserted() {
+    // Changes outside the document count for nothing in the animation candidates (a screenshot
+    // library copies `animation-*` onto its clones); inserting the clone still starts its
+    // animation, and a <style> added while clones change still applies (Chromium: the same).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>@keyframes spin{to{transform:rotate(1turn)}}</style><p id=p>a</p><div id=host></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "window.started = []; document.addEventListener('animationstart', e => started.push(e.target.id)); const c = p.cloneNode(true); c.id = 'c'; for (let i = 0; i < 20; i++) { getComputedStyle(p).getPropertyValue('animation-name'); c.style.setProperty('animation', i % 2 ? 'spin 1s' : 'none'); } c.style.animation = 'spin 1s'; window.c = c; document.head.append(Object.assign(document.createElement('style'), {textContent: '#p{animation:spin 2s}'})); getComputedStyle(p).getPropertyValue('animation-name'); host.append(c); null"}},
+            {"eval": {"expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r([started.slice().sort(), getComputedStyle(p).animationName, getComputedStyle(c).animationName]))))", "as": "got"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["got"], json!([["c", "p"], "spin", "spin"]), "{r}");
+}
+
+#[test]
+fn has_anchors_follow_inserted_subtrees_with_repeated_and_sibling_compounds() {
+    // `:has()` insertion invalidation collapses dependencies of one selector that share a
+    // compound; inserting and removing subtrees that match through nested and sibling
+    // compounds still restyles the anchors (Chromium: the same reads).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+#one:has(.a .a .a){color:rgb(200, 0, 0)} #two:has(> .x + .x){color:rgb(0, 150, 0)} #three:has(.k){color:rgb(0, 0, 220)}
+</style><div id=one><div class=a></div></div><div id=two><i class=x></i></div><div id=three></div>"#,
+    );
+    let read = "['one','two','three'].map(id => getComputedStyle(document.getElementById(id)).color)";
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": read, "as": "before"}},
+            {"eval": {"expression": "window.t = document.createElement('div'); t.innerHTML = '<div class=a><div class=a><span class=k></span></div></div>' + '<p class=a></p>'.repeat(20); one.firstElementChild.appendChild(t); window.x = document.createElement('i'); x.className = 'x'; two.appendChild(x); three.appendChild(document.createElement('b')).className = 'k'; null"}},
+            {"eval": {"expression": read, "as": "inserted"}},
+            {"eval": {"expression": "t.remove(); x.remove(); three.firstElementChild.remove(); null"}},
+            {"eval": {"expression": read, "as": "removed"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["before"], json!(["rgb(0, 0, 0)", "rgb(0, 0, 0)", "rgb(0, 0, 0)"]), "{r}");
+    assert_eq!(reads["inserted"], json!(["rgb(200, 0, 0)", "rgb(0, 150, 0)", "rgb(0, 0, 220)"]), "{r}");
+    assert_eq!(reads["removed"], json!(["rgb(0, 0, 0)", "rgb(0, 0, 0)", "rgb(0, 0, 0)"]), "{r}");
+}
+
 /// A request still in flight when a `Pyro.run` replies is listed there
 /// unfinished; the next run reports how it finished (here a mocked 500 the
 /// page shows), once, marked `previousRun`, and the run after that does not
@@ -10763,4 +10888,55 @@ fn run_reports_requests_that_finish_after_it_ended() {
     let r = h.page("Pyro.run", json!({"steps": [{"eval": {"expression": "1"}}]}));
     assert!(r.get("error").is_none(), "{r}");
     assert!(late(&r).is_empty(), "reported once: {r}");
+}
+
+/// DevTools evaluation is exempt from the page's Trusted Types eval/Function
+/// checks, as Chrome exempts it from CSP: on a `require-trusted-types-for
+/// 'script'` page the page's own `eval` is refused, while `Runtime.evaluate`,
+/// `Runtime.callFunctionOn` and `Pyro.run` compile (a driver's `page.evaluate`
+/// goes through them). Before, the driver's code was refused and the
+/// Playwright WPT runner never read the results of the enforcing pages.
+#[test]
+fn devtools_evaluation_is_exempt_from_trusted_types() {
+    if !pyro_js::compile_strings_hooks_available() {
+        eprintln!("skipped: JavaScriptCore without patch 0035");
+        return;
+    }
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><head><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"></head>
+<body><script>try { eval("1"); window.pageEval = "ran"; } catch (e) { window.pageEval = e.name; }</script>"#,
+    );
+    let r = h.page("Runtime.evaluate", json!({"expression": "window.pageEval", "returnByValue": true}));
+    assert_eq!(r["result"]["result"]["value"], "EvalError", "the page's own eval is refused: {r}");
+
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "eval('6 * 7') + new Function('return 1')()", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], 43, "Runtime.evaluate: {r}");
+
+    let global = h.page("Runtime.evaluate", json!({"expression": "globalThis"}));
+    let global = global["result"]["result"]["objectId"].as_str().unwrap().to_owned();
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration": "function() { return eval('2 + 2'); }", "objectId": global, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], 4, "Runtime.callFunctionOn: {r}");
+
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [{"eval": {"expression": "eval('5')", "as": "a"}},
+            {"eval": {"expression": "(x) => new Function('return ' + x)()", "call": true, "arg": 7, "as": "b"}}]}),
+    );
+    assert_eq!(r["result"]["reads"], json!({"a": 5, "b": 7}), "Pyro.run: {r}");
+
+    // The exemption ends with the call: page code still refuses afterwards.
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "new Promise(r => setTimeout(() => { try { eval('1'); r('ran'); } catch (e) { r(e.name); } }, 0))",
+            "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "EvalError", "a timer the call scheduled is page code: {r}");
 }

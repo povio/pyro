@@ -48,6 +48,8 @@ impl BaseDocument {
         if self.has_pending_critical_resources() {
             return;
         }
+        // pyro: the page's `<meta name=color-scheme>`.
+        self.update_page_color_scheme();
         // A viewport/device update can change percentage/auto content boxes
         // without changing their computed styles. Remember it before flushing.
         let device_changed = !self.pending_device_changes.is_empty();
@@ -123,6 +125,8 @@ impl BaseDocument {
 
         phase_profile::resolved();
         self.resolve_scroll_animation();
+        // pyro: scroll-driven animations follow the scroll position.
+        let _ = self.resample_scroll_driven();
 
         // Drop scrollbar-activity entries whose fade-out has finished (also
         // sheds entries for removed nodes).
@@ -135,6 +139,8 @@ impl BaseDocument {
         debug_timer!(timer, feature = "log-phase-times");
         let mut phase_t = phase_profile::start();
 
+        // pyro: the page's `<meta name=color-scheme>`.
+        self.update_page_color_scheme();
         // Apply any device changes (viewport resize, zoom, color-scheme, etc)
         // accumulated since the last resolve as a single device rebuild.
         self.flush_pending_device_changes();
@@ -202,24 +208,30 @@ impl BaseDocument {
             self.resolve_layout();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
-            let container_sizes_changed = self.refresh_container_query_sizes();
+            let changed_containers = self.refresh_container_query_sizes();
+            let container_sizes_changed = !changed_containers.is_empty();
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
             let scroll_states_changed = !container_sizes_changed && self.update_target_current();
             // pyro: a marker's content that reads counters was met: they are evaluated now.
             let marker_counters = std::mem::take(&mut self.marker_counters_pending);
-            if (!container_sizes_changed && !scroll_states_changed && !marker_counters) || pass == 31 {
+            // pyro: scroll-driven animations at this layout (the first sample of a new document
+            // had none: no scroll range yet); a change styles and lays out once more.
+            let timelines_changed = !container_sizes_changed && pass < 2 && self.resample_scroll_driven();
+            if (!container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed)
+                || pass == 31
+            {
                 break;
             }
             if !container_sizes_changed {
                 continue;
             }
-            self.nodes[root_node_id]
-                .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
-            for (_, node) in self.nodes.iter_mut() {
-                node.clear_layout_cache();
-            }
-            self.mark_all_damaged();
+            // pyro: only the subtrees of the containers whose size changed (or that stopped being
+            // containers) can depend on it: container queries and container units resolve
+            // against an ancestor. They restyle and lay out again; the rest of the document keeps
+            // its styles and layout caches (a whole-document pass per change made each layout
+            // read after a React commit on a page of container-query cards cost a full restyle).
+            self.restyle_container_subtrees(&changed_containers);
         }
         self.nodes.bump_geometry_generation();
 
@@ -310,9 +322,60 @@ impl BaseDocument {
         timer.print_times(&format!("Resolve({}): ", self.id()));
     }
 
-    fn refresh_container_query_sizes(&self) -> bool {
+    /// pyro: restyles and lays out again the subtrees of `containers` (see the caller in
+    /// `resolve`): each one's own subtree gets a full restyle hint, every node under it (DOM,
+    /// pseudo-element and anonymous boxes, by parent or layout parent) its layout cache cleared
+    /// and full damage, and its ancestors their layout caches cleared (an `inline-size`
+    /// container's block size still follows its content).
+    fn restyle_container_subtrees(&mut self, containers: &[NodeId]) {
+        let set: std::collections::HashSet<NodeId> = containers.iter().copied().collect();
+        let under: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(id, _)| {
+                let mut cur = Some(*id);
+                let mut steps = 0;
+                while let Some(n) = cur {
+                    if set.contains(&n) {
+                        return true;
+                    }
+                    let Some(node) = self.nodes.get(n) else { return false };
+                    cur = node.parent.or_else(|| node.layout_parent.get());
+                    steps += 1;
+                    if steps > 4096 {
+                        return true;
+                    }
+                }
+                false
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in under {
+            let node = &mut self.nodes[id];
+            node.clear_layout_cache();
+            node.insert_damage(ALL_DAMAGE);
+            // Damage carries `damaged_descendants` up its ancestors (`Node::mark_damaged`).
+            node.mark_damaged();
+        }
+        for &container in containers {
+            let Some(node) = self.nodes.get(container) else { continue };
+            node.mark_damaged();
+            let mut ancestor = node.parent.or_else(|| node.layout_parent.get());
+            self.nodes[container]
+                .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
+            while let Some(id) = ancestor {
+                let Some(node) = self.nodes.get_mut(id) else { break };
+                node.clear_layout_cache();
+                ancestor = node.parent.or_else(|| node.layout_parent.get());
+            }
+        }
+    }
+
+    /// The query containers whose queried size changed since the last call, and the ones that
+    /// stopped being size containers.
+    fn refresh_container_query_sizes(&self) -> Vec<NodeId> {
         use style::values::specified::ContainerType;
-        let mut changed = false;
+        let mut changed_ids = Vec::new();
         let mut queried = self.nodes.container_query_sizes.lock().unwrap();
         queried.retain(|id, entry| {
             let Some(node) = self.nodes.get(*id) else { return false };
@@ -324,7 +387,9 @@ impl BaseDocument {
             let both = kind.intersects(ContainerType::SIZE);
             let inline = kind.intersects(ContainerType::INLINE_SIZE);
             if !both && !inline {
-                changed |= entry.size.width.is_some() || entry.size.height.is_some();
+                if entry.size.width.is_some() || entry.size.height.is_some() {
+                    changed_ids.push(*id);
+                }
                 return false;
             }
             entry.axes = euclid::default::Size2D::new(
@@ -365,11 +430,11 @@ impl BaseDocument {
             };
             if entry.size != size {
                 entry.size = size;
-                changed = true;
+                changed_ids.push(*id);
             }
             true
         });
-        changed
+        changed_ids
     }
 
     /// The layout `resolve_transforms` and `resolve_hit_overflow` place
@@ -421,6 +486,9 @@ impl BaseDocument {
                 && !node.is_anonymous()
                 && !(containing.refresh && node.is_preserve_3d())
         };
+        // pyro: the SVG shape an `offset-path: url()` names, for `set_transform`.
+        let url_path = self.motion_url_path(node_id);
+        let _url_path = MotionUrlPath::set(url_path);
         if unchanged {
             if containing.refresh {
                 self.nodes[node_id].set_transform(scale as f32, &containing.context);
@@ -444,9 +512,22 @@ impl BaseDocument {
         {
             owner = parent;
         }
+        let root = node_id == self.root_element().id;
+        let viewport = (
+            self.viewport.window_size.0 as f64 / self.viewport.scale_f64(),
+            self.viewport.window_size.1 as f64 / self.viewport.scale_f64(),
+        );
         let contents = {
             let node = &mut self.nodes[node_id];
-            let context = node.transform_context_for_children(accumulated);
+            let mut context = node.transform_context_for_children(accumulated);
+            // pyro: the boxes the root contains are in the initial containing block, the
+            // viewport, for `offset-path` (`MotionContainingBlock`).
+            if root {
+                context.cb_size = viewport;
+                context.cb_border = [0.0; 4];
+                context.cb_padding = [0.0; 4];
+                context.cb_radii = Default::default();
+            }
             let refresh = context.gives() || node.flags.contains(NodeFlags::GIVES_3D_CONTEXT);
             node.flags.set(NodeFlags::GIVES_3D_CONTEXT, context.gives());
             ContainingTransform { context, refresh, parent: Some(owner) }
@@ -768,6 +849,20 @@ impl BaseDocument {
         let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
         let mut out = overflow.union(border_box);
         if let Some(style) = self.nodes[node_id].primary_styles() {
+            // pyro: layout containment makes the box's overflowing contents ink overflow, and paint
+            // containment clips them: neither reaches an ancestor's scrollable overflow (CSS Contain
+            // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
+            // css-contain `contain-layout-ink-overflow-*`.
+            use style::values::specified::box_::Contain;
+            if style.get_box().slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
+                && !{
+                    use style::values::specified::box_::{DisplayInside, DisplayOutside};
+                    let display = style.clone_display();
+                    display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow
+                }
+            {
+                return border_box;
+            }
             let (x, y) = (style.clone_overflow_x() != Overflow::Visible, style.clone_overflow_y() != Overflow::Visible);
             if (x || y) && !self.body_overflow_goes_to_viewport(node_id) {
                 if x {
@@ -1519,9 +1614,87 @@ impl ContainingTransform {
             *self
         } else {
             ContainingTransform {
-                context: TransformContext { scroll: self.context.scroll, ..Default::default() },
+                context: TransformContext {
+                    scroll: self.context.scroll,
+                    cb_size: self.context.cb_size,
+                    cb_border: self.context.cb_border,
+                    cb_padding: self.context.cb_padding,
+                    cb_radii: self.context.cb_radii,
+                    ..Default::default()
+                },
                 ..*self
             }
+        }
+    }
+}
+
+/// pyro: sets `stylo_to_kurbo::MOTION_URL_PATH` while it lives.
+struct MotionUrlPath(Option<kurbo::BezPath>);
+
+impl MotionUrlPath {
+    fn set(path: Option<kurbo::BezPath>) -> Self {
+        MotionUrlPath(crate::stylo_to_kurbo::MOTION_URL_PATH.with(|p| p.replace(path)))
+    }
+}
+
+impl Drop for MotionUrlPath {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        crate::stylo_to_kurbo::MOTION_URL_PATH.with(|p| *p.borrow_mut() = previous);
+    }
+}
+
+impl BaseDocument {
+    /// pyro: the geometry, in its user units, of the SVG shape element (`path`, `rect`, `circle`,
+    /// `ellipse`, `line`, `polyline`, `polygon`) that `node_id`'s `offset-path: url()` names in
+    /// this document; `None` for no `url()` or no such element.
+    fn motion_url_path(&self, node_id: NodeId) -> Option<kurbo::BezPath> {
+        use kurbo::Shape as _;
+        use style::values::generics::motion::{GenericOffsetPath, GenericOffsetPathFunction};
+        let styles = self.nodes[node_id].primary_styles()?;
+        let GenericOffsetPath::OffsetPath { path, .. } = &styles.get_box().offset_path else { return None };
+        let GenericOffsetPathFunction::Url(url) = &**path else { return None };
+        let fragment = url.url()?.fragment()?.to_owned();
+        let el = self.nodes.get(self.get_element_by_id(&fragment)?)?.element_data()?;
+        if el.name.ns != markup5ever::ns!(svg) {
+            return None;
+        }
+        let num = |name: &str| {
+            el.attr(markup5ever::LocalName::from(name))
+                .and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
+        let points = |close: bool| {
+            let text = el.attr(markup5ever::local_name!("points"))?;
+            let numbers: Vec<f64> = text
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|t| !t.is_empty())
+                .map_while(|t| t.parse().ok())
+                .collect();
+            let mut path = kurbo::BezPath::new();
+            for (i, pair) in numbers.chunks_exact(2).enumerate() {
+                let p = (pair[0], pair[1]);
+                if i == 0 { path.move_to(p) } else { path.line_to(p) }
+            }
+            if close {
+                path.close_path();
+            }
+            Some(path)
+        };
+        match &*el.name.local {
+            "path" => kurbo::BezPath::from_svg(el.attr(markup5ever::local_name!("d"))?).ok(),
+            "rect" => Some(kurbo::Rect::new(num("x"), num("y"), num("x") + num("width"), num("y") + num("height")).to_path(0.01)),
+            "circle" => Some(kurbo::Circle::new((num("cx"), num("cy")), num("r").max(0.0)).to_path(1e-6)),
+            "ellipse" => Some(kurbo::Ellipse::new((num("cx"), num("cy")), (num("rx").max(0.0), num("ry").max(0.0)), 0.0).to_path(1e-6)),
+            "line" => {
+                let mut path = kurbo::BezPath::new();
+                path.move_to((num("x1"), num("y1")));
+                path.line_to((num("x2"), num("y2")));
+                Some(path)
+            }
+            "polyline" => points(false),
+            "polygon" => points(true),
+            _ => None,
         }
     }
 }

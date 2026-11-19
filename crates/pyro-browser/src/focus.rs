@@ -93,17 +93,19 @@ impl FrameHost {
         if !self.focus_chain_current(&chain, token) {
             return false;
         }
-        {
+        let previous_target = {
             let mut state = self.focus.borrow_mut();
             if let Some(previous) = state.transition.replace(token.clone()) {
                 if !previous.ptr_eq(token) {
                     previous.cancel();
                 }
             }
+            let previous_target = state.target;
             if !matches!(target, FocusTarget::Blur(_)) {
                 state.target = destination;
             }
-        }
+            previous_target
+        };
         // Explicit blur changes the document's active element, not frame identity.
         if matches!(target, FocusTarget::Blur(_)) {
             return token.is_current();
@@ -141,6 +143,28 @@ impl FrameHost {
         }
         if !self.focus_chain_current(&chain, token) {
             return false;
+        }
+        // HTML focus update steps: `blur` at the Window of each document that left the focus
+        // chain (deepest first), then `focus` at each that entered it (outermost first).
+        if previous_target != destination {
+            let old = self.focus_chain(previous_target).unwrap_or_default();
+            for link in old.iter().rev() {
+                if !chain.iter().any(|l| l.key == link.key) {
+                    if let Some(page) = &link.page_dom {
+                        pyro_webapi::lifecycle::window_focus(page, false);
+                    }
+                }
+            }
+            for link in &chain {
+                if !old.iter().any(|l| l.key == link.key) {
+                    if let Some(page) = &link.page_dom {
+                        pyro_webapi::lifecycle::window_focus(page, true);
+                    }
+                }
+            }
+            if !self.focus_chain_current(&chain, token) {
+                return false;
+            }
         }
         if redirected.is_some() {
             if let Some(page) = &chain.last().expect("nonempty chain").page_dom {

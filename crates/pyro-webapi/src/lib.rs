@@ -41,11 +41,15 @@ mod event_source;
 pub mod fetch;
 pub mod file;
 pub mod file_reader;
+pub mod font_loading;
+pub mod typed_om;
+pub mod trusted_types;
 pub mod form_data;
 pub mod formdata;
 pub mod handlers;
 pub mod headers;
 pub mod highlights;
+pub mod view_transition;
 pub mod html;
 pub mod identity;
 mod image_decode;
@@ -101,6 +105,8 @@ pub mod websocket;
 pub mod window;
 pub mod window_message;
 pub mod worker;
+pub(crate) mod shared_worker;
+pub mod svg_use;
 mod worker_scope;
 pub mod xhr;
 pub mod xpath;
@@ -115,7 +121,7 @@ pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
-pub use page::{
+pub use page::{FrameContainer,
     BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
@@ -152,6 +158,7 @@ pub fn register(engine: &pyro_js::Engine) {
     message_channel::register(engine);
     media_source::register(engine);
     worker::register(engine);
+    shared_worker::register(engine);
     custom::register(engine);
     internals::register(engine);
     file::register(engine);
@@ -253,6 +260,80 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
 /// [`install`], returning the realm's install.js helpers for the embedder's
 /// own setup (`accessor`: an enumerable, configurable getter on the global).
 pub fn install_with_helpers<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>> {
+    install_page(scope, page)
+}
+
+/// Binds a realm made for another document to `page` (HTML Window reuse:
+/// an iframe's initial about:blank Window, made with
+/// [`PageDom::set_reusable_window`], shows the frame's first same-origin
+/// document): what [`install_with_helpers`] ties to its page, again for
+/// `page`. The global's own attributes (`document`, `window`, the touch
+/// handlers), the helpers and the interfaces' hooks stay as they were made
+/// ([`adopt_window`] moved the helpers). Call after [`adopt_window`] and
+/// with the realm's Window data already `page`'s.
+pub fn rebind_window(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
+    if page.is_disposed() {
+        return Err(pyro_js::JsError::ContextDestroyed);
+    }
+    let realm = scope.realm();
+    page.register_realm(&realm);
+    let names = scope.impure_names();
+    page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
+    install_listener_connected_hook(&page);
+    realm.set_embedder(page.clone());
+    realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
+    mutation_observer::bind(scope, &page)
+}
+
+/// Moves the Window of `realm` (the main world of `old`, an initial
+/// about:blank document) to `new`, the document that reuses it: its event
+/// target (so listeners and handlers set on it stay) and its listener
+/// holder. `new`'s own Window target, unused so far, is dropped. False (and
+/// nothing changed) when the two do not share a DOM or either has no
+/// Window target.
+pub fn adopt_window(old: &PageDom, new: &Rc<PageDom>, realm: pyro_js::RealmId) -> bool {
+    if !Rc::ptr_eq(&old.dom, &new.dom) {
+        return false;
+    }
+    let (old_doc, new_doc) = (old.document(), new.document());
+    let Some(old_key) = old.window_keys.borrow().iter().find(|(d, _)| *d == old_doc).map(|(_, k)| *k) else {
+        return false;
+    };
+    let Some(new_key) = new.window_keys.borrow().iter().find(|(d, _)| *d == new_doc).map(|(_, k)| *k) else {
+        return false;
+    };
+    old.window_keys.borrow_mut().retain(|(d, _)| *d != old_doc);
+    for entry in new.window_keys.borrow_mut().iter_mut().filter(|(d, _)| *d == new_doc) {
+        entry.1 = old_key;
+    }
+    {
+        let mut dom = new.dom.borrow_mut();
+        dom.set_document_window(old_doc, None);
+        dom.forget_target(new_key);
+        dom.set_document_window(new_doc, Some(old_key));
+    }
+    // The realm's helpers (made by install.js once) and roots go along.
+    for (from, to) in [
+        (&old.window_holders, &new.window_holders),
+        (&old.data_view_readers, &new.data_view_readers),
+        (&old.header_helpers, &new.header_helpers),
+        (&old.url_params_helpers, &new.url_params_helpers),
+        (&old.structured_clones, &new.structured_clones),
+        (&old.define_properties, &new.define_properties),
+        (&old.event_unforgeables, &new.event_unforgeables),
+    ] {
+        let moved = from.borrow_mut().remove(&realm);
+        if let Some(moved) = moved {
+            to.borrow_mut().insert(realm, moved);
+        }
+    }
+    mutation_observer::adopt_realm(old, new, realm);
+    intersection_observer::adopt_realm(old, new, realm);
+    xhr::adopt_realm(old, new, realm);
+    true
+}
+
+fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>> {
     if page.is_disposed() {
         return Err(pyro_js::JsError::ContextDestroyed);
     }
@@ -268,6 +349,7 @@ pub fn install_with_helpers<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResul
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     let helpers = install_helpers(scope)?;
+    file::install(scope, helpers.get_atom("blobParts")?)?;
     mutation_observer::install(scope, &page, helpers.get_atom("mutationOptions")?)?;
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;
     encoding::install(scope, helpers.get_atom("dataView")?)?;
@@ -296,10 +378,30 @@ pub fn install_with_helpers<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResul
     // iframe, an isolated world) does not need. It is the document the
     // realm was installed for, whatever the page displays by then. Without
     // the patched JavaScriptCore the interface's getters serve them.
+    // An initial about:blank Window that the frame's first same-origin
+    // document may reuse (`rebind_window`) shows whichever document
+    // its page has: an own accessor, as [LegacyUnforgeable] specifies.
     let document = page.document();
-    let make: pyro_js::LazyGlobalConstant = Rc::new(move |s: &Scope<'_>| window_document(s, document));
-    if scope.define_lazy_global_constant("document", make) {
+    if page.reusable_window() && window::has_window_constants() {
+        let get = scope.function("get document", |s, _, _| {
+            let page = target::page_of(s)?;
+            Ok(node::wrap_node(s, &page, page.document())?.value())
+        })?;
+        let desc = scope.object();
+        desc.set_atom("get", get.value())?;
+        desc.set_atom("enumerable", scope.boolean(true))?;
+        desc.set_atom("configurable", scope.boolean(false))?;
+        let define =
+            scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?;
+        if let Some(define) = define.and_then(|d| d.as_object()) {
+            define.call(None, &[global.value(), scope.string("document"), desc.value()])?;
+        }
         scope.define_global_constant("window", global.value());
+    } else {
+        let make: pyro_js::LazyGlobalConstant = Rc::new(move |s: &Scope<'_>| window_document(s, document));
+        if scope.define_lazy_global_constant("document", make) {
+            scope.define_global_constant("window", global.value());
+        }
     }
     // [Unscopable] members of ChildNode and ParentNode, defined with each
     // interface's members (install.js `unscopables`): reading

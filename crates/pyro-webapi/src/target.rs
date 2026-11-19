@@ -25,6 +25,8 @@ pub struct EventTargetData {
     pub key: TargetKey,
     /// The functions in this wrapper's listener array, by slot.
     listeners: ListenerFns,
+    /// Its listener list went to another owner ([`EventTargetData::hand_over`]).
+    handed_over: std::cell::Cell<bool>,
 }
 
 /// The listener functions of a target wrapper's hidden array ([`LISTENERS`]),
@@ -83,9 +85,16 @@ impl EventTargetData {
     pub fn window(page: &Rc<PageDom>, key: TargetKey) -> EventTargetData {
         EventTargetData::for_key(page.clone(), key)
     }
+    /// The target's listener list now belongs to `to`, another data of the
+    /// same key (a reused Window's): dropping this one leaves it.
+    pub fn hand_over(&self, to: &EventTargetData) {
+        debug_assert_eq!(self.key, to.key);
+        self.handed_over.set(true);
+        *to.listeners.0.borrow_mut() = self.listeners.0.take();
+    }
     /// The data of a wrapper of target `key`.
     pub(crate) fn for_key(page: Rc<PageDom>, key: TargetKey) -> EventTargetData {
-        EventTargetData { page, key, listeners: ListenerFns::default() }
+        EventTargetData { page, key, listeners: ListenerFns::default(), handed_over: std::cell::Cell::new(false) }
     }
 }
 
@@ -93,7 +102,7 @@ impl Drop for EventTargetData {
     fn drop(&mut self) {
         // Non-node, non-window targets own their listener list.
         if let TargetKey::Other(_) = self.key {
-            if !self.page.is_window_key(self.key) {
+            if !self.handed_over.get() && !self.page.is_window_key(self.key) {
                 if let Ok(mut d) = self.page.dom.try_borrow_mut() {
                     d.forget_target(self.key);
                 }

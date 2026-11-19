@@ -95,7 +95,7 @@ jobs:
           tar -xJf "nasm-$NASM_VERSION.tar.xz"
           cd "nasm-$NASM_VERSION"
           ./configure --quiet
-          make -j"$(sysctl -n hw.ncpu)" nasm
+          make -j"${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)}" nasm
           ./nasm -v
           echo "$PWD" >> "$GITHUB_PATH"
       - name: Build browser with rendering, and the comparison worker

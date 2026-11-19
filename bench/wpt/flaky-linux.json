@@ -1,0 +1,55 @@
+{
+ "//": "Linux-only additions to flaky.json for the Linux testharness gate (wpt.yml wpt-linux/gate-linux merge the two; macOS keeps gating these subtests). Same format and rules as flaky.json; adding or widening an entry needs the wpt-accept-loss label once the base branch has baseline-linux.json.",
+ "tests": {
+  "html/dom/render-blocking/parser-inserted-style-element.html": {
+   "reason": "Timing on GitHub's 4-CPU Linux runners: passed 29 and failed 11 of 40 executions across 9 CI runs at --jobs 8 (2026-11-18, runs 44275075490..44287650733); the render-blocking race of wpt-gate-flaky-evidence (the first animation frame lands 0-2 ms after the stylesheet's load is queued). Stable on macOS. At --jobs 4 (0a4adb60c) it passed both executions of bootstrap run 44290550586: too few to drop the entry.",
+   "subtests": [
+    "Rendering is blocked before render-blocking resources are loaded"
+   ]
+  },
+  "html/dom/render-blocking/remove-attr-style-keeps-blocking.html": {
+   "reason": "Timing on GitHub's 4-CPU Linux runners: passed 28 and failed 8 of 36 executions across 9 CI runs at --jobs 8 (2026-11-18); same render-blocking race. Stable on macOS. At --jobs 4 (0a4adb60c) it passed both executions of bootstrap run 44290550586: too few to drop the entry.",
+   "subtests": [
+    "Rendering is blocked before render-blocking resources are loaded"
+   ]
+  },
+  "html/dom/render-blocking/script-inserted-style-element.html": {
+   "reason": "Timing on GitHub's 4-CPU Linux runners: passed 5 and failed 8 of 13 executions across 9 CI runs at --jobs 8 (2026-11-18); same render-blocking race. Stable on macOS. At --jobs 4 (0a4adb60c) it passed both executions of bootstrap run 44290550586: too few to drop the entry.",
+   "subtests": [
+    "Rendering is blocked before render-blocking resources are loaded"
+   ]
+  },
+  "css/css-transforms/animation/transform-interpolation-005.html": {
+   "reason": "Timing on GitHub's 4-CPU Linux runners: passed 16 and failed 1 of 17 executions across 9 CI runs at --jobs 8 (2026-11-18); a transition sampled at its start time.",
+   "subtests": [
+    "CSS Transitions with transition: all: property <transform> from [matrix(1, 0, 0, 1, 0, -6)] to [matrix(0, 7, -1, 0, 6, 0)] at (2) should be [matrix(-13, 0, 0, -1, 12, 6)]"
+   ]
+  },
+  "scroll-animations/css/animation-timeline-view-functional-notation.tentative.html": {
+   "reason": "Timing on the Linux runners (2026-11-18): failed its first run and passed reruns in runs 44393445146 and 44396535093, and the view(inline 50px) change subtest passed in 44396535093 only, with no code change between. Scroll-driven sampling around the first layout (lane F2 is looking for the race). Remove once fixed.",
+   "subtests": [
+    "animation-timeline: view(inline) changes to view(inline 50px), withouttimeline range name"
+   ]
+  },
+  "trusted-types/SharedWorker-setTimeout-setInterval.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/DedicatedWorker-eval.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/inheriting-csp-for-local-schemes.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/SharedWorker-importScripts.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  },
+  "trusted-types/Document-parseHTMLUnsafe-respects-current-globals-CSP.html": {
+   "reason": "Timing on the Linux runners (2026-11-19): completed in run 44446263082 and timed out in all 3 executions of run 44447925572 with no code change between (baseline-only commit ab0359a8b). Worker/frame startup under shard load; only incompletion is allowed, a completed run is still checked. Lane F3a to investigate.",
+   "allowIncomplete": true
+  }
+ }
+}

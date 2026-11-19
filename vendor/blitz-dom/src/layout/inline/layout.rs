@@ -201,6 +201,16 @@ fn vertical_line_kind(wm: stylo_taffy::WritingMode) -> (bool, bool) {
     (central, central && wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED))
 }
 
+/// pyro: whether the lines of a root in writing mode `wm` are sideways and inverted (`vertical-lr`
+/// with `text-orientation: sideways`): their glyphs' tops, the line-over side, face block-end, so
+/// their alphabetic baseline and line-under side are toward block-start. Parley lays a line out
+/// over-side first and paint turns it within its slot (`draw_vertical_inline_layout`); its inline
+/// boxes and the baselines the root exports are turned the same way (WPT css-flexbox
+/// `baseline-synthesis-003`, css-grid `grid-self-baseline-004`).
+fn sideways_inverted_lines(wm: stylo_taffy::WritingMode) -> bool {
+    wm.is_vertical() && wm.is_sideways() && wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED)
+}
+
 /// A float met mid-line, laid out but not yet placed in the block formatting context
 #[cfg(feature = "floats")]
 struct PendingFloat {
@@ -337,14 +347,16 @@ impl LayoutPassState<'_> {
         } = float;
 
         // Note: `pos` is content-box relative
-        let pos = block_ctx.place_floated_box(
-            crate::taffy_node_id(node_id).into(),
-            output.size + margin.sum_axes(),
-            min_y,
-            direction,
-            clear,
-            false,
-        );
+        let margin_box = output.size + margin.sum_axes();
+        // pyro: a float with a `shape-outside` float area (CSS Shapes 1)
+        let bands = self.nodes[node_id]
+            .primary_styles()
+            .and_then(|style| crate::layout::shape_outside::float_bands_for(&style, margin_box, margin));
+        let id = crate::taffy_node_id(node_id).into();
+        let pos = match bands {
+            Some(bands) => block_ctx.place_shaped_floated_box(id, margin_box, min_y, direction, clear, false, &bands),
+            None => block_ctx.place_floated_box(id, margin_box, min_y, direction, clear, false),
+        };
 
         // pyro: relatively positioned inline boxes around the float move it as they move the rest
         // of their content (CSS 2.1 § 9.4.3), not where it is placed (WPT
@@ -1029,6 +1041,10 @@ impl LayoutPassState<'_> {
                         None => (margin.top + margin.bottom + output.size.height) / 2.0,
                     };
                     Some(over * scale)
+                } else if sideways_inverted_lines(self.nodes[node_id].writing_mode()) {
+                    // From the line-over side, block-end (`sideways_inverted_lines`).
+                    let margin_box = margin.top + margin.bottom + output.size.height;
+                    alphabetic.map(|alphabetic| margin_box * scale - alphabetic)
                 } else {
                     alphabetic
                 };
@@ -1437,6 +1453,11 @@ impl LayoutPassState<'_> {
                 // floats before it are all placed: a float met after one left for below its line
                 // is left for below it too.)
                 let mut placed_through: Option<usize> = None;
+                // pyro: the initial letter placed on the first line, until that line ends: its box
+                // and the margin box `place_initial_letter` excluded, which move down with the
+                // line's text when the line's annotations need more room than the letter's raise
+                // left (see `LineMetrics::annotation_shift`).
+                let mut letter_on_line: Option<(NodeId, Point<f32>, Size<f32>, taffy::FloatDirection)> = None;
                 let state = breaker.state_mut();
                 state.set_layout_max_advance(max_advance);
                 if let Some(limit) = balance_limit {
@@ -1505,6 +1526,24 @@ impl LayoutPassState<'_> {
                             }
                             line_bottoms[line_count_so_far % 2] = line_break_data.line_y_end;
                             line_count_so_far += 1;
+
+                            // pyro: the initial letter's cap height stays on its first line's text
+                            // (Blink places it after the line, `PostPlaceInitialLetterBox`): what
+                            // the line's annotations push the text down by beyond the room the
+                            // letter's raise left moves the letter, and its exclusion, too (WPT
+                            // css-inline `initial-letter-block-position-*-over-ruby*`).
+                            if let Some((letter_id, at, size, direction)) = letter_on_line.take() {
+                                let metrics = &line_break_data.metrics;
+                                let extra = (metrics.annotation_overflow[0] - metrics.annotation_shift) / scale;
+                                if extra > 0.0 {
+                                    self.nodes[letter_id].update_unrounded_layout(|layout| layout.location.y += extra);
+                                    block_ctx.place_initial_letter(
+                                        at,
+                                        Size { width: size.width, height: size.height + extra },
+                                        direction,
+                                    );
+                                }
+                            }
 
                             let state = breaker.state_mut();
 
@@ -1635,11 +1674,14 @@ impl LayoutPassState<'_> {
                                     let left = slot.x + indent;
                                     (left, left + margin.left)
                                 };
-                                block_ctx.place_initial_letter(
+                                let excluded = (
+                                    node_id,
                                     Point { x, y: line_top + extent_top },
                                     Size { width: margin_box_width, height: (extent_bottom - extent_top).max(0.0) },
                                     if rtl { taffy::FloatDirection::Right } else { taffy::FloatDirection::Left },
                                 );
+                                block_ctx.place_initial_letter(excluded.1, excluded.2, excluded.3);
+                                letter_on_line = Some(excluded);
                                 let location = Point {
                                     x: border_x + container_pb.left,
                                     y: line_top + drawn_top + container_pb.top,
@@ -1652,6 +1694,10 @@ impl LayoutPassState<'_> {
                                 placed_through = placed_through.max(Some(item));
                                 let line_y = line_top + shift;
                                 state.set_line_y(f64::from(line_y * scale));
+                                // An annotation over the line's text takes the room the raise
+                                // leaves before the text moves further (Blink's
+                                // `BlockStartAnnotationSpace`).
+                                state.set_annotation_space(shift * scale);
                                 line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
                                 has_active_floats = line_slot.segment_id.is_some();
                                 set_line_slot(state, &line_slot, scale, slack, mirror_slots);
@@ -2223,7 +2269,7 @@ impl LayoutPassState<'_> {
                                 .find(|candidate| candidate.id == ibox.id && candidate.kind == parley::InlineBoxKind::InFlow)
                                 .is_some_and(|candidate| candidate.central)
                         };
-                        if vertical_line_kind(wm).1 && central_box() {
+                        if (vertical_line_kind(wm).1 && central_box()) || sideways_inverted_lines(wm) {
                             let metrics = line.metrics();
                             ibox_y = metrics.block_min_coord + metrics.block_max_coord - ibox.y - ibox.height;
                         } else if wm.contains(stylo_taffy::WritingMode::WRITING_MODE_SIDEWAYS_LR) {
@@ -2294,13 +2340,25 @@ impl LayoutPassState<'_> {
             }
         }
 
-        let line_baseline =
-            |line: parley::Line<'_, _>| (line.metrics().baseline / scale) + line_box_top;
+        let sideways_inverted = sideways_inverted_lines(self.nodes[node_id].writing_mode());
+        let line_baseline = |line: parley::Line<'_, _>| {
+            let m = line.metrics();
+            let baseline = if sideways_inverted { m.block_min_coord + m.block_max_coord - m.baseline } else { m.baseline };
+            (baseline / scale) + line_box_top
+        };
         let exports_baseline = has_inline_content && !suppresses_baseline;
         let first_baseline = exports_baseline
             .then(|| inline_layout.layout.lines().next().map(line_baseline))
             .flatten();
-        let last_line_index = trailing_empty_line.unwrap_or(line_count).checked_sub(1);
+        // pyro: the last line box that is not a phantom one (CSS Inline 3 § 4.1: one holding only
+        // floats or collapsed white space after a `<br>` has no baseline; WPT css-flexbox
+        // `flexbox-baseline-multi-line-vert-001` whose reference is such an inline-block).
+        let last_line_index = trailing_empty_line.unwrap_or(line_count).checked_sub(1).map(|mut last| {
+            while last > 0 && inline_layout.layout.get(last).is_some_and(|line| line.metrics().invisible) {
+                last -= 1;
+            }
+            last
+        });
         let last_baseline = exports_baseline
             .then(|| last_line_index.and_then(|i| inline_layout.layout.get(i)))
             .flatten()
@@ -2308,7 +2366,7 @@ impl LayoutPassState<'_> {
         // pyro: in a vertical writing mode with a central dominant baseline (text not sideways; Blink's
         // `ComputedStyle::GetFontBaseline`), the baselines from the block-start edge, for grid baseline
         // alignment. The lines of `vertical-lr` are painted turned within their slot (line-over at block-end).
-        // (Sideways text keeps `first_baseline`/`last_baseline`, which inline-block alignment agrees with.)
+        // (Sideways text keeps `first_baseline`/`last_baseline`, turned in `vertical-lr`: `sideways_inverted_lines`.)
         let (dominant_first, dominant_last) = {
             let wm = self.nodes[node_id].writing_mode();
             if wm.is_vertical() && !wm.is_sideways() && exports_baseline && !alphabetic_atomics {
@@ -2583,7 +2641,18 @@ fn span_padding_box(
                 None => (x0, x1, own),
             });
         }
-        if let Some((x0, x1, own)) = fragment {
+        if let Some((x0, mut x1, own)) = fragment {
+            // pyro: the collapsible white space hanging past the end of a left-to-right line is in
+            // no box (`LineMetrics::collapsed_advance`): a right-to-left span whose run ends the
+            // line holds it all the same, which put its edge past the line's (WPT css-position
+            // `multicol/*-ltr-rtl-in-multicols`).
+            let metrics = line.metrics();
+            if !layout.is_rtl() && metrics.collapsed_advance > 0.0 {
+                let content_end = metrics.offset + metrics.advance - metrics.collapsed_advance;
+                if x1 > content_end && x1 - content_end <= metrics.collapsed_advance + 0.01 {
+                    x1 = content_end.max(x0);
+                }
+            }
             let (top, bottom) = if line_has_content {
                 let (top, bottom) = line.span_box_area(own);
                 (top - padding_top, bottom + padding_bottom)
@@ -2596,7 +2665,11 @@ fn span_padding_box(
         }
     }
     let (first, last) = (first?, last?);
-    let (left, right) = if rtl { (last.0, first.1) } else { (first.0, last.1) };
+    // pyro: the start edge of the first fragment and the end edge of the last are those of the
+    // lines' direction, the block container's, not the span's own (Blink: an `rtl` span in an
+    // `ltr` line contains from the left of its first fragment to the right of its last; WPT
+    // css-position `multicol/*-ltr-rtl-in-multicols`, `*-rtl-ltr-*`).
+    let (left, right) = if layout.is_rtl() { (last.0, first.1) } else { (first.0, last.1) };
     let (top, bottom) = (first.2, last.3);
     Some((left / scale, top / scale, (right - left).max(0.0) / scale, (bottom - top).max(0.0) / scale))
 }

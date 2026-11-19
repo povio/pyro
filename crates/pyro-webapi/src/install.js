@@ -185,7 +185,59 @@
   };
   const child = ['before', 'after', 'replaceWith', 'remove'], parent = ['prepend', 'append', 'replaceChildren'];
 
+  // file.rs: the `blobParts` sequence of the Blob and File constructors,
+  // converted as Web IDL converts `sequence<BlobPart>`: iterated through its
+  // @@iterator, each item converted as it comes. Blobs stay objects (the
+  // native side reads them), buffer sources become Uint8Arrays over their
+  // bytes, anything else a USVString.
+  const blobSize = getOwnPropertyDescriptor(Blob.prototype, 'size').get;
+  const bufferLength = getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
+  const sharedLength = typeof SharedArrayBuffer === 'function'
+    ? getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength').get : undefined;
+  const isView = ArrayBuffer.isView;
+  const typedArrayProto = getPrototypeOf(Uint8Array_.prototype);
+  const viewBuffer = getOwnPropertyDescriptor(typedArrayProto, 'buffer').get;
+  const viewOffset = getOwnPropertyDescriptor(typedArrayProto, 'byteOffset').get;
+  const viewLength = getOwnPropertyDescriptor(typedArrayProto, 'byteLength').get;
+  const toWellFormed = String.prototype.toWellFormed;
+  const blobParts = (parts) => {
+    const out = [];
+    if (parts === undefined) return out;
+    if (parts === null || (typeof parts !== 'object' && typeof parts !== 'function'))
+      throw new TypeError_("Failed to construct 'Blob': The provided value cannot be converted to a sequence.");
+    const method = parts[symbolIterator];
+    if (typeof method !== 'function')
+      throw new TypeError_("Failed to construct 'Blob': The object must have a callable @@iterator property.");
+    const it = apply(method, parts, []);
+    for (;;) {
+      const step = it.next();
+      if (step.done) break;
+      const v = step.value;
+      if (v !== null && typeof v === 'object') {
+        try { apply(blobSize, v, []); append(out, v); continue; } catch (_) {}
+        // A buffer source over a detached buffer holds no bytes.
+        if (isView(v)) {
+          let bytes;
+          try { bytes = new Uint8Array_(apply(viewBuffer, v, []), apply(viewOffset, v, []), apply(viewLength, v, [])); }
+          catch (_) { bytes = dataView(v); }
+          append(out, bytes || new Uint8Array_(0)); continue;
+        }
+        let isBuffer = false;
+        try { apply(bufferLength, v, []); isBuffer = true; } catch (_) {}
+        if (!isBuffer && sharedLength) try { apply(sharedLength, v, []); isBuffer = true; } catch (_) {}
+        if (isBuffer) {
+          let bytes;
+          try { bytes = new Uint8Array_(v); } catch (_) { bytes = new Uint8Array_(0); }
+          append(out, bytes); continue;
+        }
+      }
+      append(out, apply(toWellFormed, String_(v), []));
+    }
+    return out;
+  };
+
   return {
+    blobParts,
     dataView,
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
@@ -193,7 +245,8 @@
     headers: [headersHelpers, headersPopulated],
     urlSearchParams,
     structuredClone: structuredCloneFactory,
-    unscopables: [unscopable([...child, ...parent]), unscopable(child), unscopable(child), unscopable(parent), unscopable(parent)],
+    // Element's own [Unscopable] `slot` (DOM) joins ChildNode's and ParentNode's.
+    unscopables: [unscopable([...child, ...parent, 'slot']), unscopable(child), unscopable(child), unscopable([...parent, 'fullscreen']), unscopable(parent)],
     // An enumerable, configurable getter on the global (pyro-browser's
     // `window[0]`.. frame indices).
     accessor: (global, key, get) => defineProperty(global, key, { get, enumerable: true, configurable: true }),

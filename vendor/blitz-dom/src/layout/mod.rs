@@ -37,6 +37,7 @@ pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
 pub(crate) mod scroll_markers;
+pub(crate) mod shape_outside;
 pub mod table;
 pub(crate) mod table_fixup;
 pub(crate) mod text_box;
@@ -1076,14 +1077,25 @@ impl LayoutPassState<'_> {
                         // sizes it (WPT css-flexbox `stretch-flex-item-checkbox-input`). The 13x13 is the
                         // border box: the content is what padding and border leave of it (the UA sheet's
                         // `input` padding and border would otherwise make a checkbox 21x19 and a radio 17x15).
-                        Some("checkbox" | "radio") => {
+                        // pyro: a range is 129x16 by nature (Blink's slider theme size), as its
+                        // border box (blitz-paint `draw_bar_widget` paints it).
+                        kind @ Some("checkbox" | "radio" | "range") => {
                             let style = node.layout_style();
                             let parent = inputs.parent_size.width;
                             let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                             let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                            // `appearance: none` leaves a checkbox or radio no natural size (Chrome: 0x0).
+                            let none = node.primary_styles().is_some_and(|s| {
+                                *s.get_box().get_appearance() == style::computed_values::appearance::T::None
+                            });
+                            let (w, h) = match kind {
+                                Some("range") => (129.0, 16.0),
+                                _ if none => (0.0, 0.0),
+                                _ => (13.0, 13.0),
+                            };
                             let natural = taffy::Size {
-                                width: (13.0 - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
-                                height: (13.0 - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
+                                width: (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
+                                height: (h - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
                             };
                             return ChildLayout::Done(compute_leaf_layout(
                                 inputs,
@@ -2207,6 +2219,16 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
 
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
         self.child_layout_style(self.node_from_id(child_node_id))
+    }
+
+    fn float_shape_bands(
+        &self,
+        child_node_id: NodeId,
+        margin_box: taffy::Size<f32>,
+        margin: taffy::Rect<f32>,
+    ) -> Option<Vec<shape_outside::Band>> {
+        let style = self.node_from_id(child_node_id).primary_styles()?;
+        shape_outside::float_bands_for(&style, margin_box, margin)
     }
 
     fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {

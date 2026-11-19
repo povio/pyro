@@ -25,6 +25,24 @@ pub fn parse_rules(text: &str, namespaces: &mut Namespaces) -> Vec<ParsedRule> {
     parse_list(&mut parser, namespaces, true)
 }
 
+/// CSSOM "parse a CSS rule": the one rule `text` holds, `Err` when anything
+/// but whitespace and comments follows it (or it holds none).
+pub fn parse_one_rule(text: &str, namespaces: &mut Namespaces) -> Result<ParsedRule, ()> {
+    let mut p = Parser::new(text);
+    let mut rule = None;
+    loop {
+        let start = p.position();
+        let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { break };
+        match token {
+            Token::WhiteSpace(_) | Token::Comment(_) => continue,
+            _ if rule.is_some() => return Err(()),
+            Token::AtKeyword(name) => rule = Some(parse_at_rule(&mut p, &name, namespaces).ok_or(())?),
+            token => rule = Some(parse_style_rule(&mut p, start, &token, namespaces).ok_or(())?),
+        }
+    }
+    rule.ok_or(())
+}
+
 /// The serialized form of a valid selector list. Valid means what
 /// `querySelector` accepts, plus the given namespace prefixes.
 pub fn normalize_selector(text: &str, namespaces: &Namespaces) -> Option<String> {
@@ -35,7 +53,10 @@ pub fn normalize_selector(text: &str, namespaces: &Namespaces) -> Option<String>
 }
 
 fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool) -> Vec<ParsedRule> {
-    let mut rules = Vec::new();
+    let mut rules: Vec<ParsedRule> = Vec::new();
+    // `@import` and `@namespace` only count before every other rule (`@layer`
+    // statements aside); later ones are dropped, as browsers drop them.
+    let mut past_prologue = false;
     loop {
         let start = p.position();
         let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { return rules };
@@ -45,7 +66,19 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool) -> Vec
             Token::AtKeyword(name) => parse_at_rule(p, &name, namespaces),
             token => parse_style_rule(p, start, &token, namespaces),
         };
-        rules.extend(rule);
+        let Some(rule) = rule else { continue };
+        if top {
+            let prologue = match &rule {
+                ParsedRule::Other { rule_type: 3 | 10, .. } => true,
+                ParsedRule::Other { rule_type: 0, text } => text.starts_with("@layer") && text.ends_with(';'),
+                _ => false,
+            };
+            if prologue && past_prologue && matches!(rule, ParsedRule::Other { rule_type: 3 | 10, .. }) {
+                continue;
+            }
+            past_prologue |= !prologue;
+        }
+        rules.push(rule);
     }
 }
 
@@ -111,13 +144,96 @@ fn collapse(text: &str) -> String {
     text.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// An `@import` prelude with its URL serialized as CSSOM does: `url("...")`.
+fn import_url_form(prelude: &str) -> String {
+    let mut p = Parser::new(prelude);
+    let url = match p.next() {
+        Ok(Token::QuotedString(v)) | Ok(Token::UnquotedUrl(v)) => v.to_string(),
+        Ok(Token::Function(f)) if f.eq_ignore_ascii_case("url") => {
+            let inner: Result<String, ParseError<()>> =
+                p.parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(Into::into));
+            match inner {
+                Ok(v) => v,
+                Err(_) => return prelude.to_owned(),
+            }
+        }
+        _ => return prelude.to_owned(),
+    };
+    let mut out = String::from("url(");
+    let _ = cssparser::serialize_string(&url, &mut out);
+    out.push(')');
+    // The layer and supports() parts as written, the media queries serialized.
+    let (head, media) = import_split(prelude);
+    let modifiers = head[head.len().min(p.position().byte_index())..].trim().to_owned();
+    let modifiers = if head.len() >= p.position().byte_index() { modifiers } else { String::new() };
+    for part in [modifiers, if media.is_empty() { String::new() } else { serialize_media_list(&media) }] {
+        if !part.is_empty() {
+            out.push(' ');
+            out.push_str(&part);
+        }
+    }
+    out
+}
+
+/// A `layer()` argument that names a layer: dot-separated identifiers.
+pub fn valid_layer_name(inner: &str) -> bool {
+    let inner = inner.trim();
+    !inner.is_empty()
+        && inner.split('.').all(|part| {
+            !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii())
+        })
+}
+
+/// An `@import` prelude split before its media queries: the URL, `layer`
+/// and `supports()` parts, and the media query text.
+pub fn import_split(prelude: &str) -> (String, String) {
+    let mut p = cssparser::Parser::new(prelude);
+    let mut end = p.position();
+    let mut first = true;
+    loop {
+        let state = p.state();
+        let Ok(token) = p.next().cloned() else { break };
+        let keep = match &token {
+            _ if first => true,
+            cssparser::Token::Ident(i) => i.eq_ignore_ascii_case("layer"),
+            cssparser::Token::Function(f) => f.eq_ignore_ascii_case("layer") || f.eq_ignore_ascii_case("supports"),
+            _ => false,
+        };
+        if !keep {
+            p.reset(&state);
+            break;
+        }
+        if let cssparser::Token::Function(f) = &token {
+            let inner_start = p.position();
+            let _: Result<(), cssparser::ParseError<()>> = p.parse_nested_block(|n| {
+                while n.next().is_ok() {}
+                Ok(())
+            });
+            // An invalid `layer()` starts the media queries.
+            let inner = p.slice_from(inner_start);
+            if !first && f.eq_ignore_ascii_case("layer") && !valid_layer_name(inner.strip_suffix(')').unwrap_or(inner)) {
+                p.reset(&state);
+                break;
+            }
+        }
+        first = false;
+        end = p.position();
+    }
+    let head = prelude[..end.byte_index()].trim().to_owned();
+    let media = prelude[end.byte_index()..].trim().to_owned();
+    (head, media)
+}
+
+
+
 fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) -> Option<ParsedRule> {
     let lower = name.to_ascii_lowercase();
     let start = p.position();
     if matches!(lower.as_str(), "media" | "supports") {
         let mut inner = namespaces.clone();
         let (condition, rules) = parse_prelude_and_block(p, start, |n| parse_list(n, &mut inner, false));
-        return Some(ParsedRule::Group { name: lower, condition: collapse(&condition), rules: rules? });
+        let condition = if lower == "media" { serialize_media_list(&condition) } else { collapse(&condition) };
+        return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
     let rule_type = match lower.as_str() {
@@ -128,15 +244,27 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "namespace" => 10,
         "counter-style" => 11,
         "font-feature-values" => 14,
-        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope" => 0,
+        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope" | "position-try"
+        | "view-transition" => 0,
         _ => return None,
     };
     if lower == "namespace" {
         namespaces.push(parse_namespace(&prelude)?);
     }
+    // `@name prelude {block}`, without a second space when the prelude is empty.
+    let prelude = collapse(&prelude);
+    let prelude = if lower == "import" { import_url_form(&prelude) } else { prelude };
+    let head = if prelude.is_empty() { format!("@{name}") } else { format!("@{name} {prelude}") };
     let text = match block {
-        Some(block) => format!("@{name} {} {{{block}}}", collapse(&prelude)),
-        None => format!("@{name} {};", collapse(&prelude)),
+        // An empty descriptor block serializes as `{ }`.
+        Some(block)
+            if block.trim().is_empty()
+                && matches!(lower.as_str(), "page" | "font-face" | "property" | "counter-style" | "font-palette-values" | "position-try" | "view-transition") =>
+        {
+            format!("{head} {{ }}")
+        }
+        Some(block) => format!("{head} {{{block}}}"),
+        None => format!("{head};"),
     };
     Some(ParsedRule::Other { rule_type, text })
 }
@@ -330,6 +458,20 @@ mod tests {
         );
     }
 
+    /// `@position-try` and `@view-transition` are known at-rules (WPT css-anchor-position
+    /// chrome-377324991-crash inserts one with `insertRule`).
+    #[test]
+    fn position_try_and_view_transition_rules_are_kept() {
+        let rules = parse_rules("@position-try --opt {} @view-transition { navigation: auto }", &mut Vec::new());
+        assert_eq!(
+            rules,
+            [
+                ParsedRule::Other { rule_type: 0, text: "@position-try --opt { }".into() },
+                ParsedRule::Other { rule_type: 0, text: "@view-transition { navigation: auto }".into() },
+            ]
+        );
+    }
+
     #[test]
     fn selectors_serialize_canonically() {
         let ns = Vec::new();
@@ -378,4 +520,77 @@ mod tests {
             [ParsedRule::Other { rule_type: 10, text: "@namespace x 'a';".into() }, style("[x|foo=\"\" i]", "")]
         );
     }
+}
+
+/// A media query list as CSSOM serializes it (`MediaList.mediaText`): parsed
+/// by the style engine, so keywords lowercase, whitespace collapses and an
+/// invalid query becomes `not all`.
+pub fn serialize_media_list(text: &str) -> String {
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+    use style_traits::ToCss;
+    crate::stylo::enable_features();
+    let Ok(url) = url::Url::parse("about:blank") else { return String::new() };
+    let url = UrlExtraData(style::servo_arc::Arc::new(url));
+    let mut context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url,
+        Some(CssRuleType::Media),
+        style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    let mut parser = Parser::new(text);
+    style::media_queries::MediaList::parse(&mut context, &mut parser).to_css_string()
+}
+
+#[cfg(test)]
+mod media_list_tests {
+    #[test]
+    fn media_lists_serialize_as_cssom_does() {
+        use super::serialize_media_list as m;
+        assert_eq!(m("SCREEN"), "screen");
+        assert_eq!(m("  screen  ,  print  "), "screen, print");
+        assert_eq!(m("NOT  PRINT"), "not print");
+        assert_eq!(m("screen, bad$"), "screen, not all");
+        assert_eq!(m(""), "");
+    }
+}
+
+/// The conditions of an `@container` prelude as CSSOM serializes them:
+/// `(name, query)` of each, parsed by the style engine (`None` when it does
+/// not parse). An empty name or query is the empty string.
+pub fn container_conditions(prelude: &str) -> Option<Vec<(String, String)>> {
+    use style::stylesheets::container_rule::ContainerCondition;
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+    use style_traits::ToCss;
+    crate::stylo::enable_features();
+    let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+    let context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url,
+        Some(CssRuleType::Container),
+        style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    let mut parser = Parser::new(prelude);
+    let conditions = parser.parse_entirely(|i| i.parse_comma_separated(|i| ContainerCondition::parse(&context, i))).ok()?;
+    Some(
+        conditions
+            .iter()
+            .map(|c| {
+                // No name serializes as `none`.
+                let name = c.name().to_css_string();
+                let name = if name == "none" { String::new() } else { name };
+                let query = c.query_condition().map(|q| q.to_css_string()).unwrap_or_default();
+                (name, query)
+            })
+            .collect(),
+    )
 }

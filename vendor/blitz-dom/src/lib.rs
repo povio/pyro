@@ -65,6 +65,7 @@ pub use resolve::phase_profile;
 /// Computation of resolved CSS property values (`getComputedStyle()`)
 mod resolved_style;
 /// Scrolling of nodes and the viewport, and scroll animations.
+pub mod shape_path;
 mod scrolling;
 mod selection;
 /// pyro: the embedder's document selection, painted as highlighted text.
@@ -79,6 +80,8 @@ mod direction;
 mod shadow;
 pub use shadow::{ASSIGNED_SLOT_ATTR, SHADOW_HOST_ATTR};
 /// pyro: SVG reference cycles usvg does not break.
+/// pyro: scroll-driven animations (`animation-timeline`).
+pub mod scroll_timeline;
 #[cfg(feature = "svg")]
 mod svg_refs;
 /// Implementations that interact with servo's style engine

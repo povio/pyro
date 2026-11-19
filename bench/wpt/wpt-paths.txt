@@ -10,6 +10,38 @@ css/selectors/
 uievents/
 shadow-dom/
 webstorage/
+# Feature directories (lib.mjs FEATURE_DIRS): testharness pages only.
+custom-elements/
+css/css-font-loading/
+css/css-typed-om/
+css/css-scroll-snap/
+css/css-shapes/
+html/semantics/embedded-content/the-object-element/
+html/semantics/embedded-content/the-embed-element/
+html/semantics/embedded-content/the-iframe-element/
+html/semantics/links/
+html/semantics/document-metadata/
+html/semantics/forms/
+html/webappapis/
+html/semantics/scripting-1/
+html/syntax/
+selection/
+streams/
+user-timing/
+webidl/
+FileAPI/
+fetch/api/request/
+fetch/api/response/
+fetch/api/headers/
+fetch/api/abort/
+fetch/api/body/
+# css/css-variables/ and css/css-conditional/ (also feature directories) are checked out with the layout directories below.
+# css/cssom/ and css/css-cascade/ (also feature directories) are checked out with the layout directories below.
+intersection-observer/
+workers/
+scroll-animations/
+trusted-types/
+navigation-api/
 # Paint directories (lib.mjs PAINT_DIRS). Both kinds run every directory above and below: run.mjs runs their testharness
 # pages, run.mjs --kind reftest their reftests.
 css/css-backgrounds/
@@ -56,6 +88,14 @@ css/css-text/
 css/css-fonts/
 css/css-inline/
 css/css-borders/
+css/css-writing-modes/
+css/css-ui/
+css/css-contain/
+css/css-multicol/
+css/css-will-change/
+css/WOFF2/
+css/css-namespaces/
+css/css-style-attr/
 # Support files those tests load (from serve.mjs's request log, WPT_SERVE_LOG, over a full run; for the reftests,
 # from the URLs their pages, references and stylesheets name):
 resources/
@@ -65,6 +105,30 @@ images/
 interfaces/
 fetch/api/resources/
 html/resources/
+# workers/semantics/structured-clone/*.html and workers/*-in-data-url-context (feature dir workers; they also load
+# html/webappapis/structured-clone/, checked out with html/webappapis/ above):
+service-workers/service-worker/resources/
+# html/webappapis/atob/base64.any.js:
+fetch/data-urls/resources/base64.json
+# Pages of the round 4 sweep's directories (selection/, streams/, webidl/) load:
+IndexedDB/resources/support.js
+editing/include/editor-test-utils.js
+editing/include/tests.js
+# scroll-animations/scroll-timelines/scroll-timeline-snapshotting.html, custom-elements/form-associated/form-disabled-callback.html:
+css/css-scroll-snap/support/
+html/semantics/forms/form-submission-0/resources/
+# Helpers pages of the older gate directories load from elsewhere (bench/wpt sweep 2026-11-18; Python handlers
+# need wptserve and are left out):
+cors/support.js
+fullscreen/trusted-click.js
+html/anonymous-iframe/resources/common.js
+html/cross-origin-embedder-policy/credentialless/resources/common.js
+html/semantics/interestfor/resources/invoker-utils.js
+mimesniff/mime-types/resources/mime-types.json
+permissions-policy/resources/permissions-policy.js
+visual-viewport/viewport_support.js
+wai-aria/scripts/aria-utils.js
+webrtc/RTCPeerConnection-helper.js
 html/interaction/focus/the-autofocus-attribute/resources/
 loading/resources/
 css/support/

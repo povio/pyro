@@ -1744,10 +1744,9 @@ impl Stylist {
             &mut matching_context,
         );
 
-        if declarations.is_empty() && is_probe {
-            return None;
-        }
-
+        // pyro: a probe with no rules as unvisited still has a style when rules match the
+        // relevant link as visited (`a:visited::selection`); decided after that pass.
+        let unvisited_empty = declarations.is_empty();
         let rules = self.rule_tree.compute_rule_node(&mut declarations, guards);
 
         let mut visited_rules = None;
@@ -1786,6 +1785,10 @@ impl Stylist {
                     visited_rules = Some(rule_node);
                 }
             }
+        }
+
+        if unvisited_empty && is_probe && visited_rules.is_none() {
+            return None;
         }
 
         Some(CascadeInputs {

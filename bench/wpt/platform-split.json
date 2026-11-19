@@ -1,0 +1,4 @@
+{
+ "css/css-transforms/3d-point-mapping-2-transforminterop.html": "Linux x64 fails the hit test of box12 in both bootstrap runs (run 44275075490); macOS arm64 passes all 12. Deterministic, at a box edge: floating point differs between the platforms (x86-64 glibc libm vs macOS arm64), not timing.",
+ "css/css-transforms/3d-point-mapping-origins.html": "Linux x64 fails the hit test of bottom-right-medium-gray in both bootstrap runs (run 44275075490); macOS arm64 passes all 12. Same edge-of-box floating point difference as 3d-point-mapping-2-transforminterop.html."
+}

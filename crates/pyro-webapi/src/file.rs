@@ -22,23 +22,67 @@ pub struct BlobData {
     pub file: Option<(String, f64)>,
 }
 
-fn blob_parts(s: &Scope<'_>, parts: Value<'_>) -> JsResult<Vec<u8>> {
+/// Keeps install.js's `blobParts` helper for the Blob and File constructors.
+pub(crate) fn install(s: &Scope<'_>, helper: Value<'_>) -> JsResult<()> {
+    crate::target::page_of(s)?.blob_parts.borrow_mut().insert(s.realm_id(), pyro_js::Persistent::new(s, helper));
+    Ok(())
+}
+
+/// `endings` of BlobPropertyBag: whether line endings become native (`\n`).
+fn native_endings(opts: Value<'_>) -> JsResult<bool> {
+    let Some(o) = opts.as_object() else { return Ok(false) };
+    let e = o.get_atom("endings")?;
+    if e.is_undefined() {
+        return Ok(false);
+    }
+    match dom_string(e)?.as_str() {
+        "transparent" => Ok(false),
+        "native" => Ok(true),
+        other => Err(JsError::Type(
+            format!("Failed to read the 'endings' property from 'BlobPropertyBag': The provided value '{other}' is not a valid enum value of type EndingType.").into(),
+        )),
+    }
+}
+
+/// A BlobPropertyBag argument: undefined, null or an object.
+fn check_bag(what: &str, opts: Value<'_>) -> JsResult<()> {
+    if opts.is_undefined() || opts.is_null() || opts.as_object().is_some() {
+        Ok(())
+    } else {
+        Err(JsError::Type(format!("Failed to construct '{what}': The provided value is not of type 'BlobPropertyBag'.").into()))
+    }
+}
+
+/// "Convert line endings to native" (\n here): CR LF and lone CR become LF.
+fn native_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// `blobParts` converted as `sequence<BlobPart>` (install.js), before the
+/// options are read.
+fn convert_parts<'s>(s: &Scope<'s>, parts: Value<'s>) -> JsResult<Option<Object<'s>>> {
+    let page = crate::target::page_of(s)?;
+    let convert = page.blob_parts.borrow().get(&s.realm_id()).and_then(|p| p.get(s).as_object());
+    let Some(convert) = convert else { return Ok(None) };
+    Ok(convert.call(None, &[parts])?.as_object())
+}
+
+/// The bytes of converted `blobParts` (File API "process blob parts").
+fn blob_parts(s: &Scope<'_>, list: Option<Object<'_>>, native: bool) -> JsResult<Vec<u8>> {
     let mut out = Vec::new();
-    let Some(list) = parts.as_object() else {
-        if parts.is_undefined() {
-            return Ok(out);
-        }
-        return Err(JsError::Type("The provided value cannot be converted to a sequence.".into()));
-    };
+    let Some(list) = list else { return Ok(out) };
     let len = list.get_atom("length")?.to_number()? as u32;
     for i in 0..len {
         let p = list.get_index(i)?;
         if let Some(b) = s.unwrap::<Blob>(p) {
             out.extend_from_slice(&b.bytes);
-        } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, p)? {
-            out.extend_from_slice(&bytes);
+        } else if p.as_object().is_some() {
+            if let Some(bytes) = crate::encoding::buffer_source_bytes(s, p)? {
+                out.extend_from_slice(&bytes);
+            }
         } else {
-            out.extend_from_slice(dom_string(p)?.as_bytes());
+            let text = dom_string(p)?;
+            out.extend_from_slice(if native { native_newlines(&text) } else { text }.as_bytes());
         }
     }
     Ok(out)
@@ -66,24 +110,36 @@ impl JsClass for Blob {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, a| {
-            let bytes = blob_parts(s, a.get(0))?;
+            // Web IDL converts the arguments in order, the dictionary's members by name.
+            let parts = convert_parts(s, a.get(0))?;
+            check_bag("Blob", a.get(1))?;
+            let native = native_endings(a.get(1))?;
             let mime = mime_of(a.get(1))?;
+            let bytes = blob_parts(s, parts, native)?;
             s.wrap_new::<Blob>(BlobData { bytes: Bytes::from(bytes), mime, file: None }, nt, None)
         });
         def.getter("size", |s, b| Ok(s.number(b.bytes.len() as f64)));
         def.getter("type", |s, b| Ok(s.string(&b.mime)));
         def.pure_method("slice", 0, |s, b, a| {
             let len = b.bytes.len() as i64;
+            // [Clamp] long long: NaN is 0, halves round to even.
             let clamp = |v: Value<'_>, default: i64| -> JsResult<usize> {
                 if v.is_undefined() {
                     return Ok(default as usize);
                 }
-                let n = v.to_number()? as i64;
+                let x = v.to_number()?;
+                let n = if x.is_nan() { 0 } else { x.round_ties_even().clamp(-(2f64.powi(53) - 1.0), 2f64.powi(53) - 1.0) as i64 };
                 Ok((if n < 0 { (len + n).max(0) } else { n.min(len) }) as usize)
             };
             let start = clamp(a.get(0), 0)?;
             let end = clamp(a.get(1), len)?.max(start);
-            let mime = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))?.to_ascii_lowercase() };
+            // A content type outside U+0020..U+007E is the empty string.
+            let mime = if a.get(2).is_undefined() {
+                String::new()
+            } else {
+                let t = dom_string(a.get(2))?;
+                if t.chars().all(|c| (' '..='~').contains(&c)) { t.to_ascii_lowercase() } else { String::new() }
+            };
             Ok(s.wrap::<Blob>(BlobData { bytes: b.bytes.slice(start..end), mime, file: None }, None)?.value())
         });
         def.method("text", 0, |s, b, _a| {
@@ -120,9 +176,12 @@ impl JsClass for File {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(2, |s, nt, a| {
             a.require(2, "File")?;
-            let bytes = blob_parts(s, a.get(0))?;
+            let parts = convert_parts(s, a.get(0))?;
             let name = dom_string(a.get(1))?;
+            check_bag("File", a.get(2))?;
+            let native = native_endings(a.get(2))?;
             let mime = mime_of(a.get(2))?;
+            let bytes = blob_parts(s, parts, native)?;
             let lm = match a.get(2).as_object() {
                 Some(o) if !o.get_atom("lastModified")?.is_undefined() => o.get_atom("lastModified")?.to_number()?,
                 _ => crate::encoding::now_ms(),

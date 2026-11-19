@@ -118,10 +118,10 @@ pub fn resolve_transform(
         Affine::new([t.m11, t.m12, t.m21, t.m22, t.m41, t.m42].map(|v| v as f64))
     });
 
-    // TODO: support the "offset" property
-    // <https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/offset>
+    // pyro: the offset transform (CSS Motion Path 1 § 4) of an `offset-path: path()` or `ray()`.
+    let offset = offset_transform(box_styles, reference_box);
 
-    if translate.is_none() && rotate.is_none() && scale_transform.is_none() && transform.is_none() {
+    if translate.is_none() && rotate.is_none() && scale_transform.is_none() && transform.is_none() && offset.is_none() {
         return ResolvedTransform::Flat(None);
     }
 
@@ -157,6 +157,11 @@ pub fn resolve_transform(
         resolved *= Affine::scale_non_uniform(scale_transform.x, scale_transform.y)
     }
 
+    // The offset transform comes after the individual transform properties, before `transform`.
+    if let Some(offset) = offset {
+        resolved *= offset;
+    }
+
     if let Some(transform) = transform {
         resolved *= transform;
     }
@@ -179,6 +184,470 @@ pub fn resolve_transform(
     resolved = origin_translation * resolved * origin_translation.inverse();
 
     ResolvedTransform::Flat((resolved != Affine::IDENTITY).then_some(resolved))
+}
+
+/// pyro: the offset transform (CSS Motion Path 1 § 4), in the frame of the transform origin, as
+/// Chrome lays it out (measured): the anchor point (`offset-anchor`, `auto`: the transform origin)
+/// goes to the point `offset-distance` along the path (a closed path wraps around, an open one
+/// clamps) and the box turns by `offset-rotate` (`auto`, `reverse`: plus the path's direction).
+/// `path()` is in the box's coordinates (its top-left corner at the origin); `ray()`, basic shapes,
+/// `url()` and a coord box alone are in the containing block's coord box ([`MotionFrame`]).
+fn offset_transform(box_styles: &BoxStyleStruct, reference_box: Rect<CSSPixelLength>) -> Option<Affine> {
+    use style::values::generics::basic_shape::{GenericBasicShape, GenericPathOrShapeFunction};
+    use style::values::generics::motion::{GenericOffsetPath, GenericOffsetPathFunction};
+    let (path, coord_box) = match &box_styles.offset_path {
+        GenericOffsetPath::OffsetPath { path, coord_box } => (path, coord_box),
+        GenericOffsetPath::CoordBox(coord_box) => return coord_box_transform(box_styles, reference_box, *coord_box),
+        GenericOffsetPath::None => return None,
+    };
+    let shape = match &**path {
+        GenericOffsetPathFunction::Ray(ray) => return ray_transform(box_styles, reference_box, ray, *coord_box),
+        GenericOffsetPathFunction::Shape(shape) => shape,
+        GenericOffsetPathFunction::Url(_) => {
+            // An SVG shape element's geometry, laid out as a basic shape is (Chrome); anything
+            // else is `path("m 0 0")`: the anchor point goes to the box's top-left corner.
+            let Some(path) = MOTION_URL_PATH.with(|p| p.borrow().clone()) else {
+                let frame = MotionFrame::new(box_styles, reference_box, *coord_box);
+                return Some(frame.place(kurbo::Point::ZERO, box_styles.offset_rotate.angle.radians64()));
+            };
+            let frame = MotionFrame::new(box_styles, reference_box, *coord_box);
+            let mut path = path;
+            path.apply_affine(Affine::translate(frame.area.origin().to_vec2()));
+            let (point, direction) = point_along(&path, &box_styles.offset_distance)?;
+            let rotate = &box_styles.offset_rotate;
+            let mut angle = rotate.angle.radians64();
+            if rotate.auto {
+                angle += direction;
+            }
+            return Some(frame.place(point, angle));
+        }
+    };
+    if let GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) = shape {
+        let bez = crate::shape_path::svg_path_to_bezpath(
+            path.commands(),
+            |v: &f32| *v as f64,
+            |v: &f32| *v as f64,
+            |v: &f32| *v as f64,
+            |a: &f32| *a as f64,
+        )?;
+        // The path is in the box's coordinates (its top-left corner at the origin), and the anchor
+        // point goes to the point along it (as Chrome, measured).
+        let (point, direction) = point_along(&bez, &box_styles.offset_distance)?;
+        let rotate = &box_styles.offset_rotate;
+        let mut angle = rotate.angle.radians64();
+        if rotate.auto {
+            angle += direction;
+        }
+        let frame = MotionFrame::new(box_styles, reference_box, *coord_box);
+        return Some(frame.place(point, angle));
+    }
+    shape_transform(box_styles, reference_box, shape, *coord_box)
+}
+
+/// pyro: the point `offset-distance` along `path` (a closed path wraps around, an open one
+/// clamps) and the path's direction there (radians, 0 pointing right).
+fn point_along(
+    path: &kurbo::BezPath,
+    offset_distance: &style::values::computed::LengthPercentage,
+) -> Option<(kurbo::Point, f64)> {
+    use kurbo::{ParamCurve, ParamCurveArclen, ParamCurveDeriv, PathSeg};
+    let closed = path.elements().iter().any(|el| matches!(el, kurbo::PathEl::ClosePath));
+    let segments: Vec<PathSeg> = path.segments().collect();
+    const ACCURACY: f64 = 1e-7;
+    let lengths: Vec<f64> = segments.iter().map(|s| s.arclen(ACCURACY)).collect();
+    let total: f64 = lengths.iter().sum();
+    let distance = offset_distance.resolve(CSSPixelLength::new(total as f32)).px() as f64;
+    let distance = if closed && total > 0.0 { distance.rem_euclid(total) } else { distance.clamp(0.0, total) };
+    if segments.is_empty() {
+        let start = match path.elements().first() {
+            Some(kurbo::PathEl::MoveTo(p)) => *p,
+            _ => kurbo::Point::ZERO,
+        };
+        return Some((start, 0.0));
+    }
+    let mut left = distance;
+    for (index, (seg, len)) in segments.iter().zip(&lengths).enumerate() {
+        if left <= *len || index + 1 == segments.len() {
+            let t = if *len > 0.0 { seg.inv_arclen(left.min(*len), ACCURACY) } else { 0.0 };
+            let tangent = match seg {
+                PathSeg::Line(l) => l.deriv().eval(t).to_vec2(),
+                PathSeg::Quad(q) => q.deriv().eval(t).to_vec2(),
+                PathSeg::Cubic(c) => c.deriv().eval(t).to_vec2(),
+            };
+            return Some((seg.eval(t), tangent.y.atan2(tangent.x)));
+        }
+        left -= len;
+    }
+    None
+}
+
+/// pyro: the containing block of the box whose transform is being resolved, for `offset-path:
+/// ray()`: its border box in the box's border-box coordinates, and its border widths and paddings
+/// (top, right, bottom, left). Set by `Node::set_transform` around `resolve_transform`.
+#[derive(Clone, Copy, Debug)]
+pub struct MotionContainingBlock {
+    pub border_box: kurbo::Rect,
+    pub border: [f64; 4],
+    pub padding: [f64; 4],
+    /// Its border radii (top-left, top-right, bottom-right, bottom-left), resolved.
+    pub radii: [kurbo::Vec2; 4],
+}
+
+thread_local! {
+    pub static MOTION_CONTAINING_BLOCK: std::cell::Cell<Option<MotionContainingBlock>> =
+        const { std::cell::Cell::new(None) };
+    /// pyro: the geometry of the SVG shape element an `offset-path: url()` names, in its user
+    /// units (`None`: it names none). Set by `BaseDocument::resolve_transforms`.
+    pub static MOTION_URL_PATH: std::cell::RefCell<Option<kurbo::BezPath>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// pyro: the offset transform of `offset-path: ray()` (CSS Motion Path 1 § 2.1, as Blink's
+/// `ApplyMotionPathTransform`, measured on Chrome), in the frame of the transform origin. The ray
+/// starts at its `at` position, else at `offset-position` (`auto`: the box's top-left corner,
+/// `normal`: the centre of the containing block's coord box, a position: in that box); a
+/// percentage `offset-distance` is of the ray's length by its size keyword, against that box. The
+/// anchor point (`offset-anchor`, `auto`: the transform origin) goes to the point that far along
+/// the ray, and the box turns by `offset-rotate` (`auto`: the ray's direction, 0deg pointing
+/// right). `contain` is not applied.
+fn ray_transform(
+    box_styles: &BoxStyleStruct,
+    reference_box: Rect<CSSPixelLength>,
+    ray: &style::values::computed::motion::RayFunction,
+    coord_box: style::values::specified::motion::CoordBox,
+) -> Option<Affine> {
+    use style::values::generics::motion::RaySize;
+    use style::values::generics::position::GenericPositionOrAuto;
+    let theta = ray.angle.degrees() as f64;
+    if !theta.is_finite() {
+        return None;
+    }
+    let frame = MotionFrame::new(box_styles, reference_box, coord_box);
+    let area = frame.area;
+    let start = match &ray.position {
+        GenericPositionOrAuto::Position(p) => frame.in_area(p),
+        GenericPositionOrAuto::Auto => frame.starting_position(box_styles, kurbo::Point::ZERO),
+    };
+    let (sin, cos) = theta.to_radians().sin_cos();
+    let direction = kurbo::Vec2::new(sin, -cos);
+    let dx = [(start.x - area.x0).abs(), (area.x1 - start.x).abs()];
+    let dy = [(start.y - area.y0).abs(), (area.y1 - start.y).abs()];
+    let corners = [(dx[0], dy[0]), (dx[1], dy[0]), (dx[0], dy[1]), (dx[1], dy[1])].map(|(x, y)| x.hypot(y));
+    let length = match ray.size {
+        RaySize::ClosestSide => dx[0].min(dx[1]).min(dy[0]).min(dy[1]),
+        RaySize::FarthestSide => dx[0].max(dx[1]).max(dy[0]).max(dy[1]),
+        RaySize::ClosestCorner => corners.into_iter().fold(f64::INFINITY, f64::min),
+        RaySize::FarthestCorner => corners.into_iter().fold(0.0, f64::max),
+        RaySize::Sides => {
+            if !area.contains(start) && !(start.x == area.x1 || start.y == area.y1) {
+                0.0
+            } else {
+                let axis = |d: f64, from: f64, lo: f64, hi: f64| {
+                    if d > 1e-12 {
+                        (hi - from) / d
+                    } else if d < -1e-12 {
+                        (lo - from) / d
+                    } else {
+                        f64::INFINITY
+                    }
+                };
+                axis(direction.x, start.x, area.x0, area.x1).min(axis(direction.y, start.y, area.y0, area.y1)).max(0.0)
+            }
+        }
+    };
+    let length = if length.is_finite() { length } else { 0.0 };
+    let mut distance = box_styles.offset_distance.resolve(CSSPixelLength::new(length as f32)).px() as f64;
+    let rotate = &box_styles.offset_rotate;
+    let mut angle = rotate.angle.radians64();
+    if rotate.auto {
+        angle += (theta - 90.0).to_radians();
+    }
+    if ray.contain {
+        // The box's corners about the anchor point, turned: each must stay within the circle of
+        // the ray's length about its start, which bounds the distance to an interval per corner.
+        let size = (reference_box.width().px() as f64, reference_box.height().px() as f64);
+        let corners = [(0.0, 0.0), (size.0, 0.0), (size.0, size.1), (0.0, size.1)]
+            .map(|(x, y)| Affine::rotate(angle) * (kurbo::Point::new(x, y) - frame.anchor.to_vec2()))
+            .map(|p| p.to_vec2());
+        let range = |radius: f64| {
+            corners.iter().try_fold((f64::NEG_INFINITY, f64::INFINITY), |(lo, hi), c| {
+                let b = direction.dot(*c);
+                let disc = b * b - (c.hypot2() - radius * radius);
+                if disc < 0.0 {
+                    return None;
+                }
+                let root = disc.sqrt();
+                let (a, z) = (lo.max(-b - root), hi.min(-b + root));
+                (a <= z).then_some((a, z))
+            })
+        };
+        // Chrome keeps half the box's larger side from the end of the ray, whatever the anchor
+        // and direction (measured); the circle test decides only whether the box fits at all.
+        let half = size.0.max(size.1) / 2.0;
+        distance = match range(length) {
+            Some(_) if length >= half => distance.clamp(-(length - half), length - half),
+            Some((lo, hi)) => distance.clamp(lo, hi),
+            // Too big to fit at any distance: the shortest ray it fits in, at the one distance
+            // it fits there (CSS Motion Path 1: the path length is increased).
+            None => {
+                let (mut lo, mut hi) = (length, corners.iter().map(|c| c.hypot()).fold(length, f64::max) * 2.0 + 1.0);
+                for _ in 0..60 {
+                    let mid = (lo + hi) / 2.0;
+                    if range(mid).is_some() { hi = mid } else { lo = mid }
+                }
+                range(hi).map_or(0.0, |(a, z)| (a + z) / 2.0)
+            }
+        };
+    }
+    let point = start + direction * distance;
+    Some(frame.place(point, angle))
+}
+
+/// pyro: where an offset path is laid out for a box (CSS Motion Path 1): its containing block's
+/// coord box, the transform origin and the anchor point, in the box's border-box coordinates.
+struct MotionFrame {
+    area: kurbo::Rect,
+    origin: kurbo::Point,
+    anchor: kurbo::Point,
+}
+
+impl MotionFrame {
+    fn new(
+        box_styles: &BoxStyleStruct,
+        reference_box: Rect<CSSPixelLength>,
+        coord_box: style::values::specified::motion::CoordBox,
+    ) -> Self {
+        use style::values::generics::position::GenericPositionOrAuto;
+        use style::values::specified::motion::CoordBox;
+        let lp = |v: &style::values::computed::LengthPercentage, basis: f64| v.resolve(CSSPixelLength::new(basis as f32)).px() as f64;
+        let (width, height) = (reference_box.width().px() as f64, reference_box.height().px() as f64);
+        let origin = kurbo::Point::new(
+            reference_box.origin.x.px() as f64 + lp(&box_styles.transform_origin.horizontal, width),
+            reference_box.origin.y.px() as f64 + lp(&box_styles.transform_origin.vertical, height),
+        );
+        let cb = MOTION_CONTAINING_BLOCK.with(|c| c.get());
+        let area = cb.map_or(kurbo::Rect::ZERO, |cb| {
+            let inset = |r: kurbo::Rect, e: [f64; 4]| kurbo::Rect::new(r.x0 + e[3], r.y0 + e[0], r.x1 - e[1], r.y1 - e[2]);
+            match coord_box {
+                CoordBox::ContentBox => inset(inset(cb.border_box, cb.border), cb.padding),
+                CoordBox::PaddingBox => inset(cb.border_box, cb.border),
+                _ => cb.border_box,
+            }
+        });
+        let anchor = match &box_styles.offset_anchor {
+            GenericPositionOrAuto::Auto => origin,
+            GenericPositionOrAuto::Position(p) => kurbo::Point::new(lp(&p.horizontal, width), lp(&p.vertical, height)),
+        };
+        MotionFrame { area, origin, anchor }
+    }
+
+    fn in_area(&self, p: &style::values::computed::Position) -> kurbo::Point {
+        let lp = |v: &style::values::computed::LengthPercentage, basis: f64| v.resolve(CSSPixelLength::new(basis as f32)).px() as f64;
+        kurbo::Point::new(self.area.x0 + lp(&p.horizontal, self.area.width()), self.area.y0 + lp(&p.vertical, self.area.height()))
+    }
+
+    /// `offset-position`: `auto` is `auto_point`, `normal` the coord box's centre.
+    fn starting_position(&self, box_styles: &BoxStyleStruct, auto_point: kurbo::Point) -> kurbo::Point {
+        use style::values::generics::motion::GenericOffsetPosition;
+        match &box_styles.offset_position {
+            GenericOffsetPosition::Auto => auto_point,
+            GenericOffsetPosition::Normal => self.area.center(),
+            GenericOffsetPosition::Position(p) => self.in_area(p),
+        }
+    }
+
+    /// The anchor point at `point` turned by `angle`, in the frame of the transform origin. An
+    /// angle within 1e-4 rad of a quarter turn is that quarter turn: a path's tangent (a cubic's
+    /// derivative at a segment's end) is a hair off, and the rotation then antialiased edges
+    /// Chrome draws square.
+    fn place(&self, point: kurbo::Point, angle: f64) -> Affine {
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let turns = (angle / quarter).round();
+        let rotation = if (angle - turns * quarter).abs() < 1e-4 {
+            // Exact sine and cosine of a multiple of 90deg.
+            match (turns as i64).rem_euclid(4) {
+                0 => Affine::IDENTITY,
+                1 => Affine::new([0.0, 1.0, -1.0, 0.0, 0.0, 0.0]),
+                2 => Affine::new([-1.0, 0.0, 0.0, -1.0, 0.0, 0.0]),
+                _ => Affine::new([0.0, -1.0, 1.0, 0.0, 0.0, 0.0]),
+            }
+        } else {
+            Affine::rotate(angle)
+        };
+        let motion = Affine::translate(point.to_vec2()) * rotation * Affine::translate(-self.anchor.to_vec2());
+        let origin = Affine::translate(self.origin.to_vec2());
+        origin.inverse() * motion * origin
+    }
+}
+
+/// pyro: the offset transform of a basic shape (`circle()`, `ellipse()`, `inset()`/`rect()`/
+/// `xywh()`, `polygon()`, `shape()`) as an offset path, laid out in the containing block's coord
+/// box (as Chrome, measured): a circle or ellipse starts at its rightmost point, a rectangle at its
+/// top-left corner (after its corner radius), both clockwise; a polygon is closed. A shape without a
+/// position is centred at `offset-position` (`normal`: the coord box's centre, `auto`: the box's
+/// top-left corner). `offset-path: <coord-box>` alone is that box of the containing block with its
+/// border radii.
+fn shape_transform(
+    box_styles: &BoxStyleStruct,
+    reference_box: Rect<CSSPixelLength>,
+    shape: &style::values::computed::basic_shape::BasicShape,
+    coord_box: style::values::specified::motion::CoordBox,
+) -> Option<Affine> {
+    use kurbo::Shape as _;
+    use style::values::generics::basic_shape::{GenericBasicShape, GenericPathOrShapeFunction, GenericShapeRadius};
+    use style::values::generics::position::GenericPositionOrAuto;
+    let frame = MotionFrame::new(box_styles, reference_box, coord_box);
+    let area = frame.area;
+    let (w, h) = (area.width(), area.height());
+    let lp = |v: &style::values::computed::LengthPercentage, basis: f64| v.resolve(CSSPixelLength::new(basis as f32)).px() as f64;
+    let center_of = |p: &GenericPositionOrAuto<style::values::computed::Position>| match p {
+        GenericPositionOrAuto::Position(p) => frame.in_area(p),
+        GenericPositionOrAuto::Auto => frame.starting_position(box_styles, kurbo::Point::ZERO),
+    };
+    let axis_radius = |r: &GenericShapeRadius<style::values::computed::LengthPercentage>, c: f64, lo: f64, hi: f64, basis: f64| {
+        let near = (c - lo).abs().min((hi - c).abs());
+        let far = (c - lo).abs().max((hi - c).abs());
+        match r {
+            GenericShapeRadius::Length(v) => lp(&v.0, basis),
+            GenericShapeRadius::ClosestSide | GenericShapeRadius::ClosestCorner => near,
+            GenericShapeRadius::FarthestSide | GenericShapeRadius::FarthestCorner => far,
+        }
+    };
+    let path = match shape {
+        GenericBasicShape::Circle(c) => {
+            let center = center_of(&c.position);
+            let radius = match &c.radius {
+                GenericShapeRadius::Length(v) => lp(&v.0, w.hypot(h) / std::f64::consts::SQRT_2),
+                other => {
+                    let x = axis_radius(other, center.x, area.x0, area.x1, w);
+                    let y = axis_radius(other, center.y, area.y0, area.y1, h);
+                    match other {
+                        GenericShapeRadius::ClosestSide => x.min(y),
+                        GenericShapeRadius::FarthestSide => x.max(y),
+                        _ => x.hypot(y),
+                    }
+                }
+            };
+            kurbo::Circle::new(center, radius.max(0.0)).to_path(1e-6)
+        }
+        GenericBasicShape::Ellipse(e) => {
+            let center = center_of(&e.position);
+            let rx = axis_radius(&e.semiaxis_x, center.x, area.x0, area.x1, w).max(0.0);
+            let ry = axis_radius(&e.semiaxis_y, center.y, area.y0, area.y1, h).max(0.0);
+            kurbo::Ellipse::new(center, (rx, ry), 0.0).to_path(1e-6)
+        }
+        GenericBasicShape::Rect(inset) => {
+            let rect = kurbo::Rect::new(
+                area.x0 + lp(&inset.rect.3, w),
+                area.y0 + lp(&inset.rect.0, h),
+                area.x1 - lp(&inset.rect.1, w),
+                area.y1 - lp(&inset.rect.2, h),
+            );
+            let r = |c: &style::values::computed::BorderCornerRadius| kurbo::Vec2::new(lp(&c.0.width.0, w), lp(&c.0.height.0, h));
+            let round = &inset.round;
+            rounded_rect_path(rect, [r(&round.top_left), r(&round.top_right), r(&round.bottom_right), r(&round.bottom_left)])
+        }
+        GenericBasicShape::Polygon(poly) => {
+            let mut path = kurbo::BezPath::new();
+            for (i, c) in poly.coordinates.iter().enumerate() {
+                let p = kurbo::Point::new(area.x0 + lp(&c.0, w), area.y0 + lp(&c.1, h));
+                if i == 0 { path.move_to(p) } else { path.line_to(p) }
+            }
+            path.close_path();
+            path
+        }
+        GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Shape(shape)) => {
+            let agnostic = w.hypot(h) / std::f64::consts::SQRT_2;
+            let mut path = crate::shape_path::svg_path_to_bezpath(
+                &shape.commands,
+                |v: &style::values::computed::LengthPercentage| lp(v, w),
+                |v: &style::values::computed::LengthPercentage| lp(v, h),
+                |v: &style::values::computed::LengthPercentage| lp(v, agnostic),
+                |a: &style::values::computed::Angle| a.degrees() as f64,
+            )?;
+            path.apply_affine(Affine::translate(area.origin().to_vec2()));
+            path
+        }
+        GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(_)) => return None,
+    };
+    let (point, direction) = point_along(&path, &box_styles.offset_distance)?;
+    let rotate = &box_styles.offset_rotate;
+    let mut angle = rotate.angle.radians64();
+    if rotate.auto {
+        angle += direction;
+    }
+    Some(frame.place(point, angle))
+}
+
+/// pyro: `offset-path: <coord-box>`: the containing block's coord box with its border radii (less
+/// the border, and the padding, inside), from its top-left corner after the radius, clockwise.
+fn coord_box_transform(
+    box_styles: &BoxStyleStruct,
+    reference_box: Rect<CSSPixelLength>,
+    coord_box: style::values::specified::motion::CoordBox,
+) -> Option<Affine> {
+    use style::values::specified::motion::CoordBox;
+    let frame = MotionFrame::new(box_styles, reference_box, coord_box);
+    let cb = MOTION_CONTAINING_BLOCK.with(|c| c.get())?;
+    // How far the coord box is inside the border box at each side (top, right, bottom, left).
+    let inset = match coord_box {
+        CoordBox::ContentBox => std::array::from_fn(|i| cb.border[i] + cb.padding[i]),
+        CoordBox::PaddingBox => cb.border,
+        _ => [0.0; 4],
+    };
+    let [t, r, b, l] = inset;
+    let shrink = |radius: kurbo::Vec2, dx: f64, dy: f64| kurbo::Vec2::new((radius.x - dx).max(0.0), (radius.y - dy).max(0.0));
+    let radii = [
+        shrink(cb.radii[0], l, t),
+        shrink(cb.radii[1], r, t),
+        shrink(cb.radii[2], r, b),
+        shrink(cb.radii[3], l, b),
+    ];
+    let path = rounded_rect_path(frame.area, radii);
+    let (point, direction) = point_along(&path, &box_styles.offset_distance)?;
+    let rotate = &box_styles.offset_rotate;
+    let mut angle = rotate.angle.radians64();
+    if rotate.auto {
+        angle += direction;
+    }
+    Some(frame.place(point, angle))
+}
+
+/// pyro: a rectangle with elliptical corners (top-left, top-right, bottom-right, bottom-left) as a path that starts at the
+/// top edge after the top-left corner and runs clockwise; radii that do not fit are scaled down
+/// together (CSS Backgrounds § 5.5).
+fn rounded_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4]) -> kurbo::BezPath {
+    use kurbo::{Arc, Point, Vec2};
+    let (w, h) = (rect.width().max(0.0), rect.height().max(0.0));
+    let [tl, tr, br, bl] = radii.map(|r| Vec2::new(r.x.max(0.0), r.y.max(0.0)));
+    let mut f: f64 = 1.0;
+    for (sum, side) in [(tl.x + tr.x, w), (bl.x + br.x, w), (tl.y + bl.y, h), (tr.y + br.y, h)] {
+        if sum > side && sum > 0.0 {
+            f = f.min(side / sum);
+        }
+    }
+    let [tl, tr, br, bl] = [tl * f, tr * f, br * f, bl * f];
+    let mut path = kurbo::BezPath::new();
+    let corner = |path: &mut kurbo::BezPath, center: Point, radii: Vec2, start: f64| {
+        if radii.x > 0.0 && radii.y > 0.0 {
+            let arc = Arc::new(center, radii, start, std::f64::consts::FRAC_PI_2, 0.0);
+            for el in arc.append_iter(0.01) {
+                path.push(el);
+            }
+        }
+    };
+    use std::f64::consts::{FRAC_PI_2, PI};
+    path.move_to((rect.x0 + tl.x, rect.y0));
+    path.line_to((rect.x1 - tr.x, rect.y0));
+    corner(&mut path, Point::new(rect.x1 - tr.x, rect.y0 + tr.y), tr, -FRAC_PI_2);
+    path.line_to((rect.x1, rect.y1 - br.y));
+    corner(&mut path, Point::new(rect.x1 - br.x, rect.y1 - br.y), br, 0.0);
+    path.line_to((rect.x0 + bl.x, rect.y1));
+    corner(&mut path, Point::new(rect.x0 + bl.x, rect.y1 - bl.y), bl, FRAC_PI_2);
+    path.line_to((rect.x0, rect.y0 + tl.y));
+    corner(&mut path, Point::new(rect.x0 + tl.x, rect.y0 + tl.y), tl, PI);
+    path.close_path();
+    path
 }
 
 /// pyro: a linear coefficient within 1e-12 of 0, 1 or -1 is that value, and a translation

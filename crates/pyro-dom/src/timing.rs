@@ -21,6 +21,7 @@
 //! reports these properties from here too ([`TimingRules::computed_value`]),
 //! so what it says and what runs agree.
 
+use crate::style::PseudoElement;
 use std::rc::Rc;
 
 use cssparser::{ParseError, Parser, Token};
@@ -167,6 +168,32 @@ struct Rule {
     /// and the rule applies to the elements of the host's shadow tree whose `part` attribute
     /// holds every name. Empty: an ordinary rule.
     part: Vec<String>,
+    /// The `::before`/`::after` the selectors ended with (stripped): the rule applies to that
+    /// pseudo-element of the elements they match. `None`: to the elements.
+    pseudo: Option<PseudoElement>,
+}
+
+/// `selector` split at a trailing `::before`/`::after` (or the legacy one-colon forms): the
+/// originating element's selector (`*` when there is none) and the pseudo-element.
+fn pseudo_selector(selector: &str) -> Option<(String, PseudoElement)> {
+    let selector = selector.trim();
+    let lower = selector.to_ascii_lowercase();
+    for (suffix, pseudo) in [
+        ("::before", PseudoElement::Before),
+        ("::after", PseudoElement::After),
+        (":before", PseudoElement::Before),
+        (":after", PseudoElement::After),
+    ] {
+        if lower.ends_with(suffix) {
+            let host = selector[..selector.len() - suffix.len()].trim_end();
+            // (Not `::part(x)::before`, nor a pseudo-element before it.)
+            if host.ends_with(':') || host.contains("::") {
+                return None;
+            }
+            return Some((if host.is_empty() { "*".to_owned() } else { host.to_owned() }, pseudo));
+        }
+    }
+    None
 }
 
 /// `selector` split at a trailing `::part(<names>)`: the host's selector (`*` when there is
@@ -195,6 +222,10 @@ fn has_parts(dom: &Dom, el: NodeId, names: &[String]) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AnimationTiming {
     pub name: String,
+    /// `animation-duration: auto` (which `duration_ms` shows as 0).
+    pub duration_auto: bool,
+    /// Its index in the element's `animation-name` list (the other `animation-*` lists repeat to it).
+    pub index: usize,
     pub duration_ms: f64,
     pub delay_ms: f64,
     /// `f64::INFINITY` for `infinite`.
@@ -337,6 +368,11 @@ impl TimingRules {
         out
     }
 
+    /// Whether a rule declares animation or transition properties for a `::before`/`::after`.
+    pub fn has_pseudo_rules(&self) -> bool {
+        self.rules.iter().any(|rule| rule.pseudo.is_some())
+    }
+
     pub fn has_keyframes(&self, name: &str) -> bool {
         self.keyframes.contains(name)
     }
@@ -389,7 +425,19 @@ impl TimingRules {
     fn only_text_or_style_since(&self, dom: &Dom, since: u64, inline: &FxHashSet<NodeId>) -> bool {
         let Some(changes) = dom.changes_since(since) else { return false };
         let style = crate::dom::attr_name_hash("style");
+        // Nodes outside the document are never candidates (they are looked up under `doc`):
+        // their changes, such as a screenshot library copying `animation-*` onto clones, count
+        // for nothing. A removal from or an insertion into a connected parent still counts.
+        let outside = |i: u32| dom.slot_live(i) && !dom.n(i).is_connected();
         for change in changes {
+            let skip = match change {
+                crate::dom::Change::Attr(i, _, _) | crate::dom::Change::Text(i) | crate::dom::Change::State(i) => outside(i),
+                crate::dom::Change::Inserted(p, _) | crate::dom::Change::Removed(p, _, _) => outside(p),
+                _ => false,
+            };
+            if skip {
+                continue;
+            }
             match change {
                 crate::dom::Change::Text(_) => {}
                 // A text or comment node inserted or removed (`textContent = …`): no selector sees
@@ -468,6 +516,12 @@ impl TimingRules {
     /// declaration (inline or rule), `var()` substituted with the custom
     /// properties of `style_of(el)`, `inherit` taken from the parent element.
     pub fn lists(&self, dom: &Dom, el: NodeId, style_of: StyleOf<'_>) -> TimingLists {
+        self.lists_for(dom, el, None, style_of)
+    }
+
+    /// [`Self::lists`] of `el`'s `pseudo` (`None`: of `el`): the rules for that pseudo-element
+    /// apply, its inline style is none, and it inherits from `el`.
+    pub fn lists_for(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, style_of: StyleOf<'_>) -> TimingLists {
         let mut out = TimingLists::default();
         let Ok(idx) = dom.check(el) else { return out };
         if !dom.n(idx).is_element() {
@@ -475,7 +529,7 @@ impl TimingRules {
         }
         let inline: Vec<Declared> =
             match dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("style"))) {
-                Some(style) if mentions(style) => declarations(style),
+                Some(style) if pseudo.is_none() && mentions(style) => declarations(style),
                 _ => Vec::new(),
             };
         // The rules that match, with their specificity, once for all longhands: those of the
@@ -489,6 +543,9 @@ impl TimingRules {
             .iter()
             .enumerate()
             .filter_map(|(order, rule)| {
+                if rule.pseudo != pseudo {
+                    return None;
+                }
                 let (target, target_tree) = if rule.part.is_empty() {
                     (idx, tree)
                 } else {
@@ -539,6 +596,7 @@ impl TimingRules {
             out.0[longhand as usize] = match cascaded(longhand) {
                 None | Some(Value::Initial) => None,
                 Some(Value::List(list)) => Some(list.clone()),
+                Some(Value::Inherit) if pseudo.is_some() => self.lists(dom, el, style_of).0[longhand as usize].clone(),
                 Some(Value::Inherit) => dom
                     .parent_element(el)
                     .ok()
@@ -549,6 +607,9 @@ impl TimingRules {
                     match self.substitute(property, text, style.as_ref()) {
                         Some(values) => match values.iter().find(|(l, _)| *l == longhand) {
                             Some((_, Value::List(list))) => Some(list.clone()),
+                            Some((_, Value::Inherit)) if pseudo.is_some() => {
+                                self.lists(dom, el, style_of).0[longhand as usize].clone()
+                            }
                             Some((_, Value::Inherit)) => dom
                                 .parent_element(el)
                                 .ok()
@@ -594,8 +655,13 @@ impl TimingRules {
 
     /// What `el`'s style asks for (`style_of` as for [`Self::lists`]).
     pub fn element(&self, dom: &Dom, el: NodeId, style_of: StyleOf<'_>) -> ElementTiming {
+        self.element_for(dom, el, None, style_of)
+    }
+
+    /// [`Self::element`] for `el`'s `pseudo` (`None`: `el`).
+    pub fn element_for(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, style_of: StyleOf<'_>) -> ElementTiming {
         let mut out = ElementTiming::default();
-        let lists = self.lists(dom, el, style_of);
+        let lists = self.lists_for(dom, el, pseudo, style_of);
         if lists.is_empty() {
             return out;
         }
@@ -611,6 +677,10 @@ impl TimingRules {
                 let easing = lists.item(Longhand::AnimationTimingFunction, i);
                 out.animations.push(AnimationTiming {
                     name: name.clone(),
+                    // (Not declared: `auto`, css-animations-2's initial value; shown as `0s`.)
+                    duration_auto: lists.get(Longhand::AnimationDuration).is_none()
+                        || lists.item(Longhand::AnimationDuration, i) == "auto",
+                    index: i,
                     duration_ms: time_ms(lists.item(Longhand::AnimationDuration, i)).unwrap_or(0.0).max(0.0),
                     delay_ms: time_ms(lists.item(Longhand::AnimationDelay, i)).unwrap_or(0.0),
                     iterations: match lists.item(Longhand::AnimationIterationCount, i) {
@@ -654,11 +724,23 @@ impl TimingRules {
     /// cascades and the `transition` and `animation` shorthands, as Chromium
     /// serializes them; `None` for other properties.
     pub fn computed_value(&self, dom: &Dom, el: NodeId, name: &str, style_of: StyleOf<'_>) -> Option<String> {
+        self.computed_value_for(dom, el, None, name, style_of)
+    }
+
+    /// [`Self::computed_value`] of `el`'s `pseudo` (`getComputedStyle(el, '::before')`).
+    pub fn computed_value_for(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        pseudo: Option<PseudoElement>,
+        name: &str,
+        style_of: StyleOf<'_>,
+    ) -> Option<String> {
         let name = name.strip_prefix("-webkit-").unwrap_or(name);
         if name != "transition" && name != "animation" && Longhand::by_name(name).is_none() {
             return None;
         }
-        let lists = self.lists(dom, el, style_of);
+        let lists = self.lists_for(dom, el, pseudo, style_of);
         Some(match name {
             "transition" => transition_shorthand(&lists),
             "animation" => animation_shorthand(&lists),
@@ -678,6 +760,7 @@ impl TimingRules {
 /// are not one).
 fn shown(longhand: Longhand, item: &str) -> String {
     match longhand {
+        Longhand::AnimationDuration if item == "auto" => "0s".to_owned(),
         Longhand::AnimationDuration
         | Longhand::AnimationDelay
         | Longhand::TransitionDuration
@@ -786,6 +869,43 @@ fn animation_shorthand(lists: &TimingLists) -> String {
 pub type StyleSnapshot = style::servo_arc::Arc<style::properties::ComputedValues>;
 
 /// Whether `style` is `display: none` (the element is not rendered).
+/// Whether a `::before`/`::after` style generates a box: not `display: none`, and `content` not
+/// `normal` or `none`.
+pub fn generates_pseudo_box(style: &StyleSnapshot) -> bool {
+    use style::values::computed::counters::Content;
+    !displays_none(style) && !matches!(style.get_counters().content, Content::Normal | Content::None)
+}
+
+/// Whether the animation at `index` of `style` is driven by a scroll or view progress timeline
+/// (`animation-timeline` other than `auto`): its progress follows a scroll position.
+pub fn timeline_driven(style: &StyleSnapshot, index: usize) -> bool {
+    let ui = style.get_ui();
+    let count = ui.animation_timeline_count();
+    count > 0 && !ui.animation_timeline_at(index % count).is_auto()
+}
+
+/// The `animation-timeline` of the animation at `index` of `style`, serialized (`scroll()`,
+/// `view(inline)`, `--name`).
+pub fn timeline_text(style: &StyleSnapshot, index: usize) -> String {
+    use style_traits::ToCss;
+    let ui = style.get_ui();
+    let count = ui.animation_timeline_count();
+    if count == 0 {
+        return "auto".to_owned();
+    }
+    ui.animation_timeline_at(index % count).to_css_string()
+}
+
+/// The `animation-range-start` and `animation-range-end` of the animation at `index` of `style`,
+/// serialized (`normal`, `contain 0%`, `cover 100%`, `20%`).
+pub fn range_text(style: &StyleSnapshot, index: usize) -> (String, String) {
+    use style_traits::ToCss;
+    let ui = style.get_ui();
+    let s = ui.animation_range_start_count().max(1);
+    let e = ui.animation_range_end_count().max(1);
+    (ui.animation_range_start_at(index % s).to_css_string(), ui.animation_range_end_at(index % e).to_css_string())
+}
+
 pub fn displays_none(style: &StyleSnapshot) -> bool {
     style.get_box().display.is_none()
 }
@@ -952,7 +1072,13 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                         if !declarations.is_empty() {
                             // `::part()` selectors become rules of their own on the host.
                             let mut plain = Vec::new();
+                            // `::before`/`::after` selectors too, by pseudo-element.
+                            let mut pseudos: [Vec<String>; 2] = Default::default();
                             for selector in split_selectors(prelude) {
+                                if let Some((host, pseudo)) = pseudo_selector(selector) {
+                                    pseudos[pseudo as usize].push(host);
+                                    continue;
+                                }
                                 match part_selector(selector) {
                                     Some((host, part)) => {
                                         if let Some(selectors) = crate::stylo::select::parse(&host) {
@@ -961,15 +1087,36 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                                                 declarations: declarations.clone(),
                                                 scope: None,
                                                 part,
+                                                pseudo: None,
                                             });
                                         }
                                     }
                                     None => plain.push(selector),
                                 }
                             }
+                            for (pseudo, hosts) in [PseudoElement::Before, PseudoElement::After].into_iter().zip(&pseudos) {
+                                if hosts.is_empty() {
+                                    continue;
+                                }
+                                if let Some(selectors) = crate::stylo::select::parse(&hosts.join(",")) {
+                                    out.rules.push(Rule {
+                                        selectors,
+                                        declarations: declarations.clone(),
+                                        scope: None,
+                                        part: Vec::new(),
+                                        pseudo: Some(pseudo),
+                                    });
+                                }
+                            }
                             if !plain.is_empty() {
                                 if let Some(selectors) = crate::stylo::select::parse(&plain.join(",")) {
-                                    out.rules.push(Rule { selectors, declarations, scope: None, part: Vec::new() });
+                                    out.rules.push(Rule {
+                                        selectors,
+                                        declarations,
+                                        scope: None,
+                                        part: Vec::new(),
+                                        pseudo: None,
+                                    });
                                 }
                             }
                         }
@@ -1111,7 +1258,9 @@ fn computed_item(longhand: Longhand, item: &str) -> String {
     let lower = item.to_ascii_lowercase();
     let inner = lower.strip_prefix("calc(").and_then(|v| v.strip_suffix(')')).map(str::trim).unwrap_or(&lower);
     match longhand {
-        Longhand::AnimationDuration if inner == "auto" => "0s".to_owned(),
+        // (`auto` is kept: a scroll-driven animation's duration fills its range; `shown` and the
+        // time-based timing read it as 0s.)
+        Longhand::AnimationDuration if inner == "auto" => "auto".to_owned(),
         Longhand::AnimationDuration
         | Longhand::AnimationDelay
         | Longhand::TransitionDuration

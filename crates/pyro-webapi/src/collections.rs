@@ -148,6 +148,7 @@ impl JsClass for NodeList {
     fn define(def: &mut ClassDef<Self>) {
         def.pure_getter_typed("length", pyro_js::GetterResult::Number, |s, l| Ok(s.number(l.len() as f64)));
         def.pure_method("item", 1, |s, l, a| {
+            a.require(1, "NodeList.item")?;
             let i = to_u32(a.get(0))? as usize;
             match l.get(i) {
                 Some((p, id)) => Ok(wrap_node(s, p, id)?.value()),
@@ -548,6 +549,7 @@ impl JsClass for HtmlCollection {
             Ok(s.number(c.with_items(|v| v.len()) as f64))
         });
         def.pure_method("item", 1, |s, c, a| {
+            a.require(1, "HTMLCollection.item")?;
             let i = to_u32(a.get(0))? as usize;
             let id = c.with_items(|v| v.get(i).copied());
             match id {
@@ -556,6 +558,7 @@ impl JsClass for HtmlCollection {
             }
         });
         def.pure_method("namedItem", 1, |s, c, a| {
+            a.require(1, "HTMLCollection.namedItem")?;
             let name = dom_string(a.get(0))?;
             match c.named(&name) {
                 Some(id) => Ok(wrap_node(s, &c.root.page, id)?.value()),
@@ -886,6 +889,7 @@ impl JsClass for DomTokenList {
         );
         def.pure_method("toString", 0, |s, t, _a| t.value(s));
         def.pure_method("item", 1, |s, t, a| {
+            a.require(1, "DOMTokenList.item")?;
             let i = to_u32(a.get(0))? as usize;
             Ok(t.token(s, &t.el.page.dom.borrow(), i).unwrap_or_else(|| s.null()))
         });
@@ -893,6 +897,7 @@ impl JsClass for DomTokenList {
         def.indexed(|s, t, i| Ok(t.token(s, &t.el.page.dom.borrow(), i as usize)));
 
         def.pure_method("contains", 1, |s, t, a| {
+            a.require(1, "DOMTokenList.contains")?;
             let v = a.get(0);
             Ok(s.boolean(t.contains(&str_of(&v)?)))
         });
@@ -1451,6 +1456,446 @@ pub fn animated_enumeration<'s>(
     s.wrap::<SvgAnimatedEnumeration>(AnimatedEnumData { el: NodeHold::new(&page, id)?, e }, Some(key))
 }
 
+// ----- SVGAnimatedString, SVGAnimatedNumber, SVGAnimatedInteger, SVGAnimatedBoolean -------------
+
+/// Which number of an attribute an animated number or integer reflects: the whole attribute, or the
+/// first or second of a pair (`stdDeviation`, `order`, `radius`, ...), the second defaulting to the
+/// first when the attribute gives one number.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SvgPart {
+    Whole,
+    First,
+    Second,
+}
+
+/// An SVG element's string, number, integer or boolean attribute: the attribute names (the first
+/// present one is read and written; `href` falls back to `xlink:href`), which number of it, the
+/// value of an absent or unparseable attribute, and the identity slot of the wrapper.
+pub struct SvgAttr {
+    pub attrs: &'static [&'static str],
+    pub part: SvgPart,
+    pub initial: f64,
+    pub slot: u64,
+}
+
+pub struct AnimatedAttrData {
+    el: NodeHold,
+    a: &'static SvgAttr,
+}
+
+impl AnimatedAttrData {
+    fn text(&self) -> Option<String> {
+        let dom = self.el.page.dom.borrow();
+        self.a.attrs.iter().find_map(|name| dom.get_attribute(self.el.id, name).ok().flatten().map(|v| v.to_string()))
+    }
+    /// The attribute to write: the first present one, else the first name.
+    fn write_name(&self) -> &'static str {
+        let dom = self.el.page.dom.borrow();
+        self.a.attrs.iter().copied().find(|name| dom.has_attribute(self.el.id, name).unwrap_or(false)).unwrap_or(self.a.attrs[0])
+    }
+    fn set(&self, value: &str) -> JsResult<()> {
+        let name = self.write_name();
+        self.el.page.dom.borrow_mut().set_attribute(self.el.id, name, value).js()
+    }
+    /// The attribute's numbers (separated by whitespace and/or a comma); `None` when it does not parse
+    /// as one number (or, for a pair, one or two).
+    fn numbers(&self) -> Option<Vec<f64>> {
+        let text = self.text()?;
+        let parts: Vec<&str> =
+            text.split(|c: char| c.is_ascii_whitespace() || c == ',').filter(|p| !p.is_empty()).collect();
+        let max = if self.a.part == SvgPart::Whole { 1 } else { 2 };
+        if parts.is_empty() || parts.len() > max {
+            return None;
+        }
+        parts.iter().map(|p| svg_number(p)).collect()
+    }
+    fn number(&self) -> f64 {
+        self.number_as(self.a.part)
+    }
+    /// Writes `v` as this part, keeping the other number of a pair.
+    fn set_number(&self, v: f64) -> JsResult<()> {
+        let text = match self.a.part {
+            SvgPart::Whole => fmt_number(v),
+            SvgPart::First => format!("{} {}", fmt_number(v), fmt_number(self.number_as(SvgPart::Second))),
+            SvgPart::Second => format!("{} {}", fmt_number(self.number_as(SvgPart::First)), fmt_number(v)),
+        };
+        self.set(&text)
+    }
+    fn number_as(&self, part: SvgPart) -> f64 {
+        match (self.numbers(), part) {
+            (Some(n), SvgPart::Second) => n.get(1).copied().unwrap_or(n[0]),
+            (Some(n), _) => n[0],
+            (None, _) => self.a.initial,
+        }
+    }
+}
+
+/// An SVG `<number>`: a CSS number without units (`1e3`, `.5`, `-2`); `None` for anything else.
+fn svg_number(text: &str) -> Option<f64> {
+    if text.is_empty() || text.contains(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))) {
+        return None;
+    }
+    text.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+fn fmt_number(v: f64) -> String {
+    if v == v.trunc() && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+fn finite_float(v: Value<'_>, what: &str) -> JsResult<f64> {
+    let n = v.to_number()? as f32 as f64;
+    if !n.is_finite() {
+        return Err(JsError::Type(format!("Failed to set the 'baseVal' property on '{what}': The provided float value is non-finite.").into()));
+    }
+    Ok(n)
+}
+
+/// `SVGAnimatedString`: `baseVal` reflects the attribute; `animVal` is `baseVal`, as nothing animates it.
+pub struct SvgAnimatedString;
+impl JsClass for SvgAnimatedString {
+    const NAME: &'static str = "SVGAnimatedString";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor("baseVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())), |_s, t, v| t.set(&dom_string(v)?));
+        def.getter("animVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())));
+    }
+}
+
+/// `SVGAnimatedNumber`: `baseVal` is the attribute's number (its initial value when absent or
+/// invalid); setting it writes the number (a non-finite value throws a TypeError).
+pub struct SvgAnimatedNumber;
+impl JsClass for SvgAnimatedNumber {
+    const NAME: &'static str = "SVGAnimatedNumber";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "baseVal",
+            |s, t| Ok(s.number(t.number() as f32 as f64)),
+            |_s, t, v| t.set_number(finite_float(v, "SVGAnimatedNumber")?),
+        );
+        def.getter("animVal", |s, t| Ok(s.number(t.number() as f32 as f64)));
+    }
+}
+
+/// `SVGAnimatedInteger`: as `SVGAnimatedNumber`, with WebIDL `long` values (a non-integer attribute
+/// value is its initial value).
+pub struct SvgAnimatedInteger;
+impl JsClass for SvgAnimatedInteger {
+    const NAME: &'static str = "SVGAnimatedInteger";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        fn int(t: &AnimatedAttrData) -> f64 {
+            let n = t.number();
+            if n == n.trunc() { n } else { t.a.initial }
+        }
+        def.accessor("baseVal", |s, t| Ok(s.number(int(t))), |_s, t, v| t.set_number(to_i32(v)? as f64));
+        def.getter("animVal", |s, t| Ok(s.number(int(t))));
+    }
+}
+
+/// `SVGAnimatedBoolean`: the attribute is `true` (or `false`, the value of anything else).
+pub struct SvgAnimatedBoolean;
+impl JsClass for SvgAnimatedBoolean {
+    const NAME: &'static str = "SVGAnimatedBoolean";
+    type Data = AnimatedAttrData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        fn get(t: &AnimatedAttrData) -> bool {
+            t.text().is_some_and(|v| v.trim() == "true")
+        }
+        def.accessor(
+            "baseVal",
+            |s, t| Ok(s.boolean(get(t))),
+            |_s, t, v| t.set(if v.to_bool() { "true" } else { "false" }),
+        );
+        def.getter("animVal", |s, t| Ok(s.boolean(get(t))));
+    }
+}
+
+/// The element's animated value for `a`, of class `C`, the same object each time.
+pub fn animated_attr<'s, C: JsClass<Data = AnimatedAttrData>>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    id: NodeId,
+    a: &'static SvgAttr,
+) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, a.slot, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    s.wrap::<C>(AnimatedAttrData { el: NodeHold::new(&page, id)?, a }, Some(key))
+}
+
+// ----- SVGAnimatedLength, SVGLength ------------------------------------------------------------
+
+/// The direction a length attribute's percentages resolve in: the nearest `svg` viewport's width,
+/// height, or its normalized diagonal (`r`).
+#[derive(Clone, Copy)]
+pub enum SvgLengthDir {
+    Width,
+    Height,
+    Other,
+}
+
+/// An SVG element's `<length>` attribute: its name, its value when absent or invalid, the
+/// direction of its percentages, and the identity slots of its wrappers (`slot` the
+/// SVGAnimatedLength, `slot + 1` baseVal and `slot + 2` animVal).
+pub struct SvgLengthAttr {
+    pub attr: &'static str,
+    pub initial: &'static str,
+    pub dir: SvgLengthDir,
+    pub slot: u64,
+}
+
+/// SVGLength unit types, in the order of their constants (0 is unknown, 1 a plain number).
+const LENGTH_UNITS: [&str; 11] = ["", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc"];
+
+/// Parses an SVG `<length>`: a number and an optional unit, matched ASCII case-insensitively
+/// (`None` when it is not one).
+fn parse_svg_length(text: &str) -> Option<(f64, u16)> {
+    let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
+    for (kind, unit) in LENGTH_UNITS.iter().enumerate().skip(2) {
+        let n = text.len().checked_sub(unit.len())?;
+        if text.is_char_boundary(n) && text[n..].eq_ignore_ascii_case(unit) {
+            if let Some(v) = svg_number(&text[..n]) {
+                return Some((v, kind as u16));
+            }
+        }
+    }
+    svg_number(text).map(|v| (v, 1))
+}
+
+fn length_to_string(value: f64, kind: u16) -> String {
+    // The float's shortest form, as Chromium and Firefox serialize SVG numbers.
+    format!("{}{}", value as f32, LENGTH_UNITS[kind as usize])
+}
+
+pub struct SvgLengthData {
+    el: NodeHold,
+    a: &'static SvgLengthAttr,
+    anim: bool,
+}
+
+impl SvgLengthData {
+    fn get(&self) -> (f64, u16) {
+        let dom = self.el.page.dom.borrow();
+        dom.get_attribute(self.el.id, self.a.attr)
+            .ok()
+            .flatten()
+            .and_then(|v| parse_svg_length(&v))
+            .or_else(|| parse_svg_length(self.a.initial))
+            .unwrap_or((0.0, 1))
+    }
+    fn writable(&self) -> JsResult<()> {
+        if self.anim {
+            return Err(JsError::dom("NoModificationAllowedError", "The object is read-only."));
+        }
+        Ok(())
+    }
+    fn write(&self, value: f64, kind: u16) -> JsResult<()> {
+        self.el.page.dom.borrow_mut().set_attribute(self.el.id, self.a.attr, &length_to_string(value, kind)).js()
+    }
+    /// User units per unit of `kind` for this element (0 when a percentage has no viewport).
+    fn factor(&self, kind: u16) -> f64 {
+        match kind {
+            1 | 5 => 1.0,
+            2 => self.viewport_percent(),
+            3 | 4 => {
+                let page = &self.el.page;
+                let dom = page.dom.borrow();
+                let em = page.layout().style().computed_font_size(&dom, Some(self.el.id));
+                if kind == 3 { em } else { em / 2.0 }
+            }
+            6 => 96.0 / 2.54,
+            7 => 96.0 / 25.4,
+            8 => 96.0,
+            9 => 4.0 / 3.0,
+            10 => 16.0,
+            _ => 1.0,
+        }
+    }
+    /// One percent of the nearest `svg` ancestor's viewport: its `viewBox`, else its absolute
+    /// `width` and `height`; 0 without one.
+    fn viewport_percent(&self) -> f64 {
+        let dom = self.el.page.dom.borrow();
+        let mut p = dom.parent_element(self.el.id).ok().flatten();
+        while let Some(x) = p {
+            if dom.element(x).is_ok_and(|e| &*e.name.local == "svg") {
+                let attr = |n: &str| dom.get_attribute(x, n).ok().flatten().map(|v| v.to_string());
+                let vb: Option<Vec<f64>> = attr("viewBox").and_then(|v| {
+                    v.split(|c: char| c.is_ascii_whitespace() || c == ',')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.parse::<f64>().ok())
+                        .collect()
+                });
+                let (w, h) = match vb.as_deref() {
+                    Some(&[_, _, w, h]) => (w, h),
+                    _ => {
+                        let abs = |n: &str| {
+                            attr(n).and_then(|v| parse_svg_length(&v)).filter(|(_, k)| *k != 2 && *k != 3 && *k != 4)
+                        };
+                        match (abs("width"), abs("height")) {
+                            (Some((w, kw)), Some((h, kh))) => (w * self.factor(kw), h * self.factor(kh)),
+                            _ => return 0.0,
+                        }
+                    }
+                };
+                let base = match self.a.dir {
+                    SvgLengthDir::Width => w,
+                    SvgLengthDir::Height => h,
+                    SvgLengthDir::Other => ((w * w + h * h) / 2.0).sqrt(),
+                };
+                return base / 100.0;
+            }
+            p = dom.parent_element(x).ok().flatten();
+        }
+        0.0
+    }
+}
+
+fn length_kind(v: Value<'_>) -> JsResult<u16> {
+    let kind = (to_u32(v)? & 0xffff) as u16;
+    if kind == 0 || kind as usize >= LENGTH_UNITS.len() {
+        return Err(JsError::dom("NotSupportedError", "The unit type provided is invalid."));
+    }
+    Ok(kind)
+}
+
+/// `SVGLength`, reflecting a length attribute (`baseVal`) or read-only (`animVal`, which nothing
+/// animates). `value` is in user units: percentages resolve against the nearest `svg` viewport.
+pub struct SvgLength;
+impl JsClass for SvgLength {
+    const NAME: &'static str = "SVGLength";
+    type Data = SvgLengthData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for (i, name) in [
+            "SVG_LENGTHTYPE_UNKNOWN",
+            "SVG_LENGTHTYPE_NUMBER",
+            "SVG_LENGTHTYPE_PERCENTAGE",
+            "SVG_LENGTHTYPE_EMS",
+            "SVG_LENGTHTYPE_EXS",
+            "SVG_LENGTHTYPE_PX",
+            "SVG_LENGTHTYPE_CM",
+            "SVG_LENGTHTYPE_MM",
+            "SVG_LENGTHTYPE_IN",
+            "SVG_LENGTHTYPE_PT",
+            "SVG_LENGTHTYPE_PC",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            def.constant(name, i as f64);
+        }
+        def.getter("unitType", |s, t| Ok(s.number(t.get().1 as f64)));
+        def.accessor(
+            "value",
+            |s, t| {
+                let (v, k) = t.get();
+                Ok(s.number((v * t.factor(k)) as f32 as f64))
+            },
+            |_s, t, v| {
+                t.writable()?;
+                let user = finite_float(v, "SVGLength")?;
+                let (_, k) = t.get();
+                let f = t.factor(k);
+                if f == 0.0 {
+                    return t.write(user, 1);
+                }
+                t.write(user / f, k)
+            },
+        );
+        def.accessor(
+            "valueInSpecifiedUnits",
+            |s, t| Ok(s.number(t.get().0 as f32 as f64)),
+            |_s, t, v| {
+                t.writable()?;
+                let n = finite_float(v, "SVGLength")?;
+                t.write(n, t.get().1)
+            },
+        );
+        def.accessor(
+            "valueAsString",
+            |s, t| {
+                let (v, k) = t.get();
+                Ok(s.string(&length_to_string(v, k)))
+            },
+            |_s, t, v| {
+                t.writable()?;
+                let text = dom_string(v)?;
+                let Some((n, k)) = parse_svg_length(&text) else {
+                    return Err(JsError::dom("SyntaxError", "The value provided is invalid."));
+                };
+                t.write(n, k)
+            },
+        );
+        def.method("newValueSpecifiedUnits", 2, |s, t, a| {
+            t.writable()?;
+            a.require(2, "SVGLength.newValueSpecifiedUnits")?;
+            let k = length_kind(a.get(0))?;
+            let n = finite_float(a.get(1), "SVGLength")?;
+            t.write(n, k)?;
+            Ok(s.undefined())
+        });
+        def.method("convertToSpecifiedUnits", 1, |s, t, a| {
+            t.writable()?;
+            a.require(1, "SVGLength.convertToSpecifiedUnits")?;
+            let k = length_kind(a.get(0))?;
+            let (v, from) = t.get();
+            let user = v * t.factor(from);
+            let to = t.factor(k);
+            if to == 0.0 {
+                return Err(JsError::dom("NotSupportedError", "The length cannot be converted to that unit here."));
+            }
+            t.write(user / to, k)?;
+            Ok(s.undefined())
+        });
+    }
+}
+
+pub struct AnimatedLengthData {
+    el: NodeHold,
+    a: &'static SvgLengthAttr,
+}
+
+fn svg_length<'s>(s: &Scope<'s>, el: &NodeHold, a: &'static SvgLengthAttr, anim: bool) -> JsResult<Object<'s>> {
+    let key = coll_identity(&el.page, a.slot + 1 + anim as u64, el.id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgLength>(SvgLengthData { el: NodeHold::new(&el.page, el.id)?, a, anim }, Some(key))
+}
+
+/// `SVGAnimatedLength`: `baseVal` reflects the attribute, `animVal` reads it.
+pub struct SvgAnimatedLength;
+impl JsClass for SvgAnimatedLength {
+    const NAME: &'static str = "SVGAnimatedLength";
+    type Data = AnimatedLengthData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, t| Ok(svg_length(s, &t.el, t.a, false)?.value()));
+        def.getter("animVal", |s, t| Ok(svg_length(s, &t.el, t.a, true)?.value()));
+    }
+}
+
+/// The element's `SVGAnimatedLength` for `a`, the same object each time.
+pub fn animated_length<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, a: &'static SvgLengthAttr) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, a.slot, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    s.wrap::<SvgAnimatedLength>(AnimatedLengthData { el: NodeHold::new(&page, id)?, a }, Some(key))
+}
+
 // ----- SVGAnimatedTransformList ----------------------------------------------------
 
 /// One function of an SVG `transform` attribute: its `SVGTransform` type (1 matrix, 2 translate,
@@ -1615,6 +2060,12 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgTransform>();
     engine.register::<SvgMatrix>();
     engine.register::<SvgAnimatedEnumeration>();
+    engine.register::<SvgAnimatedString>();
+    engine.register::<SvgAnimatedNumber>();
+    engine.register::<SvgAnimatedInteger>();
+    engine.register::<SvgAnimatedBoolean>();
+    engine.register::<SvgAnimatedLength>();
+    engine.register::<SvgLength>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();

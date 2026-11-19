@@ -9,9 +9,30 @@ export const PAINT_DIRS = [
   'css/css-backgrounds', 'css/css-text-decor', 'css/filter-effects', 'css/compositing', 'css/css-masking',
   'css/css-color', 'css/css-transforms', 'css/CSS2',
 ];
+// Directories added to the gate with the round 4 feature lanes (a feature passes a good share of them): their
+// testharness pages run in wptrunner's 800x600 viewport. custom-elements: 190 pages (customized built-ins, lane F3a);
+// css/css-font-loading: 23 pages without wptserve (FontFace, document.fonts, lane F1); css/css-typed-om: 362 pages
+// (CSS Typed OM, lane F1); scroll-animations: scroll-driven animations (ScrollTimeline, ViewTimeline,
+// animation-timeline, lane F2); css/css-scroll-snap: 148 pages (snapped programmatic scrolls, lane F1); css/css-shapes:
+// 148 pages (shape-outside, lane F1); html/semantics/forms: 396 pages without wptserve or testdriver (form controls,
+// constraint validation, text selection, form submission); css/cssom: 270 pages (CSSOM, getComputedStyle);
+// css/css-cascade: 106 pages (cascade layers, @scope, revert). Their reftests run in LAYOUT_DIRS too. trusted-types:
+// 207 pages (policies, HTML/script/attribute sinks, eval and Function with JSC patch 0035, violation reports; lane
+// F3a), less the pages in TESTHARNESS_SKIP. navigation-api: the Navigation API (lane F3b), less its pages that time
+// out (TESTHARNESS_SKIP). html/semantics/embedded-content/the-embed-element (14 pages) and the-iframe-element (117):
+// nested browsing contexts of <iframe>, <object> and <embed> (lane F3a). html/webappapis: 312 pages without wptserve
+// (timers, atob, structured clone, event handlers, microtasks, document.open/write); html/semantics/scripting-1: 401
+// pages (script elements: types, execution order, modules, templates). Round 4 sweep (S3), pages without wptserve or
+// testdriver: html/syntax 272 (the HTML parser and serializer), selection 97 (Selection API), streams 84, user-timing
+// 36, webidl 44, FileAPI 61, fetch/api request/response/headers/abort/body 68 (fetch/api/basic is a default
+// directory; cors, policies and redirect need wptserve), css/css-variables 63 and css/css-conditional 220
+// (testharness pages; their reftests run in LAYOUT_DIRS too). html/semantics/links 14 and document-metadata 88
+// (link stylesheets and their events, <base>, <meta>, <style>, <title>; lane F3a), less TESTHARNESS_SKIP.
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1', 'html/syntax', 'selection', 'streams', 'user-timing', 'webidl', 'FileAPI', 'fetch/api/request', 'fetch/api/response', 'fetch/api/headers', 'fetch/api/abort', 'fetch/api/body', 'css/css-variables', 'css/css-conditional', 'html/semantics/links', 'html/semantics/document-metadata'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
+  ...FEATURE_DIRS,
 ];
 // `--dirs all` (run.mjs): `keep` (a kind's directories, so their pages keep their `dir` and its rules) and every other
 // directory of the checkout, the fewest that cover it: a directory that holds none of `keep` whole, else its
@@ -34,7 +55,7 @@ export function allDirs(wpt, keep) {
   return out;
 }
 // The directories whose testharness pages run in Playwright's 1280x720, the viewport their baseline was recorded with.
-const LEGACY_VIEWPORT_DIRS = DEFAULT_DIRS.filter((d) => !PAINT_DIRS.includes(d));
+const LEGACY_VIEWPORT_DIRS = DEFAULT_DIRS.filter((d) => !PAINT_DIRS.includes(d) && !FEATURE_DIRS.includes(d));
 // Testharness pages in every other directory run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
 // browser has Ahem for every page). The older directories keep the viewport their baseline was recorded with
 // (Playwright's 1280x720).
@@ -64,6 +85,124 @@ const SERVER_PAGES = [
   /^html\/semantics\/.*\/moving-between-documents\//,
 ];
 const SERVER_HELPERS = /\/common\/security-features\//;
+
+// Testharness pages left out by path (a file, every variant), each counted under its reason in `excluded` and named in
+// `reasons` (coverage.mjs), so the list shows in the gate's plan rather than as silent timeouts.
+//   trusted-types/: pages whose helpers (support/csp-violations.js, also through support/navigation-support.js) end
+//     each check on a connect-src violation, a fetch that CSP `connect-src 'none'` blocks. pyro acts on the Trusted
+//     Types directives of a CSP only, so the marker never comes and each page times out (45 s per variant).
+const CONNECT_SRC_MARKER = 'needs CSP connect-src violations (Trusted Types end marker)';
+export const TESTHARNESS_SKIP = [
+  'trusted-types/navigate-to-javascript-url-csp-headers.html',
+  'trusted-types/should-sink-type-mismatch-violation-be-blocked-by-csp-001.html',
+  'trusted-types/should-sink-type-mismatch-violation-be-blocked-by-csp-002-worker.html',
+  'trusted-types/should-sink-type-mismatch-violation-be-blocked-by-csp-003.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-001.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-002.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-003.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-004-worker.html',
+  'trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-005.html',
+  'trusted-types/trusted-types-navigation.html',
+  'trusted-types/trusted-types-reporting.html',
+].map((path) => ({ path, why: CONNECT_SRC_MARKER }));
+
+//   navigation-api/: pages that time out (lane F3b, measured with the gate's static server; each costs the page timeout).
+const NAV_CROSS = "cross-window and cross-origin navigations: the static server has no other origins, and a same-origin frame's initial about:blank Window is not reused by its first document";
+const NAV_BFCACHE = 'needs the back/forward cache';
+const NAV_OTHER = 'times out in pyro (lane F3b leftover: javascript:/srcdoc/meta refresh/history.go(0), reentrant intercepts, multi-frame traversal, sandboxed back)';
+const NAV_DOWNLOAD = 'needs downloads (anchor download attribute)';
+const NAV_FORM = 'form submission navigate events (formData, reload, traversal, targets) not done';
+const NAV_DETACH = 'an iframe removed during a traversal or navigate event: the traversal never settles';
+const NAVIGATION_API_SKIP = [
+  ['navigation-api/navigate-event/cross-window/click-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/click-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/click-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-crossdocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/location-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-crossdocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/open-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-crossdocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-crossdocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-samedocument-crossorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/cross-window/submit-samedocument-sameorigin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/defer/tentative/defer-cross-origin.html', NAV_CROSS],
+  ['navigation-api/navigate-event/navigate-navigation-navigate-cross-site-preventDefault.html', NAV_CROSS],
+  ['navigation-api/navigation-history-entry/entries-across-origins.html', NAV_CROSS],
+  ['navigation-api/navigation-history-entry/key-id-location-replace-cross-origin.html', NAV_CROSS],
+  ['navigation-api/navigation-methods/navigate-replace-cross-site.html', NAV_CROSS],
+  ['navigation-api/navigate-event/dangling-navigate-event-after-bfcache-restore.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/defer/tentative/restore-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/intercepted-navigation-after-bfcache-restore.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/navigate-history-back-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigation-activation/activation-after-bfcache-cross-origin-clears-from.html', NAV_BFCACHE],
+  ['navigation-api/navigation-activation/activation-after-bfcache-cross-origin.html', NAV_BFCACHE],
+  ['navigation-api/navigation-activation/activation-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigation-history-entry/entries-after-bfcache-in-iframe.html', NAV_BFCACHE],
+  ['navigation-api/navigation-history-entry/entries-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/per-entry-events/dispose-after-bfcache.html', NAV_BFCACHE],
+  ['navigation-api/navigate-event/defer/tentative/defer-restore-callback-abort.html', NAV_OTHER],
+  ['navigation-api/navigate-event/defer/tentative/defer-same-document.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-anchor-same-origin-cross-document.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-history-go-0.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-meta-refresh.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-svg-anchor-fragment.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-to-javascript.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-to-srcdoc.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigation-traverseTo-navigates-top-and-same-doc-child-and-cross-doc-child.html', NAV_OTHER],
+  ['navigation-api/navigate-event/replaceState-inside-back-handler-infinite.optional.html', NAV_OTHER],
+  ['navigation-api/navigate-event/signal-abort-reentry-navigate-api-tracker.html', NAV_OTHER],
+  ['navigation-api/navigate-event/signal-abort-window-stop-in-onnavigate.html', NAV_OTHER],
+  ['navigation-api/navigation-history-entry/entries-after-javascript-url-navigation.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/back-forward-multiple-frames.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/forward-to-pruned-entry.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/return-value/navigate-file-url.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/sandboxing-back-parent.html', NAV_OTHER],
+  ['navigation-api/navigation-methods/sandboxing-back-sibling.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/location-href-intercept-reentrant.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/navigate-intercept-precommitHandler-reject.tentative.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/navigate-intercept-stop.html', NAV_OTHER],
+  ['navigation-api/ordering-and-transition/transition-to.html', NAV_OTHER],
+  ['navigation-api/per-entry-events/dispose-for-full-session-history.tentative.html', NAV_OTHER],
+  ['navigation-api/per-entry-events/dispose-skip-current-on-truncate.html', NAV_OTHER],
+  ['navigation-api/precommit-handler/precommitHandler-javascript-url-before-commit.html', NAV_OTHER],
+  ['navigation-api/state/cross-document-away-and-back.html', NAV_OTHER],
+  ['navigation-api/navigate-event/navigate-anchor-download.html', NAV_DOWNLOAD],
+  ['navigation-api/ordering-and-transition/anchor-download-intercept-reject.html', NAV_DOWNLOAD],
+  ['navigation-api/ordering-and-transition/anchor-download-intercept.html', NAV_DOWNLOAD],
+  ['navigation-api/navigate-event/navigate-form-reload.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form-requestSubmit.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form-traverse.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form-with-target.html', NAV_FORM],
+  ['navigation-api/navigate-event/navigate-form.html', NAV_FORM],
+  ['navigation-api/navigation-methods/return-value/reload-detach-in-onnavigate.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/return-value/traverseTo-detach-cross-document-before-navigate-event.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/return-value/traverseTo-detach-cross-document.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/return-value/traverseTo-detach-same-document-before-navigate-event.html', NAV_DETACH],
+  ['navigation-api/navigation-methods/traverseTo-detach-between-navigate-and-navigatesuccess.html', NAV_DETACH],
+  ['navigation-api/per-entry-events/dispose-for-navigation-in-sibling-detach-frame.html', NAV_DETACH],
+].map(([path, why]) => ({ path, why }));
+TESTHARNESS_SKIP.push(...NAVIGATION_API_SKIP);
+//   html/semantics/embedded-content/the-iframe-element/: waits for a sandboxed frame's video to fire `play` (autoplay).
+TESTHARNESS_SKIP.push({ path: 'html/semantics/embedded-content/the-iframe-element/sandbox_002.htm', why: 'needs media playback (autoplay play event)' });
+//   html/semantics/links/, html/semantics/document-metadata/ (lane F3a): downloads (each waits out its subtest
+//   timeout), the tentative <style> CSP pages (pyro acts on Trusted Types directives only), and a click in a
+//   navigated-away iframe's document (times out).
+TESTHARNESS_SKIP.push(
+  { prefix: 'html/semantics/links/downloading-resources/', why: 'needs downloads (anchor download attribute)' },
+  { prefix: 'html/semantics/document-metadata/the-style-element/tentative/style-element-csp-', why: 'needs CSP style-src/script-src enforcement (only Trusted Types directives are acted on)' },
+  { path: 'html/semantics/links/following-hyperlinks/active-document.window.js', why: 'times out: a hyperlink in a navigated-away iframe document' },
+);
+// Round 4 sweep (S3): pages of the directories it added that hang or time out with the static server.
+TESTHARNESS_SKIP.push(
+  ...['html/syntax/parsing/custom-element-reparenting-shadow-cycle.html', 'html/syntax/parsing/custom-element-reparenting-template-cycle.html']
+    .map((path) => ({ path, why: 'hangs: a custom element the parser reparents into its own shadow or template cycle (lane F3a)' })),
+  { path: 'FileAPI/url/url-in-tags-revoke.window.js', why: 'times out: a revoked blob: URL an <iframe> loads never fires load or error' },
+  { path: 'streams/transferable/deserialize-error.window.js', why: 'times out: a transferred stream whose chunk fails to deserialize never errors' },
+);
 
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
@@ -100,6 +239,8 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
         if (v.length) variants = v;
         long = /<meta\s+name=["']?timeout["']?\s+content=["']?long/i.test(src);
       } else continue;
+      const skip = TESTHARNESS_SKIP.find((x) => x.path === rel || (x.prefix && rel.startsWith(x.prefix)));
+      if (skip) { exclude(skip.why); continue; }
       if (!wptserve && /\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
       if (!testdriver && /testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }
       if (!wptserve && (/\.py\b/.test(code) || SERVER_PAGES.some((re) => re.test(rel)) || SERVER_HELPERS.test(code))) { exclude('needs wptserve python handler'); continue; }
@@ -129,8 +270,15 @@ export const LAYOUT_DIRS = [
   'css/cssom', 'css/cssom-view', 'css/mediaqueries', 'css/css-syntax', 'css/css-shadow', 'css/css-transitions',
   'css/css-animations', 'css/css-properties-values-api', 'css/css-grid', 'css/css-text', 'css/css-fonts',
   'css/css-inline', 'css/css-borders',
+  // pyro: css-shapes (238 reftests; shape-outside, lane F1).
+  'css/css-shapes',
+  // pyro: writing modes, UI (outline, box-sizing, cursor, appearance), containment, multi-column, will-change, WOFF2
+  // fonts, namespaces and style attributes (3,407 reftests, 2,612 pass locally; README "Reftests").
+  'css/css-writing-modes', 'css/css-ui', 'css/css-contain', 'css/css-multicol', 'css/css-will-change', 'css/WOFF2',
+  'css/css-namespaces', 'css/css-style-attr',
 ];
-export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding', ...LAYOUT_DIRS];
+// scroll-animations: scroll-driven animations' reftests (lane F2; 33 pages, 18 pass).
+export const REFTEST_DIRS = [...PAINT_DIRS, 'css/selectors', 'html/dom', 'shadow-dom', 'dom', 'encoding', ...LAYOUT_DIRS, 'scroll-animations'];
 // Reftests left out by path, with the reason discovery counts them under (`excluded`). A pattern is a prefix of the
 // page's URL or a whole URL.
 //   css/css-grid/grid-lanes/: masonry layout, which pyro (Taffy) does not implement and Chrome ships behind a flag:
@@ -426,7 +574,7 @@ export function plan(tests, baseline, { gate = false, timeout, longTimeout }) {
   for (const t of tests) {
     const b = baseline?.tests?.[t.url];
     const def = t.long ? longTimeout : timeout;
-    const p = { ...t, limit: def, est: b ? Math.max(b.ms, 20) : t.long ? 3000 : 500 };
+    const p = { ...t, limit: def, est: b ? Math.max(b.ms, 20) : t.long ? 3000 : 500, known: b?.status };
     if (gate && b) {
       if (skippable(b)) { skipped.push(t.url); continue; }
       if (b.status === 'complete') p.limit = Math.min(def, Math.max(10 * b.ms, 10000));

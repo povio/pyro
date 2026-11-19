@@ -175,7 +175,7 @@ impl crate::document::BaseDocument {
             stylist: &self.stylist,
             options: GLOBAL_STYLE_DATA.options.clone(),
             guards,
-            visited_styles_enabled: false,
+            visited_styles_enabled: true,
             animations: self.animations.clone(),
             current_time_for_animations: now,
             snapshot_map: &self.snapshots,
@@ -490,7 +490,7 @@ impl crate::document::BaseDocument {
             stylist: &self.stylist,
             options: GLOBAL_STYLE_DATA.options.clone(),
             guards,
-            visited_styles_enabled: false,
+            visited_styles_enabled: true,
             animations: self.animations.clone(),
             current_time_for_animations: 0.0,
             snapshot_map: &self.snapshots,
@@ -712,11 +712,16 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     // pyro: a scroll pseudo-element's box originates from the element it names, not from its
-    // parent in the tree (a marker's is its group, `layout::scroll_markers`).
+    // parent in the tree (a marker's is its group, `layout::scroll_markers`). An anonymous box
+    // nested in another one (a `::first-letter` box inside a `::first-line` box) originates
+    // from the outer box, and so on up to an element (`ultimate_originating_element` walks it).
     fn pseudo_element_originating_element(&self) -> Option<Self> {
         match self.scroll_pseudo() {
             Some((_, origin)) => Some(self.with(origin)),
-            None => selectors::Element::parent_element(self),
+            None => match TNode::parent_node(self) {
+                Some(parent) if parent.is_pseudo_element() => Some(parent),
+                _ => selectors::Element::parent_element(self),
+            },
         }
     }
 
@@ -830,6 +835,8 @@ impl selectors::Element for BlitzNode<'_> {
             // visited style (WPT css-pseudo `selection-link-002`; `crate::dom_selection`).
             NonTSPseudoClass::Link => {
                 self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
+                    // Inside `:has()` every link is unvisited (as `:visited` below).
+                    && (context.visited_handling().matches_unvisited() || context.relative_selector_anchor().is_some())
                     && !(crate::dom_selection::LINKS_AS_VISITED.get()
                         && self.element_state().contains(ElementState::VISITED))
             }
@@ -853,8 +860,18 @@ impl selectors::Element for BlitzNode<'_> {
             // pyro: links to the document itself (`ElementData::flush_link_visited`), but not
             // inside `:has()`, where Chromium takes every link as unvisited (WPT
             // `css/selectors/has-visited.html`, `invalidation/link-pseudo-in-has.html`).
+            // The element's style matches every link as unvisited and its visited style (Stylo's
+            // `visited_styles_enabled`) the relevant link as visited, whose visited-dependent
+            // colours a visited link takes (`StyleBuilder::pyro_take_visited_dependent`).
             NonTSPseudoClass::Visited => {
-                self.element_state().contains(ElementState::VISITED)
+                self.element_state().intersects(ElementState::VISITED_OR_UNVISITED)
+                    && (context.visited_handling().matches_visited()
+                        || (crate::dom_selection::LINKS_AS_VISITED.get()
+                            && self.element_state().contains(ElementState::VISITED))
+                        // Invalidation (`:has()` insertion stand-ins) matches by the state, as
+                        // before visited styles: in its normal mode `:visited` would never match.
+                        || (context.matching_for_invalidation()
+                            && self.element_state().contains(ElementState::VISITED)))
                     && context.relative_selector_anchor().is_none()
             }
             NonTSPseudoClass::Autofill => false,
@@ -932,6 +949,8 @@ impl selectors::Element for BlitzNode<'_> {
         }
     }
 
+    // pyro: an `<a>` (any, as before; `:link`/`:visited` still need link state). Not keyed on the
+    // link state: that is set after insertion, which `:has()` invalidation would miss.
     fn is_link(&self) -> bool {
         self.data.is_element_with_tag_name(&local_name!("a"))
     }
@@ -1354,6 +1373,12 @@ impl<'a> TElement for BlitzNode<'a> {
             Some(None) => false,
             None => crate::lang::language(self).is_some_and(|lang| crate::lang::range_matches(lang, value)),
         }
+    }
+
+    // pyro: a link to the document itself (`ElementData::flush_link_visited`); its visited style
+    // gives its colours (`StyleAdjuster::adjust_for_links`).
+    fn is_visited_link(&self) -> bool {
+        self.element_state().contains(ElementState::VISITED)
     }
 
     fn is_html_document_body_element(&self) -> bool {
@@ -2260,6 +2285,17 @@ impl crate::BaseDocument {
         self.invalidate_relative_selectors(node, ElementSelectorFlags::empty(), DomMutationOperation::Remove);
     }
 
+    /// pyro: whether a style sheet of the document's origins or of a shadow tree has a relative
+    /// selector (`:has()`).
+    fn uses_relative_selectors(&self) -> bool {
+        let data = self.stylist.cascade_data();
+        use style::stylesheets::Origin;
+        [Origin::UserAgent, Origin::User, Origin::Author]
+            .into_iter()
+            .any(|origin| data.borrow_for_origin(origin).relative_invalidation_map_attributes().used)
+            || self.nodes.shadow_roots.values().any(|root| root.styles.data.relative_invalidation_map_attributes().used)
+    }
+
     fn invalidate_relative_selectors(
         &self,
         node: BlitzNode<'_>,
@@ -2281,6 +2317,12 @@ impl crate::BaseDocument {
         }
         // pyro: `:host:has()` (`crate::shadow`).
         self.invalidate_host_relative_selectors(node);
+        // pyro: without a relative selector in any style sheet there is nothing to invalidate.
+        // Asked per element, Stylo walks the styles of every shadow-including ancestor, which
+        // is quadratic in deeply nested shadow trees (WPT many-slots-crash: 1,000 levels).
+        if inherited.is_empty() && !self.uses_relative_selectors() {
+            return;
+        }
         let prev = node.prev_sibling_element();
         let next = node.next_sibling_element();
         invalidator(node, SiblingTraversalMap::default()).invalidate_relative_selectors_for_dom_mutation(
@@ -2389,9 +2431,40 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 false => data.styles.pseudos.get(&style::selector_parser::PseudoElement::FirstLine).cloned(),
             };
             // pyro: what counters and quotes read of the element before the restyle.
+            // pyro: the `::before`/`::after` styles before the restyle, for the embedder's transitions.
+            let old_generated_boxes = (self.track_style_changes && !data.styles.pseudos.is_empty()).then(|| {
+                [style::selector_parser::PseudoElement::Before, style::selector_parser::PseudoElement::After]
+                    .map(|pseudo| data.styles.pseudos.get(&pseudo).cloned())
+            });
             let old_generated = (self.track_counters && !self.counters_changed.load(std::sync::atomic::Ordering::Relaxed))
                 .then(|| crate::layout::counters::CounterInputs::of(&data.styles));
             recalc_style_at(self, context, el, &mut data, note_child);
+            // pyro: a replaced `::before`/`::after` style is a style change of the pseudo-element
+            // (before its sampled values are cascaded in, as the element's own).
+            if let Some(old) = old_generated_boxes {
+                for (i, pseudo) in
+                    [style::selector_parser::PseudoElement::Before, style::selector_parser::PseudoElement::After]
+                        .iter()
+                        .enumerate()
+                {
+                    let new = match data.styles.pseudos.is_empty() {
+                        true => None,
+                        false => data.styles.pseudos.get(pseudo),
+                    };
+                    if let (Some(old), Some(new)) = (&old[i], new) {
+                        if !Arc::ptr_eq(old, new) {
+                            self.style_changes.lock().unwrap().push(crate::StyleChange {
+                                node: el.id,
+                                pseudo: i as u8 + 1,
+                                before: old.clone(),
+                                after: new.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            // pyro: the animated values of the element's `::before`/`::after`.
+            crate::animation::cascade_sampled_pseudos(el, context, &mut data);
             if let Some(old) = old_generated {
                 if old != crate::layout::counters::CounterInputs::of(&data.styles) {
                     self.counters_changed.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -2410,6 +2483,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 if let (Some(old), Some(new)) = (&old_primary, new_primary) {
                     self.style_changes.lock().unwrap().push(crate::StyleChange {
                         node: el.id,
+                        pseudo: 0,
                         before: old.clone(),
                         after: new.clone(),
                     });
@@ -2773,10 +2847,7 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
             &style.get_background().background_image.0,
             &el.background_images,
         ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
-            || out_of_sync(
-                std::slice::from_ref(&style.get_border().border_image_source),
-                &el.border_images,
-            )
+            || out_of_sync(&crate::layout::damage::border_image_sources(style), &el.border_images)
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
             // pyro: an element whose `content` is one image shows it (`flush_content_image`).
             || {
@@ -3252,7 +3323,8 @@ mod relative_selector_invalidation_tests {
         m.append_children(body, &[p, q]);
         drop(m);
         d.resolve(0.0);
-        assert_eq!(order(&d, a), 3, "a:visited wins over the earlier a:link");
+        // `order` is not visited-dependent: the visited style's `order: 3` stays out.
+        assert_eq!(order(&d, a), 1, "a:visited sets colours only");
         assert_eq!(z_index(&d, a), 5, "a:link applies to the visited link");
         assert_eq!(order(&d, p), 7, ":has(> :link) matches");
         assert_eq!(z_index(&d, p), 0, ":has(> :visited) does not");
@@ -3276,6 +3348,16 @@ mod style_change_tests {
     use super::*;
     use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
     use blitz_traits::shell::{ColorScheme, Viewport};
+
+    #[test]
+    fn animation_timeline_cascades() {
+        let (doc, div) = make_doc(".a { animation: g 1s; animation-timeline: scroll(nearest); scroll-timeline-name: --t }", "atl");
+        let style = doc.nodes[div].primary_styles().unwrap();
+        use style_traits::ToCss;
+        let ui = style.get_ui();
+        assert_eq!(ui.animation_timeline_at(0).to_css_string(), "scroll()");
+        assert_eq!(ui.scroll_timeline_name_at(0).to_css_string(), "--t");
+    }
 
     /// `<html><head><style>{css}</style></head><body><div class=a>`, resolved.
     fn make_doc(css: &str, tag: &str) -> (BaseDocument, NodeId) {
@@ -3494,7 +3576,7 @@ mod box_generating_pseudo_tests {
             stylist: &doc.stylist,
             options: GLOBAL_STYLE_DATA.options.clone(),
             guards,
-            visited_styles_enabled: false,
+            visited_styles_enabled: true,
             animations: doc.animations.clone(),
             current_time_for_animations: 0.0,
             snapshot_map: &doc.snapshots,

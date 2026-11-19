@@ -454,7 +454,33 @@ impl PageNav {
         self.pending_frame_url.borrow_mut().take()
     }
 
+    /// HTML "navigate to a javascript: URL" in this frame's document: a task evaluates the
+    /// URL's script there (the document stays: a string result does not replace it). A document
+    /// that requires Trusted Types for script runs what its default policy makes of the script
+    /// (sink "Location href"), or nothing.
+    fn run_javascript_url(&self, url: &str) {
+        let Some(source) = crate::bindings::javascript_url_source(url) else { return };
+        let page = self.page;
+        let frame_id = self.frame_id.clone();
+        let document = self.state.borrow().doc_seq;
+        self.sched.post(TaskSource::Navigation, move |b| {
+            let Some(key) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
+            let Some(doc) = b.doc(key).filter(|p| p.nav.state.borrow().doc_seq == document) else { return };
+            let (realm, page_dom) = (doc.main_frame.main_realm().cloned(), doc.main_frame.page_dom.clone());
+            drop(doc);
+            let (Some(realm), Some(page_dom)) = (realm, page_dom) else { return };
+            let Ok(scope) = realm.scope() else { return };
+            let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
+            if let Err(e) = scope.eval(&source, None, 1) {
+                scope.report_exception(&e);
+            }
+        });
+    }
+
     fn navigate(&self, url: String, history: HistoryHandling) {
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            page.note_navigation_request();
+        }
         let sequence = self.script_navigation.get().wrapping_add(1);
         self.script_navigation.set(sequence);
         let page = self.page;
@@ -962,9 +988,15 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
     a == b
 }
 
-/// Location assignment: fragment-only changes are same-document.
+/// Location assignment: fragment-only changes are same-document; a `javascript:` URL runs
+/// its script in this document.
 fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
-    navigate_to(nav, parse(nav, input)?, replace);
+    let target = parse(nav, input)?;
+    if target.scheme() == "javascript" {
+        nav.run_javascript_url(target.as_str());
+        return Ok(());
+    }
+    navigate_to(nav, target, replace);
     Ok(())
 }
 
@@ -1647,6 +1679,18 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         }
         Ok(s.array(&values)?.value())
     });
+    // active() -> whether the document is fully active (its frame not
+    // removed, not navigated away): the methods reject InvalidStateError
+    // otherwise.
+    {
+        let with_nav = with_nav.clone();
+        let f = s.function("active", move |s, _this, _a| {
+            let active =
+                with_nav().ok().is_some_and(|nav| nav.page_dom.borrow().upgrade().is_some_and(|p| p.is_fully_active()));
+            Ok(s.boolean(active))
+        })?;
+        natives.set_atom("active", f.value())?;
+    }
     // resolve(url) -> the absolute URL, or SyntaxError.
     native!("resolve", |s, nav, a| Ok(s.string(parse(&nav, a.get(0))?.as_str())));
     // navigate(url, replace, stateJSON?) -> whether it stayed in the

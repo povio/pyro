@@ -56,7 +56,7 @@ pub use self::calc::{CalcLengthPercentage, CalcNumeric};
 pub use self::color::{
     Color, ColorOrAuto, ColorPropertyValue, ColorScheme, ForcedColorAdjust, PrintColorAdjust,
 };
-pub use self::column::{ColumnCount, ColumnFill, ColumnSpan};
+pub use self::column::{ColumnCount, ColumnFill, ColumnSpan, ColumnWrap};
 pub use self::corner_shape::{CornerShape, CornerShapeRect, SuperellipseArg};
 pub use self::counters::{Content, ContentItem, CounterIncrement, CounterReset, CounterSet};
 pub use self::easing::TimingFunction;
@@ -200,6 +200,19 @@ impl AngleOrPercentage {
     ) -> Result<Self, ParseError> {
         if let Ok(per) = input.try_parse(|i| Percentage::parse(context, i)) {
             return Ok(AngleOrPercentage::Percentage(per));
+        }
+        // pyro: a math function mixing angles and percentages, a percentage being that fraction
+        // of a full turn (the only use of this type is a conic gradient's stops).
+        if let Ok(angle) = input.try_parse(|i| -> Result<Angle, ParseError> {
+            let name = match i.next()? {
+                Token::Function(name) => name.clone(),
+                _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
+            };
+            let function = calc::CalcNode::math_function(context, &name)?;
+            calc::CalcNode::parse_angle_percentage_of_turn(context, i, function)
+                .map(|calc| Angle::new_calc(Box::new(calc)))
+        }) {
+            return Ok(AngleOrPercentage::Angle(angle));
         }
 
         Angle::parse_internal(context, input, allow_unitless_zero).map(AngleOrPercentage::Angle)

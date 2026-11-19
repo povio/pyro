@@ -93,14 +93,16 @@ fn src_changes_reload_once_and_report_pending_state() {
         eval(&thread, page, "events.filter(e => e.startsWith('a:')).join('|')"),
         "a:load:true:3x2|a:load:true:800x600"
     );
-    // Setting the same source again does not request it again.
+    // Setting the same source again does not request it again; as a relevant mutation it fires
+    // `load` again, from the image already loaded (HTML's list of available images).
     eval(&thread, page, "document.getElementById('a').src = '/b.gif'; 1");
     settle(&mut thread);
     assert_eq!(loader.log.borrow().iter().filter(|u| u.ends_with("b.gif")).count(), 1);
+    assert_eq!(eval(&thread, page, "events.filter(e => e.startsWith('a:')).length"), "3");
     // Removing src clears the image without an event.
     eval(&thread, page, "document.getElementById('a').removeAttribute('src'); 1");
     settle(&mut thread);
-    assert_eq!(eval(&thread, page, "[document.getElementById('a').naturalWidth, events.length].join()"), "0,3");
+    assert_eq!(eval(&thread, page, "[document.getElementById('a').naturalWidth, events.length].join()"), "0,4");
 }
 
 #[test]
@@ -310,4 +312,102 @@ fn canvas_origin_clean_uses_the_documents_actual_origin() {
     assert_eq!(in_frame(&thread, "http://site.test/child.html"), "SecurityError");
     // about:srcdoc inherits the parent's origin: its same-origin image is clean.
     assert_eq!(in_frame(&thread, "about:srcdoc"), "255");
+}
+
+/// `<object data>` fetches its data: `load` for a fetched resource, `error` for a failed one, no
+/// event without `data` or when the object is not being rendered (`display: none`, decided from
+/// the last completed layout: here a layout read right after insertion), and a pending object
+/// fetch delays the window's `load`.
+#[test]
+fn objects_fire_load_and_error_for_their_data() {
+    let (mut thread, page, loader) = setup(
+        "<script>globalThis.objects = []; for (const t of ['load', 'error']) document.addEventListener(t, e => { if (e.target.tagName === 'OBJECT') objects.push(e.target.id + ':' + t) }, true); addEventListener('load', () => objects.push('window:load'));</script>\
+         <object id=a data=/a.svg></object><object id=b data=/missing.svg></object><object id=c></object>\
+         <div style=display:none id=hide></div>\
+         <script>const d = document.createElement('object'); d.id = 'd'; d.data = '/a.svg'; hide.append(d); document.body.offsetWidth;</script>",
+    );
+    loader.insert(
+        "http://site.test/a.svg",
+        "image/svg+xml",
+        "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='16'/>",
+        Duration::from_millis(30),
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let events = eval(&thread, page, "objects.join('|')");
+    assert!(events.contains("a:load") && events.contains("b:error"), "{events}");
+    assert!(!events.contains("c:") && !events.contains("d:"), "{events}");
+    assert!(events.ends_with("window:load"), "{events}");
+}
+
+/// `naturalWidth`/`naturalHeight` of SVG images follow CSS Images 3 (a missing dimension from the
+/// ratio, else the default object size's), and `width`/`height` read the rendered size, or when
+/// not rendered the attribute, else the natural size; a sourceless image reads 0.
+#[test]
+fn natural_and_rendered_sizes_of_images() {
+    let (mut thread, page, loader) = setup(
+        "<img id=a src=/none.svg style='display:none'><img id=b src=/ratio.svg style='display:none'><img id=c src=/w.svg>\
+         <img id=d src=/a.png style='width:7px'>\
+         <img id=e src=/a.png width=9 style='display:none'><img id=f src=/a.png style='display:none'>",
+    );
+    let svg = |attrs: &str| format!("<svg xmlns='http://www.w3.org/2000/svg' {attrs}/>");
+    loader.insert("http://site.test/none.svg", "image/svg+xml", &svg(""), Duration::ZERO);
+    loader.insert("http://site.test/ratio.svg", "image/svg+xml", &svg("viewBox='0 0 30 10'"), Duration::ZERO);
+    loader.insert("http://site.test/w.svg", "image/svg+xml", &svg("width='60'"), Duration::ZERO);
+    loader.insert_bytes("http://site.test/a.png", "image/png", &png(3, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "[...document.images].map(i => [i.id, i.naturalWidth, i.naturalHeight, i.width, i.height].join(' ')).join('|')"
+        ),
+        "a 300 150 300 150|b 300 100 300 100|c 60 150 60 150|d 3 2 7 4|e 3 2 9 2|f 3 2 3 2"
+    );
+    assert_eq!(eval(&thread, page, "const f = document.getElementById('f'); f.removeAttribute('src'); [f.width, f.height].join()"), "0,0");
+}
+
+/// HTML relevant mutations: setting `src` (even to its value) or changing the CORS settings state
+/// restarts the request and fires `load` again; a `sizes` change without `w` descriptors or a
+/// `crossorigin` value of the same state does not.
+#[test]
+fn relevant_mutations_restart_the_request() {
+    let (mut thread, page, loader) = setup("<img id=a src=/a.png>");
+    loader.insert_bytes("http://site.test/a.png", "image/png", &png(3, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let step = |thread: &mut BrowserThread, js: &str| {
+        eval(thread, page, &format!("events.length = 0; {{ const a = document.getElementById('a'); {js} }}"));
+        settle(thread);
+        eval(thread, page, "events.join('|')")
+    };
+    assert_eq!(step(&mut thread, "a.src = a.getAttribute('src');"), "a:load:true:3x2");
+    assert_eq!(step(&mut thread, "a.crossOrigin = 'anonymous';"), "a:load:true:3x2");
+    assert_eq!(step(&mut thread, "a.crossOrigin = 'foo';"), "");
+    assert_eq!(step(&mut thread, "a.sizes = '10px';"), "");
+}
+
+/// `sizes="auto"` of a lazy image is its laid-out width; a lazy image that is not rendered
+/// selects (its `auto` entry skipped) without fetching until it is rendered, or until it stops
+/// being lazy (then the source selected while deferred is fetched). "Rendered" and the width come
+/// from the last completed layout, never running one per image: here a layout read right after
+/// the insertion.
+#[test]
+fn sizes_auto_and_deferred_lazy_images() {
+    let (mut thread, page, loader) = setup(
+        "<body><script>document.body.innerHTML = \"<img id=a loading=lazy sizes=auto style='width:10px' srcset='/s.png 50w, /l.png 51w'>\
+         <img id=b loading=lazy sizes='auto, 500px' style='display:none;width:10px' srcset='/s.png?b 50w, /l.png?b 500w'>\"; document.body.offsetWidth;</script>",
+    );
+    for url in ["s.png", "l.png", "s.png?b", "l.png?b"] {
+        loader.insert_bytes(&format!("http://site.test/{url}"), "image/png", &png(3, 2), Duration::ZERO);
+    }
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let fetched = |loader: &StaticLoader, needle: &str| loader.log.borrow().iter().any(|u| u.ends_with(needle));
+    assert_eq!(eval(&thread, page, "document.getElementById('a').currentSrc"), "http://site.test/s.png");
+    assert!(!fetched(&loader, "?b"), "a display:none lazy image is not fetched");
+    eval(&thread, page, "document.getElementById('b').loading = 'eager'; 1");
+    settle(&mut thread);
+    assert!(fetched(&loader, "l.png?b"), "eager fetches the source selected while deferred (auto skipped: 500px)");
 }

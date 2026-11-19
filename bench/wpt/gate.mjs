@@ -50,7 +50,8 @@ const SUITES = {
   crashtest: { title: 'WPT crashtest gate', baseline: 'crashtest-baseline.json', flaky: 'crashtest-flaky.json', artifact: 'wpt-crashtest-baseline', regression: 'WPT crashtest regression' },
 };
 if (!Object.hasOwn(SUITES, KIND)) { console.error(`gate.mjs: --kind ${KIND}: expected ${Object.keys(SUITES).join(', ')}`); process.exit(2); }
-const SUITE = SUITES[KIND];
+// --artifact NAME: the CI artifact the messages name (the Linux testharness gate uploads wpt-linux-baseline).
+const SUITE = { ...SUITES[KIND], ...(opt('--artifact') ? { artifact: opt('--artifact') } : {}) };
 const BASELINE_FILE = path.resolve(opt('--baseline', path.join(HERE, SUITE.baseline)));
 const FLAKY_FILE = path.resolve(opt('--flaky', path.join(HERE, SUITE.flaky)));
 const B = path.basename(BASELINE_FILE), F = path.basename(FLAKY_FILE);
@@ -94,7 +95,7 @@ function run() {
   const jobs = Number(opt('--jobs', os.availableParallelism?.() ?? os.cpus().length));
   const common = ['--kind', KIND, '--wpt', wpt, '--bin', `gate=${path.resolve(bin)}`];
   if (baseline) common.push('--baseline', BASELINE_FILE);
-  for (const k of ['--dirs', '--server', '--match', '--timeout', '--long-timeout', '--sample-encoding']) if (opt(k)) common.push(k, opt(k));
+  for (const k of ['--dirs', '--server', '--match', '--timeout', '--long-timeout', '--sample-encoding', '--slow-jobs']) if (opt(k)) common.push(k, opt(k));
   if (flag('--reuse-context')) common.push('--reuse-context');
   if (flag('--testdriver')) common.push('--testdriver');
   const first = ['--out', out, '--jobs', String(jobs), ...common, ...(full ? [] : ['--gate'])];

@@ -314,6 +314,17 @@ pub struct LineMetrics {
     /// pyro: the line is an invisible line box (CSS Inline 3 § 4.1): it holds no text and no
     /// box with content, only empty inline boxes, so it has no height and they have none.
     pub invisible: bool,
+
+    /// pyro: how far annotations (ruby annotations, emphasis marks) grow the line box past what
+    /// its line heights give it, over and under (CSS Ruby 1 § 4.4).
+    pub annotation_overflow: [f32; 2],
+
+    /// pyro: how far the line moved up from where the previous line's end (or the caller's
+    /// [`BreakerState::set_annotation_space`]) put it, because the annotations of one of the two
+    /// took room the other leaves free (Blink's annotation block offset shift).
+    ///
+    /// [`BreakerState::set_annotation_space`]: crate::BreakerState::set_annotation_space
+    pub annotation_shift: f32,
 }
 
 impl LineMetrics {
@@ -422,6 +433,36 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
     /// See also [`Self::style`].
     pub fn style_index(&self) -> u16 {
         self.style_index
+    }
+
+    /// pyro: the `vertical-align` of the run's own span.
+    pub fn vertical_align(&self) -> crate::style::VerticalAlign {
+        self.style().vertical_align
+    }
+
+    /// pyro: whether the run's span, or a span around it, is aligned by an edge of its box
+    /// (`vertical-align: top | bottom | text-top | text-bottom`) rather than by a baseline. On a
+    /// central baseline (vertical writing modes) such a run keeps the place the line gave it,
+    /// where a baseline-aligned run moves to the line's central baseline.
+    pub fn edge_aligned(&self) -> bool {
+        use crate::style::{AlignmentBaseline, BaselineShift};
+        let styles = self.run.layout.styles();
+        let mut index = self.style_index;
+        loop {
+            let Some(style) = styles.get(usize::from(index)) else {
+                return false;
+            };
+            let align = style.vertical_align;
+            if matches!(align.shift, BaselineShift::Top | BaselineShift::Bottom)
+                || matches!(align.alignment, AlignmentBaseline::TextTop | AlignmentBaseline::TextBottom)
+            {
+                return true;
+            }
+            if style.parent == index {
+                return false;
+            }
+            index = style.parent;
+        }
     }
 
     /// Returns the offset to the baseline.

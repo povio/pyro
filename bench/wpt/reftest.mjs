@@ -121,14 +121,20 @@ export const reftestEnv = (wpt) => ({
 /** Ahem alone, for testharness pages (wptrunner installs it for every test; geometry pages measure its boxes). */
 export const ahemEnv = (wpt) => ({ PYRO_FONTS: path.join(wpt, 'fonts', 'Ahem.ttf') });
 
-/** One page's render: navigate, settle (bounded by `deadline`, a Date.now() value), capture. */
-async function render(page, cdp, base, url, deadline) {
+/** One page's render: navigate, settle (bounded by `deadline`, a Date.now() value), capture. `st` (optional) adds
+ *  each stage's milliseconds: goto (navigation to commit), settle (load, fonts, the two real frames, reftest-wait),
+ *  capture (screenshot over CDP and its decode in the runner). */
+async function render(page, cdp, base, url, deadline, st) {
   const left = () => Math.max(1, deadline - Date.now());
+  let t = Date.now();
+  const lap = (k) => { if (st) { const n = Date.now(); st[k] = (st[k] ?? 0) + n - t; t = n; } };
   await page.goto(url === 'about:blank' ? url : `${base}/${url}`, { waitUntil: 'commit', timeout: left() });
+  lap('goto');
   // A navigation inside the page destroys the context the wait runs in: wait again in the new one.
   for (;;) {
     const r = await page.evaluate(settle, left()).catch((e) => (Date.now() < deadline && /destroyed|navigat/i.test(String(e.message)) ? null : Promise.reject(e)));
-    if (r?.done) return capture(page, cdp);
+    lap('settle');
+    if (r?.done) { const shot = await capture(page, cdp); lap('capture'); return shot; }
     if (r) return { timeout: true, wait: r.wait };
   }
 }
@@ -136,11 +142,12 @@ async function render(page, cdp, base, url, deadline) {
 const cache = new Map();
 const CACHE_MAX = 48; // ~92 MB of 800x600 RGBA renders
 /** A reference's render, from the cache when this runner rendered it before at this viewport. */
-async function renderRef(page, cdp, base, url, viewport, deadline) {
+async function renderRef(page, cdp, base, url, viewport, deadline, st) {
   const key = `${viewport.width}x${viewport.height} ${url}`;
   const hit = cache.get(key);
-  if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
-  const r = await render(page, cdp, base, url, deadline);
+  if (hit) { cache.delete(key); cache.set(key, hit); if (st) st.cached = (st.cached ?? 0) + 1; return hit; }
+  if (st) st.renders = (st.renders ?? 0) + 1;
+  const r = await render(page, cdp, base, url, deadline, st);
   if (r.timeout) return r;
   cache.set(key, r);
   if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
@@ -165,21 +172,28 @@ export async function runReftest(page, t, base, limit) {
   const t0 = Date.now();
   const deadline = t0 + limit;
   const viewport = t.viewport ?? VIEWPORT;
+  // Where the page's time goes (run.mjs records it as `stages`): setup (viewport, CDP session), goto/settle/capture
+  // summed over the test's and its uncached references' renders, compare (pixel comparison in the runner).
+  const st = { renders: 1 };
+  let t1 = Date.now();
   const now = page.viewportSize();
   if (now?.width !== viewport.width || now?.height !== viewport.height) await page.setViewportSize(viewport);
   const cdp = await page.context().newCDPSession(page);
+  st.setup = Date.now() - t1;
   try {
-    const test = await render(page, cdp, base, t.url, deadline);
-    if (test.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], error: test.wait ? 'reftest-wait was not removed' : 'the page did not load' };
+    const test = await render(page, cdp, base, t.url, deadline, st);
+    if (test.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], stages: st, error: test.wait ? 'reftest-wait was not removed' : 'the page did not load' };
     const refs = [];
     for (const r of t.refs) {
-      const shot = await renderRef(page, cdp, base, r.url, viewport, deadline);
-      if (shot.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], error: `reference ${r.url} ${shot.wait ? 'kept reftest-wait' : 'did not load'}` };
+      const shot = await renderRef(page, cdp, base, r.url, viewport, deadline, st);
+      if (shot.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], stages: st, error: `reference ${r.url} ${shot.wait ? 'kept reftest-wait' : 'did not load'}` };
       refs.push(shot);
     }
+    t1 = Date.now();
     const v = verdict(t, test, refs);
+    st.compare = Date.now() - t1;
     if (!v.pass) await keep(t, test, refs);
-    return { status: 'complete', ms: Date.now() - t0, subtests: [{ name: 'reftest', status: v.pass ? 'Pass' : 'Fail', msg: v.msg.slice(0, 300) }] };
+    return { status: 'complete', ms: Date.now() - t0, stages: st, subtests: [{ name: 'reftest', status: v.pass ? 'Pass' : 'Fail', msg: v.msg.slice(0, 300) }] };
   } finally {
     cdp.detach().catch(() => {});
   }

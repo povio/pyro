@@ -68,3 +68,26 @@ fn a_split_inline_without_inline_content_is_a_zero_width_containing_block() {
     assert_eq!(count(&img, RED), 0);
     assert_eq!(count(&img, [0, 128, 0]), 10000);
 }
+
+/// The left of the lime pixels in rows `y0..y1`.
+fn lime_left(img: &RgbaImage, y0: usize, y1: usize) -> Option<usize> {
+    (y0..y1)
+        .flat_map(|y| (0..img.width as usize).map(move |x| (x, y)))
+        .filter(|&(x, y)| img.data[(y * img.width as usize + x) * 4..][..3] == [0, 255, 0])
+        .map(|(x, _)| x)
+        .min()
+}
+
+/// An `rtl` span in an `ltr` line contains from the left of its first fragment to the right of
+/// its last, the edges of the lines' direction (Blink), and the white space hanging past the end
+/// of its first line is in no box: on 80px lines of 20px Ahem, the span's first fragment is at
+/// 40..80 and its last ("XX" on the third line) at 0..40, so a box at `right: 0` ends at 40 (WPT
+/// css-position `multicol/*-ltr-rtl-in-multicols`).
+#[test]
+fn an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction() {
+    let img = render(
+        "<div style='width:80px;font:20px/1 A;color:black'>XX<span dir=rtl style='position:relative'>XX \
+           <i style='position:absolute;top:0;right:0;width:10px;height:10px;background:lime'></i>XXXX XX</span></div>",
+    );
+    assert_eq!(lime_left(&img, 0, 10), Some(30));
+}

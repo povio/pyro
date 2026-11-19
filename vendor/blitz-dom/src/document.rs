@@ -87,6 +87,8 @@ pub(crate) fn init_stylo_prefs() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
+        // pyro: `offset-path: url()` to an SVG shape element (resolve.rs `motion_url_path`).
+        style_config::set_pref!("layout.css.motion-path-url.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
         // pyro: `font-format()`/`font-tech()` in `@supports`, `tech()` in `@font-face` sources.
         style_config::set_pref!("layout.css.font-tech.enabled", true);
@@ -108,6 +110,9 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.hyphens.enabled", true);
         // pyro: `text-wrap-style: balance` (blitz-dom balances the lines of such a block).
         style_config::set_pref!("layout.css.text-wrap-style.balance.enabled", true);
+        // pyro: `text-wrap-style: pretty` (laid out as `auto`, as CSS Text 4 allows). Chrome
+        // rejects `white-space-collapse: preserve-spaces`, which stays off.
+        style_config::set_pref!("layout.css.text-wrap-style.pretty.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
@@ -330,14 +335,14 @@ pub enum DocumentEvent {
 /// first old style and takes the new one.
 pub(crate) fn note_style_changes(
     changes: &mut Vec<StyleChange>,
-    index: &mut HashMap<NodeId, usize>,
+    index: &mut HashMap<(NodeId, u8), usize>,
     new: Vec<StyleChange>,
 ) {
     for change in new {
-        match index.get(&change.node) {
+        match index.get(&(change.node, change.pseudo)) {
             Some(&i) => changes[i].after = change.after,
             None => {
-                index.insert(change.node, changes.len());
+                index.insert((change.node, change.pseudo), changes.len());
                 changes.push(change);
             }
         }
@@ -349,6 +354,8 @@ pub(crate) fn note_style_changes(
 #[derive(Clone)]
 pub struct StyleChange {
     pub node: NodeId,
+    /// pyro: 0 for the element's own style, 1 its `::before`'s, 2 its `::after`'s.
+    pub pseudo: u8,
     pub before: style::servo_arc::Arc<style::properties::ComputedValues>,
     pub after: style::servo_arc::Arc<style::properties::ComputedValues>,
 }
@@ -378,6 +385,10 @@ pub struct BaseDocument {
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
     pub(crate) pending_device_changes: DeviceChanges,
+    /// pyro: the page's supported color schemes, from its first valid `<meta name=color-scheme>`.
+    pub(crate) page_color_scheme: style::values::specified::color::ColorSchemeFlags,
+    /// pyro: the `<meta>` elements made in this document (removed ones drop out when looked at).
+    pub(crate) meta_nodes: Vec<NodeId>,
     /// pyro: the root's available space in the last layout pass.
     pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
     /// See [`BaseDocument::set_layout_size`].
@@ -523,7 +534,12 @@ pub struct BaseDocument {
     /// finds an element's entry, so one restyled twice keeps its first old and
     /// its last new style.
     pub(crate) style_changes: Vec<StyleChange>,
-    pub(crate) style_change_index: HashMap<NodeId, usize>,
+    /// pyro: the page's scroll offsets for scroll-driven animations (`scroll_timeline`): its
+    /// scrolled elements' and the viewport's. Layout queries do not move the nodes' own scroll
+    /// offsets (a capture does), so scroll timelines read the page's here.
+    /// `None` (a document made for one capture): the nodes' own offsets and the viewport's.
+    pub(crate) timeline_scroll: Option<(std::collections::HashMap<NodeId, (f64, f64)>, (f64, f64))>,
+    pub(crate) style_change_index: HashMap<(NodeId, u8), usize>,
     pub(crate) track_style_changes: bool,
     /// pyro: the boxes that left a container's list (`Node::layout_child_of`) during
     /// `resolve_layout_children`; those no container collected again by its end leave the layout
@@ -612,6 +628,8 @@ pub struct BaseDocument {
     pub(crate) first_line_changed: Vec<NodeId>,
     /// pyro: the embedder's selection, painted in place of `text_selection` (`dom_selection`).
     pub(crate) dom_selection: Option<crate::DomSelection>,
+    /// pyro: the replaced elements the selection holds (painted with its tint).
+    pub(crate) selected_replaced: Vec<NodeId>,
     /// pyro: the embedder's highlights (custom highlights and the target text), bottom first
     /// (`dom_highlights`).
     pub(crate) dom_highlights: Vec<(crate::HighlightName, Vec<crate::DomSelection>)>,
@@ -788,6 +806,8 @@ impl BaseDocument {
             svg_sprites: HashMap::new(),
             svg_images: HashMap::new(),
             pending_device_changes: DeviceChanges::empty(),
+            page_color_scheme: style::values::specified::color::ColorSchemeFlags::empty(),
+            meta_nodes: Default::default(),
             last_layout_space: None,
             layout_size: None,
             layout_available: None,
@@ -836,6 +856,7 @@ impl BaseDocument {
             oof_hoisted: HashSet::new(),
             sticky_nodes: HashSet::new(),
             style_changes: Vec::new(),
+            timeline_scroll: Default::default(),
             style_change_index: HashMap::new(),
             track_style_changes: false,
             left_layout_lists: Vec::new(),
@@ -862,6 +883,7 @@ impl BaseDocument {
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
+            selected_replaced: Vec::new(),
             dom_highlights: Vec::new(),
             first_line_reparented: Default::default(),
             generated_counters: false,
@@ -1772,8 +1794,38 @@ impl BaseDocument {
         // either stays four characters, as in every browser (WPT css/CSS2 content-177).
         let css = self.nodes[target_id].text_content();
         let host = self.nodes[target_id].containing_shadow_host_id();
-        let sheet = self.make_stylesheet_in(&css, Origin::Author, host);
+        // pyro: a `media` attribute is the sheet's media list (HTML `<style media>`): a sheet
+        // whose media do not match applies nothing. Parsed apart (not the shared sheet of its
+        // text, whose media list is empty).
+        let sheet = match self.node_media_list(target_id) {
+            Some(media) => DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(&css, Origin::Author, media))),
+            None => self.make_stylesheet_in(&css, Origin::Author, host),
+        };
         self.add_stylesheet_for_node(sheet, target_id);
+    }
+
+    /// pyro: the media list of the `media` attribute of the `<style>` or `<link>` element
+    /// `node_id`; `None` without one (or an empty one: all media).
+    pub(crate) fn node_media_list(&self, node_id: NodeId) -> Option<MediaList> {
+        use style::stylesheets::CssRuleType;
+        let text = self.nodes.get(node_id)?.attr(local_name!("media"))?.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let extra = self.url.url_extra_data();
+        let mut context = style::parser::ParserContext::new(
+            Origin::Author,
+            &extra,
+            Some(CssRuleType::Media),
+            style_traits::ParsingMode::DEFAULT,
+            QuirksMode::NoQuirks,
+            Default::default(),
+            None,
+            None,
+            Default::default(),
+        );
+        let mut parser = cssparser::Parser::new(text);
+        Some(MediaList::parse(&mut context, &mut parser))
     }
 
     pub fn remove_user_agent_stylesheet(&mut self, sheet: &UserAgentStylesheet) {
@@ -1857,11 +1909,16 @@ impl BaseDocument {
     }
 
     fn parse_stylesheet(&self, css: &str, origin: Origin) -> DocumentStyleSheet {
-        let data = Stylesheet::from_str(
+        DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(css, origin, MediaList::empty())))
+    }
+
+    /// pyro: [`Self::parse_stylesheet`] with the sheet's media list (`<style media>`).
+    fn parse_stylesheet_with_media(&self, css: &str, origin: Origin, media: MediaList) -> Stylesheet {
+        Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),
             origin,
-            ServoArc::new(self.guard.wrap(MediaList::empty())),
+            ServoArc::new(self.guard.wrap(media)),
             self.guard.clone(),
             Some(&StylesheetLoader {
                 tx: self.tx.clone(),
@@ -1874,9 +1931,7 @@ impl BaseDocument {
             None,
             QuirksMode::NoQuirks,
             AllowImportRules::Yes,
-        );
-
-        DocumentStyleSheet(ServoArc::new(data))
+        )
     }
 
     pub fn upsert_stylesheet_for_node(&mut self, node_id: NodeId) {
@@ -1991,6 +2046,11 @@ impl BaseDocument {
     /// the first replacement and after the last: a transition's before-change
     /// and after-change styles. An element styled for the first time, or whose
     /// styles were dropped, is no change. O(elements restyled), not a scan.
+    /// pyro: the page's scroll offsets that scroll-driven animations follow (`timeline_scroll`).
+    pub fn set_timeline_scroll(&mut self, elements: std::collections::HashMap<NodeId, (f64, f64)>, viewport: (f64, f64)) {
+        self.timeline_scroll = Some((elements, viewport));
+    }
+
     pub fn take_style_changes(&mut self) -> Vec<StyleChange> {
         self.style_change_index.clear();
         std::mem::take(&mut self.style_changes)
@@ -2049,6 +2109,53 @@ impl BaseDocument {
         })
     }
 
+    /// pyro: an `<img>` that represents no image (it failed to load, or has no usable source)
+    /// and has non-empty `alt` text is laid out as a non-replaced box holding that text, as
+    /// browsers show it (HTML rendering § images: "an inline box containing the text"; WPT
+    /// css-overflow `overflow-img-scroll-non-replaced`). Its text is an anonymous child.
+    pub fn show_image_alt_text(&mut self, node_id: NodeId) {
+        let Some(node) = self.nodes.get(node_id) else { return };
+        let Some(element) = node.element_data() else { return };
+        if element.name.local != local_name!("img") || element.image_broken {
+            return;
+        }
+        let Some(alt) = element.attr(local_name!("alt")).filter(|alt| !alt.is_empty()).map(str::to_owned) else {
+            return;
+        };
+        let failed = element.image_failed;
+        let node = &mut self.nodes[node_id];
+        if let Some(element) = node.element_data_mut() {
+            element.image_broken = true;
+            element.special_data = SpecialElementData::None;
+        }
+        node.clear_layout_cache();
+        {
+            let mut mutator = self.mutate();
+            // pyro: an image that failed to load shows Chromium's broken-image icon before its
+            // alt text: a 16px square box blitz-paint draws it in (`draw_broken_image_icon`).
+            if failed {
+                let style = crate::node::Attribute {
+                    name: markup5ever::QualName::new(None, markup5ever::ns!(), local_name!("style")),
+                    value: "display:inline-block;width:16px;height:16px;vertical-align:top".to_string(),
+                };
+                let marker = crate::node::Attribute {
+                    name: markup5ever::QualName::new(None, markup5ever::ns!(), LocalName::from("pyro-broken-image-icon")),
+                    value: String::new(),
+                };
+                let icon = mutator.create_element(markup5ever::QualName::new(None, markup5ever::ns!(html), local_name!("span")), vec![style, marker]);
+                mutator.append_children(node_id, &[icon]);
+            }
+            let text = mutator.create_text_node(&alt);
+            mutator.append_children(node_id, &[text]);
+        }
+        let mut current = Some(node_id);
+        while let Some(id) = current {
+            self.nodes[id].insert_damage(ALL_DAMAGE);
+            self.nodes[id].clear_layout_cache();
+            current = self.nodes[id].parent;
+        }
+    }
+
     /// Whether the Document has pending requests for "critical" resources (that should block rendering)
     pub fn has_pending_critical_resources(&self) -> bool {
         !self.pending_critical_resources.is_empty()
@@ -2062,6 +2169,18 @@ impl BaseDocument {
             Err(err) => {
                 if let Some(url) = res.resolved_url.as_ref() {
                     let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
+                    // pyro: a broken `<img>` with alt text shows that text.
+                    for (node_id, image_type) in &waiting_nodes {
+                        if matches!(image_type, ImageType::Image) {
+                            if let Some(element) = self.nodes.get_mut(*node_id).and_then(|n| n.element_data_mut()) {
+                                if element.name.local == local_name!("img") {
+                                    element.image_failed = true;
+                                }
+                            }
+                            self.nodes[*node_id].insert_damage(ALL_DAMAGE);
+                            self.show_image_alt_text(*node_id);
+                        }
+                    }
                     // pyro: a list item whose image fails keeps its `list-style-type` marker.
                     for (node_id, image_type) in &waiting_nodes {
                         if let (ImageType::ListStyle(idx), Some(node)) = (image_type, self.nodes.get_mut(*node_id)) {
@@ -2094,6 +2213,10 @@ impl BaseDocument {
         match resource {
             Resource::Css(css, page_css) => {
                 let node_id = res.node_id.unwrap();
+                // pyro: a `<link media>` is its sheet's media list (each fetch parses its own sheet).
+                if let Some(media) = self.node_media_list(node_id) {
+                    *css.0.media.write_with(&mut self.guard.write()) = media;
+                }
                 self.add_stylesheet_for_node(css, node_id);
                 match page_css {
                     Some(text) => {
@@ -3336,6 +3459,89 @@ impl BaseDocument {
 
     /// Record pending [`DeviceChanges`] and request a redraw so that they are
     /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
+    /// pyro: HTML `<meta name=color-scheme>`: the first such element (tree order) whose content
+    /// is a valid value gives the page's supported color schemes; a change rebuilds the device.
+    pub(crate) fn update_page_color_scheme(&mut self) {
+        use style::values::specified::color::ColorSchemeFlags;
+        let mut flags = None;
+        // Only `<meta name=color-scheme>` elements in the document, in tree order (by a walk when
+        // there are several).
+        let mut candidates: Vec<NodeId> = Vec::new();
+        let nodes = &self.nodes;
+        self.meta_nodes.retain(|&id| nodes.get(id).is_some_and(|n| n.element_data().is_some_and(|e| e.name.local == markup5ever::local_name!("meta"))));
+        for &id in &self.meta_nodes {
+            let node = &self.nodes[id];
+            // In the document tree, not a shadow tree.
+            if node.is_in_document()
+                && node.containing_shadow_host_id().is_none()
+                && node.element_data().is_some_and(|e| e.attr(markup5ever::local_name!("name")).is_some_and(|n| n.trim().eq_ignore_ascii_case("color-scheme")))
+            {
+                candidates.push(id);
+            }
+        }
+        if candidates.is_empty() && self.page_color_scheme.is_empty() {
+            return;
+        }
+        if candidates.len() > 1 {
+            let mut order = Vec::new();
+            let root = self.root_node_id;
+            self.iter_subtree_mut(root, |id, _| {
+                if candidates.contains(&id) {
+                    order.push(id);
+                }
+            });
+            candidates = order;
+        }
+        for id in candidates {
+            let node = &self.nodes[id];
+            let Some(el) = node.element_data() else { continue };
+            if el.name.local != markup5ever::local_name!("meta")
+                || !el.attr(markup5ever::local_name!("name")).is_some_and(|n| n.trim().eq_ignore_ascii_case("color-scheme"))
+            {
+                continue;
+            }
+            let Some(content) = el.attr(markup5ever::local_name!("content")) else { continue };
+            let tokens: Vec<String> = content.split_ascii_whitespace().map(str::to_ascii_lowercase).collect();
+            let parsed = if tokens.len() == 1 && tokens[0] == "normal" {
+                Some(ColorSchemeFlags::empty())
+            } else if !tokens.is_empty() && !tokens.iter().any(|t| t == "normal") {
+                let mut f = ColorSchemeFlags::empty();
+                for t in &tokens {
+                    match t.as_str() {
+                        "light" => f |= ColorSchemeFlags::LIGHT,
+                        "dark" => f |= ColorSchemeFlags::DARK,
+                        "only" => f |= ColorSchemeFlags::ONLY,
+                        _ => {}
+                    }
+                }
+                (f.intersects(ColorSchemeFlags::LIGHT | ColorSchemeFlags::DARK)).then_some(f)
+            } else {
+                None
+            };
+            if parsed.is_some() {
+                flags = parsed;
+                break;
+            }
+        }
+        let flags = flags.unwrap_or_else(ColorSchemeFlags::empty);
+        if flags != self.page_color_scheme {
+            self.page_color_scheme = flags;
+            self.queue_device_changes(DeviceChanges::COLOR_SCHEME);
+        }
+    }
+
+    /// pyro: whether the page's color scheme (its `<meta name=color-scheme>`, with the user's
+    /// preference when it supports both) is dark: the canvas is painted dark then.
+    pub fn page_color_scheme_is_dark(&self) -> bool {
+        use style::values::specified::color::ColorSchemeFlags;
+        let flags = self.page_color_scheme;
+        let (dark, light) = (flags.contains(ColorSchemeFlags::DARK), flags.contains(ColorSchemeFlags::LIGHT));
+        if dark != light {
+            return dark;
+        }
+        dark && self.viewport.color_scheme == blitz_traits::shell::ColorScheme::Dark
+    }
+
     pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
         if changes.is_empty() {
             return;
@@ -3352,12 +3558,9 @@ impl BaseDocument {
             return;
         }
 
-        self.set_stylist_device(make_device(
-            &self.viewport,
-            self.layout_size,
-            self.media_type.clone(),
-            self.font_ctx.clone(),
-        ));
+        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.font_ctx.clone());
+        device.set_page_color_scheme(self.page_color_scheme);
+        self.set_stylist_device(device);
         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
         // pyro: shadow roots' cascade data holds their sheets' media query results.
         self.invalidate_shadow_styles();
@@ -3727,6 +3930,32 @@ impl BaseDocument {
     /// The document's `title` element
     pub fn find_title_node(&self) -> Option<&Node> {
         self.find_element_by_tag_name(&local_name!("title"))
+    }
+
+    /// pyro: selects `start..end` (UTF-16 code units of its value) in the text input at
+    /// `node_id`, as the page's DOM has it (the focused control's selection, painted).
+    pub fn set_text_input_selection(&mut self, node_id: NodeId, start: u32, end: u32) {
+        let Some(text) = self
+            .nodes
+            .get(node_id)
+            .and_then(|node| node.element_data())
+            .and_then(|el| el.text_input_data())
+            .map(|input| input.editor.raw_text().to_owned())
+        else {
+            return;
+        };
+        let byte_of = |utf16: u32| {
+            let mut units = 0u32;
+            for (index, ch) in text.char_indices() {
+                if units >= utf16 {
+                    return index;
+                }
+                units += ch.len_utf16() as u32;
+            }
+            text.len()
+        };
+        let (start, end) = (byte_of(start), byte_of(end));
+        self.with_text_input(node_id, |mut driver| driver.select_byte_range(start, end));
     }
 
     pub fn with_text_input(

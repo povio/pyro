@@ -61,6 +61,10 @@ pub(super) struct ExtraDeviceData {
     /// An implementation of a trait which implements support for querying font metrics.
     #[ignore_malloc_size_of = "Owned by embedder"]
     font_metrics_provider: Box<dyn FontMetricsProvider>,
+    /// pyro: the page's supported color schemes (HTML `<meta name=color-scheme>`): what an
+    /// element whose `color-scheme` is `normal` uses.
+    #[ignore_malloc_size_of = "Plain flags"]
+    page_color_scheme: ColorSchemeFlags,
 }
 
 #[derive(Debug, MallocSizeOf, Clone, PartialEq)]
@@ -118,6 +122,7 @@ impl Device {
             extra: ExtraDeviceData {
                 media_data,
                 font_metrics_provider,
+                page_color_scheme: ColorSchemeFlags::empty(),
             },
         }
     }
@@ -361,7 +366,15 @@ impl Device {
         self.extra.media_data.all_pointer_capabilities
     }
 
+    /// pyro: sets the page's supported color schemes (HTML `<meta name=color-scheme>`).
+    pub fn set_page_color_scheme(&mut self, flags: ColorSchemeFlags) {
+        self.extra.page_color_scheme = flags;
+    }
+
     pub(crate) fn is_dark_color_scheme(&self, color_scheme_flags: ColorSchemeFlags) -> bool {
+        // pyro: `color-scheme: normal` takes the page's supported color schemes.
+        let color_scheme_flags =
+            if color_scheme_flags.is_empty() { self.extra.page_color_scheme } else { color_scheme_flags };
         // Inspired by
         // https://searchfox.org/firefox-main/rev/0a7f146ccac85b8f413264042dcd764028d419ec/widget/nsXPLookAndFeel.cpp#1296
         let supports_dark_mode = color_scheme_flags.contains(ColorSchemeFlags::DARK);

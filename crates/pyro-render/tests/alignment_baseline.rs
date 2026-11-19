@@ -42,3 +42,19 @@ fn the_longhand_aligns_baselines_of_its_name() {
     assert!(render("<div>X<span style='vertical-align:middle'>X</span></div>") != plain, "vertical-align: middle");
     assert!(render("<div>X<span style='vertical-align:text-top'>X</span></div>") != plain, "vertical-align: text-top");
 }
+
+/// A baseline shift of a negative half pixel rounds up, as Blink snaps positions: an empty
+/// inline-block (its baseline is its bottom margin edge) lowered by `vertical-align: -7.5px` and
+/// lifted back by `margin-bottom: 7.5px` sits exactly where one with neither does (WPT CSS2
+/// `visudet/inline-block-baseline-011`, `-014`). Rounding halves away from zero put it a pixel low.
+#[test]
+fn a_negative_half_pixel_shift_rounds_up() {
+    let square = "display:inline-block;width:15px;height:15px;background:#00f";
+    let top = |data: &[u8]| (0..200).find(|&y| (0..300).any(|x| data[(y * 300 + x) * 4..][..3] == [0, 0, 255]));
+    let plain = render(&format!("<p style='font-size:15px;line-height:5;margin:0'>A <span style='{square}'></span></p>"));
+    let shifted = render(&format!(
+        "<p style='font-size:15px;line-height:5;margin:0'>A <span style='{square};vertical-align:-7.5px;margin-bottom:7.5px'></span></p>"
+    ));
+    assert!(top(&plain).is_some());
+    assert_eq!(top(&shifted), top(&plain));
+}

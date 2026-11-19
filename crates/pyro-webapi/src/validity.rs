@@ -32,7 +32,7 @@ impl JsClass for ValidityState {
 
 /// Snapshot of the element's validity (attributes are not live).
 pub(crate) fn validity_state<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let v = n.page().dom.borrow().validity(n.id).js()?;
+    let v = n.page().dom.borrow().validity_flags(n.id).js()?;
     Ok(s.wrap::<ValidityState>(v, None)?.value())
 }
 

@@ -189,8 +189,117 @@ pub(crate) struct FrameHost {
     /// proxy, which every later document's realm adopts (`make_realm`), so
     /// that `iframe.contentWindow` stays one object that follows the frame.
     window_proxies: RefCell<BTreeMap<u64, pyro_js::Persistent>>,
+    /// `<object>`/`<embed>` elements showing a document that were not being rendered when they
+    /// would have got their child navigable (`display: none`): they get it once rendered
+    /// ([`FrameHost::connect_rendered_objects`]).
+    pending_objects: RefCell<Vec<(FrameKey, LoaderId, NodeId)>>,
+    /// `<object>`/`<embed>` elements not fetched because they were not being rendered: fetched
+    /// once rendered (`Browser::fetch_rendered_objects`).
+    pub(crate) hidden_objects: RefCell<Vec<(FrameKey, NodeId)>>,
+    /// The layout engine's sync stamp when the hidden objects were last checked.
+    pub(crate) hidden_checked_at: Cell<Option<(u64, u64, u32, u32)>>,
 }
+/// A popup page made when `window.open` ran, before the embedder creates the
+/// page: its frame tree with the initial about:blank document and realms
+/// (HTML creates that document synchronously, so the opener can script it at
+/// once). [`Browser::create_page_with`] turns it into the page.
+pub(crate) struct PrebuiltPopup {
+    pub id: PageId,
+    pub host: Rc<FrameHost>,
+    pub nav: Rc<PageNav>,
+    pub frame: Frame,
+}
+
 impl FrameHost {
+    /// The popup page `window.open` asks for, made now in this page's
+    /// context: a top-level frame whose initial about:blank document has the
+    /// opener frame's origin and base URL and the session storage copied for
+    /// it, with its main-world realm (and the worlds init scripts name).
+    pub(crate) fn prebuild_popup(
+        self: &Rc<Self>,
+        opener: FrameKey,
+        session: pyro_webapi::StorageNamespace,
+        name: String,
+    ) -> Result<PrebuiltPopup, JsError> {
+        let from = self.frame(opener).ok_or(JsError::ContextDestroyed)?;
+        let id = PageId(self.next() as u32);
+        let frame = Frame {
+            id: FrameId(format!("{:032X}", self.next())),
+            parent: None,
+            owner: None,
+            name,
+            base_url: from.base_url.clone(),
+            sandbox: Default::default(),
+            url: "about:blank".into(),
+            loader_id: LoaderId(format!("{:032X}", self.next())),
+            realms: Vec::new(),
+            dom: None,
+            document: None,
+            page_dom: None,
+            network_idle: NetworkIdle::default(),
+            origin: from.origin.clone(),
+            opaque_origin: from.opaque_origin,
+            dom_content_loaded: false,
+            loaded: false,
+            unreachable: None,
+        };
+        let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
+        let mut settings = self.settings.borrow().clone();
+        settings.session = session;
+        settings.viewport = Default::default();
+        settings.user_agent = None;
+        settings.extra_headers = Default::default();
+        let host = Rc::new(Self {
+            children: RefCell::new(BTreeMap::new()),
+            root: RefCell::new(frame.clone()),
+            root_nav: nav.clone(),
+            dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
+            settings: RefCell::new(settings),
+            page: id,
+            context: self.context,
+            layout_bodies: self.layout_bodies.clone(),
+            sched: self.sched.clone(),
+            handle: self.handle.clone(),
+            observer: self.observer.clone(),
+            next: self.next.clone(),
+            started: self.started,
+            retired: RefCell::new(Vec::new()),
+            class: Cell::new(self.class.get()),
+            // Its `window.opener` from the start (`Browser::adopt_popup` sets it again).
+            opener: RefCell::new(Some(Rc::downgrade(self))),
+            popup: RefCell::new(None),
+            window_proxies: RefCell::new(BTreeMap::new()),
+            pending_objects: RefCell::new(Vec::new()),
+            hidden_objects: RefCell::new(Vec::new()),
+            hidden_checked_at: Cell::new(None),
+            focus: RefCell::new(crate::focus::FocusState::new(id)),
+        });
+        let key: FrameKey = id.into();
+        let dom = bindings::create(&host, key, "about:blank", &frame.loader_id)?;
+        // Nothing loads into it: it is complete as made (as in browsers).
+        dom.set_ready_state(dom.document(), "complete");
+        nav.commit_document("about:blank", HistoryHandling::Replace, Some((host.dom.clone(), dom.document())));
+        nav.set_page_dom(&dom);
+        {
+            let mut root = host.root.borrow_mut();
+            root.dom = Some(host.dom.clone());
+            root.document = Some(dom.document());
+            root.page_dom = Some(dom);
+        }
+        let scripts = host.settings.borrow().scripts.clone();
+        let mut worlds = vec![None];
+        for script in scripts {
+            if script.world.is_some() && !worlds.contains(&script.world) {
+                worlds.push(script.world);
+            }
+        }
+        for world in worlds {
+            host.make_realm(key, nav.clone(), world)?;
+        }
+        let frame = host.root.borrow().clone();
+        Ok(PrebuiltPopup { id, host, nav, frame })
+    }
+
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
         let state = browser.contexts.iter().find(|c| c.id == context).expect("context");
         let (local, services) = (state.local_storage.clone(), state.services.clone());
@@ -227,6 +336,9 @@ impl FrameHost {
             opener: RefCell::new(None),
             popup: RefCell::new(None),
             window_proxies: RefCell::new(BTreeMap::new()),
+            pending_objects: RefCell::new(Vec::new()),
+            hidden_objects: RefCell::new(Vec::new()),
+            hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
@@ -352,6 +464,11 @@ impl FrameHost {
         if world.is_none() {
             if let Some(child) = key.child {
                 self.keep_window_proxy(child, &realm)?;
+                // An iframe's initial about:blank Window: its first
+                // same-origin document reuses it (`reuse_realm`).
+                if nav.is_initial_blank() {
+                    dom.set_reusable_window(true);
+                }
             }
         }
         self.setup_realm(&realm, key, nav, &dom)?;
@@ -359,6 +476,37 @@ impl FrameHost {
         self.finish_realm(&realm, key, &world, &bindings, &scripts)?;
         self.emit(PageEvent::RealmCreated { frame_id: frame.id, realm: realm.id(), world, origin: frame.origin });
         Ok(realm)
+    }
+    /// HTML Window reuse: the main-world `realm` of the frame's initial
+    /// about:blank document becomes the realm of its new document (already
+    /// committed, same origin), whose Window target it took over
+    /// (`pyro_webapi::adopt_window`). What script put on the window (its
+    /// expandos, listeners, `onload`) stays; the bindings, frame indices and
+    /// init scripts are set up for the new document as for a new realm.
+    pub(crate) fn reuse_realm(self: &Rc<Self>, key: FrameKey, nav: Rc<PageNav>, realm: &Realm) -> Result<(), JsError> {
+        let frame = self.frame(key).ok_or(JsError::ContextDestroyed)?;
+        let dom = frame.page_dom.ok_or(JsError::ContextDestroyed)?;
+        let scripts: Vec<InitScript> =
+            self.settings.borrow().scripts.iter().filter(|s| s.world.is_none()).cloned().collect();
+        let data = WindowData::for_frame(self.sched.clone(), nav, &dom, Rc::downgrade(self), key);
+        {
+            let scope = realm.scope()?;
+            let old = scope.global_data::<Window>().ok_or(JsError::ContextDestroyed)?;
+            old.hand_over(&data);
+        }
+        realm.replace_global_data::<Window>(data)?;
+        realm.set_origin(Some(frame.origin.clone()));
+        {
+            let _setup = realm.setup_without_watchdog();
+            let scope = realm.scope()?;
+            pyro_webapi::rebind_window(&scope, dom.clone())?;
+            // Per document, not per Window: a new History object.
+            scope.forget_identity(pyro_js::IdentityKey(window::KEY_HISTORY, 0));
+        }
+        loader::install_module_fetcher(self.sched.clone(), key, realm);
+        self.push_realm(key, None, realm)?;
+        // Bindings stay installed on the global; init scripts run again.
+        self.finish_realm(realm, key, &None, &[], &scripts)
     }
     /// The frame's WindowProxy for its new main-world `realm`: the proxy of
     /// the frame's first document, which `realm` adopts, as browsers keep one
@@ -463,6 +611,25 @@ impl FrameHost {
             }
         }
     }
+    /// The pending `<object>`/`<embed>` elements (not rendered when connected) that are rendered
+    /// now get their child navigable; those no longer connected, or no longer showing a document,
+    /// are dropped. HTML runs the element's steps again when its rendering changes.
+    pub fn connect_rendered_objects(self: &Rc<Self>) {
+        if self.pending_objects.borrow().is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut *self.pending_objects.borrow_mut());
+        for (parent, loader, node) in pending {
+            let keep = {
+                let dom = self.dom.borrow();
+                dom.is_connected(node).unwrap_or(false) && dom.is_document_object(node)
+            };
+            if keep && self.owner(node).is_none() {
+                // Puts it back when it is still not rendered.
+                let _ = self.connected(parent, &loader, node);
+            }
+        }
+    }
     pub fn connected(self: &Rc<Self>, parent: FrameKey, loader: &LoaderId, node: NodeId) -> Result<(), JsError> {
         if !self.matches(parent, loader) || self.owner(node).is_some() {
             return Ok(());
@@ -473,6 +640,19 @@ impl FrameHost {
             if !dom.is_connected(node).unwrap_or(false) || dom.owner_document(node).ok().flatten() != ancestor.document
             {
                 return Ok(());
+            }
+            // An `<object>` or `<embed>` that is not being rendered (`display: none`) represents
+            // nothing: no child navigable (HTML "the embed element", "the object element").
+            if dom.is_document_object(node) {
+                if let Some(page_dom) = ancestor.page_dom.as_ref() {
+                    if !page_dom.layout().check_visibility(&dom, node, Default::default()) {
+                        let mut pending = self.pending_objects.borrow_mut();
+                        if !pending.iter().any(|(_, _, n)| *n == node) {
+                            pending.push((parent, loader.clone(), node));
+                        }
+                        return Ok(());
+                    }
+                }
             }
             (
                 dom.get_attribute(node, "name").ok().flatten().unwrap_or("").to_owned(),
@@ -698,7 +878,7 @@ impl Browser {
 }
 
 impl FrameHost {
-    fn same_origin(&self, a: FrameKey, b: FrameKey) -> bool {
+    pub(crate) fn same_origin(&self, a: FrameKey, b: FrameKey) -> bool {
         let (Some(a), Some(b)) = (self.frame(a), self.frame(b)) else { return false };
         if a.origin == "null" || b.origin == "null" {
             a.origin == b.origin && a.opaque_origin == b.opaque_origin
@@ -1294,53 +1474,21 @@ impl Browser {
             if !dom.is_connected(owner).unwrap_or(false) {
                 return;
             }
+            // An `<object>` hosting a document navigates to its `data`, an `<embed>` to its `src`
+            // (neither has `srcdoc`).
+            let embedded = dom.is_document_object(owner);
+            let object = embedded && dom.element(owner).is_ok_and(|e| &*e.name.local == "object");
             (
-                dom.get_attribute(owner, "srcdoc").ok().flatten().map(str::to_owned),
-                dom.get_attribute(owner, "src").ok().flatten().map(str::to_owned),
+                dom.get_attribute(owner, "srcdoc").ok().flatten().filter(|_| !embedded).map(str::to_owned),
+                dom.get_attribute(owner, if object { "data" } else { "src" }).ok().flatten().map(str::to_owned),
                 // `<base href>` aware.
                 crate::loader::node_base_url(&dom, owner),
             )
         };
         let result = if let Some(html) = srcdoc {
-            let loader = LoaderId(format!("{:032X}", self.next()));
-            let opts = NavigateOpts {
-                post: None,
-                url: "about:srcdoc".into(),
-                reason: NavigationReason::InitialFrameNavigation,
-                cdp_request_id: None,
-                referrer: Some(parent.url),
-            };
-            self.emit(
-                key.page,
-                PageEvent::FrameNavigate {
-                    frame_id: frame.id,
-                    loader_id: loader.clone(),
-                    url: opts.url.clone(),
-                    reason: opts.reason,
-                    cdp_request_id: None,
-                },
-            );
-            self.begin_document(
-                key,
-                &opts,
-                loader,
-                Resource {
-                    url: opts.url.clone(),
-                    status: 200,
-                    mime: "text/html".into(),
-                    charset: None,
-                    body: html.into_bytes(),
-                    content_disposition: None,
-                    header_csp: false,
-                    refresh: None,
-                    content_language: None,
-                    referrer_policy: None,
-                    timing: None,
-                    partial: None,
-                },
-                HistoryHandling::Replace,
-            )
+            self.begin_srcdoc(key, frame.id.clone(), html, parent.url, HistoryHandling::Replace).map(|_| ())
         } else {
+            let has_src = src.is_some();
             let raw = src.unwrap_or_default();
             let url = if raw.trim().is_empty() {
                 "about:blank".to_string()
@@ -1350,10 +1498,49 @@ impl Browser {
                     .map(|u| u.to_string())
                     .unwrap_or_else(|_| raw.clone())
             };
-            if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
+            if let Some(source) = crate::bindings::javascript_url_source(&url) {
+                // HTML "navigate to a javascript: URL" with initialInsertion: a task runs the
+                // Trusted Types pre-navigation check and the script in the frame's initial
+                // document, which stays; its load follows. Author code in that check (a default
+                // policy) may remove the container: then nothing runs and no load is fired.
+                let parent_key = frame.parent.as_ref().and_then(|id| host.key(id));
+                self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
+                    let connected = |b: &Browser| {
+                        b.page(key.page).is_some_and(|p| p.frames.dom.borrow().is_connected(owner).unwrap_or(false))
+                    };
+                    let Some(doc) = b.doc(key) else { return };
+                    let realm = doc.main_frame.main_realm().cloned();
+                    drop(doc);
+                    // The check runs under the inserting document's policies (the request's
+                    // policy container is snapshotted from it).
+                    let checker = parent_key.and_then(|k| b.doc(k)).and_then(|d| {
+                        Some((d.main_frame.main_realm().cloned()?, d.main_frame.page_dom.clone()?))
+                    });
+                    if let (Some(realm), Some((parent_realm, parent_dom))) = (realm, checker) {
+                        if let (Ok(scope), Ok(parent_scope)) = (realm.scope(), parent_realm.scope()) {
+                            let script = pyro_webapi::trusted_types::javascript_url_script(&parent_scope, &parent_dom, &source);
+                            if !connected(b) {
+                                return;
+                            }
+                            if let Some(script) = script {
+                                if let Err(e) = scope.eval(&script, None, 1) {
+                                    scope.report_exception(&e);
+                                }
+                            }
+                        }
+                    }
+                    if connected(b) {
+                        b.finish_blank_document(key);
+                    }
+                });
+                Ok(())
+            } else if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
                 // A script that opened the initial document since (append,
                 // then `contentDocument.open()`) finishes it with `close()`.
                 if host.nav(key).map_or(true, |nav| nav.is_initial_blank()) {
+                    if let (true, Some(dom)) = (has_src, &frame.page_dom) {
+                        dom.note_blank_requested();
+                    }
                     self.finish_blank_document(key);
                 }
                 Ok(())
@@ -1379,6 +1566,74 @@ impl Browser {
                 }
             }
         }
+    }
+}
+
+impl Browser {
+    /// Loads `html`, the `srcdoc` of the iframe of `key`, as its document
+    /// `about:srcdoc` (the initial navigation, and a navigation to
+    /// `about:srcdoc` such as `location.reload()` of that document).
+    pub(crate) fn begin_srcdoc(
+        &mut self,
+        key: FrameKey,
+        frame_id: FrameId,
+        html: String,
+        referrer: String,
+        history: HistoryHandling,
+    ) -> Result<LoaderId, JsError> {
+        let loader = LoaderId(format!("{:032X}", self.next()));
+        let opts = NavigateOpts {
+            post: None,
+            url: "about:srcdoc".into(),
+            reason: NavigationReason::InitialFrameNavigation,
+            cdp_request_id: None,
+            referrer: Some(referrer),
+        };
+        self.emit(
+            key.page,
+            PageEvent::FrameNavigate {
+                frame_id,
+                loader_id: loader.clone(),
+                url: opts.url.clone(),
+                reason: opts.reason,
+                cdp_request_id: None,
+            },
+        );
+        self.begin_document(
+            key,
+            &opts,
+            loader.clone(),
+            Resource {
+                url: opts.url.clone(),
+                status: 200,
+                mime: "text/html".into(),
+                charset: None,
+                body: html.into_bytes(),
+                content_disposition: None,
+                header_csp: None,
+                refresh: None,
+                content_language: None,
+                referrer_policy: None,
+                timing: None,
+                partial: None,
+                nosniff: false,
+            },
+            history,
+        )?;
+        Ok(loader)
+    }
+
+    /// The `srcdoc` of the connected iframe that holds the frame of `key`, if it has one.
+    pub(crate) fn srcdoc_of(&self, key: FrameKey) -> Option<(FrameId, String)> {
+        let host = self.page(key.page).map(|p| p.frames.clone())?;
+        let frame = host.frame(key)?;
+        let owner = frame.owner?;
+        let dom = host.dom.borrow();
+        if !dom.is_connected(owner).unwrap_or(false) {
+            return None;
+        }
+        let html = dom.get_attribute(owner, "srcdoc").ok().flatten()?.to_owned();
+        Some((frame.id, html))
     }
 }
 

@@ -1,0 +1,81 @@
+//! The value of `<input type=color>` (HTML "color state"): any CSS color,
+//! serialized in the control's `colorspace` (`limited-srgb` or `display-p3`)
+//! with or without its alpha channel (the `alpha` attribute).
+
+use style::color::{AbsoluteColor, ColorSpace};
+use style::context::QuirksMode;
+use style::servo_arc::Arc;
+use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+
+/// `raw` parsed as a CSS color: `None` when it is not one. `currentcolor`
+/// is black; colors that need a style context (system colors) do not parse.
+fn parse(raw: &str) -> Option<AbsoluteColor> {
+    crate::stylo::enable_features();
+    let url = UrlExtraData(Arc::new(url::Url::parse("about:blank").ok()?));
+    let context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url,
+        Some(CssRuleType::Style),
+        style_traits::ParsingMode::DEFAULT,
+        QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    let mut parser = cssparser::Parser::new(raw.trim_matches(|c: char| c.is_ascii_whitespace()));
+    let computed = style::values::specified::Color::parse_and_compute(&context, &mut parser, None).ok()?;
+    Some(computed.resolve_to_absolute(&AbsoluteColor::BLACK))
+}
+
+/// A component as CSS color serialization prints it: at most six decimals,
+/// no trailing zeros.
+fn num(v: f32) -> String {
+    let s = format!("{:.6}", v);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" { "0".into() } else { s.into() }
+}
+
+/// The color state's value sanitization: `raw` as a CSS color (black when it
+/// is not one), converted to `display-p3` when `p3`, else to sRGB clipped to
+/// its gamut and stored in 8 bits per channel. Without `alpha` the color is
+/// opaque and sRGB serializes as `#rrggbb`; otherwise as `color(...)`.
+pub fn sanitize(raw: &str, alpha: bool, p3: bool) -> String {
+    let color = parse(raw).unwrap_or(AbsoluteColor::BLACK);
+    let a = if alpha { (color.alpha().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0).round() / 255.0 } else { 1.0 };
+    let suffix = if a < 1.0 { format!(" / {}", num(a)) } else { String::new() };
+    if p3 {
+        let c = color.to_color_space(ColorSpace::DisplayP3);
+        let [r, g, b] = [c.c0(), c.c1(), c.c2()].map(|v| num(v.unwrap_or(0.0)));
+        return format!("color(display-p3 {r} {g} {b}{suffix})");
+    }
+    let c = color.to_color_space(ColorSpace::Srgb);
+    let [r, g, b] = [c.c0(), c.c1(), c.c2()].map(|v| (v.unwrap_or(0.0).clamp(0.0, 1.0) * 255.0).round());
+    if !alpha {
+        return format!("#{:02x}{:02x}{:02x}", r as u8, g as u8, b as u8);
+    }
+    let [r, g, b] = [r, g, b].map(|v| num(v / 255.0));
+    format!("color(srgb {r} {g} {b}{suffix})")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize;
+
+    #[test]
+    fn color_well_values() {
+        assert_eq!(sanitize("", false, false), "#000000");
+        assert_eq!(sanitize(" #FFF ", false, false), "#ffffff");
+        assert_eq!(sanitize("#ffffff;", false, false), "#000000");
+        assert_eq!(sanitize("inherit", false, false), "#000000");
+        assert_eq!(sanitize("currentColor", true, false), "color(srgb 0 0 0)");
+        assert_eq!(sanitize("crimson", false, false), "#dc143c");
+        assert_eq!(sanitize("hsl(150deg 100 53.5)", false, false), "#12ff88");
+        assert_eq!(sanitize("color(display-p3 .5 0 0)", false, false), "#8c0000");
+        assert_eq!(sanitize("transparent", true, false), "color(srgb 0 0 0 / 0)");
+        assert_eq!(sanitize("#ffffff08", true, false), "color(srgb 1 1 1 / 0.031373)");
+        assert_eq!(sanitize("rgb(1,1,1,0.5)", false, false), "#010101");
+        assert_eq!(sanitize("white", false, true), "color(display-p3 1 1 1)");
+        assert_eq!(sanitize("color(display-p3 3 none .2 / .6)", true, true), "color(display-p3 3 0 0.2 / 0.6)");
+    }
+}

@@ -87,6 +87,9 @@ pub(crate) struct WorkerStart {
     pub(crate) early: Vec<Early>,
     /// A service worker version: its global is a `ServiceWorkerGlobalScope`.
     pub(crate) service: Option<crate::service_worker_scope::ServiceStart>,
+    /// A shared worker: its global is a `SharedWorkerGlobalScope`, and
+    /// documents connect to it (`WorkerLoop::connect`).
+    pub(crate) shared_worker: bool,
 }
 
 impl WorkerStart {
@@ -120,6 +123,7 @@ impl WorkerStart {
             module: false,
             early: Vec::new(),
             service: None,
+            shared_worker: false,
         })
     }
 
@@ -158,6 +162,7 @@ impl WorkerStart {
             module,
             early: Vec::new(),
             service: Some(service),
+            shared_worker: false,
         })
     }
 }
@@ -297,6 +302,29 @@ impl WorkerLoop {
         fire_message(&s, &self.page, target, &message);
     }
 
+    /// A document connected to this shared worker: `connect` at the global,
+    /// with the port `message` transfers as `ports[0]` and `source`.
+    pub(crate) fn connect(&mut self, message: WireMessage) {
+        if self.shared.closing.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(s) = self.realm.scope() else { return };
+        let Some(target) = self.page.window_target() else { return };
+        let Ok((_, ports)) = crate::structured_clone::decode_with_ports(&s, &message) else { return };
+        let Some(ports) = ports else { return };
+        let port = ports.get_index(0).ok().map(|p| Persistent::new(&s, p));
+        let ev = crate::event::EventCore::trusted(&self.page, crate::event::EventInterface::MessageEvent, "connect", false, false);
+        {
+            let mut fields = ev.fields.borrow_mut();
+            fields.message_data = Some(Persistent::new(&s, s.string("")));
+            fields.message_ports = Some(Persistent::new(&s, ports.value()));
+            if let Some(port) = port {
+                fields.message_source_window = Some(Rc::new(move |s| Ok(s.rehome(port.get(s)))));
+            }
+        }
+        crate::target::fire(&self.page, target, &ev);
+    }
+
     /// Runs `f` with the realm (a service worker's browser-thread request).
     pub(crate) fn service(&mut self, f: impl FnOnce(&Scope<'_>, &Rc<PageDom>)) {
         if self.shared.closing.load(Ordering::Acquire) {
@@ -318,7 +346,11 @@ impl WorkerLoop {
         let filename = exception.url.clone().unwrap_or_default();
         let (line, column) = (exception.line.unwrap_or(0), exception.column.unwrap_or(0));
         let mut report = true;
-        if !self.in_error {
+        // The exception reporter fired the global's event already (uncanceled).
+        let fired = self.page.reported_errors.get();
+        if fired > 0 {
+            self.page.reported_errors.set(fired - 1);
+        } else if !self.in_error {
             if let Some(target) = self.page.window_target() {
                 let ev = EventCore::trusted(&self.page, EventInterface::ErrorEvent, "error", false, true);
                 {
@@ -466,7 +498,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
             terminate.terminate();
         }
     }
-    let class = register(&engine, start.service.is_some());
+    let class = register(&engine, start.service.is_some(), start.shared_worker);
     let events = Rc::new(WorkerEvents {
         buffer: RefCell::new(VecDeque::new()),
         inspector: RefCell::new(None),
@@ -515,6 +547,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     };
     if start.service.is_some() {
         realm.set_global_data::<ServiceWorkerGlobalScope>(scope)?;
+    } else if start.shared_worker {
+        realm.set_global_data::<SharedWorkerGlobalScope>(scope)?;
     } else {
         realm.set_global_data::<DedicatedWorkerGlobalScope>(scope)?;
     }
@@ -530,7 +564,14 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     })));
     {
         let s = realm.scope()?;
-        install(&s, &page, start.service.is_some())?;
+        let global = if start.service.is_some() {
+            "ServiceWorkerGlobalScope"
+        } else if start.shared_worker {
+            "SharedWorkerGlobalScope"
+        } else {
+            "DedicatedWorkerGlobalScope"
+        };
+        install(&s, &page, global)?;
         if let Some(service) = &start.service {
             crate::service_worker_scope::install(&s, service, start.poster.clone(), start.shared.clone())?;
         }
@@ -869,6 +910,11 @@ impl JsClass for WorkerGlobalScope {
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
         crate::canvas::define_worker_globals(def);
+        // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.
+        crate::font_loading::define_globals(def);
+        crate::typed_om::define_globals(def);
+        crate::trusted_types::define_globals(def);
+        def.getter("fonts", |s, g| crate::font_loading::fonts(s, &g.target.page));
         crate::storage_manager::define_globals(def);
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
@@ -1011,6 +1057,29 @@ impl JsClass for DedicatedWorkerGlobalScope {
     }
 }
 
+/// A shared worker's global (HTML `SharedWorkerGlobalScope`): each document
+/// that connects fires `connect` with its port (`WorkerLoop::connect`).
+pub struct SharedWorkerGlobalScope;
+impl JsClass for SharedWorkerGlobalScope {
+    const NAME: &'static str = "SharedWorkerGlobalScope";
+    type Data = ScopeData;
+    type Parent = WorkerGlobalScope;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("name", |s, g| Ok(s.string(&g.name)));
+        def.method("close", 0, |s, g, _a| {
+            g.shared.closing.store(true, Ordering::Release);
+            let id = g.id;
+            (g.poster)(Box::new(move || deliver_up(id, Up::Closed)));
+            Ok(s.undefined())
+        });
+        def.accessor(
+            "onconnect",
+            |s, g| crate::target::event_handler(s, &g.target, "connect"),
+            |s, g, value| crate::target::set_event_handler(s, &g.target, "connect", value),
+        );
+    }
+}
+
 /// A service worker's global (`service_worker_scope` makes what it returns).
 pub struct ServiceWorkerGlobalScope;
 impl JsClass for ServiceWorkerGlobalScope {
@@ -1113,7 +1182,7 @@ pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
 }
 
 /// The classes a worker's realm exposes; returns its global's class.
-fn register(engine: &Engine, service: bool) -> pyro_js::ClassId {
+fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::ClassId {
     engine.register::<EventTarget>();
     crate::event::register_for_worker(engine);
     crate::abort::register(engine);
@@ -1143,16 +1212,23 @@ fn register(engine: &Engine, service: bool) -> pyro_js::ClassId {
     if service {
         return engine.register::<ServiceWorkerGlobalScope>();
     }
+    if shared_worker {
+        return engine.register::<SharedWorkerGlobalScope>();
+    }
     engine.register::<DedicatedWorkerGlobalScope>()
 }
 
 /// The part of `crate::install` that applies without a window.
-fn install(s: &Scope<'_>, page: &Rc<PageDom>, service: bool) -> JsResult<()> {
+fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     let realm = s.realm();
     page.register_realm(&realm);
     realm.set_embedder(page.clone());
     realm.set_unhandled_rejection_handler(crate::event::dispatch_unhandled_rejection);
+    // HTML "report the error": the global's `error` event fires in the task
+    // that threw, its listeners before their microtasks.
+    realm.set_exception_reporter(Some(crate::lifecycle::report_exception));
     let helpers = crate::install_helpers(s)?;
+    crate::file::install(s, helpers.get_atom("blobParts")?)?;
     crate::encoding::install(s, helpers.get_atom("dataView")?)?;
     crate::headers::install(s, helpers.get_atom("headers")?)?;
     crate::url_search_params::install(s, helpers.get_atom("urlSearchParams")?)?;
@@ -1170,7 +1246,6 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, service: bool) -> JsResult<()> {
     crate::structured_clone::prepare_wire(s)?;
     // The global is JSC's default one, whose prototype cannot be replaced
     // (docs/ARCHITECTURE.md), and libraries read `self.constructor.name`.
-    let global = if service { "ServiceWorkerGlobalScope" } else { "DedicatedWorkerGlobalScope" };
     s.eval(
         &format!("Object.defineProperty(self, 'constructor', {{value: {global}, writable: true, configurable: true}})"),
         Some("pyro://internal/worker-scope.js"),

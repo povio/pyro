@@ -664,7 +664,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // pyro: the heights of the items of subgrids in their columns only, in their own rows.
     if has_subgrid_items && replay.is_none() {
-        subgrid::resolve_standalone_heights(tree, &mut items, own_item_count);
+        subgrid::resolve_standalone_heights(tree, &mut items, own_item_count, &rows);
     }
 
     // Run track sizing algorithm for Inline axis

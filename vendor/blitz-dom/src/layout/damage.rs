@@ -1122,16 +1122,15 @@ impl BaseDocument {
             return;
         };
 
+        let border_sources = border_image_sources(&style);
         let (style_images, elem_images): (&[style::values::computed::Image], _) = match kind {
             ImageLayerKind::Background => (
                 &style.get_background().background_image.0,
                 &mut elem.background_images,
             ),
             ImageLayerKind::Mask => (&style.get_svg().mask_image.0, &mut elem.mask_images),
-            ImageLayerKind::BorderImage => (
-                std::slice::from_ref(&style.get_border().border_image_source),
-                &mut elem.border_images,
-            ),
+            // pyro: `mask-border-source` loads as the second border image.
+            ImageLayerKind::BorderImage => (&border_sources[..], &mut elem.border_images),
             ImageLayerKind::ListStyle => (
                 std::slice::from_ref(&style.get_list().list_style_image),
                 &mut elem.list_style_images,
@@ -1200,4 +1199,17 @@ impl BaseDocument {
             elem_images[idx] = new_image;
         }
     }
+}
+
+/// pyro: the images an element's `border_images` load: `border-image-source`, then
+/// `mask-border-source` when it has one (else just the first).
+pub(crate) fn border_image_sources(
+    style: &style::properties::ComputedValues,
+) -> smallvec::SmallVec<[style::values::computed::Image; 2]> {
+    let mut sources = smallvec::smallvec![style.get_border().border_image_source.clone()];
+    let mask = &style.get_svg().mask_border_source;
+    if !matches!(mask, style::values::computed::Image::None) {
+        sources.push(mask.clone());
+    }
+    sources
 }

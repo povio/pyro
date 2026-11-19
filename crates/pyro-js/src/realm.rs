@@ -393,6 +393,9 @@ pub(crate) struct RealmInner {
     /// proxies, and the interface objects as seen by script (the proxies).
     /// Three protections per realm instead of three per class.
     interfaces: RefCell<Option<[Persistent; 3]>>,
+    /// Trusted Types for eval and Function (patched JSC 0035): the functions
+    /// [`Scope::set_compile_strings_hooks`] installed.
+    compile_hooks: RefCell<Option<[Persistent; 2]>>,
     /// Whether each class's members are installed in this realm.
     populated: RefCell<Vec<bool>>,
     identity: RefCell<rustc_hash::FxHashMap<IdentityKey, sys::JSWeakRef>>,
@@ -465,6 +468,9 @@ pub(crate) struct RealmInner {
     /// and unallocated, until script uses them).
     console_counts: RefCell<rustc_hash::FxHashMap<String, u64>>,
     console_timers: RefCell<rustc_hash::FxHashMap<String, std::time::Instant>>,
+    /// Set while the realm lingers ([`Realm::linger`]): a weak handle on its
+    /// global object, whose death ends the realm.
+    linger: Cell<sys::JSWeakRef>,
 }
 
 impl RealmInner {
@@ -518,7 +524,12 @@ impl RealmInner {
             return p.get(scope).as_object().ok_or(JsError::Type("missing helper".into()));
         }
         let f = self.helper(scope, name)?;
-        self.helper_cache.borrow_mut().insert(name, Persistent::new(scope, f.value()));
+        let mut p = Persistent::new(scope, f.value());
+        if self.is_lingering() {
+            // The helpers object, which the global holds, keeps the function.
+            p.unroot();
+        }
+        self.helper_cache.borrow_mut().insert(name, p);
         Ok(f)
     }
     fn helper<'s>(&self, scope: &Scope<'s>, name: &str) -> JsResult<Object<'s>> {
@@ -557,6 +568,38 @@ impl RealmInner {
         }
     }
 
+    /// Whether the realm lingers ([`Realm::linger`]).
+    pub(crate) fn is_lingering(&self) -> bool {
+        !self.linger.get().is_null()
+    }
+
+    /// A lingering realm whose global object the collector found dead: no
+    /// object of the realm is left to call into it.
+    pub(crate) fn global_dead(&self) -> bool {
+        let weak = self.linger.get();
+        if weak.is_null() {
+            return false;
+        }
+        let Some((_, _, get)) = sys::spi::get().weak() else { return true };
+        // SAFETY: the realm's own live handle.
+        unsafe { get(weak) }.is_null()
+    }
+
+    /// Every `Persistent` the realm itself roots: what keeps its global
+    /// object alive besides the context's retain.
+    fn for_each_root(&self, f: &mut dyn FnMut(&mut Persistent)) {
+        if let Some(lists) = self.interfaces.borrow_mut().as_mut() {
+            lists.iter_mut().for_each(&mut *f);
+        }
+        for cell in [&self.helpers, &self.object_proto, &self.function_proto, &self.dom_exception] {
+            if let Some(p) = cell.borrow_mut().as_mut() {
+                f(p);
+            }
+        }
+        self.helper_cache.borrow_mut().values_mut().for_each(&mut *f);
+        self.fn_cache.borrow_mut().values_mut().for_each(|(_, p)| f(p));
+    }
+
     pub(crate) fn dispose(&self) {
         // A lean callback on the stack may hold this realm by `live()`'s
         // uncounted borrow: page script ran inside one (debug check).
@@ -567,8 +610,26 @@ impl RealmInner {
         if ctx.is_null() {
             return;
         }
+        // A lingering realm whose global died has no context left to use.
+        let lingering = self.is_lingering();
+        let dead = self.global_dead();
+        let weak = self.linger.replace(ptr::null_mut());
+        if !weak.is_null() {
+            if let Some((_, release, _)) = sys::spi::get().weak() {
+                // SAFETY: the realm's own handle, released once.
+                unsafe { release(self.engine.group(), weak) };
+            }
+        }
         self.global_object.set(ptr::null_mut());
-        self.engine.realms.borrow_mut().remove(&(ctx as usize));
+        {
+            // A lingering realm whose global died may find its context's
+            // address taken by a newer realm's: remove only its own entry.
+            let mut realms = self.engine.realms.borrow_mut();
+            let me: *const RealmInner = self;
+            if realms.get(&(ctx as usize)).is_some_and(|w| std::ptr::eq(w.as_ptr(), me)) {
+                realms.remove(&(ctx as usize));
+            }
+        }
         let loader = self.module_loader.replace(ptr::null_mut());
         if !loader.is_null() {
             unsafe { sys::modules::pyro_jsc_module_loader_release(loader) };
@@ -588,6 +649,7 @@ impl RealmInner {
             }
         }
         self.interfaces.borrow_mut().take();
+        self.compile_hooks.borrow_mut().take();
         self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
@@ -602,12 +664,18 @@ impl RealmInner {
         }
         // The functions may outlive the realm (script elsewhere holds one),
         // their global with them: the payloads go when it does.
-        let global = match self.global_target.get() {
-            // SAFETY: the context is still retained.
-            g if g.is_null() => unsafe { sys::JSContextGetGlobalObject(ctx) },
-            g => g,
-        };
-        self.engine.retire_members(global, member_fns);
+        if dead {
+            // Their functions died with the global.
+            drop(member_fns);
+        } else {
+            let global = match self.global_target.get() {
+                // SAFETY: the context is still retained, or (lingering) its
+                // global object is alive.
+                g if g.is_null() => unsafe { sys::JSContextGetGlobalObject(ctx) },
+                g => g,
+            };
+            self.engine.retire_members(global, member_fns);
+        }
         #[cfg(debug_assertions)]
         {
             let me: *const RealmInner = self;
@@ -622,21 +690,22 @@ impl RealmInner {
                 unsafe { release(self.engine.group(), w) };
             }
         }
-        if let Some(tracked) = sys::spi::get().tracked() {
+        if let Some(tracked) = sys::spi::get().tracked().filter(|_| !lingering) {
             // Owned wrappers: nothing keeps them any more (the payloads stay
-            // until their objects die).
+            // until their objects die). A lingering realm let them go.
             // SAFETY: the realm's still-retained context.
             unsafe { (tracked.release)(ctx) };
         }
         for (_, (_, v)) in self.shared_strings.borrow_mut().drain() {
-            // SAFETY: protected by `shared_string` on this still-live context.
-            unsafe { sys::JSValueUnprotect(ctx, v) };
+            // SAFETY: protected by `shared_string`; the root context is of
+            // the same VM and live (a lingering realm's may not be).
+            unsafe { sys::JSValueUnprotect(if dead { self.engine.root_ctx() } else { ctx }, v) };
         }
         self.interned.borrow_mut().clear(self.engine.group());
         self.embedder.borrow_mut().take();
         self.current_event.set(ptr::null());
         self.named_properties.borrow_mut().take();
-        if self.global_constants.replace(false) {
+        if self.global_constants.replace(false) && !dead {
             if let Some(clear) = sys::spi::get().clear_constant_accessors {
                 // SAFETY: the live global behind this realm's proxy, on its
                 // still-retained context. Its constants (a window's document)
@@ -647,6 +716,10 @@ impl RealmInner {
             }
         }
         drop(std::mem::take(&mut *self.lazy_constants.borrow_mut()));
+        if lingering {
+            // `linger` gave up the retain and reported the realm destroyed.
+            return;
+        }
         // SAFETY: we owned one retain on the global context.
         unsafe { sys::JSGlobalContextRelease(ctx) };
         if let Some(h) = self.engine.hooks() {
@@ -746,8 +819,10 @@ impl Realm {
         *self.inner.origin.borrow_mut() = origin;
     }
 
+    /// Disposed, or lingering ([`Realm::linger`]): gone for its embedder,
+    /// though script elsewhere may still call into a lingering realm.
     pub fn is_disposed(&self) -> bool {
-        self.inner.ctx.get().is_null() && !self.is_deferred()
+        (self.inner.ctx.get().is_null() && !self.is_deferred()) || self.inner.is_lingering()
     }
 
     /// Whether the realm still waits for its first [`Realm::scope`] to be
@@ -765,7 +840,8 @@ impl Realm {
             self.materialize_deferred()?;
         }
         let ctx = self.inner.global_ctx()?;
-        if self.inner.engine.is_shut_down() {
+        // A lingering realm's context lives only as long as its global.
+        if self.inner.engine.is_shut_down() || self.inner.global_dead() {
             return Err(JsError::ContextDestroyed);
         }
         Ok(Scope { ctx: ctx as sys::JSContextRef, realm: &self.inner })
@@ -794,6 +870,104 @@ impl Realm {
         self.inner.dispose();
     }
 
+    /// Disposes the realm once nothing can reach it any more, instead of now,
+    /// and keeps it usable until then: the realm of a document its frame
+    /// navigated away from, whose objects other documents' script may still
+    /// hold (HTML keeps such a Document usable; it is only not fully active).
+    ///
+    /// The realm gives up every root of its own (its context's retain, its
+    /// protected interface lists and helpers, the wrappers it kept alive and
+    /// its wrapper shapes); its global object holds them instead, in a hidden
+    /// array, so the realm lives exactly as long as script anywhere reaches
+    /// one of its objects. The engine disposes it at a safe point after the
+    /// collector finds the global dead (`EngineInner::release_dead_members`).
+    /// The embedder must have dropped its own roots into the realm first
+    /// (listeners, timers, pinned wrappers), or the realm stays alive as long
+    /// as they do. Values a lingering realm's script roots again
+    /// (`Persistent::new`) keep it too, until they are dropped.
+    ///
+    /// No longer listed by [`Realm::by_id`], and reported destroyed to the
+    /// engine hooks now. Returns false when it cannot linger (no weak handles
+    /// or hidden properties in this JavaScriptCore, or a realm already gone):
+    /// the caller then disposes it.
+    pub fn linger(&self) -> bool {
+        let inner = &self.inner;
+        if inner.is_lingering() || inner.engine.is_shut_down() || inner.deferred.borrow().is_some() {
+            return false;
+        }
+        let spi = sys::spi::get();
+        let Some((create, _, _)) = spi.weak() else { return false };
+        let ctx = inner.ctx.get();
+        if ctx.is_null() {
+            return false;
+        }
+        crate::class::assert_not_in_lean_call();
+        let target = match inner.global_target.get() {
+            t if t.is_null() => inner.global_object.get(),
+            t => t,
+        };
+        if target.is_null() {
+            return false;
+        }
+        let mut roots = Vec::new();
+        inner.for_each_root(&mut |p| roots.push(p.as_raw()));
+        let mut exception = ptr::null();
+        // SAFETY: live, retained context; the values are protected.
+        let array = unsafe { sys::JSObjectMakeArray(ctx, roots.len(), roots.as_ptr(), &mut exception) };
+        if array.is_null() {
+            return false;
+        }
+        // Under a symbol no script has (the global is no host object that
+        // takes hidden properties): non-enumerable, fixed.
+        // SAFETY: live context; `target` is its global.
+        unsafe {
+            let key = sys::JSValueMakeSymbol(ctx, crate::string::atom_raw("pyro lingering roots"));
+            let attributes = sys::kJSPropertyAttributeReadOnly
+                | sys::kJSPropertyAttributeDontEnum
+                | sys::kJSPropertyAttributeDontDelete;
+            let mut exception = ptr::null();
+            sys::JSObjectSetPropertyForKey(ctx, target, key, array as sys::JSValueRef, attributes, &mut exception);
+            if !exception.is_null() {
+                return false;
+            }
+        }
+        inner.for_each_root(&mut |p| p.unroot());
+        if let Some(tracked) = spi.tracked() {
+            // SAFETY: the realm's still-retained context.
+            unsafe { (tracked.release)(ctx) };
+        }
+        // A shape holds its structure, and the structure the global: release
+        // them, and wrap with the prototype from now on.
+        let classes = inner.populated.borrow().len().max(inner.shapes.borrow().len());
+        let shapes = std::mem::replace(&mut *inner.shapes.borrow_mut(), vec![NO_SHAPE; classes]);
+        if let Some(release) = spi.wrapper_shape_release {
+            for shape in shapes.into_iter().filter(|&s| !s.is_null() && s != NO_SHAPE) {
+                // SAFETY: made by `JSWrapperShapeCreate` in this realm's group.
+                unsafe { release(inner.engine.group(), shape) };
+            }
+        }
+        let loader = inner.module_loader.replace(ptr::null_mut());
+        if !loader.is_null() {
+            unsafe { sys::modules::pyro_jsc_module_loader_release(loader) };
+        }
+        inner.module_fetcher.borrow_mut().take();
+        // SAFETY: a live object of this engine's VM.
+        inner.linger.set(unsafe { create(inner.engine.group(), target) });
+        // SAFETY: we owned one retain on the global context; the context
+        // stays valid while its global object lives.
+        unsafe { sys::JSGlobalContextRelease(ctx) };
+        inner.engine.lingering.borrow_mut().push(inner.clone());
+        if let Some(h) = inner.engine.hooks() {
+            h.realm_destroyed(inner.id);
+        }
+        true
+    }
+
+    /// Whether the realm lingers ([`Realm::linger`]) and is not disposed yet.
+    pub fn is_lingering(&self) -> bool {
+        self.inner.is_lingering()
+    }
+
     /// Sets the payload of the global object (realm created with `global_class`).
     /// May be called once; the payload lives until the realm is dropped.
     pub fn set_global_data<C: JsClass>(&self, data: C::Data) -> JsResult<()> {
@@ -813,6 +987,34 @@ impl Realm {
         }
         let h = class::new_payload(&self.inner.engine, id, Kind::Instance, &self.inner, None, data);
         self.inner.global_payload.set(h);
+        Ok(())
+    }
+
+    /// Replaces the payload of the global object (`set_global_data`): a
+    /// window object reused by its browsing context's next document (HTML:
+    /// the first navigation from an initial about:blank document to a
+    /// same-origin one keeps the Window). Not from inside a callback that
+    /// borrows the old payload. Errors as `set_global_data`, and when no
+    /// payload was set.
+    pub fn replace_global_data<C: JsClass>(&self, data: C::Data) -> JsResult<()> {
+        self.inner.global_ctx()?;
+        let id = self
+            .inner
+            .engine
+            .classes
+            .borrow()
+            .id_of::<C>()
+            .ok_or_else(|| JsError::Type(format!("{} not registered", C::NAME).into()))?;
+        if self.inner.global_class != Some(id) {
+            return Err(JsError::Type(format!("realm global is not a {}", C::NAME).into()));
+        }
+        if self.inner.global_payload.get().is_null() {
+            return Err(JsError::Type("no global data to replace".into()));
+        }
+        let h = class::new_payload(&self.inner.engine, id, Kind::Instance, &self.inner, None, data);
+        let old = self.inner.global_payload.replace(h);
+        // SAFETY: the owned payload, which no scope borrows outside a callback.
+        unsafe { ((*old).drop_fn)(old) };
         Ok(())
     }
 
@@ -914,7 +1116,11 @@ impl WeakRealm {
 
     /// The realm, if still alive and not disposed.
     pub fn upgrade(&self) -> Option<Realm> {
-        self.0.upgrade().map(|inner| Realm { inner }).filter(|r| !r.is_disposed())
+        // A lingering realm is still entered by the script that reaches it.
+        self.0
+            .upgrade()
+            .map(|inner| Realm { inner })
+            .filter(|r| !r.is_disposed() || (r.inner.is_lingering() && !r.inner.global_dead()))
     }
 }
 
@@ -965,6 +1171,75 @@ pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
     }
 }
 
+thread_local! {
+    /// Depth of [`Scope::compile_exempt`] calls on this thread.
+    static COMPILE_EXEMPT: Cell<u32> = const { Cell::new(0) };
+}
+
+/// The realm's compile-strings hook `index` (0 code for eval, 1 can compile),
+/// protected for the call: the call may replace it or dispose the realm.
+fn compile_hook(ctx: sys::JSContextRef, index: usize) -> Option<Persistent> {
+    let realm = realm_for_ctx(ctx)?;
+    let hooks = realm.compile_hooks.borrow();
+    hooks.as_ref().map(|h| h[index].clone())
+}
+
+unsafe extern "C" fn code_for_eval_hook(
+    ctx: sys::JSContextRef,
+    value: sys::JSObjectRef,
+    exception: *mut sys::JSValueRef,
+) -> sys::JSStringRef {
+    let Some(f) = compile_hook(ctx, 0) else { return std::ptr::null_mut() };
+    let arg = value as sys::JSValueRef;
+    // SAFETY: JSC calls this with the lock held, `ctx` live and `exception`
+    // writable; `f` is a protected function of this realm.
+    unsafe {
+        let r = sys::JSObjectCallAsFunction(ctx, f.as_raw() as sys::JSObjectRef, std::ptr::null_mut(), 1, &arg, exception);
+        if r.is_null() || !(*exception).is_null() || !sys::JSValueIsString(ctx, r) {
+            return std::ptr::null_mut();
+        }
+        sys::JSValueToStringCopy(ctx, r, exception)
+    }
+}
+
+unsafe extern "C" fn can_compile_strings_hook(
+    ctx: sys::JSContextRef,
+    compilation_type: std::os::raw::c_int,
+    code: sys::JSStringRef,
+    argument_count: usize,
+    arguments: *const sys::JSValueRef,
+    exception: *mut sys::JSValueRef,
+) -> bool {
+    if COMPILE_EXEMPT.with(Cell::get) > 0 {
+        return true;
+    }
+    let Some(f) = compile_hook(ctx, 1) else { return true };
+    let kind: &[u8] = match compilation_type {
+        0 => b"Function\0",
+        1 => b"eval\0",
+        _ => b"indirect-eval\0",
+    };
+    // SAFETY: as in `code_for_eval_hook`; `arguments` holds `argument_count`
+    // values (any count with a null pointer when zero).
+    unsafe {
+        let kind = sys::JSStringCreateWithUTF8CString(kind.as_ptr().cast());
+        let mut args = vec![sys::JSValueMakeString(ctx, kind), sys::JSValueMakeString(ctx, code)];
+        sys::JSStringRelease(kind);
+        if argument_count > 0 && !arguments.is_null() {
+            args.extend_from_slice(std::slice::from_raw_parts(arguments, argument_count));
+        }
+        let r = sys::JSObjectCallAsFunction(
+            ctx,
+            f.as_raw() as sys::JSObjectRef,
+            std::ptr::null_mut(),
+            args.len(),
+            args.as_ptr(),
+            exception,
+        );
+        !r.is_null() && (*exception).is_null() && sys::JSValueToBoolean(ctx, r)
+    }
+}
+
 /// `candidate`, if it is what [`realm_for_ctx`] would find for `ctx`: a live
 /// realm of a live engine whose global context is `ctx` (only the thread's
 /// current engine is live, and a realm whose context is set is in its
@@ -989,6 +1264,54 @@ impl<'s> Scope<'s> {
 
     pub fn ctx(&self) -> sys::JSContextRef {
         self.ctx
+    }
+
+    /// Trusted Types for string compilation (patched JSC 0035). `code_for_eval`
+    /// is called with an object passed to eval and returns its code (a
+    /// TrustedScript's data) or null, which leaves it unevaluated.
+    /// `can_compile` is called as (type, code, ...Function arguments), type
+    /// "Function", "eval" (direct) or "indirect-eval", while the enforcement
+    /// ([`Self::set_trusted_types_enforcement`]) is not none; it returns
+    /// whether the code may compile, or throws. False without the patch.
+    pub fn set_compile_strings_hooks(&self, code_for_eval: Object<'_>, can_compile: Object<'_>) -> bool {
+        let Some(set) = sys::spi::get().set_compile_strings_callbacks else { return false };
+        let ctx = self.realm.ctx.get();
+        if ctx.is_null() {
+            return false;
+        }
+        *self.realm.compile_hooks.borrow_mut() =
+            Some([Persistent::new(self, code_for_eval.value()), Persistent::new(self, can_compile.value())]);
+        // SAFETY: the realm's live global context; the callbacks find the
+        // functions through the realm of the context they are called with.
+        unsafe { set(ctx, Some(code_for_eval_hook), Some(can_compile_strings_hook)) }
+    }
+
+    /// Runs `f` with string compilation exempt from the compile-strings hook: the
+    /// embedder's own compiles of code it already checked (an event handler
+    /// content attribute through the Function constructor).
+    pub fn compile_exempt<R>(&self, f: impl FnOnce() -> R) -> R {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                COMPILE_EXEMPT.with(|c| c.set(c.get() - 1));
+            }
+        }
+        COMPILE_EXEMPT.with(|c| c.set(c.get() + 1));
+        let _reset = Reset;
+        f()
+    }
+
+    /// The realm's `require-trusted-types-for 'script'` state for eval and
+    /// Function: 0 none, 1 report-only, 2 enforced. False without patch 0035.
+    pub fn set_trusted_types_enforcement(&self, level: i32) -> bool {
+        let Some(set) = sys::spi::get().set_trusted_types_enforcement else { return false };
+        let ctx = self.realm.ctx.get();
+        if ctx.is_null() {
+            return false;
+        }
+        // SAFETY: the realm's live global context.
+        unsafe { set(ctx, level) };
+        true
     }
 
     pub fn realm(&self) -> Realm {
@@ -1247,6 +1570,10 @@ impl<'s> Scope<'s> {
             .as_object()
             .filter(|o| o.is_function())
             .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        // A lingering realm adds no root: the function would keep its global.
+        if self.realm.is_lingering() {
+            return Ok(f);
+        }
         let mut cache = self.realm.fn_cache.borrow_mut();
         if cache.len() >= MAX_CACHED {
             cache.clear();
@@ -1276,6 +1603,31 @@ impl<'s> Scope<'s> {
             }
             Some(t) => f.call_rooted(t.as_object(), args),
             None => f.call_rooted(None, args),
+        }
+    }
+
+    /// Runs `f` inside a JavaScript frame (a helper calls it), so the
+    /// microtasks the callbacks it invokes queue run when the frame returns,
+    /// not after each callback (JavaScriptCore performs a checkpoint when the
+    /// outermost call returns). HTML "report the error" fires every `error`
+    /// listener before the checkpoint.
+    pub fn in_script_frame<R: 'static>(&self, f: impl for<'a> FnOnce(&Scope<'a>) -> R + 'static) -> JsResult<R> {
+        let f = std::cell::RefCell::new(Some(f));
+        let out: std::rc::Rc<std::cell::RefCell<Option<R>>> = std::rc::Rc::default();
+        let slot = out.clone();
+        let native = self.function("", move |s, _this, _a| {
+            if let Some(f) = f.borrow_mut().take() {
+                *slot.borrow_mut() = Some(f(s));
+            }
+            Ok(s.undefined())
+        })?;
+        let call = self.realm.cached_helper(self, "callWith")?;
+        let called = call.call(None, &[native.value(), self.undefined()]);
+        let result = out.borrow_mut().take();
+        match (result, called) {
+            (Some(r), _) => Ok(r),
+            (None, Err(e)) => Err(e),
+            (None, Ok(_)) => Err(JsError::Type("in_script_frame: the callback did not run".into())),
         }
     }
 
@@ -1490,6 +1842,16 @@ impl<'s> Scope<'s> {
             }
             let o = (*h).object.get();
             (!o.is_null()).then(|| Object::from_raw(self.ctx, o))
+        }
+    }
+
+    /// Forgets the wrapper of `key` in this realm: the next wrap for `key`
+    /// makes a new one (an object per document on a reused Window).
+    pub fn forget_identity(&self, key: IdentityKey) {
+        let old = self.realm.identity.borrow_mut().remove(&key);
+        if let (Some(weak), Some((_, release, _))) = (old, sys::spi::get().weak()) {
+            // SAFETY: weak handles are owned by the identity map.
+            unsafe { release(self.realm.engine.group(), weak) };
         }
     }
 
@@ -2186,6 +2548,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         protos: RefCell::new(Vec::new()),
         shapes: RefCell::new(Vec::new()),
         interfaces: RefCell::new(None),
+        compile_hooks: RefCell::new(None),
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(rustc_hash::FxHashMap::default()),
         shared_strings: RefCell::new(rustc_hash::FxHashMap::default()),
@@ -2217,6 +2580,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         global_members_on_instance: Cell::new(false),
         console_counts: RefCell::new(Default::default()),
         console_timers: RefCell::new(Default::default()),
+        linger: Cell::new(ptr::null_mut()),
     });
     Ok(Realm { inner })
 }
@@ -2579,7 +2943,9 @@ fn copy_global_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     let names: Vec<&'static str> = {
         let reg = realm.engine.classes.borrow();
         let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
-        d.methods.iter().map(|m| m.name).chain(d.accessors.iter().map(|a| a.name)).collect()
+        // Lazily made interface objects stay on the global alone (WebIDL: not prototype members);
+        // copying one would read it, which makes it.
+        d.methods.iter().map(|m| m.name).chain(d.accessors.iter().filter(|a| !a.value).map(|a| a.name)).collect()
     };
     let names_array = scope.array(&[])?;
     for (i, n) in names.iter().enumerate() {
@@ -2717,7 +3083,7 @@ fn install_members_raw(
         }
         (
             d.methods.iter().map(|m| (m.name, m.length, m.call, m.pure)).collect::<Vec<_>>(),
-            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot, a.enumerable)).collect::<Vec<_>>(),
+            d.accessors.iter().map(|a| (a.name, a.get, a.set, a.slot, a.enumerable, a.value)).collect::<Vec<_>>(),
             d.constants.clone(),
             d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
             if d.indexed_iterable {
@@ -2761,6 +3127,7 @@ fn install_members_raw(
     let members = helper("members")?;
     // Where custom accessors go: for the global's own members, the object
     // behind its proxy.
+    let own_holder = matches!(part, MemberPart::Instance(_));
     let (holder, instance, interface) = match part {
         MemberPart::All => (proto.raw, true, true),
         MemberPart::Instance(holder) => (holder, true, false),
@@ -2775,7 +3142,7 @@ fn install_members_raw(
     batch.flush()?;
     let accessor = helper("accessor")?;
     let custom = sys::spi::get().set_custom_accessor;
-    for (name, get, set, slot, enumerable) in accessors {
+    for (name, get, set, slot, enumerable, value) in accessors {
         let attributes = if enumerable { sys::kJSPropertyAttributeNone } else { sys::kJSPropertyAttributeDontEnum };
         if let (Some(install), Some(slot)) = (custom, slot) {
             // A custom accessor: inline caches call the getter directly
@@ -2792,8 +3159,14 @@ fn install_members_raw(
             // dispatch takes the lean path for the global's payload, as does
             // one of a class that asked for that
             // (`ClassDef::attributes_without_jit_getters`).
-            let ok = match (crate::accessors::fast_entry(slot), sys::spi::get().set_fast_getter) {
-                (Some((entry, context, result)), Some(fast)) if !on_global && jit_getters => unsafe {
+            // Only where the property lives on the global itself (the object behind the window's
+            // proxy): a custom value on a prototype is called with the prototype.
+            let as_value = sys::spi::get().set_custom_value.filter(|_| value && own_holder);
+            let ok = match (as_value, crate::accessors::fast_entry(slot), sys::spi::get().set_fast_getter) {
+                // A lazily made interface object: a custom value, which reads as a data property.
+                // No setter: an assignment (or the getter's own replacement) makes it a plain value.
+                (Some(set_value), _, _) => unsafe { set_value(ctx, holder, n, getter, None, attributes) },
+                (None, Some((entry, context, result)), Some(fast)) if !on_global && jit_getters => unsafe {
                     fast(ctx, holder, n, getter, setter, attributes, Some(entry), context, result, true)
                 },
                 _ => unsafe { install(ctx, holder, n, getter, setter, attributes) },

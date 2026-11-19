@@ -1557,7 +1557,8 @@ pub mod style_structs {
             /// Whether this is a multicol style.
             #[cfg(feature = "servo")]
             pub fn is_multicol(&self) -> bool {
-                !self.column_width.is_auto() || !self.column_count.is_auto()
+                // pyro: `column-height` makes a multi-column container too (css-multicol-2).
+                !self.column_width.is_auto() || !self.column_count.is_auto() || !self.column_height.is_auto()
             }
         % endif
     }
@@ -1621,6 +1622,12 @@ pub struct ComputedValuesInner {
     /// relevant link for this element. A element's "relevant link" is the
     /// element being matched if it is a link or the nearest ancestor link.
     visited_style: Option<Arc<ComputedValues>>,
+
+    /// pyro: for a visited link and its contents, whose visited-dependent properties hold the
+    /// visited style's values (`StyleBuilder::pyro_take_visited_dependent`), a style whose
+    /// visited-dependent properties are the unvisited ones (its other properties mean nothing):
+    /// what `getComputedStyle` reports ([`ComputedValues::pyro_unvisited_view`]).
+    pub pyro_unvisited: Option<Arc<ComputedValues>>,
 }
 
 /// The struct that Servo uses to represent computed values.
@@ -1922,6 +1929,7 @@ impl ComputedValues {
                 writing_mode,
                 rules,
                 visited_style,
+                pyro_unvisited: None,
                 effective_zoom,
                 flags,
             % for style_struct in data.active_style_structs():
@@ -1930,6 +1938,19 @@ impl ComputedValues {
             },
             pseudo: pseudo.cloned(),
         })
+    }
+
+    /// pyro: this style as `getComputedStyle` reports it: for a visited link and its contents,
+    /// the visited-dependent properties unvisited (`pyro_unvisited`); `None` for any other.
+    pub fn pyro_unvisited_view(&self) -> Option<ComputedValues> {
+        let unvisited = self.pyro_unvisited.as_deref()?;
+        let mut view = ComputedValues { inner: self.inner.clone(), pseudo: self.pseudo.clone() };
+        % for property in data.longhands:
+        % if property.is_visited_dependent() and not property.logical:
+        view.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(unvisited.get_${property.style_struct.name_lower}());
+        % endif
+        % endfor
+        Some(view)
     }
 
     /// Get the initial computed values.
@@ -1962,6 +1983,7 @@ impl ComputedValues {
                 writing_mode: WritingMode::empty(),
                 rules: None,
                 visited_style: None,
+                pyro_unvisited: None,
                 effective_zoom: crate::values::computed::Zoom::ONE,
                 flags: ComputedValueFlags::empty(),
             },
@@ -2052,6 +2074,7 @@ impl ComputedValuesInner {
                 writing_mode: self.writing_mode.clone(),
                 rules: self.rules.clone(),
                 visited_style: self.visited_style.clone(),
+                pyro_unvisited: self.pyro_unvisited.clone(),
                 flags,
                 effective_zoom: self.effective_zoom.clone(),
                 % for style_struct in data.active_style_structs():
@@ -2066,6 +2089,7 @@ impl ComputedValuesInner {
     pub fn visited_style(&self) -> Option<&ComputedValues> {
         self.visited_style.as_deref()
     }
+
 
     % for style_struct in data.active_style_structs():
         /// Clone the ${style_struct.name} struct.
@@ -2273,6 +2297,8 @@ pub struct StyleBuilder<'a> {
     /// for this element.  A element's "relevant link" is the element being
     /// matched if it is a link or the nearest ancestor link.
     pub visited_style: Option<Arc<ComputedValues>>,
+    /// pyro: see `ComputedValuesInner::pyro_unvisited`.
+    pub pyro_unvisited: Option<Arc<ComputedValues>>,
     % for style_struct in data.active_style_structs():
         ${style_struct.ident}: StyleStructRef<'a, style_structs::${style_struct.name}>,
     % endfor
@@ -2310,6 +2336,7 @@ impl<'a> StyleBuilder<'a> {
             color_scheme: inherited_style.get_inherited_ui().color_scheme_bits(),
             flags: Cell::new(flags),
             visited_style: None,
+            pyro_unvisited: None,
             % for style_struct in data.active_style_structs():
             % if style_struct.inherited:
             ${style_struct.ident}: StyleStructRef::Borrowed(inherited_style.get_${style_struct.name_lower}()),
@@ -2356,12 +2383,57 @@ impl<'a> StyleBuilder<'a> {
             color_scheme: style_to_derive_from.get_inherited_ui().color_scheme_bits(),
             flags: Cell::new(style_to_derive_from.flags),
             visited_style: None,
+            pyro_unvisited: None,
             % for style_struct in data.active_style_structs():
             ${style_struct.ident}: StyleStructRef::Borrowed(
                 style_to_derive_from.get_${style_struct.name_lower}()
             ),
             % endfor
         }
+    }
+
+    /// pyro: a visited link's (and its contents') used values of the visited-dependent properties
+    /// (the colours Chromium takes from `:visited` rules) come from its visited style. Every other
+    /// property keeps the style of the link as unvisited (CSS Selectors 4 § 7.2, privacy).
+    #[cfg(feature = "servo")]
+    pub fn pyro_take_visited_dependent(&mut self, visited: &ComputedValues) {
+        // The unvisited values first, for `getComputedStyle`: this element's, or for an inherited
+        // value its parent's unvisited one (contents of a visited link inherit its visited colour,
+        // and report the unvisited one as Chromium does).
+        let parent = self.inherited_style;
+        let mut unvisited = visited.clone();
+        % for property in data.longhands:
+        % if property.is_visited_dependent() and not property.logical:
+        {
+            let mine = &*self.${property.style_struct.ident};
+            % if property.style_struct.inherited:
+            let from_parent = parent.pyro_unvisited.as_deref().filter(|_| {
+                mine.${property.ident} == parent.get_${property.style_struct.name_lower}().${property.ident}
+            });
+            match from_parent {
+                Some(p) => unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(p.get_${property.style_struct.name_lower}()),
+                None => unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine),
+            }
+            % else:
+            unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine);
+            % endif
+        }
+        % endif
+        % endfor
+        self.pyro_unvisited = Some(Arc::new(unvisited));
+        % for property in data.longhands:
+        % if property.is_visited_dependent() and not property.logical:
+        {
+            let v = visited.get_${property.style_struct.name_lower}();
+            if !self.${property.style_struct.ident}.ptr_eq(v) {
+                % if not property.style_struct.inherited:
+                self.modified_reset = true;
+                % endif
+                self.${property.style_struct.ident}.mutate().copy_${property.ident}_from(v);
+            }
+        }
+        % endif
+        % endfor
     }
 
     /// Copy the reset properties from `style`.
@@ -2589,7 +2661,8 @@ impl<'a> StyleBuilder<'a> {
 
     /// Turns this `StyleBuilder` into a proper `ComputedValues` instance.
     pub fn build(self) -> Arc<ComputedValues> {
-        ComputedValues::new(
+        let pyro_unvisited = self.pyro_unvisited;
+        let mut style = ComputedValues::new(
             self.pseudo,
             self.substitution_functions.custom_properties,
             self.attribute_references,
@@ -2601,7 +2674,13 @@ impl<'a> StyleBuilder<'a> {
             % for style_struct in data.active_style_structs():
             self.${style_struct.ident}.build(),
             % endfor
-        )
+        );
+        if pyro_unvisited.is_some() {
+            if let Some(inner) = Arc::get_mut(&mut style) {
+                inner.inner.pyro_unvisited = pyro_unvisited;
+            }
+        }
+        style
     }
 
     /// Get the substitution function maps if necessary.
@@ -2808,7 +2887,8 @@ macro_rules! longhand_properties_idents {
 #[cfg(feature = "gecko")]
 size_of_test!(ComputedValues, 248);
 #[cfg(feature = "servo")]
-size_of_test!(ComputedValues, 232);
+// pyro: + `pyro_unvisited`.
+size_of_test!(ComputedValues, 240);
 
 // FFI relies on this.
 size_of_test!(Option<Arc<ComputedValues>>, 8);

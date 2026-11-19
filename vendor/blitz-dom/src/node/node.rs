@@ -168,6 +168,11 @@ bitflags! {
         /// pseudo-element boxes beside those boxes already (`scroll_markers`), in this block or
         /// beside it: its own construction and inline layout do not place them again.
         const WRAPS_BOX_RUN = 1 << 28;
+        /// pyro: a positioned (relative or sticky) inline box that is not atomic, listed in the paint
+        /// tree as a positioned entry of its own (`BaseDocument::positioned_inline_spans`): its content
+        /// paints there, in tree order with the other positioned boxes (CSS 2.1 Appendix E step 8).
+        /// Hit testing passes over it (its inline root hit-tests its text).
+        const INLINE_PASS_ENTRY = 1 << 29;
     }
 }
 
@@ -184,6 +189,12 @@ pub struct TransformContext {
     pub preserve_3d: Option<Context3D>,
     /// Its scroll offset (CSS px): its children move by it, its perspective origin does not.
     pub scroll: (f64, f64),
+    /// pyro: its border box size, border widths and paddings (top, right, bottom, left), for the
+    /// `offset-path: ray()` of the boxes it contains (`MotionContainingBlock`).
+    pub cb_size: (f64, f64),
+    pub cb_border: [f64; 4],
+    pub cb_padding: [f64; 4],
+    pub cb_radii: [kurbo::Vec2; 4],
 }
 
 /// pyro: a 3D rendering context as an element of it gives it to its children
@@ -874,13 +885,34 @@ impl Node {
         accumulated: Option<Context3D>,
     ) -> TransformContext {
         let scroll = self.scroll_offset();
+        let layout = self.final_layout();
+        let edges = |r: taffy::Rect<f32>| [r.top, r.right, r.bottom, r.left].map(f64::from);
         let mut context = TransformContext {
             scroll: (scroll.x, scroll.y),
+            cb_size: (layout.size.width as f64, layout.size.height as f64),
+            cb_border: edges(layout.border),
+            cb_padding: edges(layout.padding),
             ..Default::default()
         };
         let Some(s) = self.primary_styles() else {
             return context;
         };
+        {
+            let b = s.get_border();
+            let (w, h) = context.cb_size;
+            let r = |c: &style::values::computed::BorderCornerRadius| {
+                kurbo::Vec2::new(
+                    c.0.width.0.resolve(style::values::computed::CSSPixelLength::new(w as f32)).px() as f64,
+                    c.0.height.0.resolve(style::values::computed::CSSPixelLength::new(h as f32)).px() as f64,
+                )
+            };
+            context.cb_radii = [
+                r(&b.border_top_left_radius),
+                r(&b.border_top_right_radius),
+                r(&b.border_bottom_right_radius),
+                r(&b.border_bottom_left_radius),
+            ];
+        }
         let box_styles = s.get_box();
         // pyro: an anonymous box (a table wrapper, row group or row around a cell) passes on the
         // 3D rendering context it is in, as Chromium's do (`accumulated` is its parent's there).
@@ -919,7 +951,22 @@ impl Node {
             let size = (layout.size.width as f64, layout.size.height as f64);
             let box_styles = s.get_box();
             let reference_box = self.transform_reference_box(box_styles.transform_box);
+            // pyro: the containing block's geometry for `offset-path: ray()`, around the box.
+            let motion = (!matches!(box_styles.offset_path, style::values::generics::motion::GenericOffsetPath::None))
+                .then(|| crate::stylo_to_kurbo::MotionContainingBlock {
+                    border_box: kurbo::Rect::new(
+                        -layout.location.x as f64,
+                        -layout.location.y as f64,
+                        parent.cb_size.0 - layout.location.x as f64,
+                        parent.cb_size.1 - layout.location.y as f64,
+                    ),
+                    border: parent.cb_border,
+                    padding: parent.cb_padding,
+                    radii: parent.cb_radii,
+                });
+            let previous = crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.replace(motion));
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
+            crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.set(previous));
             // pyro: an anonymous box has no `transform-style` of its own: it is in its parent's
             // 3D rendering context, if any, and passes it on (CSS Transforms 2 WPT
             // transform-table-011: anonymous table boxes around a preserve-3d cell).
@@ -2396,7 +2443,21 @@ impl Node {
                 return true;
             }
         }
-        // TODO: contain
+        // pyro: layout and paint containment make a stacking context (CSS Contain 2 § 3.2, § 3.4),
+        // on a box they apply to: not a non-atomic inline box, nor an internal table box other
+        // than a cell (WPT css-contain `contain-paint-stacking-context-*`).
+        {
+            use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
+            if box_style.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT) {
+                let display = box_style.display;
+                let inline_box = display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow;
+                let table_internal =
+                    display.outside() == DisplayOutside::InternalTable && display.inside() != DisplayInside::TableCell;
+                if !inline_box && !table_internal && !display.is_contents() && !display.is_none() {
+                    return true;
+                }
+            }
+        }
 
         false
     }
@@ -2424,12 +2485,14 @@ impl Node {
             return true;
         }
 
-        style
-            .get_svg()
-            .mask_image
-            .0
-            .iter()
-            .any(|image| !matches!(image, GenericImage::None))
+        // pyro: a `mask-border` masks as a `mask-image` does.
+        !matches!(style.get_svg().mask_border_source, GenericImage::None)
+            || style
+                .get_svg()
+                .mask_image
+                .0
+                .iter()
+                .any(|image| !matches!(image, GenericImage::None))
     }
 
     /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
@@ -2461,6 +2524,12 @@ impl Node {
     ) -> Option<HitResult> {
         use style::computed_values::pointer_events::T as PointerEvents;
         use style::computed_values::visibility::T as Visibility;
+
+        // pyro: a positioned inline box listed in the paint tree for its paint order alone: its
+        // inline root hit-tests its text (`NodeFlags::INLINE_PASS_ENTRY`).
+        if self.flags.contains(NodeFlags::INLINE_PASS_ENTRY) {
+            return None;
+        }
 
         // Don't hit on visbility:hidden elements
         if let Some(style) = self.primary_styles() {

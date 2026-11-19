@@ -45,6 +45,23 @@ pub struct PageDom {
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
+    /// SVG `<use>` elements with an instance, and a fingerprint of what each
+    /// mirrors (`svg_use`).
+    pub(crate) use_hosts: RefCell<Vec<(NodeId, u64)>>,
+    /// [`PageDom::detach`] ran (`dispose` sets it too).
+    detached: Cell<bool>,
+    /// The document is a child frame's initial about:blank one, whose Window
+    /// its first same-origin document reuses (HTML "navigate", Window reuse):
+    /// its realm's `document` is an accessor of the page it shows, not a
+    /// constant ([`crate::adopt_window`]).
+    reusable_window: Cell<bool>,
+    /// The frame's `src` asked for about:blank, served by this document:
+    /// once loaded it counts as a committed about:blank navigation.
+    blank_requested: Cell<bool>,
+    /// Navigations of the document's frame this document started (links,
+    /// forms, `location`, `navigation.navigate`): a form submission whose
+    /// `formdata` event started one is dropped (`form_submission`).
+    navigation_requests: Cell<u32>,
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
     /// The document's origin is opaque although its URL's is not (a sandboxed
@@ -84,6 +101,8 @@ pub struct PageDom {
     pub(crate) custom_elements: RefCell<crate::custom::Registry>,
     pub(crate) header_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// install.js's `blobParts` conversion, per realm (file.rs).
+    pub(crate) blob_parts: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
     /// node (or an active non-node target): (realm, target) -> wrapper.
     pub(crate) pinned: RefCell<FxHashMap<(RealmId, TargetKey), Persistent>>,
@@ -142,6 +161,9 @@ pub struct PageDom {
     /// exception is being dispatched at the Window, so an exception thrown
     /// by one of its listeners is reported without a second event.
     pub(crate) error_reporting: Cell<bool>,
+    /// Error events report_exception fired at a worker's global already: the
+    /// worker's later report of the same exception goes only to its owner.
+    pub(crate) reported_errors: Cell<u32>,
     /// (event id, realm) while an `error` event for an uncaught exception
     /// is dispatched: as in Chrome, only the listeners of the world that
     /// threw see it (an isolated world's error skips the page's `onerror`,
@@ -274,6 +296,9 @@ pub struct PageDom {
     pub(crate) script_parser_active: Cell<bool>,
     pub(crate) script_parser_close: Cell<bool>,
     pub(crate) script_nesting: Cell<u32>,
+    /// The eval/Function Trusted Types enforcement last given to the main realm
+    /// (`trusted_types::sync_compile_strings`): 0 none, 1 report-only, 2 enforced.
+    pub(crate) tt_eval_level: Cell<u8>,
     /// The network parser, lent by the loader while a script it reached runs:
     /// that script's `document.write`s parse at its insertion point.
     pub(crate) network_parser: RefCell<Option<pyro_dom::parse::DocumentParser>>,
@@ -299,9 +324,19 @@ pub struct PageDom {
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
+    /// The text of each sheet a `<style>` imported, by its absolute URL (for
+    /// `CSSImportRule.styleSheet`); the embedder provides it as it loads.
+    pub(crate) imported_sheets: RefCell<FxHashMap<String, String>>,
     /// The constructed sheets each document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
+    /// The CSS-connected font faces of the document as of an author sheets key (`css_font_faces`).
+    css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
+    /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
+    pub(crate) font_loads: Cell<u32>,
+    font_delay_since: Cell<Option<std::time::Instant>>,
+    /// The font families elements name, as of a DOM version (`used_face_loading`).
+    used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
     /// Faux layout + style engine of the displayed document. Read it with
@@ -483,8 +518,25 @@ pub enum FocusTarget {
     Blur(NodeId),
 }
 
+/// Where a document is shown ([`PageHooks::container`]).
+pub enum FrameContainer {
+    /// The document of a top-level browsing context.
+    Top,
+    /// A child frame's document: the parent document and the frame's owner
+    /// element in it.
+    Frame(Rc<PageDom>, NodeId),
+    /// Not shown in a page any more (its frame was removed or navigated).
+    Detached,
+}
+
 /// Embedder (pyro-browser) services the bindings need.
 pub trait PageHooks {
+    /// Where the document is shown: geometry across frames (an
+    /// IntersectionObserver's implicit root is the top-level document's
+    /// viewport) walks up through it.
+    fn container(&self) -> FrameContainer {
+        FrameContainer::Top
+    }
     /// Observation-only (no JS): the frame that showed this document was
     /// removed from its page (its iframe left the document). Such a document
     /// is no longer fully active although script of it may still be running.
@@ -656,6 +708,11 @@ impl PageDom {
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             disposed: Cell::new(false),
+            use_hosts: RefCell::new(Vec::new()),
+            detached: Cell::new(false),
+            reusable_window: Cell::new(false),
+            blank_requested: Cell::new(false),
+            navigation_requests: Cell::new(0),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
             opaque_origin: Cell::new(false),
@@ -673,6 +730,7 @@ impl PageDom {
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
             data_view_readers: RefCell::new(FxHashMap::default()),
+            blob_parts: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
             custom_elements: RefCell::new(crate::custom::Registry::default()),
@@ -693,6 +751,7 @@ impl PageDom {
             next_event: Cell::new(1),
             error_reporting: Cell::new(false),
             error_event_world: Cell::new(None),
+            reported_errors: Cell::new(0),
             event_clock: RefCell::new(None),
             event_unforgeables: RefCell::new(FxHashMap::default()),
             animation_events: Default::default(),
@@ -754,6 +813,7 @@ impl PageDom {
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
             script_nesting: Cell::new(0),
+            tt_eval_level: Cell::new(0),
             network_parser: RefCell::new(None),
             network_parser_lent: Cell::new(false),
             written_scripts: RefCell::new(Vec::new()),
@@ -766,7 +826,12 @@ impl PageDom {
             popover: Default::default(),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
+            imported_sheets: RefCell::new(FxHashMap::default()),
             adopted_sheets: RefCell::new(FxHashMap::default()),
+            css_font_faces: RefCell::new(None),
+            font_loads: Cell::new(0),
+            font_delay_since: Cell::new(None),
+            used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
@@ -850,7 +915,7 @@ impl PageDom {
     /// removed. Callbacks of a document that is not fully active do not run
     /// ("check if we can run script").
     pub fn is_fully_active(&self) -> bool {
-        !self.disposed.get() && !self.hooks.borrow().as_ref().is_some_and(|h| h.frame_detached())
+        !self.disposed.get() && !self.detached.get() && !self.hooks.borrow().as_ref().is_some_and(|h| h.frame_detached())
     }
 
     /// Release document-owned binding state before disposing its realms.
@@ -861,6 +926,58 @@ impl PageDom {
         if self.disposed.replace(true) {
             return;
         }
+        if !self.detached.replace(true) {
+            self.release_activity();
+        }
+        self.realms.borrow_mut().clear();
+        drop(self.main_world.take());
+    }
+
+    /// The document's frame navigated away from it, but script of other
+    /// documents may still hold it: HTML keeps such a Document usable, only
+    /// not fully active. Everything the document does on its own ends here
+    /// (loads, timers' owners, observers, workers, ports, focus, its window
+    /// as an event target, the embedder hooks) and every root the bindings
+    /// held into its realms is dropped, so that the realms can linger
+    /// (`pyro_js::Realm::linger`) and go when nothing reaches them. DOM calls
+    /// on it keep working. [`PageDom::dispose`] later finishes it.
+    pub fn detach(&self) {
+        if self.disposed.get() || self.detached.replace(true) {
+            return;
+        }
+        self.release_activity();
+    }
+
+    /// Marks the document as an initial about:blank one whose Window the
+    /// next same-origin document may reuse; set before its realm is made.
+    pub fn set_reusable_window(&self, reusable: bool) {
+        self.reusable_window.set(reusable);
+    }
+
+    /// Whether [`PageDom::set_reusable_window`] marked the document.
+    pub fn reusable_window(&self) -> bool {
+        self.reusable_window.get()
+    }
+
+    /// The owner's `src` (empty or about:blank) navigated to about:blank,
+    /// which this initial document serves. Browsers reuse its Window only
+    /// for a navigation that starts before that load (WPT
+    /// window-reuse-in-nested-browsing-contexts).
+    pub fn note_blank_requested(&self) {
+        self.blank_requested.set(true);
+    }
+
+    /// Whether [`PageDom::note_blank_requested`] ran.
+    pub fn blank_requested(&self) -> bool {
+        self.blank_requested.get()
+    }
+
+    /// Whether [`PageDom::detach`] (or `dispose`) ran.
+    pub fn is_detached(&self) -> bool {
+        self.detached.get()
+    }
+
+    fn release_activity(&self) {
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
         self.dom.borrow_mut().unwatch_iframes(self.document());
@@ -879,8 +996,6 @@ impl PageDom {
         crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         crate::media::dispose(self);
-        self.realms.borrow_mut().clear();
-        drop(self.main_world.take());
         // Drop roots and embedder hooks outside RefCell borrows: destructors
         // can release wrappers or other resources owned by this page.
         drop(self.hooks.take());
@@ -898,6 +1013,7 @@ impl PageDom {
         self.animation_events.clear();
         drop(self.pending_port_reconcile.take());
         drop(self.data_view_readers.take());
+        drop(self.blob_parts.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
         // A drag in flight owns a Persistent to its DataTransfer wrapper.
@@ -1090,6 +1206,123 @@ impl PageDom {
         if let Ok(dom) = self.dom.try_borrow() {
             layout.start_font_loads(&dom);
         }
+    }
+
+    /// pyro: the layout engine's state of the font at `url` (`FontFace.status`).
+    pub fn font_url_state(&self, url: &str) -> Option<bool> {
+        self.try_layout()?.font_url_state(url)
+    }
+
+    /// The `@font-face` rules of the document's sheets: its CSS-connected `FontFace`s, in order
+    /// (sheets in shadow trees left out, as in Chromium).
+    pub fn css_font_faces(&self) -> Rc<Vec<pyro_dom::font_face::CssFace>> {
+        let Some(layout) = self.try_layout() else { return Rc::default() };
+        let Ok(dom) = self.dom.try_borrow() else { return Rc::default() };
+        let style = layout.style();
+        let key = style.author_sheets_key(&dom);
+        if let Some((k, faces)) = &*self.css_font_faces.borrow() {
+            if *k == key {
+                return faces.clone();
+            }
+        }
+        let doc = self.document();
+        let base = dom.document_base_url(doc).ok().map(str::to_owned).unwrap_or_default();
+        let mut faces = Vec::new();
+        style.for_each_author_sheet_owned(&dom, &mut |owner, text| {
+            let Some(owner) = owner else { return };
+            if dom.root_node(owner, false).is_ok_and(|root| root != doc) {
+                return;
+            }
+            let link = dom.element(owner).is_ok_and(|e| &*e.name.local == "link");
+            let sheet_base = link
+                .then(|| dom.get_attribute(owner, "href").ok().flatten())
+                .flatten()
+                .and_then(|href| url::Url::parse(&base).ok()?.join(href.trim()).ok())
+                .map_or_else(|| base.clone(), |u| u.to_string());
+            pyro_dom::font_face::css_faces(text, &sheet_base, &mut faces);
+        });
+        let faces = Rc::new(faces);
+        *self.css_font_faces.borrow_mut() = Some((key, faces.clone()));
+        faces
+    }
+
+    /// The `@font-face` rules of the faces scripts added to `document.fonts`.
+    pub(crate) fn set_script_fonts(&self, css: Option<Rc<str>>) {
+        self.layout.borrow_mut().style_mut().set_script_fonts(css);
+    }
+
+    /// Whether web fonts delay the document's load event, as font loads do in Chromium: a
+    /// `FontFace` load in flight or a face the layout engine is fetching for the document's
+    /// styles. At most 10 s, so a font that never answers cannot hold `load` back for good.
+    pub fn fonts_delay_load(&self) -> bool {
+        // A face of the document's sheets delays the load event only once text uses its family:
+        // Chromium starts a face's load when layout first needs it, while the layout engine here
+        // fetches every `@font-face` source when the sheet arrives.
+        // Checked at every microtask checkpoint while loading: from the last completed layout,
+        // never running layout (a sync per checkpoint pinned a core on script-heavy pages).
+        let pending = self.font_loads.get() > 0 || (self.fonts_pending_as_laid_out() && self.used_face_loading());
+        if !pending {
+            return false;
+        }
+        let since = *self.font_delay_since.get().get_or_insert_with(std::time::Instant::now);
+        self.font_delay_since.set(Some(since));
+        since.elapsed() < std::time::Duration::from_secs(10)
+    }
+
+    /// Whether a face of the document's sheets that the layout engine is still fetching has a
+    /// family some element's `font-family` names.
+    fn used_face_loading(&self) -> bool {
+        let faces = self.css_font_faces();
+        let loading: Vec<String> = faces
+            .iter()
+            .filter(|face| {
+                face.sources.iter().any(|source| match source {
+                    pyro_dom::font_face::FontSource::Url(url, _) => self.font_url_state(url) == Some(false),
+                    pyro_dom::font_face::FontSource::Local(_) => false,
+                })
+            })
+            .map(|face| face.family.to_lowercase())
+            .collect();
+        if loading.is_empty() {
+            return false;
+        }
+        let Some(layout) = self.try_layout() else { return false };
+        let Ok(dom) = self.dom.try_borrow() else { return false };
+        let version = dom.version();
+        if let Some((v, used)) = &*self.used_font_families.borrow() {
+            if *v == version {
+                return loading.iter().any(|family| used.contains(family));
+            }
+        }
+        // The families as of the last completed layout: walking every element's computed style
+        // while the layout is stale would run it (this is asked at every checkpoint). None
+        // collected yet: no face delays the load.
+        if !layout.style().engine_current(&dom) {
+            return self.used_font_families.borrow().as_ref().is_some_and(|(_, used)| loading.iter().any(|family| used.contains(family)));
+        }
+        let mut used = std::collections::HashSet::new();
+        if let Ok(nodes) = dom.descendants(self.document()) {
+            for id in nodes {
+                if dom.element(id).is_err() {
+                    continue;
+                }
+                if let Some(families) = layout.style().computed_value(&dom, id, "font-family") {
+                    for family in families.split(',') {
+                        used.insert(family.trim().trim_matches(['"', '\'']).to_lowercase());
+                    }
+                }
+            }
+        }
+        let hit = loading.iter().any(|family| used.contains(family));
+        *self.used_font_families.borrow_mut() = Some((version, used));
+        hit
+    }
+
+    /// [`pyro_dom::layout::Layout::fonts_pending_as_laid_out`].
+    pub fn fonts_pending_as_laid_out(&self) -> bool {
+        let Some(layout) = self.try_layout() else { return false };
+        let Ok(dom) = self.dom.try_borrow() else { return false };
+        layout.fonts_pending_as_laid_out(&dom)
     }
 
     /// pyro: whether web fonts are still loading (`document.fonts`).
@@ -1582,6 +1815,7 @@ impl PageDom {
         crate::custom::run_upgrades(self);
         crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
+        crate::svg_use::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
         self.frame_resize_after_task();
@@ -1595,6 +1829,9 @@ impl PageDom {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
         self.data_view_readers.borrow_mut().retain(|realm, _| {
+            self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
+        });
+        self.blob_parts.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
         let pending = std::mem::take(&mut *self.pending_release.borrow_mut());
@@ -1713,7 +1950,29 @@ impl PageDom {
             h.download(request);
         }
     }
+    /// The embedder started a navigation of this document's frame on the
+    /// document's behalf (script `location`/`navigation.navigate`), outside
+    /// [`PageDom::navigate`].
+    pub fn note_navigation_request(&self) {
+        self.navigation_requests.set(self.navigation_requests.get().wrapping_add(1));
+    }
+    pub(crate) fn navigation_requests(&self) -> u32 {
+        self.navigation_requests.get()
+    }
+    /// Where the document is shown ([`PageHooks::container`]).
+    pub(crate) fn container(&self) -> FrameContainer {
+        if self.disposed.get() || self.detached.get() {
+            return FrameContainer::Detached;
+        }
+        match self.hooks() {
+            Some(h) => h.container(),
+            None => FrameContainer::Detached,
+        }
+    }
     pub(crate) fn navigate(&self, req: NavigationRequest) {
+        if req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
+            self.note_navigation_request();
+        }
         if self.scripting_disabled() && pyro_net::Url::parse(&req.url).is_ok_and(|url| url.scheme() == "javascript") {
             return;
         }
@@ -2256,5 +2515,14 @@ impl PageDom {
     /// Borrow helper for bindings.
     pub fn with_dom<R>(&self, f: impl FnOnce(&mut Dom) -> R) -> R {
         f(&mut self.dom.borrow_mut())
+    }
+}
+
+impl PageDom {
+    /// A sheet a `<style>` imported loaded: `CSSImportRule.styleSheet` lists
+    /// its rules. `url` is the absolute URL the rule names (and, after a
+    /// redirect, the final one too).
+    pub fn provide_imported_sheet(&self, url: &str, text: &str) {
+        self.imported_sheets.borrow_mut().insert(url.to_owned(), text.to_owned());
     }
 }

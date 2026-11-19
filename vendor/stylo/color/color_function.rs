@@ -199,6 +199,31 @@ impl<Color> ColorFunction<Color> {
         // Builds a variant where the origin is converted to `$space` (the
         // function's color space) before its channels are read.
         macro_rules! convert {
+            ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr, legacy_hue) => {{
+                // pyro: the hue a legacy sRGB origin (`rgb()`, a hex color or a keyword) has
+                // when it is achromatic reads as 0 rather than missing. pyro's CSSOM keeps inline
+                // styles as text, so an `hsl()`/`hwb()` origin comes back as `rgb()` and its
+                // authored hue would otherwise be lost to the conversion.
+                let converted = abs_origin.map(|o| {
+                    let mut c = o.to_color_space($space);
+                    if o.color_space == ColorSpace::Srgb
+                        && o.flags.contains(ColorFlags::IS_LEGACY_SRGB)
+                        && !o.flags.intersects(ColorFlags::NONE_FLAGS)
+                        && c.c0().is_none()
+                    {
+                        c.components.0 = 0.0;
+                        c.flags.remove(ColorFlags::C0_IS_NONE);
+                    }
+                    c
+                });
+                ColorFunction::$variant(
+                    Optional::from(origin),
+                    $c0.to_computed_value(context, converted.as_ref())?,
+                    $c1.to_computed_value(context, converted.as_ref())?,
+                    $c2.to_computed_value(context, converted.as_ref())?,
+                    $alpha.to_computed_value(context, converted.as_ref())?,
+                )
+            }};
             ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr) => {{
                 let converted = abs_origin.map(|o| o.to_color_space($space));
                 ColorFunction::$variant(
@@ -234,10 +259,10 @@ impl<Color> ColorFunction<Color> {
                 )
             },
             ColorFunction::Hsl(_, c0, c1, c2, alpha) => {
-                convert!(Hsl, ColorSpace::Hsl, c0, c1, c2, alpha)
+                convert!(Hsl, ColorSpace::Hsl, c0, c1, c2, alpha, legacy_hue)
             },
             ColorFunction::Hwb(_, c0, c1, c2, alpha) => {
-                convert!(Hwb, ColorSpace::Hwb, c0, c1, c2, alpha)
+                convert!(Hwb, ColorSpace::Hwb, c0, c1, c2, alpha, legacy_hue)
             },
             ColorFunction::Lab(_, c0, c1, c2, alpha) => {
                 convert!(Lab, ColorSpace::Lab, c0, c1, c2, alpha)

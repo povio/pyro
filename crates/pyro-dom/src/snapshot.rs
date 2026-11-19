@@ -447,6 +447,10 @@ impl Dom {
                                 ("option", "selected") => html,
                                 ("link", "href") => href.is_some(),
                                 ("iframe" | "frame", "src" | "srcdoc") => html,
+                                // An `<object>` showing a frame document: its `data` is not an image.
+                                ("object", "data" | "srcdoc") | ("embed", "src" | "srcdoc") => {
+                                    html && self.frame_documents.contains_key(&n)
+                                }
                                 ("img", "src") => image_source.is_some(),
                                 _ => false,
                             };
@@ -484,7 +488,7 @@ impl Dom {
                             }
                         }
                     }
-                    if html && matches!(local, "iframe" | "frame") {
+                    if html && matches!(local, "iframe" | "frame" | "object" | "embed") {
                         if let Some(frame) = self.frame_documents.get(&n) {
                             attrs.push(RAttr { name: plain("srcdoc"), value: Cow::Borrowed(&frame.html), valueless: false });
                             attrs.push(RAttr {
@@ -535,7 +539,9 @@ impl Dom {
                     if slot_kids.as_ref().is_some_and(|(_, _, assigned)| *assigned) {
                         attrs.push(marker(ASSIGNED_SLOT_ATTR));
                     }
-                    if e.shadow_root != NIL {
+                    // A user-agent shadow root (`<use>` instance) renders as if absent.
+                    let rendered_shadow = e.shadow_root != NIL && !self.has_ua_shadow_idx(e.shadow_root);
+                    if rendered_shadow {
                         attrs.push(marker(SHADOW_HOST_ATTR));
                     }
                     let tag = self.serialized_tag(n);
@@ -561,12 +567,12 @@ impl Dom {
                         stack.push(Step::Synthetic(n, self.value(id).unwrap_or_default(), TextKind::Textarea));
                         continue;
                     }
-                    if html && matches!(local, "iframe" | "frame") {
+                    if html && (matches!(local, "iframe" | "frame") || (local == "object" && self.frame_documents.contains_key(&n))) {
                         continue;
                     }
                     if let Some((kids, kids_scope, _)) = slot_kids {
                         push_children(&mut stack, kids, kids_scope);
-                    } else if e.shadow_root != NIL {
+                    } else if rendered_shadow {
                         hosts.push((n, scope));
                         self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
@@ -591,6 +597,7 @@ impl Dom {
     /// content gives its sheet text.
     pub fn render_delta(&self, doc: NodeId, since: u64, opts: &RenderHtml<'_>) -> Option<RenderDelta> {
         let d = self.check(doc).ok()?;
+        // (User-agent shadow trees too: their nodes are not in the render tree.)
         if self.shadow_root_count() != 0 || opts.mark.is_some() || opts.adopted.is_some() {
             return None;
         }
@@ -765,7 +772,8 @@ impl Dom {
             let is_style = style_owner(i) == Some(i);
             // A frame's own attributes (its children are not rendered, it is).
             let is_frame = matches!(&self.n(i).kind, NodeKind::Element(e)
-                if e.is_html() && matches!(&*e.name.local, "iframe" | "frame"));
+                if e.is_html() && (matches!(&*e.name.local, "iframe" | "frame")
+                    || (matches!(&*e.name.local, "object" | "embed") && self.frame_documents.contains_key(&i))));
             let own_attributes = is_style || is_frame || textarea_attributes.get(&i) == Some(&true);
             let place =
                 if own_attributes && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };

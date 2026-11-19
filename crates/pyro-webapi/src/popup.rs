@@ -51,6 +51,10 @@ pub struct PopupState {
     /// The opener set the popup's `opener` to null (`popup.opener = null`,
     /// before the popup's page existed or since): it reads null on both sides.
     opener_cleared: Cell<bool>,
+    /// The popup's initial about:blank document, made by the embedder when
+    /// `window.open` ran (HTML creates it synchronously), until the embedder
+    /// turns it into the popup page (`PopupTicket::take_prebuilt`).
+    prebuilt: RefCell<Option<Box<dyn std::any::Any>>>,
 }
 
 impl std::fmt::Debug for PopupState {
@@ -87,6 +91,7 @@ impl PopupTicket {
             session,
             page: RefCell::new(Weak::new()),
             opener_cleared: Cell::new(false),
+            prebuilt: RefCell::new(None),
         });
         (Rc::new(Self(state.clone())), state)
     }
@@ -120,6 +125,17 @@ impl PopupTicket {
     /// one), through which the opener's stand-in reaches the popup.
     pub fn attach_page(&self, page: &Rc<PageDom>) {
         *self.0.page.borrow_mut() = Rc::downgrade(page);
+    }
+
+    /// Keeps the embedder's popup page made ahead of its creation (its
+    /// initial about:blank document, already attached with `attach_page`).
+    pub fn set_prebuilt(&self, prebuilt: Box<dyn std::any::Any>) {
+        *self.0.prebuilt.borrow_mut() = Some(prebuilt);
+    }
+
+    /// The popup page made ahead, once.
+    pub fn take_prebuilt(&self) -> Option<Box<dyn std::any::Any>> {
+        self.0.prebuilt.borrow_mut().take()
     }
 }
 

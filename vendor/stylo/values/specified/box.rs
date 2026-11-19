@@ -1418,11 +1418,17 @@ impl Parse for WillChange {
     ToShmem,
     ToTyped,
 )]
-#[css(bitflags(single = "none,auto,manipulation", mixed = "pan-x,pan-y,pinch-zoom"))]
+// pyro: `pan-left`, `pan-right`, `pan-up` and `pan-down` too (Pointer Events 3, as Chromium):
+// `[pan-x | pan-left | pan-right] || [pan-y | pan-up | pan-down] || pinch-zoom`.
+#[css(bitflags(
+    single = "none,auto,manipulation",
+    mixed = "pan-x,pan-left,pan-right,pan-y,pan-up,pan-down,pinch-zoom",
+    validate_mixed = "Self::validate_mixed_flags",
+))]
 #[repr(C)]
-pub struct TouchAction(u8);
+pub struct TouchAction(u16);
 bitflags! {
-    impl TouchAction: u8 {
+    impl TouchAction: u16 {
         /// `none` variant
         const NONE = 1 << 0;
         /// `auto` variant
@@ -1435,10 +1441,25 @@ bitflags! {
         const MANIPULATION = 1 << 4;
         /// `pinch-zoom` variant
         const PINCH_ZOOM = 1 << 5;
+        /// pyro: `pan-left` variant
+        const PAN_LEFT = 1 << 6;
+        /// pyro: `pan-right` variant
+        const PAN_RIGHT = 1 << 7;
+        /// pyro: `pan-up` variant
+        const PAN_UP = 1 << 8;
+        /// pyro: `pan-down` variant
+        const PAN_DOWN = 1 << 9;
     }
 }
 
 impl TouchAction {
+    /// pyro: one keyword of each axis at most.
+    fn validate_mixed_flags(&self) -> bool {
+        let x = self.intersection(Self::PAN_X | Self::PAN_LEFT | Self::PAN_RIGHT);
+        let y = self.intersection(Self::PAN_Y | Self::PAN_UP | Self::PAN_DOWN);
+        x.bits().count_ones() <= 1 && y.bits().count_ones() <= 1
+    }
+
     #[inline]
     /// Get default `touch-action` as `auto`
     pub fn auto() -> TouchAction {

@@ -1,0 +1,168 @@
+Pyro patch 0035: Trusted Types hooks for eval and Function.
+
+The C-API global used JSGlobalObject's codeForEval and canCompileStrings, so an embedder could
+not apply Trusted Types to string compilation. JSGlobalContextSetCompileStringsCallbacks
+(API/JSForkPrivate.h) gives JSAPIGlobalObject per-global callbacks for both:
+codeForEval turns a TrustedScript passed to eval into its code, canCompileStrings runs the
+default policy and the CSP check (and may throw). JSGlobalContextSetTrustedTypesEnforcement sets
+the global's require-trusted-types-for state, which decides whether canCompileStrings is asked.
+
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+index c555378a93..76cd1f6850 100644
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+@@ -40,6 +40,8 @@
+ #include "ImportMap.h"
+ #include "JSBaseInternal.h"
+ #include "JSModuleLoader.h"
++#include "JSForkPrivate.h"
++#include "JSStringRef.h"
+ #include "JSModuleLoaderRefPrivate.h"
+ #include "JSNativeStdFunction.h"
+ #include "JSObjectInlines.h"
+@@ -95,6 +97,49 @@ void JSAPIGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globa
+     Base::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+ }
+ 
++// Trusted Types for eval and Function, through the embedder's callbacks
++// (JSGlobalContextSetCompileStringsCallbacks): without them, the defaults.
++String JSAPIGlobalObject::codeForEval(JSGlobalObject* globalObject, JSValue value)
++{
++    auto* thisObject = uncheckedDowncast<JSAPIGlobalObject>(globalObject);
++    if (!thisObject->m_codeForEvalCallback || !value.isObject())
++        return nullString();
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    auto callback = reinterpret_cast<JSCodeForEvalCallback>(thisObject->m_codeForEvalCallback);
++    JSValueRef exception = nullptr;
++    JSStringRef result = callback(toRef(globalObject), toRef(asObject(value)), &exception);
++    String code = result ? result->string() : nullString();
++    if (result)
++        JSStringRelease(result);
++    if (exception) {
++        throwException(globalObject, scope, toJS(globalObject, exception));
++        return nullString();
++    }
++    return code;
++}
++
++bool JSAPIGlobalObject::canCompileStrings(JSGlobalObject* globalObject, CompilationType type, String code, const ArgList& args)
++{
++    auto* thisObject = uncheckedDowncast<JSAPIGlobalObject>(globalObject);
++    if (!thisObject->m_canCompileStringsCallback)
++        return true;
++    VM& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    auto callback = reinterpret_cast<JSCanCompileStringsCallback>(thisObject->m_canCompileStringsCallback);
++    Vector<JSValueRef, 8> arguments;
++    for (size_t i = 0; i < args.size(); ++i)
++        arguments.append(toRef(globalObject, args.at(i)));
++    auto codeRef = OpaqueJSString::tryCreate(code.isNull() ? emptyString() : code);
++    JSValueRef exception = nullptr;
++    bool allowed = callback(toRef(globalObject), static_cast<int>(type), codeRef.get(), arguments.size(), arguments.span().data(), &exception);
++    if (exception) {
++        throwException(globalObject, scope, toJS(globalObject, exception));
++        return false;
++    }
++    return allowed;
++}
++
+ // The module hooks below follow JSAPIGlobalObject.mm, with the delegate replaced
+ // by a C callback (JSModuleLoaderRefPrivate.h).
+ 
+@@ -449,6 +494,31 @@ bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, JSModuleLoa
+     return true;
+ }
+ 
++bool JSGlobalContextSetCompileStringsCallbacks(JSGlobalContextRef ctx, JSCodeForEvalCallback codeForEval, JSCanCompileStringsCallback canCompileStrings)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject)
++        return false;
++    apiGlobalObject->setCompileStringsCallbacks(reinterpret_cast<void*>(codeForEval), reinterpret_cast<void*>(canCompileStrings));
++    return true;
++}
++
++void JSGlobalContextSetTrustedTypesEnforcement(JSGlobalContextRef ctx, JSTrustedTypesEnforcement enforcement)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    TrustedTypesEnforcement value = TrustedTypesEnforcement::None;
++    switch (enforcement) {
++    case kJSTrustedTypesReportOnly: value = TrustedTypesEnforcement::ReportOnly; break;
++    case kJSTrustedTypesEnforced: value = TrustedTypesEnforcement::Enforced; break;
++    case kJSTrustedTypesEnforcedWithEvalEnabled: value = TrustedTypesEnforcement::EnforcedWithEvalEnabled; break;
++    default: break;
++    }
++    globalObject->setTrustedTypesEnforcement(value);
++}
++
+ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef* messages)
+ {
+     JSGlobalObject* globalObject = toJS(ctx);
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+index 45fb916f58..b3770a7313 100644
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+@@ -70,6 +70,13 @@ public:
+     // From the first import map on, specifiers resolve through importMap().
+     void didAddImportMap() { m_hasImportMap = true; }
+     std::expected<String, String> resolveModuleSpecifier(const String& specifier, const String& referrer);
++    // String compilation hooks (JSForkPrivate.h): a JSCodeForEvalCallback and a
++    // JSCanCompileStringsCallback.
++    void setCompileStringsCallbacks(void* codeForEval, void* canCompileStrings)
++    {
++        m_codeForEvalCallback = codeForEval;
++        m_canCompileStringsCallback = canCompileStrings;
++    }
+ #endif
+ 
+ private:
+@@ -82,8 +89,14 @@ private:
+     static JSPromise* moduleLoaderFetch(JSGlobalObject*, JSModuleLoader*, JSValue, const String&, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
+     static JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSModuleLoader*, JSValue, JSModuleRecord*, RefPtr<ScriptFetcher>);
+     static JSValue moduleLoaderEvaluate(JSGlobalObject*, JSModuleLoader*, JSValue, JSValue, RefPtr<ScriptFetcher>, JSValue, JSValue);
++#if !JSC_OBJC_API_ENABLED
++    static String codeForEval(JSGlobalObject*, JSValue);
++    static bool canCompileStrings(JSGlobalObject*, CompilationType, String, const ArgList&);
++#endif
+ 
+ #if !JSC_OBJC_API_ENABLED
++    void* m_codeForEvalCallback { nullptr };
++    void* m_canCompileStringsCallback { nullptr };
+     void* m_moduleLoaderCallback { nullptr };
+     void* m_moduleLoaderInfo { nullptr };
+     void* m_moduleBaseURLCallback { nullptr };
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 3424f71449..0d6e759264 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -272,6 +272,26 @@ JS_EXPORT const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef va
+    when nothing watches the name. May not run JavaScript; callable with the DOM borrowed. */
+ JS_EXPORT void JSAddImpureProperty(JSContextRef ctx, JSStringRef propertyName);
+ 
++/* Trusted Types for string compilation (eval, Function). `codeForEval` gets an object
++   passed to eval and returns its code as a new string the caller releases (a TrustedScript),
++   or NULL to leave it unevaluated, as eval does with any other object. `canCompileStrings`
++   decides whether `code` may compile: `compilationType` is 0 for Function (with the
++   constructor's arguments), 1 for direct and 2 for indirect eval. It is asked only while the
++   global's enforcement (below) is not kJSTrustedTypesNone, and not for an eval of a
++   TrustedScript. Either may set `*exception`. False when `ctx` has no C-API global. */
++typedef JSStringRef (*JSCodeForEvalCallback)(JSContextRef ctx, JSObjectRef value, JSValueRef* exception);
++typedef bool (*JSCanCompileStringsCallback)(JSContextRef ctx, int compilationType, JSStringRef code, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
++JS_EXPORT bool JSGlobalContextSetCompileStringsCallbacks(JSGlobalContextRef ctx, JSCodeForEvalCallback codeForEval, JSCanCompileStringsCallback canCompileStrings);
++
++typedef enum {
++    kJSTrustedTypesNone = 0,
++    kJSTrustedTypesReportOnly = 1,
++    kJSTrustedTypesEnforced = 2,
++    kJSTrustedTypesEnforcedWithEvalEnabled = 3,
++} JSTrustedTypesEnforcement;
++/* The global's `require-trusted-types-for 'script'` state for eval and Function. */
++JS_EXPORT void JSGlobalContextSetTrustedTypesEnforcement(JSGlobalContextRef ctx, JSTrustedTypesEnforcement enforcement);
++
+ #ifdef __cplusplus
+ }
+ #endif

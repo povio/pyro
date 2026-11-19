@@ -168,6 +168,7 @@ fn a_time_zone_override_goes_back_to_the_hosts() {
         zone
     };
     let host = zone(&engine);
+    clear_stack();
     assert_eq!(engine.recycle(Some(clean)), Ok(()));
     let other = if host == "Asia/Tokyo" { "America/Lima" } else { "Asia/Tokyo" };
     if !engine.set_time_zone(Some(other)).unwrap_or(false) {

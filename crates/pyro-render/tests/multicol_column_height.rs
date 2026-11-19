@@ -1,0 +1,128 @@
+//! css-multicol-2 `column-height` and `column-wrap`: a fixed column height, columns wrapping into
+//! rows `row-gap` apart, the container as tall as its rows; `column-height` alone makes a
+//! multi-column container, and the `columns` shorthand takes it after a slash.
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+use pyro_dom::{
+    parse::{parse_document, DomRef},
+    snapshot::{render_key, RenderHtml, RenderNodeKind},
+};
+use pyro_render::*;
+
+struct NoFetch;
+impl Fetcher for NoFetch {
+    fn fetch(&self, _: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err("offline".into()));
+    }
+}
+
+fn fetcher() -> Arc<dyn Fetcher> {
+    Arc::new(NoFetch)
+}
+
+fn boxes(html: &str, ids: &[&str]) -> Vec<[f64; 4]> {
+    use_fork_safe_fonts();
+    let dom: DomRef = Rc::new(RefCell::new(pyro_dom::Dom::new()));
+    let doc = parse_document(&dom, "http://test/", html);
+    let d = dom.borrow();
+    let keys: Vec<_> = ids.iter().map(|id| render_key(d.get_element_by_id(doc, id).unwrap().unwrap())).collect();
+    let tree = d
+        .render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
+    let tree = Tree {
+        nodes: tree
+            .nodes
+            .into_iter()
+            .map(|node| TreeNode {
+                key: node.key,
+                parent: node.parent,
+                kind: match node.kind {
+                    RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+                    RenderNodeKind::Text(text) => TreeKind::Text(text),
+                },
+            })
+            .collect(),
+    };
+    let snap = Snapshot {
+        base_url: "http://test/".into(),
+        width: 800,
+        height: 600,
+        device_scale_factor: 1.0,
+        live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
+        ..Default::default()
+    };
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&snap, &fetcher()).unwrap();
+    keys.into_iter()
+        .map(|key| {
+            let b = renderer.element_box(1, key).unwrap();
+            [b.x, b.y, b.x + b.width, b.y + b.height]
+        })
+        .collect()
+}
+
+
+fn height(container: &str) -> f64 {
+    let b = boxes(
+        &format!("<!doctype html><style>body{{margin:0}}</style><div id=c style='width:100px;{container}'><div style='height:100px'></div></div>"),
+        &["c"],
+    );
+    b[0][3] - b[0][1]
+}
+
+#[test]
+fn columns_of_a_fixed_height_wrap_into_rows() {
+    // 100px of content in 2 columns of 25px: 2 rows, 10px apart.
+    assert_eq!(height("columns:2;gap:10px 0;column-height:25px;column-wrap:wrap"), 60.0);
+    // `auto` wraps when the height is given; `nowrap` keeps one row (the container's own height
+    // is then its content's, as without a column height: 0 here, since columns are not stacked).
+    assert_eq!(height("columns:2;gap:10px 0;column-height:25px"), 60.0);
+    assert_eq!(height("columns:2;column-height:25px;column-wrap:nowrap"), 25.0);
+    // The shorthand, and `column-height` alone (one column per row).
+    assert_eq!(height("columns:2 / 25px;row-gap:0"), 50.0);
+    assert_eq!(height("column-height:40px;row-gap:20px"), 160.0); // 3 rows of 40px, 2 gaps of 20px
+}
+
+#[test]
+fn without_a_column_height_nothing_changes() {
+    assert_eq!(height("columns:2;gap:0"), 50.0);
+    assert_eq!(height("column-wrap:wrap"), 100.0);
+}
+
+/// The red and green channels of a pixel of the page.
+fn rg_at(body: &str, x: usize, y: usize) -> (u8, u8) {
+    let snap = Snapshot {
+        html: format!("<!doctype html><style>body{{margin:0}}</style>{body}"),
+        base_url: "http://test/".into(),
+        width: 200,
+        height: 200,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let (img, _, _) = Renderer::new().render(&snap, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let i = (y * img.width as usize + x) * 4;
+    (img.data[i], img.data[i + 1])
+}
+
+#[test]
+fn an_abspos_box_of_a_multicol_container_is_placed_against_it_not_in_a_column() {
+    // Two 50px-tall columns: an abspos box at the container's (10, 60) lies past the first
+    // column's range; painted in a column it was moved to the second (60, 10). It stays at its place.
+    let body = "<div style='position:relative;columns:2;gap:0;width:100px;column-fill:auto;height:50px'>\
+                <div style='height:100px'></div>\
+                <div style='position:absolute;left:10px;top:60px;width:20px;height:20px;background:#f00'></div></div>";
+    assert_eq!(rg_at(body, 20, 70), (255, 0), "the box at its place");
+    assert_eq!(rg_at(body, 70, 20), (255, 255), "not in the second column");
+}
+
+#[test]
+fn columns_after_a_spanner_fit_what_is_left_of_a_definite_height() {
+    // WPT multicol-span-all-012: a 70px spanner, then 120px in 3 columns of a 100px-tall container:
+    // 30px are left, so the columns are 30px tall (4 of them, the last past the content box).
+    let body = "<div style='columns:3;width:75px;height:100px;column-gap:0'>\
+                <div style='column-span:all;width:100px;height:70px;background:#0f0'></div>\
+                <div style='height:120px;background:#f00'></div></div>";
+    assert_eq!(rg_at(body, 10, 99), (255, 0), "the first column reaches the container's end");
+    assert_eq!(rg_at(body, 90, 80), (255, 0), "a fourth column takes the rest");
+    assert_eq!(rg_at(body, 10, 105), (255, 255), "nothing below the container");
+}

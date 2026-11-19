@@ -1074,3 +1074,71 @@ frame's whole transform, clipped to the content box (upstream applied the transl
 - Round 4 lane F, `render.rs`/`highlight.rs`/`text.rs`: vertical lines paint selections through the highlight path (`stroke_highlighted_text` takes per-line transforms and `VerticalLine`s; not upright or truncated lines), and text shadows are drawn in vertical lines with their physical offsets turned into the line's space (`VerticalLine::turned_offset`).
 - Round 4 lane F, `render.rs`/`text.rs`: positioned inline boxes (relative or sticky, not atomic) paint after their inline root's in-flow content, each with its fragments then its text in tree order (`positioned_passes`, `DrawTextContext::positioned_pass`), as CSS 2.1 Appendix E step 8: a relative span's text and shadows cover the root's later text (WPT css-pseudo `highlight-painting-002` reference). Not with highlights, truncated lines or `sideways-lr`. Upright glyphs advancing by the font's height (parley `shape::upright`) have their em box centred in that advance.
 - Round 4 lane F, `highlight.rs`: a visited link's selection style comes from `selection_pseudo_style` (none when only `:link` rules matched). `render.rs`: `image(<color>)` list markers fill their box with the colour.
+- Round 4 lane F, `render.rs`/`highlight.rs`: a text control's selection paints in its `::selection` colours (`control_selection_colors`: background, and the selected text redrawn in the highlight colour inside the selection, the rest outside it), not the fixed light blue (WPT css-pseudo `selection-textarea-011`).
+- Round 4 lane F, `render.rs`: an inline `<svg>` with selected text paints `inline_svg_with_selection`'s source (not in recording paints).
+- Round 4 lane F, `render.rs`: upright vertical lines take the highlight path too (`::selection` colours; WPT css-pseudo `active-selection-031`).
+- Round 4 lane F, `highlight.rs`: the parts of unselected glyphs that reach into a selection stretch (italic overhang) are painted before its background, as Chromium (WPT css-pseudo `selection-background-painting-order`).
+- Round 4 lane F, `highlight.rs`: a line's shadows paint before all its text (the originating text's outside the stretches, then each highlight's), and text in several highlights casts every layer's shadows, the bottom layer's on top (WPT css-pseudo `highlight-painting-shadows-horizontal`, `-vertical`). The overhang pass draws glyphs only, on horizontal lines.
+- Round 4 lane F, `render.rs`: a replaced element the selection holds is tinted with its `::selection` background, made translucent as Blink's `Color::BlendWithWhite` (`draw_selection_tint`; WPT css-pseudo `active-selection-041`).
+- Round 4 lane F, `render/border.rs`: square `inset`/`outset` sides join like solid ones of different colours (`draw_square_solid_sides_overdrawn`, in their shades): no background through the corner miters (WPT css-pseudo `selection-input-011`).
+- Round 4 lane F, `text.rs`: over text in a highlight that has a decoration of its own, all originating decorations take the highlight's colour (an underline of its own colour too; WPT css-pseudo `highlight-painting-004` reference); without one, an own-colour underline/overline keeps it.
+- Round 4 lane F, `render/border.rs`: `inset`/`outset` sides (and `groove`/`ridge` halves) take Blink's `BoxBorderPainter::CalculateInsetOutsetColor` shades: `Color::Dark`/`Color::Light` exactly (8-bit quantized, black → rgb(84, 84, 84), white → rgb(171, 171, 171)), luminance thresholds rgb(32)/rgb(235); the light sides were the base colour before.
+- Round 4 lane F, `render/border.rs`: square `groove`/`ridge` borders take the overdraw path too, each half ring in its shades (`overdraw_square_sides` on `border_slice(0, ½)` and `(½, 1)`): their corners match Chrome's.
+- Round 4 lane F, `render/box_shadow.rs` `overflow_clip_path`: the `overflow-clip-margin` edge is the padding box's shape moved by the signed distance to it, its radii adjusted as Blink's `FloatRoundedRect::OutsetWithCornerCorrection` (WPT css-overflow `overflow-clip-margin-border-radius-002`, `overflow-clip-margin-visual-box-and-value-with-border-radius`).
+- Round 4 lane F, `render.rs` `draw_text_input_text`: the element's scroll offset (`scrollLeft`) moves a text control's text once (it was applied by both the content position and the scrolled transform), and the editor's caret-following offset applies only while the control is focused (WPT css-overflow `scrollable-overflow-input-001`).
+- Round 4 lane F, `render.rs` `line_truncation`: no `text-overflow` ellipsis while the text's editing host (nearest `contenteditable` other than `false`) has the focus (WPT css-overflow `text-overflow-ellipsis-editable-div-with-caret`).
+- Round 4 lane G (`render.rs` `render_node`): a positioned inline box's paint-tree entry (blitz-dom
+  `NodeFlags::INLINE_PASS_ENTRY`) paints nothing yet; its inline root paints its content (`positioned_passes`).
+- Round 4 lane F, `render.rs`: a broken image showing its alt text is clipped as a box (not as replaced content).
+- Round 4 lane F, `render.rs` `draw_broken_image_icon` (+ `broken_image_icon.rs`: Chromium's `IDR_BROKENIMAGE` as Chrome draws it at 1x, captured over white and black for its alpha; Chromium BSD licence): the icon before a broken image's alt text, and for a sized broken image without alt text a 1px rgb(192, 192, 192) border with the icon 2px inside, as Chrome.
+- Round 4 lane G (`render.rs` `draw_inline_pass_entry`, `draw_inline_pass`, `inline_pass_entries`): a positioned
+  inline box listed in the paint tree (blitz-dom `NodeFlags::INLINE_PASS_ENTRY`) paints its fragments and text at its
+  entry, in the positioned layer in tree order: its horizontal inline root leaves that pass (its transform and content
+  position) for it instead of painting it after its own in-flow content, and is not culled while it has such boxes (an
+  offset can bring them into view). Vertical roots, highlighted or truncated text and line-by-line painting keep
+  painting every pass themselves. Hoisted boxes add `inline_sticky_containing_block_offset`.
+- Round 4 lane F, `light-dark()` in SVG images: usvg does not parse it (the paint fell back to black). An SVG image is parsed with each `light-dark(a, b)` as `a` (`svg_refs::resolve_light_dark`); `SvgImageData::for_color_scheme` parses the dark variant, which a border image draws when the element's used colour scheme is dark and the image's own `color-scheme` allows dark (blitz-paint `ElementCx::dark_color_scheme`). WPT css-borders `border-image-color-scheme`.
+- Round 4 lane F, `background-clip: border-area text`: layers cut to it form a text-clip run of their own whose `DestIn` mask fills the border area besides the text (`end_text_clip_group`). WPT css-backgrounds `clip-border-area-text`.
+  painting every pass themselves. Hoisted boxes add `inline_sticky_containing_block_offset`. Atomic inline boxes in
+  such a box (badges: `inline_entry_owner`, the innermost positioned inline box around them) are skipped by the root
+  (`draw_paint_child`) and painted at the box's entry after its text, moved by the sticky offsets of the inline boxes
+  around them (`positioned_passes` also follows atomic inline boxes, from their parent). `tests/positioned_inline_paint_order.rs`.
+- Lane F1, `render/form_controls.rs` `draw_input`: a checkbox's or radio's accent is `accent-color` (text `color` for `auto`); a (partly) transparent one is precomposed over the used colour scheme's `Canvas` system colour (CSS UI 4 § 6.1). WPT css-ui `accent-color-*`, `transparent-accent-color-*`. Range, progress and meter: `draw_bar_widget`.
+- Lane F1: `render/clip_path.rs` `svg_path_to_bezpath` moved to blitz-dom `shape_path.rs` (shared with `shape-outside` float layout).
+- Round 4 lane S4, `src/text.rs` `VerticalLine::central_for`: on a vertical line's central baseline, a run aligned by
+  its box's edge (`vertical-align: top | bottom | text-top | text-bottom`, parley `GlyphRun::edge_aligned`) keeps the
+  place the line gave it (centred on its own fragment box) and does not set the line's central baseline; a `middle`
+  run is centred half the x-height of the run that sets it over the central baseline (Blink aligns `middle` on the
+  central baseline in vertical lines). Before, every run was re-centred on the line's one central baseline. WPT
+  css-writing-modes `vertical-alignment-*` (24 of 24). `pyro-render/tests/vertical_align_orthogonal_sizes.rs`.
+- Lane F1, `render/form_controls.rs` `draw_bar_widget`: `<input type=range>`, `<progress>` and `<meter>` as headless Chrome draws them (measured): an 8px pill track (`#efefef`, dark `#3b3b3b`, disabled `#fafafa`) filled up to the value with the accent colour (default `#0075ff`, dark `#99c8ff`; a meter's optimum/suboptimal/even-less-good region `#107c10`/`#ffb900`/`#d83b01`), a 1px border over it (`#767676` at 50%, dark `#858585`, meter `#cbcbcb`), and for a range a 16px thumb of the accent colour at the value (min/max/step/value attributes; disabled `#cbcbcb`). An indeterminate progress bar shows the track only (Chrome animates a segment). Drawn along the inline axis: a vertical writing mode turns it, and the value runs from the inline start (rtl, bottom-to-top inline directions). `appearance: none`, and on a meter or progress bar an author or user border or background (css-ui-4's appearance-disabling properties), draws Chromium's non-native look: a progress bar is a `#808080` rectangle filled `#008000`, a meter a half-thick bar with Chromium's gradients (`#ddd`/`#eee`/`#ccc`, and per region `#ad7`/`#cea`/`#7a3`, `#fe7`/`#ffc`/`#db3`, `#f77`/`#fcc`/`#d44`), a range only its thumb; a checkbox or radio draws nothing.
+- Round 4 lane S4, `render.rs` `create_css_rect_with_corners` (`native_button`): a button of native appearance
+  (`-moz-default-appearance: button` from the UA sheet, any `appearance` but `none`, Stylo's
+  `HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND` unset) has 1px corners where its `border-radius` is 0: Chromium's
+  native look, not a computed radius. WPT css-ui `compute-kind-widget-generated/*` (153 pages).
+  `pyro-render/tests/button_native_corners.rs`.
+- Lane F1, `highlight.rs` `selection_style`: a visited link's `::selection` style is computed lazily with it taken as visited before looking for an eager one (an eager one matched as unvisited is missing when only `:visited` rules apply).
+- Round 4 lane S4, `render.rs` `combined_text_compression` (in `node_transform`): a `text-combine-upright: all` box
+  (Stylo's `adjust_for_text_combine_upright`) whose text is wider than its 1em square is scaled horizontally to fit,
+  from the line's start edge (right in right-to-left text). `pyro-render/tests/text_combine_upright.rs`.
+
+## Inline boxes pulled back by a negative margin (WPT round 4, lane S1)
+
+`src/render.rs` (`InlineBoxFragment::text_start`, the line-by-line passes of `draw_inline_layout`), `src/text.rs`
+(`TextCut::split`): an inline box pulled back over the text before it on its line by a negative left margin is
+painted as CSS 2.1 Appendix E paints a line in tree order: the line's text before the box's element (by its position
+in the text, wherever it is on the line), then the box, then the rest, so its background covers that text and its
+own text covers its background (WPT CSS2 `css1/c5504-imrgn-l-005`). As `reaches_back` (outer shadows) does, with the
+text split by position, not by the box's edge. Covered by `crates/pyro-render/tests/inline_negative_margin_order.rs`.
+- Round 4 lane S4, `render/multicol.rs` `draw_columns` + `render.rs` `multicol_skips` (`PaintContext::multicol_pass`):
+  the out-of-flow boxes a multi-column container is the containing block of (no positioned, transformed or contained
+  inline or box between them, which would be theirs and is fragmented) are placed against it, not in a column:
+  each column's pass leaves them out and they are painted once after the columns, in the container's own space
+  (before, each column painted them, moved by its offset and cut at its range). WPT css-multicol `column-height-002`,
+  `-021`, and abspos-in-multicol pages. `pyro-render/tests/multicol_column_height.rs`.
+- Lane F2, `mask-border` (css-masking-1 §8): `render/border_image.rs` draws a nine-piece image from either the
+  `border-image-*` or the `mask-border-*` values (`NinePiece`, `image_area`); `render/mask.rs` masks the element with
+  the mask border's image (a `DestIn` layer, by alpha or `mask-border-mode: luminance`) after its `mask-image` layers,
+  the isolation layer cut to the mask painting area, else the mask border image area; an image not loaded masks
+  nothing. A `mask-border` is a backdrop root (`render.rs`). WPT css-masking `mask-border-*` interpolation and
+  composition pages (+1,798 subtests).

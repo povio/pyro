@@ -24,12 +24,12 @@ impl Dom {
     }
 
     /// Whether `i` could be upgraded: an HTML element with a custom element
-    /// name (a hyphen in it) that is not custom yet.
+    /// name (a hyphen in it) or an is value, that is not custom yet.
     fn upgrade_candidate(&self, i: u32) -> bool {
         self.n(i).element().is_some_and(|e| {
             e.flags & (element_flags::CUSTOM_DEFINED | element_flags::CUSTOM_FAILED) == 0
                 && e.is_html()
-                && e.name.local.contains('-')
+                && (e.is_value.is_some() || e.name.local.contains('-'))
         })
     }
 
@@ -55,7 +55,8 @@ impl Dom {
         }
     }
 
-    /// The not-yet-custom HTML elements named `local` among the shadow-including descendants of
+    /// The not-yet-custom HTML elements a definition named `local` may be for (their local name
+    /// or their is value) among the shadow-including descendants of
     /// `root`, in shadow-including tree order (shadow trees before children): the elements
     /// `customElements.define` upgrades (HTML "upgrade candidates", which include the elements of
     /// shadow trees: a component's shadow tree holds the components it uses).
@@ -64,7 +65,7 @@ impl Dom {
         let mut out = Vec::new();
         let mut i = root;
         while i != NIL {
-            if self.upgrade_candidate(i) && self.n(i).element().is_some_and(|e| e.name.local == *local) {
+            if self.upgrade_candidate(i) && self.n(i).element().is_some_and(|e| e.may_be_defined_as(local)) {
                 out.push(self.id_of(i));
             }
             i = self.next_shadow_including(i, root);

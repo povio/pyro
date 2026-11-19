@@ -348,13 +348,12 @@ fn settle(t: &mut BrowserThread, root: &Realm, until: &str) -> String {
 }
 
 #[test]
-fn a_rule_change_that_makes_an_element_a_candidate_starts_no_transition_but_tracks_it() {
-    // Chrome: a sheet that brings an element its transition together with a
-    // new width starts nothing (and so does a class doing both at once);
-    // the element's style then is its before-change style, so a later
-    // change transitions. `b`'s width goes 300px -> auto, which no browser
-    // interpolates: since #283 (`changed_longhands` asks Stylo to animate
-    // between the values) it starts no transition here either, as in Chrome.
+fn a_rule_change_that_makes_an_element_a_candidate_transitions_and_tracks_it() {
+    // Chrome (checked 2026-11-18): a sheet that brings an element its transition together with a
+    // new width transitions it (the after-change style's `transition-*` applies, css-transitions-1
+    // §3), and a later change transitions again. `b`'s class brings its transition and width
+    // auto -> 300px, then 300px -> auto: no browser interpolates `auto`, so it starts nothing
+    // (`changed_longhands` asks Stylo to animate between the values, as since #283).
     let (mut t, root) = transition_page("#a { width: 100px; height: 10px } .w { width: 300px } .t { transition: width 20ms }");
     eval(
         &root,
@@ -364,9 +363,21 @@ fn a_rule_change_that_makes_an_element_a_candidate_starts_no_transition_but_trac
          b.className = 't w';
          setTimeout(() => { a.style.width = '300px'; b.classList.remove('w'); }, 30); 0",
     );
-    let mut log: Vec<String> = settle(&mut t, &root, "transitionend:width:a").split(' ').map(str::to_owned).collect();
+    run_until(&mut t, &root, "log.filter(e => e == 'transitionend:width:a').length == 2");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    let mut log: Vec<String> = eval(&root, "log.join(' ')").split(' ').map(str::to_owned).collect();
     log.sort();
-    assert_eq!(log, ["transitionend:width:a", "transitionrun:width:a", "transitionstart:width:a"]);
+    assert_eq!(
+        log,
+        [
+            "transitionend:width:a",
+            "transitionend:width:a",
+            "transitionrun:width:a",
+            "transitionrun:width:a",
+            "transitionstart:width:a",
+            "transitionstart:width:a"
+        ]
+    );
 }
 
 #[test]
@@ -1185,4 +1196,29 @@ fn smil_animate_of_css_properties() {
         ),
         "rgb(0, 0, 255) rgb(0, 128, 0) rgb(255, 0, 0) rgb(255, 0, 0) rgb(0, 128, 0)"
     );
+}
+
+#[test]
+fn a_pseudo_element_transitions_with_its_pseudo_element_in_the_events() {
+    // A `::before` whose width changes transitions on its own: the events go to the element with
+    // `pseudoElement` set, the element's own width does not transition, `getComputedStyle(el,
+    // '::before')` reads the transition's value and its `transition-duration`, and
+    // `getAnimations()` lists a CSSTransition whose effect targets the pseudo-element.
+    let (mut t, root) = transition_page(
+        "#a { height: 10px } #a::before { content: \"\"; display: block; width: 100px; transition: width 10s linear } #a.w::before { width: 200px }",
+    );
+    eval(
+        &root,
+        "globalThis.plog = [];
+         addEventListener('transitionrun', e => plog.push(e.propertyName + ':' + e.pseudoElement));
+         globalThis.a = el('a'); getComputedStyle(a, '::before').width; a.classList.add('w'); 0",
+    );
+    run_until(&mut t, &root, "plog.length > 0");
+    assert_eq!(eval(&root, "plog.join(' ')"), "width:::before");
+    assert_eq!(eval(&root, "getComputedStyle(a, '::before').transitionDuration"), "10s");
+    assert_eq!(eval(&root, "getComputedStyle(a).transitionDuration"), "0s");
+    let listed = eval(&root, "a.getAnimations({subtree: true}).map(x => x.constructor.name + ':' + x.effect.pseudoElement).join(' ')");
+    assert_eq!(listed, "CSSTransition:::before");
+    let width: f64 = eval(&root, "parseFloat(getComputedStyle(a, '::before').width)").parse().unwrap();
+    assert!((100.0..200.0).contains(&width), "under way: {width}");
 }

@@ -3010,6 +3010,7 @@ dependencies = [
  "pyro-layout",
  "pyro-media",
  "pyro-net",
+ "pyro-psl",
  "pyro-render",
  "pyro-runtime",
  "rand_core 0.6.4",
@@ -3017,8 +3018,10 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "skrifa 0.44.0",
  "tokio",
  "url",
+ "wuff",
  "x25519-dalek",
 ]
 

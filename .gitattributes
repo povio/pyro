@@ -9,3 +9,4 @@ crates/pyro-render/tests/integration.rs merge=union
 bench/wpt/baseline.json merge=wpt-baseline
 bench/wpt/reftest-baseline.json merge=wpt-baseline
 bench/wpt/crashtest-baseline.json merge=wpt-baseline
+bench/wpt/baseline-linux.json merge=wpt-baseline

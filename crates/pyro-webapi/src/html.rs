@@ -239,13 +239,7 @@ macro_rules! reflect_action {
 
 macro_rules! simple_class {
     ($name:ident, $js:literal, $parent:ty) => {
-        pub struct $name;
-        impl JsClass for $name {
-            const NAME: &'static str = $js;
-            type Data = NodeData;
-            type Parent = $parent;
-            fn define(_def: &mut ClassDef<Self>) {}
-        }
+        simple_class!($name, $js, $parent, |_def| {});
     };
     ($name:ident, $js:literal, $parent:ty, $body:expr) => {
         pub struct $name;
@@ -254,6 +248,11 @@ macro_rules! simple_class {
             type Data = NodeData;
             type Parent = $parent;
             fn define(def: &mut ClassDef<Self>) {
+                // HTML element interfaces are `[HTMLConstructor]`: constructible by a customized
+                // built-in element's class (`class extends HTMLButtonElement`).
+                if $js.starts_with("HTML") {
+                    def.constructor(0, |s, nt, _a| crate::custom::construct_html_element(s, nt, $js));
+                }
                 let f: fn(&mut ClassDef<Self>) = $body;
                 f(def);
             }
@@ -402,6 +401,8 @@ const REFERRER_POLICY: EnumAttr = EnumAttr {
     invalid: "",
 };
 const LOADING: EnumAttr = EnumAttr { keywords: &["lazy", "eager"], missing: "eager", invalid: "eager" };
+/// HTML fetch priority attribute (`<img>`, `<link>`, `<script>`).
+const FETCH_PRIORITY: EnumAttr = EnumAttr { keywords: &["high", "low", "auto"], missing: "auto", invalid: "auto" };
 const DECODING: EnumAttr = EnumAttr { keywords: &["async", "sync", "auto"], missing: "auto", invalid: "auto" };
 const INPUT_MODE: EnumAttr = EnumAttr {
     keywords: &["none", "text", "tel", "url", "email", "numeric", "decimal", "search"],
@@ -422,6 +423,8 @@ const FORM_ENCTYPE_OVERRIDE: EnumAttr =
 const METHOD_KEYWORDS: &[&str] = &["get", "post", "dialog"];
 const FORM_METHOD: EnumAttr = EnumAttr { keywords: METHOD_KEYWORDS, missing: "get", invalid: "get" };
 const FORM_METHOD_OVERRIDE: EnumAttr = EnumAttr { keywords: METHOD_KEYWORDS, missing: "", invalid: "get" };
+const COLOR_SPACE: EnumAttr =
+    EnumAttr { keywords: &["limited-srgb", "display-p3"], missing: "limited-srgb", invalid: "limited-srgb" };
 const FORM_AUTOCOMPLETE: EnumAttr = EnumAttr { keywords: &["on", "off"], missing: "on", invalid: "on" };
 const CELL_SCOPE: EnumAttr = EnumAttr { keywords: &["row", "col", "rowgroup", "colgroup"], missing: "", invalid: "" };
 const LINK_AS: EnumAttr = EnumAttr {
@@ -515,6 +518,33 @@ fn parsed_attr<T>(n: &NodeData, attr: &str, parse: fn(&str) -> Option<T>) -> JsR
 }
 
 /// An integer attribute in `min..=2147483647`, else `default`.
+/// `img.width` (`width`) or `img.height`: see the accessors.
+fn img_dimension(n: &NodeData, width: bool) -> JsResult<f64> {
+    let page = n.page();
+    let connected = page.dom.borrow().is_connected(n.id).unwrap_or(false);
+    if connected {
+        crate::animation_events::layout_flush(page, n.id);
+        let rendered = page.layout().rendered_content_size(&page.dom.borrow(), n.id);
+        if let Some((w, h)) = rendered {
+            return Ok((if width { w } else { h }).trunc());
+        }
+    }
+    let attr = int_attr(n, if width { "width" } else { "height" }, 0, -1.0)?;
+    if attr >= 0.0 {
+        return Ok(attr);
+    }
+    // Without a source (its `src` removed, no `srcset`) the image has none: 0 at once.
+    let dom = page.dom.borrow();
+    let sourceless = dom.get_attribute(n.id, "src").ok().flatten().is_none()
+        && dom.get_attribute(n.id, "srcset").ok().flatten().is_none()
+        && dom.parent(n.id).ok().flatten().and_then(|p| dom.element(p).ok()).is_none_or(|p| &*p.name.local != "picture");
+    if sourceless {
+        return Ok(0.0);
+    }
+    let natural = dom.reported_natural_size(n.id);
+    Ok(natural.map_or(0.0, |(w, h)| (if width { w } else { h }).trunc()))
+}
+
 fn int_attr(n: &NodeData, attr: &str, min: i64, default: impl Into<f64>) -> JsResult<f64> {
     let value = parsed_attr(n, attr, parse_html_int)?.filter(|v| (min..=MAX_REFLECTED_INT).contains(v));
     Ok(value.map_or_else(|| default.into(), |v| v as f64))
@@ -709,6 +739,36 @@ pub enum ElClass {
     SvgRadialGradient,
     SvgFilter,
     SvgMarker,
+    SvgRect,
+    SvgCircle,
+    SvgEllipse,
+    SvgLine,
+    SvgFeBlend,
+    SvgFeColorMatrix,
+    SvgFeComponentTransfer,
+    SvgFeFuncR,
+    SvgFeFuncG,
+    SvgFeFuncB,
+    SvgFeFuncA,
+    SvgFeComposite,
+    SvgFeConvolveMatrix,
+    SvgFeDiffuseLighting,
+    SvgFeDistantLight,
+    SvgFePointLight,
+    SvgFeSpotLight,
+    SvgFeDisplacementMap,
+    SvgFeDropShadow,
+    SvgFeFlood,
+    SvgFeGaussianBlur,
+    SvgFeImage,
+    SvgFeMerge,
+    SvgFeMergeNode,
+    SvgFeMorphology,
+    SvgFeOffset,
+    SvgFeSpecularLighting,
+    SvgFeTile,
+    SvgFeTurbulence,
+    MathMl,
     Other,
 }
 
@@ -719,7 +779,11 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "svg" => ElClass::SvgRoot,
             "a" => ElClass::SvgA,
             // SVGGraphicsElement interfaces (SVG 2).
-            "g" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "path" | "text" | "tspan"
+            "rect" => ElClass::SvgRect,
+            "circle" => ElClass::SvgCircle,
+            "ellipse" => ElClass::SvgEllipse,
+            "line" => ElClass::SvgLine,
+            "g" | "polyline" | "polygon" | "path" | "text" | "tspan"
             | "textPath" | "use" | "image" | "foreignObject" | "switch" | "defs" => ElClass::SvgGraphics,
             "clipPath" => ElClass::SvgClipPath,
             "mask" => ElClass::SvgMask,
@@ -728,14 +792,47 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "radialGradient" => ElClass::SvgRadialGradient,
             "filter" => ElClass::SvgFilter,
             "marker" => ElClass::SvgMarker,
+            "feBlend" => ElClass::SvgFeBlend,
+            "feColorMatrix" => ElClass::SvgFeColorMatrix,
+            "feComponentTransfer" => ElClass::SvgFeComponentTransfer,
+            "feFuncR" => ElClass::SvgFeFuncR,
+            "feFuncG" => ElClass::SvgFeFuncG,
+            "feFuncB" => ElClass::SvgFeFuncB,
+            "feFuncA" => ElClass::SvgFeFuncA,
+            "feComposite" => ElClass::SvgFeComposite,
+            "feConvolveMatrix" => ElClass::SvgFeConvolveMatrix,
+            "feDiffuseLighting" => ElClass::SvgFeDiffuseLighting,
+            "feDistantLight" => ElClass::SvgFeDistantLight,
+            "fePointLight" => ElClass::SvgFePointLight,
+            "feSpotLight" => ElClass::SvgFeSpotLight,
+            "feDisplacementMap" => ElClass::SvgFeDisplacementMap,
+            "feDropShadow" => ElClass::SvgFeDropShadow,
+            "feFlood" => ElClass::SvgFeFlood,
+            "feGaussianBlur" => ElClass::SvgFeGaussianBlur,
+            "feImage" => ElClass::SvgFeImage,
+            "feMerge" => ElClass::SvgFeMerge,
+            "feMergeNode" => ElClass::SvgFeMergeNode,
+            "feMorphology" => ElClass::SvgFeMorphology,
+            "feOffset" => ElClass::SvgFeOffset,
+            "feSpecularLighting" => ElClass::SvgFeSpecularLighting,
+            "feTile" => ElClass::SvgFeTile,
+            "feTurbulence" => ElClass::SvgFeTurbulence,
             _ => ElClass::Svg,
         };
+    }
+    if e.namespace() == &markup5ever::ns!(mathml) {
+        return ElClass::MathMl;
     }
     if !e.is_html() {
         return ElClass::Other;
     }
+    html_class_for_local(&e.name.local)
+}
+
+/// The interface class of an HTML element named `local` (HTML "element interface").
+pub fn html_class_for_local(local: &str) -> ElClass {
     use ElClass::*;
-    match &*e.name.local {
+    match local {
         "html" => Html,
         "head" => Head,
         "body" => Body,
@@ -899,7 +996,294 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgRadialGradient => s.wrap::<SvgRadialGradientElement>(d, k),
         SvgFilter => s.wrap::<SvgFilterElement>(d, k),
         SvgMarker => s.wrap::<SvgMarkerElement>(d, k),
+        SvgRect => s.wrap::<SvgRectElement>(d, k),
+        SvgCircle => s.wrap::<SvgCircleElement>(d, k),
+        SvgEllipse => s.wrap::<SvgEllipseElement>(d, k),
+        SvgLine => s.wrap::<SvgLineElement>(d, k),
+        SvgFeBlend => s.wrap::<SvgFeBlendElement>(d, k),
+        SvgFeColorMatrix => s.wrap::<SvgFeColorMatrixElement>(d, k),
+        SvgFeComponentTransfer => s.wrap::<SvgFeComponentTransferElement>(d, k),
+        SvgFeFuncR => s.wrap::<SvgFeFuncRElement>(d, k),
+        SvgFeFuncG => s.wrap::<SvgFeFuncGElement>(d, k),
+        SvgFeFuncB => s.wrap::<SvgFeFuncBElement>(d, k),
+        SvgFeFuncA => s.wrap::<SvgFeFuncAElement>(d, k),
+        SvgFeComposite => s.wrap::<SvgFeCompositeElement>(d, k),
+        SvgFeConvolveMatrix => s.wrap::<SvgFeConvolveMatrixElement>(d, k),
+        SvgFeDiffuseLighting => s.wrap::<SvgFeDiffuseLightingElement>(d, k),
+        SvgFeDistantLight => s.wrap::<SvgFeDistantLightElement>(d, k),
+        SvgFePointLight => s.wrap::<SvgFePointLightElement>(d, k),
+        SvgFeSpotLight => s.wrap::<SvgFeSpotLightElement>(d, k),
+        SvgFeDisplacementMap => s.wrap::<SvgFeDisplacementMapElement>(d, k),
+        SvgFeDropShadow => s.wrap::<SvgFeDropShadowElement>(d, k),
+        SvgFeFlood => s.wrap::<SvgFeFloodElement>(d, k),
+        SvgFeGaussianBlur => s.wrap::<SvgFeGaussianBlurElement>(d, k),
+        SvgFeImage => s.wrap::<SvgFeImageElement>(d, k),
+        SvgFeMerge => s.wrap::<SvgFeMergeElement>(d, k),
+        SvgFeMergeNode => s.wrap::<SvgFeMergeNodeElement>(d, k),
+        SvgFeMorphology => s.wrap::<SvgFeMorphologyElement>(d, k),
+        SvgFeOffset => s.wrap::<SvgFeOffsetElement>(d, k),
+        SvgFeSpecularLighting => s.wrap::<SvgFeSpecularLightingElement>(d, k),
+        SvgFeTile => s.wrap::<SvgFeTileElement>(d, k),
+        SvgFeTurbulence => s.wrap::<SvgFeTurbulenceElement>(d, k),
+        MathMl => s.wrap::<MathMlElement>(d, k),
         Other => s.wrap::<Element>(d, k),
+    }
+}
+
+
+/// The name of the interface of `class` (`HTMLButtonElement`, ...).
+pub fn interface_name(class: ElClass) -> &'static str {
+    use ElClass::*;
+    match class {
+        Html => HtmlHtmlElement::NAME,
+        Head => HtmlHeadElement::NAME,
+        Body => HtmlBodyElement::NAME,
+        Title => HtmlTitleElement::NAME,
+        Meta => HtmlMetaElement::NAME,
+        Link => HtmlLinkElement::NAME,
+        Style => HtmlStyleElement::NAME,
+        Script => HtmlScriptElement::NAME,
+        Div => HtmlDivElement::NAME,
+        Span => HtmlSpanElement::NAME,
+        Paragraph => HtmlParagraphElement::NAME,
+        Heading => HtmlHeadingElement::NAME,
+        Anchor => HtmlAnchorElement::NAME,
+        Image => HtmlImageElement::NAME,
+        Input => HtmlInputElement::NAME,
+        TextArea => HtmlTextAreaElement::NAME,
+        Select => HtmlSelectElement::NAME,
+        Option => HtmlOptionElement::NAME,
+        OptGroup => HtmlOptGroupElement::NAME,
+        Button => HtmlButtonElement::NAME,
+        Form => HtmlFormElement::NAME,
+        Label => HtmlLabelElement::NAME,
+        FieldSet => HtmlFieldSetElement::NAME,
+        Legend => HtmlLegendElement::NAME,
+        UList => HtmlUListElement::NAME,
+        OList => HtmlOListElement::NAME,
+        Li => HtmlLiElement::NAME,
+        Table => HtmlTableElement::NAME,
+        TableSection => HtmlTableSectionElement::NAME,
+        TableRow => HtmlTableRowElement::NAME,
+        TableCell => HtmlTableCellElement::NAME,
+        TableCaption => HtmlTableCaptionElement::NAME,
+        TableCol => HtmlTableColElement::NAME,
+        IFrame => HtmlIFrameElement::NAME,
+        Template => HtmlTemplateElement::NAME,
+        Slot => HtmlSlotElement::NAME,
+        Canvas => HtmlCanvasElement::NAME,
+        Video => HtmlVideoElement::NAME,
+        Audio => HtmlAudioElement::NAME,
+        Br => HtmlBrElement::NAME,
+        Hr => HtmlHrElement::NAME,
+        Pre => HtmlPreElement::NAME,
+        Quote => HtmlQuoteElement::NAME,
+        DList => HtmlDListElement::NAME,
+        Dialog => HtmlDialogElement::NAME,
+        Details => HtmlDetailsElement::NAME,
+        Progress => HtmlProgressElement::NAME,
+        Meter => HtmlMeterElement::NAME,
+        Output => HtmlOutputElement::NAME,
+        DataList => HtmlDataListElement::NAME,
+        Picture => HtmlPictureElement::NAME,
+        Source => HtmlSourceElement::NAME,
+        Time => HtmlTimeElement::NAME,
+        Data => HtmlDataElement::NAME,
+        Base => HtmlBaseElement::NAME,
+        Object => HtmlObjectElement::NAME,
+        Embed => HtmlEmbedElement::NAME,
+        Area => HtmlAreaElement::NAME,
+        Map => HtmlMapElement::NAME,
+        Mod => HtmlModElement::NAME,
+        Menu => HtmlMenuElement::NAME,
+        Marquee => HtmlMarqueeElement::NAME,
+        FrameSet => HtmlFrameSetElement::NAME,
+        Frame => HtmlFrameElement::NAME,
+        Font => HtmlFontElement::NAME,
+        Directory => HtmlDirectoryElement::NAME,
+        Param => HtmlParamElement::NAME,
+        Track => HtmlTrackElement::NAME,
+        Unknown => HtmlUnknownElement::NAME,
+        Generic => HtmlElement::NAME,
+        Svg => SvgElement::NAME,
+        SvgGraphics => SvgGraphicsElement::NAME,
+        SvgA => SvgAElement::NAME,
+        SvgRoot => SvgSvgElement::NAME,
+        SvgClipPath => SvgClipPathElement::NAME,
+        SvgMask => SvgMaskElement::NAME,
+        SvgPattern => SvgPatternElement::NAME,
+        SvgLinearGradient => SvgLinearGradientElement::NAME,
+        SvgRadialGradient => SvgRadialGradientElement::NAME,
+        SvgFilter => SvgFilterElement::NAME,
+        SvgMarker => SvgMarkerElement::NAME,
+        SvgRect => SvgRectElement::NAME,
+        SvgCircle => SvgCircleElement::NAME,
+        SvgEllipse => SvgEllipseElement::NAME,
+        SvgLine => SvgLineElement::NAME,
+        SvgFeBlend => SvgFeBlendElement::NAME,
+        SvgFeColorMatrix => SvgFeColorMatrixElement::NAME,
+        SvgFeComponentTransfer => SvgFeComponentTransferElement::NAME,
+        SvgFeFuncR => SvgFeFuncRElement::NAME,
+        SvgFeFuncG => SvgFeFuncGElement::NAME,
+        SvgFeFuncB => SvgFeFuncBElement::NAME,
+        SvgFeFuncA => SvgFeFuncAElement::NAME,
+        SvgFeComposite => SvgFeCompositeElement::NAME,
+        SvgFeConvolveMatrix => SvgFeConvolveMatrixElement::NAME,
+        SvgFeDiffuseLighting => SvgFeDiffuseLightingElement::NAME,
+        SvgFeDistantLight => SvgFeDistantLightElement::NAME,
+        SvgFePointLight => SvgFePointLightElement::NAME,
+        SvgFeSpotLight => SvgFeSpotLightElement::NAME,
+        SvgFeDisplacementMap => SvgFeDisplacementMapElement::NAME,
+        SvgFeDropShadow => SvgFeDropShadowElement::NAME,
+        SvgFeFlood => SvgFeFloodElement::NAME,
+        SvgFeGaussianBlur => SvgFeGaussianBlurElement::NAME,
+        SvgFeImage => SvgFeImageElement::NAME,
+        SvgFeMerge => SvgFeMergeElement::NAME,
+        SvgFeMergeNode => SvgFeMergeNodeElement::NAME,
+        SvgFeMorphology => SvgFeMorphologyElement::NAME,
+        SvgFeOffset => SvgFeOffsetElement::NAME,
+        SvgFeSpecularLighting => SvgFeSpecularLightingElement::NAME,
+        SvgFeTile => SvgFeTileElement::NAME,
+        SvgFeTurbulence => SvgFeTurbulenceElement::NAME,
+        MathMl => MathMlElement::NAME,
+        Other => Element::NAME,
+    }
+}
+
+/// The interface name of an HTML element named `local`.
+pub fn interface_name_for_html(local: &str) -> &'static str {
+    interface_name(html_class_for_local(local))
+}
+
+/// Whether `local` names an HTML element whose interface is not `HTMLUnknownElement` (what
+/// `customElements.define`'s `extends` may name).
+pub fn is_known_html_element(local: &str) -> bool {
+    !matches!(html_class_for_local(local), ElClass::Unknown)
+}
+
+/// The wrapper of `el`, made by `new C()` of a customized built-in element: its element
+/// interface with `new_target`'s prototype.
+pub(crate) fn wrap_new_html_element<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    el: NodeId,
+    new_target: Object<'s>,
+) -> JsResult<Object<'s>> {
+    let class = class_for(&page.dom.borrow(), el);
+    use ElClass::*;
+    match class {
+        Html => crate::node::wrap_new_node::<HtmlHtmlElement>(s, page, el, new_target),
+        Head => crate::node::wrap_new_node::<HtmlHeadElement>(s, page, el, new_target),
+        Body => crate::node::wrap_new_node::<HtmlBodyElement>(s, page, el, new_target),
+        Title => crate::node::wrap_new_node::<HtmlTitleElement>(s, page, el, new_target),
+        Meta => crate::node::wrap_new_node::<HtmlMetaElement>(s, page, el, new_target),
+        Link => crate::node::wrap_new_node::<HtmlLinkElement>(s, page, el, new_target),
+        Style => crate::node::wrap_new_node::<HtmlStyleElement>(s, page, el, new_target),
+        Script => crate::node::wrap_new_node::<HtmlScriptElement>(s, page, el, new_target),
+        Div => crate::node::wrap_new_node::<HtmlDivElement>(s, page, el, new_target),
+        Span => crate::node::wrap_new_node::<HtmlSpanElement>(s, page, el, new_target),
+        Paragraph => crate::node::wrap_new_node::<HtmlParagraphElement>(s, page, el, new_target),
+        Heading => crate::node::wrap_new_node::<HtmlHeadingElement>(s, page, el, new_target),
+        Anchor => crate::node::wrap_new_node::<HtmlAnchorElement>(s, page, el, new_target),
+        Image => crate::node::wrap_new_node::<HtmlImageElement>(s, page, el, new_target),
+        Input => crate::node::wrap_new_node::<HtmlInputElement>(s, page, el, new_target),
+        TextArea => crate::node::wrap_new_node::<HtmlTextAreaElement>(s, page, el, new_target),
+        Select => crate::node::wrap_new_node::<HtmlSelectElement>(s, page, el, new_target),
+        Option => crate::node::wrap_new_node::<HtmlOptionElement>(s, page, el, new_target),
+        OptGroup => crate::node::wrap_new_node::<HtmlOptGroupElement>(s, page, el, new_target),
+        Button => crate::node::wrap_new_node::<HtmlButtonElement>(s, page, el, new_target),
+        Form => crate::node::wrap_new_node::<HtmlFormElement>(s, page, el, new_target),
+        Label => crate::node::wrap_new_node::<HtmlLabelElement>(s, page, el, new_target),
+        FieldSet => crate::node::wrap_new_node::<HtmlFieldSetElement>(s, page, el, new_target),
+        Legend => crate::node::wrap_new_node::<HtmlLegendElement>(s, page, el, new_target),
+        UList => crate::node::wrap_new_node::<HtmlUListElement>(s, page, el, new_target),
+        OList => crate::node::wrap_new_node::<HtmlOListElement>(s, page, el, new_target),
+        Li => crate::node::wrap_new_node::<HtmlLiElement>(s, page, el, new_target),
+        Table => crate::node::wrap_new_node::<HtmlTableElement>(s, page, el, new_target),
+        TableSection => crate::node::wrap_new_node::<HtmlTableSectionElement>(s, page, el, new_target),
+        TableRow => crate::node::wrap_new_node::<HtmlTableRowElement>(s, page, el, new_target),
+        TableCell => crate::node::wrap_new_node::<HtmlTableCellElement>(s, page, el, new_target),
+        TableCaption => crate::node::wrap_new_node::<HtmlTableCaptionElement>(s, page, el, new_target),
+        TableCol => crate::node::wrap_new_node::<HtmlTableColElement>(s, page, el, new_target),
+        IFrame => crate::node::wrap_new_node::<HtmlIFrameElement>(s, page, el, new_target),
+        Template => crate::node::wrap_new_node::<HtmlTemplateElement>(s, page, el, new_target),
+        Slot => crate::node::wrap_new_node::<HtmlSlotElement>(s, page, el, new_target),
+        Canvas => crate::node::wrap_new_node::<HtmlCanvasElement>(s, page, el, new_target),
+        Video => crate::node::wrap_new_node::<HtmlVideoElement>(s, page, el, new_target),
+        Audio => crate::node::wrap_new_node::<HtmlAudioElement>(s, page, el, new_target),
+        Br => crate::node::wrap_new_node::<HtmlBrElement>(s, page, el, new_target),
+        Hr => crate::node::wrap_new_node::<HtmlHrElement>(s, page, el, new_target),
+        Pre => crate::node::wrap_new_node::<HtmlPreElement>(s, page, el, new_target),
+        Quote => crate::node::wrap_new_node::<HtmlQuoteElement>(s, page, el, new_target),
+        DList => crate::node::wrap_new_node::<HtmlDListElement>(s, page, el, new_target),
+        Dialog => crate::node::wrap_new_node::<HtmlDialogElement>(s, page, el, new_target),
+        Details => crate::node::wrap_new_node::<HtmlDetailsElement>(s, page, el, new_target),
+        Progress => crate::node::wrap_new_node::<HtmlProgressElement>(s, page, el, new_target),
+        Meter => crate::node::wrap_new_node::<HtmlMeterElement>(s, page, el, new_target),
+        Output => crate::node::wrap_new_node::<HtmlOutputElement>(s, page, el, new_target),
+        DataList => crate::node::wrap_new_node::<HtmlDataListElement>(s, page, el, new_target),
+        Picture => crate::node::wrap_new_node::<HtmlPictureElement>(s, page, el, new_target),
+        Source => crate::node::wrap_new_node::<HtmlSourceElement>(s, page, el, new_target),
+        Time => crate::node::wrap_new_node::<HtmlTimeElement>(s, page, el, new_target),
+        Data => crate::node::wrap_new_node::<HtmlDataElement>(s, page, el, new_target),
+        Base => crate::node::wrap_new_node::<HtmlBaseElement>(s, page, el, new_target),
+        Object => crate::node::wrap_new_node::<HtmlObjectElement>(s, page, el, new_target),
+        Embed => crate::node::wrap_new_node::<HtmlEmbedElement>(s, page, el, new_target),
+        Area => crate::node::wrap_new_node::<HtmlAreaElement>(s, page, el, new_target),
+        Map => crate::node::wrap_new_node::<HtmlMapElement>(s, page, el, new_target),
+        Mod => crate::node::wrap_new_node::<HtmlModElement>(s, page, el, new_target),
+        Menu => crate::node::wrap_new_node::<HtmlMenuElement>(s, page, el, new_target),
+        Marquee => crate::node::wrap_new_node::<HtmlMarqueeElement>(s, page, el, new_target),
+        FrameSet => crate::node::wrap_new_node::<HtmlFrameSetElement>(s, page, el, new_target),
+        Frame => crate::node::wrap_new_node::<HtmlFrameElement>(s, page, el, new_target),
+        Font => crate::node::wrap_new_node::<HtmlFontElement>(s, page, el, new_target),
+        Directory => crate::node::wrap_new_node::<HtmlDirectoryElement>(s, page, el, new_target),
+        Param => crate::node::wrap_new_node::<HtmlParamElement>(s, page, el, new_target),
+        Track => crate::node::wrap_new_node::<HtmlTrackElement>(s, page, el, new_target),
+        Unknown => crate::node::wrap_new_node::<HtmlUnknownElement>(s, page, el, new_target),
+        Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
+        Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
+        SvgGraphics => crate::node::wrap_new_node::<SvgGraphicsElement>(s, page, el, new_target),
+        SvgA => crate::node::wrap_new_node::<SvgAElement>(s, page, el, new_target),
+        SvgRoot => crate::node::wrap_new_node::<SvgSvgElement>(s, page, el, new_target),
+        SvgClipPath => crate::node::wrap_new_node::<SvgClipPathElement>(s, page, el, new_target),
+        SvgMask => crate::node::wrap_new_node::<SvgMaskElement>(s, page, el, new_target),
+        SvgPattern => crate::node::wrap_new_node::<SvgPatternElement>(s, page, el, new_target),
+        SvgLinearGradient => crate::node::wrap_new_node::<SvgLinearGradientElement>(s, page, el, new_target),
+        SvgRadialGradient => crate::node::wrap_new_node::<SvgRadialGradientElement>(s, page, el, new_target),
+        SvgFilter => crate::node::wrap_new_node::<SvgFilterElement>(s, page, el, new_target),
+        SvgMarker => crate::node::wrap_new_node::<SvgMarkerElement>(s, page, el, new_target),
+        SvgRect => crate::node::wrap_new_node::<SvgRectElement>(s, page, el, new_target),
+        SvgCircle => crate::node::wrap_new_node::<SvgCircleElement>(s, page, el, new_target),
+        SvgEllipse => crate::node::wrap_new_node::<SvgEllipseElement>(s, page, el, new_target),
+        SvgLine => crate::node::wrap_new_node::<SvgLineElement>(s, page, el, new_target),
+        SvgFeBlend => crate::node::wrap_new_node::<SvgFeBlendElement>(s, page, el, new_target),
+        SvgFeColorMatrix => crate::node::wrap_new_node::<SvgFeColorMatrixElement>(s, page, el, new_target),
+        SvgFeComponentTransfer => crate::node::wrap_new_node::<SvgFeComponentTransferElement>(s, page, el, new_target),
+        SvgFeFuncR => crate::node::wrap_new_node::<SvgFeFuncRElement>(s, page, el, new_target),
+        SvgFeFuncG => crate::node::wrap_new_node::<SvgFeFuncGElement>(s, page, el, new_target),
+        SvgFeFuncB => crate::node::wrap_new_node::<SvgFeFuncBElement>(s, page, el, new_target),
+        SvgFeFuncA => crate::node::wrap_new_node::<SvgFeFuncAElement>(s, page, el, new_target),
+        SvgFeComposite => crate::node::wrap_new_node::<SvgFeCompositeElement>(s, page, el, new_target),
+        SvgFeConvolveMatrix => crate::node::wrap_new_node::<SvgFeConvolveMatrixElement>(s, page, el, new_target),
+        SvgFeDiffuseLighting => crate::node::wrap_new_node::<SvgFeDiffuseLightingElement>(s, page, el, new_target),
+        SvgFeDistantLight => crate::node::wrap_new_node::<SvgFeDistantLightElement>(s, page, el, new_target),
+        SvgFePointLight => crate::node::wrap_new_node::<SvgFePointLightElement>(s, page, el, new_target),
+        SvgFeSpotLight => crate::node::wrap_new_node::<SvgFeSpotLightElement>(s, page, el, new_target),
+        SvgFeDisplacementMap => crate::node::wrap_new_node::<SvgFeDisplacementMapElement>(s, page, el, new_target),
+        SvgFeDropShadow => crate::node::wrap_new_node::<SvgFeDropShadowElement>(s, page, el, new_target),
+        SvgFeFlood => crate::node::wrap_new_node::<SvgFeFloodElement>(s, page, el, new_target),
+        SvgFeGaussianBlur => crate::node::wrap_new_node::<SvgFeGaussianBlurElement>(s, page, el, new_target),
+        SvgFeImage => crate::node::wrap_new_node::<SvgFeImageElement>(s, page, el, new_target),
+        SvgFeMerge => crate::node::wrap_new_node::<SvgFeMergeElement>(s, page, el, new_target),
+        SvgFeMergeNode => crate::node::wrap_new_node::<SvgFeMergeNodeElement>(s, page, el, new_target),
+        SvgFeMorphology => crate::node::wrap_new_node::<SvgFeMorphologyElement>(s, page, el, new_target),
+        SvgFeOffset => crate::node::wrap_new_node::<SvgFeOffsetElement>(s, page, el, new_target),
+        SvgFeSpecularLighting => crate::node::wrap_new_node::<SvgFeSpecularLightingElement>(s, page, el, new_target),
+        SvgFeTile => crate::node::wrap_new_node::<SvgFeTileElement>(s, page, el, new_target),
+        SvgFeTurbulence => crate::node::wrap_new_node::<SvgFeTurbulenceElement>(s, page, el, new_target),
+        MathMl => crate::node::wrap_new_node::<MathMlElement>(s, page, el, new_target),
+        Other => crate::node::wrap_new_node::<Element>(s, page, el, new_target),
     }
 }
 
@@ -946,6 +1330,10 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.method("getAnimations", 0, |s, n, a| {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
         crate::animations::element_animations(s, n.page(), el, &a)
+    });
+    def.method("startViewTransition", 0, |s, n, a| {
+        let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+        crate::view_transition::start(s, n.page(), el, el, a.get(0))
     });
     // ARIA reflection (ARIAMixin) for the attributes Playwright/Testing
     // Library read through properties.
@@ -1027,7 +1415,7 @@ impl JsClass for HtmlElement {
     type Parent = Element;
     fn define(def: &mut ClassDef<Self>) {
         crate::handlers::define_global(def);
-        def.constructor(0, |s, nt, _a| crate::custom::construct_html_element(s, nt));
+        def.constructor(0, |s, nt, _a| crate::custom::construct_html_element(s, nt, "HTMLElement"));
         reflect_str!(def, "title", "title");
         reflect_str!(def, "lang", "lang");
         reflect_enum!(def, "dir", "dir", DIR);
@@ -1191,11 +1579,17 @@ impl JsClass for HtmlElement {
                     _ => cur = dom.parent_element(c).js()?,
                 }
             }
-            Ok(s.boolean(false))
+            // `designMode` makes the body's content editable.
+            Ok(s.boolean(crate::editing::in_design_mode_content(&dom, n.id)))
         });
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
+        // CSS Typed OM: the inline declarations as a StylePropertyMap.
+        def.getter("attributeStyleMap", |s, n| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::typed_om::attribute_style_map(s, n.page(), el)
+        });
         def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
         def.accessor("outerText", crate::layout_api::inner_text, crate::layout_api::set_outer_text);
         def.getter("offsetParent", crate::layout_api::offset_parent);
@@ -1255,6 +1649,7 @@ simple_class!(HtmlHtmlElement, "HTMLHtmlElement", HtmlElement, |def| {
 });
 simple_class!(HtmlHeadElement, "HTMLHeadElement", HtmlElement);
 simple_class!(HtmlBodyElement, "HTMLBodyElement", HtmlElement, |def| {
+    crate::handlers::define_window_reflecting(def);
     reflect_str_nn!(def, "text", "text");
     reflect_str_nn!(def, "link", "link");
     reflect_str_nn!(def, "vLink", "vlink");
@@ -1285,6 +1680,7 @@ simple_class!(HtmlLinkElement, "HTMLLinkElement", HtmlElement, |def| {
     reflect_str!(def, "media", "media");
     reflect_str!(def, "type", "type");
     reflect_enum!(def, "as", "as", LINK_AS);
+    reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
     reflect_cors!(def, "crossOrigin", "crossorigin");
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_str!(def, "integrity", "integrity");
@@ -1315,7 +1711,12 @@ simple_class!(HtmlStyleElement, "HTMLStyleElement", HtmlElement, |def| {
 });
 simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     reflect_tokens!(def, "blocking", "blocking");
-    reflect_url!(def, "src", "src");
+    reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
+    // `src` reflects its URL; setting it is a Trusted Types sink (TrustedScriptURL).
+    def.pure_accessor_typed("src", pyro_js::GetterResult::String, reflect_url!(@get "src"), |s, n, v| {
+        let url = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::ScriptUrl, v, "HTMLScriptElement src", false)?;
+        n.page().dom.borrow_mut().set_attribute(n.id, "src", &url).js()
+    });
     reflect_str!(def, "type", "type");
     reflect_str!(def, "charset", "charset");
     reflect_cors!(def, "crossOrigin", "crossorigin");
@@ -1341,8 +1742,8 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     def.accessor(
         "text",
         |s, n| Ok(s.string(&n.page().dom.borrow().script_info(n.id).js()?.inline_text)),
-        |_s, n, v| {
-            let arg0 = dom_string(v)?;
+        |s, n, v| {
+            let arg0 = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement text", false)?;
             n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
         },
     );
@@ -1460,10 +1861,13 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_str!(def, "useMap", "usemap");
     reflect_enum!(def, "loading", "loading", LOADING);
     reflect_enum!(def, "decoding", "decoding", DECODING);
+    reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_bool!(def, "isMap", "ismap");
-    reflect_ulong!(def, "width", "width", 0);
-    reflect_ulong!(def, "height", "height", 0);
+    // HTML: the rendered width and height when the image is being rendered, else (as browsers
+    // do) the content attribute when it parses, else the density-corrected natural size, else 0.
+    def.accessor("width", |s, n| Ok(s.number(img_dimension(n, true)?)), |_s, n, v| set_ulong(n, "width", to_u32(v)?, 0));
+    def.accessor("height", |s, n| Ok(s.number(img_dimension(n, false)?)), |_s, n, v| set_ulong(n, "height", to_u32(v)?, 0));
     reflect_str!(def, "name", "name");
     reflect_url!(def, "lowsrc", "lowsrc");
     reflect_str!(def, "align", "align");
@@ -1473,14 +1877,28 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_str_nn!(def, "border", "border");
     // Natural size from the loaded file's header (no pixel decoding); 0
     // while loading, for broken images and for unparsed formats.
-    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().natural_size(n.id).map_or(0.0, |(w, _)| w))));
-    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().natural_size(n.id).map_or(0.0, |(_, h)| h))));
+    // `unsigned long`: a density-corrected size below 1 px reads 0.
+    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(w, _)| w.trunc()))));
+    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
         let viewport = n.page().viewport();
         let dom = n.page().dom.borrow();
-        // A `<picture>` parent's matching `<source>` is the selected source.
-        let picture = dom.picture_source(n.id, &viewport);
+        // The source the loader selected for the current request (a lazy image's `sizes=auto`
+        // needs its layout), else a `<picture>` parent's matching `<source>`.
+        // The loader's selection when `sizes=auto` took part (it needs the layout the image had
+        // when selected): a lazy image, or one whose `sizes` (or a `<picture>` `<source>`'s) says
+        // `auto`.
+        let lazy = dom.get_attribute(n.id, "loading").js()?.is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+        let auto = |el: NodeId| {
+            dom.get_attribute(el, "sizes").ok().flatten().is_some_and(|s| s.split(',').next().is_some_and(|f| f.trim().eq_ignore_ascii_case("auto")))
+        };
+        let in_picture_auto = dom.parent(n.id).ok().flatten().is_some_and(|p| {
+            dom.element(p).is_ok_and(|e| &*e.name.local == "picture")
+                && dom.children(p).is_ok_and(|mut kids| kids.any(|k| dom.element(k).is_ok_and(|e| &*e.name.local == "source") && auto(k)))
+        });
+        let stored = if lazy || auto(n.id) || in_picture_auto { dom.image_source(n.id).map(str::to_owned) } else { None };
+        let picture = stored.or_else(|| dom.picture_source(n.id, &viewport));
         let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
         Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
     });
@@ -1510,6 +1928,22 @@ fn define_validation<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
 }
 
+/// A text control's selection: start, end and direction.
+fn selection_state(n: &NodeData) -> Option<(u32, u32, Option<bool>)> {
+    let dom = n.page().dom.borrow();
+    let (start, end) = dom.selection(n.id).ok()?;
+    Some((start, end, dom.selection_direction(n.id).ok()?))
+}
+
+/// HTML "set the selection range": when the start, end or direction changed,
+/// queue an element task that fires `select` (bubbling, not cancelable).
+/// Setting the same range again fires nothing.
+fn queue_select_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
+    if selection_state(n) != before {
+        crate::input::queue_simple(n.page(), n.id, "select", true, false);
+    }
+}
+
 fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.accessor(
         "selectionStart",
@@ -1521,6 +1955,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         },
         |_s, n, v| {
             let st = to_u32(v)?;
+            if !has_selection(n) {
+                return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
+            }
+            let before = selection_state(n);
             {
                 let mut dom = n.page().dom.borrow_mut();
                 let (_, e) = dom.selection(n.id).js()?;
@@ -1529,6 +1967,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_direction(n.id, direction).js()?;
             }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
+            queue_select_if_changed(n, before);
             Ok(())
         },
     );
@@ -1542,6 +1981,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         },
         |_s, n, v| {
             let end = to_u32(v)?;
+            if !has_selection(n) {
+                return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
+            }
+            let before = selection_state(n);
             {
                 let mut dom = n.page().dom.borrow_mut();
                 let (st, _) = dom.selection(n.id).js()?;
@@ -1550,6 +1993,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_direction(n.id, direction).js()?;
             }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
+            queue_select_if_changed(n, before);
             Ok(())
         },
     );
@@ -1570,7 +2014,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
             }
             let direction = selection_direction(&dom_string(v)?);
-            n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()
+            let before = selection_state(n);
+            n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()?;
+            queue_select_if_changed(n, before);
+            Ok(())
         },
     );
     def.method("setSelectionRange", 2, |s, n, a| {
@@ -1580,12 +2027,14 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         let arg0 = to_u32(a.get(0))?;
         let arg1 = to_u32(a.get(1))?;
         let direction = if a.get(2).is_undefined() { None } else { selection_direction(&dom_string(a.get(2))?) };
+        let before = selection_state(n);
         {
             let mut dom = n.page().dom.borrow_mut();
             dom.set_selection_range(n.id, arg0, arg1).js()?;
             dom.set_selection_direction(n.id, direction).js()?;
         }
         crate::editing::queue_control_selectionchange(n.page(), n.id);
+        queue_select_if_changed(n, before);
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
@@ -1594,12 +2043,22 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         // (Playwright fill: select(), then Input.insertText) replaces it.
         let number = n.page().dom.borrow().input_type(n.id).is_ok_and(|t| t == InputType::Number);
         if has_selection(n) || number {
+            let before = selection_state(n);
             let mut dom = n.page().dom.borrow_mut();
             let len = pyro_dom::dom::utf16_len(&dom.value(n.id).js()?);
             dom.set_selection_range(n.id, 0, len).js()?;
             drop(dom);
+            // Blink's `TextControlElement::select()` then focuses the control (without restoring
+            // a cached selection or scrolling to it): the selection shows, with the focus ring.
+            let page = n.page();
+            let doc = page.document();
+            if page.dom.borrow().focused(doc).ok().flatten() != Some(n.id) {
+                crate::input::focus_element_with_options(page, n.id, true);
+                let mut dom = page.dom.borrow_mut();
+                dom.set_selection_range(n.id, 0, len).js()?;
+            }
             crate::editing::queue_control_selectionchange(n.page(), n.id);
-            crate::input::fire_simple(n.page(), n.id, "select", true, false);
+            queue_select_if_changed(n, before);
         }
         Ok(s.undefined())
     });
@@ -1640,11 +2099,30 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         if start > end {
             return Err(JsError::dom("IndexSizeError", "The provided start value is larger than the end value."));
         }
+        let before = selection_state(n);
         n.page().dom.borrow_mut().set_range_text(n.id, &text, start, end, mode).js()?;
         crate::editing::queue_control_selectionchange(n.page(), n.id);
-        crate::input::queue_simple(n.page(), n.id, "select", true, false);
+        queue_select_if_changed(n, before);
         Ok(s.undefined())
     });
+}
+
+/// `autocomplete` of `input`, `select` and `textarea`: the attribute's
+/// IDL-exposed autofill value on getting, the attribute on setting.
+fn define_autocomplete<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.accessor(
+        "autocomplete",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let anchor = dom.element(n.id).is_ok_and(|e| &*e.name.local == "input")
+                && dom.input_type(n.id).is_ok_and(|t| t == InputType::Hidden);
+            Ok(s.string(&pyro_dom::forms::autofill_idl_value(dom.get_attribute(n.id, "autocomplete").js()?, anchor)))
+        },
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "autocomplete", &arg0).js()
+        },
+    );
 }
 
 /// A `selectionDirection` keyword: backward (`Some(true)`), forward, or
@@ -1679,7 +2157,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     reflect_str!(def, "pattern", "pattern");
     reflect_str!(def, "accept", "accept");
     reflect_str!(def, "alt", "alt");
-    reflect_str!(def, "autocomplete", "autocomplete");
+    define_autocomplete(def);
     reflect_str!(def, "dirName", "dirname");
     reflect_str!(def, "formTarget", "formtarget");
     reflect_str!(def, "align", "align");
@@ -1693,6 +2171,8 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     reflect_bool!(def, "required", "required");
     reflect_bool!(def, "multiple", "multiple");
     reflect_bool!(def, "formNoValidate", "formnovalidate");
+    reflect_bool!(def, "alpha", "alpha");
+    reflect_enum!(def, "colorSpace", "colorspace", COLOR_SPACE);
     reflect_limited_long!(def, "maxLength", "maxlength");
     reflect_limited_long!(def, "minLength", "minlength");
     reflect_positive_ulong!(def, "size", "size", 20);
@@ -1810,7 +2290,7 @@ simple_class!(HtmlTextAreaElement, "HTMLTextAreaElement", HtmlElement, |def| {
     define_text_selection(def);
     reflect_str!(def, "name", "name");
     reflect_str!(def, "placeholder", "placeholder");
-    reflect_str!(def, "autocomplete", "autocomplete");
+    define_autocomplete(def);
     reflect_str!(def, "wrap", "wrap");
     reflect_str!(def, "dirName", "dirname");
     reflect_bool!(def, "disabled", "disabled");
@@ -1847,7 +2327,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
     define_labels(def);
     define_validation(def);
     reflect_str!(def, "name", "name");
-    reflect_str!(def, "autocomplete", "autocomplete");
+    define_autocomplete(def);
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "required", "required");
     reflect_bool!(def, "multiple", "multiple");
@@ -1886,6 +2366,8 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
         let o = n.page().dom.borrow().select_options(n.id).js()?.get(i).copied();
         node_value(s, n.page(), o)
     });
+    // Indexed properties make it iterable (Web IDL).
+    def.indexed_iterator();
     def.indexed(|s, n, i| {
         let o = n.page().dom.borrow().select_options(n.id).js()?.get(i as usize).copied();
         match o {
@@ -2763,6 +3245,18 @@ simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
     reflect_url!(def, "codeBase", "codebase");
     reflect_str!(def, "codeType", "codetype");
     reflect_str_nn!(def, "border", "border");
+    // An object showing a document has a child navigable, as an iframe does (null otherwise).
+    def.getter("contentDocument", |s, n| {
+        if let Some(document) = n.page().frame_document_value(s, n.id)? {
+            return Ok(document);
+        }
+        let doc = n.page().frame_document(n.id);
+        node_value(s, n.page(), doc)
+    });
+    def.getter("contentWindow", |s, n| match n.page().frame_window(s, n.id)? {
+        Some(w) => Ok(w),
+        None => Ok(s.null()),
+    });
 });
 simple_class!(HtmlEmbedElement, "HTMLEmbedElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");
@@ -2795,6 +3289,7 @@ simple_class!(HtmlMarqueeElement, "HTMLMarqueeElement", HtmlElement, |def| {
     reflect_str!(def, "width", "width");
 });
 simple_class!(HtmlFrameSetElement, "HTMLFrameSetElement", HtmlElement, |def| {
+    crate::handlers::define_window_reflecting(def);
     reflect_str!(def, "cols", "cols");
     reflect_str!(def, "rows", "rows");
 });
@@ -2852,6 +3347,11 @@ impl JsClass for SvgElement {
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
+        // CSS Typed OM: the inline declarations as a StylePropertyMap.
+        def.getter("attributeStyleMap", |s, n| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::typed_om::attribute_style_map(s, n.page(), el)
+        });
         def.getter("ownerSVGElement", |s, n| {
             let dom = n.page().dom.borrow();
             let mut p = dom.parent_element(n.id).js()?;
@@ -2882,6 +3382,30 @@ impl JsClass for SvgElement {
         });
     }
 }
+/// MathML Core `MathMLElement`: an element in the MathML namespace, with
+/// `HTMLOrSVGElement`, `ElementCSSInlineStyle` and the event handlers.
+pub struct MathMlElement;
+impl JsClass for MathMlElement {
+    const NAME: &'static str = "MathMLElement";
+    type Data = NodeData;
+    type Parent = Element;
+    fn define(def: &mut ClassDef<Self>) {
+        crate::handlers::define_global(def);
+        def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
+        // [PutForwards=cssText]
+        def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
+        // CSS Typed OM: the inline declarations as a StylePropertyMap.
+        def.getter("attributeStyleMap", |s, n| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::typed_om::attribute_style_map(s, n.page(), el)
+        });
+        def.method("focus", 0, focus_element);
+        def.method("blur", 0, |s, n, _a| {
+            crate::input::blur_element(n.page(), n.id);
+            Ok(s.undefined())
+        });
+    }
+}
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     // pyro: `transform` (SVG 2 `SVGAnimatedTransformList`, the attribute's list).
     def.getter("transform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "transform")?.value()));
@@ -2894,7 +3418,101 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         crate::layout_api::rect_value(s, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });
-simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement);
+simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    // SVG time control (SVG 1.1 `SVGSVGElement`), of the document's SMIL clock (`smil`).
+    def.method("setCurrentTime", 1, |s, n, a| {
+        a.require(1, "SVGSVGElement.setCurrentTime")?;
+        let seconds = a.get(0).to_number()?;
+        if !seconds.is_finite() {
+            return Err(JsError::Type(
+                "Failed to execute 'setCurrentTime' on 'SVGSVGElement': The provided float value is non-finite.".into(),
+            ));
+        }
+        crate::smil::set_current_time(n.page(), seconds);
+        Ok(s.undefined())
+    });
+    def.method("getCurrentTime", 0, |s, n, _a| Ok(s.number(crate::smil::current_time(n.page()))));
+    def.method("pauseAnimations", 0, |s, n, _a| {
+        crate::smil::set_paused(n.page(), true);
+        Ok(s.undefined())
+    });
+    def.method("unpauseAnimations", 0, |s, n, _a| {
+        crate::smil::set_paused(n.page(), false);
+        Ok(s.undefined())
+    });
+    def.method("animationsPaused", 0, |s, n, _a| Ok(s.boolean(crate::smil::paused(n.page()))));
+});
+// SVG 2 `<length>` attributes as `SVGAnimatedLength`s (`collections::SvgLengthAttr`: the attribute,
+// its initial value and the direction its percentages resolve in).
+static LEN_300: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x", initial: "0%", dir: collections::SvgLengthDir::Width, slot: 300 };
+static LEN_303: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y", initial: "0%", dir: collections::SvgLengthDir::Height, slot: 303 };
+static LEN_306: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "width", initial: "100%", dir: collections::SvgLengthDir::Width, slot: 306 };
+static LEN_309: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "height", initial: "100%", dir: collections::SvgLengthDir::Height, slot: 309 };
+static LEN_312: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x", initial: "-10%", dir: collections::SvgLengthDir::Width, slot: 312 };
+static LEN_315: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y", initial: "-10%", dir: collections::SvgLengthDir::Height, slot: 315 };
+static LEN_318: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "width", initial: "120%", dir: collections::SvgLengthDir::Width, slot: 318 };
+static LEN_321: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "height", initial: "120%", dir: collections::SvgLengthDir::Height, slot: 321 };
+static LEN_324: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x", initial: "0", dir: collections::SvgLengthDir::Width, slot: 324 };
+static LEN_327: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y", initial: "0", dir: collections::SvgLengthDir::Height, slot: 327 };
+static LEN_330: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "width", initial: "0", dir: collections::SvgLengthDir::Width, slot: 330 };
+static LEN_333: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "height", initial: "0", dir: collections::SvgLengthDir::Height, slot: 333 };
+static LEN_336: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x1", initial: "0%", dir: collections::SvgLengthDir::Width, slot: 336 };
+static LEN_339: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y1", initial: "0%", dir: collections::SvgLengthDir::Height, slot: 339 };
+static LEN_342: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x2", initial: "100%", dir: collections::SvgLengthDir::Width, slot: 342 };
+static LEN_345: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y2", initial: "0%", dir: collections::SvgLengthDir::Height, slot: 345 };
+static LEN_348: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "cx", initial: "50%", dir: collections::SvgLengthDir::Width, slot: 348 };
+static LEN_351: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "cy", initial: "50%", dir: collections::SvgLengthDir::Height, slot: 351 };
+static LEN_354: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "r", initial: "50%", dir: collections::SvgLengthDir::Other, slot: 354 };
+static LEN_357: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "fx", initial: "50%", dir: collections::SvgLengthDir::Width, slot: 357 };
+static LEN_360: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "fy", initial: "50%", dir: collections::SvgLengthDir::Height, slot: 360 };
+static LEN_363: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "fr", initial: "0%", dir: collections::SvgLengthDir::Other, slot: 363 };
+static LEN_366: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "refX", initial: "0", dir: collections::SvgLengthDir::Width, slot: 366 };
+static LEN_369: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "refY", initial: "0", dir: collections::SvgLengthDir::Height, slot: 369 };
+static LEN_372: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "markerWidth", initial: "3", dir: collections::SvgLengthDir::Width, slot: 372 };
+static LEN_375: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "markerHeight", initial: "3", dir: collections::SvgLengthDir::Height, slot: 375 };
+static LEN_378: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "width", initial: "auto", dir: collections::SvgLengthDir::Width, slot: 378 };
+static LEN_381: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "height", initial: "auto", dir: collections::SvgLengthDir::Height, slot: 381 };
+static LEN_384: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "rx", initial: "0", dir: collections::SvgLengthDir::Width, slot: 384 };
+static LEN_387: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "ry", initial: "0", dir: collections::SvgLengthDir::Height, slot: 387 };
+static LEN_390: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "cx", initial: "0", dir: collections::SvgLengthDir::Width, slot: 390 };
+static LEN_393: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "cy", initial: "0", dir: collections::SvgLengthDir::Height, slot: 393 };
+static LEN_396: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "r", initial: "0", dir: collections::SvgLengthDir::Other, slot: 396 };
+static LEN_399: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x1", initial: "0", dir: collections::SvgLengthDir::Width, slot: 399 };
+static LEN_402: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y1", initial: "0", dir: collections::SvgLengthDir::Height, slot: 402 };
+static LEN_405: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x2", initial: "0", dir: collections::SvgLengthDir::Width, slot: 405 };
+static LEN_408: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y2", initial: "0", dir: collections::SvgLengthDir::Height, slot: 408 };
+
+simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement);
+simple_class!(SvgRectElement, "SVGRectElement", SvgGeometryElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_378)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_381)?.value()));
+    def.getter("rx", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_384)?.value()));
+    def.getter("ry", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_387)?.value()));
+});
+simple_class!(SvgCircleElement, "SVGCircleElement", SvgGeometryElement, |def| {
+    def.getter("cx", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_390)?.value()));
+    def.getter("cy", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_393)?.value()));
+    def.getter("r", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_396)?.value()));
+});
+simple_class!(SvgEllipseElement, "SVGEllipseElement", SvgGeometryElement, |def| {
+    def.getter("cx", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_390)?.value()));
+    def.getter("cy", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_393)?.value()));
+    def.getter("rx", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_384)?.value()));
+    def.getter("ry", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_387)?.value()));
+});
+simple_class!(SvgLineElement, "SVGLineElement", SvgGeometryElement, |def| {
+    def.getter("x1", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_399)?.value()));
+    def.getter("y1", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_402)?.value()));
+    def.getter("x2", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_405)?.value()));
+    def.getter("y2", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_408)?.value()));
+});
+
 // SVG 2 elements with enumerated attributes, as `SVGAnimatedEnumeration`s
 // (`collections::SvgEnum`: the keywords, in the order of their values from 1).
 const UNITS: &[&str] = &["userSpaceOnUse", "objectBoundingBox"];
@@ -2937,11 +3555,19 @@ simple_class!(SvgClipPathElement, "SVGClipPathElement", SvgElement, |def| {
     svg_enum!(def, "clipPathUnits", CLIP_PATH_UNITS);
 });
 simple_class!(SvgMaskElement, "SVGMaskElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_312)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_315)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_318)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_321)?.value()));
     unit_type_constants(def);
     svg_enum!(def, "maskUnits", MASK_UNITS);
     svg_enum!(def, "maskContentUnits", MASK_CONTENT_UNITS);
 });
 simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
     unit_type_constants(def);
     svg_enum!(def, "patternUnits", PATTERN_UNITS);
     svg_enum!(def, "patternContentUnits", PATTERN_CONTENT_UNITS);
@@ -2955,18 +3581,409 @@ simple_class!(SvgGradientElement, "SVGGradientElement", SvgElement, |def| {
     svg_enum!(def, "gradientUnits", GRADIENT_UNITS);
     svg_enum!(def, "spreadMethod", SPREAD_METHOD);
 });
-simple_class!(SvgLinearGradientElement, "SVGLinearGradientElement", SvgGradientElement);
-simple_class!(SvgRadialGradientElement, "SVGRadialGradientElement", SvgGradientElement);
+simple_class!(SvgLinearGradientElement, "SVGLinearGradientElement", SvgGradientElement, |def| {
+    def.getter("x1", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_336)?.value()));
+    def.getter("y1", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_339)?.value()));
+    def.getter("x2", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_342)?.value()));
+    def.getter("y2", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_345)?.value()));
+});
+simple_class!(SvgRadialGradientElement, "SVGRadialGradientElement", SvgGradientElement, |def| {
+    def.getter("cx", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_348)?.value()));
+    def.getter("cy", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_351)?.value()));
+    def.getter("r", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_354)?.value()));
+    def.getter("fx", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_357)?.value()));
+    def.getter("fy", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_360)?.value()));
+    def.getter("fr", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_363)?.value()));
+});
 simple_class!(SvgFilterElement, "SVGFilterElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_312)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_315)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_318)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_321)?.value()));
     unit_type_constants(def);
     svg_enum!(def, "filterUnits", FILTER_UNITS);
     svg_enum!(def, "primitiveUnits", PRIMITIVE_UNITS);
 });
 simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
+    def.getter("refX", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_366)?.value()));
+    def.getter("refY", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_369)?.value()));
+    def.getter("markerWidth", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_372)?.value()));
+    def.getter("markerHeight", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_375)?.value()));
     def.constant("SVG_MARKERUNITS_UNKNOWN", 0.0);
     def.constant("SVG_MARKERUNITS_USERSPACEONUSE", 1.0);
     def.constant("SVG_MARKERUNITS_STROKEWIDTH", 2.0);
     svg_enum!(def, "markerUnits", MARKER_UNITS);
+});
+
+// SVG filter primitives (Filter Effects 1): their attributes as SVGAnimatedEnumeration, -String,
+// -Number, -Integer and -Boolean values (`collections`), following the specification's IDL.
+// Not implemented yet: the number lists (`values`, `tableValues`, `kernelMatrix`) and feImage's
+// `preserveAspectRatio`.
+static FE_BLEND_MODE: collections::SvgEnum =
+    collections::SvgEnum { attr: "mode", keywords: &["normal", "multiply", "screen", "darken", "lighten", "overlay", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"], initial: 1, slot: 40 };
+static FE_COLOR_MATRIX_TYPE: collections::SvgEnum =
+    collections::SvgEnum { attr: "type", keywords: &["matrix", "saturate", "hueRotate", "luminanceToAlpha"], initial: 1, slot: 41 };
+static FE_TRANSFER_TYPE: collections::SvgEnum =
+    collections::SvgEnum { attr: "type", keywords: &["identity", "table", "discrete", "linear", "gamma"], initial: 1, slot: 42 };
+static FE_COMPOSITE_OPERATOR: collections::SvgEnum =
+    collections::SvgEnum { attr: "operator", keywords: &["over", "in", "out", "atop", "xor", "arithmetic"], initial: 1, slot: 43 };
+static FE_CONVOLVE_EDGE_MODE: collections::SvgEnum =
+    collections::SvgEnum { attr: "edgeMode", keywords: &["duplicate", "wrap", "none"], initial: 1, slot: 44 };
+static FE_BLUR_EDGE_MODE: collections::SvgEnum =
+    collections::SvgEnum { attr: "edgeMode", keywords: &["duplicate", "wrap", "none"], initial: 3, slot: 45 };
+static FE_X_CHANNEL: collections::SvgEnum =
+    collections::SvgEnum { attr: "xChannelSelector", keywords: &["R", "G", "B", "A"], initial: 4, slot: 46 };
+static FE_Y_CHANNEL: collections::SvgEnum =
+    collections::SvgEnum { attr: "yChannelSelector", keywords: &["R", "G", "B", "A"], initial: 4, slot: 47 };
+static FE_MORPHOLOGY_OPERATOR: collections::SvgEnum =
+    collections::SvgEnum { attr: "operator", keywords: &["erode", "dilate"], initial: 1, slot: 48 };
+static FE_TURBULENCE_TYPE: collections::SvgEnum =
+    collections::SvgEnum { attr: "type", keywords: &["fractalNoise", "turbulence"], initial: 2, slot: 49 };
+static FE_STITCH_TILES: collections::SvgEnum =
+    collections::SvgEnum { attr: "stitchTiles", keywords: &["stitch", "noStitch"], initial: 2, slot: 50 };
+static FE_ATTR_100: collections::SvgAttr = collections::SvgAttr { attrs: &["in"], part: collections::SvgPart::Whole, initial: 0.0, slot: 100 };
+static FE_ATTR_101: collections::SvgAttr = collections::SvgAttr { attrs: &["in2"], part: collections::SvgPart::Whole, initial: 0.0, slot: 101 };
+static FE_ATTR_102: collections::SvgAttr = collections::SvgAttr { attrs: &["result"], part: collections::SvgPart::Whole, initial: 0.0, slot: 102 };
+static FE_ATTR_103: collections::SvgAttr = collections::SvgAttr { attrs: &["slope"], part: collections::SvgPart::Whole, initial: 1.0, slot: 103 };
+static FE_ATTR_104: collections::SvgAttr = collections::SvgAttr { attrs: &["intercept"], part: collections::SvgPart::Whole, initial: 0.0, slot: 104 };
+static FE_ATTR_105: collections::SvgAttr = collections::SvgAttr { attrs: &["amplitude"], part: collections::SvgPart::Whole, initial: 1.0, slot: 105 };
+static FE_ATTR_106: collections::SvgAttr = collections::SvgAttr { attrs: &["exponent"], part: collections::SvgPart::Whole, initial: 1.0, slot: 106 };
+static FE_ATTR_107: collections::SvgAttr = collections::SvgAttr { attrs: &["offset"], part: collections::SvgPart::Whole, initial: 0.0, slot: 107 };
+static FE_ATTR_108: collections::SvgAttr = collections::SvgAttr { attrs: &["k1"], part: collections::SvgPart::Whole, initial: 0.0, slot: 108 };
+static FE_ATTR_109: collections::SvgAttr = collections::SvgAttr { attrs: &["k2"], part: collections::SvgPart::Whole, initial: 0.0, slot: 109 };
+static FE_ATTR_110: collections::SvgAttr = collections::SvgAttr { attrs: &["k3"], part: collections::SvgPart::Whole, initial: 0.0, slot: 110 };
+static FE_ATTR_111: collections::SvgAttr = collections::SvgAttr { attrs: &["k4"], part: collections::SvgPart::Whole, initial: 0.0, slot: 111 };
+static FE_ATTR_112: collections::SvgAttr = collections::SvgAttr { attrs: &["order"], part: collections::SvgPart::First, initial: 3.0, slot: 112 };
+static FE_ATTR_113: collections::SvgAttr = collections::SvgAttr { attrs: &["order"], part: collections::SvgPart::Second, initial: 3.0, slot: 113 };
+static FE_ATTR_114: collections::SvgAttr = collections::SvgAttr { attrs: &["divisor"], part: collections::SvgPart::Whole, initial: 1.0, slot: 114 };
+static FE_ATTR_115: collections::SvgAttr = collections::SvgAttr { attrs: &["bias"], part: collections::SvgPart::Whole, initial: 0.0, slot: 115 };
+static FE_ATTR_116: collections::SvgAttr = collections::SvgAttr { attrs: &["targetX"], part: collections::SvgPart::Whole, initial: 0.0, slot: 116 };
+static FE_ATTR_117: collections::SvgAttr = collections::SvgAttr { attrs: &["targetY"], part: collections::SvgPart::Whole, initial: 0.0, slot: 117 };
+static FE_ATTR_118: collections::SvgAttr = collections::SvgAttr { attrs: &["kernelUnitLength"], part: collections::SvgPart::First, initial: 0.0, slot: 118 };
+static FE_ATTR_119: collections::SvgAttr = collections::SvgAttr { attrs: &["kernelUnitLength"], part: collections::SvgPart::Second, initial: 0.0, slot: 119 };
+static FE_ATTR_120: collections::SvgAttr = collections::SvgAttr { attrs: &["preserveAlpha"], part: collections::SvgPart::Whole, initial: 0.0, slot: 120 };
+static FE_ATTR_121: collections::SvgAttr = collections::SvgAttr { attrs: &["surfaceScale"], part: collections::SvgPart::Whole, initial: 1.0, slot: 121 };
+static FE_ATTR_122: collections::SvgAttr = collections::SvgAttr { attrs: &["diffuseConstant"], part: collections::SvgPart::Whole, initial: 1.0, slot: 122 };
+static FE_ATTR_123: collections::SvgAttr = collections::SvgAttr { attrs: &["azimuth"], part: collections::SvgPart::Whole, initial: 0.0, slot: 123 };
+static FE_ATTR_124: collections::SvgAttr = collections::SvgAttr { attrs: &["elevation"], part: collections::SvgPart::Whole, initial: 0.0, slot: 124 };
+static FE_ATTR_125: collections::SvgAttr = collections::SvgAttr { attrs: &["x"], part: collections::SvgPart::Whole, initial: 0.0, slot: 125 };
+static FE_ATTR_126: collections::SvgAttr = collections::SvgAttr { attrs: &["y"], part: collections::SvgPart::Whole, initial: 0.0, slot: 126 };
+static FE_ATTR_127: collections::SvgAttr = collections::SvgAttr { attrs: &["z"], part: collections::SvgPart::Whole, initial: 0.0, slot: 127 };
+static FE_ATTR_128: collections::SvgAttr = collections::SvgAttr { attrs: &["pointsAtX"], part: collections::SvgPart::Whole, initial: 0.0, slot: 128 };
+static FE_ATTR_129: collections::SvgAttr = collections::SvgAttr { attrs: &["pointsAtY"], part: collections::SvgPart::Whole, initial: 0.0, slot: 129 };
+static FE_ATTR_130: collections::SvgAttr = collections::SvgAttr { attrs: &["pointsAtZ"], part: collections::SvgPart::Whole, initial: 0.0, slot: 130 };
+static FE_ATTR_131: collections::SvgAttr = collections::SvgAttr { attrs: &["specularExponent"], part: collections::SvgPart::Whole, initial: 1.0, slot: 131 };
+static FE_ATTR_132: collections::SvgAttr = collections::SvgAttr { attrs: &["limitingConeAngle"], part: collections::SvgPart::Whole, initial: 0.0, slot: 132 };
+static FE_ATTR_133: collections::SvgAttr = collections::SvgAttr { attrs: &["scale"], part: collections::SvgPart::Whole, initial: 0.0, slot: 133 };
+static FE_ATTR_134: collections::SvgAttr = collections::SvgAttr { attrs: &["dx"], part: collections::SvgPart::Whole, initial: 2.0, slot: 134 };
+static FE_ATTR_135: collections::SvgAttr = collections::SvgAttr { attrs: &["dy"], part: collections::SvgPart::Whole, initial: 2.0, slot: 135 };
+static FE_ATTR_136: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::First, initial: 2.0, slot: 136 };
+static FE_ATTR_137: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::Second, initial: 2.0, slot: 137 };
+static FE_ATTR_138: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::First, initial: 0.0, slot: 138 };
+static FE_ATTR_139: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::Second, initial: 0.0, slot: 139 };
+static FE_ATTR_140: collections::SvgAttr = collections::SvgAttr { attrs: &["crossorigin"], part: collections::SvgPart::Whole, initial: 0.0, slot: 140 };
+static FE_ATTR_141: collections::SvgAttr = collections::SvgAttr { attrs: &["href", "xlink:href"], part: collections::SvgPart::Whole, initial: 0.0, slot: 141 };
+static FE_ATTR_142: collections::SvgAttr = collections::SvgAttr { attrs: &["radius"], part: collections::SvgPart::First, initial: 0.0, slot: 142 };
+static FE_ATTR_143: collections::SvgAttr = collections::SvgAttr { attrs: &["radius"], part: collections::SvgPart::Second, initial: 0.0, slot: 143 };
+static FE_ATTR_144: collections::SvgAttr = collections::SvgAttr { attrs: &["dx"], part: collections::SvgPart::Whole, initial: 0.0, slot: 144 };
+static FE_ATTR_145: collections::SvgAttr = collections::SvgAttr { attrs: &["dy"], part: collections::SvgPart::Whole, initial: 0.0, slot: 145 };
+static FE_ATTR_146: collections::SvgAttr = collections::SvgAttr { attrs: &["specularConstant"], part: collections::SvgPart::Whole, initial: 1.0, slot: 146 };
+static FE_ATTR_147: collections::SvgAttr = collections::SvgAttr { attrs: &["baseFrequency"], part: collections::SvgPart::First, initial: 0.0, slot: 147 };
+static FE_ATTR_148: collections::SvgAttr = collections::SvgAttr { attrs: &["baseFrequency"], part: collections::SvgPart::Second, initial: 0.0, slot: 148 };
+static FE_ATTR_149: collections::SvgAttr = collections::SvgAttr { attrs: &["numOctaves"], part: collections::SvgPart::Whole, initial: 1.0, slot: 149 };
+static FE_ATTR_150: collections::SvgAttr = collections::SvgAttr { attrs: &["seed"], part: collections::SvgPart::Whole, initial: 0.0, slot: 150 };
+simple_class!(SvgFeBlendElement, "SVGFEBlendElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_FEBLEND_MODE_UNKNOWN", 0.0);
+    def.constant("SVG_FEBLEND_MODE_NORMAL", 1.0);
+    def.constant("SVG_FEBLEND_MODE_MULTIPLY", 2.0);
+    def.constant("SVG_FEBLEND_MODE_SCREEN", 3.0);
+    def.constant("SVG_FEBLEND_MODE_DARKEN", 4.0);
+    def.constant("SVG_FEBLEND_MODE_LIGHTEN", 5.0);
+    def.constant("SVG_FEBLEND_MODE_OVERLAY", 6.0);
+    def.constant("SVG_FEBLEND_MODE_COLOR_DODGE", 7.0);
+    def.constant("SVG_FEBLEND_MODE_COLOR_BURN", 8.0);
+    def.constant("SVG_FEBLEND_MODE_HARD_LIGHT", 9.0);
+    def.constant("SVG_FEBLEND_MODE_SOFT_LIGHT", 10.0);
+    def.constant("SVG_FEBLEND_MODE_DIFFERENCE", 11.0);
+    def.constant("SVG_FEBLEND_MODE_EXCLUSION", 12.0);
+    def.constant("SVG_FEBLEND_MODE_HUE", 13.0);
+    def.constant("SVG_FEBLEND_MODE_SATURATION", 14.0);
+    def.constant("SVG_FEBLEND_MODE_COLOR", 15.0);
+    def.constant("SVG_FEBLEND_MODE_LUMINOSITY", 16.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("in2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_101)?.value()));
+    svg_enum!(def, "mode", FE_BLEND_MODE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeColorMatrixElement, "SVGFEColorMatrixElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_FECOLORMATRIX_TYPE_UNKNOWN", 0.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_MATRIX", 1.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_SATURATE", 2.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_HUEROTATE", 3.0);
+    def.constant("SVG_FECOLORMATRIX_TYPE_LUMINANCETOALPHA", 4.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    svg_enum!(def, "type", FE_COLOR_MATRIX_TYPE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeComponentTransferElement, "SVGFEComponentTransferElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgComponentTransferFunctionElement, "SVGComponentTransferFunctionElement", SvgElement, |def| {
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_UNKNOWN", 0.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_IDENTITY", 1.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_TABLE", 2.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_DISCRETE", 3.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_LINEAR", 4.0);
+    def.constant("SVG_FECOMPONENTTRANSFER_TYPE_GAMMA", 5.0);
+    svg_enum!(def, "type", FE_TRANSFER_TYPE);
+    def.getter("slope", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_103)?.value()));
+    def.getter("intercept", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_104)?.value()));
+    def.getter("amplitude", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_105)?.value()));
+    def.getter("exponent", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_106)?.value()));
+    def.getter("offset", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_107)?.value()));
+});
+simple_class!(SvgFeFuncRElement, "SVGFEFuncRElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeFuncGElement, "SVGFEFuncGElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeFuncBElement, "SVGFEFuncBElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeFuncAElement, "SVGFEFuncAElement", SvgComponentTransferFunctionElement);
+simple_class!(SvgFeCompositeElement, "SVGFECompositeElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_FECOMPOSITE_OPERATOR_UNKNOWN", 0.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_OVER", 1.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_IN", 2.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_OUT", 3.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_ATOP", 4.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_XOR", 5.0);
+    def.constant("SVG_FECOMPOSITE_OPERATOR_ARITHMETIC", 6.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("in2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_101)?.value()));
+    svg_enum!(def, "operator", FE_COMPOSITE_OPERATOR);
+    def.getter("k1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_108)?.value()));
+    def.getter("k2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_109)?.value()));
+    def.getter("k3", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_110)?.value()));
+    def.getter("k4", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_111)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeConvolveMatrixElement, "SVGFEConvolveMatrixElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_EDGEMODE_UNKNOWN", 0.0);
+    def.constant("SVG_EDGEMODE_DUPLICATE", 1.0);
+    def.constant("SVG_EDGEMODE_WRAP", 2.0);
+    def.constant("SVG_EDGEMODE_NONE", 3.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("orderX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_112)?.value()));
+    def.getter("orderY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_113)?.value()));
+    def.getter("divisor", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_114)?.value()));
+    def.getter("bias", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_115)?.value()));
+    def.getter("targetX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_116)?.value()));
+    def.getter("targetY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_117)?.value()));
+    svg_enum!(def, "edgeMode", FE_CONVOLVE_EDGE_MODE);
+    def.getter("kernelUnitLengthX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_118)?.value()));
+    def.getter("kernelUnitLengthY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_119)?.value()));
+    def.getter("preserveAlpha", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedBoolean>(s, n.page(), n.id, &FE_ATTR_120)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeDiffuseLightingElement, "SVGFEDiffuseLightingElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("surfaceScale", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_121)?.value()));
+    def.getter("diffuseConstant", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_122)?.value()));
+    def.getter("kernelUnitLengthX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_118)?.value()));
+    def.getter("kernelUnitLengthY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_119)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeDistantLightElement, "SVGFEDistantLightElement", SvgElement, |def| {
+    def.getter("azimuth", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_123)?.value()));
+    def.getter("elevation", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_124)?.value()));
+});
+simple_class!(SvgFePointLightElement, "SVGFEPointLightElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_125)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_126)?.value()));
+    def.getter("z", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_127)?.value()));
+});
+simple_class!(SvgFeSpotLightElement, "SVGFESpotLightElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_125)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_126)?.value()));
+    def.getter("z", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_127)?.value()));
+    def.getter("pointsAtX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_128)?.value()));
+    def.getter("pointsAtY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_129)?.value()));
+    def.getter("pointsAtZ", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_130)?.value()));
+    def.getter("specularExponent", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_131)?.value()));
+    def.getter("limitingConeAngle", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_132)?.value()));
+});
+simple_class!(SvgFeDisplacementMapElement, "SVGFEDisplacementMapElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_CHANNEL_UNKNOWN", 0.0);
+    def.constant("SVG_CHANNEL_R", 1.0);
+    def.constant("SVG_CHANNEL_G", 2.0);
+    def.constant("SVG_CHANNEL_B", 3.0);
+    def.constant("SVG_CHANNEL_A", 4.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("in2", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_101)?.value()));
+    def.getter("scale", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_133)?.value()));
+    svg_enum!(def, "xChannelSelector", FE_X_CHANNEL);
+    svg_enum!(def, "yChannelSelector", FE_Y_CHANNEL);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeDropShadowElement, "SVGFEDropShadowElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("dx", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_134)?.value()));
+    def.getter("dy", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_135)?.value()));
+    def.getter("stdDeviationX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_136)?.value()));
+    def.getter("stdDeviationY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_137)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+    def.method("setStdDeviation", 2, |s, n, a| {
+        a.require(2, "setStdDeviation")?;
+        let (x, y) = (a.get(0).to_number()? as f32, a.get(1).to_number()? as f32);
+        if !x.is_finite() || !y.is_finite() {
+            return Err(JsError::Type("Failed to execute 'setStdDeviation': The provided float value is non-finite.".into()));
+        }
+        n.page().dom.borrow_mut().set_attribute(n.id, "stdDeviation", &format!("{x} {y}")).js()?;
+        Ok(s.undefined())
+    });
+});
+simple_class!(SvgFeFloodElement, "SVGFEFloodElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeGaussianBlurElement, "SVGFEGaussianBlurElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_EDGEMODE_UNKNOWN", 0.0);
+    def.constant("SVG_EDGEMODE_DUPLICATE", 1.0);
+    def.constant("SVG_EDGEMODE_WRAP", 2.0);
+    def.constant("SVG_EDGEMODE_NONE", 3.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("stdDeviationX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_138)?.value()));
+    def.getter("stdDeviationY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_139)?.value()));
+    svg_enum!(def, "edgeMode", FE_BLUR_EDGE_MODE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+    def.method("setStdDeviation", 2, |s, n, a| {
+        a.require(2, "setStdDeviation")?;
+        let (x, y) = (a.get(0).to_number()? as f32, a.get(1).to_number()? as f32);
+        if !x.is_finite() || !y.is_finite() {
+            return Err(JsError::Type("Failed to execute 'setStdDeviation': The provided float value is non-finite.".into()));
+        }
+        n.page().dom.borrow_mut().set_attribute(n.id, "stdDeviation", &format!("{x} {y}")).js()?;
+        Ok(s.undefined())
+    });
+});
+simple_class!(SvgFeImageElement, "SVGFEImageElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("crossOrigin", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_140)?.value()));
+    def.getter("href", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_141)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeMergeElement, "SVGFEMergeElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeMergeNodeElement, "SVGFEMergeNodeElement", SvgElement, |def| {
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+});
+simple_class!(SvgFeMorphologyElement, "SVGFEMorphologyElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_MORPHOLOGY_OPERATOR_UNKNOWN", 0.0);
+    def.constant("SVG_MORPHOLOGY_OPERATOR_ERODE", 1.0);
+    def.constant("SVG_MORPHOLOGY_OPERATOR_DILATE", 2.0);
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    svg_enum!(def, "operator", FE_MORPHOLOGY_OPERATOR);
+    def.getter("radiusX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_142)?.value()));
+    def.getter("radiusY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_143)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeOffsetElement, "SVGFEOffsetElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("dx", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_144)?.value()));
+    def.getter("dy", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_145)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeSpecularLightingElement, "SVGFESpecularLightingElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("surfaceScale", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_121)?.value()));
+    def.getter("specularConstant", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_146)?.value()));
+    def.getter("specularExponent", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_131)?.value()));
+    def.getter("kernelUnitLengthX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_118)?.value()));
+    def.getter("kernelUnitLengthY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_119)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeTileElement, "SVGFETileElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.getter("in1", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_100)?.value()));
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
+});
+simple_class!(SvgFeTurbulenceElement, "SVGFETurbulenceElement", SvgElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
+    def.constant("SVG_TURBULENCE_TYPE_UNKNOWN", 0.0);
+    def.constant("SVG_TURBULENCE_TYPE_FRACTALNOISE", 1.0);
+    def.constant("SVG_TURBULENCE_TYPE_TURBULENCE", 2.0);
+    def.constant("SVG_STITCHTYPE_UNKNOWN", 0.0);
+    def.constant("SVG_STITCHTYPE_STITCH", 1.0);
+    def.constant("SVG_STITCHTYPE_NOSTITCH", 2.0);
+    def.getter("baseFrequencyX", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_147)?.value()));
+    def.getter("baseFrequencyY", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_148)?.value()));
+    def.getter("numOctaves", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedInteger>(s, n.page(), n.id, &FE_ATTR_149)?.value()));
+    def.getter("seed", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &FE_ATTR_150)?.value()));
+    svg_enum!(def, "stitchTiles", FE_STITCH_TILES);
+    svg_enum!(def, "type", FE_TURBULENCE_TYPE);
+    def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 
 // SVG 2 `a`: the link attributes it shares with HTML's.
@@ -3330,6 +4347,7 @@ fn eval_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId, text: &str,
     page.set_current_script(Some(node));
     page.script_nesting.set(page.script_nesting.get() + 1);
     with_parser(page, doc, |p| p.open_insertion_point());
+    crate::trusted_types::sync_compile_strings(&scope, page);
     if let Err(e) = scope.eval(text, Some(url), 1) {
         scope.report_exception(&e);
     }
@@ -3519,6 +4537,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<HtmlParamElement>();
     engine.register::<HtmlTrackElement>();
     engine.register::<SvgElement>();
+    engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
     engine.register::<SvgAElement>();
@@ -3530,6 +4549,37 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgRadialGradientElement>();
     engine.register::<SvgFilterElement>();
     engine.register::<SvgMarkerElement>();
+    engine.register::<SvgGeometryElement>();
+    engine.register::<SvgRectElement>();
+    engine.register::<SvgCircleElement>();
+    engine.register::<SvgEllipseElement>();
+    engine.register::<SvgLineElement>();
+    engine.register::<SvgComponentTransferFunctionElement>();
+    engine.register::<SvgFeBlendElement>();
+    engine.register::<SvgFeColorMatrixElement>();
+    engine.register::<SvgFeComponentTransferElement>();
+    engine.register::<SvgFeFuncRElement>();
+    engine.register::<SvgFeFuncGElement>();
+    engine.register::<SvgFeFuncBElement>();
+    engine.register::<SvgFeFuncAElement>();
+    engine.register::<SvgFeCompositeElement>();
+    engine.register::<SvgFeConvolveMatrixElement>();
+    engine.register::<SvgFeDiffuseLightingElement>();
+    engine.register::<SvgFeDistantLightElement>();
+    engine.register::<SvgFePointLightElement>();
+    engine.register::<SvgFeSpotLightElement>();
+    engine.register::<SvgFeDisplacementMapElement>();
+    engine.register::<SvgFeDropShadowElement>();
+    engine.register::<SvgFeFloodElement>();
+    engine.register::<SvgFeGaussianBlurElement>();
+    engine.register::<SvgFeImageElement>();
+    engine.register::<SvgFeMergeElement>();
+    engine.register::<SvgFeMergeNodeElement>();
+    engine.register::<SvgFeMorphologyElement>();
+    engine.register::<SvgFeOffsetElement>();
+    engine.register::<SvgFeSpecularLightingElement>();
+    engine.register::<SvgFeTileElement>();
+    engine.register::<SvgFeTurbulenceElement>();
     engine.register::<DomImplementation>();
 }
 

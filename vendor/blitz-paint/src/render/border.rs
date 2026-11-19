@@ -10,73 +10,80 @@ use style::{
 };
 
 use crate::{
-    color::{ToColorColor as _, contrast_ratio},
+    color::ToColorColor as _,
     kurbo_css::{CssBox, Edge, NonUniformRoundedRectRadii},
     render::{ElementCx, PhysicalTracks},
 };
 
-/// A darker version of a colour (mirrors WebKit/Blink's `Color::Dark`): the
-/// brightest channel is reduced by a fixed amount and the others scaled to match,
-/// preserving hue.
-fn darken(color: Color) -> Color {
-    let [r, g, b, a] = color.components;
-    let v = r.max(g).max(b);
-    if v == 0.0 {
-        return color;
-    }
-    let multiplier = ((v - 0.33) / v).max(0.0);
-    Color::new([r * multiplier, g * multiplier, b * multiplier, a])
+/// pyro: Blink's `QuantizeTo8Bit`: a channel times the largest float under 256, truncated to an
+/// 8-bit value.
+fn quantize_to_8bit(v: f32) -> f32 {
+    const SCALE: f32 = 255.999_98; // nextafterf(256.0, 0.0)
+    ((v * SCALE) as i32) as f32 / 255.0
 }
 
-/// A lighter version of a colour (mirrors WebKit/Blink's `Color::Light`): the
-/// brightest channel is increased by a fixed amount and the others scaled to
-/// match, preserving hue.
+/// A darker version of a colour: Blink's `Color::Dark` (`platform/graphics/color.cc`): opaque
+/// white is rgb(171, 171, 171); otherwise the brightest channel loses 0.33 and the others
+/// scale with it, quantized to 8 bits, alpha kept.
+fn darken(color: Color) -> Color {
+    let [r, g, b, a] = color.components;
+    if [r, g, b, a] == [1.0, 1.0, 1.0, 1.0] {
+        return Color::from_rgb8(171, 171, 171);
+    }
+    let v = r.max(g).max(b);
+    let multiplier = if v == 0.0 { 0.0 } else { ((v - 0.33) / v).max(0.0) };
+    Color::new([
+        quantize_to_8bit(r * multiplier),
+        quantize_to_8bit(g * multiplier),
+        quantize_to_8bit(b * multiplier),
+        a,
+    ])
+}
+
+/// A lighter version of a colour: Blink's `Color::Light`: black is rgb(84, 84, 84) (with its
+/// alpha); otherwise the brightest channel gains 0.33 (up to 1) and the others scale with it,
+/// quantized to 8 bits, alpha kept.
 fn lighten(color: Color) -> Color {
     let [r, g, b, a] = color.components;
     let v = r.max(g).max(b);
     if v == 0.0 {
-        // Pure black: WebKit uses a fixed dark grey (0x545454).
-        return Color::new([0.33, 0.33, 0.33, a]);
+        let grey = 84.0 / 255.0;
+        return Color::new([grey, grey, grey, a]);
     }
     let multiplier = (v + 0.33).min(1.0) / v;
-    Color::new([r * multiplier, g * multiplier, b * multiplier, a])
+    Color::new([
+        quantize_to_8bit(r * multiplier),
+        quantize_to_8bit(g * multiplier),
+        quantize_to_8bit(b * multiplier),
+        a,
+    ])
 }
 
-/// The colour of a single edge of an `inset`/`outset` border.
-///
-/// An `outset` border is raised: the top/left edges use the "lighter" shade and
-/// the bottom/right edges the "darker" shade (`inset` is the reverse). The exact
-/// shading matches Chrome's `CalculateInsetOutsetColor`:
-///
-/// * The darker edge is always darkened.
-/// * The lighter edge keeps the base colour unchanged, *except* for colours dark
-///   enough that the darkened edge wouldn't have enough contrast against the base
-///   colour, which are lightened instead so the bevel stays visible.
+/// pyro: the WCAG relative luminance of a colour (`color_utils::GetRelativeLuminance4f`).
+fn relative_luminance(color: Color) -> f32 {
+    let linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+    let [r, g, b, _] = color.components;
+    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+}
+
+/// The colour of a single edge of an `inset`/`outset` border: Blink's
+/// `BoxBorderPainter::CalculateInsetOutsetColor` with `DarkenBoxSide` (an `inset` border darkens
+/// its top and left sides, an `outset` one its bottom and right). A colour as dark as
+/// rgb(32, 32, 32) or darker is lightened on the darkened sides and lightened twice on the
+/// others; otherwise the darkened sides take `Color::Dark` and the others `Color::Light`, but a
+/// colour as light as rgb(235, 235, 235) or lighter stays as it is there.
 fn beveled_edge_color(color: Color, edge: Edge, inset: bool) -> Color {
-    let top_or_left = matches!(edge, Edge::Top | Edge::Left);
-    let should_darken = top_or_left == inset;
-
-    let dark_color = darken(color);
-    if should_darken {
-        return dark_color;
+    const BASE_DARK_COLOR_LUMINANCE: f32 = 0.014_443_844; // rgb(32, 32, 32)
+    const BASE_LIGHT_COLOR_LUMINANCE: f32 = 0.830_77; // rgb(235, 235, 235)
+    let is_darken = matches!(edge, Edge::Top | Edge::Left) == inset;
+    let luminance = relative_luminance(color);
+    if luminance <= BASE_DARK_COLOR_LUMINANCE {
+        return if is_darken { lighten(color) } else { lighten(lighten(color)) };
     }
-
-    // Lighter edge. Chrome uses the base colour as-is unless the colour is dark
-    // enough that the darkened edge lacks contrast against it. The red/green
-    // shortcut mirrors Chrome: for those colours the contrast is always
-    // sufficient, so the base colour is used without a contrast check.
-    let [r, g, _, _] = color.components;
-    if r >= 150.0 / 255.0 || g >= 92.0 / 255.0 {
-        return color;
+    if is_darken {
+        return darken(color);
     }
-
-    // Lighten only when the darkened edge would be too low-contrast to read.
-    const MIN_CONTRAST_RATIO: f32 = 1.75;
-    if contrast_ratio(color, dark_color) < MIN_CONTRAST_RATIO {
-        lighten(color)
-    } else {
-        color
-    }
+    if luminance > BASE_LIGHT_COLOR_LUMINANCE { color } else { lighten(color) }
 }
 
 /// The (outer half, inner half) colours of a single edge of a `groove`/`ridge`
@@ -805,23 +812,56 @@ impl ElementCx<'_, '_> {
             (Edge::Bottom, &border.border_bottom_color, border.border_bottom_style),
             (Edge::Left, &border.border_left_color, border.border_left_style),
         ];
+        // (outer half, inner half) of each side: one colour but for `groove`/`ridge`.
         let mut colors = [None; 4];
+        let mut inner_colors = [None; 4];
+        let mut halves = false;
         for (i, (edge, color, style)) in sides.iter().enumerate() {
             if self.edge_width(*edge) <= 0.0 || style.none_or_hidden() {
                 continue;
             }
             let color = color.resolve_to_absolute(&current_color).as_srgb_color();
-            if *style != BorderStyle::Solid || color.components[3] < 1.0 {
+            // pyro: `inset`/`outset` sides are solid in their shades (a text field's border:
+            // the background no longer shows through the corner joins; WPT css-pseudo
+            // `selection-input-011`).
+            // pyro: and `groove`/`ridge` sides, each half ring painted so in its shades.
+            let (color, inner) = match style {
+                BorderStyle::Solid => (color, color),
+                BorderStyle::Inset | BorderStyle::Outset => {
+                    let shade = beveled_edge_color(color, *edge, *style == BorderStyle::Inset);
+                    (shade, shade)
+                }
+                BorderStyle::Groove | BorderStyle::Ridge => {
+                    halves = true;
+                    grooved_edge_colors(color, *edge, *style == BorderStyle::Ridge)
+                }
+                _ => return false,
+            };
+            if color.components[3] < 1.0 || inner.components[3] < 1.0 {
                 return false;
             }
             colors[i] = Some(color);
+            inner_colors[i] = Some(inner);
         }
-        let present: SmallVec<[Color; 4]> = colors.iter().flatten().copied().collect();
+        let present: SmallVec<[Color; 8]> = colors.iter().chain(inner_colors.iter()).flatten().copied().collect();
         if present.len() < 2 || present.iter().all(|c| *c == present[0]) {
             return false;
         }
-        let bb = self.frame.border_box;
-        let w = self.frame.border_width;
+        if !halves {
+            self.overdraw_square_sides(scene, self.frame.border_box, self.frame.border_width, colors);
+            return true;
+        }
+        let outer = self.frame.border_slice(0.0, 0.5);
+        let inner = self.frame.border_slice(0.5, 1.0);
+        self.overdraw_square_sides(scene, outer.border_box, outer.border_width, colors);
+        self.overdraw_square_sides(scene, inner.border_box, inner.border_width, inner_colors);
+        true
+    }
+
+    /// pyro: one ring of square border sides (`bb` its outer edge, `w` its widths) in `colors`
+    /// (top, right, bottom, left; `None` for a side without a line), by overdraw
+    /// (`draw_square_solid_sides_overdrawn`).
+    fn overdraw_square_sides(&self, scene: &mut impl PaintScene, bb: Rect, w: Insets, colors: [Option<Color>; 4]) {
         // Blink's side order for sides of one opacity and style (`kSidePriority`).
         const ORDER: [usize; 4] = [0, 2, 1, 3];
         let mut painted = [false; 4];
@@ -871,7 +911,6 @@ impl ElementCx<'_, '_> {
             scene.fill(Fill::NonZero, self.transform, color, None, &path);
             painted[i] = true;
         }
-        true
     }
 
     /// The border width (in device pixels) of a single edge.

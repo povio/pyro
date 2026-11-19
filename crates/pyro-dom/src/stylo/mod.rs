@@ -69,6 +69,11 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.masking.enabled", true);
         style_config::set_pref!("layout.css.math-properties.enabled", true);
         style_config::set_pref!("layout.css.motion-path.enabled", true);
+        // pyro: as blitz-dom's `init_stylo_prefs`, for declarations script parses before the
+        // layout engine starts: `offset-path: url()`, `text-wrap-style: balance | pretty`.
+        style_config::set_pref!("layout.css.motion-path-url.enabled", true);
+        style_config::set_pref!("layout.css.text-wrap-style.balance.enabled", true);
+        style_config::set_pref!("layout.css.text-wrap-style.pretty.enabled", true);
         style_config::set_pref!("layout.css.overscroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scroll-driven-animations.enabled", true);
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);

@@ -254,6 +254,11 @@ pub struct Snapshot {
     /// The page's custom highlights and target text, bottom first, painted under the selection
     /// in screenshots of a [`Live`] document.
     pub highlights: Vec<TextHighlight>,
+    /// The focused text control's selection: its node key and start and end in UTF-16 code
+    /// units of its value, painted in screenshots of a [`Live`] document.
+    pub control_selection: Option<(u64, u32, u32)>,
+    /// The replaced elements the selection holds (their node keys), painted with its tint.
+    pub selected_replaced: Vec<u64>,
 }
 
 /// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
@@ -704,8 +709,10 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 <p>Aa 0 €<b>b</b><i>i</i> Ωж 中文 العربية</p><input value="x"><button>b</button>
 <svg width="8" height="8"><text x="0" y="8">s</text></svg></body></html>"#;
 
-/// UA rule that settles transitions and animations at their end values.
-const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation: none !important; }";
+/// UA rule that settles transitions and animations at their end values (the page samples them in).
+/// `animation-name` only, not the `animation` shorthand: that would also reset `animation-timeline`
+/// and `animation-range`, which the scroll-driven animations read from these styles.
+const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation-name: none !important; }";
 /// Chrome's `<input type=file>` box ("Choose File · No file chosen"): Blitz
 /// lays the control out with no content to size it by, so it would be
 /// zero-sized and never visible or clickable.
@@ -772,6 +779,9 @@ pub struct Renderer {
     /// Animated values to sample into a page's persistent document at its
     /// next sync ([`Renderer::set_animations`]).
     animations: HashMap<u64, Arc<AnimationFrame>>,
+    /// The page's scroll offsets (scrolled elements by key, the viewport's), for scroll-driven
+    /// animations: handed to the page's document at its next sync or render.
+    timeline_scroll: HashMap<u64, (Vec<(u64, (f64, f64))>, (f64, f64))>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -822,6 +832,7 @@ impl Renderer {
             resources: net::ResourceCache::default(),
             mirrors: HashMap::new(),
             animations: HashMap::new(),
+            timeline_scroll: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
@@ -856,7 +867,23 @@ impl Renderer {
 
     /// Hands `page`'s pending animated values to its document, which restyles
     /// the elements whose values changed at its next resolve.
+    /// The page's scroll offsets for its scroll-driven animations (`BaseDocument::set_timeline_scroll`),
+    /// applied at its next sync or render.
+    pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
+        // A document that exists takes them now: the animated values of the next sync are computed
+        // (from its scroll timelines) before that sync applies anything.
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
+            m.doc.set_timeline_scroll(map, viewport);
+        }
+        self.timeline_scroll.insert(page, (elements, viewport));
+    }
+
     fn apply_animations(&mut self, page: u64) {
+        if let (Some(m), Some((elements, viewport))) = (self.mirrors.get_mut(&page), self.timeline_scroll.remove(&page)) {
+            let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
+            m.doc.set_timeline_scroll(map, viewport);
+        }
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         let Some(frame) = self.animations.remove(&page) else { return };
         if frame.is_empty() && !m.doc.has_sampled_animations() {
@@ -989,10 +1016,15 @@ impl Renderer {
         selection: bool,
     ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>), RenderError> {
         let started = Instant::now();
+        // The focused text control's selection, set once laid out (its editor is made then).
+        let mut control = None;
         let (doc, bridge, clip) = match &snap.live {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
+                if let Some(offsets) = &snap.element_scroll {
+                    self.timeline_scroll.insert(live.page, (offsets.clone(), (snap.scroll_x, snap.scroll_y)));
+                }
                 if let Some(frame) = &snap.animations {
                     self.animations.insert(live.page, frame.clone());
                 }
@@ -1046,6 +1078,18 @@ impl Renderer {
                             })
                         });
                         m.doc.set_dom_selection(selection);
+                        let replaced = snap
+                            .selected_replaced
+                            .iter()
+                            .filter(|_| selection_paint)
+                            .filter_map(|&key| m.node(key))
+                            .collect();
+                        m.doc.set_selected_replaced(replaced);
+                        // The focused text control's selection.
+                        control = snap
+                            .control_selection
+                            .filter(|_| selection_paint)
+                            .and_then(|(key, start, end)| Some((m.node(key)?, start, end)));
                         let highlights = snap
                             .highlights
                             .iter()
@@ -1119,6 +1163,9 @@ impl Renderer {
         let resolving = profiling.then(Instant::now);
         if !resolved_latest {
             doc.resolve(0.0);
+        }
+        if let Some((id, start, end)) = control {
+            doc.set_text_input_selection(id, start, end);
         }
         if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
             let resolved = resolving.elapsed();
@@ -1223,7 +1270,10 @@ impl Renderer {
         // Blitz paints the document at its own scale; the area's origin and
         // a clip scale are applied as a transform of the recorded scene.
         let mut scene = Scene::new();
-        let [r, g, b, a] = snap.background.unwrap_or([255; 4]);
+        // The canvas of a dark page color scheme (`<meta name=color-scheme content=dark>`) is
+        // Chromium's dark Canvas.
+        let default = if doc.page_color_scheme_is_dark() { [18, 18, 18, 255] } else { [255; 4] };
+        let [r, g, b, a] = snap.background.unwrap_or(default);
         if a > 0 {
             let color = Color::from_rgba8(r, g, b, a);
             scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &Rect::new(0.0, 0.0, w as f64, h as f64));
@@ -1281,6 +1331,9 @@ impl Renderer {
         let profiling = profiling::on();
         let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;
+        // (Scroll-driven animations' values follow the layout: a style read lays the document out
+        // too, else a new view timeline subject samples the last layout, which lacks it.)
+        let style_only = style_only && !doc.has_scroll_driven_animations();
         let geometry_generation = doc.root_node().tree().geometry_generation();
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, style_only);
@@ -1348,6 +1401,8 @@ impl Renderer {
             // Hover, focus or active moved, or something waits to restyle.
             m.undisplayed.get_mut().clear();
         }
+        // (As in `sync_delta`: scroll-driven animations need the layout.)
+        let style_only = style_only && !m.doc.has_scroll_driven_animations();
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
@@ -1522,18 +1577,62 @@ impl Renderer {
         page: u64,
     ) -> Vec<(
         u64,
+        u8,
         style::servo_arc::Arc<style::properties::ComputedValues>,
         style::servo_arc::Arc<style::properties::ComputedValues>,
     )> {
         let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
         let changes = m.doc.take_style_changes();
-        changes.into_iter().filter_map(|c| Some((m.key_of(c.node)?, c.before, c.after))).collect()
+        changes.into_iter().filter_map(|c| Some((m.key_of(c.node)?, c.pseudo, c.before, c.after))).collect()
     }
 
     /// The computed style of pseudo-element `pseudo` of the element keyed
     /// `key` in `page`'s persistent document (`getComputedStyle(el,
     /// pseudo)`; see `BaseDocument::pseudo_element_style`, which
     /// `generated_only` is passed to). `None`: not mirrored.
+    /// A script `ScrollTimeline` (`subject` `None`) or `ViewTimeline` of `page`, by keys (`source`
+    /// `None`: the viewport): its scroll offset now, its start and end offsets and its scroll
+    /// container's key (`Some(None)` for the viewport); `None` when inactive (see
+    /// `blitz_dom::scroll_timeline::timeline_state`). `axis`: 0 block, 1 inline, 2 x, 3 y; insets as
+    /// (0 auto, 1 px, 2 fraction, value).
+    pub fn timeline_state(
+        &self,
+        page: u64,
+        source: Option<u64>,
+        subject: Option<u64>,
+        axis: u8,
+        inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
+        use blitz_dom::scroll_timeline::InsetValue;
+        use style::values::specified::animation::ScrollAxis;
+        let m = self.mirrors.get(&page)?;
+        let source = match source {
+            Some(key) => Some(m.node(key)?),
+            None => None,
+        };
+        let subject = match subject {
+            Some(key) => Some(m.node(key)?),
+            None => None,
+        };
+        let axis = match axis {
+            1 => ScrollAxis::Inline,
+            2 => ScrollAxis::X,
+            3 => ScrollAxis::Y,
+            _ => ScrollAxis::Block,
+        };
+        let inset = inset.map(|(kind, v)| match kind {
+            1 => InsetValue::Px(v),
+            2 => InsetValue::Fraction(v),
+            _ => InsetValue::Auto,
+        });
+        let r = blitz_dom::scroll_timeline::timeline_ranges(&m.doc, source, subject, axis, inset)?;
+        let src = match r.source {
+            Some(id) => Some(m.key_of(id)?),
+            None => None,
+        };
+        Some((r.offset, r.start, r.end, src, r.contain, r.subject_size))
+    }
+
     pub fn element_pseudo_style(
         &self,
         page: u64,
@@ -3291,6 +3390,33 @@ mod settle_resolution_tests {
         assert_eq!(advances, 0, "a color-only style read must not perform a full layout");
     }
 
+    /// A text field switching between the plain text states (Danex's search box toggles
+    /// text/search) updates in place: the delta applies instead of rebuilding the document, and
+    /// the result matches a fresh build. A switch to another kind of control still does not fit.
+    #[test]
+    fn input_type_switch_within_text_fields_applies_as_a_delta() {
+        let source = "<!doctype html><style>input{width:80px} input[type=search]{width:140px}</style><input id=box type=text value=abc>";
+        let (snap, key) = fixture(source);
+        let (search, _) = fixture(&source.replace("type=text", "type=search"));
+        let (checkbox, _) = fixture(&source.replace("type=text", "type=checkbox"));
+        let kind_of = |s: &Snapshot| s.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let id = renderer.mirrors[&1].node(key).unwrap();
+        renderer
+            .sync_delta(1, &[DeltaOp::Node { key, kind: kind_of(&search) }], (200, 100, 1.0, false, false), false)
+            .expect("text -> search applies as a delta");
+        assert_eq!(renderer.mirrors[&1].node(key), Some(id), "the input is updated, not replaced");
+        let mut whole = Renderer::new();
+        whole.sync_layout(&search, &fetcher).unwrap();
+        assert_eq!(renderer.element_box(1, key).unwrap(), whole.element_box(1, key).unwrap());
+        assert!(
+            renderer.sync_delta(1, &[DeltaOp::Node { key, kind: kind_of(&checkbox) }], (200, 100, 1.0, false, false), false).is_err(),
+            "a checkbox is another control: the document is built again"
+        );
+    }
+
     /// Danex lab canvas: the containing block of an absolutely positioned chain turned
     /// `display: none` in the sync that removed the innermost box. Laid out hidden, the block kept
     /// its hoisted list, rounding walked it to the removed (dropped) box: `invalid SlotMap key`.
@@ -3536,6 +3662,39 @@ mod settle_resolution_tests {
         resolve(&mut renderer, 1);
         assert_eq!(renderer.elements_from_point(1, 10.0, 10.0).first(), Some(&key));
         assert!(renderer.mirrors.get_mut(&1).unwrap().doc.paint_tree_matches_fresh_build());
+    }
+
+    /// A positioned inline box that is not atomic is listed in the paint tree as a positioned entry,
+    /// in tree order with the positioned boxes around it (blitz-dom `positioned_inline_spans`), and
+    /// the tree rebuilt after it stops and starts being positioned equals a fresh build.
+    #[test]
+    fn positioned_inline_spans_are_paint_tree_entries_in_tree_order() {
+        let (snap, _) = fixture(
+            "<!doctype html><style>body{margin:0}</style><div id=root style='position:relative'>\
+             <span id=before style='position:absolute'>a</span>\
+             text <span id=box style='position:relative'>b</span> more\
+             <span id=after style='position:absolute'>c</span></div>",
+        );
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let ids: Vec<_> = ["root", "before", "box", "after"].iter().map(|id| blitz_by_id(&renderer, 1, id)).collect();
+        let order = |renderer: &mut Renderer| {
+            let doc = &mut renderer.mirrors.get_mut(&1).unwrap().doc;
+            doc.ensure_paint_tree();
+            assert!(doc.paint_tree_matches_fresh_build());
+            let children = doc.get_node(ids[0]).unwrap().paint_children.borrow().clone().unwrap_or_default();
+            ids[1..].iter().filter_map(|id| children.iter().position(|child| child == id)).collect::<Vec<_>>()
+        };
+        let listed = order(&mut renderer);
+        assert_eq!(listed.len(), 3, "the span is listed with the positioned boxes");
+        assert!(listed[0] < listed[1] && listed[1] < listed[2], "in tree order: {listed:?}");
+        set_style(&mut renderer, 1, ids[2], "");
+        resolve(&mut renderer, 1);
+        assert_eq!(order(&mut renderer).len(), 2, "a static span is not listed");
+        set_style(&mut renderer, 1, ids[2], "position:sticky");
+        resolve(&mut renderer, 1);
+        assert_eq!(order(&mut renderer).len(), 3, "a sticky span is listed again");
     }
 
     /// Floats are lifted out of the blocks that paint in their painter's phases (blitz-dom

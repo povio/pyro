@@ -529,8 +529,12 @@ pub(crate) fn inner_text<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>>
     Ok(s.string(&t))
 }
 
-pub(crate) fn set_inner_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
-    let text = null_to_empty(v)?;
+pub(crate) fn set_inner_text(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
+    let text = if crate::trusted_types::is_html_script(n.page(), n.id) {
+        crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?
+    } else {
+        null_to_empty(v)?
+    };
     n.page().dom.borrow_mut().set_inner_text(n.id, &text).js()
 }
 
@@ -636,6 +640,8 @@ impl ComputedData {
                 page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
             }
             PseudoArg::Pseudo(pseudo) => {
+                // A style flush too: the pseudo-element's transitions start at it.
+                crate::animation_events::observe(page, self.el.id);
                 page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
             }
             PseudoArg::Invalid => String::new(),
@@ -768,7 +774,8 @@ fn computed_read_only<'s>(_s: &Scope<'s>, _c: &ComputedData, _v: Value<'s>) -> J
 
 pub struct ComputedStyle;
 impl JsClass for ComputedStyle {
-    const NAME: &'static str = "CSSStyleDeclaration";
+    // CSSOM: a computed style is a `CSSStyleProperties`.
+    const NAME: &'static str = "CSSStyleProperties";
     type Data = ComputedData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {

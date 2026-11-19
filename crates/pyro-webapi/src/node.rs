@@ -424,7 +424,7 @@ impl JsClass for Node {
                 let dom = n.page().dom.borrow();
                 Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
             },
-            |_s, n, v| {
+            |s, n, v| {
                 // `DOMString?`: undefined converts to null, which sets "".
                 // The value converts first (an object's toString runs before
                 // the blur, as in the spec), then a focused element inside
@@ -434,6 +434,11 @@ impl JsClass for Node {
                 // GC can then free the old one.
                 let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
                 let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
+                // A `<script>`'s text is a Trusted Types sink when the document requires them.
+                if crate::trusted_types::requires_for_script(n.page()) && crate::trusted_types::is_html_script(n.page(), n.id) {
+                    let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement textContent", true)?;
+                    return set(&text);
+                }
                 // A string (the usual value) needs no nullish test first.
                 if v.is_string() {
                     blur();
@@ -533,6 +538,7 @@ impl JsClass for Node {
             Ok(wrap_node(s, n.page(), c)?.value())
         });
         def.pure_method("contains", 1, |s, n, a| {
+            a.require(1, "Node.contains")?;
             let Some(o) = opt_node_arg(s, a.get(0), "contains")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().contains(n.id, o).js()?))
         });
@@ -542,10 +548,12 @@ impl JsClass for Node {
             Ok(s.number(n.page().dom.borrow().compare_document_position(n.id, o).js()? as f64))
         });
         def.pure_method("isSameNode", 1, |s, n, a| {
+            a.require(1, "Node.isSameNode")?;
             let o = opt_node_arg(s, a.get(0), "isSameNode")?;
             Ok(s.boolean(o == Some(n.id)))
         });
         def.pure_method("isEqualNode", 1, |s, n, a| {
+            a.require(1, "Node.isEqualNode")?;
             let Some(o) = opt_node_arg(s, a.get(0), "isEqualNode")? else { return Ok(s.boolean(false)) };
             Ok(s.boolean(n.page().dom.borrow().is_equal_node(n.id, o).js()?))
         });
@@ -554,6 +562,7 @@ impl JsClass for Node {
             Ok(s.undefined())
         });
         def.pure_method("lookupPrefix", 1, |s, n, a| {
+            a.require(1, "Node.lookupPrefix")?;
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_prefix(n.id, namespace.as_deref()).js()? {
@@ -562,6 +571,7 @@ impl JsClass for Node {
             })
         });
         def.pure_method("lookupNamespaceURI", 1, |s, n, a| {
+            a.require(1, "Node.lookupNamespaceURI")?;
             let prefix = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(match dom.lookup_namespace_uri(n.id, prefix.as_deref()).js()? {
@@ -570,6 +580,7 @@ impl JsClass for Node {
             })
         });
         def.pure_method("isDefaultNamespace", 1, |s, n, a| {
+            a.require(1, "Node.isDefaultNamespace")?;
             let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
             Ok(s.boolean(dom.lookup_namespace_uri(n.id, None).js()? == namespace.as_deref().filter(|s| !s.is_empty())))
@@ -843,6 +854,7 @@ impl JsClass for Text {
         });
         def.getter("assignedSlot", assigned_slot);
         def.method("splitText", 1, |s, n, a| {
+            a.require(1, "Text.splitText")?;
             let off = to_u32(a.get(0))?;
             let t = n.page().dom.borrow_mut().split_text(n.id, off).js()?;
             Ok(wrap_node(s, n.page(), t)?.value())
@@ -1021,7 +1033,9 @@ fn get_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>>
 /// `setHTMLUnsafe(html)` on `Element` and `ShadowRoot`.
 fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "setHTMLUnsafe")?;
-    let html = dom_string(a.get(0))?;
+    let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
+    let sink = if shadow { "ShadowRoot setHTMLUnsafe" } else { "Element setHTMLUnsafe" };
+    let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(0), sink, false)?;
     crate::input::blur_before_removal(n.page(), n.id, true);
     pyro_dom::parse::set_html_unsafe(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
     Ok(s.undefined())
@@ -1033,6 +1047,8 @@ impl JsClass for ShadowRoot {
     type Data = NodeData;
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
+        // Fullscreen API: nothing is ever fullscreen.
+        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
         def.getter("host", |s, n| {
             let h = n.page().dom.borrow().fragment_host(n.id).js()?;
             node_value(s, n.page(), h)
@@ -1080,8 +1096,8 @@ impl JsClass for ShadowRoot {
         def.accessor(
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
-            |_s, n, v| {
-                let html = null_to_empty(v)?;
+            |s, n, v| {
+                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
                 let mut dom = n.page().dom.borrow_mut();
                 let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
                 let frag = pyro_dom::parse::parse_fragment(&mut dom, host, &html).js()?;
@@ -1113,6 +1129,30 @@ impl JsClass for Element {
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
+        // Fullscreen API: pyro never shows an element fullscreen, so a request is denied the way
+        // Chromium denies one it may not grant (a TypeError); the handlers exist for pages to set.
+        crate::handlers::define_fullscreen(def);
+        def.method("requestFullscreen", 0, |s, _n, _a| {
+            let d = s.deferred()?;
+            let promise = d.promise.get(s);
+            d.reject(s, JsError::Type("Permissions check failed".into()).to_value(s))?;
+            Ok(promise)
+        });
+        // CSS Typed OM: the element's computed values as a StylePropertyMapReadOnly.
+        def.method("computedStyleMap", 0, |s, n, _a| {
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            // The computed (not resolved) value of a property, from the style engine.
+            let (page, id) = (n.page().clone(), n.id);
+            let get = s.function("computedValue", move |s, _this, a| {
+                let name = crate::util::dom_string(a.get(0))?;
+                let (Ok(layout), Ok(dom)) = (page.layout.try_borrow(), page.dom.try_borrow()) else { return Ok(s.null()) };
+                Ok(match layout.style().computed_value(&dom, id, &name) {
+                    Some(v) if !v.is_empty() => s.string(&v),
+                    _ => s.null(),
+                })
+            })?;
+            crate::typed_om::computed_style_map(s, n.page(), el, get.value())
+        });
         def.pure_getter_typed("tagName", pyro_js::GetterResult::String, |s, n| {
             let dom = n.page().dom.borrow();
             Ok(match dom.tag_name_parts(n.id).js()? {
@@ -1268,9 +1308,12 @@ impl JsClass for Element {
         });
         def.method("setAttribute", 2, |s, n, a| {
             a.require(2, "Element.setAttribute")?;
-            let (name, value) = (a.get(0), a.get(1));
+            let (name, value_arg) = (a.get(0), a.get(1));
             let name = n.page().names.arg(s, &name)?;
-            let value = str_of(&value)?;
+            let value = match crate::trusted_types::attribute_value(s, n.page(), n.id, &setattribute_local(n, name.text()), None, value_arg)? {
+                Some(trusted) => std::borrow::Cow::Owned(trusted),
+                None => str_of(&value_arg)?,
+            };
             match &name {
                 NameArg::Name(name) => n.page().dom.borrow_mut().set_attribute_named(n.id, name, &value),
                 NameArg::Text(name) => n.page().dom.borrow_mut().set_attribute(n.id, name, &value),
@@ -1284,7 +1327,11 @@ impl JsClass for Element {
             a.require(3, "Element.setAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let name = dom_string(a.get(1))?;
-            let value = dom_string(a.get(2))?;
+            let local = name.rsplit(':').next().unwrap_or(&name).to_owned();
+            let value = match crate::trusted_types::attribute_value(s, n.page(), n.id, &local, ns.as_deref(), a.get(2))? {
+                Some(trusted) => trusted,
+                None => dom_string(a.get(2))?,
+            };
             n.page().dom.borrow_mut().set_attribute_ns(n.id, ns.as_deref(), &name, &value).js()?;
             if ns.is_none() {
                 crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
@@ -1327,6 +1374,7 @@ impl JsClass for Element {
             ))
         });
         def.pure_method("hasAttributeNS", 2, |s, n, a| {
+            a.require(2, "Element.hasAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
             Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, ns.as_deref(), &local).js()?.is_some()))
@@ -1363,17 +1411,22 @@ impl JsClass for Element {
         def.accessor(
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
-            |_s, n, v| {
-                let html = null_to_empty(v)?;
+            |s, n, v| {
+                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element innerHTML", true)?;
                 crate::input::blur_before_removal(n.page(), n.id, true);
                 pyro_dom::parse::set_inner_html(&mut n.page().dom.borrow_mut(), n.id, &html).js()
             },
         );
         def.accessor(
             "outerHTML",
-            |s, n| Ok(s.string(&n.page().dom.borrow().outer_html(n.id).js()?)),
-            |_s, n, v| {
-                let html = null_to_empty(v)?;
+            // An element of an XML document serializes as XML (DOM Parsing "fragment serializing").
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                let xml = dom.node_document(n.id).is_ok_and(|d| dom.is_xml_document(d));
+                Ok(s.string(&if xml { dom.xml_serialize(n.id) } else { dom.outer_html(n.id) }.js()?))
+            },
+            |s, n, v| {
+                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element outerHTML", true)?;
                 let has_parent = n.page().dom.borrow().parent(n.id).js()?.is_some();
                 if has_parent {
                     crate::input::blur_before_removal(n.page(), n.id, false);
@@ -1400,7 +1453,7 @@ impl JsClass for Element {
         def.method("insertAdjacentHTML", 2, |s, n, a| {
             a.require(2, "Element.insertAdjacentHTML")?;
             let pos = dom_string(a.get(0))?.to_ascii_lowercase();
-            let html = dom_string(a.get(1))?;
+            let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(1), "Element insertAdjacentHTML", false)?;
             let mut dom = n.page().dom.borrow_mut();
             let parent = dom.parent(n.id).js()?;
             let ctx = match pos.as_str() {
@@ -1545,6 +1598,18 @@ impl JsClass for Document {
         define_parent_node(def);
         crate::handlers::define_global(def);
         crate::handlers::define_document(def);
+        crate::handlers::define_fullscreen(def);
+        // Fullscreen API: pyro shows nothing fullscreen, so fullscreen is not enabled, no element
+        // is fullscreen, and exitFullscreen() rejects as it does with no fullscreen element.
+        def.getter("fullscreenEnabled", |s, _n| Ok(s.boolean(false)));
+        def.getter("fullscreen", |s, _n| Ok(s.boolean(false)));
+        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
+        def.method("exitFullscreen", 0, |s, _n, _a| {
+            let d = s.deferred()?;
+            let promise = d.promise.get(s);
+            d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;
+            Ok(promise)
+        });
         crate::html::define_document_reflection(def);
         def.constructor(0, |s, nt, _a| {
             let page = page_of(s)?;
@@ -1663,12 +1728,15 @@ impl JsClass for Document {
         def.getter("readyState", |s, n| Ok(s.string(crate::html::ready_state(n.page(), n.id))));
         def.getter("visibilityState", |s, n| Ok(s.string(if n.page().is_hidden() { "hidden" } else { "visible" })));
         def.getter("hidden", |s, n| Ok(s.boolean(n.page().is_hidden())));
-        def.getter("defaultView", |s, n| Ok(if n.page().document() == n.id { s.global().value() } else { s.null() }));
+        // A document its frame navigated away from has no browsing context.
+        def.getter("defaultView", |s, n| {
+            Ok(if n.page().document() == n.id && !n.page().is_detached() { s.global().value() } else { s.null() })
+        });
         def.getter("activeElement", |s, n| {
             let f = n.page().dom.borrow().active_element(n.id).js()?;
             node_value(s, n.page(), f)
         });
-        def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id)));
+        def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id && !n.page().is_detached())));
         def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script()));
         def.getter("implementation", |s, n| Ok(crate::html::dom_implementation(s, n)?.value()));
         def.getter("forms", |s, n| {
@@ -1769,15 +1837,29 @@ impl JsClass for Document {
             let page = n.page();
             Ok(s.string(&if page.document() == n.id { page.document_referrer() } else { String::new() }))
         });
-        def.getter("domain", |s, n| {
-            if s.realm().origin().as_deref() == Some("null") {
-                return Ok(s.string(""));
-            }
-            let url = n.page().dom.borrow().document_data(n.id).js()?.url.to_string();
-            Ok(s.string(
-                pyro_net::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_owned)).as_deref().unwrap_or(""),
-            ))
-        });
+        // HTML `document.domain`. The getter is the origin's effective domain; the setter runs
+        // the checks (no browsing context, no effective domain, not a registrable domain suffix:
+        // SecurityError) and then has no effect, as every agent cluster is origin-keyed (Chromium's
+        // default; `Origin-Agent-Cluster: ?0` is not modelled).
+        def.accessor(
+            "domain",
+            |s, n| Ok(s.string(effective_domain(s, n).as_deref().unwrap_or(""))),
+            |s, n, v| {
+                let value = dom_string(v)?;
+                let security = |m: &str| JsError::dom("SecurityError", format!("Failed to set the 'domain' property on 'Document': {m}"));
+                if n.page().document() != n.id {
+                    return Err(security("Assignment is forbidden for documents without a browsing context."));
+                }
+                let Some(effective) = effective_domain(s, n) else {
+                    return Err(security("Assignment is forbidden for documents with an opaque origin."));
+                };
+                if !registrable_domain_suffix_or_equal(&value, &effective) {
+                    return Err(security(&format!("'{value}' is not a suffix of '{effective}'.")));
+                }
+                // The surrounding agent's agent cluster is origin-keyed: nothing changes.
+                Ok(())
+            },
+        );
         def.getter("location", |s, n| {
             Ok(if n.page().document() == n.id { s.global().get_atom("location")? } else { s.null() })
         });
@@ -1818,8 +1900,13 @@ impl JsClass for Document {
                 .transpose()?
                 .filter(|v| !v.is_undefined())
             {
-                let arg0 = dom_string(is)?;
-                n.page().dom.borrow_mut().set_attribute(el, "is", &arg0).js()?;
+                // DOM "create an element" with the options' `is`: the element's is value (no
+                // `is` attribute), for an HTML element.
+                let is = dom_string(is)?;
+                let mut dom = n.page().dom.borrow_mut();
+                if dom.element(el).js()?.is_html() {
+                    dom.set_is_value(el, Some(pyro_dom::LocalName::from(is.as_str()))).js()?;
+                }
             }
             crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
@@ -1828,6 +1915,15 @@ impl JsClass for Document {
             let ns = opt_dom_string(a.get(0))?;
             let q = dom_string(a.get(1))?;
             let el = n.page().dom.borrow_mut().create_element_ns(n.id, ns.as_deref(), &q).js()?;
+            if let Some(is) =
+                a.opt(2).and_then(|o| o.as_object()).map(|o| o.get_atom("is")).transpose()?.filter(|v| !v.is_undefined())
+            {
+                let is = dom_string(is)?;
+                let mut dom = n.page().dom.borrow_mut();
+                if dom.element(el).js()?.is_html() {
+                    dom.set_is_value(el, Some(pyro_dom::LocalName::from(is.as_str()))).js()?;
+                }
+            }
             crate::html::upgrade_if_custom(s, n.page(), n.id, el)
         });
         def.method("createTextNode", 1, |s, n, a| {
@@ -1902,6 +1998,32 @@ impl JsClass for Document {
         });
         def.method("elementFromPoint", 2, crate::html::element_from_point);
         def.method("elementsFromPoint", 2, crate::html::elements_from_point);
+        // HTML `designMode`: "on" makes the whole document editable; turning it on puts the
+        // selection at the start of the document.
+        def.accessor(
+            "designMode",
+            |s, n| Ok(s.string(if n.page().dom.borrow().design_mode(n.id) { "on" } else { "off" })),
+            |_s, n, v| {
+                let value = crate::util::dom_string(v)?.to_ascii_lowercase();
+                let on = match value.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Ok(()),
+                };
+                let was = n.page().dom.borrow().design_mode(n.id);
+                n.page().dom.borrow_mut().set_design_mode(n.id, on).js()?;
+                if on && !was && n.page().document() == n.id {
+                    crate::editing::set_selection(n.page(), (n.id, 0), (n.id, 0));
+                }
+                Ok(())
+            },
+        );
+        def.method("startViewTransition", 0, |s, n, a| {
+            let doc = wrap_node(s, n.page(), n.id)?.value();
+            let root = n.page().dom.borrow().document_element(n.id).js()?;
+            let root = node_value(s, n.page(), root)?;
+            crate::view_transition::start(s, n.page(), doc, root, a.get(0))
+        });
         def.method("getSelection", 0, |s, _n, _a| {
             s.global().get_atom("getSelection")?.as_object().map_or(Ok(s.null()), |f| f.call(None, &[]))
         });
@@ -1936,12 +2058,8 @@ impl JsClass for Document {
         def.method("close", 0, |s, n, _a| crate::html::document_close(s, n));
         def.method("write", 0, |s, n, a| crate::html::document_write(s, n, a, false));
         def.method("writeln", 0, |s, n, a| crate::html::document_write(s, n, a, true));
-        // A stand-in for the FontFaceSet: a set-like of one entry per `@font-face` rule of the
-        // document's sheets, each loaded (pages wait on `[...document.fonts][0].load()`; the
-        // set was not iterable). Fonts load in the renderer, which screenshots wait for.
-        def.getter("fonts", |s, _n| s.eval(DOCUMENT_FONTS, None, 1));
-        // pyro: what `document.fonts` waits on (web fonts the layout engine is still loading).
-        def.method("__pyroFontsPending", 0, |s, n, _a| Ok(s.boolean(n.page().fonts_pending())));
+        // CSS Font Loading: the document's `FontFaceSet` (font_loading.rs).
+        def.getter("fonts", |s, n| crate::font_loading::fonts(s, n.page()));
     }
 }
 
@@ -1986,61 +2104,56 @@ pub(crate) fn thread_leftover() -> Option<&'static str> {
     None
 }
 
-/// `document.fonts` (see the getter).
-const DOCUMENT_FONTS: &str = r#"(() => {
-  // Web fonts load in the layout engine: `status`, `ready`, `load()` and `check()` follow its
-  // fetches (`document.__pyroFontsPending`), at most 10 s.
-  const pending = () => { try { return !!document.__pyroFontsPending(); } catch (e) { return false; } };
-  const settled = () => new Promise((resolve) => {
-    const until = Date.now() + 10000;
-    const tick = () => (pending() && Date.now() < until ? setTimeout(tick, 5) : resolve());
-    tick();
-  });
-  const faces = [];
-  const face = (family) => {
-    const f = { family, style: 'normal', weight: 'normal', stretch: 'normal', unicodeRange: 'U+0-10FFFF',
-      variant: 'normal', featureSettings: 'normal', display: 'auto',
-      load() { return settled().then(() => f); } };
-    Object.defineProperty(f, 'status', { get: () => (pending() ? 'loading' : 'loaded'), enumerable: true });
-    Object.defineProperty(f, 'loaded', { get: () => settled().then(() => f), enumerable: true });
-    faces.push(f);
-  };
-  try {
-    for (const sheet of document.styleSheets) {
-      let rules;
-      try { rules = sheet.cssRules; } catch (e) { continue; }
-      for (const rule of rules) {
-        const text = String(rule.cssText || '');
-        if (rule.type === 5 || /^\s*@font-face\b/i.test(text)) {
-          const m = /font-family\s*:\s*([^;}]+)/i.exec(text);
-          face(m ? m[1].trim() : '');
-        }
-      }
+
+/// The effective domain of the document's origin (its host), `None` for an opaque origin. The
+/// window's document has its realm's origin (an about:srcdoc or about:blank document inherits
+/// its creator's); another document, its URL's.
+fn effective_domain(s: &Scope<'_>, n: &NodeData) -> Option<String> {
+    let origin = s.realm().origin();
+    if origin.as_deref() == Some("null") {
+        return None;
     }
-  } catch (e) {}
-  if (!faces.length) {
-    try {
-      for (const style of document.querySelectorAll('style')) {
-        const re = /@font-face\s*\{[^}]*?font-family\s*:\s*([^;}]+)/gi;
-        let m;
-        while ((m = re.exec(style.textContent))) face(m[1].trim());
-      }
-    } catch (e) {}
-  }
-  const set = {
-    size: faces.length,
-    check() { return !pending(); },
-    load() { return settled().then(() => faces.slice()); },
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; },
-    forEach(callback, self) { faces.forEach((f) => callback.call(self, f, f, set)); },
-    has(f) { return faces.includes(f); },
-    add() { return set; }, delete() { return false; }, clear() {},
-    values() { return faces[Symbol.iterator](); },
-    keys() { return faces[Symbol.iterator](); },
-    entries() { return faces.map((f) => [f, f])[Symbol.iterator](); },
-    [Symbol.iterator]() { return faces[Symbol.iterator](); },
-  };
-  Object.defineProperty(set, 'status', { get: () => (pending() ? 'loading' : 'loaded'), enumerable: true });
-  set.ready = settled().then(() => set);
-  return set;
-})()"#;
+    let source = match origin {
+        Some(origin) if n.page().document() == n.id => origin.to_string(),
+        _ => n.page().dom.borrow().document_data(n.id).ok()?.url.to_string(),
+    };
+    pyro_net::Url::parse(&source).ok()?.host_str().map(str::to_owned)
+}
+
+/// HTML "is a registrable domain suffix of or is equal to" (`host_suffix` against the
+/// effective domain `original`).
+fn registrable_domain_suffix_or_equal(host_suffix: &str, original: &str) -> bool {
+    let Ok(parsed) = pyro_net::Url::parse(&format!("http://{host_suffix}/")) else { return false };
+    let Some(suffix) = parsed.host_str().map(str::to_owned) else { return false };
+    if suffix == original {
+        return true;
+    }
+    let is_domain = |h: &str| !(h.starts_with('[') || h.parse::<std::net::Ipv4Addr>().is_ok());
+    if !is_domain(&suffix) || !is_domain(original) {
+        return false;
+    }
+    if !original.ends_with(&format!(".{suffix}")) {
+        return false;
+    }
+    // A public suffix (`com`, `github.io`) cannot be the domain.
+    if pyro_psl::suffix_str(&suffix) == Some(suffix.as_str()) {
+        return false;
+    }
+    if pyro_psl::suffix_str(original).is_some_and(|ps| ps.ends_with(&suffix)) {
+        return false;
+    }
+    true
+}
+
+/// The local name `setAttribute(name)` sets: `name` lowercased on an HTML element of an HTML
+/// document (DOM), else as given.
+fn setattribute_local<'a>(n: &NodeData, name: &'a str) -> std::borrow::Cow<'a, str> {
+    let dom = n.page().dom.borrow();
+    let html = dom.element(n.id).is_ok_and(|e| e.is_html())
+        && dom.node_document(n.id).ok().and_then(|d| dom.document_data(d).ok()).is_some_and(|d| d.kind == pyro_dom::DocumentKind::Html);
+    if html && name.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(name.to_ascii_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(name)
+    }
+}

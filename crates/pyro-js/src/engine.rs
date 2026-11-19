@@ -175,6 +175,8 @@ pub(crate) struct EngineInner {
     /// ([`EngineInner::release_dead_members`]). Every function points at its
     /// realm's global (its structure does), so none of them is alive then.
     retired_members: RefCell<Vec<RetiredMembers>>,
+    /// Realms that linger (`Realm::linger`) until their global object dies.
+    pub(crate) lingering: RefCell<Vec<Rc<RealmInner>>>,
     /// Garbage collections seen, for sweeping the realms' interned strings.
     pub(crate) collections: crate::interned::Collections,
     /// The property hooks' switches (see [`class::HookState`]).
@@ -475,6 +477,7 @@ impl EngineInner {
     /// for a realm whose script read `document`, every navigation). A safe
     /// point: after a task, after a settle.
     pub(crate) fn release_dead_members(&self) {
+        self.release_dead_lingering();
         let Ok(mut retired) = self.retired_members.try_borrow_mut() else { return };
         if retired.is_empty() || self.is_shut_down() {
             return;
@@ -492,6 +495,30 @@ impl EngineInner {
         });
         drop(retired);
         drop(dead);
+    }
+
+    /// Disposes the lingering realms whose global object died.
+    fn release_dead_lingering(&self) {
+        if self.is_shut_down() || callback_tls().depth.get() > 0 {
+            return;
+        }
+        let dead: Vec<Rc<RealmInner>> = {
+            let Ok(mut lingering) = self.lingering.try_borrow_mut() else { return };
+            if lingering.is_empty() {
+                return;
+            }
+            let (dead, kept) = std::mem::take(&mut *lingering).into_iter().partition(|r| r.global_dead());
+            *lingering = kept;
+            dead
+        };
+        for realm in &dead {
+            realm.dispose();
+        }
+    }
+
+    /// The realms lingering now (`Realm::linger`).
+    pub(crate) fn lingering_count(&self) -> usize {
+        self.lingering.borrow().len()
     }
 
     /// The payloads waiting for their realm's global to die (tests).
@@ -567,12 +594,13 @@ impl EngineInner {
 
     /// Finds a live realm by id (`Realm::by_id` only: this walks the map).
     pub(crate) fn realm_by_id(&self, id: crate::RealmId) -> Option<Rc<RealmInner>> {
-        self.realms.borrow().values().filter_map(Weak::upgrade).find(|r| r.id == id)
+        self.realms.borrow().values().filter_map(Weak::upgrade).find(|r| r.id == id && !r.is_lingering())
     }
 
     /// The live realms, in creation order.
     pub(crate) fn live_realms(&self) -> Vec<Rc<RealmInner>> {
-        let mut realms: Vec<Rc<RealmInner>> = self.realms.borrow().values().filter_map(Weak::upgrade).collect();
+        let mut realms: Vec<Rc<RealmInner>> =
+            self.realms.borrow().values().filter_map(Weak::upgrade).filter(|r| !r.is_lingering()).collect();
         realms.sort_by_key(|r| r.id);
         realms
     }
@@ -589,6 +617,12 @@ impl EngineInner {
         if self.shut_down.get() {
             return;
         }
+        // Lingering realms hold the engine: end them first.
+        let lingering = std::mem::take(&mut *self.lingering.borrow_mut());
+        for r in &lingering {
+            r.dispose();
+        }
+        drop(lingering);
         let realm_alive = self.realms.borrow().values().any(|r| r.strong_count() > 0);
         if realm_alive || (self.is_current() && callback_tls().depth.get() > 0) {
             return;
@@ -792,6 +826,7 @@ impl Engine {
             idle_floor: Cell::new(process_footprint().unwrap_or(u64::MAX)),
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
+            lingering: RefCell::new(Vec::new()),
             collections: crate::interned::Collections::new(),
             hook_state: class::HookState::default(),
             held: RefCell::new(crate::persistent::HeldValues::default()),
@@ -905,6 +940,12 @@ impl Engine {
     /// Measured on 20 open/boot/close cycles of a 2 MB app: the process
     /// plateaus at 270 MB instead of 339 MB. `PYRO_RELEASE_ON_CLOSE=0`
     /// turns it off (benchmark comparison).
+    /// How many realms linger now ([`crate::Realm::linger`]): kept until the
+    /// collector finds their global object dead.
+    pub fn lingering_realms(&self) -> usize {
+        self.inner.lingering_count()
+    }
+
     pub fn release_closed(&self) {
         if self.inner.release_gate.exiting.get()
             || std::env::var("PYRO_RELEASE_ON_CLOSE").is_ok_and(|v| v == "0")
@@ -1181,7 +1222,7 @@ impl Engine {
                 self.inner.idle_floor.set(process_footprint().unwrap_or(u64::MAX));
                 reseed(self.inner.root);
                 for (global, realm) in self.inner.realms.borrow().iter() {
-                    if realm.strong_count() > 0 {
+                    if realm.upgrade().is_some_and(|r| !r.is_lingering()) {
                         reseed(*global as sys::JSGlobalContextRef);
                     }
                 }

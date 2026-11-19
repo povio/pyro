@@ -297,7 +297,8 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
 - `style_adjuster.rs`: a `::scroll-marker-group` always has layout containment, and size containment unless it is
   absolutely positioned (CSS Overflow 5's recommended `contain: size !important`; Chromium contains its layout too).
   `content-visibility` is parsed for servo; `auto` adds layout, style and paint containment to the computed `contain`
-  (every element is taken as relevant to the user: no size containment), `hidden` does nothing yet.
+  (every element is taken as relevant to the user: no size containment); `hidden` adds size containment as well
+  (round 4 lane S4; blitz-dom skips its contents).
 - `style_adjuster.rs` (`adjust_for_author_styled_button`): a button (`button`, `input` of type `button`, `submit`
   or `reset`, `::scroll-button()`) whose border or background an author or user styles has square corners unless
   one rounds them: pyro's UA sheet rounds buttons by 1px for Chromium's native look, which Chromium drops then
@@ -404,3 +405,41 @@ without a style context (custom properties left as they are): pyro serializes a 
   `servo/restyle_damage.rs`: identical style structs compute no damage, and a custom-property-only change adds no
   REPAINT (no paint worklets here; a `var()` whose value changes damages through the computed value). A custom property
   written on a scroller over a 3,000-cell table: 820 → 495 ms per 200 writes (Chromium 472).
+- `invalidation/element/relative_selector.rs`: `RelativeSelectorDependencyCollector::insert_invalidation` looks up
+  the invalidations it may collapse with through an index by (relative invalidation kind, `SelectorKey`), the two
+  things `invalidation_can_collapse` requires equal, instead of scanning every collected invalidation for every
+  dependency of every element of an inserted subtree. Same first match (the index keeps insertion order; an update
+  keeps the entry's kind and selector). Mounting a 1,089-element lab canvas tile 20 times: 23,950 → 22,008 M
+  instructions.
+- Round 4 lane F, `values/specified/calc.rs` `parse_angle_percentage_of_turn` + `specified::AngleOrPercentage`: a math function mixing angles and percentages in a conic gradient stop resolves each percentage as that fraction of a full turn (`calc(0deg + 100%)` = 360deg), instead of failing (which dropped the background). WPT css-images `conic-gradient-calc-angle-percentage`.
+- Round 4 lane F, `specified::BackgroundClip::BorderAreaText`: `background-clip: border-area text` (either order) parses as one value, the union of the two areas (backgrounds-4), which blitz-paint paints as a text-clip run whose mask also takes in the border area. WPT css-backgrounds `clip-border-area-text`.
+- Lane F2 (scroll-driven animations), `properties/longhands.toml` + `shorthands.toml` + `shorthands.rs`: `scroll-timeline-name`/`-axis`, `view-timeline-name`/`-axis`/`-inset`, `timeline-scope` and the `scroll-timeline`, `view-timeline` and `animation-range` shorthands are enabled for the servo engine behind `layout.css.scroll-driven-animations.enabled` (on in pyro), as `animation-timeline` and `animation-range-start`/`-end` were: they parse, cascade and compute (WPT scroll-animations/css parsing and computed-value pages).
+- Lane F1 (pyro-wide properties), `properties/longhands.toml` + `shorthands.toml` + `shorthands.rs`: properties that were `engine = "gecko"` now parse, cascade and compute for the servo engine too. They are:
+  - scroll snapping and padding: `scroll-padding-*` (and its shorthands), `scroll-snap-type`/`-align`/`-stop`, `scrollbar-gutter`, `overflow-anchor`;
+  - UI: `accent-color`, `resize`;
+  - motion path: `offset-position`/`-distance`/`-rotate`/`-anchor` and the `offset` shorthand;
+  - shapes: `shape-outside`/`-margin`/`-image-threshold`;
+  - SVG paint: `paint-order`, `stop-color`/`-opacity`, `flood-color`/`-opacity`, `lighting-color`, `marker-start`/`-mid`/`-end` and the `marker` shorthand, `text-anchor`, `vector-effect`, `clip-rule`, `color-interpolation`(`-filters`), `shape-rendering`.
+
+  The `offset` shorthand serializes nothing while the servo-pref'd `offset-path` is off (pyro turns `layout.css.motion-path.enabled` on). Rendering does not read them yet; `pyro-dom`'s `gecko_only` module still answers `overflow-anchor` and `text-anchor` itself. WPT: css-scroll-snap, css-shapes, css-ui, motion, svg/painting, svg/pservers and css-typed-om parsing and computed-value pages.
+- Lane F2, `properties/shorthands.rs` `animation` serialization: a `0s` duration is written (the initial value is `auto`, css-animations-2), so `animation: 0s linear a` round-trips through CSSOM instead of coming back as `auto` (WPT scroll-animations `progress-based-animation-animation-longhand-properties` "animation-duration: 0s").
+- Lane F1 (CSS Shapes), `values/specified/basic_shape.rs`: `shape-outside` accepts `path()` (`AllowedBasicShapes::SHAPE_OUTSIDE` gets `PATH`), as Chromium; blitz-dom lays floats out around it. `shape()` stays out until it is laid out too.
+- Lane S2 (css-color), `color/mix.rs` `mix_many`: `color-mix()` percentages that sum to zero mix the colors equally into a fully transparent result (css-color-5 "normalize mix percentages": the alpha multiplier is the sum) instead of returning transparent black, as Chromium (WPT css-color `color-computed-color-mix-function`, `color-valid-color-mix-function`).
+- Lane F1 (visited styles for servo): `StyleBuilder::pyro_take_visited_dependent` (properties.mako.rs) copies the visited-dependent longhands from the visited style, and records the unvisited ones in `ComputedValuesInner::pyro_unvisited` (inherited values from the parent's, so a link's contents report its unvisited colour); `ComputedValues::pyro_unvisited_view` is the style `getComputedStyle` reports. `StyleAdjuster` calls it after `adjust_for_links` when `IS_RELEVANT_LINK_VISITED` is set. `ComputedValues` grows by 8 bytes (232 → 240). `style_resolver.rs`: only a visited link (`is_visited_link`) or its contents get a visited style. `Stylist::lazy_pseudo_rules`: a probe whose rules match only as visited still gets a style.
+- Round 4 lane S4, `style_adjuster.rs` (`adjust_for_text_combine_upright`): `text-combine-upright: all` on an inline
+  box in a vertical, not sideways, line becomes an inline-block of `horizontal-tb` writing (so its descendants combine
+  with it), 1em by 1em with `line-height` 1em, one centred line (`text-wrap-mode: nowrap`, `text-align: center`);
+  blitz-paint compresses text wider than 1em. Not where `text-emphasis-style` is set (the marks of combined text go
+  beside it in the vertical line; left upright as before). WPT css-writing-modes `text-combine-upright-*` (+12).
+- Round 4 lane S4, css-multicol-2 `column-height` (`auto | <length>`, `values::specified::column` `NonNegativeLengthOrAuto`)
+  and `column-wrap` (`auto | nowrap | wrap`, `ColumnWrap`, a `Copy` type in `data.py`) longhands, servo only, behind
+  `layout.css.columns.enabled`; `columns` takes `[ / <'column-height'> ]` (serialized when not `auto`); a
+  `column-height` other than `auto` makes a multi-column container (`is_multicol`). blitz-dom lays them out.
+- Lane S2 (css-color), relative colors and `none`: `color/component.rs` `ColorComponent::to_computed_value`: a channel keyword whose origin component is missing (`none`, or powerless after the conversion into the function's color space) resolves to `none` instead of 0, as Chromium; calc() still reads it as zero. `color/to_css.rs`: legacy sRGB with a missing component serializes as `color(srgb ...)` (which can say `none`) instead of `rgb()` with zeros. `color/color_function.rs` `to_computed_value`: an achromatic legacy sRGB origin read into `hsl()`/`hwb()` keeps hue 0 rather than a missing hue, because pyro's CSSOM keeps inline styles as text and an `hsl()`/`hwb()` origin comes back serialized as `rgb()` (its authored hue would be lost). WPT css-color +241 (`color-computed-none`, `-relative-color`, `-powerless`, `-rgb`, `color-valid-rgb`, ...).
+- Lane F1: `appearance` is `affects = "layout"`, servo damage `rebuild_box` (a checkbox or radio of `appearance: none` has no natural size in blitz-dom).
+- Lane F1 (keywords, as Chrome): `touch-action` takes `pan-left`, `pan-right`, `pan-up` and `pan-down` (one keyword per axis, `validate_mixed_flags`; `TouchAction` is u16), and `pointer-events` the SVG values (`visiblePainted` ... `all`) and Chromium's `bounding-box` for servo. Hit testing treats them as `auto`, as Chrome does for HTML boxes. `text-wrap-style: pretty` is enabled by pref (blitz-dom and pyro-dom) and laid out as `auto`. `white-space-collapse: preserve-spaces` stays off because Chrome rejects it.
+- Lane F2, `mask-border` (css-masking-1 §8): `mask-border-source`, `-slice` (initial `0`), `-width` (initial `auto`),
+  `-outset`, `-repeat` and `-mode` (`MaskType`, initial `alpha`) longhands in the svg struct behind
+  `layout.css.masking.enabled`, with border-image's types and interpolation; the `mask-border` shorthand
+  (`shorthands.rs` `mask_border`: border-image's grammar plus the mode). `BorderImageSlice::zero` and
+  `BorderImageSideWidth::auto` in `values/computed/border.rs`. blitz-paint renders it.

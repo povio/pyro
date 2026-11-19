@@ -200,6 +200,19 @@ text, which can drop passes without a conflict).
 instead of keeping the committed ones. blitz-paint's, parley_engine's and stylo's sections are macOS `diff -u` output:
 elsewhere the regenerated sections can align differently (they still apply).
 
+## Linux and macOS
+
+The testharness gate moves to GitHub's Linux runners (wpt.yml `build-linux`, `wpt-linux`, `gate-linux`; ubuntu-latest
+x64, three shards), off the two lp-m1 Macs: testharness compares no pixels. Its baseline is `baseline-linux.json`,
+bootstrapped from a CI run's `wpt-linux-baseline` artifact (never edited by hand). Until that file is committed the
+Linux jobs only report and the macOS `wpt`/`gate` jobs keep gating; once it is committed, the macOS testharness jobs
+stop. Reftests, crashtests and the client job stay on lp-m1.
+
+`platform-diff.mjs baseline.json baseline-linux.json` lists every page whose results differ between the platforms
+(also in `gate-linux`'s summary and its `wpt-platform-diff` artifact). A page that passes less on Linux is recorded,
+with the reason, in `platform-split.json` (`{ "<url>": "<reason>" }`); `--strict` fails on any that is not, so
+moving the gate never drops coverage silently.
+
 ## Before making it a required check
 
 The gate's false failures come from pages whose results depend on load. `flaky.json` started with the six such pages
@@ -428,6 +441,33 @@ The 3 errors are one pyro bug, not a crash: `Page.captureScreenshot` answers `th
 and do not get are missing in WPT too (`/fonts/DoulosSIL-R.woff`, `/fonts/GentiumPlus-R.woff2`,
 `css/css-pseudo/highlight-cascade/support/selections.js` and ten others).
 
+Added on 2026-11-18 to `LAYOUT_DIRS` (and `wpt-paths.txt`): eight directories that pass most of their reftests, 3,407
+reftests in all. Two local runs at `--jobs 4` of the integration build (not a baseline; the baseline comes from CI)
+completed every page but one hang and agreed on every page but
+`css/css-contain/content-visibility/content-visibility-with-popover-top-layer-005.html` (passed in one run, hung in
+the other). They hold about 270 s of page time, which is about 35 s of wall time on each of the two `lp-m1` reftest
+shards at 4 jobs (twice that on the first run after the addition, which reruns each new pass):
+
+| directory | reftests | reference files | no reference | crash tests | manual | print | wptserve | pyro (local) | Chrome |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| css/css-writing-modes | 1,165 | 478 | 75 | 13 | 54 | 0 | 0 | 947 | 1,122 |
+| css/css-ui | 963 | 106 | 0 | 6 | 94 | 0 | 0 | 744 | 947 |
+| css/css-contain | 433 | 223 | 0 | 64 | 0 | 1 | 2 | 295-296 | 424 |
+| css/css-multicol | 462 | 216 | 1 | 165 | 1 | 4 | 1 | 253 | 457 |
+| css/css-will-change | 47 | 16 | 0 | 1 | 0 | 0 | 0 | 42 | 47 |
+| css/WOFF2 | 298 | 298 | 3 | 0 | 0 | 0 | 0 | 293 | 292 |
+| css/css-namespaces | 23 | 8 | 1 | 0 | 0 | 0 | 0 | 22 | 23 |
+| css/css-style-attr | 16 | 4 | 0 | 0 | 0 | 0 | 0 | 15 | 16 |
+| **added 2026-11-18** | **3,407** | 1,349 | 80 | 249 | 149 | 5 | 3 | 2,612 | 3,328 |
+
+Chrome is wpt.fyi's Chrome 157 stable run nearest the pinned revision (`chrome-compare.mjs`). pyro fails 218
+css-writing-modes reftests (191 of them pass in Chrome). The largest groups: 55 `forms/*` controls in vertical modes,
+25 `text-combine-upright-*` and `tcy-*`, 24 `abs-pos-non-replaced-icb-*` (each test is an `<object type="text/html">`
+whose nested document pyro does not render, so it paints the fallback), 24 percentage sizes of orthogonal flows
+(`sizing-orthog*`), 12 `vertical-alignment-*` (`vertical-align: top | text-top | text-bottom | bottom` is ignored
+in vertical lines) and 12 tables in vertical modes (`border-conflict-element-*`, `caption-side-*`: a collapsed-border
+table of empty cells paints nothing).
+
 Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
 markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
 such as `interact`), print reftests, pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions,
@@ -498,6 +538,8 @@ Measured on the pull request that added the job (all 9,341 reftests; a run witho
 | `macos-15` (GitHub: M2 Pro, 5 vCPUs, 14 GB, macOS 15.8) | 2 x 5 | 53 s, 65 s | 2:04, 2:22 | every page |
 | `macos-15` | 3 x 5 | 34-37 s (70 s with the crash) | 1:28-2:35 | every page |
 | `lp-m1` (M1, 8 CPUs, 8 GB, macOS 26.7) | 1 x 8 | 72 s (9,300 pages), 115-131 s with the timeouts' tail | 4:55 | all but 5 pages, which a runner bug (since fixed) recorded as crashes |
+
+Since 2026-11-18 `lp-m1` also includes `worker-4-studio` (Mac Studio, M5 Max, 18 cores, 36 GB). Its runner `.env` sets `PYRO_CI_CPUS=4`, and every CPU-sized `--jobs`/`-j` in the workflows reads `PYRO_CI_CPUS` before `hw.ncpu`, so it does about an M1 runner's share; it runs at nice 10.
 | `macos-15`, a pull request's gate run (baseline committed) | 2 x 5 | 35 s, 40 s | 0:52, 0:55 | (2 pages rerun) |
 
 The 11 pages that time out (15 s each) and the crash run last in a run without a baseline; a pull request's run skips
@@ -593,8 +635,8 @@ bench/wpt/fetch-wpt.sh --all ~/wpt-full                     # the whole revision
 bun bench/wpt/coverage.mjs --wpt ~/wpt-full                 # downloads the manifest from wpt.fyi once (40 MB)
 ```
 
-At a421f2fe, of 132,204 manifest items: testharness 39,989 (gate 3,537, runnable 19,495), reftest 29,212 (gate
-18,158, runnable 9,640), crashtest 2,105 (gate 2,031). Not run: testharness worker variants 4,320, wptserve names
+At a421f2fe, of 132,204 manifest items: testharness 39,989 (gate 5,011, runnable 18,021), reftest 29,212 (gate
+21,836, runnable 5,962), crashtest 2,105 (gate 2,031). Not run: testharness worker variants 4,320, wptserve names
 7,048, Python handlers 2,748, testdriver 2,701; reftests needing wptserve 418, testdriver 83, masonry 911; and
 test262 53,814, manual 3,047, visual 2,714, wdspec 685, print reftests 448, aamtest 190. `discoveredNotInManifest`
 lists what discovery takes that the manifest classifies otherwise (45 `-crash` pages as testharness, 4 SVG reftests):
@@ -801,11 +843,30 @@ transition page): 1,967 of 2,031 passed. 12 pages failed for a defect in pyro, 1
 | 2 | no screenshot, `the page's tree has a repeated key`: every `<slot>` of one name (and every slot of a `slotAssignment: "manual"` root) rendered the host's children | pyro-dom's render tree gives them to the slot DOM's "find a slot" names |
 | 1 | crash, stack overflow in usvg: a `<pattern>` cycle through `href` (`svg/crashtests/chrome-bug-565674533.html`) | `svg_refs.rs` breaks pattern cycles as it does clip path, mask and filter cycles |
 | 1 | panic, `Duration::from_secs_f64` on an animation of `duration: 95903184853313357582278077554606` | timer delays from a page saturate (`delay_from_ms`) |
-| 1 | **open**: `custom-elements/many-slots-crash.html` hangs (no answer for 30 s). A custom element whose shadow tree holds another of itself recurses; Chrome ends it with a stack overflow `RangeError`. pyro's page thread was sampled in `Dom::collect_garbage` (`component_root`) under `PageDom::sweep_released_nodes`, from the mutation-observer microtask inside `custom::run_reactions`: each level sweeps the nodes released so far | |
+| 1 | hang, `custom-elements/many-slots-crash.html`: a custom element whose shadow tree holds another of itself recursed without end (Chrome ends it with a stack overflow `RangeError`); pyro runs a callback's reactions in the next batch, so it looped | the batch depth stands for HTML's reaction nesting: past 256 a callback reports a `RangeError` (`custom::run_reactions`); blitz-dom skips `:has()` invalidation without `:has()` rules |
 
-The other 52 time out without a crash: 51 wait in `test-wait` for something pyro does not do (20 of them view
-transitions; scroll timelines, typed OM, editing commands), and one navigates without end. They are failing entries
-of the baseline, skipped by a pull request's run.
+The other 52 timed out without a crash. Round 4 (lane R4CR, 2026-11-18) fixed one more panic (a `::first-letter`
+box inside a `::first-line` box had no originating element) and the many-slots hang, and made 30 of the timeouts
+complete:
+- view transitions: a lifecycle-only `startViewTransition` (20 pages);
+- `MathMLElement`, SVG time control (`setCurrentTime` and the rest), `commitStyles` on SVG, `@position-try` in
+  `insertRule`, srcdoc reload, `window.find`, and a `KeyframeEffect` target from another
+  document.
+
+Feature lane F3a (2026-11-18) completed 4 more: customized built-in elements (the two `abort-insertion` pages, which
+also hung on a cycle the parser made), `document.designMode` (`designMode-caret-change`) and `selectstart` from
+`selectAll` and `find()` (`selectall-and-find-svg-text-on-selectstart`), and `<object>` load and error events
+(`container-queries/crashtests/chrome-bug-439886903-crash`); then focus and blur at Windows between frames
+(`designMode-document-will-be-blurred`) and Trusted Types with `javascript:` navigation
+(`navigate-to-javascript-url-007-crash`).
+
+2,029 of 2,031 complete locally (with the font and Typed OM lanes; lane F3b: navigated-away iframe documents, IntersectionObserver across documents, `SharedWorker`, `<use>` instances; lane F2: scroll-driven animations). These 2 are **known incomplete**: each needs a feature pyro does not have. They stay
+failing entries of the baseline, not flaky entries, and none of them crashes, panics or hangs:
+
+| page | needs |
+|---|---|
+| `streams/readable-byte-streams/crashtests/from-cross-realm.html` | none in pyro: Chrome times out on it too (wpt.fyi); the popup's synchronous about:blank document it needs exists since lane F3b |
+| `editing/crashtests/inserthorizontalrule-in-textarea-in-editor-and-undo-on-error-events.html` | none in pyro: it waits for an `error` event at an `<object>` without `data`, which Chromium fires and HTML does not (no data shows the fallback content; `<object>` load and error events exist since lane F3a) |
 
 ### CI
 

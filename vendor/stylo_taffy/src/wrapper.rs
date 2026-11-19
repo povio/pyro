@@ -264,6 +264,8 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         self.layout_wm().logical_point(overflow)
     }
 
+    // pyro: scrollbars overlay content (as headless Chrome, and Chrome with overlay scrollbars):
+    // no box reserves scrollbar space, so `scrollbar-gutter` (parsed, computed) changes no layout.
     #[inline]
     fn scrollbar_width(&self) -> f32 {
         0.0
@@ -1163,7 +1165,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
         } else {
             1.0
         };
-        taffy::Size { width: 1.0, height: block }
+        // pyro: in the inline axis of a horizontal grid, the line-under edge of the vertical lines it
+        // would hold (sideways `vertical-lr`: the left, `sideways_inverted_lines` in blitz-dom), so
+        // the start in `ltr` (WPT css-grid `grid-self-baseline-006`)
+        let inline = if wm.is_vertical() || !wm.is_bidi_ltr() { 1.0 } else { 0.0 };
+        taffy::Size { width: inline, height: block }
     }
 
     /// pyro: a subgrid's `normal` gap is its parent's.

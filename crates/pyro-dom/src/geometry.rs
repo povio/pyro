@@ -167,6 +167,15 @@ pub trait SubresourceLoader: Send + Sync {
     /// The bodies loaded for the documents that go out with this one's
     /// network identity, which they reuse ([`SubresourceBodies`]).
     fn bodies(&self) -> &std::sync::Arc<SubresourceBodies>;
+    /// pyro: this document's layout asked for the font at `url` (its fetch may be shared with the
+    /// identity's other documents).
+    fn font_asked(&self, _url: &str) {}
+    /// pyro: the fonts this document's layout asked for ([`Self::font_asked`]), `None` when the
+    /// loader does not keep track (then every font in flight for the identity counts as this
+    /// document's).
+    fn asked_fonts(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 /// Sub-resource bodies loaded from the network for the layouts of the
@@ -224,6 +233,9 @@ pub trait GeometrySource {
     /// the next [`GeometrySource::sync`] ([`GeometrySource::element_style`]
     /// answers from it).
     fn sync_styles(&self, _dom: &Dom, _style: &crate::style::StyleEngine) {}
+    /// The page scrolled: its scrolled elements' offsets (by key) and the viewport's, which
+    /// scroll-driven animations follow.
+    fn set_scroll(&self, _elements: Vec<(u64, (f64, f64))>, _viewport: (f64, f64)) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// The engine's resolved value of one element's `property` as of the last sync (`None`: the engine
@@ -323,6 +335,11 @@ pub trait GeometrySource {
     fn fonts_pending(&self) -> bool {
         false
     }
+    /// pyro: whether the engine has the font at `url` (`Some(true)`), is loading it
+    /// (`Some(false)`), or neither (`None`) (`FontFace.status` of a face the engine loads).
+    fn font_url_state(&self, _url: &str) -> Option<bool> {
+        None
+    }
     /// One element's computed style as of the last sync (`None`: the engine
     /// has none for it, and the document's own cascade answers).
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
@@ -340,11 +357,12 @@ pub trait GeometrySource {
         None
     }
     /// The elements whose style was replaced since the last call, by key,
-    /// with the style before and after; recorded while the engine's
+    /// with the style before and after (and 1 or 2 for a change of its `::before` or `::after`, 0
+    /// of its own); recorded while the engine's
     /// [`crate::style::StyleEngine::track_style_changes`] is on.
     fn take_style_changes(
         &self,
-    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    ) -> Vec<(u64, u8, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
     {
         Vec::new()
     }
@@ -352,6 +370,17 @@ pub trait GeometrySource {
     /// (`getComputedStyle(el, pseudo)`) as of the last sync; with
     /// `generated_only`, only a stored style of a pseudo-element its rules
     /// generate.
+    /// A script scroll or view progress timeline's state as of the last sync
+    /// (`pyro_render::Renderer::timeline_state`): scroll offset, start, end, scroll container key.
+    fn timeline_state(
+        &self,
+        _source: Option<u64>,
+        _subject: Option<u64>,
+        _axis: u8,
+        _inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
+        None
+    }
     fn element_pseudo_style(
         &self,
         _key: u64,

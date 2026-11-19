@@ -27,6 +27,9 @@ pub(crate) struct VerticalLine {
     /// The line's central baseline, which `text-orientation: mixed` and `upright` align runs to; `sideways`
     /// keeps the alphabetic baseline.
     central: Option<f32>,
+    /// pyro: the x-height of the run that sets the central baseline, half of which a
+    /// `vertical-align: middle` run is centred over it.
+    central_x_height: f32,
     /// `text-orientation: upright`: every glyph stands upright.
     all_upright: bool,
     /// pyro: the line is turned a quarter counterclockwise (`sideways-lr`).
@@ -37,11 +40,14 @@ impl VerticalLine {
     pub(crate) fn new(line: &Line<'_, TextBrush>, sideways: bool, all_upright: bool) -> Self {
         // A fragment's box is its whole-pixel ascent and descent, around the middle of which the
         // tallest fragment in the line (the one that sets its height) has the central baseline.
+        let mut central_x_height = 0.0;
         let central = (!sideways)
             .then(|| {
                 line.items()
                     .filter_map(|item| match item {
-                        PositionedLayoutItem::GlyphRun(run) => Some(run),
+                        // pyro: a run aligned by its box's edge keeps its own place
+                        // (`VerticalLine::central_for`).
+                        PositionedLayoutItem::GlyphRun(run) if !run.edge_aligned() => Some(run),
                         _ => None,
                     })
                     .max_by_key(|run| {
@@ -50,11 +56,12 @@ impl VerticalLine {
                     })
                     .map(|run| {
                         let metrics = run.run().font_metrics();
+                        central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
                         run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
                     })
             })
             .flatten();
-        Self { central, all_upright, counterclockwise: false }
+        Self { central, central_x_height, all_upright, counterclockwise: false }
     }
 
     /// pyro: for a line turned a quarter counterclockwise (`sideways-lr`).
@@ -113,9 +120,27 @@ impl VerticalLine {
         })
     }
 
+    /// pyro: the central baseline a run is centred on: the line's, or for a run aligned by its
+    /// box's edge (`vertical-align: top | bottom | text-top | text-bottom`, which Parley has
+    /// already placed against the line or its parent's content area) the middle of its own
+    /// fragment box, so that it stays where the line put it.
+    fn central_for(self, run: &parley::GlyphRun<'_, TextBrush>) -> Option<f32> {
+        let central = self.central?;
+        if !run.edge_aligned() {
+            // `middle`: the box's middle goes half the parent's x-height over the central
+            // baseline (as Blink, which aligns on the central baseline in vertical lines).
+            if run.vertical_align().alignment == parley::AlignmentBaseline::Middle {
+                return Some(central - self.central_x_height / 2.0);
+            }
+            return Some(central);
+        }
+        let metrics = run.run().font_metrics();
+        Some(run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0)
+    }
+
     /// Moves a run's fragment box from the alphabetic baseline to the central one.
     fn fragment_shift(self, run: &parley::GlyphRun<'_, TextBrush>) -> Affine {
-        let Some(central) = self.central else {
+        let Some(central) = self.central_for(run) else {
             return Affine::IDENTITY;
         };
         let metrics = run.run().font_metrics();
@@ -131,7 +156,7 @@ impl VerticalLine {
         run: &parley::GlyphRun<'_, TextBrush>,
         source: Option<&str>,
     ) -> (Affine, Option<Affine>) {
-        let Some(central) = self.central else {
+        let Some(central) = self.central_for(run) else {
             return (Affine::IDENTITY, None);
         };
         let metrics = run.run().font_metrics();
@@ -727,6 +752,8 @@ pub(crate) struct DrawTextContext {
     /// pyro: the next `stroke_text` draws the text's shadows alone (no glyphs, no decoration
     /// lines but their shadows): those of highlighted text, under the highlights' backgrounds.
     pub(crate) shadows_only: bool,
+    /// pyro: draw the glyphs alone, without decorations (`highlight`: unselected glyphs' overhang).
+    pub(crate) glyphs_only: bool,
     /// pyro: the next `stroke_text` draws only the glyphs whose middle is in one of these
     /// stretches (layout x): a highlight's shadows are cast by its glyphs alone.
     pub(crate) glyph_spans: Option<SmallVec<[(f32, f32); 4]>>,
@@ -944,6 +971,9 @@ impl LineTops {
 pub(crate) struct TextCut {
     pub edge: f32,
     pub keep_left: bool,
+    /// pyro: a byte offset in the root's text: the cut keeps the atoms before it (`keep_left`) or
+    /// from it, wherever they are on the line, in place of those left or right of `edge`.
+    pub split: Option<usize>,
 }
 
 impl TextCut {
@@ -956,13 +986,13 @@ impl TextCut {
         let advances: Vec<f32> = run.glyphs().map(|g| g.advance).collect();
         let (mut pen, mut index) = (run.offset(), 0);
         let (mut range, mut extent) = (None::<std::ops::Range<usize>>, None::<(f32, f32)>);
-        for (_, count) in run.atom_texts() {
+        for (text, count) in run.atom_texts() {
             let Some(glyphs) = advances.get(index..index + count) else { break };
             let advance: f32 = glyphs.iter().sum();
-            let keep = if self.keep_left {
-                pen + advance <= self.edge + EPSILON
-            } else {
-                pen >= self.edge - EPSILON
+            let keep = match self.split {
+                Some(split) => (text.start < split) == self.keep_left,
+                None if self.keep_left => pen + advance <= self.edge + EPSILON,
+                None => pen >= self.edge - EPSILON,
             };
             if keep {
                 let r = range.get_or_insert(index..index);
@@ -1703,9 +1733,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         highlighting,
         highlights,
         shadows_only,
+        glyphs_only,
         glyph_spans,
     } = context;
     let shadows_only = *shadows_only;
+    let undecorated = shadows_only || *glyphs_only;
     let positioned_pass = *positioned_pass;
     let glyph_spans = glyph_spans.as_ref();
     let shift = *text_shift;
@@ -2069,12 +2101,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // does a line-through of a colour of its own, drawn over the text as part of it (Blink;
         // WPT css-pseudo `selection-originating-decoration-color`); an underline or overline of
         // its own colour keeps it (css-text-decor `text-decoration-inset-marked-text-gap`).
+        // pyro: all of them when the highlight has a decoration of its own (WPT css-pseudo
+        // `highlight-painting-004`: an underline of its own colour turns the selection's).
         if highlighting {
-            for acc in deco_boxes
-                .iter_mut()
-                .filter(|acc| (acc.deco.current_color || acc.deco.line == TextDecorationLine::LINE_THROUGH) && !acc.selection)
-            {
-                if let Some(color) = crate::highlight::highlight_of(doc, acc.node_id, highlights).and_then(|h| h.color) {
+            for acc in deco_boxes.iter_mut().filter(|acc| !acc.selection) {
+                let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) else { continue };
+                let recolour = acc.deco.current_color
+                    || acc.deco.line == TextDecorationLine::LINE_THROUGH
+                    || highlight.decoration.is_some();
+                if let (true, Some(color)) = (recolour, highlight.color) {
                     acc.deco.color = color;
                 }
             }
@@ -2304,7 +2339,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 }
             }
         }
-        if !deco_boxes.is_empty() && !shadows_only {
+        if !deco_boxes.is_empty() && !undecorated {
             flush(scene, DecorationPhase::UnderOver);
         }
         for (glyph_run, paint) in glyph_runs.iter().zip(run_paints.iter()).filter(|(_, paint)| paint.drawn) {
@@ -2315,7 +2350,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             }
             draw_run(scene, glyph_run, paint, None, runs);
         }
-        if !deco_boxes.is_empty() && !shadows_only {
+        if !deco_boxes.is_empty() && !undecorated {
             flush(scene, DecorationPhase::LineThrough);
         }
     }

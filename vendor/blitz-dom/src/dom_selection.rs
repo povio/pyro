@@ -156,6 +156,34 @@ impl BaseDocument {
         false
     }
 
+    /// pyro: the CSS text of the author or user declaration of `longhand` that `style`'s rules
+    /// give (the highest priority one), `None` without one or for a CSS-wide keyword.
+    pub(crate) fn declared_css(
+        &self,
+        style: &style::properties::ComputedValues,
+        longhand: style::properties::LonghandId,
+    ) -> Option<String> {
+        use style::properties::{PropertyDeclaration, PropertyDeclarationId};
+        use style::stylesheets::Origin;
+        let guard = self.guard.read();
+        for node in style.rules().self_and_ancestors() {
+            if node.cascade_level().origin().origin() == Origin::UserAgent {
+                continue;
+            }
+            let Some(source) = node.style_source() else { continue };
+            let Some((declaration, _)) = source.read(&guard).get(PropertyDeclarationId::Longhand(longhand)) else {
+                continue;
+            };
+            if matches!(declaration, PropertyDeclaration::CSSWideKeyword(_)) {
+                return None;
+            }
+            let mut css = String::new();
+            declaration.to_css(&mut css).ok()?;
+            return Some(css);
+        }
+        None
+    }
+
     /// pyro: whether author or user rules (style sheets, style attributes, animations) give
     /// `style` a declaration of some of `longhands`. A `revert` at the highest priority declares
     /// nothing (it rolls back to the user agent's, which declares none of these for a highlight
@@ -167,16 +195,40 @@ impl BaseDocument {
         style: &style::properties::ComputedValues,
         longhands: &[style::properties::LonghandId],
     ) -> bool {
+        use style::computed_value_flags::ComputedValueFlags;
+        use style::properties::LonghandId as L;
+        let guard = self.guard.read();
+        // pyro: a visited link's visited-dependent colours come from its visited style, whose
+        // rules (`:visited` ones) declare them too.
+        let visited = style
+            .visited_style()
+            .filter(|_| style.flags.contains(ComputedValueFlags::IS_RELEVANT_LINK_VISITED));
+        longhands.iter().any(|&longhand| {
+            let dependent = matches!(
+                longhand,
+                L::Color | L::BackgroundColor | L::TextDecorationColor | L::TextEmphasisColor | L::OutlineColor
+                    | L::CaretColor | L::Fill | L::Stroke
+            );
+            let rule_sets = std::iter::once(style).chain(visited.filter(|_| dependent));
+            rule_sets.into_iter().any(|style| self.rules_declare(&guard, style, longhand))
+        })
+    }
+
+    fn rules_declare(
+        &self,
+        guard: &style::shared_lock::SharedRwLockReadGuard,
+        style: &style::properties::ComputedValues,
+        longhand: style::properties::LonghandId,
+    ) -> bool {
         use style::properties::{CSSWideKeyword, PropertyDeclaration, PropertyDeclarationId};
         use style::stylesheets::Origin;
-        let guard = self.guard.read();
-        longhands.iter().any(|&longhand| {
+        {
             for node in style.rules().self_and_ancestors() {
                 if node.cascade_level().origin().origin() == Origin::UserAgent {
                     continue;
                 }
                 let Some(source) = node.style_source() else { continue };
-                let Some((declaration, _)) = source.read(&guard).get(PropertyDeclarationId::Longhand(longhand)) else {
+                let Some((declaration, _)) = source.read(guard).get(PropertyDeclarationId::Longhand(longhand)) else {
                     continue;
                 };
                 return match declaration {
@@ -189,7 +241,17 @@ impl BaseDocument {
                 };
             }
             false
-        })
+        }
+    }
+
+    /// pyro: the replaced elements the selection holds, painted with its tint from now on.
+    pub fn set_selected_replaced(&mut self, nodes: Vec<NodeId>) {
+        self.selected_replaced = nodes;
+    }
+
+    /// pyro: whether the selection holds the replaced element `node_id`.
+    pub fn is_selected_replaced(&self, node_id: NodeId) -> bool {
+        self.selected_replaced.contains(&node_id)
     }
 
     /// pyro: the selection painted from now on (`None`: none), in place of blitz's own.
@@ -200,32 +262,7 @@ impl BaseDocument {
     /// pyro: the inline roots holding text of `selection`, each with the bytes of its text
     /// (`TextLayout::text`) the selection covers.
     pub(crate) fn dom_selection_ranges(&self, selection: DomSelection) -> Vec<(NodeId, usize, usize)> {
-        // The text nodes from the start to the end, in tree order, each with the UTF-16 range of
-        // its data selected (`None`: to its end).
-        let mut selected: HashMap<NodeId, (usize, Option<usize>)> = HashMap::new();
-        let mut stack = vec![self.root_node().id];
-        let mut inside = false;
-        while let Some(id) = stack.pop() {
-            let Some(node) = self.nodes.get(id) else { continue };
-            if let NodeData::Text(_) = node.data {
-                let start = if id == selection.start.0 {
-                    inside = true;
-                    selection.start.1
-                } else {
-                    0
-                };
-                if !inside {
-                    continue;
-                }
-                if id == selection.end.0 {
-                    selected.insert(id, (start, Some(selection.end.1)));
-                    break;
-                }
-                selected.insert(id, (start, None));
-                continue;
-            }
-            stack.extend(node.children.iter().rev().copied());
-        }
+        let selected = self.selected_text_nodes(selection);
         if selected.is_empty() {
             return Vec::new();
         }
@@ -254,6 +291,89 @@ impl BaseDocument {
             }
         }
         ranges
+    }
+
+    /// pyro: the text nodes from the start of `selection` to its end, in tree order, each with the
+    /// UTF-16 range of its data selected (`None`: to its end).
+    pub(crate) fn selected_text_nodes(&self, selection: DomSelection) -> HashMap<NodeId, (usize, Option<usize>)> {
+        let mut selected: HashMap<NodeId, (usize, Option<usize>)> = HashMap::new();
+        let mut stack = vec![self.root_node().id];
+        let mut inside = false;
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if let NodeData::Text(_) = node.data {
+                let start = if id == selection.start.0 {
+                    inside = true;
+                    selection.start.1
+                } else {
+                    0
+                };
+                if !inside {
+                    continue;
+                }
+                if id == selection.end.0 {
+                    selected.insert(id, (start, Some(selection.end.1)));
+                    break;
+                }
+                selected.insert(id, (start, None));
+                continue;
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        selected
+    }
+
+    /// pyro: an inline `<svg>` serialized again with its selected text in its `::selection` fill and
+    /// stroke (CSS Pseudo 4 § 3.2: `fill`, `stroke-color`, `stroke-width` apply to selected SVG
+    /// text), for a content box of `width` x `height` CSS px; `None` with no selected text that
+    /// such a style restyles. Not kept: made for each paint with a selection.
+    #[cfg(feature = "svg")]
+    pub fn inline_svg_with_selection(&self, node_id: NodeId, width: f32, height: f32) -> Option<std::sync::Arc<crate::node::SvgImageData>> {
+        use style::properties::LonghandId;
+        let selection = self.dom_selection?;
+        let selected = self.selected_text_nodes(selection);
+        let mut overrides: HashMap<NodeId, (usize, Option<usize>, String)> = HashMap::new();
+        let mut stack = vec![node_id];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if let (NodeData::Text(_), Some(&(from, to))) = (&node.data, selected.get(&id)) {
+                let Some(parent) = node.parent else { continue };
+                let Some(style) = self.selection_pseudo_style(parent) else { continue };
+                // (Stylo's cascade keeps only the colours of a highlight pseudo-element: the
+                // declared values are read from its rules.)
+                let mut attrs = String::new();
+                for (longhand, name) in [
+                    (LonghandId::Fill, "fill"),
+                    (LonghandId::Stroke, "stroke"),
+                    (LonghandId::StrokeWidth, "stroke-width"),
+                ] {
+                    if let Some(value) = self.declared_css(&style, longhand) {
+                        let mut escaped = String::new();
+                        let _ = html_escape::encode_double_quoted_attribute_to_string(&value, &mut escaped);
+                        attrs.push_str(&format!(" {name}=\"{escaped}\""));
+                    }
+                }
+                if !attrs.is_empty() {
+                    overrides.insert(id, (from, to, attrs));
+                }
+                continue;
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        if overrides.is_empty() {
+            return None;
+        }
+        let node = self.get_node(node_id)?;
+        crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| *cell.borrow_mut() = overrides);
+        let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
+        crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| cell.borrow_mut().clear());
+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
+        crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
+            if svg.intrinsic_dimensions.view_box.is_none() {
+                svg.inline_source = Some(source.as_str().into());
+            }
+            std::sync::Arc::new(svg)
+        })
     }
 }
 
@@ -289,8 +409,19 @@ fn produced_offset(content: &str, produced: &str, utf16: usize) -> usize {
             }
             // Collapsed white space, or text the layout changed (`text-transform`).
             _ if c.is_whitespace() => {}
-            Some(_) => {
-                out.next();
+            // pyro: a combining mark `text-transform` removed (Greek uppercase drops the acute
+            // accent and the tonos; WPT css-text `text-transform-upperlower-106`).
+            Some(&(_, p)) if is_combining_mark(c) && !is_combining_mark(p) => {}
+            Some(&(index, _)) => {
+                // pyro: a character that `text-transform` mapped to several (`ß` to `SS`) produced
+                // them all (WPT css-text `text-transform-upperlower-105`).
+                let rest = &produced[index..];
+                let expanded = [c.to_uppercase().collect::<String>(), c.to_lowercase().collect::<String>()]
+                    .into_iter()
+                    .find(|mapped| mapped.chars().count() > 1 && rest.starts_with(mapped.as_str()));
+                for _ in 0..expanded.map_or(1, |mapped| mapped.chars().count()) {
+                    out.next();
+                }
             }
             None => break,
         }
@@ -298,9 +429,24 @@ fn produced_offset(content: &str, produced: &str, utf16: usize) -> usize {
     out.peek().map_or(produced.len(), |&(index, _)| index)
 }
 
+/// pyro: whether `c` is in a block of combining diacritical marks.
+fn is_combining_mark(c: char) -> bool {
+    matches!(c as u32, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
+}
+
 #[cfg(test)]
 mod tests {
     use super::produced_offset;
+
+    #[test]
+    fn offsets_follow_case_mappings_that_change_the_length() {
+        // `ß` uppercased to "SS": one source character covers both.
+        assert_eq!(produced_offset("\u{DF}", "SS", 1), 2);
+        assert_eq!(produced_offset("a\u{DF}b", "ASSB", 2), 3);
+        // Greek uppercase drops the acute: "Ϊ́Ρ" to "Ϊ̈Ρ"; the first three source characters are
+        // the first letter.
+        assert_eq!(produced_offset("\u{399}\u{308}\u{301}\u{3A1}", "\u{399}\u{308}\u{3A1}", 3), 4);
+    }
 
     #[test]
     fn offsets_follow_collapsed_white_space() {

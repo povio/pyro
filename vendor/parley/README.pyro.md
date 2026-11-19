@@ -144,6 +144,17 @@ are smaller (CSS Ruby 1, 4.4), so the line box holds the annotations. It is part
 build cache's key. Zero by default: nothing else changes. Covered by
 `emphasis_marks_and_annotations_take_room_in_the_line` in `crates/pyro-render/tests/text_emphasis_ruby.rs`.
 
+`layout/line_break.rs` (`BreakerState::annotation_space`, `set_annotation_space`, `SubtreeExtents::{bare_box,
+marks_box}`, `finish_line`), `layout/style_metrics.rs` (`StyleMetrics::bare`, `BoxMetrics::{bare, marks, new, span}`),
+`layout/line.rs` (`LineMetrics::{annotation_overflow, annotation_shift}`), `layout/resume.rs`
+(`LineStart::annotation_space`): an annotation that overflows its line box takes the room the neighbouring line leaves
+beyond its content (with the annotations drawn there) on that side, as Blink's `InlineLayoutAlgorithm` does with
+`BlockStartAnnotationSpace`: one under a line's text takes the half-leading over the next line's, one over a line's
+text the half-leading under the previous line's, and the line moves up by that much (`annotation_shift`; the layout's
+height takes it off). The caller can give the first line such room (`set_annotation_space`: blitz-dom gives it an
+initial letter's raise). Lines without annotations do not move. Covered by
+`crates/pyro-render/tests/ruby_annotation_space.rs` and the raised-letter test in `initial_letter.rs`.
+
 `resolve/tree.rs` (`push_bidi_control`, `push_empty_box_strut`, `deferred_controls`, `resolve_unspaced_style_id`),
 `builder.rs`: blitz-dom pushes the bidi formatting characters an inline element's `unicode-bidi` stands for (U+202A to
 U+202E, U+2066 to U+2069) and the strut of an empty inline box (U+2061) as text of the current span, in its style
@@ -167,6 +178,11 @@ resolved to.
 space (a bidi formatting character, a zero-width joiner), as in browsers.
 
 All covered by `crates/pyro-render/tests/unicode_bidi.rs` (and `block_in_inline.rs` for the strut).
+
+`resolve/tree.rs` (`push_style`): a full style table (style ids are `u16`) gives the span its parent's style (or a
+variant its span's) instead of panicking with "too many styles"; each empty inline box's strut materialises its style,
+so a paragraph of 66,000 empty spans overflowed. Test: `first_line::more_inline_spans_than_style_ids_paint` in
+pyro-render.
 
 `layout/line_break.rs` (`BreakerState::item_index`): the index of the layout item to be laid out next, so that
 blitz-dom can tell a float it left for below a line from one past the point where that line wrapped (met again on
@@ -434,3 +450,22 @@ Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs
   edges again where shaping was not safe to break, so its wrapped lines start at the content edge (macOS Times and
   Helvetica). WPT CSS2 `bidi-002` (RLO run broken after a space), css-text `hyphens-auto-001` (space|W pairs).
 - Round 4 lane F, `shape/upright.rs` + `StyleProperty::Upright`: upright glyphs (CSS `text-orientation: upright`) of a font without vertical metrics advance by the font's height (ascent + descent, HarfBuzz's default vertical advance), their hyphens too (WPT css-values `ch-unit-002`, `-011`).
+- Round 4 lane S4, `layout/line.rs` `GlyphRun::vertical_align` and `GlyphRun::edge_aligned`: a run's own
+  `vertical-align`, and whether its span or one around it is aligned by an edge of its box (`top`, `bottom`,
+  `text-top`, `text-bottom`), for blitz-paint's runs on a central baseline. WPT css-writing-modes `vertical-alignment-*`.
+
+## Font selection: characters HarfBuzz shapes in a font without them (WPT round 4, lane S1)
+
+`shape/mod.rs` (the coverage closure of font selection, `hidden_default_ignorable`): a font covers U+2011 NON-BREAKING
+HYPHEN when it has U+2010 HYPHEN, and covers the default-ignorable code points HarfBuzz hides, so they keep the font
+as in Blink (harfrust draws U+2011 as the font's U+2010 and hides the ignorables). Variation selectors, ZWJ, the
+Mongolian variation selectors and U+00AD are left out: they choose glyphs and fonts. WPT css-text
+`line-break-anywhere-overrides-uax-behavior-011/013/014`. Covered by `crates/pyro-render/tests/font_coverage_hidden.rs`.
+
+## Baseline offsets round halves up (WPT round 4, lane S1)
+
+`layout/style_metrics.rs` (`round_half_up`): quantized baseline offsets of span boxes and inline boxes round halves up
+(towards positive infinity), as Blink snaps a layout position to a pixel, not away from zero: an empty inline-block
+with `vertical-align: -7.5px` and `margin-bottom: 7.5px` sits on the baseline (WPT CSS2
+`visudet/inline-block-baseline-011`, `-014`). Covered by `a_negative_half_pixel_shift_rounds_up` in
+`crates/pyro-render/tests/alignment_baseline.rs`.

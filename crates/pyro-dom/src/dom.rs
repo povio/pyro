@@ -285,6 +285,9 @@ pub struct Dom {
     pub(crate) nonces: crate::nonce::NonceState,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
+    /// `naturalWidth`/`naturalHeight` where they differ from what layout uses: an SVG image's
+    /// natural dimensions completed against the default object size (CSS Images 3).
+    reported_natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
     /// The source an `<img>` selected from its `srcset` or its `<picture>`'s `<source>`s (the URL
     /// as written), set by the image loader: what a render snapshot gives as the image's `src`.
     image_sources: rustc_hash::FxHashMap<NodeId, String>,
@@ -360,6 +363,7 @@ impl Dom {
             details: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
+            reported_natural_sizes: Default::default(),
             image_sources: Default::default(),
             window_names: Default::default(),
             attr_nodes: Default::default(),
@@ -459,6 +463,23 @@ impl Dom {
     pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
         self.check(el).ok()?;
         self.natural_sizes.get(&el).copied()
+    }
+    /// `naturalWidth` and `naturalHeight` of an image element: [`Dom::set_reported_natural_size`]'s
+    /// value, else its [`Dom::natural_size`].
+    pub fn reported_natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
+        self.check(el).ok()?;
+        self.reported_natural_sizes.get(&el).or_else(|| self.natural_sizes.get(&el)).copied()
+    }
+    /// Records or clears what `naturalWidth`/`naturalHeight` report when it is not the layout's
+    /// natural size (an SVG without natural dimensions reports the default object size).
+    pub fn set_reported_natural_size(&mut self, el: NodeId, size: Option<(f64, f64)>) {
+        if self.check(el).is_err() {
+            return;
+        }
+        match size {
+            Some(s) => self.reported_natural_sizes.insert(el, s),
+            None => self.reported_natural_sizes.remove(&el),
+        };
     }
     /// Records or clears an image element's natural size. A change bumps
     /// the version so layout and style caches recompute; it is journaled
@@ -726,6 +747,11 @@ impl Dom {
         self.shadow_roots
     }
 
+    /// Whether `host`'s shadow root is a user-agent one (rendered as if absent).
+    pub(crate) fn has_ua_shadow_idx(&self, sr: u32) -> bool {
+        matches!(&self.n(sr).kind, NodeKind::Fragment(f) if f.flags & crate::node::shadow_flags::USER_AGENT != 0)
+    }
+
     /// Records a tree, attribute or character-data mutation.
     #[track_caller]
     pub(crate) fn bump_tree(&mut self) {
@@ -889,6 +915,7 @@ impl Dom {
             hovered: NIL,
             activated: NIL,
             focus_visible: false,
+            design_mode: false,
             document_element: NIL,
             head: NIL,
             body: NIL,
@@ -902,6 +929,21 @@ impl Dom {
         self.n_mut(idx).set_tree_flags(tree_flags::CONNECTED);
         self.doc_data_mut(idx).owned = 1;
         self.id_of(idx)
+    }
+
+    /// HTML `document.designMode` of `doc`: whether the whole document is editable.
+    pub fn design_mode(&self, doc: NodeId) -> bool {
+        self.check(doc).ok().is_some_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.design_mode))
+    }
+
+    /// Sets `doc`'s `designMode` (`on`).
+    pub fn set_design_mode(&mut self, doc: NodeId, on: bool) -> DomResult<()> {
+        let i = self.check(doc)?;
+        match &mut self.n_mut(i).kind {
+            NodeKind::Document(d) => d.design_mode = on,
+            _ => return Err(DomError::Type("not a document")),
+        }
+        Ok(())
     }
 
     /// Marks a document as displayed by a browsing context; active documents
@@ -974,6 +1016,17 @@ impl Dom {
             return;
         }
         let Some(e) = n.element() else { return };
+        // HTML "Content security policy state" of a `<meta http-equiv>` child of the head: its
+        // policy joins the document's (only its Trusted Types directives are kept).
+        if e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.eq_ignore_ascii_case("content-security-policy")) {
+            let doc = n.owner_doc;
+            let in_head = self.doc_data(doc).head != NIL && n.parent == self.doc_data(doc).head;
+            if let (true, Some(content)) = (in_head, e.attr_local(&local_name!("content")).map(str::to_owned)) {
+                let doc = self.id_of(doc);
+                self.add_csp_policies(doc, &content, false);
+            }
+            return;
+        }
         // A responsive embedded sizing `<meta>` opts the document in while it has no body yet, and for good
         // (Blink `HTMLMetaElement::ProcessContent`; WPT css-sizing `responsive-iframe/*`)
         if e.attr_local(&local_name!("name")).is_some_and(|name| name.eq_ignore_ascii_case("responsive-embedded-sizing")) {
@@ -1115,6 +1168,17 @@ impl Dom {
     pub fn document_fallback_base_url(&self, doc: NodeId) -> DomResult<&str> {
         let d = self.document_data(doc)?;
         Ok(d.base_url.as_deref().unwrap_or(&d.url))
+    }
+    /// The `target` of the first `<base>` in `doc` that has one (HTML "get an element's
+    /// target": a link without a target of its own uses it).
+    pub fn base_target(&self, doc: NodeId) -> Option<String> {
+        if !self.base_seen {
+            return None;
+        }
+        self.descendants(doc).ok()?.find_map(|id| {
+            let e = self.element(id).ok()?;
+            (e.is_html() && *e.local_name() == *"base").then(|| self.get_attribute(id, "target").ok().flatten().map(str::to_owned))?
+        })
     }
     fn first_base_href(&self, doc: NodeId) -> Option<Box<str>> {
         let href = self.descendants(doc).ok()?.find_map(|id| {
@@ -1415,6 +1479,18 @@ impl Dom {
         Ok(self.id_of(sr))
     }
 
+    /// The user-agent shadow root of `host` (closed; script cannot reach it):
+    /// SVG `<use>` element instances. Made on first use, on any element.
+    pub fn ua_shadow_root(&mut self, host: NodeId) -> DomResult<NodeId> {
+        let h = self.check(host)?;
+        let existing = self.n(h).element().ok_or(DomError::Type("not an element"))?.shadow_root;
+        if existing != NIL {
+            return Ok(self.id_of(existing));
+        }
+        let sr = self.new_shadow_root(h, ShadowRootMode::Closed, crate::node::shadow_flags::USER_AGENT);
+        Ok(self.id_of(sr))
+    }
+
     fn new_shadow_root(&mut self, h: u32, mode: ShadowRootMode, mut flags: u8) -> u32 {
         // A custom host makes it available to its internals; a
         // precustomized one (its constructor running) is the bindings' to
@@ -1485,6 +1561,20 @@ impl Dom {
 
     /// Whether `i`'s root is a shadow root (a bit kept by `tree_scope`).
     #[inline]
+    /// Whether `i` is in a user-agent shadow tree (a `<use>` instance), at
+    /// any depth of shadow trees.
+    pub(crate) fn in_ua_shadow_tree(&self, mut i: u32) -> bool {
+        while self.n(i).in_shadow_tree() {
+            let root = self.root_idx(i);
+            match &self.n(root).kind {
+                NodeKind::Fragment(f) if f.flags & crate::node::shadow_flags::USER_AGENT != 0 => return true,
+                NodeKind::Fragment(f) if f.host != NIL => i = f.host,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     pub(crate) fn in_shadow_tree(&self, i: u32) -> bool {
         let r = self.n(i).in_shadow_tree();
         debug_assert_eq!(r, matches!(&self.n(self.root_idx(i)).kind, NodeKind::Fragment(f) if f.shadow.is_some()));
@@ -1890,6 +1980,30 @@ impl Dom {
     }
 
     /// `Node.isConnected` (shadow-including).
+    /// pyro: whether every change since `version` was made outside the document tree: to
+    /// nodes, or the child lists of nodes, that are not connected to a document (a clone a
+    /// screenshot library styles, a fragment being built). Such changes cannot reach layout or
+    /// computed styles, so the layout engine need not sync for them. `false` when the journal no
+    /// longer covers `version`, or for unannotated changes and focus/hover changes. A node that
+    /// was connected when it changed and is detached now was removed, which shows as a removal
+    /// from a connected parent; one detached when it changed and connected since was inserted,
+    /// which shows as an insertion into a connected parent: both answer `false`.
+    pub fn only_detached_changes_since(&self, version: u64) -> bool {
+        let Some(changes) = self.changes_since(version) else { return false };
+        let detached = |i: u32| self.slot_live(i) && !self.n(i).is_connected();
+        for change in changes {
+            let outside = match change {
+                Change::Attr(i, _, _) | Change::State(i) | Change::Text(i) => detached(i),
+                Change::Inserted(parent, _) | Change::Removed(parent, _, _) => detached(parent),
+                Change::Pseudo | Change::Unknown(_) => false,
+            };
+            if !outside {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn is_connected(&self, id: NodeId) -> DomResult<bool> {
         let (i, n) = self.live(id)?;
         debug_assert_eq!(n.is_connected(), self.connected_by_walk(i));
@@ -1905,7 +2019,7 @@ impl Dom {
         }
         false
     }
-    fn is_host_including_inclusive_ancestor(&self, anc: u32, mut node: u32) -> bool {
+    pub(crate) fn is_host_including_inclusive_ancestor(&self, anc: u32, mut node: u32) -> bool {
         loop {
             if self.is_inclusive_ancestor(anc, node) {
                 return true;
@@ -2739,8 +2853,11 @@ impl Dom {
                 });
                 // HTML script cloning steps: "already started" is copied.
                 let started = e.flags & crate::node::element_flags::SCRIPT_ALREADY_STARTED;
+                // DOM "clone a single node": the copy has the same is value.
+                let is_value = e.is_value.clone();
                 let id = self.create_element_raw(self.id_of(doc), name)?;
                 let el = self.n_mut(id.idx).element_mut().unwrap();
+                el.is_value = is_value;
                 el.set_attr_state(attrs);
                 el.control = control;
                 el.flags |= started;

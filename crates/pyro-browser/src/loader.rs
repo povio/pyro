@@ -80,6 +80,8 @@ pub enum ResourceKind {
     Video,
     /// A hyperlink download (`<a download>`).
     Download,
+    /// An `<object>` element's data (destination "object").
+    Object,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +139,11 @@ pub struct Resource {
     pub content_disposition: Option<String>,
     /// The response carried a `Content-Security-Policy` header (the policy
     /// itself is not enforced; a document delivered with one hides nonces).
-    pub header_csp: bool,
+    /// pyro: the values of its `Content-Security-Policy` headers joined by `,` (each a policy),
+    /// a newline, and those of its `Content-Security-Policy-Report-Only` headers. Only the
+    /// Trusted Types directives are acted on (`Dom::set_trusted_types_policies`); other
+    /// directives are not enforced.
+    pub header_csp: Option<String>,
     /// The `Refresh` response header (HTML declarative refresh), if any.
     pub refresh: Option<String>,
     /// A document's `Content-Language` response header, if any (its
@@ -151,6 +157,8 @@ pub struct Resource {
     /// `Some`: `body` is a prefix of the response body, cut as the
     /// request's `part` asked (the transfer stopped there).
     pub partial: Option<pyro_webapi::Partial>,
+    /// The response said `X-Content-Type-Options: nosniff`: a style sheet must be `text/css`.
+    pub nosniff: bool,
 }
 
 impl Resource {
@@ -298,7 +306,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Font => pyro_net::Destination::Font,
             ResourceKind::Audio => pyro_net::Destination::Audio,
             ResourceKind::Video => pyro_net::Destination::Video,
-            ResourceKind::Download => pyro_net::Destination::Other,
+            ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
         };
         // Resource Timing: the document that gets this fetch's entry.
         let timed = request.initiator.and_then(|i| Some((i, requesting_document(browser, &request)?)));
@@ -414,13 +422,14 @@ impl ResourceLoader for NetLoader {
                 mime: head.mime,
                 charset: head.charset,
                 content_disposition: None,
-                header_csp: false,
+                header_csp: None,
                 refresh: None,
                 content_language: None,
                 referrer_policy: None,
                 body: hit.file.body.to_vec(),
                 timing: report.filter(|_| document).map(Box::new),
                 partial: None,
+                nosniff: false,
             };
             browser.scheduler().post(TaskSource::Networking, move |b| {
                 b.report_resource_delivery(
@@ -478,12 +487,13 @@ impl ResourceLoader for NetLoader {
                     charset: h.charset,
                     body: std::mem::take(&mut body),
                     content_disposition: None,
-                    header_csp: false,
+                    header_csp: None,
                     refresh: None,
                     content_language: None,
                     referrer_policy: None,
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
+                    nosniff: false,
                 };
                 let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Ok(resource)));
                 // Stop the transfer: a live stream never ends.
@@ -511,6 +521,11 @@ impl ResourceLoader for NetLoader {
                     Some(h) => Ok(Resource {
                         timing: timing(&h),
                         partial: None,
+                        nosniff: h
+                            .headers
+                            .get("x-content-type-options")
+                            .and_then(|v| v.to_str().ok())
+                            .is_some_and(|v| v.split(',').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("nosniff"))),
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,
@@ -520,7 +535,16 @@ impl ResourceLoader for NetLoader {
                             .get(http::header::CONTENT_DISPOSITION)
                             .and_then(|v| v.to_str().ok())
                             .map(str::to_owned),
-                        header_csp: h.headers.contains_key(http::header::CONTENT_SECURITY_POLICY),
+                        header_csp: {
+                            let joined = |name: http::header::HeaderName| -> String {
+                                let values: Vec<&str> =
+                                    h.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+                                values.join(",")
+                            };
+                            let enforce = joined(http::header::CONTENT_SECURITY_POLICY);
+                            let report_only = joined(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY);
+                            (!enforce.is_empty() || !report_only.is_empty()).then(|| format!("{enforce}\n{report_only}"))
+                        },
                         // Only a document honours it; other kinds skip the lookup.
                         refresh: document
                             .then(|| h.headers.get(http::header::REFRESH)?.to_str().ok().map(str::to_owned))
@@ -619,6 +643,8 @@ type StaticEntry = (String, Vec<u8>, Duration);
 #[derive(Default)]
 pub struct StaticLoader {
     entries: RefCell<std::collections::HashMap<String, StaticEntry>>,
+    /// The `Content-Security-Policy` header value served with a URL.
+    csp: RefCell<std::collections::HashMap<String, String>>,
     pub log: RefCell<Vec<String>>,
 }
 
@@ -628,6 +654,10 @@ impl StaticLoader {
     }
     pub fn insert_bytes(&self, url: &str, mime: &str, body: &[u8], delay: Duration) {
         self.entries.borrow_mut().insert(url.to_string(), (mime.to_string(), body.to_vec(), delay));
+    }
+    /// Serves `url` with a `Content-Security-Policy: {policy}` header.
+    pub fn set_csp(&self, url: &str, policy: &str) {
+        self.csp.borrow_mut().insert(url.to_string(), policy.to_string());
     }
 }
 
@@ -640,6 +670,7 @@ impl ResourceLoader for StaticLoader {
             request.url.clone()
         });
         let entry = self.entries.borrow().get(&request.url).cloned();
+        let csp = self.csp.borrow().get(&request.url).cloned();
         let url = request.url;
         let part = request.part;
         let delay = entry.as_ref().map_or(Duration::ZERO, |e| e.2);
@@ -676,12 +707,13 @@ impl ResourceLoader for StaticLoader {
                         charset: None,
                         body,
                         content_disposition: None,
-                        header_csp: false,
+                        header_csp: csp.clone(),
                         refresh: None,
                         content_language: None,
                         referrer_policy: None,
                         timing: None,
                         partial,
+                        nosniff: false,
                     })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
@@ -1167,12 +1199,13 @@ impl Browser {
             charset: None,
             body: Vec::new(),
             content_disposition: None,
-            header_csp: false,
+            header_csp: None,
             refresh: None,
             content_language: None,
             referrer_policy: None,
             timing: None,
             partial: None,
+                nosniff: false,
         };
         if let Err(e) =
             self.begin_document_with(page, &document, loader_id.clone(), resource, history, Some(unreachable))
@@ -1263,8 +1296,12 @@ impl Browser {
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
         // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
-        if resource.header_csp && !self.page(page.page).is_some_and(|p| p.bypass_csp) {
-            let _ = dom.borrow_mut().set_header_csp(doc, true);
+        if let Some(csp) = resource.header_csp.as_deref().filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp)) {
+            let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
+            if !enforce.is_empty() {
+                let _ = dom.borrow_mut().set_header_csp(doc, true);
+            }
+            let _ = dom.borrow_mut().set_trusted_types_policies(doc, enforce, report_only);
         }
         if let Some(refresh) = resource.refresh.as_deref() {
             self.refresh_header(page, refresh);
@@ -1281,6 +1318,17 @@ impl Browser {
         }
         .map_err(|e| JsError::type_error(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
+        // HTML encoding sniffing: a child document without a declared encoding
+        // inherits its same-origin container document's.
+        if page.child.is_some() {
+            let parent = self.page(page.page).map(|p| p.frames.parent_key(page)).filter(|&k| k != page);
+            let inherited = parent.and_then(|k| self.doc(k)).and_then(|d| d.main_frame.page_dom.clone()).and_then(|pd| {
+                let dom = pd.dom.borrow();
+                let data = dom.document_data(pd.document()).ok()?;
+                (origin_of(&data.url.to_string()) == origin).then_some(data.charset)
+            });
+            parser.set_fallback_charset(inherited);
+        }
         // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
         // media"): Chromium's markup, the image at the top left in a frame, centred on a dark
         // background in a window.
@@ -2037,6 +2085,7 @@ impl Browser {
             || state.stylesheets.styles_pending()
             || state.images.blocking_load() != 0
             || state.main_frame.page_dom.as_ref().is_some_and(|d| d.media_delays_load())
+            || state.main_frame.page_dom.as_ref().is_some_and(|d| d.fonts_delay_load())
         {
             return;
         }
@@ -2113,6 +2162,7 @@ impl Browser {
         let outer = bindings.as_ref().and_then(|dom| dom.current_script());
         if let Some(dom) = &bindings {
             dom.set_current_script(Some(element.node));
+            pyro_webapi::trusted_types::sync_compile_strings(&scope, dom);
         }
         if let Err(e) = scope.eval(text, Some(url), 1) {
             scope.report_exception(&e);
@@ -2380,6 +2430,7 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
     let Ok(scope) = realm.scope() else { return };
     let outer = bindings.current_script();
     bindings.set_current_script(Some(node));
+    pyro_webapi::trusted_types::sync_compile_strings(&scope, &bindings);
     realm.reenter_native_callback_hook(|| {
         if let Err(e) = scope.eval(&text, Some(&frame.base_url), 1) {
             scope.report_exception(&e);

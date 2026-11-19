@@ -70,12 +70,13 @@ impl ManualLoader {
             charset: None,
             body: body.as_bytes().to_vec(),
             content_disposition: None,
-            header_csp: false,
+            header_csp: None,
             refresh: None,
             content_language: None,
             referrer_policy: None,
             timing: None,
             partial: None,
+                nosniff: false,
         }
     }
 

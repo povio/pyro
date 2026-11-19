@@ -79,13 +79,56 @@ input[type="hidden" i] {
 input[type="checkbox"] {
     box-sizing: border-box;
     margin: 3px 3px 3px 4px;
+    /* pyro: Chromium's (html.css): no border or padding of its own, so `appearance: none`
+       leaves it 0x0. */
+    padding: initial;
+    border: initial;
+}
+
+/* pyro: native controls (Chromium's html.css); `appearance: none` turns their native look off
+   (blitz-paint form_controls.rs, layout/mod.rs). */
+input[type="checkbox" i],
+input[type="radio" i],
+input[type="range" i],
+progress,
+meter {
+    appearance: auto;
 }
 
 input[type="radio"] {
     box-sizing: border-box;
     border-radius: 13px;
     border: none;
+    padding: initial;
     margin: 3px 3px 0 5px;
+}
+
+/* pyro: Chromium's range, progress and meter (html.css): a range is 129x16 by
+   nature (layout/mod.rs), themed without its field background; blitz-paint
+   `draw_bar_widget` paints all three. */
+input[type="range" i] {
+    margin: 2px;
+    padding: 0;
+    border: none;
+    background-color: transparent;
+    color: rgb(16, 16, 16);
+    cursor: default;
+}
+
+progress,
+meter {
+    display: inline-block;
+    box-sizing: border-box;
+    vertical-align: -0.2em;
+    block-size: 1em;
+}
+
+progress {
+    inline-size: 10em;
+}
+
+meter {
+    inline-size: 5em;
 }
 
 /* Chromium's UA sheet: text inputs are 2px-inset-bordered with 1px 2px
@@ -93,13 +136,13 @@ input[type="radio"] {
 input {
     border: 2px inset #767676;
     padding: 1px 2px;
-    background-color: white;
+    background-color: Field;
 }
 
 textarea {
     border: 1px solid #999;
     padding: 2px;
-    background-color: white;
+    background-color: Field;
 }
 
 /* Chromium's `font: -webkit-small-control`: form controls default to 13.333px. */
@@ -190,7 +233,13 @@ input[type="submit"],
 input[type="reset"],
 input[type="button"] {
     border: 1px solid #999;
-    border-radius: 1px;
+    /* pyro: Chromium's native look rounds a button's corners by 1px. Not a `border-radius` here
+       (Chromium's computed one is 0): blitz-paint rounds a button of native appearance
+       (`-moz-default-appearance: button`, `appearance: auto`, no author border or background),
+       so that an author-styled one and one of `appearance: none` are square alike (css-ui-4's
+       appearance-disabling properties; WPT css-ui `compute-kind-widget-generated/*`). */
+    -moz-default-appearance: button;
+    appearance: auto;
     padding: 1px 6px;
     color: black;
     background-color: #EFEFEF;
@@ -227,7 +276,8 @@ input[type="file" i] {
 
 input[type="file" i]::file-selector-button {
     border: 1px solid #999;
-    border-radius: 1px;
+    -moz-default-appearance: button;
+    appearance: auto;
     padding: 1px 6px;
     color: black;
     background-color: #EFEFEF;
@@ -1028,6 +1078,12 @@ canvas {
 
 iframe:focus-visible,
 body:focus-visible,
+/* pyro: the root's text color is CanvasText (CSS Color Adjust: its initial value), so it follows the
+   page's color scheme (`<meta name=color-scheme>`, `color-scheme`); black in the light scheme. */
+:root {
+  color: CanvasText;
+}
+
 html:focus-visible {
     /* These elements historically don't show outlines when focused by default.
    * We could consider changing that if needed. */
@@ -1069,7 +1125,7 @@ area {
 
 iframe:fullscreen {
     /* iframes in full-screen mode don't show a border. */
-    border: none !important;
+    border: none;
     padding: unset !important;
 }
 

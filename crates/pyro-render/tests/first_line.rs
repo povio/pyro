@@ -192,3 +192,25 @@ fn first_line_skips_an_inline_block_before() {
         "<div><span style='color:#f00'>abcd</span></div>",
     );
 }
+
+/// A `::first-letter` box inside the `::first-line` box (here of a `<q>`'s open quote, with
+/// `vertical-align` and `opacity` so that it is painted on its own) is reparented through the
+/// first-line box without a panic (WPT text-decoration-first-line-layer-crash): an anonymous
+/// box in another one originates from the outer box.
+#[test]
+fn first_letter_in_first_line_box_paints() {
+    let image = render(
+        "<style>.c{float:right;text-decoration:overline}.c::first-letter{vertical-align:super;opacity:.1}\
+         .c::first-line{text-decoration:overline}</style><q class=c>appxgrxebpwykansiejjsh</q>",
+    );
+    assert!(image.data.chunks(4).any(|p| p[..3] != [255, 255, 255]), "the text is painted");
+}
+
+/// A paragraph of more empty spans than parley has style ids (`u16`; each empty span puts an
+/// empty-box strut in its own style) is laid out and painted instead of panicking with "too many
+/// styles" (pyro-browser `review_a_journal_overflow_falls_back_to_every_candidate`).
+#[test]
+fn more_inline_spans_than_style_ids_paint() {
+    let image = render(&format!("{}<p>end", "<span></span>".repeat(66_000)));
+    assert!(image.data.chunks(4).any(|p| p[..3] != [255, 255, 255]), "the text is painted");
+}

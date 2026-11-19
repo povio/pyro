@@ -237,14 +237,17 @@ bitflags! {
             Self::PATH.bits() |
             Self::SHAPE.bits();
 
-        /// For shape-outside.
+        /// For shape-outside. pyro: `path()` and `shape()` too (CSS Shapes 2, as Chromium; pyro
+        /// lays floats out around them).
         const SHAPE_OUTSIDE =
             Self::INSET.bits() |
             Self::XYWH.bits() |
             Self::RECT.bits() |
             Self::CIRCLE.bits() |
             Self::ELLIPSE.bits() |
-            Self::POLYGON.bits();
+            Self::POLYGON.bits() |
+            Self::PATH.bits() |
+            Self::SHAPE.bits();
     }
 }
 

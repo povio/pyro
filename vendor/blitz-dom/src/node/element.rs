@@ -46,6 +46,12 @@ pub(crate) fn parse_classes(value: &str) -> ThinVec<Atom> {
     value.split_ascii_whitespace().map(Atom::from).collect()
 }
 
+/// pyro: sampled values at the animations and transitions levels.
+pub type SampledBlocks = (
+    Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+);
+
 pub struct ElementData {
     /// The elements tag name, namespace and prefix
     pub name: QualName,
@@ -93,6 +99,13 @@ pub struct ElementData {
     /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
     /// whose own `content` is one image (it is laid out as an `<img>` of it).
     pub content_image: Option<(String, f32)>,
+    /// pyro: an `<img>` whose image failed to load (or has no source) and that has non-empty
+    /// `alt` text: it represents its alt text, laid out as a non-replaced box holding it
+    /// (HTML rendering § images; `BaseDocument::show_image_alt_text`).
+    pub image_broken: bool,
+    /// pyro: an `<img>` whose image failed to load (whatever its `alt`): painted with Chromium's
+    /// broken-image icon (and, when it has no alt text, a border round its box).
+    pub image_failed: bool,
     /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
     /// in place of content, as an image without a natural size (`util::content_gradient`).
     pub content_gradient: bool,
@@ -138,6 +151,10 @@ pub struct ElementData {
     /// pyro: the sampled values of the animations on the element's `::marker`
     /// (`ElementEffects::marker`): cascaded onto the marker's style (`layout::list`).
     pub sampled_marker: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    /// pyro: the sampled values of the effects on the element's `::before` (`[0]`) and `::after`
+    /// (`[1]`): at the animations level (`.0`) and the transitions level (`.1`) of the pseudo's
+    /// cascade (`animation::cascade_sampled_pseudos`).
+    pub sampled_pseudos: [SampledBlocks; 2],
     pub sampled_transitions: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     /// pyro: an animation of this element that is current or in effect animates a property that
     /// makes a stacking context, which makes the element one (`animation.rs`).
@@ -414,6 +431,8 @@ impl Clone for ElementData {
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
             content_image: self.content_image.clone(),
+            image_broken: self.image_broken,
+            image_failed: self.image_failed,
             content_gradient: self.content_gradient,
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
@@ -432,6 +451,7 @@ impl Clone for ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,
@@ -546,6 +566,8 @@ impl ElementData {
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
             content_image: None,
+            image_broken: false,
+            image_failed: false,
             content_gradient: false,
             reference_images: ThinVec::new(),
 
@@ -560,6 +582,7 @@ impl ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
             before: None,

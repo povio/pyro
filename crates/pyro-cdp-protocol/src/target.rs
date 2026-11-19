@@ -133,8 +133,25 @@ pub trait Host {
     /// Creates an `about:blank` page. Returns its key and target id; the target
     /// id is the main frame id, as in Chrome and upstream.
     fn create_page(&mut self, context: ContextKey) -> CdpResult<(PageKey, String)>;
+    /// Creates the page of a popup the engine requested (`handle` is the
+    /// request's): the page the opener's `window.open` made ahead, with the
+    /// initial about:blank document its script may have changed already, when
+    /// there is one. The flag says whether it was made ahead.
+    fn create_popup_page(
+        &mut self,
+        context: ContextKey,
+        _handle: Option<&std::rc::Rc<dyn std::any::Any>>,
+    ) -> CdpResult<(PageKey, String, bool)> {
+        self.create_page(context).map(|(page, id)| (page, id, false))
+    }
     /// Starts a navigation (used by `Target.createTarget` with a URL).
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()>;
+    /// Reports again the commit of `page`'s initial about:blank document
+    /// (a popup that keeps the one `window.open` made). False when the page
+    /// shows another document: the caller navigates instead.
+    fn announce_initial_document(&mut self, _page: PageKey) -> bool {
+        false
+    }
     fn close_page(&mut self, page: PageKey);
     fn page_url(&self, page: PageKey) -> String;
     fn page_title(&self, page: PageKey) -> String;
@@ -508,6 +525,10 @@ struct TargetEntry {
     /// Popup navigation held until the client's `Runtime.runIfWaitingForDebugger`
     /// (Chrome pauses popups so init scripts and listeners are installed first).
     pending_url: Option<String>,
+    /// The popup's initial about:blank document, made by `window.open`, stays
+    /// (no URL to load): releasing the popup announces its commit instead of
+    /// replacing it.
+    keep_initial: bool,
     /// The prepared-page profile this target was acquired from.
     prepared_profile: Option<usize>,
 }
@@ -1100,6 +1121,7 @@ impl<H: Host> Browser<H> {
                     opener_id: None,
                     can_access_opener: false,
                     pending_url: None,
+                    keep_initial: false,
                     prepared_profile: Some(entry.profile),
                 });
                 if self.discover || self.discover_tabs {
@@ -1706,6 +1728,7 @@ impl<H: Host> Browser<H> {
                     opener_id: None,
                     can_access_opener: false,
                     pending_url: None,
+                    keep_initial: false,
                     prepared_profile: None,
                 });
                 if self.discover || self.discover_tabs {
@@ -2025,7 +2048,14 @@ impl<H: Host> Browser<H> {
             {
                 continue;
             }
-            let Ok((page, target_id)) = self.host.create_page(context_key) else { continue };
+            let Ok((page, target_id, prebuilt)) = self.host.create_popup_page(context_key, request.handle.as_ref())
+            else {
+                continue;
+            };
+            // A popup opened without a URL keeps the initial about:blank
+            // document `window.open` made (HTML does not navigate it).
+            let keep_initial = prebuilt && request.url == "about:blank";
+            let url = (!keep_initial).then_some(request.url);
             let paused = self.auto_attach || self.tab_attach;
             self.targets.push(TargetEntry {
                 id: target_id.clone(),
@@ -2033,7 +2063,9 @@ impl<H: Host> Browser<H> {
                 page,
                 opener_id: Some(opener_id),
                 can_access_opener: request.opener_access,
-                pending_url: paused.then(|| request.url.clone()),
+                // Paused, a kept document still waits for its announced commit.
+                pending_url: paused.then(|| url.clone().unwrap_or_else(|| "about:blank".into())),
+                keep_initial,
                 prepared_profile: None,
             });
             if self.discover || self.discover_tabs {
@@ -2045,7 +2077,9 @@ impl<H: Host> Browser<H> {
                 if self.auto_attach_new(&target_id, true, out).is_err() {
                     self.close_target(&target_id, out);
                 }
-            } else if self.host.navigate(page, &request.url).is_err() {
+            } else if keep_initial {
+                self.host.announce_initial_document(page);
+            } else if url.as_deref().is_some_and(|url| self.host.navigate(page, url).is_err()) {
                 self.close_target(&target_id, out);
             }
         }
@@ -2060,7 +2094,11 @@ impl<H: Host> Browser<H> {
                     let Some(target) = self.targets.iter_mut().find(|t| t.page == page) else { continue };
                     // A paused popup has not started: this replaces what it will load.
                     match target.pending_url.as_mut() {
-                        Some(pending) => *pending = url,
+                        Some(pending) => {
+                            *pending = url;
+                            // It loads a document now instead of keeping its initial one.
+                            target.keep_initial = false;
+                        }
                         None => {
                             let _ = self.host.navigate(page, &url);
                         }
@@ -2200,7 +2238,13 @@ impl<H: Host> Browser<H> {
         let Some(target) = self.targets.iter_mut().find(|t| t.id == target_id) else { return };
         let Some(url) = target.pending_url.take() else { return };
         let page = target.page;
+        let keep_initial = target.keep_initial;
         self.host.set_initial_popup(page, false);
+        // A kept initial document: clients (Playwright's `popup` event) wait
+        // for a commit, which the host announces for it.
+        if keep_initial && self.host.announce_initial_document(page) {
+            return;
+        }
         // about:blank too: clients wait for the commit that replaces the ":" initial document.
         if self.host.navigate(page, &url).is_err() {
             self.close_target(target_id, out);

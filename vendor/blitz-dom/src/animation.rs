@@ -115,6 +115,77 @@ pub struct Effect {
     pub easing: Option<Arc<str>>,
     /// The effect's composite operation (keyframes without one of their own).
     pub composite: Composite,
+    /// pyro: a CSS animation driven by a scroll or view progress timeline (`animation-timeline`):
+    /// its progress comes from the scroll position at each sample (`scroll_timeline`), not from
+    /// `progress`.
+    pub timeline: Option<TimelineDriven>,
+}
+
+/// pyro: what a scroll-driven CSS animation's progress needs besides the scroll position: the index
+/// of the animation in its target's `animation-*` lists, and its timing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimelineDriven {
+    pub index: usize,
+    pub iterations: f64,
+    /// 0 `normal`, 1 `reverse`, 2 `alternate`, 3 `alternate-reverse`.
+    pub direction: u8,
+    /// 0 `none`, 1 `forwards`, 2 `backwards`, 3 `both`.
+    pub fill: u8,
+    /// `animation-delay` (ms) and `animation-duration` (ms; `None`: `auto`): on a progress-based
+    /// timeline they are shares of the whole (Web Animations 2, "converting time values").
+    pub delay_ms: f64,
+    pub duration_ms: Option<f64>,
+    /// On the element's `::before` (1) or `::after` (2), or the element itself (0).
+    pub pseudo: u8,
+}
+
+impl TimelineDriven {
+    /// The iteration progress at `p` through the attachment range, and the before flag; `None`
+    /// outside the range without a fill that covers it.
+    fn iteration_progress(&self, p: f64) -> Option<(f64, bool)> {
+        let n = if self.iterations.is_finite() { self.iterations.max(0.0) } else { 1.0 };
+        let backwards = self.fill & 2 != 0;
+        let forwards = self.fill & 1 != 0;
+        // The start delay and the iteration duration as shares of the timeline: an `auto` duration
+        // fills it (no delay); times are proportions of delay + duration x iterations.
+        let (delay, iteration) = match self.duration_ms {
+            None => (0.0, if n > 0.0 { 1.0 / n } else { 0.0 }),
+            Some(duration) => {
+                let total = self.delay_ms + duration * n;
+                if total > 0.0 { (self.delay_ms / total, duration / total) } else { (0.0, 0.0) }
+            }
+        };
+        let active = iteration * n;
+        let local = p - delay;
+        let overall = if local < 0.0 && !(active == 0.0 && p >= 0.0) {
+            if !backwards {
+                return None;
+            }
+            0.0
+        } else if local > active || (active == 0.0 && local >= 0.0) || (active == 0.0 && p >= 0.0) {
+            if !forwards {
+                return None;
+            }
+            n
+        } else {
+            local / iteration
+        };
+        let mut iteration = overall.floor();
+        let mut fraction = overall - iteration;
+        if fraction == 0.0 && overall > 0.0 && overall >= n {
+            iteration -= 1.0;
+            fraction = 1.0;
+        }
+        let odd = iteration as i64 % 2 == 1;
+        let reversed = match self.direction {
+            1 => true,
+            2 => odd,
+            3 => !odd,
+            _ => false,
+        };
+        let fraction = if n == 0.0 { 0.0 } else { fraction };
+        Some((if reversed { 1.0 - fraction } else { fraction }, local < 0.0))
+    }
 }
 
 /// The effects of one element, each list in composite order: `transitions`
@@ -131,11 +202,39 @@ pub struct ElementEffects {
     /// pyro: animations in effect on the element's `::marker` (a list item's): their values go
     /// into the marker's style (`ElementData::sampled_marker`, `layout::list`), not the element's.
     pub marker: Vec<Effect>,
+    /// pyro: the effects on the element's `::before` (`[0]`) and `::after` (`[1]`): resolved
+    /// against the pseudo-element's own style and cascaded into it.
+    pub pseudos: [PseudoEffects; 2],
 }
+
+/// pyro: the effects on one of an element's `::before`/`::after`, each list in composite order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PseudoEffects {
+    pub transitions: Vec<Effect>,
+    pub animations: Vec<Effect>,
+}
+
+impl PseudoEffects {
+    pub fn is_empty(&self) -> bool {
+        self.transitions.is_empty() && self.animations.is_empty()
+    }
+
+    fn all(&self) -> impl Iterator<Item = &Effect> {
+        self.animations.iter().chain(&self.transitions)
+    }
+}
+
+/// pyro: `::before` and `::after`, as `ElementEffects::pseudos` indexes them.
+const PSEUDOS: [style::selector_parser::PseudoElement; 2] =
+    [style::selector_parser::PseudoElement::Before, style::selector_parser::PseudoElement::After];
 
 impl ElementEffects {
     pub fn is_empty(&self) -> bool {
-        self.transitions.is_empty() && self.animations.is_empty() && self.current.is_empty() && self.marker.is_empty()
+        self.transitions.is_empty()
+            && self.animations.is_empty()
+            && self.current.is_empty()
+            && self.marker.is_empty()
+            && self.pseudos.iter().all(PseudoEffects::is_empty)
     }
 
     /// pyro: every effect, in effect or only current.
@@ -168,20 +267,40 @@ impl SampledAnimations {
 
 #[derive(Default)]
 struct ElementState {
+    /// pyro: the effects as the page gave them (scroll-driven ones with their timeline).
+    given: ElementEffects,
+    /// The effects in effect now: the given ones, scroll-driven ones at their progress now.
     effects: ElementEffects,
     /// Keyframes resolved against `base`, by effect keyframes.
     resolved: Vec<(Keyframes, Resolved)>,
     base: Option<BaseKey>,
+    /// pyro: the same for the element's `::before` and `::after` (`ElementEffects::pseudos`).
+    pseudos: [PseudoState; 2],
     /// The values sampled into the element's cascade.
     sampled: Sampled,
 }
 
-#[derive(Default, PartialEq)]
+/// pyro: the resolved keyframes of the effects on one pseudo-element, against its base style.
+#[derive(Default)]
+struct PseudoState {
+    resolved: Vec<(Keyframes, Resolved)>,
+    base: Option<BaseKey>,
+}
+
+impl PseudoState {
+    fn resolved_all(&self, effects: &PseudoEffects) -> bool {
+        self.base.is_some() && effects.all().all(|e| self.resolved.iter().any(|(k, _)| *k == e.keyframes))
+    }
+}
+
+#[derive(Clone, Default, PartialEq)]
 struct Sampled {
     animations: Option<AnimationValueMap>,
     transitions: Option<AnimationValueMap>,
     /// pyro: the values of the effects on the element's `::marker`.
     marker: Option<AnimationValueMap>,
+    /// pyro: the values of the effects on `::before` and `::after` (animations, transitions).
+    pseudos: [(Option<AnimationValueMap>, Option<AnimationValueMap>); 2],
     /// pyro: an effect animates a property that makes a stacking context
     /// (`ElementData::animation_stacking_context`).
     stacking_context: bool,
@@ -194,6 +313,9 @@ struct BaseKey {
     /// The parent's style (inherited values), compared by address.
     parent: usize,
     base_style: ServoArc<ComputedValues>,
+    /// pyro: the keyframes are a `::before`/`::after`'s (with the originating element's style):
+    /// their values cascade as the pseudo-element's, inheriting from the element.
+    pseudo: Option<(style::selector_parser::PseudoElement, ServoArc<ComputedValues>)>,
 }
 
 /// An effect's keyframes resolved against the element's base style.
@@ -231,8 +353,12 @@ impl BaseDocument {
                 continue;
             }
             let mut element = state.elements.remove(&id).unwrap_or_default();
-            element.effects = effects;
+            element.effects = self.drive(id, &effects);
+            element.given = effects;
             element.resolved.retain(|(k, _)| element.effects.all().any(|e| e.keyframes == *k));
+            for (state, effects) in element.pseudos.iter_mut().zip(&element.effects.pseudos) {
+                state.resolved.retain(|(k, _)| effects.all().any(|e| e.keyframes == *k));
+            }
             next.insert(id, element);
         }
         // Elements without effects any more lose their values.
@@ -244,7 +370,10 @@ impl BaseDocument {
         for id in ids {
             let element = state.elements.get_mut(&id).unwrap();
             let resolved = element.base.is_some()
-                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes));
+                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes))
+                && element.pseudos.iter().zip(&element.effects.pseudos).all(|(state, effects)| {
+                    effects.is_empty() || state.resolved_all(effects)
+                });
             if !resolved {
                 // Resolved against the style the next traversal computes.
                 state.pending = true;
@@ -256,13 +385,7 @@ impl BaseDocument {
             let sampled = sample(element, &mut state.easings);
             if sampled != element.sampled {
                 element.sampled = sampled;
-                let sampled = Sampled {
-                    animations: element.sampled.animations.clone(),
-                    transitions: element.sampled.transitions.clone(),
-                    marker: element.sampled.marker.clone(),
-                    stacking_context: element.sampled.stacking_context,
-                };
-                self.apply_sampled(id, sampled);
+                self.apply_sampled(id, element.sampled.clone());
             }
         }
         self.sampled_animations = state;
@@ -323,7 +446,7 @@ impl BaseDocument {
             stylist: &self.stylist,
             options: GLOBAL_STYLE_DATA.options.clone(),
             guards,
-            visited_styles_enabled: false,
+            visited_styles_enabled: true,
             animations: self.animations.clone(),
             current_time_for_animations: 0.0,
             snapshot_map: &self.snapshots,
@@ -371,7 +494,7 @@ impl BaseDocument {
                 stylist: &self.stylist,
                 options: GLOBAL_STYLE_DATA.options.clone(),
                 guards,
-                visited_styles_enabled: false,
+                visited_styles_enabled: true,
                 animations: self.animations.clone(),
                 current_time_for_animations: 0.0,
                 snapshot_map: &self.snapshots,
@@ -412,6 +535,7 @@ impl BaseDocument {
                         rules,
                         parent,
                         base_style,
+                        pseudo: None,
                     });
                     element.resolved.clear();
                 }
@@ -431,6 +555,38 @@ impl BaseDocument {
                     );
                     element.resolved.push((keyframes, resolved));
                 }
+                // pyro: the keyframes of the effects on `::before`/`::after`, against the
+                // pseudo-element's style without the values sampled into it.
+                for (i, pseudo) in PSEUDOS.iter().enumerate() {
+                    if element.effects.pseudos[i].is_empty() {
+                        element.pseudos[i] = PseudoState::default();
+                        continue;
+                    }
+                    let Some(pseudo_style) = node.borrow_data().and_then(|d| d.styles.pseudos.get(pseudo).cloned()) else {
+                        continue;
+                    };
+                    let rules = shared.stylist.rule_tree().remove_animation_rules(pseudo_style.rules());
+                    let parent = &*style as *const ComputedValues as usize;
+                    let ps = &mut element.pseudos[i];
+                    if !ps.base.as_ref().is_some_and(|b| b.rules == rules && b.parent == parent) {
+                        let base_style = if rules == *pseudo_style.rules() {
+                            pseudo_style.clone()
+                        } else {
+                            cascade_pseudo(node, &mut context, rules.clone(), &pseudo_style, pseudo, &style)
+                        };
+                        ps.base = Some(BaseKey { rules, parent, base_style, pseudo: Some((pseudo.clone(), style.clone())) });
+                        ps.resolved.clear();
+                    }
+                    let base = ps.base.clone().unwrap();
+                    let effects: Vec<Keyframes> = element.effects.pseudos[i].all().map(|e| e.keyframes.clone()).collect();
+                    for keyframes in effects {
+                        if ps.resolved.iter().any(|(k, _)| *k == keyframes) {
+                            continue;
+                        }
+                        let resolved = resolve(self, node, &base, &keyframes, &mut context, &mut state.easings);
+                        ps.resolved.push((keyframes, resolved));
+                    }
+                }
                 let sampled = sample(element, &mut state.easings);
                 if sampled != element.sampled {
                     element.sampled = sampled;
@@ -440,14 +596,7 @@ impl BaseDocument {
             });
         }
         for id in &restyle {
-            let element = &state.elements[id];
-            let sampled = Sampled {
-                animations: element.sampled.animations.clone(),
-                transitions: element.sampled.transitions.clone(),
-                marker: element.sampled.marker.clone(),
-                stacking_context: element.sampled.stacking_context,
-            };
-            self.apply_sampled(*id, sampled);
+            self.apply_sampled(*id, state.elements[id].sampled.clone());
         }
         self.sampled_animations = state;
         !restyle.is_empty()
@@ -469,6 +618,8 @@ impl BaseDocument {
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
         let marker = block(sampled.marker);
+        let [(before_a, before_t), (after_a, after_t)] = sampled.pseudos;
+        let pseudos = [(block(before_a), block(before_t)), (block(after_a), block(after_t))];
         let Some(data) = node.element_data_mut() else {
             return;
         };
@@ -486,6 +637,20 @@ impl BaseDocument {
         let Some(node) = self.nodes.get_mut(id) else {
             return;
         };
+        let Some(data) = node.element_data_mut() else {
+            return;
+        };
+        // pyro: the values on `::before`/`::after`: the element's restyle cascades them into the
+        // pseudo-elements' styles (`cascade_sampled_pseudos`).
+        let pseudo_had = data.sampled_pseudos.iter().any(|(a, t)| a.is_some() || t.is_some());
+        let pseudo_has = pseudos.iter().any(|(a, t)| a.is_some() || t.is_some());
+        if pseudo_had || pseudo_has {
+            data.sampled_pseudos = pseudos;
+            if pseudo_has {
+                data.may_have_animations.store(true, Ordering::Relaxed);
+            }
+            node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+        }
         let Some(data) = node.element_data_mut() else {
             return;
         };
@@ -513,6 +678,105 @@ impl BaseDocument {
             data.may_have_animations.store(true, Ordering::Relaxed);
         }
         node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+    }
+}
+
+impl BaseDocument {
+    /// pyro: `effects` with each scroll-driven one at its progress now (`scroll_timeline`), and
+    /// those outside their range without a fill (or on an inactive timeline) left out.
+    fn drive(&self, id: NodeId, effects: &ElementEffects) -> ElementEffects {
+        let driven = |e: &Effect| e.timeline.is_some();
+        let any = effects.animations.iter().any(driven)
+            || effects.pseudos.iter().any(|p| p.animations.iter().any(driven));
+        if !any {
+            return effects.clone();
+        }
+        let node = self.get_node(id);
+        let style_of = |pseudo: u8| -> Option<ServoArc<ComputedValues>> {
+            let node = node?;
+            match pseudo {
+                0 => node.primary_styles().map(|s| (*s).clone()),
+                i => {
+                    let data = node.borrow_data()?;
+                    data.styles.pseudos.get(&PSEUDOS[usize::from(i - 1)]).cloned()
+                }
+            }
+        };
+        let place = |list: &[Effect]| -> Vec<Effect> {
+            list.iter()
+                .filter_map(|e| match e.timeline {
+                    None => Some(e.clone()),
+                    Some(t) => {
+                        let style = style_of(t.pseudo)?;
+                        let p = crate::scroll_timeline::progress(self, id, &style, t.index)?;
+                        let (progress, before) = t.iteration_progress(p)?;
+                        Some(Effect { progress, before, ..e.clone() })
+                    }
+                })
+                .collect()
+        };
+        let mut out = effects.clone();
+        out.animations = place(&effects.animations);
+        for (o, p) in out.pseudos.iter_mut().zip(&effects.pseudos) {
+            o.animations = place(&p.animations);
+        }
+        out
+    }
+
+    /// pyro: at each resolve, the scroll-driven animations at the scroll position now (scrolling
+    /// changes no page state the page's frame would show): elements whose values change are
+    /// marked for restyle.
+    /// pyro: whether a scroll-driven animation is sampled: its values depend on the layout (a
+    /// view timeline's subject's position), so a style-only resolve is not enough for them.
+    pub fn has_scroll_driven_animations(&self) -> bool {
+        self.sampled_animations.elements.values().any(|e| {
+            e.given.animations.iter().any(|x| x.timeline.is_some())
+                || e.given.pseudos.iter().any(|p| p.animations.iter().any(|x| x.timeline.is_some()))
+        })
+    }
+
+    /// `true`: an element's values changed (marked for restyle).
+    pub(crate) fn resample_scroll_driven(&mut self) -> bool {
+        if self.sampled_animations.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        let mut state = std::mem::take(&mut self.sampled_animations);
+        let ids: Vec<NodeId> = state
+            .elements
+            .iter()
+            .filter(|(_, e)| {
+                e.given.animations.iter().any(|x| x.timeline.is_some())
+                    || e.given.pseudos.iter().any(|p| p.animations.iter().any(|x| x.timeline.is_some()))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let element = state.elements.get_mut(&id).unwrap();
+            let effects = self.drive(id, &element.given);
+            if effects == element.effects {
+                continue;
+            }
+            element.effects = effects;
+            let resolved = element.base.is_some()
+                && element.effects.all().all(|e| element.resolved.iter().any(|(k, _)| *k == e.keyframes))
+                && element.pseudos.iter().zip(&element.effects.pseudos).all(|(s, e)| e.is_empty() || s.resolved_all(e));
+            changed = true;
+            if !resolved {
+                state.pending = true;
+                if let Some(node) = self.nodes.get_mut(id) {
+                    node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+                }
+                continue;
+            }
+            let sampled = sample(element, &mut state.easings);
+            if sampled != element.sampled {
+                element.sampled = sampled;
+                self.apply_sampled(id, element.sampled.clone());
+            }
+        }
+        self.sampled_animations = state;
+        changed
     }
 }
 
@@ -734,7 +998,10 @@ fn resolve<'a>(
                         &mut important_rules_changed,
                     )
                     .unwrap_or_else(|| base.rules.clone());
-                let style = cascade(node, context, rules, &base.base_style);
+                let style = match &base.pseudo {
+                    Some((pseudo, primary)) => cascade_pseudo(node, context, rules, &base.base_style, pseudo, primary),
+                    None => cascade(node, context, rules, &base.base_style),
+                };
                 for i in ids {
                     values[i] =
                         AnimationValue::from_computed_values(properties[i].0.as_borrowed(), &style);
@@ -769,14 +1036,13 @@ fn sample(
     element: &ElementState,
     easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>,
 ) -> Sampled {
-    let level = |effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
+    let level_of = |all: &[(Keyframes, Resolved)], effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
         if effects.is_empty() {
             return None;
         }
         let mut map = AnimationValueMap::default();
         for effect in effects {
-            let Some((_, resolved)) = element
-                .resolved
+            let Some((_, resolved)) = all
                 .iter()
                 .find(|(k, _)| *k == effect.keyframes)
             else {
@@ -823,10 +1089,21 @@ fn sample(
             })
         })
     });
+    let level = |effects: &[Effect], easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
+        level_of(&element.resolved, effects, easings)
+    };
+    let pseudo = |i: usize, easings: &mut FxHashMap<Arc<str>, Option<TimingFunction>>| {
+        let (state, effects) = (&element.pseudos[i], &element.effects.pseudos[i]);
+        (
+            level_of(&state.resolved, &effects.animations, easings),
+            level_of(&state.resolved, &effects.transitions, easings),
+        )
+    };
     Sampled {
         animations: level(&element.effects.animations, easings),
         transitions: level(&element.effects.transitions, easings),
         marker: level(&element.effects.marker, easings),
+        pseudos: [pseudo(0, easings), pseudo(1, easings)],
         stacking_context,
     }
 }
@@ -974,6 +1251,82 @@ pub(crate) fn sampled_rule(
 
 /// Whether the element has sampled values (no style sharing).
 pub(crate) fn has_sampled(node: &Node) -> bool {
-    node.element_data()
-        .is_some_and(|d| d.sampled_animations.is_some() || d.sampled_transitions.is_some())
+    node.element_data().is_some_and(|d| {
+        d.sampled_animations.is_some()
+            || d.sampled_transitions.is_some()
+            || d.sampled_pseudos.iter().any(|(a, t)| a.is_some() || t.is_some())
+    })
+}
+
+/// pyro: after the element's restyle, the values sampled for its `::before` and `::after`
+/// (`ElementData::sampled_pseudos`) cascaded into their styles, at the animations and
+/// transitions levels.
+pub(crate) fn cascade_sampled_pseudos<'a>(
+    node: &'a Node,
+    context: &mut StyleContext<'_, &'a Node>,
+    data: &mut style::data::ElementData,
+) {
+    let Some(element) = node.element_data() else { return };
+    if element.sampled_pseudos.iter().all(|(a, t)| a.is_none() && t.is_none()) {
+        return;
+    }
+    if data.styles.pseudos.is_empty() {
+        return;
+    }
+    let Some(primary) = data.styles.primary.clone() else { return };
+    for (i, pseudo) in PSEUDOS.iter().enumerate() {
+        let (animations, transitions) = &element.sampled_pseudos[i];
+        if animations.is_none() && transitions.is_none() {
+            continue;
+        }
+        let Some(style) = data.styles.pseudos.get(pseudo).cloned() else { continue };
+        let shared = context.shared;
+        let rule_tree = shared.stylist.rule_tree();
+        let mut rules = rule_tree.remove_animation_rules(style.rules());
+        let mut important_changed = false;
+        for (origin, block) in [(CascadeOrigin::Transitions, transitions), (CascadeOrigin::Animations, animations)] {
+            if let Some(block) = block {
+                if let Some(path) = rule_tree.update_rule_at_level(
+                    CascadeLevel::new(origin),
+                    LayerOrder::root(),
+                    Some(block.borrow_arc()),
+                    &rules,
+                    &shared.guards,
+                    &mut important_changed,
+                ) {
+                    rules = path;
+                }
+            }
+        }
+        if rules == *style.rules() {
+            continue;
+        }
+        let animated = cascade_pseudo(node, context, rules, &style, pseudo, &primary);
+        data.styles.pseudos.set(pseudo, animated);
+    }
+}
+
+/// pyro: `rules` cascaded as the `pseudo` of `node` (whose style is `primary`).
+fn cascade_pseudo<'a>(
+    node: &'a Node,
+    context: &mut StyleContext<'_, &'a Node>,
+    rules: StrongRuleNode,
+    style: &ComputedValues,
+    pseudo: &style::selector_parser::PseudoElement,
+    primary: &ServoArc<ComputedValues>,
+) -> ServoArc<ComputedValues> {
+    context.thread_local.current_dom_depth = TNode::depth(&node);
+    let mut resolver =
+        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
+    let inputs = CascadeInputs {
+        rules: Some(rules),
+        visited_rules: None,
+        flags: style.flags.for_cascade_inputs(),
+        included_cascade_flags: RuleCascadeFlags::empty(),
+    };
+    let primary = style::style_resolver::PrimaryStyle {
+        style: style::style_resolver::ResolvedStyle(primary.clone()),
+        reused_via_rule_node: false,
+    };
+    resolver.cascade_style_and_visited_for_pseudo_with_default_parents(inputs, pseudo, &primary).0
 }

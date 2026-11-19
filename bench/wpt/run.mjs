@@ -13,6 +13,7 @@
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
 // --repeat N: run every selected page N times (the gate's reruns), one result each; copies run side by side.
 // --baseline: per-page durations order the run longest first and balance --shard I/N (0-based).
+// --slow-jobs N: the baseline's timed-out pages run on N more workers beside --jobs (see SLOW_JOBS).
 // --gate: the PR gate's plan (lib.mjs plan()): skip pages with no coverage to protect, and bound the timeout of a
 //   page that completed in the baseline by 10x its duration (at least 10 s).
 // Every page gets a new browser context, so a page's result does not depend on the page that ran before it in the
@@ -371,7 +372,13 @@ let lastProgress = Date.now();
 const PLAN = tests.map((t) => t.url);
 await startBrowser();
 const results = [];
-let next = 0, done = 0, restarts = 0;
+let done = 0, restarts = 0;
+// The runner's event loop delay, sampled every 100 ms: one loop serves every worker (CDP messages, a reftest's 2.6 MB
+// base64 screenshot, pixel comparisons), so a busy loop holds pages that the browser has finished.
+const lags = [];
+let lagAt = Date.now();
+const lagTimer = setInterval(() => { const n = Date.now(); lags.push(n - lagAt - 100); lagAt = n; }, 100);
+lagTimer.unref();
 const t0 = Date.now();
 // Resolves once a TCP connect to the proxy (or the server) succeeds again, after at most 90 s.
 let portsDrained = null;
@@ -387,19 +394,28 @@ async function drainPorts() {
     await sleep(2000);
   }
 }
+// --slow-jobs N: pages that timed out in the baseline (`known: 'timeout'`, lib.mjs plan()) or took 5 s or more in it
+// (est, mostly testharness's own 10 s timeout ending the page) wait nearly idle. In a nightly testharness shard
+// (8,890 pages) they were 6% of the pages and 60% of the page time. They go to a queue of their own served by N more
+// workers, beside the --jobs workers, so they neither hold those workers nor get a shorter cap: they still run to
+// their timeout and stay in the results as they come out.
+const SLOW_JOBS = Number(opt('--slow-jobs', 0));
+const isSlow = (t) => SLOW_JOBS > 0 && !!t.known && (t.known === 'timeout' || t.est >= 5000);
+const queues = { main: { list: tests.filter((t) => !isSlow(t)), next: 0 }, slow: { list: tests.filter(isSlow), next: 0 } };
 let workers = 0;
-async function worker() {
+async function worker(q) {
   const slot = {};
   const w = workers++;
-  while (next < tests.length) {
-    const t = tests[next++];
+  while (q.next < q.list.length) {
+    const t = q.list[q.next++];
     let r;
     if (restarting) await restarting;
     const leave = RENDERS ? await enter(t) : () => {};
     if (restarting) await restarting;
     const gen = generation, panicsBefore = panics, tail = stderrTail;
     // In flight from here: waiting for a solo page or a restart above is not being stuck.
-    inflight.set(w, { url: t.url, since: Date.now(), limit: t.limit });
+    const startedAt = Date.now();
+    inflight.set(w, { url: t.url, since: startedAt, limit: t.limit });
     trace(`start ${w} ${t.url}`);
     try { r = await guarded(slot, t, gen); }
     catch (e) {
@@ -414,7 +430,7 @@ async function worker() {
         console.error(`${LABEL}: ${t.url}: connections fail (ports exhausted?); waiting for them to drain`);
         inflight.delete(w);
         await (portsDrained ??= drainPorts().finally(() => { portsDrained = null; }));
-        t.retried = (t.retried ?? 0) + 1; tests.push(t); continue;
+        t.retried = (t.retried ?? 0) + 1; q.list.push(t); continue;
       }
       const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
       // Whether this page's browser died (or was replaced): a lost connection can arrive before its exit does.
@@ -423,7 +439,7 @@ async function worker() {
       // browser that was killed for it, until the new one is spawned.)
       if (gen === generation && died) { restarts++; await restartBrowser(gen); }
       if (RENDERS && lost) {
-        if (!t.solo) { t.solo = true; tests.push(t); continue; }
+        if (!t.solo) { t.solo = true; q.list.push(t); continue; }
         if (died) {
           r.status = 'crash';
           // The browser's last words (a panic that aborted, an assertion), read once its stderr has drained.
@@ -431,13 +447,13 @@ async function worker() {
         }
       }
       // The browser was replaced under this page (another slot's page hung it): run the page again.
-      else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; tests.push(t); continue; }
+      else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; q.list.push(t); continue; }
     } finally { leave(); inflight.delete(w); }
     if (KIND === 'crashtest' && r.status !== 'crash' && r.status !== 'hang') {
       // A panic's lines may still be in the pipe when the page's last answer arrives.
       await sleep(10);
       if (panics !== panicsBefore) {
-        if (!t.solo) { t.solo = true; tests.push(t); await resetSlot(slot); continue; }
+        if (!t.solo) { t.solo = true; q.list.push(t); await resetSlot(slot); continue; }
         r = { status: 'panic', ms: r.ms, error: lastPanic, subtests: [] };
         await resetSlot(slot);
       }
@@ -447,7 +463,10 @@ async function worker() {
     const { est, limit, retried, solo: alone, refs, fuzzy, viewport, ...meta } = t;
     inflight.delete(w);
     trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
-    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log) });
+    // A reftest's stage timings, and the worker's own time around the page (`gap`: from the previous page's end to
+    // this page's start, i.e. queueing, solo waits and context resets).
+    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log), ...(r.stages ? { stages: { ...r.stages, gap: startedAt - (slot.lastEnd ?? startedAt) } } : {}) });
+    slot.lastEnd = Date.now();
     lastFinish = Date.now();
     if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
       lastProgress = Date.now();
@@ -457,7 +476,11 @@ async function worker() {
   }
   await resetSlot(slot);
 }
-await Promise.all(Array.from({ length: JOBS }, worker));
+if (queues.slow.list.length) console.error(`${LABEL}: ${queues.slow.list.length} slow page(s) (timed out or 5 s+ in the baseline) run on ${Math.min(SLOW_JOBS, queues.slow.list.length)} more worker(s)`);
+await Promise.all([
+  ...Array.from({ length: JOBS }, () => worker(queues.main)),
+  ...Array.from({ length: Math.min(SLOW_JOBS, queues.slow.list.length) }, () => worker(queues.slow)),
+]);
 finish();
 // Writes the results and exits. `stalled`: the reason pages that have no result are recorded as errors.
 function finish(stalled) {
@@ -466,15 +489,18 @@ function finish(stalled) {
     for (const t of tests) if (!have.has(t.url)) { have.add(t.url); results.push({ dir: t.dir, url: t.url, status: 'error', error: stalled, subtests: [] }); }
   }
 const wallMs = Date.now() - t0;
+clearInterval(lagTimer);
+const lagSorted = lags.sort((a, b) => a - b), pct = (q) => lagSorted[Math.min(lagSorted.length - 1, Math.floor(q * lagSorted.length))] ?? 0;
+const loopLagMs = { p50: pct(0.5), p99: pct(0.99), max: lagSorted.at(-1) ?? 0, samples: lagSorted.length };
 killBrowser();
 const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: opt('--dirs') === 'all' ? ['all'] : DIRS, jobs: JOBS,
   restricted: RESTRICTED, reuseContext: REUSE, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
-  wallMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
+  wallMs, loopLagMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
-console.error(`${LABEL}: done ${PLAN.length} pages in ${(wallMs / 1000).toFixed(1)} s (CPU: browser ${browserCpuS.toFixed(1)} s, runner ${run.runnerCpuS.toFixed(1)} s, server ${serverCpuS.toFixed(1)} s), restarts ${restarts}`);
+console.error(`${LABEL}: done ${PLAN.length} pages in ${(wallMs / 1000).toFixed(1)} s (CPU: browser ${browserCpuS.toFixed(1)} s, runner ${run.runnerCpuS.toFixed(1)} s, server ${serverCpuS.toFixed(1)} s), restarts ${restarts}, event loop lag p50 ${loopLagMs.p50} ms p99 ${loopLagMs.p99} ms`);
 process.exit(0);
 }

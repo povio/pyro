@@ -325,6 +325,11 @@ where
     dependencies: FxHashMap<E, ElementDependencies<'a>>,
     /// Dependencies that created an invalidation right away.
     invalidations: AlreadyInvalidated<'a, E>,
+    /// pyro: the indices into `invalidations` by relative invalidation kind and selector, the
+    /// two things `invalidation_can_collapse` requires equal first: a dependency is compared
+    /// only with the entries it could collapse with, instead of scanning every entry for every
+    /// dependency of every element of an inserted subtree.
+    invalidation_index: FxHashMap<(RelativeDependencyInvalidationKind, SelectorKey), SmallVec<[usize; 2]>>,
     /// The top element in the subtree being invalidated.
     top: E,
     /// Optional context that will be used to try and skip invalidations
@@ -443,6 +448,7 @@ where
         Self {
             dependencies: FxHashMap::default(),
             invalidations: AlreadyInvalidated::default(),
+            invalidation_index: FxHashMap::default(),
             top,
             quirks_mode,
             optimization_context,
@@ -457,21 +463,27 @@ where
         host: Option<OpaqueElement>,
     ) {
         let in_subtree = element != self.top;
-        if let Some(entry) = self.invalidations.iter_mut().find(|entry| {
-            // If we're in the subtree of DOM manipulation - worrying the about positioning of this element
-            // is irrelevant, because the DOM structure is either completely new or about to go away.
-            let both_in_subtree = in_subtree && entry.element != self.top;
-            // If we're considering the same element for invalidation, their evaluation of the indexed selector
-            // is identical by definition.
-            let same_element = element == entry.element;
-            invalidation_can_collapse(
-                dependency,
-                entry.dependency,
-                both_in_subtree || same_element,
-            )
-        }) {
-            entry.update(element, host, dependency)
+        // pyro: only the entries with the same kind and selector can collapse (the index keeps
+        // them in insertion order, so the first match is the one a full scan finds; an update
+        // keeps the entry's kind and selector, so its key stays valid).
+        let key = (dependency.relative_invalidation_kind(), SelectorKey::new(&dependency.selector));
+        let top = self.top;
+        let found = self.invalidation_index.get(&key).and_then(|candidates| {
+            candidates.iter().copied().find(|&i| {
+                let entry = &self.invalidations[i];
+                // If we're in the subtree of DOM manipulation - worrying the about positioning of this element
+                // is irrelevant, because the DOM structure is either completely new or about to go away.
+                let both_in_subtree = in_subtree && entry.element != top;
+                // If we're considering the same element for invalidation, their evaluation of the indexed selector
+                // is identical by definition.
+                let same_element = element == entry.element;
+                invalidation_can_collapse(dependency, entry.dependency, both_in_subtree || same_element)
+            })
+        });
+        if let Some(i) = found {
+            self.invalidations[i].update(element, host, dependency)
         } else {
+            self.invalidation_index.entry(key).or_default().push(self.invalidations.len());
             self.invalidations
                 .push(AlreadyInvalidatedEntry::new(element, host, dependency));
         }

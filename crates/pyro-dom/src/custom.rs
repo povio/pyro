@@ -183,8 +183,9 @@ impl Dom {
 
     #[cold]
     fn observed_attribute_changed(&mut self, i: u32, name: &QualName, old: Option<&str>, new: Option<&str>) {
-        let local = &self.n(i).element().expect("element").name.local;
-        let observed = self.reactions.observed.get(local).is_some_and(|names| names.contains(&name.local));
+        let e = self.n(i).element().expect("element");
+        let observes = |key: &LocalName| self.reactions.observed.get(key).is_some_and(|names| names.contains(&name.local));
+        let observed = observes(&e.name.local) || e.is_value.as_ref().is_some_and(observes);
         if !observed {
             return;
         }
@@ -225,15 +226,16 @@ impl Dom {
     }
 
     /// The parser hooks of `document`, when an HTML element named `name`
-    /// may be defined.
+    /// (with the is value `is`) may be defined.
     pub(crate) fn parser_custom_elements(
         &self,
         document: u32,
         name: &QualName,
+        is: Option<&LocalName>,
     ) -> Option<Rc<dyn ParserCustomElements>> {
         if self.reactions.defined.is_empty()
             || name.ns != markup5ever::ns!(html)
-            || !self.reactions.defined.contains(&name.local)
+            || !(self.reactions.defined.contains(&name.local) || is.is_some_and(|is| self.reactions.defined.contains(is)))
         {
             return None;
         }
@@ -309,13 +311,27 @@ impl Dom {
     }
 
     /// Whether the parser of `document` may construct an element named
-    /// `name` (a window defined that name and gave its hooks).
+    /// `name` with the is value `is` (a window defined that name, or the
+    /// customized built-in `is` names, and gave its hooks).
     #[inline]
-    pub(crate) fn parser_may_construct(&self, document: u32, name: &QualName) -> bool {
+    pub(crate) fn parser_may_construct(&self, document: u32, name: &QualName, is: Option<&str>) -> bool {
         !self.reactions.defined.is_empty()
             && name.ns == markup5ever::ns!(html)
-            && self.reactions.defined.contains(&name.local)
+            && (self.reactions.defined.contains(&name.local)
+                || is.is_some_and(|is| self.reactions.defined.contains(&LocalName::from(is))))
             && self.reactions.parser.contains_key(&self.id_of(document))
+    }
+
+    /// DOM "is value" of `el` (`None` for an autonomous or uncustomized element).
+    pub fn is_value(&self, el: NodeId) -> Option<LocalName> {
+        self.check(el).ok().and_then(|i| self.n(i).element()?.is_value.clone())
+    }
+
+    /// Sets `el`'s is value, as `createElement(name, {is})` does when it creates it.
+    pub fn set_is_value(&mut self, el: NodeId, is: Option<LocalName>) -> DomResult<()> {
+        let i = self.check(el)?;
+        self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?.is_value = is;
+        Ok(())
     }
 
     /// The token's attributes of a parser-made element that was not

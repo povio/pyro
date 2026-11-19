@@ -199,8 +199,97 @@ pub(crate) struct Scripted {
     /// It shows nothing (a CSS animation's or transition's object canceled,
     /// finished without fill, or without a target).
     gone: bool,
-    /// Its effect's target is the element's `::marker`.
-    marker: bool,
+    /// Its effect's target: the element, or one of its pseudo-elements.
+    pseudo: Pseudo,
+    /// Its timeline is a scroll or view progress timeline: times are percentages of it, and its
+    /// time is the scroll position's.
+    scroll: Option<ScrollRef>,
+}
+
+/// A script animation's scroll or view progress timeline (`ScrollTimeline`, `ViewTimeline`).
+#[derive(Clone, Debug)]
+pub(crate) struct ScrollRef {
+    /// The scroll container (`None`: the viewport) of a scroll timeline.
+    pub source: Option<NodeId>,
+    /// A view timeline's subject.
+    pub subject: Option<NodeId>,
+    /// 0 block, 1 inline, 2 x, 3 y.
+    pub axis: u8,
+    /// (0 auto, 1 px, 2 fraction, value), start and end.
+    pub inset: [(u8, f64); 2],
+    /// A scroll timeline whose source is null: never active.
+    pub inactive: bool,
+}
+
+/// A progress-based timeline's current time now (a percentage), from the engine's last layout;
+/// `None` while inactive.
+fn scroll_time(page: &PageDom, r: &ScrollRef) -> Option<f64> {
+    if r.inactive {
+        return None;
+    }
+    let layout = page.try_layout()?;
+    let (offset, start, end) = layout.style().timeline_state(r.source, r.subject, r.axis, r.inset)?;
+    if end > start {
+        Some((offset - start) / (end - start) * 100.0)
+    } else if r.subject.is_some() {
+        Some(if offset >= end { 100.0 } else { 0.0 })
+    } else {
+        None
+    }
+}
+
+impl Scripted {
+    /// The current time at `now`: on a progress-based timeline, from the scroll position.
+    fn current_on(&self, page: &PageDom, now: f64) -> Option<f64> {
+        let Some(r) = &self.scroll else { return self.current(now) };
+        if self.gone {
+            return None;
+        }
+        if let Some(hold) = self.hold {
+            return Some(hold);
+        }
+        Some((scroll_time(page, r)? - self.start?) * self.rate)
+    }
+}
+
+/// The pseudo-element an effect targets.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum Pseudo {
+    #[default]
+    None,
+    Marker,
+    Before,
+    After,
+}
+
+impl Pseudo {
+    /// animations.js's code: 0 none, 1 `::marker`, 2 `::before`, 3 `::after`.
+    pub(crate) fn from_code(code: f64) -> Pseudo {
+        match code as i32 {
+            1 => Pseudo::Marker,
+            2 => Pseudo::Before,
+            3 => Pseudo::After,
+            _ => Pseudo::None,
+        }
+    }
+
+    /// The target of an animation of `pseudo` (`None`: the element).
+    pub(crate) fn of(pseudo: Option<pyro_dom::style::PseudoElement>) -> Pseudo {
+        match pseudo {
+            None => Pseudo::None,
+            Some(pyro_dom::style::PseudoElement::Before) => Pseudo::Before,
+            Some(pyro_dom::style::PseudoElement::After) => Pseudo::After,
+        }
+    }
+
+    /// `ElementAnimations::pseudos`' index of `::before`/`::after`.
+    pub(crate) fn generated_index(self) -> Option<usize> {
+        match self {
+            Pseudo::Before => Some(0),
+            Pseudo::After => Some(1),
+            _ => None,
+        }
+    }
 }
 
 impl Scripted {
@@ -246,7 +335,8 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                         composite: s.composite,
                         seq,
                         gone: s.gone,
-                        marker: s.marker,
+                        pseudo: s.pseudo,
+                        scroll: s.scroll,
                     },
                 );
             }
@@ -281,7 +371,8 @@ pub(crate) struct ReportedState {
     pub easing: Option<Arc<str>>,
     pub composite: Composite,
     pub gone: bool,
-    pub marker: bool,
+    pub pseudo: Pseudo,
+    pub scroll: Option<ScrollRef>,
 }
 
 impl ReportedState {
@@ -391,6 +482,8 @@ impl Builder {
             Level::Animation => e.animations.push(effect),
             Level::Current => e.current.push(effect),
             Level::Marker => e.marker.push(effect),
+            Level::PseudoTransition(i) => e.pseudos[i].transitions.push(effect),
+            Level::PseudoAnimation(i) => e.pseudos[i].animations.push(effect),
         }
     }
 }
@@ -404,6 +497,10 @@ enum Level {
     Current,
     /// pyro: in effect on the element's `::marker` (`ElementAnimations::marker`).
     Marker,
+    /// In effect on the element's `::before` (0) or `::after` (1), at the transitions or the
+    /// animations level (`ElementAnimations::pseudos`).
+    PseudoTransition(usize),
+    PseudoAnimation(usize),
 }
 
 /// When the effects are sampled.
@@ -475,14 +572,20 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             Some(s) if !s.keyframes.frames.is_empty() => (s.el.unwrap_or(t.el()), s.keyframes.clone()),
             _ => (t.el(), keyframes),
         };
+        // On the element's `::before`/`::after`: at its transitions level.
+        let level = match Pseudo::of(t.pseudo()).generated_index() {
+            Some(i) => Level::PseudoTransition(i),
+            None => Level::Transition,
+        };
         let effect = Effect {
             keyframes: Keyframes::Text(keyframes),
             progress: p.progress,
             before: p.before,
             easing,
             composite: Composite::Replace,
+            timeline: None,
         };
-        visit(el, Level::Transition, effect);
+        visit(el, level, effect);
     }
     // SMIL `<animate>` elements, under the CSS animations of their targets.
     let now_or_settled = (!settled).then_some(now);
@@ -490,9 +593,58 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
     // CSS animations, in each element's `animation-name` order.
     for t in animations.iter().filter(|t| t.is_live()) {
         let Some((own_timing, style)) = css_animation_timing(t) else { continue };
+        // Driven by a scroll or view progress timeline: the layout engine places it at the scroll
+        // position (`TimelineDriven`); its time does not matter.
+        if t.driven && !overrides.contains_key(&t.id()) {
+            let pseudo = Pseudo::of(t.pseudo());
+            let index = t.timing().map_or(0, |timing| timing.index);
+            let effect = Effect {
+                keyframes: Keyframes::Css {
+                    name: Arc::from(t.name()),
+                    easing: style.easing.as_deref().map(Arc::from),
+                    composite: Composite::parse(&style.composition).unwrap_or_default(),
+                },
+                progress: 0.0,
+                before: false,
+                easing: None,
+                composite: Composite::Replace,
+                timeline: Some(pyro_dom::animation::TimelineDriven {
+                    index,
+                    iterations: own_timing.iterations,
+                    direction: match style.direction.as_str() {
+                        "reverse" => 1,
+                        "alternate" => 2,
+                        "alternate-reverse" => 3,
+                        _ => 0,
+                    },
+                    fill: match style.fill.as_str() {
+                        "forwards" => 1,
+                        "backwards" => 2,
+                        "both" => 3,
+                        _ => 0,
+                    },
+                    delay_ms: own_timing.delay,
+                    duration_ms: match t.timing().is_some_and(|timing| timing.duration_auto) {
+                        true => None,
+                        false => Some(own_timing.duration),
+                    },
+                    pseudo: match pseudo {
+                        Pseudo::Before => 1,
+                        Pseudo::After => 2,
+                        _ => 0,
+                    },
+                }),
+            };
+            let level = match pseudo.generated_index() {
+                Some(i) => Level::PseudoAnimation(i),
+                None => Level::Animation,
+            };
+            visit(t.el(), level, effect);
+            continue;
+        }
         let (local, rate, timing, held) = match overrides.get(&t.id()) {
-            Some(s) => match s.current(now) {
-                Some(local) => (local, s.rate, s.timing.clone(), s.hold.is_some() || s.rate == 0.0),
+            Some(s) => match s.current_on(page, now) {
+                Some(local) => (local, s.rate, s.timing.clone(), s.hold.is_some() || s.rate == 0.0 || s.scroll.is_some()),
                 None => continue,
             },
             None => (t.local_ms(now), 1.0, own_timing, t.is_paused()),
@@ -508,6 +660,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
                 before: p.before,
                 easing: s.easing.clone(),
                 composite: s.composite,
+                timeline: None,
             },
             _ => Effect {
                 keyframes: Keyframes::Css {
@@ -520,9 +673,21 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
                 // The object's effect easing (`linear` unless script set one).
                 easing: overrides.get(&t.id()).and_then(|s| s.easing.clone()),
                 composite: Composite::Replace,
+                timeline: None,
             },
         };
         let el = overrides.get(&t.id()).and_then(|s| s.el).unwrap_or(t.el());
+        // On the element's `::before`/`::after` (as its object's effect targets, once script
+        // reported it): its values in effect only.
+        let pseudo = match overrides.get(&t.id()) {
+            Some(s) if s.el.is_some() => s.pseudo,
+            _ => Pseudo::of(t.pseudo()),
+        };
+        let level = match (pseudo.generated_index(), level) {
+            (None, level) => level,
+            (Some(i), Level::Animation) => Level::PseudoAnimation(i),
+            (Some(_), _) => continue,
+        };
         visit(el, level, effect);
     }
     // Script animations, in the order they were made.
@@ -530,22 +695,27 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
     script.sort_by_key(|s| s.seq);
     for s in script {
         let Some(el) = s.el else { continue };
-        let Some(local) = s.current(now) else { continue };
+        let Some(local) = s.current_on(page, now) else { continue };
         let Some(local) = clock.local(&s.timing, local, s.rate) else { continue };
         let Some((p, level)) = in_effect_or_current(&s.timing, local, s.rate, settled) else { continue };
-        moving |= p.moving && s.hold.is_none() && s.rate != 0.0;
+        // (One on a progress-based timeline moves with scrolling: the stamp follows the scroll.)
+        moving |= p.moving && s.hold.is_none() && s.rate != 0.0 && s.scroll.is_none();
         let effect = Effect {
             keyframes: Keyframes::Text(s.keyframes.clone()),
             progress: p.progress,
             before: p.before,
             easing: s.easing.clone(),
             composite: s.composite,
+            timeline: None,
         };
-        // An effect on the element's `::marker`: its values in effect only.
-        let level = match (s.marker, level) {
-            (false, level) => level,
-            (true, Level::Animation) => Level::Marker,
-            (true, _) => continue,
+        // An effect on a pseudo-element: its values in effect only.
+        let level = match (s.pseudo, level) {
+            (Pseudo::None, level) => level,
+            (Pseudo::Marker, Level::Animation) => Level::Marker,
+            (pseudo, Level::Animation) if pseudo.generated_index().is_some() => {
+                Level::PseudoAnimation(pseudo.generated_index().unwrap())
+            }
+            _ => continue,
         };
         visit(el, level, effect);
     }
@@ -559,7 +729,15 @@ pub(crate) fn stamp(page: &PageDom, now: f64) -> u64 {
     let moving = walk(page, now, false, &mut |_, _, _| {});
     // The `<animate>` elements as last read (after the walk read them).
     let generation = page.animation_events.generation.get() ^ crate::smil::version(page).rotate_left(29);
-    let generation = generation.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
+    let mut generation = generation.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17);
+    // Scroll-driven animations move with the scroll position: each scroll is a new frame.
+    let driven = page.animation_events.try_timelines().is_some_and(|(animations, _)| animations.iter().any(|t| t.driven && t.is_live()))
+        || page.animation_events.scripted.try_borrow().is_ok_and(|s| s.values().any(|s| s.scroll.is_some() && !s.gone));
+    if driven {
+        if let Some(layout) = page.try_layout() {
+            generation ^= layout.timeline_scroll_generation().wrapping_mul(0xD6E8_FEB8_6659_FD93).rotate_left(7);
+        }
+    }
     if moving {
         generation ^ ((now / FRAME_MS).floor() as i64 as u64).wrapping_add(1)
     } else {
@@ -573,10 +751,13 @@ pub(crate) fn animates(
     state: &crate::animation_events::State,
     rules: &pyro_dom::timing::TimingRules,
     el: NodeId,
+    pseudo: Option<pyro_dom::style::PseudoElement>,
     longhand: &str,
 ) -> bool {
-    let css =
-        state.animations().iter().any(|t| t.is_live() && t.el() == el && rules.keyframes_declare(t.name(), longhand));
+    // (Animations of the same target: the element, or the same pseudo-element of it.)
+    let css = state.animations().iter().any(|t| {
+        t.is_live() && t.el() == el && t.pseudo() == pseudo && rules.keyframes_declare(t.name(), longhand)
+    });
     if css {
         return true;
     }
@@ -584,6 +765,7 @@ pub(crate) fn animates(
     scripted.values().any(|s| {
         s.css.is_none()
             && s.el == Some(el)
+            && s.pseudo == Pseudo::of(pseudo)
             && s.keyframes
                 .frames
                 .iter()
@@ -594,19 +776,11 @@ pub(crate) fn animates(
 /// The page's [`pyro_dom::animation::AnimationSource`]: what the layout
 /// engine samples at each sync (no transitions).
 pub(crate) fn source(page: &Rc<PageDom>) -> pyro_dom::animation::SharedAnimationSource {
-    Rc::new(Source { page: Rc::downgrade(page), clock: Cell::new(None), stamp: Cell::new(None) })
+    Rc::new(Source { page: Rc::downgrade(page), stamp: Cell::new(None) })
 }
 
 struct Source {
     page: Weak<PageDom>,
-    /// The time layout samples the animations at during the current task
-    /// (`pyro_runtime::task_seq`): read once per task, as a browser
-    /// samples its timelines once per frame. Read at each query instead, a
-    /// task asking for geometry again and again (a range over a large
-    /// `display: contents` subtree, one rect per text node) synced the
-    /// whole layout again every 16 ms while an infinite animation ran,
-    /// minutes for a large page.
-    clock: Cell<Option<(u64, f64)>>,
     /// The stamp last computed in this task, with the animation and
     /// `<animate>` generations it saw: every style and layout query asks
     /// for it, and computing it walks every animation of the page (axe-core
@@ -616,15 +790,8 @@ struct Source {
 
 impl Source {
     fn now(&self, page: &PageDom) -> f64 {
-        let Some(seq) = pyro_runtime::task_seq() else { return crate::event::page_now_ms(page) };
-        match self.clock.get() {
-            Some((at, now)) if at == seq => now,
-            _ => {
-                let now = crate::event::page_now_ms(page);
-                self.clock.set(Some((seq, now)));
-                now
-            }
-        }
+        // (The task's clock reading the CSS animations and transitions it starts start at.)
+        page.animation_events.task_now(page)
     }
 }
 
@@ -652,11 +819,44 @@ impl pyro_dom::animation::AnimationSource for Source {
     }
 
     fn transition_value(&self, el: NodeId, longhand: &str) -> Option<pyro_dom::animation::TransitionValue> {
+        self.transition_value_of(el, None, longhand)
+    }
+
+    fn pseudo_transition_value(
+        &self,
+        el: NodeId,
+        pseudo: pyro_dom::style::PseudoElement,
+        longhand: &str,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
+        self.transition_value_of(el, Some(pseudo), longhand)
+    }
+}
+
+impl Source {
+    fn transition_value_of(
+        &self,
+        el: NodeId,
+        pseudo: Option<pyro_dom::style::PseudoElement>,
+        longhand: &str,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
+        // A shorthand: its longhands' running transitions, together.
+        if let Some(longhands) = pyro_dom::animation::shorthand_longhands(longhand) {
+            let mut out: Option<pyro_dom::timing::StyleSnapshot> = None;
+            for l in longhands {
+                if let Some(pyro_dom::animation::TransitionValue::Style(s)) = self.transition_value_of(el, pseudo, l) {
+                    out = Some(match out {
+                        None => s,
+                        Some(into) => pyro_dom::animation::with_longhand_of(into, &s, l),
+                    });
+                }
+            }
+            return out.map(pyro_dom::animation::TransitionValue::Style);
+        }
         let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
         let now = self.now(&page);
         let state = &page.animation_events;
         let (_, transitions) = state.try_timelines()?;
-        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.name() == longhand)?;
+        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo && t.name() == longhand)?;
         // (One script controls through its `CSSTransition` object follows that object: left out.)
         if t.has_ended()
             || state.scripted.try_borrow().ok()?.values().any(|s| s.css == Some(t.id()))
@@ -670,7 +870,12 @@ impl pyro_dom::animation::AnimationSource for Source {
         {
             let dom = page.dom.try_borrow().ok()?;
             // (An element going `display: none` has no style of the engine's to compare.)
-            if let Some(current) = page.try_layout()?.style().stylo_style(&dom, el) {
+            let style = page.try_layout()?;
+            let current = match pseudo {
+                None => style.style().stylo_style(&dom, el),
+                Some(pseudo) => style.style().pseudo_style(&dom, el, pseudo, false),
+            };
+            if let Some(current) = current {
                 if !pyro_dom::animation::same_computed_value(longhand, &current, after) {
                     return None;
                 }
@@ -705,6 +910,12 @@ impl PageDom {
     /// One flag and stamp check for a document that neither animates nor
     /// transitions, or did not change.
     pub fn update_animations(self: &Rc<Self>) {
+        // Scroll timelines take the frame's scroll position (their times hold still until a frame).
+        if let Some(layout) = self.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
+            }
+        }
         crate::animation_events::before_render(self);
     }
 
@@ -713,6 +924,11 @@ impl PageDom {
     /// style changes since the last frame start their transitions and
     /// animations first, as at a rendering opportunity.
     pub fn animation_frame(self: &Rc<Self>) -> AnimationFrame {
+        if let Some(layout) = self.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
+            }
+        }
         crate::animation_events::before_render(self);
         frame(self, crate::event::page_now_ms(self), true)
     }

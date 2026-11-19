@@ -148,6 +148,17 @@ fn append_text(dom: &mut Dom, parent: u32, before: u32, text: &str) {
     dom.queue_child_list(parent, &[t], &[], prev, before);
 }
 
+/// HTML "insert an element at the adjusted insertion location": "if it is not possible to insert
+/// element at the adjusted insertion location, abort these steps". A custom element's
+/// constructor, run before the insertion, may have made the parser's insertion parent its own
+/// descendant (`this.appendChild(form)` for the form it was going into): inserting it would make
+/// a cycle (WPT custom-elements custom-button-abort-insertion-crash).
+fn cannot_insert(d: &Dom, parent: u32, child: &NodeOrText<u32>) -> bool {
+    // A node the parser just made has no children: only one a script filled can be an ancestor.
+    matches!(child, NodeOrText::AppendNode(n)
+        if (d.n(*n).first_child != NIL || *n == parent) && d.is_host_including_inclusive_ancestor(*n, parent))
+}
+
 fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) {
     match child {
         NodeOrText::AppendText(t) => append_text(dom, parent, before, &t),
@@ -199,7 +210,13 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         // borrow: until a window defines a name, one set test per element.
         let template = flags.template;
         let created = self.dom.with(|d| {
-            if self.sync_custom && !template && d.parser_may_construct(self.doc, &name) {
+            // HTML "create an element for a token": the token's `is` attribute is the is value
+            // of an HTML element.
+            let is = (name.ns == markup5ever::ns!(html))
+                .then(|| attrs.iter().find(|a| a.name.ns == ns!() && &*a.name.local == "is"))
+                .flatten()
+                .map(|a| &*a.value);
+            if self.sync_custom && !template && d.parser_may_construct(self.doc, &name, is) {
                 return Err((name, attrs));
             }
             Ok(self.new_element(d, name, attrs, template))
@@ -234,7 +251,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     fn append(&self, parent: &u32, child: NodeOrText<u32>) {
         self.settle_custom(*parent, &child);
         let queued = self.dom.with(|d| {
-            insert_node(d, *parent, NIL, child);
+            if !cannot_insert(d, *parent, &child) {
+                insert_node(d, *parent, NIL, child);
+            }
             d.custom_reactions_queued()
         });
         if queued {
@@ -308,7 +327,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         let queued = self.dom.with(|d| {
             // The constructor may have moved the sibling.
             let parent = d.n(*sibling).parent;
-            if parent != NIL {
+            if parent != NIL && !cannot_insert(d, parent, &new_node) {
                 insert_node(d, parent, *sibling, new_node);
             }
             d.custom_reactions_queued()
@@ -411,6 +430,12 @@ impl<A: DomAccess> Sink<A> {
             d.inline_transitions_seen = true;
         }
         let mut el = ElementData::new(name);
+        if el.is_html() {
+            el.is_value = attrs
+                .iter()
+                .find(|a| a.name.ns == ns!() && &*a.name.local == "is")
+                .map(|a| html5ever::LocalName::from(&*a.value));
+        }
         el.set_attrs(
             attrs.into_iter().map(|a| crate::node::Attr { name: a.name, value: (&*a.value).into() }).collect(),
         );
@@ -439,7 +464,17 @@ impl<A: DomAccess> Sink<A> {
     /// with it until the parser inserts it (`Sink::settle_custom`).
     #[inline(never)]
     fn new_custom_element(&self, name: QualName, attrs: Vec<Attribute>, template: bool) -> u32 {
-        let created = self.dom.with(|d| self.new_element(d, name, Vec::new(), template));
+        let is = attrs
+            .iter()
+            .find(|a| a.name.ns == ns!() && &*a.name.local == "is")
+            .map(|a| html5ever::LocalName::from(&*a.value));
+        let created = self.dom.with(|d| {
+            let created = self.new_element(d, name, Vec::new(), template);
+            if let Some(e) = d.n_mut(created).element_mut() {
+                e.is_value = is;
+            }
+            created
+        });
         self.pending_custom.borrow_mut().push((created, attrs));
         self.has_pending_custom.set(true);
         created
@@ -477,8 +512,8 @@ impl<A: DomAccess> Sink<A> {
         let n = *n;
         let attrs: Vec<(QualName, String)> = attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect();
         let hooks = self.dom.with(|d| {
-            let name = d.n(n).element().map(|e| e.name.clone())?;
-            (d.n(parent).owner_doc == self.doc).then(|| d.parser_custom_elements(self.doc, &name)).flatten()
+            let (name, is) = d.n(n).element().map(|e| (e.name.clone(), e.is_value.clone()))?;
+            (d.n(parent).owner_doc == self.doc).then(|| d.parser_custom_elements(self.doc, &name, is.as_ref())).flatten()
         });
         let constructed = match hooks {
             Some(hooks) => {
@@ -528,6 +563,9 @@ pub struct DocumentParser {
     plaintext: bool,
     /// Transport-layer charset label (Content-Type), used by `feed_bytes`.
     transport_charset: Option<&'static encoding_rs::Encoding>,
+    /// The encoding when nothing declares one (a same-origin parent
+    /// document's), before the UTF-8 default.
+    fallback_charset: Option<&'static encoding_rs::Encoding>,
     decoder: Option<encoding_rs::Decoder>,
     decoded: String,
     /// Bytes held back until 1024 bytes (or EOF) are available for prescan.
@@ -566,42 +604,213 @@ pub fn is_xml_mime(mime: &str) -> bool {
         || essence.ends_with("+xml")
 }
 
-/// Charset prescan of the first bytes for `<meta charset>` /
-/// `<meta http-equiv=content-type content="...charset=...">` (simplified
-/// HTML §13.2.3.2).
+/// HTML "prescan a byte stream to determine its encoding" (§13.2.3.2) over
+/// the first 1024 bytes, then "get an XML encoding" for input that starts
+/// with an XML declaration (`<?xml ... encoding="..."`), as browsers do: comments and other markup are skipped, `<meta>` attributes are read
+/// with the "get an attribute" algorithm, and `content` counts only with
+/// `http-equiv="content-type"`.
 pub fn prescan_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
-    let head = &head[..head.len().min(1024)];
-    let lower: Vec<u8> = head.iter().map(|b| b.to_ascii_lowercase()).collect();
-    let mut pos = 0;
-    while let Some(off) = find(&lower[pos..], b"<meta") {
-        let start = pos + off;
-        let end = find(&lower[start..], b">").map_or(lower.len(), |e| start + e);
-        let tag = &lower[start..end];
-        if let Some(c) = find(tag, b"charset") {
-            let mut rest = &tag[c + 7..];
-            while let [b' ' | b'\t' | b'\n' | b'\r' | b'=', tail @ ..] = rest {
-                rest = tail;
-            }
-            let rest: &[u8] = match rest.first() {
-                Some(b'"') | Some(b'\'') => &rest[1..],
-                _ => rest,
-            };
-            let label_end = rest
-                .iter()
-                .position(|&b| matches!(b, b'"' | b'\'' | b';' | b' ' | b'/' | b'>' | b'\t' | b'\n'))
-                .unwrap_or(rest.len());
-            if let Some(enc) = encoding_rs::Encoding::for_label(&rest[..label_end]) {
-                // UTF-16 declared in a byte-oriented prescan means UTF-8.
-                return Some(if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
-                    encoding_rs::UTF_8
-                } else {
-                    enc
-                });
-            }
+    meta_charset(head).or_else(|| xml_encoding(head))
+}
+
+/// The `<meta>` part of the prescan.
+fn meta_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    let b = &head[..head.len().min(1024)];
+    let fix = |enc: &'static encoding_rs::Encoding| {
+        if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
+            encoding_rs::UTF_8
+        } else if enc == encoding_rs::X_USER_DEFINED {
+            encoding_rs::WINDOWS_1252
+        } else {
+            enc
         }
-        pos = end.max(start + 5);
+    };
+    let starts_ci = |at: usize, s: &[u8]| b.len() >= at + s.len() && b[at..at + s.len()].eq_ignore_ascii_case(s);
+    let mut pos = 0;
+    while pos < b.len() {
+        if b[pos..].starts_with(b"<!--") {
+            // The `-->` may share the dashes of `<!--`.
+            match find(&b[pos + 2..], b"-->") {
+                Some(e) => pos = pos + 2 + e + 3,
+                None => return None,
+            }
+            continue;
+        }
+        if starts_ci(pos, b"<meta") && b.get(pos + 5).is_some_and(|&c| matches!(c, b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' | b'/')) {
+            pos += 6;
+            let mut names: Vec<Vec<u8>> = Vec::new();
+            let (mut got_pragma, mut need_pragma, mut charset) = (false, None::<bool>, None);
+            while let Some((name, value)) = get_attribute(b, &mut pos) {
+                if names.contains(&name) {
+                    continue;
+                }
+                match name.as_slice() {
+                    b"http-equiv" if value == b"content-type" => got_pragma = true,
+                    b"content" if charset.is_none() => {
+                        if let Some(enc) = charset_from_content(&value) {
+                            charset = Some(enc);
+                            need_pragma = Some(true);
+                        }
+                    }
+                    b"charset" => {
+                        charset = encoding_rs::Encoding::for_label(trim_ascii(&value));
+                        need_pragma = Some(false);
+                    }
+                    _ => {}
+                }
+                names.push(name);
+            }
+            match (need_pragma, charset) {
+                (None, _) | (_, None) => {}
+                (Some(true), _) if !got_pragma => {}
+                (_, Some(enc)) => return Some(fix(enc)),
+            }
+            continue;
+        }
+        let tag_start = |at: usize| b.get(at).is_some_and(|c| c.is_ascii_alphabetic());
+        if b[pos] == b'<' && (tag_start(pos + 1) || (b.get(pos + 1) == Some(&b'/') && tag_start(pos + 2))) {
+            // A tag: skip its name, then its attributes.
+            while pos < b.len() && !matches!(b[pos], b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' | b'>') {
+                pos += 1;
+            }
+            while get_attribute(b, &mut pos).is_some() {}
+            continue;
+        }
+        if b[pos..].starts_with(b"<!") || b[pos..].starts_with(b"</") || b[pos..].starts_with(b"<?") {
+            match b[pos..].iter().position(|&c| c == b'>') {
+                Some(e) => pos += e + 1,
+                None => return None,
+            }
+            continue;
+        }
+        pos += 1;
     }
     None
+}
+
+fn trim_ascii(v: &[u8]) -> &[u8] {
+    let start = v.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(v.len());
+    let end = v.iter().rposition(|c| !c.is_ascii_whitespace()).map_or(start, |e| e + 1);
+    &v[start..end]
+}
+
+/// HTML "get an attribute" (prescan): `(name, value)` lowercased, or `None`
+/// at a `>` or the end. Leaves `pos` after the attribute.
+fn get_attribute(b: &[u8], pos: &mut usize) -> Option<(Vec<u8>, Vec<u8>)> {
+    let ws = |c: u8| matches!(c, b'\t' | b'\n' | b'\x0c' | b'\r' | b' ');
+    while *pos < b.len() && (ws(b[*pos]) || b[*pos] == b'/') {
+        *pos += 1;
+    }
+    if *pos >= b.len() || b[*pos] == b'>' {
+        return None;
+    }
+    let (mut name, mut value) = (Vec::new(), Vec::new());
+    // Name.
+    loop {
+        let c = *b.get(*pos)?;
+        if c == b'=' && !name.is_empty() {
+            *pos += 1;
+            break;
+        }
+        if ws(c) {
+            while *pos < b.len() && ws(b[*pos]) {
+                *pos += 1;
+            }
+            if b.get(*pos) != Some(&b'=') {
+                return Some((name, value));
+            }
+            *pos += 1;
+            break;
+        }
+        if c == b'/' || c == b'>' {
+            return Some((name, value));
+        }
+        name.push(c.to_ascii_lowercase());
+        *pos += 1;
+    }
+    // Value.
+    while *pos < b.len() && ws(b[*pos]) {
+        *pos += 1;
+    }
+    let c = *b.get(*pos)?;
+    if c == b'"' || c == b'\'' {
+        *pos += 1;
+        loop {
+            let d = *b.get(*pos)?;
+            *pos += 1;
+            if d == c {
+                return Some((name, value));
+            }
+            value.push(d.to_ascii_lowercase());
+        }
+    }
+    if c == b'>' {
+        return Some((name, value));
+    }
+    loop {
+        let Some(&d) = b.get(*pos) else { return Some((name, value)) };
+        if ws(d) || d == b'>' {
+            return Some((name, value));
+        }
+        value.push(d.to_ascii_lowercase());
+        *pos += 1;
+    }
+}
+
+/// HTML "extract a character encoding from a meta element" (a `content`
+/// value such as `text/html; charset=windows-1251`).
+fn charset_from_content(v: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    let mut pos = 0;
+    loop {
+        let at = find(&v[pos..], b"charset")?;
+        pos += at + 7;
+        let mut p = pos;
+        while p < v.len() && v[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        if v.get(p) != Some(&b'=') {
+            continue;
+        }
+        p += 1;
+        while p < v.len() && v[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        let rest = &v[p..];
+        let label = match rest.first() {
+            Some(&q @ (b'"' | b'\'')) => {
+                let end = rest[1..].iter().position(|&c| c == q)?;
+                &rest[1..1 + end]
+            }
+            Some(_) => &rest[..rest.iter().position(|&c| c.is_ascii_whitespace() || c == b';').unwrap_or(rest.len())],
+            None => return None,
+        };
+        return encoding_rs::Encoding::for_label(label);
+    }
+}
+
+/// HTML "get an XML encoding": the `encoding` of an XML declaration the
+/// input starts with (before its first `>`); UTF-16 labels mean UTF-8.
+fn xml_encoding(b: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    if !b.starts_with(b"<?xml") {
+        return None;
+    }
+    let end = b.iter().position(|&c| c == b'>')?;
+    let mut pos = find(&b[..end], b"encoding")? + 8;
+    while pos < end && b[pos] <= 0x20 {
+        pos += 1;
+    }
+    if b.get(pos) != Some(&b'=') {
+        return None;
+    }
+    pos += 1;
+    while pos < end && b[pos] <= 0x20 {
+        pos += 1;
+    }
+    let quote = *b.get(pos).filter(|&&c| c == b'"' || c == b'\'')?;
+    pos += 1;
+    let close = b[pos..end].iter().position(|&c| c == quote)?;
+    let enc = encoding_rs::Encoding::for_label(&b[pos..pos + close])?;
+    Some(if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE { encoding_rs::UTF_8 } else { enc })
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -623,6 +832,7 @@ impl DocumentParser {
             ended: false,
             plaintext: false,
             transport_charset: None,
+            fallback_charset: None,
             decoder: None,
             decoded: String::new(),
             sniff: Vec::new(),
@@ -660,6 +870,15 @@ impl DocumentParser {
             data.content_type = "text/plain".into();
         }
         Ok(parser)
+    }
+
+    /// Sets the encoding used when neither the transport nor the prescan
+    /// declares one (HTML: a same-origin container document's encoding).
+    /// UTF-16 is not inherited.
+    pub fn set_fallback_charset(&mut self, label: Option<&str>) {
+        self.fallback_charset = label
+            .and_then(|l| encoding_rs::Encoding::for_label(l.as_bytes()))
+            .filter(|e| *e != encoding_rs::UTF_16LE && *e != encoding_rs::UTF_16BE);
     }
 
     /// Sets the Content-Type charset label for `feed_bytes`.
@@ -702,6 +921,7 @@ impl DocumentParser {
             .map(|(e, _)| e)
             .or(self.transport_charset)
             .or_else(|| if self.plaintext { None } else { prescan_charset(&self.sniff) })
+            .or(self.fallback_charset)
             .unwrap_or(encoding_rs::UTF_8);
         self.decoder = Some(enc.new_decoder_with_bom_removal());
         if let Ok(mut d) = self.dom.try_borrow_mut() {

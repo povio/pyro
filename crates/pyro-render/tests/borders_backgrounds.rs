@@ -347,3 +347,98 @@ fn a_fixed_background_under_an_identity_transform_scrolls() {
         assert_near(pixel(&img, 1.0, 55.0, 55.0), GRID[0], transform);
     }
 }
+
+/// `inset`/`outset` sides and the halves of `groove`/`ridge` take Blink's shades
+/// (`BoxBorderPainter::CalculateInsetOutsetColor`: `Color::Dark` on the darkened sides,
+/// `Color::Light` on the others, very dark colours lightened on both and very light ones kept).
+/// The expected values are Chrome's (measured 2026-11-18). The light sides kept the base
+/// colour before (`#888` outset's top was 136, Chrome's 221).
+#[test]
+fn bevelled_border_sides_take_chrome_shades() {
+    let boxes = "<style>div{position:absolute;width:40px;height:40px;border-width:20px}</style>\
+        <div style='left:0;top:0;border-style:inset;border-color:#888'></div>\
+        <div style='left:100px;top:0;border-style:outset;border-color:#888'></div>\
+        <div style='left:200px;top:0;border-style:inset;border-color:black'></div>\
+        <div style='left:300px;top:0;border-style:inset;border-color:white'></div>\
+        <div style='left:0;top:100px;border-style:inset;border-color:rgb(255,0,0)'></div>\
+        <div style='left:100px;top:100px;border-style:groove;border-color:rgb(0,128,0)'></div>\
+        <div style='left:200px;top:100px;border-style:ridge;border-color:rgb(0,0,255)'></div>\
+        <div style='left:300px;top:100px;border-style:outset;border-color:rgb(20,20,20)'></div>";
+    let img = render(boxes, 1.0);
+    // (box origin, top outer half, top inner half, bottom inner half): Chrome's colours.
+    let chrome: [((f64, f64), [u8; 3], [u8; 3], [u8; 3]); 8] = [
+        ((0.0, 0.0), [52, 52, 52], [52, 52, 52], [221, 221, 221]),
+        ((100.0, 0.0), [221, 221, 221], [221, 221, 221], [52, 52, 52]),
+        ((200.0, 0.0), [84, 84, 84], [84, 84, 84], [168, 168, 168]),
+        ((300.0, 0.0), [171, 171, 171], [171, 171, 171], [255, 255, 255]),
+        ((0.0, 100.0), [171, 0, 0], [171, 0, 0], [255, 0, 0]),
+        // A groove's bottom inner half is shaded as an inset's top (the halves swap at the
+        // bottom and right: their outer half is the inner edge's opposite).
+        ((100.0, 100.0), [0, 44, 0], [0, 212, 0], [0, 44, 0]),
+        ((200.0, 100.0), [0, 0, 255], [0, 0, 171], [0, 0, 255]),
+        ((300.0, 100.0), [188, 188, 188], [188, 188, 188], [104, 104, 104]),
+    ];
+    for ((x, y), top_outer, top_inner, bottom_inner) in chrome {
+        let at = |dx, dy| pixel(&img, 1.0, x + dx, y + dy);
+        assert_near(at(40.0, 5.0), top_outer, &format!("box at {x},{y}: top, outer half"));
+        assert_near(at(40.0, 15.0), top_inner, &format!("box at {x},{y}: top, inner half"));
+        assert_near(at(40.0, 65.0), bottom_inner, &format!("box at {x},{y}: bottom, inner half"));
+        assert_near(at(5.0, 40.0), top_outer, &format!("box at {x},{y}: left, outer half"));
+    }
+    // A groove's corner joins its sides' halves on the diagonal, the background not showing
+    // through: Chrome's top-right outer corner pixel is the even mix of the dark top half and the
+    // light right half (it was mixed with the white page).
+    assert_near(pixel(&img, 1.0, 179.0, 100.0), [0, 128, 0], "groove top-right corner diagonal");
+    assert_near(pixel(&img, 1.0, 279.0, 100.0), [0, 0, 213], "ridge top-right corner diagonal");
+}
+
+/// An `<img>` that fails to load (or has no source) and has `alt` text shows that text, as
+/// browsers do (HTML rendering § images); an empty `alt` shows nothing. It showed nothing at all.
+#[test]
+fn a_broken_image_shows_its_alt_text() {
+    let ink = |body: &str| {
+        let img = render(body, 1.0);
+        (0..60u32)
+            .flat_map(|y| (0..300u32).map(move |x| (x, y)))
+            .filter(|&(x, y)| pixel(&img, 1.0, f64::from(x), f64::from(y))[0] < 128)
+            .count()
+    };
+    let style = "style='font:40px/1 serif;color:black'";
+    assert!(ink(&format!("<img src='missing.png' alt='Broken' {style}>")) > 100, "failed load");
+    assert!(ink(&format!("<img alt='Broken' {style}>")) > 100, "no source");
+    assert_eq!(ink(&format!("<img src='missing.png' alt='' {style}>")), 0, "empty alt");
+}
+
+/// A broken image draws Chromium's broken-image icon: before its alt text, and, given a size
+/// without alt text, 2px inside a 1px rgb(192, 192, 192) border round its box (measured in
+/// Chrome 2026-11-18). Neither was drawn.
+#[test]
+fn a_broken_image_draws_the_broken_image_icon() {
+    let img = render(
+        "<img src='missing.png' width=100 height=40 style='position:absolute;left:10px;top:10px'>\
+         <img src='missing.png' alt='Text' style='position:absolute;left:10px;top:100px;font:16px serif'>",
+        1.0,
+    );
+    let at = |x: f64, y: f64| pixel(&img, 1.0, x, y);
+    assert_eq!(at(50.0, 10.0), [192, 192, 192], "the border's top");
+    assert_eq!(at(10.0, 30.0), [192, 192, 192], "the border's left");
+    assert_eq!(at(109.0, 30.0), [192, 192, 192], "the border's right");
+    // The icon's grass (green) near its bottom left corner, in both.
+    let green = |p: [u8; 3]| p[1] > 120 && p[0] < 150 && p[2] < 150;
+    assert!((0..16).any(|d| green(at(12.0 + f64::from(d), 25.0))), "icon in the sized box");
+    assert!((0..16).any(|d| green(at(10.0 + f64::from(d), 113.0))), "icon before the alt text");
+}
+
+/// `background-clip: border-area text` (either order) paints the union of the border area and
+/// the text, not the whole box (WPT `clip-border-area-text.html`).
+#[test]
+fn border_area_and_text_clip_combine() {
+    for clip in ["border-area text", "text border-area"] {
+        let img = render(
+            &format!("<div style='position:absolute;left:0;top:0;width:200px;height:100px;box-sizing:border-box;border:20px solid transparent;font:bold 40px/60px monospace;color:transparent;background:linear-gradient(blue,blue);background-clip:{clip}'>X</div>"),
+            1.0,
+        );
+        assert_near(pixel(&img, 1.0, 10.0, 50.0), BLUE, &format!("{clip}: the border"));
+        assert_near(pixel(&img, 1.0, 150.0, 50.0), WHITE, &format!("{clip}: the padding box past the text"));
+    }
+}

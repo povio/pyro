@@ -19,6 +19,8 @@ struct LayoutLoader {
     frame: FrameKey,
     loader: LoaderId,
     bodies: Arc<pyro_dom::layout::SubresourceBodies>,
+    /// The fonts this document's layout asked for (`document.fonts`, the load event).
+    asked_fonts: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
@@ -41,6 +43,16 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
     fn bodies(&self) -> &Arc<pyro_dom::layout::SubresourceBodies> {
         &self.bodies
     }
+
+    fn font_asked(&self, url: &str) {
+        if let Ok(mut asked) = self.asked_fonts.lock() {
+            asked.insert(url.to_owned());
+        }
+    }
+
+    fn asked_fonts(&self) -> Option<Vec<String>> {
+        self.asked_fonts.lock().ok().map(|asked| asked.iter().cloned().collect())
+    }
 }
 
 struct Hooks {
@@ -57,6 +69,23 @@ struct Hooks {
 }
 
 impl PageHooks for Hooks {
+    fn container(&self) -> pyro_webapi::FrameContainer {
+        use pyro_webapi::FrameContainer;
+        let Some(host) = self.frames.upgrade() else { return FrameContainer::Detached };
+        if !host.matches(self.page, &self.loader) {
+            return FrameContainer::Detached;
+        }
+        if self.page.child.is_none() {
+            return FrameContainer::Top;
+        }
+        let Some(owner) = host.with_frame(self.page, |f| f.owner).flatten() else { return FrameContainer::Detached };
+        let parent = host.parent_key(self.page);
+        match host.page_dom(parent) {
+            Some(dom) if !dom.is_detached() => FrameContainer::Frame(dom, owner),
+            _ => FrameContainer::Detached,
+        }
+    }
+
     fn frame_detached(&self) -> bool {
         // Only a child frame can leave its page.
         self.page.child.is_some()
@@ -171,29 +200,69 @@ impl PageHooks for Hooks {
     fn navigate(&self, request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
+        // `window.open` of a new browsing context: HTML creates its initial
+        // about:blank document now, so the opener can script it before the
+        // embedder makes the page (`Browser::create_page_with`).
+        if let (Some(ticket), Some(host)) = (request.popup.as_ref(), self.frames.upgrade()) {
+            let new_context = request.method == "GET"
+                && host.matches(page, &loader)
+                && request.target.as_deref().is_some_and(|t| {
+                    !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent")
+                        && host.named_frame(page, t).is_none()
+                })
+                && host.frame(page).is_some_and(|f| !f.sandbox.popups_blocked);
+            if new_context {
+                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned()) {
+                    Ok(prebuilt) => {
+                        if let Some(dom) = &prebuilt.frame.page_dom {
+                            ticket.attach_page(dom);
+                        }
+                        ticket.set_prebuilt(Box::new(prebuilt));
+                    }
+                    Err(e) => eprintln!("pyro: cannot make the popup's initial document: {e:?}"),
+                }
+            }
+        }
         // HTML "navigate": a GET of the document's own URL with a fragment is
         // a fragment navigation, done at once (the URL has changed when the
         // link's `click()` returns) and never a reload.
         let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
-        let nav = own_frame
-            .then(|| self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| host.nav(page)))
-            .flatten();
+        // The frame the navigation is for: this one, or a frame of this page
+        // the target names (`<a target>`, `<form target>`). Its `navigate`
+        // event fires and its fragment navigations stay in its document, as
+        // HTML "navigate" runs on the target navigable.
+        let mut cross_origin_target = false;
+        let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| {
+            let key = if own_frame {
+                Some(page)
+            } else {
+                request.target.as_deref().and_then(|t| host.named_frame(page, t))
+            };
+            cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
+            key.and_then(|key| host.nav(key))
+        });
         if request.method == "GET" && request.body.is_none() {
             if nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment(&request.url)) {
                 return;
             }
             // Navigation API: the document's `navigate` event may cancel
-            // or intercept the load.
-            if let Some(nav) = nav.as_ref().filter(|_| !request.url.starts_with("javascript:")) {
-                match nav.navigate_event("push", &request.url, true) {
+            // or intercept the load. A cross-document navigation a
+            // cross-origin document starts fires none (HTML "navigate").
+            if let Some(nav) =
+                nav.as_ref().filter(|_| !request.url.starts_with("javascript:") && !cross_origin_target)
+            {
+                // HTML "navigate" with history handling "auto": a navigation
+                // to the document's own URL replaces its entry.
+                let kind = if request.url == nav.url() { "replace" } else { "push" };
+                match nav.navigate_event(kind, &request.url, true) {
                     crate::nav::NavigateDecision::Cancel => return,
-                    crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, "push"),
+                    crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, kind),
                     crate::nav::NavigateDecision::Proceed => {}
                 }
             }
         }
         // `document.open()` before the task runs drops it (stop loading).
-        let stops = nav.map(|nav| nav.stop_count());
+        let stops = nav.filter(|_| own_frame).map(|nav| nav.stop_count());
         self.sched.post(TaskSource::Navigation, move |b| {
             if !b.doc(page).is_some_and(|p| {
                 p.main_frame.loader_id == loader && stops.is_none_or(|stops| p.nav.stop_count() == stops)
@@ -570,6 +639,9 @@ impl Browser {
 
     pub(crate) fn drain_dom_resources(&mut self, page: FrameKey) {
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
+        host.connect_rendered_objects();
+        self.fetch_rendered_objects(&host);
+        self.fetch_rendered_images(page);
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();
@@ -608,7 +680,19 @@ impl Browser {
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Img {
                 if image_nodes.insert(event.node) {
-                    self.image_event(target, event.node);
+                    // HTML: setting `src`/`srcset` restarts the request even for the same URL
+                    // (a relevant mutation; a CORS or referrer policy state change is found by
+                    // `image_event_with` itself).
+                    let restart = event.reason == pyro_dom::script::ResourceReason::SourceChanged;
+                    self.image_event_with(target, event.node, restart);
+                }
+            } else if event.kind == pyro_dom::script::ResourceKind::Object {
+                if image_nodes.insert(event.node) {
+                    self.object_event(target, event.node);
+                }
+            } else if event.kind == pyro_dom::script::ResourceKind::Embed {
+                if image_nodes.insert(event.node) {
+                    self.embed_event(target, event.node);
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Preload {
                 if preload_nodes.insert(event.node) {
@@ -618,6 +702,12 @@ impl Browser {
                 // Script-inserted (or `src`-changed) scripts: "already
                 // started" makes repeats of one element no-ops.
                 self.script_event(target, event.node);
+            } else if event.kind == pyro_dom::script::ResourceKind::SvgImage {
+                if image_nodes.insert(event.node) {
+                    self.svg_image_event(target, event.node);
+                }
+            } else if event.kind == pyro_dom::script::ResourceKind::SvgUse {
+                pyro_webapi::svg_use::update(&bindings, event.node);
             } else if event.kind == pyro_dom::script::ResourceKind::Meta {
                 // A refresh pragma acts on insertion only.
                 if event.reason == pyro_dom::script::ResourceReason::Connected {
@@ -642,7 +732,7 @@ impl Browser {
 
 /// The script of a `javascript:` URL (HTML "evaluate a javascript: URL": the
 /// percent-decoded rest of the URL), or `None` for any other URL.
-fn javascript_url_source(url: &str) -> Option<String> {
+pub(crate) fn javascript_url_source(url: &str) -> Option<String> {
     const SCHEME: &str = "javascript:";
     let rest = url.get(SCHEME.len()..).filter(|_| url[..SCHEME.len()].eq_ignore_ascii_case(SCHEME))?;
     Some(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned())
@@ -695,6 +785,7 @@ pub(crate) fn create(
         frame: page,
         loader: loader.clone(),
         bodies: host.layout_bodies.clone(),
+        asked_fonts: Default::default(),
     }));
     bindings.set_storage_namespaces(settings.local, settings.session);
     let mut viewport = settings.viewport;

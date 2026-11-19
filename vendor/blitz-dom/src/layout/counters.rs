@@ -147,6 +147,10 @@ struct Walk {
     /// pyro: the text of each list item's `::marker` content that reads counters
     /// (`BaseDocument::marker_texts`).
     marker_texts: HashMap<NodeId, String>,
+    /// pyro: for each enclosing element of style containment (innermost last), how many
+    /// instances of each counter there were when its subtree began: an increment or set in the
+    /// subtree of a counter made outside it makes a new counter instead (CSS Contain 2 § 3.3).
+    barriers: Vec<HashMap<Atom, usize>>,
 }
 
 impl Walk {
@@ -178,10 +182,26 @@ impl Walk {
         }
     }
 
-    /// The innermost counter `name`, instantiated at 0 on the box when there is none.
-    fn innermost(&mut self, name: &Atom, scope: NodeId, own: NodeId) -> &mut Instance {
+    /// pyro: the innermost counter `name` for `counter()` and `counters()`, instantiated at 0 on the
+    /// box when there is none. Unlike [`Self::innermost`], it reads a counter made outside an
+    /// enclosing style containment as it is.
+    fn read(&mut self, name: &Atom, scope: NodeId, own: NodeId) -> &mut Instance {
         if self.counters.get(name).is_none_or(|stack| stack.is_empty()) {
             self.reset(name, 0, scope, own, false);
+        }
+        self.counters.get_mut(name).unwrap().last_mut().unwrap()
+    }
+
+    /// The innermost counter `name`, instantiated at 0 on the box when there is none.
+    fn innermost(&mut self, name: &Atom, scope: NodeId, own: NodeId) -> &mut Instance {
+        let len = self.counters.get(name).map_or(0, |stack| stack.len());
+        let outside = self.barriers.last().map(|base| base.get(name).copied().unwrap_or(0));
+        if len == 0 {
+            self.reset(name, 0, scope, own, false);
+        } else if outside.is_some_and(|base| len <= base) {
+            // pyro: style containment: the counter is the outer one; a new one starts at 0.
+            self.counters.get_mut(name).unwrap().push(Instance { value: 0, scope, sibling: true, reversed: false });
+            self.made.push((scope, name.clone()));
         }
         self.counters.get_mut(name).unwrap().last_mut().unwrap()
     }
@@ -246,11 +266,11 @@ impl Walk {
             match item {
                 ContentItem::String(string) => push(&mut pieces, string),
                 ContentItem::Counter(name, counter_style) => {
-                    let value = self.innermost(&name.0, owner, pseudo_scope()).value;
+                    let value = self.read(&name.0, owner, pseudo_scope()).value;
                     push(&mut pieces, &format(value, counter_style));
                 }
                 ContentItem::Counters(name, separator, counter_style) => {
-                    self.innermost(&name.0, owner, pseudo_scope());
+                    self.read(&name.0, owner, pseudo_scope());
                     let mut text = String::new();
                     for (index, instance) in self.counters[&name.0].iter().enumerate() {
                         if index > 0 {
@@ -487,6 +507,16 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
             }
         }
     }
+    // pyro: style containment scopes counter changes and quote depth to the element's subtree,
+    // its `::before` and `::after` included (CSS Contain 2 § 3.3); the element's own counter
+    // properties (above) are outside it.
+    let contains_style = !display.is_contents()
+        && style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE);
+    let saved_quote_depth = walk.quote_depth;
+    if contains_style {
+        let base = walk.counters.iter().map(|(name, stack)| (name.clone(), stack.len())).collect();
+        walk.barriers.push(base);
+    }
     drop(style);
     // pyro: its children and its `::before` and `::after` are then its parent's in the box tree,
     // which counters follow (Blink counts layout objects; WPT `counter-order-display-contents`).
@@ -540,6 +570,10 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
         }
     }
     walk.leave(node_id);
+    if contains_style {
+        walk.barriers.pop();
+        walk.quote_depth = saved_quote_depth;
+    }
     if texts.iter().any(Option::is_some) {
         walk.texts.insert(node_id, texts);
     }

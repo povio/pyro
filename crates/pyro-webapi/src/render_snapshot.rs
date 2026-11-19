@@ -70,6 +70,12 @@ pub struct RenderSnapshot {
     /// (`CSS.highlights`, by priority, then registration) by name, then the target text (`None`),
     /// each with its ranges as [`RenderSnapshot::selection`]'s.
     pub highlights: Vec<(Option<String>, Vec<((u64, u32), (u64, u32))>)>,
+    /// The focused text control's selection, in every form: its render key and the selection's
+    /// start and end in UTF-16 code units of its value.
+    pub control_selection: Option<(u64, u32, u32)>,
+    /// The replaced elements (images, video, canvas) the document selection holds, in every
+    /// form: their render keys (painted with the selection's tint).
+    pub selected_replaced: Vec<u64>,
 }
 
 /// How a snapshot carries the document.
@@ -114,6 +120,7 @@ impl PageDom {
         canvases.extend(self.video_bitmaps());
         let selection = crate::editing::selection_range(self);
         let dom = self.dom.borrow();
+        let selected_replaced = selection.map_or_else(Vec::new, |range| replaced_in(&dom, self.document(), range));
         let selection = selection.and_then(|range| text_selection(&dom, self.document(), range));
         let mut highlights = Vec::new();
         {
@@ -140,11 +147,18 @@ impl PageDom {
                 highlights.push((None, target));
             }
         }
+        // The focused text control's selection (painted with its `::selection` style).
+        let control_selection = dom.focused(self.document()).ok().flatten().and_then(|id| {
+            let (start, end) = dom.selection(id).ok()?;
+            Some((pyro_dom::snapshot::render_key(id), start, end))
+        });
         let layout = self.layout();
         RenderSnapshot {
             canvases,
             selection,
             highlights,
+            control_selection,
+            selected_replaced,
             ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
         }
     }
@@ -212,6 +226,8 @@ fn snapshot_of(
             content_language: dom.content_language(document).map(str::to_owned),
             selection: None,
             highlights: Vec::new(),
+            control_selection: None,
+            selected_replaced: Vec::new(),
         }
     }
 }
@@ -222,6 +238,29 @@ fn snapshot_of(
 /// UTF-16 code units of its data. `None` when the selection is collapsed or holds no rendered
 /// text. Text the render tree leaves out or replaces (in `<script>`, `<noscript>`, `<template>`,
 /// frames, `<style>`, `<textarea>`) is passed over.
+/// The replaced elements (`img`, `video`, `canvas`) inside the selection `start..end`: their
+/// render keys.
+fn replaced_in(dom: &pyro_dom::Dom, document: NodeId, (start, end): (crate::editing::Point, crate::editing::Point)) -> Vec<u64> {
+    use crate::editing::local;
+    use crate::range::compare_boundary_points_dom as compare;
+    if start == end {
+        return Vec::new();
+    }
+    dom.descendants(document)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|&n| matches!(local(dom, n).as_str(), "img" | "video" | "canvas"))
+        .filter(|&n| {
+            let Some(parent) = dom.parent(n).ok().flatten() else { return false };
+            let Some(index) = dom.children(parent).ok().and_then(|mut c| c.position(|c| c == n)) else { return false };
+            let (before, after) = ((parent, index as u32), (parent, index as u32 + 1));
+            compare(dom, start, before) <= 0 && compare(dom, after, end) <= 0
+        })
+        .map(pyro_dom::snapshot::render_key)
+        .collect()
+}
+
 fn text_selection(
     dom: &pyro_dom::Dom,
     document: NodeId,

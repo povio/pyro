@@ -57,11 +57,54 @@ struct Image {
     pending: bool,
     blocks_load: bool,
     cancel: Option<ResourceCancellation>,
+    /// The request's CORS settings and referrer policy states: a change restarts it.
+    request_state: (u8, String),
+    /// Whether the finished request gave an image (`load`) or not (`error`): what a restart of
+    /// the same request fires again without fetching (HTML's list of available images).
+    outcome: Option<bool>,
+}
+
+/// An `<img>`'s CORS settings attribute state (0 no CORS, 1 anonymous, 2 use-credentials) and
+/// referrer policy attribute state (a known keyword, else ""): a change of either is a relevant
+/// mutation.
+fn image_request_state(dom: &pyro_dom::Dom, node: NodeId) -> (u8, String) {
+    let cors = match dom.get_attribute(node, "crossorigin").ok().flatten() {
+        None => 0,
+        Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+        Some(_) => 1,
+    };
+    const POLICIES: [&str; 8] = [
+        "no-referrer",
+        "no-referrer-when-downgrade",
+        "same-origin",
+        "origin",
+        "strict-origin",
+        "origin-when-cross-origin",
+        "strict-origin-when-cross-origin",
+        "unsafe-url",
+    ];
+    let referrer = dom
+        .get_attribute(node, "referrerpolicy")
+        .ok()
+        .flatten()
+        .map(|v| v.to_ascii_lowercase())
+        .filter(|v| POLICIES.contains(&v.as_str()))
+        .unwrap_or_default();
+    (cors, referrer)
 }
 
 #[derive(Default)]
 pub(crate) struct Images {
     entries: HashMap<NodeId, Image>,
+    /// Lazy images whose source was selected while they were not being rendered (detached, or
+    /// `display: none`): their fetch waits (HTML: they never intersect the viewport) until they
+    /// are rendered, or until `loading` stops being lazy, which fetches the source selected then.
+    deferred: HashMap<NodeId, Option<pyro_dom::picture::Candidate>>,
+    /// Each lazy image's last `sizes="auto"` width while it was rendered: what `auto` stays when
+    /// it stops being rendered.
+    auto_widths: HashMap<NodeId, f64>,
+    /// The layout engine's sync stamp when the deferred images were last checked.
+    checked_at: Option<(u64, u64, u32, u32)>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -83,6 +126,41 @@ enum Source {
 }
 
 /// SVG natural size from numeric (px or unitless) root width/height.
+/// An SVG image's natural dimensions as `naturalWidth`/`naturalHeight` report them (CSS Images 3
+/// "natural dimensions", with HTML's density correction of the image's own dimensions): a missing
+/// one comes from the other through the `viewBox` ratio, or is the default object size's (300 x
+/// 150); without either, the ratio fitted into the default object size, or that size.
+fn svg_reported_size(body: &[u8], density: f64) -> Option<((f64, f64), bool)> {
+    let text = std::str::from_utf8(body.get(..body.len().min(4096))?).ok()?;
+    let start = text.find("<svg")?;
+    let tag = &text[start..start + text[start..].find('>')?];
+    let raw = |name: &str| {
+        let i = tag.find(&format!(" {name}="))? + name.len() + 2;
+        let quote = tag[i..].chars().next()?;
+        let rest = &tag[i + 1..];
+        Some(rest[..rest.find(quote)?].trim().to_owned())
+    };
+    // An absolute length (px or unitless); percentages and negative values are none.
+    let length = |name: &str| raw(name)?.trim_end_matches("px").parse::<f64>().ok().filter(|v| *v >= 0.0);
+    let ratio = raw("viewBox").and_then(|v| {
+        let n: Vec<f64> = v.split(|c: char| c == ',' || c.is_ascii_whitespace()).filter(|s| !s.is_empty()).filter_map(|s| s.parse().ok()).collect();
+        (n.len() == 4 && n[2] > 0.0 && n[3] > 0.0).then(|| n[2] / n[3])
+    });
+    let d = if density > 0.0 { density } else { 1.0 };
+    let (width, height) = (length("width"), length("height"));
+    let intrinsic = width.is_some() || height.is_some();
+    Some((match (width, height, ratio) {
+        (Some(w), Some(h), _) => (w / d, h / d),
+        (Some(w), None, Some(r)) => (w / d, w / r / d),
+        (Some(w), None, None) => (w / d, 150.0),
+        (None, Some(h), Some(r)) => (h * r / d, h / d),
+        (None, Some(h), None) => (300.0, h / d),
+        (None, None, Some(r)) if r > 2.0 => (300.0, 300.0 / r),
+        (None, None, Some(r)) => (150.0 * r, 150.0),
+        (None, None, None) => (300.0, 150.0),
+    }, intrinsic))
+}
+
 fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
     let text = std::str::from_utf8(body.get(..body.len().min(4096))?).ok()?;
     let start = text.find("<svg")?;
@@ -97,8 +175,24 @@ fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
     Some((attr("width")?, attr("height")?))
 }
 
+/// Whether `node` is being rendered as of the last completed layout, never running layout: the
+/// full answer when that layout is current (a query then syncs nothing), else the engine's last
+/// answer; `None` when that layout has not seen `node` (inserted since) or cannot tell.
+fn rendered_as_laid_out(layout: &pyro_dom::layout::Layout, dom: &pyro_dom::Dom, node: NodeId) -> Option<bool> {
+    if layout.style().engine_current(dom) {
+        return Some(layout.check_visibility(dom, node, Default::default()));
+    }
+    layout.style().displayed_as_synced(dom, node)
+}
+
 impl Browser {
     pub(crate) fn image_event(&mut self, page: FrameKey, node: NodeId) {
+        self.image_event_with(page, node, false);
+    }
+
+    /// [`Browser::image_event`]; `restart`: a relevant mutation, which starts a new request (and
+    /// fires `load` again) even when the URL is the one already loaded.
+    pub(crate) fn image_event_with(&mut self, page: FrameKey, node: NodeId, restart: bool) {
         let Some(state) = self.doc(page) else { return };
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
         let loader = state.main_frame.loader_id.clone();
@@ -109,7 +203,91 @@ impl Browser {
         // A `<picture>` parent's matching `<source>` provides the image
         // instead of `src` (a `<source>` or the `<img>` moving in or out of
         // the picture is a relevant mutation: the DOM queues this event).
-        let candidate = bindings.dom.borrow().picture_candidate(node, &bindings.viewport());
+        // A lazy image's concrete width, for `sizes="auto"` (laid out, else its `width`
+        // attribute, else the default object size's 300 px).
+        drop(state);
+        let (lazy, hidden, rendered_width, attr_width, auto_css_width) = {
+            let dom = bindings.dom.borrow();
+            let lazy = dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+            let connected = dom.is_connected(node).unwrap_or(false);
+            // "Being rendered" from the last completed layout, never running layout here (this
+            // runs per inserted image); its size only when that layout is current (free then).
+            let laid_out = if connected && lazy { rendered_as_laid_out(&bindings.layout(), &dom, node) } else { None };
+            let hidden = lazy && (!connected || laid_out == Some(false));
+            let rendered = if laid_out == Some(true) && bindings.layout().style().engine_current(&dom) {
+                bindings.layout().rendered_content_size(&dom, node)
+            } else {
+                None
+            };
+            // `object-fit: cover` (sizes-auto 2d, tentative): the width the image is drawn at,
+            // max(width, height x ratio), the ratio from `h` descriptors, else the dimension
+            // attributes.
+            let rendered = rendered.map(|(w, h)| {
+                let cover = bindings.layout().style().computed_value(&dom, node, "object-fit").is_some_and(|v| v == "cover");
+                let ratio = || {
+                    let from_h = dom.get_attribute(node, "srcset").ok().flatten().and_then(|srcset| {
+                        srcset.split(',').find_map(|c| {
+                            let mut parts = c.split_ascii_whitespace().skip(1);
+                            let (mut w, mut h) = (None, None);
+                            for d in parts.by_ref() {
+                                if let Some(v) = d.strip_suffix('w') { w = v.parse::<f64>().ok(); }
+                                if let Some(v) = d.strip_suffix('h') { h = v.parse::<f64>().ok(); }
+                            }
+                            w.zip(h).filter(|(_, h)| *h > 0.0).map(|(w, h)| w / h)
+                        })
+                    });
+                    let attr = |n: &str| dom.get_attribute(node, n).ok().flatten().and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0);
+                    from_h.or_else(|| attr("width").zip(attr("height")).map(|(w, h)| w / h))
+                };
+                if cover { ratio().map_or(w, |r| w.max(h * r)) } else { w }
+            });
+            let attr = dom.get_attribute(node, "width").ok().flatten().and_then(|w| w.trim().parse::<f64>().ok());
+            // Lazy images only: the style read flushes style, which an eager image's insertion
+            // must not do (it started the layout engine's fetches during parsing).
+            let auto_css = lazy
+                && rendered.is_some()
+                && attr.is_none()
+                && bindings.layout().style().computed_value(&dom, node, "width").is_none_or(|w| w == "auto")
+                && dom.natural_size(node).is_none();
+            (lazy, hidden, rendered, attr, auto_css)
+        };
+        // A lazy image's concrete width, for `sizes="auto"`: laid out (the default object size's
+        // 300 px while its width is `auto` and no image gave a natural width). Not rendered: its
+        // last width while rendered when still connected, else none (the `auto` entry is skipped).
+        let _ = attr_width;
+        let auto_width = if !lazy {
+            None
+        } else if let Some(w) = rendered_width {
+            let w = if auto_css_width { 300.0 } else { w };
+            if let Some(mut p) = self.doc_mut(page) {
+                p.images.auto_widths.insert(node, w);
+            }
+            Some(w)
+        } else if bindings.dom.borrow().is_connected(node).unwrap_or(false) {
+            // Connected but not rendered (display: none): the last width; a disconnected image
+            // has none.
+            self.doc(page).and_then(|p| p.images.auto_widths.get(&node).copied())
+        } else {
+            None
+        };
+        // Not rendered as of the last layout (or detached): select now, fetch once rendered. Not
+        // in that layout yet (inserted since): fetched now, as an eager image.
+        let deferred_now = hidden;
+        let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
+        let candidate = match stored {
+            // `loading` stopped being lazy: the source selected while deferred is fetched.
+            Some(selected) if !lazy && !restart => selected,
+            _ => bindings.dom.borrow().picture_candidate_auto(node, &bindings.viewport(), auto_width),
+        };
+        if deferred_now {
+            // Not rendered and lazy: select now, fetch once rendered (or eager).
+            bindings.dom.borrow_mut().set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
+            if let Some(mut p) = self.doc_mut(page) {
+                p.images.deferred.insert(node, candidate);
+            }
+            return;
+        }
+        let Some(state) = self.doc(page) else { return };
         let density = candidate.as_ref().map_or(1.0, |c| c.density);
         let picture_source = candidate.map(|c| c.url);
         // The renderer draws the selected source (its snapshot's `src`).
@@ -126,14 +304,30 @@ impl Browser {
                     .map_or(Source::Invalid, |u| Source::Url(u.to_string())),
             }
         };
-        let current = state.images.entries.get(&node).map(|i| (i.url.clone(), i.pending));
+        let request_state = image_request_state(&bindings.dom.borrow(), node);
+        let current =
+            state.images.entries.get(&node).map(|i| (i.url.clone(), i.pending, i.request_state == request_state, i.outcome));
         drop(state);
         let url = match source {
-            Source::Url(url) if current.as_ref().is_some_and(|(u, _)| *u == url) => {
+            Source::Url(url) if current.as_ref().is_some_and(|(u, pending, same, _)| *u == url && *same && (!restart || *pending)) => {
                 // Same request: a `decode()` made since waits for nothing.
-                if current.is_some_and(|(_, pending)| !pending) {
+                if current.is_some_and(|(_, pending, _, _)| !pending) {
                     bindings.settle_image_decodes(node);
                 }
+                return;
+            }
+            // A restarted request for the image already loaded: HTML's list of available
+            // images gives it again without fetching, and `load` (or `error`) fires again.
+            Source::Url(url) if current.as_ref().is_some_and(|(u, pending, same, outcome)| *u == url && *same && !pending && outcome.is_some()) => {
+                let ok = current.and_then(|(_, _, _, outcome)| outcome).unwrap_or(false);
+                let weak = Rc::downgrade(&bindings);
+                self.scheduler().post(TaskSource::DomManipulation, move |_b| {
+                    if let Some(bindings) = weak.upgrade() {
+                        bindings.settle_image_decodes(node);
+                        pyro_webapi::lifecycle::resource_loaded(&bindings, node, ok);
+                    }
+                });
+                let _ = url;
                 return;
             }
             Source::Url(url) => url,
@@ -142,7 +336,7 @@ impl Browser {
                 self.doc_mut(page).expect("page").images.entries.remove(&node);
                 bindings.set_image_state(node, None, false);
                 bindings.keep_loading_image(node, false);
-                bindings.dom.borrow_mut().set_natural_size(node, None);
+                { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
                 if invalid {
                     self.image_error_task(page, loader, &bindings, node);
                 }
@@ -175,6 +369,8 @@ impl Browser {
                     pending: true,
                     blocks_load: !loaded,
                     cancel: None,
+                    request_state,
+                    outcome: None,
                 },
             );
             generation
@@ -183,7 +379,7 @@ impl Browser {
         // (`None` would clear the image and reject pending `decode()`s).
         bindings.set_image_state(node, Some(raw_src.as_deref().unwrap_or("")), true);
         bindings.keep_loading_image(node, true);
-        bindings.dom.borrow_mut().set_natural_size(node, None);
+        { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
         let weak = Rc::downgrade(&bindings);
         let finish = move |b: &mut Browser, result| {
             let Some(bindings) = weak.upgrade() else { return };
@@ -199,12 +395,13 @@ impl Browser {
                     charset: None,
                     body: bytes.to_vec(),
                     content_disposition: None,
-                    header_csp: false,
+                    header_csp: None,
                     refresh: None,
                     content_language: None,
                     referrer_policy: None,
                     timing: None,
                     partial: None,
+                nosniff: false,
                 })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, result));
@@ -264,6 +461,7 @@ impl Browser {
         // corrupt.
         let mut decodable = false;
         let mut raster = None;
+        let mut reported = None;
         let outcome = result.ok().filter(|r| (200..300).contains(&r.status) && !r.body.is_empty()).and_then(|r| {
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
             if let Some((w, h)) = pyro_dom::image::dimensions(body) {
@@ -273,6 +471,7 @@ impl Browser {
             }
             if r.mime == "image/svg+xml" || body.trim_ascii_start().starts_with(b"<svg") {
                 decodable = true;
+                reported = svg_reported_size(body, density);
                 return Some(svg_size(body));
             }
             decodable = !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp");
@@ -282,13 +481,26 @@ impl Browser {
         // The density-corrected natural size (HTML): a `2x` candidate of 200 px is 100 px wide.
         let natural =
             outcome.flatten().map(|(w, h)| if density > 0.0 && density != 1.0 { (w / density, h / density) } else { (w, h) });
-        bindings.dom.borrow_mut().set_natural_size(node, natural);
+        // An SVG with one natural dimension is laid out at its completed, density-corrected
+        // size; one with none keeps sizing from its ratio in layout.
+        let natural = natural.or(reported.filter(|(_, intrinsic)| *intrinsic).map(|(size, _)| size));
+        let reported = reported.map(|(size, _)| size);
+        {
+            let mut dom = bindings.dom.borrow_mut();
+            dom.set_natural_size(node, natural);
+            dom.set_reported_natural_size(node, reported);
+        }
         bindings.image_loaded(node, &src, decodable);
         // Canvas drawing decodes the pixels from the bytes, when the
         // document may draw images (it has a canvas or used canvas APIs).
         if let Some(r) = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES && bindings.wants_image_bytes()) {
             let clean = self.image_origin_clean(page, &r.url);
             bindings.set_image_bytes(node, r.body, clean);
+        }
+        if let Some(mut state) = self.doc_mut(page) {
+            if let Some(image) = state.images.entries.get_mut(&node).filter(|i| i.generation == generation) {
+                image.outcome = Some(outcome.is_some());
+            }
         }
         // A later owner-thread task: no DOM/state borrow survives dispatch.
         pyro_webapi::lifecycle::resource_loaded(bindings, node, outcome.is_some());
@@ -310,6 +522,390 @@ impl Browser {
         // about:blank and about:srcdoc documents.
         let document = &state.main_frame.origin;
         document != "null" && *document == crate::loader::origin_of(url)
+    }
+
+    /// HTML `<object>` "obtain the resource": a connected, rendered `<object>` with a `data` URL fetches it;
+    /// a failed fetch (network error, a non-2xx status) fires `error`, any other response `load`
+    /// (what the content is drawn as is the renderer's). An object without `data` gets no
+    /// event (it shows its fallback content). Pending fetches delay the window's `load`.
+    pub(crate) fn object_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let loader = state.main_frame.loader_id.clone();
+        let base = state.main_frame.base_url.clone();
+        let loaded = state.main_frame.loaded;
+        let (connected, data) = {
+            let dom = bindings.dom.borrow();
+            (dom.is_connected(node).unwrap_or(false), dom.get_attribute(node, "data").ok().flatten().map(str::to_owned))
+        };
+        // "If the element is not being rendered": fallback, nothing is fetched (an `<object>`
+        // in a `display: none` subtree neither loads nor delays the window's `load`).
+        let rendered = connected && {
+            let dom = bindings.dom.borrow();
+            rendered_as_laid_out(&bindings.layout(), &dom, node) != Some(false)
+        };
+        if connected && !rendered && data.is_some() {
+            self.note_hidden_object(page, node);
+        }
+        let source = match data.filter(|_| rendered) {
+            None => Source::None,
+            Some(v) if v.trim().is_empty() => Source::None,
+            Some(v) => {
+                let dom = bindings.dom.borrow();
+                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
+                    .ok()
+                    .and_then(|b| b.join(v.trim()).ok())
+                    .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
+            }
+        };
+        drop(state);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false);
+    }
+
+    /// The deferred lazy images of `page` that are rendered now run their steps again (select
+    /// with their layout, then fetch).
+    pub(crate) fn fetch_rendered_images(&mut self, page: FrameKey) {
+        let Some(state) = self.doc(page) else { return };
+        if state.images.deferred.is_empty() {
+            return;
+        }
+        let nodes: Vec<NodeId> = state.images.deferred.keys().copied().collect();
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let checked = state.images.checked_at;
+        drop(state);
+        // Decided once per completed layout (this runs at every microtask checkpoint): the
+        // engine's answers change only when it syncs, and nothing here makes it sync. An image
+        // connected since that layout is not in it: it is fetched as an eager image.
+        let synced = bindings.layout().style().engine_sync_stamp();
+        let stamp_moved = synced != checked;
+        if let Some(mut p) = self.doc_mut(page) {
+            p.images.checked_at = synced;
+        }
+        for node in nodes {
+            let rendered = {
+                let dom = bindings.dom.borrow();
+                if !dom.is_alive(node) {
+                    drop(dom);
+                    if let Some(mut p) = self.doc_mut(page) {
+                        p.images.deferred.remove(&node);
+                    }
+                    continue;
+                }
+                dom.is_connected(node).unwrap_or(false)
+                    && match rendered_as_laid_out(&bindings.layout(), &dom, node) {
+                        Some(rendered) => stamp_moved && rendered,
+                        None => true,
+                    }
+            };
+            if rendered {
+                self.image_event_with(page, node, false);
+            }
+        }
+    }
+
+    /// Remembers the `<object>`/`<embed>` `node`, not fetched while not being rendered.
+    fn note_hidden_object(&self, page: FrameKey, node: NodeId) {
+        if let Some(p) = self.page(page.page) {
+            let mut hidden = p.frames.hidden_objects.borrow_mut();
+            if !hidden.iter().any(|(_, n)| *n == node) {
+                hidden.push((page, node));
+            }
+        }
+    }
+
+    /// HTML runs an `<object>`'s or `<embed>`'s steps again when its rendering changes: those not
+    /// fetched while not being rendered that are rendered now are fetched (`object_event`,
+    /// `embed_event`, which remember them again when they are still not rendered).
+    pub(crate) fn fetch_rendered_objects(&mut self, host: &Rc<crate::frames::FrameHost>) {
+        if host.hidden_objects.borrow().is_empty() {
+            return;
+        }
+        // Decided once per completed layout, never syncing (this runs at every microtask
+        // checkpoint): nothing changes until the engine syncs again.
+        let synced = host.hidden_objects.borrow().first().and_then(|(page, _)| {
+            let bindings = self.doc(*page).and_then(|p| p.main_frame.page_dom.clone())?;
+            let stamp = bindings.layout().style().engine_sync_stamp();
+            Some(stamp)
+        });
+        // An object connected since that layout is not in it: checked (and fetched) now.
+        let unseen = host.hidden_objects.borrow().iter().any(|(page, node)| {
+            self.doc(*page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|b| {
+                let dom = b.dom.borrow();
+                dom.is_connected(*node).unwrap_or(false) && b.layout().style().displayed_as_synced(&dom, *node).is_none()
+            })
+        });
+        if let Some(stamp) = synced {
+            if stamp == host.hidden_checked_at.get() && !unseen {
+                return;
+            }
+            host.hidden_checked_at.set(stamp);
+        }
+        let hidden = std::mem::take(&mut *host.hidden_objects.borrow_mut());
+        for (page, node) in hidden {
+            let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { continue };
+            let (connected, embed, rendered) = {
+                let dom = bindings.dom.borrow();
+                let connected = dom.is_connected(node).unwrap_or(false);
+                let embed = dom.element(node).is_ok_and(|e| &*e.name.local == "embed");
+                (connected, embed, connected && rendered_as_laid_out(&bindings.layout(), &dom, node) != Some(false))
+            };
+            if !connected {
+                continue;
+            }
+            if !rendered {
+                host.hidden_objects.borrow_mut().push((page, node));
+            } else if embed {
+                self.embed_event(page, node);
+            } else {
+                self.object_event(page, node);
+            }
+        }
+    }
+
+    /// `<embed src>` (HTML "the embed element"): a rendered one fetches its `src`; the response's
+    /// Content-Type decides whether it shows a document (a child navigable, which fires its
+    /// `load`), else `load` fires when the fetch is done. An `<embed>` whose `type` or URL already
+    /// names a document is a frame container from the start (frames.rs).
+    pub(crate) fn embed_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let loader = state.main_frame.loader_id.clone();
+        let base = state.main_frame.base_url.clone();
+        let loaded = state.main_frame.loaded;
+        let (connected, src) = {
+            let dom = bindings.dom.borrow();
+            (dom.is_connected(node).unwrap_or(false), dom.get_attribute(node, "src").ok().flatten().map(str::to_owned))
+        };
+        let rendered = connected && {
+            let dom = bindings.dom.borrow();
+            rendered_as_laid_out(&bindings.layout(), &dom, node) != Some(false)
+        };
+        if connected && !rendered && src.is_some() {
+            self.note_hidden_object(page, node);
+        }
+        let source = match src.filter(|_| rendered) {
+            None => Source::None,
+            Some(v) if v.trim().is_empty() => Source::None,
+            Some(v) => {
+                let dom = bindings.dom.borrow();
+                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
+                    .ok()
+                    .and_then(|b| b.join(v.trim()).ok())
+                    // A `javascript:` URL in `src` does nothing (no fetch, no `load`).
+                    .filter(|u| u.scheme() != "javascript")
+                    .map_or(Source::None, |u| Source::Url(u.to_string()))
+            }
+        };
+        drop(state);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false);
+    }
+
+    /// SVG `<image>` (SVG 2 §5.7): a connected one fetches its `href` (or
+    /// `xlink:href`) for its `load` and `error` events, as `<object>` does
+    /// (the renderer draws the image itself). No `href`, no event. Its fetch
+    /// delays the window's `load`. Instances of `<use>` load theirs.
+    pub(crate) fn svg_image_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        let loader = state.main_frame.loader_id.clone();
+        let base = state.main_frame.base_url.clone();
+        let loaded = state.main_frame.loaded;
+        let href = {
+            let dom = bindings.dom.borrow();
+            let connected = dom.is_connected(node).unwrap_or(false)
+                || dom.root_node(node, true).ok().is_some_and(|r| dom.is_connected(r).unwrap_or(false));
+            connected
+                .then(|| {
+                    dom.get_attribute(node, "href")
+                        .ok()
+                        .flatten()
+                        .or_else(|| dom.get_attribute_ns(node, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
+                        .map(str::to_owned)
+                })
+                .flatten()
+        };
+        let source = match href {
+            None => Source::None,
+            Some(v) if v.trim().is_empty() => Source::None,
+            Some(v) => {
+                let dom = bindings.dom.borrow();
+                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
+                    .ok()
+                    .and_then(|b| b.join(v.trim()).ok())
+                    .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
+            }
+        };
+        drop(state);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true);
+    }
+
+    /// Fetches `source` for `node`'s `load` / `error` events only (`<object>`,
+    /// SVG `<image>`): a failed fetch or a non-2xx status is `error`, and with
+    /// `image` so is a body no image decoder takes (an empty one, or a PNG,
+    /// GIF, JPEG or WebP whose header does not parse).
+    #[allow(clippy::too_many_arguments)]
+    fn fetch_for_load_event(
+        &mut self,
+        page: FrameKey,
+        node: NodeId,
+        bindings: &Rc<PageDom>,
+        loader: LoaderId,
+        base: String,
+        loaded: bool,
+        source: Source,
+        image: bool,
+    ) {
+        let bindings = bindings.clone();
+        let Some(state) = self.doc(page) else { return };
+        let current = state.images.entries.get(&node).map(|i| i.url.clone());
+        drop(state);
+        let url = match source {
+            Source::Url(url) if current.as_deref() == Some(url.as_str()) => return,
+            Source::Url(url) => url,
+            Source::None => {
+                self.doc_mut(page).expect("page").images.entries.remove(&node);
+                return;
+            }
+            Source::Invalid => {
+                self.doc_mut(page).expect("page").images.entries.remove(&node);
+                self.image_error_task(page, loader, &bindings, node);
+                return;
+            }
+        };
+        if bindings.dom.borrow_mut().add_ref(node).is_err() {
+            return;
+        }
+        let hold = Rc::new(ResourceNode { dom: bindings.dom.clone(), node });
+        let generation = {
+            let mut guard = self.doc_mut(page).expect("page");
+            let images = &mut guard.images;
+            images.generation += 1;
+            let generation = images.generation;
+            images.entries.insert(
+                node,
+                Image {
+                    _node: Some(hold),
+                    url: url.clone(),
+                    src: String::new(),
+                    density: 1.0,
+                    generation,
+                    pending: true,
+                    blocks_load: !loaded,
+                    cancel: None,
+                    request_state: Default::default(),
+                    outcome: None,
+                },
+            );
+            generation
+        };
+        let weak = Rc::downgrade(&bindings);
+        let finish = move |b: &mut Browser, result: Result<Resource, String>| {
+            let Some(bindings) = weak.upgrade() else { return };
+            b.finish_object(page, &loader, &bindings, node, generation, result, image);
+        };
+        if url.starts_with("blob:") {
+            let ok = bindings.blob_url(&url).is_some();
+            self.scheduler().post(TaskSource::Networking, move |b| {
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Vec::new(), content_disposition: None, header_csp: None, refresh: None, content_language: None, referrer_policy: None, timing: None, partial: None, nosniff: false }) } else { Err("revoked or unknown blob URL".into()) })
+            });
+            return;
+        }
+        let Some(resource_loader) = self.loader_for(page) else {
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+            return;
+        };
+        let frame = self.doc(page).expect("page").main_frame.clone();
+        let request = FetchRequest {
+            post: None,
+            url,
+            kind: ResourceKind::Object,
+            page: page.page,
+            referrer: Some(base),
+            frame_id: Some(frame.id.0.clone()),
+            loader_id: Some(frame.loader_id.0.clone()),
+            crossorigin: None,
+            initiator: Some(pyro_webapi::resource_timing::Initiator::Other),
+            module: None,
+            part: None,
+        };
+        let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
+        if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node))) {
+            image.cancel = cancel;
+        }
+    }
+
+    fn finish_object(
+        &mut self,
+        page: FrameKey,
+        loader: &LoaderId,
+        bindings: &Rc<PageDom>,
+        node: NodeId,
+        generation: u64,
+        result: Result<Resource, String>,
+        image: bool,
+    ) {
+        self.drain_dom_resources(page);
+        let Some(mut state) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
+        let Some(entry) = state.images.entries.get_mut(&node).filter(|i| i.generation == generation && i.pending)
+        else {
+            return;
+        };
+        if let Some(cancel) = entry.cancel.take() {
+            cancel.disarm();
+        }
+        entry.pending = false;
+        let hold = entry._node.take();
+        let url = entry.url.clone();
+        drop(state);
+        // The page's layout engine lays the element out from the same body
+        // (an `<object>` image's size), which it would otherwise fetch on its
+        // own and might not have when `load` fires and scripts measure.
+        if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
+            if let Some(p) = self.page(page.page) {
+                p.frames.layout_bodies.provide(&url, &r.body);
+            }
+        }
+        // HTML "the object element": the response's Content-Type decides what the object shows.
+        // A document gets a child navigable (which loads it and fires the element's `load`), as
+        // when `type` says so.
+        if !image {
+            if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status)) {
+                let essence = r.mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+                // Without a Content-Type, the element's `type` or URL says.
+                let document = if essence.is_empty() {
+                    bindings.dom.borrow().element(node).is_ok_and(pyro_dom::iframe::object_hosts_document)
+                } else {
+                    matches!(essence.as_str(), "text/html" | "application/xhtml+xml")
+                };
+                if document {
+                    // A later fetch of the same URL (after a `type` change) runs again.
+                    if let Some(mut state) = self.doc_mut(page) {
+                        state.images.entries.remove(&node);
+                    }
+                    bindings.dom.borrow_mut().set_object_document(node);
+                    drop(hold);
+                    self.drain_dom_resources(page);
+                    self.maybe_fire_load(page);
+                    return;
+                }
+            }
+        }
+        // An `<embed>` fires `load` once its fetch is done, whatever came back.
+        let embed = !image && bindings.dom.borrow().element(node).is_ok_and(|e| &*e.name.local == "embed");
+        let ok = embed || result.is_ok_and(|r| {
+            (200..300).contains(&r.status)
+                && (!image || {
+                    let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
+                    !body.is_empty()
+                        && (pyro_dom::image::dimensions(body).is_some()
+                            || r.mime == "image/svg+xml"
+                            || body.trim_ascii_start().starts_with(b"<svg")
+                            || !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp"))
+                })
+        });
+        pyro_webapi::lifecycle::resource_loaded(bindings, node, ok);
+        drop(hold);
+        self.maybe_fire_load(page);
     }
 
     fn image_error_task(&self, page: FrameKey, loader: LoaderId, bindings: &Rc<PageDom>, node: NodeId) {

@@ -271,6 +271,15 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
         before: e.before,
         easing: e.easing.clone(),
         composite: composite(e.composite),
+        timeline: e.timeline.map(|t| b::TimelineDriven {
+            index: t.index,
+            iterations: t.iterations,
+            direction: t.direction,
+            fill: t.fill,
+            delay_ms: t.delay_ms,
+            duration_ms: t.duration_ms,
+            pseudo: t.pseudo,
+        }),
     };
     frame
         .elements
@@ -283,6 +292,10 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
                     animations: el.animations.iter().map(effect).collect(),
                     current: el.current.iter().map(effect).collect(),
                     marker: el.marker.iter().map(effect).collect(),
+                    pseudos: std::array::from_fn(|i| b::PseudoEffects {
+                        transitions: el.pseudos[i].transitions.iter().map(effect).collect(),
+                        animations: el.pseudos[i].animations.iter().map(effect).collect(),
+                    }),
                 },
             )
         })
@@ -418,6 +431,8 @@ impl BlitzGeometry {
             content_language: dom.content_language(style.document()).map(str::to_owned),
             selection: None,
             highlights: Vec::new(),
+            control_selection: None,
+            selected_replaced: Vec::new(),
         };
         if let Some(t) = t {
             SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
@@ -734,7 +749,13 @@ impl GeometrySource for BlitzGeometry {
     fn fonts_pending(&self) -> bool {
         let loader = self.loader.borrow();
         let Some(loader) = loader.as_ref() else { return false };
+        let asked = loader.asked_fonts();
         let bodies = loader.bodies().lock();
+        // pyro: only the fonts this document asked for (another page of the identity may have one
+        // in flight that this document does not use).
+        if let Some(asked) = asked {
+            return asked.iter().any(|url| bodies.get(url).is_some_and(|body| body.is_empty()));
+        }
         // An empty entry is a load in flight (`LocalFiles::network`); a failed one is removed.
         bodies.iter().any(|(url, body)| {
             body.is_empty() && {
@@ -744,12 +765,26 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn font_url_state(&self, url: &str) -> Option<bool> {
+        let loader = self.loader.borrow();
+        let bodies = loader.as_ref()?.bodies().lock();
+        bodies.get(url).map(|body| !body.is_empty())
+    }
+
     fn sync(&self, dom: &Dom, layout: &Layout) {
         let t = profile::on().then(Instant::now);
         self.sync_inner(dom, layout.style(), false);
         if let Some(t) = t {
             profile::add(0, t.elapsed());
         }
+    }
+
+    fn set_scroll(&self, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                r.get_or_insert_with(Renderer::new).set_timeline_scroll(self.page, elements, viewport);
+            }
+        });
     }
 
     fn sync_styles(&self, dom: &Dom, style: &StyleEngine) {
@@ -905,7 +940,7 @@ impl GeometrySource for BlitzGeometry {
 
     fn take_style_changes(
         &self,
-    ) -> Vec<(u64, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
+    ) -> Vec<(u64, u8, style::servo_arc::Arc<style::properties::ComputedValues>, style::servo_arc::Arc<style::properties::ComputedValues>)>
     {
         RENDERER.with(|r| {
             r.try_borrow_mut()
@@ -915,6 +950,16 @@ impl GeometrySource for BlitzGeometry {
                 .map(|r| r.take_style_changes(self.page))
                 .unwrap_or_default()
         })
+    }
+
+    fn timeline_state(
+        &self,
+        source: Option<u64>,
+        subject: Option<u64>,
+        axis: u8,
+        inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.timeline_state(self.page, source, subject, axis, inset))
     }
 
     fn element_pseudo_style(

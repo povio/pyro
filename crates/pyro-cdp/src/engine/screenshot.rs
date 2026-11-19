@@ -387,6 +387,8 @@ impl EngineHost {
                     ranges: ranges.into_iter().map(|(start, end)| pyro_render::TextSelection { start, end }).collect(),
                 })
                 .collect(),
+            control_selection: s.control_selection,
+            selected_replaced: s.selected_replaced,
         })
     }
 

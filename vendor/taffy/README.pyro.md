@@ -312,9 +312,14 @@ Upstream's float and block-formatting-context fixes since v0.15.1 (#1384, #1385,
   margins to apply as if there were none (WPT `zero-width-floats`); beside a float of some width a zero-width float
   absorbs its side's margin, as before (WPT `zero-width-floats-positioning.tentative`).
 
-Not done: the browsers' rule that an auto width's negative margins do not widen the band it must fit in (WPT
-`floats-wrap-bfc-with-margin-001`, which every browser passes) contradicts `floats-wrap-bfc-with-margin-006/007.tentative`
-(every browser fails them, pyro passed them), so the band still widens by them. Nor `max-height` separating a
+Beside a float, negative margins on a side with no float no longer widen the band (`find_bfc_slot`): the box is no
+wider than the band, and one that they make wider moves down (Chromium, measured; WPT `floats-wrap-bfc-with-margin-001`,
+`-001a`, `-002`, which every browser passes). This loses `floats-wrap-bfc-with-margin-006/007.tentative`, which assert the
+opposite and every browser fails (`crates/pyro-render/tests/floats.rs`). The side with no float is bounded by the
+containing block alone: its segment inset (a float that ended, in another container) is no edge (pyro-layout
+`flow::floats_like_chromium`, `#c6`).
+
+Not done: `max-height` separating a
 last child's bottom margin (WPT `max-height-separates-margin`, Chromium and Gecko): `margin-collapse-038` (Safari only,
 which pyro passes) expects the margins to collapse. Covered by `crates/pyro-render/tests/floats.rs`.
 
@@ -372,9 +377,13 @@ grid container in flow with neither layout nor paint containment, in its parent'
   nested subgrids too), each with that margin, border and padding at the subgrid's edges and that half gap difference
   elsewhere as an extra margin (`GridItem::extra_margin`). The subgrid itself takes no part in sizing in its subgridded
   axes (`GridItem::excluded`); a virtual item takes none in the axes its subgrid has tracks of its own. Where no item of
-  the subgrid lies at an edge, the items at the edge-most occupied track are also given stretched to it with the edge's
-  margin, border and padding; an empty subgrid gives an item of no size spanning its tracks with them at both edges (as
-  Blink, WPT `subgrid-no-items-on-edges-001`). The virtual items are dropped before the items are positioned;
+  the subgrid lies at an edge (or it has none), an item of no size in its edge track alone carries the edge's margin,
+  border and padding, so the empty tracks between it and the edge-most item stay empty (as Blink, measured: WPT
+  `subgrid-no-items-on-edges-001`, `subgrid/grid-gap-002`, `orthogonal-writing-mode-002`, `-003`;
+  `crates/pyro-render/tests/subgrid_edge_tracks.rs`). A percentage gap of the subgrid counts as zero for its parent's
+  track sizing and resolves against the subgrid's content box once the parent's tracks give it
+  (`update_subgrid_track_sizes`; Blink, measured: items may overflow; WPT `subgrid/grid-gap-008`). The virtual items
+  are dropped before the items are positioned;
 - stretches the subgrid in its subgridded axes, whatever its alignment, size, minimum and maximum size and aspect ratio.
 
 The subgrid's own layout places its items as the grid placed them for sizing (`place_subgrid_items`): the spanned
@@ -558,7 +567,11 @@ Column-only subgrids (css-grid-2 §9 standalone axis): a subgrid in its columns 
 (`SubgridContext::own_rows`, `subgrid::record_own_rows`); before sizing its columns the parent lays out its
 column-only subgrid children at their definite (else max-content) height and gives their items the rows they span
 (`resolve_standalone_heights`, `GridItem::standalone_size.height`), so an orthogonal item's width follows its row
-(WPT `subgrid/standalone-axis-size-010`). Nested ones still see the rows of their last measure.
+(WPT `subgrid/standalone-axis-size-010`). A subgrid stretched over rows of fixed sizes is measured at their height,
+so a nested one sizes its own rows in what it gets (`-011`). The items of a nested subgrid in both its axes (no tracks
+of its own) belong to its parent subgrid's tracks, their owner lines shifted to where it lies there
+(`collect_virtual_items`), so they and chains of such subgrids reach the subgrid with rows of its own (`-012`, `-013`).
+`crates/pyro-render/tests/subgrid_edge_tracks.rs`.
 
 
 **Flex content sizes (lane FO).** A block's content size (`SizingMode::ContentSize`) ignores its own `min-width`,
@@ -668,3 +681,16 @@ item without its content-based height (no definite basis or height, no growing) 
   physical left (line-under).
 - Flexbox: `baseline` items in an rtl column share a baseline at their line-left edges, their group at the cross
   start (`max_baseline_cross` in `align_flex_items_along_cross_axis`; WPT `flexbox-align-self-vert-rtl-001..003,005`).
+- `compute/grid/track_sizing.rs` (`track_sizing_algorithm`, round 4 lane G): a percentage gutter resolves against the
+  container's size alone; track percentages keep the minimum size as a fallback basis. While an inline grid with
+  only a `min-width` sizes itself its percentage gap counts as zero, then overflows (Chromium, measured; WPT css-grid
+  `subgrid/grid-gap-003`; `crates/pyro-render/tests/subgrid_edge_tracks.rs`).
+- Lane F1 (CSS Shapes), `compute/float.rs` + `compute/block.rs` + `tree/traits.rs`: a float's `shape-outside` float area. `Segment::shape` holds the insets line boxes take where a float's area leaves them more room than its margin box. `FloatContext::shape_float` / `BlockContext::place_shaped_floated_box` set them from rows of the margin box with the area's horizontal extent (`LayoutBlockContainer::float_shape_bands`, implemented by blitz-dom). `find_content_slot` reads them; floats are still placed by margin boxes (CSS Shapes 1 § 3).
+
+## Content-derived abspos heights are not definite (WPT round 4, lane S1)
+
+`src/compute/oof.rs` (`height_is_definite`): an absolutely positioned box is laid out with its final size as known
+dimensions, but its height is definite (`LayoutInput::known_dimensions_are_definite`) only when it was known before
+its content was measured (its `height`, both insets, a ratio); one its content gives leaves its children's percentage
+heights `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`). Covered by
+`crates/pyro-render/tests/abspos_percentage_heights.rs`.

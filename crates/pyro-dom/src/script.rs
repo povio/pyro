@@ -68,18 +68,32 @@ pub enum ResourceKind {
     StyleText,
     Iframe,
     Img,
+    /// `<object data>`: fetched for its `load`/`error` events (the renderer draws the content).
+    Object,
+    /// `<embed src>`: fetched for its `load` event and, by its response's Content-Type, whether it
+    /// shows a document (a child navigable).
+    Embed,
     /// `<link rel=modulepreload>` / `<link rel=preload>`: fetched ahead, with
     /// `load`/`error` on the link (bundlers' preload helpers await them).
     Preload,
     /// `<meta http-equiv=refresh>`: its insertion schedules a declarative
     /// refresh (the loader handles `Connected` events only).
     Meta,
+    /// SVG `<use>`: (re)builds its shadow tree of clones of the element its
+    /// `href` names (the bindings' `svg_use`).
+    SvgUse,
+    /// SVG `<image>`: fetched for its `load`/`error` events (the renderer
+    /// draws the image itself).
+    SvgImage,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ResourceReason {
     Connected,
     AttrChanged,
+    /// An `<img>`'s `src` or `srcset` was set (even to its value): HTML "update the image data"
+    /// restarts the request (a relevant mutation).
+    SourceChanged,
     Removed,
     ChildrenChanged,
 }
@@ -95,6 +109,9 @@ pub struct ResourceEvent {
 pub(crate) struct ResourceQueue {
     pub(crate) enabled: bool,
     pub(crate) events: Vec<ResourceEvent>,
+    /// Each `<style>`'s count of children changes (HTML: each one replaces its CSS style sheet
+    /// object, also when its text stays the same).
+    pub(crate) sheet_generations: rustc_hash::FxHashMap<NodeId, u32>,
 }
 
 impl Dom {
@@ -112,6 +129,9 @@ impl Dom {
     /// connected document's would: the loader resolves each event's document
     /// when it handles it, after the parsed nodes moved to their real one.
     fn connected_for_resources(&self, i: u32) -> bool {
+        // Nothing in a `<use>` instance loads or runs (SVG 2: its scripts do
+        // not execute; it is not a document tree of its own).
+        // (`push_resource` keeps a `<use>` instance's resources from loading.)
         self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)
     }
 
@@ -134,6 +154,12 @@ impl Dom {
         let e = self.n(idx).element()?;
         if e.name.ns == ns!(svg) && e.name.local == local_name!("script") {
             return Some(ResourceKind::Script);
+        }
+        if e.name.ns == ns!(svg) && e.name.local == local_name!("use") {
+            return Some(ResourceKind::SvgUse);
+        }
+        if e.name.ns == ns!(svg) && e.name.local == local_name!("image") {
+            return Some(ResourceKind::SvgImage);
         }
         if !e.is_html() {
             return None;
@@ -158,6 +184,8 @@ impl Dom {
             }
             local_name!("iframe") | local_name!("frame") => ResourceKind::Iframe,
             local_name!("img") => ResourceKind::Img,
+            local_name!("object") if e.is_html() => ResourceKind::Object,
+            local_name!("embed") if e.is_html() => ResourceKind::Embed,
             // HTML: a refresh pragma acts when inserted into the document
             // tree (connected, not in a shadow tree), decided here because
             // the loader may see the event after the meta was removed.
@@ -308,7 +336,11 @@ impl Dom {
         if matches!(local, "name" | "content") && self.is_html_meta(idx) {
             self.process_viewport_meta(idx);
         }
-        let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled");
+        // An `<img>`'s CORS settings and referrer policy are relevant mutations too (HTML "update
+        // the image data" restarts with them).
+        let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled" | "data")
+            || (matches!(local, "crossorigin" | "referrerpolicy" | "loading")
+                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img")));
         if !relevant {
             return;
         }
@@ -317,10 +349,12 @@ impl Dom {
             // it is connected (`new Image()`, a tree built before insertion).
             // The loader drops events of a document without a browsing
             // context (template contents, createHTMLDocument).
-            if matches!(local, "src" | "srcset")
+            if matches!(local, "src" | "srcset" | "loading")
                 && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img"))
             {
-                self.push_resource(idx, ResourceKind::Img, ResourceReason::AttrChanged);
+                let reason =
+                    if local == "loading" { ResourceReason::AttrChanged } else { ResourceReason::SourceChanged };
+                self.push_resource(idx, ResourceKind::Img, reason);
             }
             return;
         }
@@ -328,7 +362,12 @@ impl Dom {
             if k == ResourceKind::Script && !script_src {
                 return;
             }
-            self.push_resource(idx, k, ResourceReason::AttrChanged);
+            let reason = if k == ResourceKind::Img && matches!(local, "src" | "srcset") {
+                ResourceReason::SourceChanged
+            } else {
+                ResourceReason::AttrChanged
+            };
+            self.push_resource(idx, k, reason);
         } else if local == "rel" {
             // rel removed "stylesheet": the old sheet must go.
             if self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("link")) {
@@ -347,6 +386,12 @@ impl Dom {
         if let Ok(i) = self.check(img) {
             self.push_resource(i, ResourceKind::Img, ResourceReason::AttrChanged);
         }
+    }
+
+    /// How many times the `<style>` `node`'s children changed (its CSS style sheet object is
+    /// replaced each time).
+    pub fn style_sheet_generation(&self, node: NodeId) -> u32 {
+        self.resources.sheet_generations.get(&node).copied().unwrap_or(0)
     }
 
     pub(crate) fn resources_after_text(&mut self, text_node: u32) {
@@ -382,7 +427,16 @@ impl Dom {
     }
 
     pub(crate) fn push_resource(&mut self, idx: u32, kind: ResourceKind, reason: ResourceReason) {
+        // Nothing in a `<use>` instance loads or runs but an SVG `<image>`,
+        // as in browsers (its `load`/`error` reach the instance's clone).
+        if kind != ResourceKind::SvgImage && self.n(idx).in_shadow_tree() && self.in_ua_shadow_tree(idx) {
+            return;
+        }
         let ev = ResourceEvent { node: self.id_of(idx), kind, reason };
+        if kind == ResourceKind::StyleText && reason == ResourceReason::ChildrenChanged {
+            let generation = self.resources.sheet_generations.entry(ev.node).or_default();
+            *generation = generation.wrapping_add(1);
+        }
         // Coalesce consecutive duplicates (e.g. many text appends to one <style>).
         if self.resources.events.last() != Some(&ev) {
             self.add_ref(ev.node).expect("live resource node");
@@ -409,7 +463,8 @@ impl Dom {
         let i = self.check(script)?;
         let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
         let ty = e.attr_local(&local_name!("type"));
-        let lang = e.attr_local(&local_name!("language"));
+        // `language` is an attribute of HTML's `<script>` only: an SVG one ignores it.
+        let lang = if e.is_html() { e.attr_local(&local_name!("language")) } else { None };
         let kind = match ty {
             Some(t) if !t.is_empty() => {
                 let t = t.trim().to_ascii_lowercase();
@@ -483,5 +538,31 @@ impl Dom {
         let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         e.flags &= !element_flags::PARSER_INSERTED;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod language_attribute_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::ScriptKind;
+    use crate::parse::{parse_document, DomRef};
+    use crate::Dom;
+
+    /// `language` makes an HTML `<script>` a data block, never an SVG one
+    /// (html/semantics/scripting-1/the-script-element/script-type-and-language-js-svg.svg).
+    #[test]
+    fn only_html_scripts_read_language() {
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><script id=h language=javascript1.9></script><svg><script id=s language=javascript1.9></script></svg>",
+        );
+        let dom = dom_ref.borrow();
+        let kind = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().kind;
+        assert_eq!(kind("h"), ScriptKind::Data);
+        assert_eq!(kind("s"), ScriptKind::Classic);
     }
 }

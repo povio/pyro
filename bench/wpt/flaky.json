@@ -1,6 +1,9 @@
 {
  "//": "What the WPT gate does not check, each with its reason (README.md). Keys are page URLs, or patterns where * matches anything. An entry is the whole page ({reason}), some subtests ({reason, subtests: [names]}), or only the page's completion ({reason, allowIncomplete: true}). Adding or widening an entry needs the wpt-accept-loss label.",
  "tests": {
+  "navigation-api/navigation-methods/navigate-replace-cross-document.html": {
+   "reason": "Timing: the iframe's replace navigation passed in one of two gate runs of one binary and in 4 of 4 runs alone (lane F3b, 2026-11-18); a race between the navigation's commit and the iframe's load event, not found yet"
+  },
   "css/selectors/focus-within-009.html": {
    "reason": "Timing: passes when the page runs alone (4 of 4 runs) and fails in full runs under load (4 of 4), fork JavaScriptCore at 7e68",
    "subtests": ["Move 'target1' in 'container2'"]

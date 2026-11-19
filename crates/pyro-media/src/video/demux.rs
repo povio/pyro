@@ -169,11 +169,14 @@ fn mp4_track(file: &[u8], trak: &[u8], mdia: &[u8], movie_scale: Option<u32>) ->
     let count = dts.len();
     let mut cts = vec![0i64; count];
     if let Some(ctts) = child(stbl, b"ctts") {
-        let signed = ctts.first() == Some(&1);
+        // Offsets are signed in either version: files with a version 0 box and negative offsets
+        // are common (WPT `media/white.mp4`: -200, -100), and FFmpeg (Chromium's demuxer) reads
+        // them as signed 32-bit values too. Read unsigned, a negative offset ordered its frame
+        // past the end, and no frame after the first decoded.
         let mut at = 0usize;
         for i in 0..be32(ctts, 4)? as usize {
             let (n, off) = (be32(ctts, 8 + i * 8)?, be32(ctts, 12 + i * 8)?);
-            let off = if signed { i64::from(off as i32) } else { i64::from(off) };
+            let off = i64::from(off as i32);
             for _ in 0..n {
                 if let Some(c) = cts.get_mut(at) {
                     *c = off;

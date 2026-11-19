@@ -56,6 +56,9 @@ use crate::node::{NodeId, NodeKind, NIL};
 /// (StyleManager.zig:1998).
 pub const DEFAULT_FONT_SIZE: f64 = 16.0;
 
+/// The id of the sheet of script-added font faces among the document's adopted sheets.
+const SCRIPT_FONTS_SHEET: u64 = u64::MAX;
+
 // ---------------------------------------------------------------------------
 // Values
 // ---------------------------------------------------------------------------
@@ -71,7 +74,7 @@ pub enum Display {
 }
 
 /// The tree-abiding pseudo-elements the style engine computes styles for.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PseudoElement {
     Before,
     After,
@@ -848,6 +851,8 @@ pub struct StyleEngine {
     /// for the [`StyleEngine::author_sheets_key`] (and the unregistered
     /// `<style>` elements, with their text revisions) they were read at.
     timing_rules: RefCell<Option<(AuthorSheetsKey, Vec<(NodeId, u64)>, Rc<crate::timing::TimingRules>)>>,
+    /// [`StyleEngine::unregistered_style_elements`] as of a DOM version and sheet generation.
+    unregistered: RefCell<Option<(u64, (u64, usize), Vec<NodeId>)>>,
     /// Sheet revisions handed out so far.
     revisions: u64,
     /// Called before the layout engine computes styles anew (CSS rule
@@ -877,6 +882,9 @@ pub struct StyleEngine {
     adopted: std::collections::BTreeMap<NodeId, Vec<u64>>,
     /// The text of each adopted constructed sheet.
     constructed: rustc_hash::FxHashMap<u64, Rc<str>>,
+    /// The `@font-face` rules of the faces scripts added to `document.fonts` (CSS Font Loading),
+    /// applied as a sheet the document adopts ahead of its own adopted sheets.
+    script_fonts: Option<Rc<str>>,
     /// The document's `CSS.registerProperty()` registrations, in order.
     registered_properties: Vec<RegisteredProperty>,
 }
@@ -935,6 +943,7 @@ impl StyleEngine {
             active_styled: Cell::new(true),
             gecko_rules: RefCell::new(None),
             timing_rules: RefCell::new(None),
+            unregistered: RefCell::new(None),
             revisions: 0,
             track_style_changes: Cell::new(false),
             animation_source: RefCell::new(None),
@@ -946,6 +955,7 @@ impl StyleEngine {
             registered_properties: Vec::new(),
             adopted: Default::default(),
             constructed: Default::default(),
+            script_fonts: None,
             recalc_hook: RefCell::new(None),
             recalc_hooked_at: Cell::new(None),
         }
@@ -979,7 +989,13 @@ impl StyleEngine {
         el: NodeId,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         self.owns(dom, el)?;
-        self.external_style(dom, el)
+        let style = self.external_style(dom, el)?;
+        // A visited link and its contents report their unvisited colours, as Chromium (the
+        // engine paints the visited ones; stylo `ComputedValues::pyro_unvisited_view`).
+        Some(match style.pyro_unvisited_view() {
+            Some(view) => style::servo_arc::Arc::new(view),
+            None => style,
+        })
     }
 
     /// Whether the layout engine records the elements whose computed style a
@@ -1034,6 +1050,17 @@ impl StyleEngine {
         source.transition_value(el, longhand)
     }
 
+    /// [`Self::transition_value`] of `el`'s `::before`/`::after`.
+    pub fn pseudo_transition_value(
+        &self,
+        el: NodeId,
+        pseudo: PseudoElement,
+        longhand: &str,
+    ) -> Option<crate::animation::TransitionValue> {
+        let source = self.animation_source.try_borrow().ok()?.clone()?;
+        source.pseudo_transition_value(el, pseudo, longhand)
+    }
+
     /// Runs `f` with `style` standing for `el`'s computed style (`stylo_style`); `None` while
     /// another override runs.
     pub fn with_style_override<R>(
@@ -1056,6 +1083,21 @@ impl StyleEngine {
         self.style_override.borrow().is_some()
     }
 
+    /// A script scroll or view progress timeline's state as of the layout engine's last sync (no sync
+    /// now: the animated values of a sync read it): scroll offset, start and end offsets.
+    pub fn timeline_state(
+        &self,
+        source: Option<NodeId>,
+        subject: Option<NodeId>,
+        axis: u8,
+        inset: [(u8, f64); 2],
+    ) -> Option<(f64, f64, f64)> {
+        let external = self.external.borrow();
+        let (engine, _) = external.as_ref()?;
+        let key = crate::snapshot::render_key;
+        engine.timeline_state(source.map(key), subject.map(key), axis, inset).map(|(o, s, e, ..)| (o, s, e))
+    }
+
     /// The animated values for a sync of the layout engine, now; `None`
     /// without an animation source.
     pub fn take_animation_frame(&self) -> Option<crate::animation::AnimationFrame> {
@@ -1073,16 +1115,21 @@ impl StyleEngine {
     pub fn take_style_changes(
         &self,
         dom: &Dom,
-    ) -> Vec<(NodeId, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
+    ) -> Vec<(NodeId, Option<PseudoElement>, crate::timing::StyleSnapshot, crate::timing::StyleSnapshot)> {
         let external = self.external.borrow();
         let Some((source, _)) = &*external else { return Vec::new() };
         source
             .take_style_changes()
             .into_iter()
-            .filter_map(|(key, before, after)| {
+            .filter_map(|(key, pseudo, before, after)| {
                 let el = crate::geometry::node_of(dom, key)?;
                 self.owns(dom, el)?;
-                Some((el, before, after))
+                let pseudo = match pseudo {
+                    1 => Some(PseudoElement::Before),
+                    2 => Some(PseudoElement::After),
+                    _ => None,
+                };
+                Some((el, pseudo, before, after))
             })
             .collect()
     }
@@ -1188,6 +1235,35 @@ impl StyleEngine {
         }
     }
 
+    /// Whether the layout engine's last sync answers for `dom` as it is now: a style or geometry
+    /// query then syncs nothing.
+    pub fn engine_current(&self, dom: &Dom) -> bool {
+        if self.external_syncing.get() {
+            return false;
+        }
+        let stamp = self.observation_stamp(dom);
+        let external = self.external.borrow();
+        external.as_ref().is_some_and(|(source, at)| *at == Some(stamp) && !source.stale() && !self.animations_changed())
+    }
+
+    /// The stamp of the layout engine's last sync (`None` before the first).
+    pub fn engine_sync_stamp(&self) -> Option<(u64, u64, u32, u32)> {
+        self.external.borrow().as_ref()?.1
+    }
+
+    /// [`Self::engine_displayed`] as of the engine's last sync, never syncing: `None` when the
+    /// engine has not seen `el` (inserted since), or cannot tell.
+    pub fn displayed_as_synced(&self, dom: &Dom, el: NodeId) -> Option<bool> {
+        self.owns(dom, el)?;
+        if self.external_syncing.get() {
+            return None;
+        }
+        let external = self.external.borrow();
+        let (source, at) = external.as_ref()?;
+        at.as_ref()?;
+        source.element_displayed(crate::snapshot::render_key(el))
+    }
+
     /// Brings the layout engine's styles up to `dom` (layout is left to the
     /// next geometry query); the stamp they answer for, `None` when
     /// there are no computed styles (no engine, or it is inactive or syncing).
@@ -1196,6 +1272,7 @@ impl StyleEngine {
             return None;
         }
         let stamp = self.observation_stamp(dom);
+        let mut skip = false;
         let source = {
             let external = self.external.borrow();
             let (source, at) = external.as_ref()?;
@@ -1205,8 +1282,23 @@ impl StyleEngine {
             if !source.active() {
                 return None;
             }
+            // pyro: only nodes outside the document changed (`Dom::only_detached_changes_since`):
+            // their styles and boxes are not the engine's, nothing to sync.
+            if let Some((v0, g0, f0, h0)) = *at {
+                skip = v0 != stamp.0
+                    && (g0, f0, h0) == (stamp.1, stamp.2, stamp.3)
+                    && !source.stale()
+                    && !self.animations_changed()
+                    && dom.only_detached_changes_since(v0);
+            }
             source.clone()
         };
+        if skip {
+            if let Some((_, at)) = self.external.borrow_mut().as_mut() {
+                *at = Some(stamp);
+            }
+            return Some(stamp);
+        }
         self.before_recalc(dom);
         self.external_syncing.set(true);
         source.sync_styles(dom, self);
@@ -1464,21 +1556,30 @@ impl StyleEngine {
     /// is its child text content (HTML: "the child text content of the style
     /// element"), not the text of deeper descendants.
     pub fn for_each_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(&str)) {
+        self.for_each_author_sheet_owned(dom, &mut |_, text| f(text));
+    }
+
+    /// [`StyleEngine::for_each_author_sheet`] with each sheet's owner node (`None`: an adopted or
+    /// script-font sheet).
+    pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             match &sheet.source {
-                SheetSource::Text(text) => f(text),
-                SheetSource::StyleElement => f(&dom.child_text_content(sheet.owner)),
+                SheetSource::Text(text) => f(Some(sheet.owner), text),
+                SheetSource::StyleElement => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
             }
+        }
+        if let Some(text) = &self.script_fonts {
+            f(None, text);
         }
         for (scope, ids) in &self.adopted {
             if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
                 continue;
             }
             for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
-                f(text);
+                f(None, text);
             }
         }
     }
@@ -1487,7 +1588,7 @@ impl StyleEngine {
     /// document or a shadow root).
     pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
@@ -1497,6 +1598,9 @@ impl StyleEngine {
                 SheetSource::StyleElement => f(scope, &dom.child_text_content(sheet.owner)),
             }
         }
+        if let Some(text) = &self.script_fonts {
+            f(self.doc, text);
+        }
         for (scope, ids) in &self.adopted {
             if !dom.is_alive(*scope) || !dom.is_connected(*scope).unwrap_or(false) {
                 continue;
@@ -1504,6 +1608,15 @@ impl StyleEngine {
             for text in ids.iter().filter_map(|id| self.constructed.get(id)) {
                 f(*scope, text);
             }
+        }
+    }
+
+    /// The `@font-face` rules of the faces scripts added to `document.fonts` (`None`: none).
+    pub fn set_script_fonts(&mut self, text: Option<Rc<str>>) {
+        if self.script_fonts != text {
+            self.script_fonts = text;
+            // Rendered as an adopted sheet, which the render delta does not track: a whole sync.
+            self.invalidate();
         }
     }
 
@@ -1539,13 +1652,15 @@ impl StyleEngine {
 
     /// The constructed sheets (id and text) `scope` adopts, in order.
     pub fn adopted_sheets(&self, scope: NodeId) -> Vec<(u64, Rc<str>)> {
-        let Some(ids) = self.adopted.get(&scope) else { return Vec::new() };
-        ids.iter().filter_map(|id| Some((*id, self.constructed.get(id)?.clone()))).collect()
+        let fonts = self.script_fonts.as_ref().filter(|_| scope == self.doc).map(|t| (SCRIPT_FONTS_SHEET, t.clone()));
+        let Some(ids) = self.adopted.get(&scope) else { return fonts.into_iter().collect() };
+        fonts.into_iter().chain(ids.iter().filter_map(|id| Some((*id, self.constructed.get(id)?.clone())))).collect()
     }
 
-    /// Whether any document or shadow root adopts a constructed sheet.
+    /// Whether any document or shadow root adopts a constructed sheet (or the document has
+    /// script-added font faces).
     pub fn has_adopted(&self) -> bool {
-        !self.adopted.is_empty()
+        !self.adopted.is_empty() || self.script_fonts.is_some()
     }
 
     /// A key that changes when the author sheets' texts may have: the sheet
@@ -1895,15 +2010,28 @@ impl StyleEngine {
 
     /// The document's HTML `<style>` elements no sheet is registered for yet, in tree order.
     fn unregistered_style_elements(&self, dom: &Dom) -> Vec<NodeId> {
+        // pyro: asked on every transition/animation property read (`timing_value`) while resource
+        // events wait; the walk over the document is kept per DOM version and sheet generation,
+        // and across changes made only outside the document (a screenshot library styling clones).
+        let (version, generation) = (dom.version(), (self.generation, self.sheets.len()));
+        if let Some((v, g, list)) = self.unregistered.borrow_mut().as_mut() {
+            if *g == generation && (*v == version || dom.only_detached_changes_since(*v)) {
+                *v = version;
+                return list.clone();
+            }
+        }
         let Ok(desc) = dom.descendants(self.doc) else { return Vec::new() };
-        desc.filter(|&n| {
-            dom.node(n)
-                .ok()
-                .and_then(|n| n.element())
-                .is_some_and(|e| e.is_html() && e.name.local == local_name!("style"))
-                && !self.sheets.iter().any(|s| s.owner == n)
-        })
-        .collect()
+        let list: Vec<NodeId> = desc
+            .filter(|&n| {
+                dom.node(n)
+                    .ok()
+                    .and_then(|n| n.element())
+                    .is_some_and(|e| e.is_html() && e.name.local == local_name!("style"))
+                    && !self.sheets.iter().any(|s| s.owner == n)
+            })
+            .collect();
+        *self.unregistered.borrow_mut() = Some((version, generation, list.clone()));
+        list
     }
 
     /// `getComputedStyle` of the transition and animation properties the
@@ -1911,6 +2039,12 @@ impl StyleEngine {
     /// the layout engine's cascade has them all `none` (its animation engine
     /// stays off). `None` for other properties.
     pub fn timing_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        self.timing_value_for(dom, el, None, name)
+    }
+
+    /// [`Self::timing_value`] of `el`'s `pseudo` (`getComputedStyle(el, '::before')`; `None`: of
+    /// `el`).
+    pub fn timing_value_for(&self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, name: &str) -> Option<String> {
         if !(name.contains("transition") || name.contains("animation")) {
             return None;
         }
@@ -1918,7 +2052,7 @@ impl StyleEngine {
         // A style flush first: it registers the `<style>` sheets inserted since.
         self.engine_styled(dom)?;
         let style_of = |e: NodeId| self.stylo_style(dom, e);
-        self.timing_rules(dom).computed_value(dom, el, name, &style_of)
+        self.timing_rules(dom).computed_value_for(dom, el, pseudo, name, &style_of)
     }
 
     /// A property the engine's Stylo does not parse ([`crate::gecko_only`]),
@@ -2245,4 +2379,14 @@ pub(crate) fn ua_display(tag: &str) -> &'static str {
         "button" | "input" | "select" | "textarea" | "meter" | "progress" => "inline-block",
         _ => "inline",
     }
+}
+
+/// Whether `owner` is an HTML `<link>` whose `rel` no longer says `stylesheet`: its sheet goes at
+/// once (HTML: the link stops creating an external resource link), before the loader hears of it.
+fn link_not_stylesheet(dom: &Dom, owner: NodeId) -> bool {
+    dom.element(owner).is_ok_and(|e| {
+        e.is_html()
+            && &*e.name.local == "link"
+            && !e.attr("rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+    })
 }

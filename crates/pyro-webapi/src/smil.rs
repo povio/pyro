@@ -46,6 +46,83 @@ pub(crate) struct Animate {
 #[derive(Default)]
 pub(crate) struct Cache {
     read: RefCell<Option<(u64, Rc<Vec<Animate>>)>>,
+    /// `SVGSVGElement` time control (`setCurrentTime`, `pauseAnimations`), of
+    /// the document's one SMIL clock (SVG gives each outermost `<svg>` its
+    /// own; pyro's animations all run on the document's).
+    seek: std::cell::Cell<Seek>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Seek {
+    /// Added to the time since the load event.
+    offset_ms: f64,
+    /// The time the clock stopped at (`pauseAnimations`).
+    paused_ms: Option<f64>,
+    /// Bumped by each change, a change of the frame (`version`).
+    generation: u64,
+}
+
+/// The document's SMIL time at page time `now` (ms): since the load event,
+/// moved by `setCurrentTime`, held by `pauseAnimations`. `None` before the
+/// load event (unless set while paused).
+fn document_time(page: &PageDom, now: f64) -> Option<f64> {
+    let seek = page.animation_events.smil.seek.get();
+    if let Some(paused) = seek.paused_ms {
+        return Some(paused);
+    }
+    page.timing().load_start.map(|load| now - load + seek.offset_ms)
+}
+
+/// `SVGSVGElement.getCurrentTime()`, in seconds.
+pub(crate) fn current_time(page: &PageDom) -> f64 {
+    let now = page.timeline_now_ms();
+    let seek = page.animation_events.smil.seek.get();
+    match document_time(page, now) {
+        Some(t) => t / 1000.0,
+        // Before the load event the clock is at its offset.
+        None => seek.offset_ms / 1000.0,
+    }
+}
+
+/// `SVGSVGElement.setCurrentTime(seconds)`.
+pub(crate) fn set_current_time(page: &PageDom, seconds: f64) {
+    let target = seconds.max(0.0) * 1000.0;
+    let now = page.timeline_now_ms();
+    let cell = &page.animation_events.smil.seek;
+    let mut seek = cell.get();
+    match (seek.paused_ms, page.timing().load_start) {
+        (Some(_), _) => seek.paused_ms = Some(target),
+        (None, Some(load)) => seek.offset_ms = target - (now - load),
+        (None, None) => seek.offset_ms = target,
+    }
+    seek.generation = seek.generation.wrapping_add(1);
+    cell.set(seek);
+}
+
+/// `pauseAnimations()` (`true`) and `unpauseAnimations()` (`false`).
+pub(crate) fn set_paused(page: &PageDom, paused: bool) {
+    let now = page.timeline_now_ms();
+    let cell = &page.animation_events.smil.seek;
+    let current = document_time(page, now);
+    let mut seek = cell.get();
+    match (paused, seek.paused_ms) {
+        (true, None) => seek.paused_ms = Some(current.unwrap_or(seek.offset_ms)),
+        (false, Some(at)) => {
+            seek.paused_ms = None;
+            seek.offset_ms = match page.timing().load_start {
+                Some(load) => at - (now - load),
+                None => at,
+            };
+        }
+        _ => return,
+    }
+    seek.generation = seek.generation.wrapping_add(1);
+    cell.set(seek);
+}
+
+/// `animationsPaused()`.
+pub(crate) fn paused(page: &PageDom) -> bool {
+    page.animation_events.smil.seek.get().paused_ms.is_some()
 }
 
 impl Cache {
@@ -205,12 +282,13 @@ pub(crate) fn walk(page: &PageDom, now: Option<f64>, visit: &mut dyn FnMut(NodeI
     let Some(animations) = page.animation_events.smil.animations(&dom, page.document()) else { return false };
     // The time containers start at the load event.
     let time = match now {
-        Some(now) => match page.timing().load_start {
-            Some(load) => Some(now - load),
+        Some(now) => match document_time(page, now) {
+            Some(time) => Some(time),
             None => return !animations.is_empty(),
         },
         None => None,
     };
+    let paused = page.animation_events.smil.seek.get().paused_ms.is_some();
     let mut moving = false;
     for a in animations.iter() {
         // Where the active duration ends: a whole number of iterations ends
@@ -230,11 +308,11 @@ pub(crate) fn walk(page: &PageDom, now: Option<f64>, visit: &mut dyn FnMut(NodeI
             Some(time) => {
                 let active = time - a.begin_ms;
                 if active < 0.0 {
-                    moving = true;
+                    moving |= !paused;
                     continue;
                 }
                 if active < a.dur_ms * a.repeat {
-                    moving = true;
+                    moving |= !paused;
                     (active % a.dur_ms) / a.dur_ms
                 } else if a.freeze {
                     end()
@@ -250,6 +328,7 @@ pub(crate) fn walk(page: &PageDom, now: Option<f64>, visit: &mut dyn FnMut(NodeI
             before: false,
             easing: None,
             composite: Composite::Replace,
+            timeline: None,
         };
         let constant = |v: &str| {
             let frame = |offset| TextKeyframe { offset, easing: None, composite: None, declarations: declaration(v) };
@@ -290,7 +369,8 @@ pub(crate) fn present(page: &PageDom, dom: &Dom) -> bool {
 /// The DOM version the animations were read at: a change of the
 /// `<animate>` elements is a change of the frame (`animation_frame::stamp`).
 pub(crate) fn version(page: &PageDom) -> u64 {
-    page.animation_events.smil.read.borrow().as_ref().map_or(0, |(at, _)| *at)
+    let read = page.animation_events.smil.read.borrow().as_ref().map_or(0, |(at, _)| *at);
+    read ^ page.animation_events.smil.seek.get().generation.rotate_left(17)
 }
 
 #[cfg(test)]

@@ -89,6 +89,20 @@ fn extends_letter(c: char) -> bool {
     ) || matches!(c, '\u{200C}' | '\u{200D}' | '\u{FE00}'..='\u{FE0F}')
 }
 
+/// pyro: a virama that links consonants into a conjunct (Unicode `Indic_Conjunct_Break=Linker`:
+/// Devanagari, Bengali, Gujarati, Oriya, Telugu, Malayalam).
+fn is_conjunct_linker(c: char) -> bool {
+    matches!(c, '\u{094D}' | '\u{09CD}' | '\u{0ACD}' | '\u{0B4D}' | '\u{0C4D}' | '\u{0D4D}')
+}
+
+/// pyro: a consonant a conjunct linker joins (`Indic_Conjunct_Break=Consonant`, by block: the
+/// letters of the six scripts above).
+fn is_conjunct_consonant(c: char) -> bool {
+    matches!(c as u32, 0x0900..=0x0D7F)
+        && GENERAL_CATEGORY.get(c) == GeneralCategory::OtherLetter
+        && !matches!(c as u32, 0x0904..=0x0914 | 0x0985..=0x0994 | 0x0A85..=0x0A94 | 0x0B05..=0x0B14 | 0x0C05..=0x0C14 | 0x0D05..=0x0D14)
+}
+
 /// What one text node holds of the first letter.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TextScan {
@@ -135,10 +149,18 @@ pub(crate) fn scan_text(text: &str) -> TextScan {
     if regional(letter) {
         chars.next_if(|&(_, c)| regional(c));
     }
+    // pyro: and an Indic conjunct goes on after each virama to the next consonant (Unicode 15.1
+    // grapheme rule GB9c, as Chromium's ICU: "स्थ" is one letter; WPT css-pseudo
+    // `first-letter-hi-001`).
     loop {
         let mut joined = false;
+        let mut linked = false;
         while let Some((_, c)) = chars.next_if(|&(_, c)| extends_letter(c)) {
             joined = c == '\u{200D}';
+            linked = is_conjunct_linker(c) || (linked && matches!(c, '\u{200C}' | '\u{200D}'));
+        }
+        if linked && chars.next_if(|&(_, c)| is_conjunct_consonant(c)).is_some() {
+            continue;
         }
         if !(joined && chars.next_if(|&(_, c)| !c.is_whitespace()).is_some()) {
             break;
@@ -741,5 +763,15 @@ mod tests {
     fn letter_keeps_its_marks() {
         // e + combining acute accent.
         assert_eq!(scan_text("e\u{0301}tude"), TextScan::Letter(0..3));
+    }
+
+    #[test]
+    fn an_indic_conjunct_is_one_letter() {
+        // स्थलों: sa + virama + tha, then la.
+        assert_eq!(scan_text("\u{0938}\u{094D}\u{0925}\u{0932}"), TextScan::Letter(0..9));
+        // ष्क्रस: three consonants linked.
+        assert_eq!(scan_text("\u{0937}\u{094D}\u{0915}\u{094D}\u{0930}\u{0938}"), TextScan::Letter(0..15));
+        // A virama at the end of a word links nothing across the space.
+        assert_eq!(scan_text("\u{0915}\u{094D} \u{0932}"), TextScan::Letter(0..6));
     }
 }

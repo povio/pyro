@@ -229,6 +229,7 @@ impl JsClass for AbortSignal {
             Ok(sig.value())
         });
         def.static_method("timeout", 1, |s, a| {
+            a.require(1, "AbortSignal.timeout")?;
             let ms = a.get(0).to_number()?;
             let sig = new_signal(s)?;
             let keep = Persistent::new(s, sig.value());

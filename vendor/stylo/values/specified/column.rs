@@ -38,6 +38,34 @@ pub enum ColumnFill {
     Auto,
 }
 
+/// pyro: https://drafts.csswg.org/css-multicol-2/#cwr
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum ColumnWrap {
+    Auto,
+    Nowrap,
+    Wrap,
+}
+
 /// https://drafts.csswg.org/css-multicol/#propdef-column-span
 #[allow(missing_docs)]
 #[derive(

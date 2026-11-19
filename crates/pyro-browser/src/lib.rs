@@ -1285,11 +1285,27 @@ impl Browser {
         };
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         let frames = FrameHost::new(self, id, context, frame.clone(), nav.clone());
+        self.push_page(id, context, frame, frames, nav);
+        self.navigate(
+            id,
+            NavigateOpts {
+                post: None,
+                url: "about:blank".into(),
+                reason: NavigationReason::InitialFrameNavigation,
+                cdp_request_id: None,
+                referrer: None,
+            },
+        )?;
+        Ok(id)
+    }
+
+    fn push_page(&mut self, id: PageId, context: ContextId, frame: Frame, frames: Rc<FrameHost>, nav: Rc<PageNav>) {
         let session_storage = frames.settings.borrow().session.clone();
         let init_scripts = self.contexts.iter().find(|c| c.id == context).unwrap().init_scripts.clone();
         frames.settings.borrow_mut().scripts = init_scripts.clone();
-        debug_assert!(self.pages.last().is_none_or(|last| last.id < id), "page ids increase");
-        self.pages.push(Page {
+        // A popup made ahead (`create_page_with`) took its id earlier.
+        let at = self.pages.partition_point(|p| p.id < id);
+        self.pages.insert(at, Page {
             id,
             context,
             root_dirty: Cell::new(true),
@@ -1323,17 +1339,50 @@ impl Browser {
             viewport: Default::default(),
             pending_resize: None,
         });
-        self.navigate(
-            id,
-            NavigateOpts {
-                post: None,
-                url: "about:blank".into(),
-                reason: NavigationReason::InitialFrameNavigation,
-                cdp_request_id: None,
-                referrer: None,
-            },
-        )?;
-        Ok(id)
+    }
+
+    /// The popup page the opener's `window.open` made ahead (its ticket's
+    /// prebuilt page, `PopupTicket::take_prebuilt`): it becomes a page of
+    /// `context` with its initial about:blank document as it is now, which
+    /// the opener may have scripted already. `None` when `prebuilt` is not
+    /// such a page or the context is gone.
+    pub fn create_page_with(&mut self, context: ContextId, prebuilt: Box<dyn std::any::Any>) -> Option<PageId> {
+        let prebuilt = prebuilt.downcast::<frames::PrebuiltPopup>().ok()?;
+        if !self.contexts.iter().any(|c| c.id == context) || prebuilt.host.context != context {
+            return None;
+        }
+        let frames::PrebuiltPopup { id, host, nav, frame } = *prebuilt;
+        self.push_page(id, context, frame, host, nav);
+        let p = self.page_mut(id)?;
+        let realms = p.frames.root.borrow().realms.clone();
+        p.main_frame.realms = realms;
+        p.main_frame.dom_content_loaded = true;
+        p.main_frame.loaded = true;
+        Some(id)
+    }
+
+    /// Reports the commit and load of `page`'s initial about:blank document
+    /// as it is now (a popup's, made by `window.open`; CDP clients wait for a
+    /// commit). False when the page shows another document.
+    pub fn announce_initial_document(&mut self, id: PageId) -> bool {
+        let Some(p) = self.page(id) else { return false };
+        if !p.nav.is_initial_blank() || p.main_frame.url != "about:blank" {
+            return false;
+        }
+        let (frame_id, loader_id) = (p.main_frame.id.clone(), p.main_frame.loader_id.clone());
+        let timestamp = self.timestamp();
+        self.emit(id, PageEvent::FrameNavigated {
+            frame_id: frame_id.clone(),
+            loader_id: loader_id.clone(),
+            url: "about:blank".into(),
+            reason: NavigationReason::InitialFrameNavigation,
+            cdp_request_id: None,
+            timestamp,
+            unreachable_url: None,
+        });
+        self.emit(id, PageEvent::FrameDomContentLoaded { frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp });
+        self.emit(id, PageEvent::FrameLoaded { frame_id, loader_id, timestamp });
+        true
     }
 
     /// Makes `page` (just created in the opener's context) the popup that
@@ -1655,6 +1704,15 @@ impl Browser {
                 opts.url = unreachable.url;
             }
         }
+        // `about:srcdoc` is the iframe's `srcdoc`, never fetched: navigating
+        // to it (a srcdoc document's `location.reload()`) loads it again.
+        if opts.url == "about:srcdoc" {
+            if let Some((frame_id, html)) = self.srcdoc_of(page) {
+                self.cancel_pending_document(page);
+                let referrer = opts.referrer.clone().unwrap_or_default();
+                return self.begin_srcdoc(page, frame_id, html, referrer, history);
+            }
+        }
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         // Invalidate the previous fetch even for blank or failed navigation.
         self.cancel_pending_document(page);
@@ -1777,6 +1835,7 @@ impl Browser {
         let token =
             if inherit_url && !sandbox.opaque { inherit_from.as_ref().expect("creator").1 } else { self.next() };
         let base_url = if inherit_url { inherit_from.as_ref().expect("creator").2.clone() } else { opts.url.clone() };
+        let previous_origin = self.doc(page).map(|d| d.main_frame.origin.clone());
         {
             let mut state = self.doc_mut(page).ok_or(JsError::ContextDestroyed)?;
             state.main_frame.origin = actual_origin.clone();
@@ -1792,9 +1851,16 @@ impl Browser {
             self.forget_network_activity(page, &previous);
         }
         let scripts = self.page(page.page).ok_or(JsError::ContextDestroyed)?.init_scripts.clone();
-        let (frame_id, old, scripts, nav, old_dom) = {
+        let (frame_id, mut old, scripts, nav, old_dom, initial_same_origin) = {
             let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
             p.main_frame.network_idle = NetworkIdle::default();
+            // HTML Window reuse: the initial about:blank document of a frame,
+            // replaced by a document of its own origin.
+            let blank_loaded = p.main_frame.loaded && p.main_frame.page_dom.as_ref().is_some_and(|d| d.blank_requested());
+            let initial_same_origin = !blank_loaded
+                && p.nav.is_initial_blank()
+                && previous_origin.as_deref() == Some(actual_origin.as_str())
+                && actual_origin != "null";
             p.main_frame.origin = actual_origin.clone();
             p.main_frame.dom_content_loaded = false;
             p.main_frame.loaded = false;
@@ -1833,20 +1899,68 @@ impl Browser {
             p.nav.commit_document_at(&opts.url, entry_url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             p.nav.set_page_dom(&page_dom);
-            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced))
+            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), (old_dom, replaced), initial_same_origin)
         };
         let (old_dom, replaced) = old_dom;
+        // A child frame's initial about:blank Window made reusable
+        // (`FrameHost::reuse_realm`) becomes the new document's: it keeps its
+        // realm, event target and what script put on it, as browsers keep
+        // the Window object.
+        let reused = match &old_dom {
+            Some(dom) if page.child.is_some() && initial_same_origin && dom.reusable_window() => {
+                let at = old.iter().position(|r| {
+                    r.world.is_none() && !r.realm.is_deferred() && !r.realm.is_disposed() && !r.realm.is_lingering()
+                });
+                match at {
+                    Some(at) if pyro_webapi::adopt_window(dom, &page_dom, old[at].realm.id()) => {
+                        let r = old.remove(at);
+                        window::cancel_timers(&r.realm);
+                        pyro_webapi::lifecycle::realm_disposed(dom, r.realm.id());
+                        Some(r.realm)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        // A child frame's previous document stays usable while script of
+        // other documents holds it (its parent's, through a saved
+        // `contentDocument`): HTML only makes it not fully active. Its realms
+        // linger until nothing reaches them (`Realm::linger`); the engine
+        // disposes them after a collection finds them dead.
+        let linger = page.child.is_some() && old_dom.is_some();
         if let Some(dom) = &old_dom {
-            dom.dispose();
+            if linger {
+                dom.detach();
+            } else {
+                dom.dispose();
+            }
         }
+        let mut lingered = true;
         for r in old {
-            window::cancel_timers(&r.realm);
+            if linger {
+                window::release_roots(&r.realm);
+            } else {
+                window::cancel_timers(&r.realm);
+            }
             let id = r.realm.id();
             if let Some(dom) = &old_dom {
-                pyro_webapi::lifecycle::realm_disposed(dom, id);
+                if linger {
+                    pyro_webapi::lifecycle::realm_detached(dom, id);
+                } else {
+                    pyro_webapi::lifecycle::realm_disposed(dom, id);
+                }
             }
-            r.realm.dispose();
+            if !(linger && r.realm.linger()) {
+                lingered = false;
+                r.realm.dispose();
+            }
             self.emit(page.page, PageEvent::RealmDestroyed { frame_id: frame_id.clone(), realm: id });
+        }
+        if linger && !lingered {
+            if let Some(dom) = &old_dom {
+                dom.dispose();
+            }
         }
         if let Some(dom) = &old_dom {
             let _ = dom.dom.borrow_mut().set_document_active(dom.document(), false);
@@ -1881,7 +1995,12 @@ impl Browser {
         }
         self.sync_root(page.page);
         for world in worlds {
-            host.make_realm(page, nav.clone(), world)?;
+            match (&world, &reused) {
+                (None, Some(realm)) => host.reuse_realm(page, nav.clone(), realm)?,
+                _ => {
+                    host.make_realm(page, nav.clone(), world)?;
+                }
+            }
         }
         if page.child.is_none() {
             self.page_mut(page.page).expect("page").main_frame.realms = host.root.borrow().realms.clone();

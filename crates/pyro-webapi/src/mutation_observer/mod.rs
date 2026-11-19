@@ -311,7 +311,13 @@ pub fn checkpoint(page: &Rc<PageDom>) {
     // Reconcile only observed targets when the native tree changes, and only
     // when one of them was connected or disconnected (checked first without
     // allocating: most mutations leave every target where it was).
-    if page.mutations.version.replace(Some(version)) != Some(version) && pins_out_of_date(page) {
+    // Changes only outside the document (detached clones being styled) connect or disconnect no
+    // target (`Dom::only_detached_changes_since`).
+    let previous = page.mutations.version.replace(Some(version));
+    let outside_only = previous.is_some_and(|v| {
+        v != version && page.dom.try_borrow().is_ok_and(|dom| dom.only_detached_changes_since(v))
+    });
+    if previous != Some(version) && !outside_only && pins_out_of_date(page) {
         let observers: Vec<_> = page.mutations.observers.borrow().values().filter_map(Weak::upgrade).collect();
         let mut needed = FxHashMap::default();
         for observer in observers {
@@ -351,8 +357,23 @@ fn pins_out_of_date(page: &PageDom) -> bool {
             pinned_targets += usize::from(pinned);
         }
     }
-    // Pins of targets no observer has any more.
-    pins.len() != pinned_targets
+    // Pins of targets no observer has any more. Two observers (or two `observe()` calls of one)
+    // on the same target share its pin: count each pinned target once, or the reconcile below
+    // ran after every DOM call of the page.
+    if pins.len() == pinned_targets {
+        return false;
+    }
+    let mut distinct = rustc_hash::FxHashSet::default();
+    for observer in observers.values() {
+        let Some(observer) = observer.upgrade() else { return true };
+        let Ok(targets) = observer.targets.try_borrow() else { return true };
+        for &node in targets.iter() {
+            if pins.contains_key(&(observer.realm_id, node)) {
+                distinct.insert((observer.realm_id, node));
+            }
+        }
+    }
+    pins.len() != distinct.len()
 }
 
 fn notify(page: &Rc<PageDom>) {
@@ -434,8 +455,22 @@ pub(crate) fn after_task(page: &PageDom) {
 }
 /// `helper` converts a MutationObserverInit (install.js `mutationOptions`).
 pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>, helper: pyro_js::Value<'_>) -> JsResult<()> {
-    *page.mutations.owner.borrow_mut() = Rc::downgrade(page);
     page.mutations.helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helper));
+    bind(s, page)
+}
+
+/// The realm of `old`'s window now serves `new` (Window reuse): its helper
+/// moves along.
+pub(crate) fn adopt_realm(old: &PageDom, new: &PageDom, realm: RealmId) {
+    let helper = old.mutations.helpers.borrow_mut().remove(&realm);
+    if let Some(helper) = helper {
+        new.mutations.helpers.borrow_mut().insert(realm, helper);
+    }
+}
+
+/// The realm's native callback hooks, for `page`.
+pub(crate) fn bind(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+    *page.mutations.owner.borrow_mut() = Rc::downgrade(page);
     let weak = Rc::downgrade(page);
     s.realm().set_native_callback_hook(Some(Rc::new(move |s| {
         if let Some(page) = weak.upgrade() {

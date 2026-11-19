@@ -4,6 +4,7 @@ use crate::engine::{self, EngineInner};
 use crate::realm::Scope;
 use crate::value::Value;
 use pyro_jsc_sys as sys;
+use std::ptr;
 use std::rc::{Rc, Weak};
 
 /// A strong, GC-protected reference to a JavaScript value (`JSValueProtect`).
@@ -65,10 +66,15 @@ impl Persistent {
 
 impl Clone for Persistent {
     fn clone(&self) -> Self {
-        if self.vm_alive() {
-            unsafe { sys::JSValueProtect(self.root, self.raw) };
+        // An unrooted handle (`unroot`) clones into a rooted one.
+        let root = match self.root {
+            r if r.is_null() => self.engine.upgrade().map_or(ptr::null(), |e| e.root_ctx()),
+            r => r,
+        };
+        if self.vm_alive() && !root.is_null() {
+            unsafe { sys::JSValueProtect(root, self.raw) };
         }
-        Persistent { raw: self.raw, engine: self.engine.clone(), root: self.root }
+        Persistent { raw: self.raw, engine: self.engine.clone(), root }
     }
 }
 
@@ -77,13 +83,24 @@ impl Drop for Persistent {
         // Never called from inside a JSC finalizer: wrapper payloads are dropped
         // at safe points (see class::drain_finalized), so unprotect is legal
         // here. After engine shutdown the VM is gone and nothing is protected.
-        if self.vm_alive() {
+        if !self.root.is_null() && self.vm_alive() {
             unsafe { sys::JSValueUnprotect(self.root, self.raw) };
         }
     }
 }
 
 impl Persistent {
+    /// Gives up the handle's root: from now on something else must keep the
+    /// value alive (a lingering realm's global object, which holds its
+    /// former roots in a hidden array, `Realm::linger`). The handle then
+    /// reads the value while that holds and never unprotects it.
+    pub(crate) fn unroot(&mut self) {
+        if !self.root.is_null() && self.vm_alive() {
+            unsafe { sys::JSValueUnprotect(self.root, self.raw) };
+        }
+        self.root = ptr::null();
+    }
+
     fn vm_alive(&self) -> bool {
         self.engine.upgrade().is_some_and(|e| !e.is_shut_down())
     }

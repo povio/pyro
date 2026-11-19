@@ -159,3 +159,40 @@ fn a_floated_first_letter_is_a_float() {
     assert_eq!(black(24), Some(40));
     assert_eq!(black(48), Some(0));
 }
+
+/// A ruby annotation over the first line's text grows the line; the letter's cap height stays on
+/// the line's text, so a dropped letter moves down with it (WPT css-inline
+/// `initial-letter-block-position-drop-over-ruby`). The 10px annotation over a 20px base on 24px
+/// lines leaves the line 8px taller.
+#[test]
+fn an_over_annotation_moves_a_drop_initial_with_the_text() {
+    let img = render(
+        ".p::first-letter { initial-letter: 3 }",
+        "<div class=p>Abc <ruby>xyz<rt>XYZ</rt></ruby><br>def<br>ghi<br>jkl<br>mno</div>",
+    );
+    assert_eq!(bbox(&img, LIME, ALL), Some([0, 10, 80, 90]));
+    assert_eq!(bbox(&img, BLACK, [0, 10, 130, 30]), Some([80, 10, 120, 30]));
+}
+
+/// A raised letter's shift leaves room over the first line that its annotation takes: the text
+/// moves down by the larger of the two, not their sum, and the letter moves only by what the
+/// annotation needs beyond the shift (WPT css-inline `initial-letter-block-position-raise-over-ruby`
+/// and `-tall`, as Blink's `BlockStartAnnotationSpace`).
+#[test]
+fn a_raised_initial_leaves_room_for_an_over_annotation() {
+    let img = render(
+        ".p::first-letter { initial-letter: 3 raise }",
+        "<div class=p>Abc <ruby>xyz<rt>XYZ</rt></ruby><br>def<br>ghi<br>jkl<br>mno</div>",
+    );
+    assert_eq!(bbox(&img, LIME, ALL), Some([0, 2, 80, 82]));
+    // The line's text 48px down (two lines), its annotation in the room above it.
+    assert_eq!(bbox(&img, BLACK, [0, 50, 130, 70]), Some([80, 50, 120, 70]));
+    assert_eq!(line(&img, 72), Some([80, 74, 140, 94]));
+    // An 80px annotation needs 78px over the line: 30px more than the shift, the letter with it.
+    let tall = render(
+        ".p::first-letter { initial-letter: 3 raise } rt { font-size: 80px }",
+        "<div class=p>Abc <ruby>xyz<rt>X</rt></ruby><br>def<br>ghi<br>jkl<br>mno</div>",
+    );
+    assert_eq!(bbox(&tall, LIME, ALL), Some([0, 32, 80, 112]));
+    assert_eq!(bbox(&tall, BLACK, [0, 80, 130, 100]), Some([80, 80, 120, 100]));
+}

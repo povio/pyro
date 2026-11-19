@@ -6,7 +6,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use pyro_dom::parse::{parse_document, DomRef};
 use pyro_dom::snapshot::{render_key, RenderHtml, RenderNodeKind};
-use pyro_render::animation::{Composite, Effect, ElementEffects, Keyframes, TextKeyframe, TextKeyframes};
+use pyro_render::animation::{Composite, Effect, ElementEffects, Keyframes, PseudoEffects, TextKeyframe, TextKeyframes};
 use pyro_render::*;
 
 struct NoFetch;
@@ -72,6 +72,7 @@ fn css(name: &str, easing: Option<&str>, progress: f64) -> Effect {
         before: false,
         easing: None,
         composite: Composite::Replace,
+        timeline: None,
     }
 }
 
@@ -92,6 +93,7 @@ fn text(frames: &[(f64, &str)], progress: f64, easing: Option<&str>) -> Effect {
         before: false,
         easing: easing.map(Arc::from),
         composite: Composite::Replace,
+        timeline: None,
     }
 }
 
@@ -240,4 +242,35 @@ fn an_animation_in_its_delay_makes_a_stacking_context() {
     assert_near(pixel(&img, 50, 25), [0, 0, 255], "with no value");
     let img = render(&mut r, &snap, Vec::new());
     assert_near(pixel(&img, 50, 75), [0, 128, 0], "the animation gone: under it again");
+}
+
+/// Effects on `::before`/`::after` go into the pseudo-element's style: an implicit keyframe takes
+/// the pseudo-element's own base value (not the element's), the element keeps its own, and a frame
+/// without them puts the base values back.
+#[test]
+fn pseudo_element_effects_animate_the_pseudo_element() {
+    const PSEUDO: &str = "<!doctype html><style>body{margin:0;background:#fff} #target{width:100px;height:100px;background-color:rgb(0,0,200)}\
+        #target::before{content:'';display:block;width:50px;height:50px;background-color:rgb(0,200,0)}\
+        @keyframes to-red{to{background-color:rgb(200,0,0)}}</style><div id=target></div>";
+    let (snap, key) = page(PSEUDO);
+    let mut r = Renderer::new();
+    let effects = |progress: f64| {
+        vec![(
+            key,
+            ElementEffects {
+                pseudos: [
+                    PseudoEffects { animations: vec![css("to-red", Some("linear"), progress)], ..Default::default() },
+                    PseudoEffects::default(),
+                ],
+                ..Default::default()
+            },
+        )]
+    };
+    let img = render(&mut r, &snap, effects(0.5));
+    assert_near(pixel(&img, 25, 25), [100, 100, 0], "::before halfway from its own green");
+    assert_near(pixel(&img, 75, 75), [0, 0, 200], "the element keeps its colour");
+    let img = render(&mut r, &snap, effects(1.0));
+    assert_near(pixel(&img, 25, 25), [200, 0, 0], "::before at the end");
+    let img = render(&mut r, &snap, Vec::new());
+    assert_near(pixel(&img, 25, 25), [0, 200, 0], "no animation: the base value");
 }

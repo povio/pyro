@@ -118,6 +118,35 @@ pub struct SvgImageData {
     pub viewport_dependent: bool,
 }
 
+/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background` or
+/// `background-color` declaration of its `style` attribute) drawn as a full-size `<rect>` under its
+/// content: an image's root element paints its background over the whole canvas, which usvg does
+/// not (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is none.
+fn root_background_painted(text: &str, doc: &roxmltree::Document) -> Option<String> {
+    let root = doc.root_element();
+    let style = root.attribute("style")?;
+    let color = style.split(';').find_map(|declaration| {
+        let (name, value) = declaration.split_once(':')?;
+        let name = name.trim();
+        (name.eq_ignore_ascii_case("background") || name.eq_ignore_ascii_case("background-color"))
+            .then(|| value.trim())
+            .filter(|value| value.parse::<svgtypes::Color>().is_ok())
+    })?;
+    // Under the first child (an empty root has nothing to paint over the background anyway; the
+    // background alone is then inserted before the closing tag).
+    let at = match root.first_child() {
+        Some(child) => child.range().start,
+        None => {
+            let end = root.range().end;
+            let closing = text[..end].rfind("</")?;
+            if closing <= root.range().start { return None; }
+            closing
+        }
+    };
+    let rect = format!("<rect xmlns=\"http://www.w3.org/2000/svg\" width=\"100%\" height=\"100%\" fill=\"{}\"/>", color.replace('"', ""));
+    Some(format!("{}{}{}", &text[..at], rect, &text[at..]))
+}
+
 impl SvgImageData {
     /// Parse an SVG image from raw data, capturing both the rendered
     /// [`usvg::Tree`] and the declared root dimensions from a single XML
@@ -142,8 +171,21 @@ impl SvgImageData {
         };
         let doc = roxmltree::Document::parse_with_options(text, xml_options)
             .map_err(usvg::Error::ParsingFailed)?;
-        let intrinsic_dimensions = SvgIntrinsicDimensions::from_xmltree(&doc);
-        let tree = match usvg::Tree::from_xmltree(&doc, options) {
+        // pyro: the root's CSS background paints the image's canvas (usvg draws none).
+        let with_background = root_background_painted(text, &doc);
+        let parsed;
+        let (text, doc) = match &with_background {
+            Some(source) => {
+                let xml_options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+                parsed = roxmltree::Document::parse_with_options(source, xml_options)
+                    .map_err(usvg::Error::ParsingFailed)?;
+                (source.as_str(), &parsed)
+            }
+            None => (text, &doc),
+        };
+        let doc = doc;
+        let intrinsic_dimensions = SvgIntrinsicDimensions::from_xmltree(doc);
+        let tree = match usvg::Tree::from_xmltree(doc, options) {
             Ok(tree) => tree,
             // pyro: a root `width` or `height` of zero is a natural size of zero, not an invalid image
             // (browsers lay it out at that size, its `viewBox` ratio kept, and draw its content in the box
@@ -173,6 +215,22 @@ impl SvgImageData {
         })
     }
 
+    /// pyro: the image drawn for an element whose used colour scheme is dark (`dark`), when the
+    /// image uses `light-dark()` and its own `color-scheme` allows dark: parsed again with each
+    /// `light-dark()` its dark colour (WPT css-borders `border-image-color-scheme`). `None`
+    /// otherwise: the image as loaded is the light one.
+    pub fn for_color_scheme(&self, dark: bool) -> Option<SvgImageData> {
+        let source = self.source.as_deref().filter(|_| dark)?;
+        crate::svg_refs::find_bytes(source, b"light-dark(")?;
+        if !crate::svg_refs::allows_dark_scheme(source) {
+            return None;
+        }
+        let dark_source = crate::svg_refs::resolve_light_dark(source, true)?;
+        let mut svg = crate::util::parse_svg_image(&dark_source).ok()?;
+        svg.source = self.source.clone();
+        Some(svg)
+    }
+
     /// pyro: an inline `<svg>` without a `viewBox`, parsed again for a CSS box
     /// `width` x `height` (CSS px): its viewport is the box, so user units are
     /// CSS px and percentages (a `<use>` of a `<symbol>` sized `100%` by default)
@@ -191,6 +249,25 @@ impl SvgImageData {
     /// The intrinsic width in CSS px, present only when the root `<svg>`
     /// declared an absolute (non-percentage) `width`.
     pub fn intrinsic_width(&self) -> Option<f32> {
+        self.declared_width()
+    }
+
+    /// The intrinsic height in CSS px, present only when the root `<svg>`
+    /// declared an absolute (non-percentage) `height`.
+    pub fn intrinsic_height(&self) -> Option<f32> {
+        let height = self.declared_height();
+        height.filter(|&height| !self.zero_beside_ratio(height, self.declared_width()))
+    }
+
+    /// pyro: a zero `height` beside a non-zero `width` is no natural height when a `viewBox` gives
+    /// the ratio, as in Blink: `width="20px" height="0px" viewBox="0 0 50 100"` is 20px wide and
+    /// 40px tall (WPT css-grid `grid-item-aspect-ratio-stretch-4`), but a zero `width` beside a
+    /// height stays (`width="0px" height="20px"` is 0px wide: `-stretch-3`).
+    fn zero_beside_ratio(&self, length: f32, other: Option<f32>) -> bool {
+        length == 0.0 && other.is_some_and(|other| other > 0.0) && self.viewbox_aspect_ratio().is_some_and(|r| r.is_finite() && r > 0.0)
+    }
+
+    fn declared_width(&self) -> Option<f32> {
         use svgtypes::LengthUnit;
         let declared = self
             .intrinsic_dimensions
@@ -205,9 +282,7 @@ impl SvgImageData {
         declared.then(|| self.tree.size().width())
     }
 
-    /// The intrinsic height in CSS px, present only when the root `<svg>`
-    /// declared an absolute (non-percentage) `height`.
-    pub fn intrinsic_height(&self) -> Option<f32> {
+    fn declared_height(&self) -> Option<f32> {
         use svgtypes::LengthUnit;
         let declared = self
             .intrinsic_dimensions

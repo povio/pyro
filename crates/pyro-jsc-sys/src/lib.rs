@@ -612,6 +612,28 @@ pub mod spi {
         getter: JSObjectGetPropertyCallback,
     );
 
+    /// Patch 0035: an object passed to eval as code (a TrustedScript), as a new
+    /// string the caller releases, or null to leave it unevaluated.
+    pub type JSCodeForEvalCallback =
+        unsafe extern "C" fn(ctx: JSContextRef, value: JSObjectRef, exception: *mut JSValueRef) -> JSStringRef;
+    /// Patch 0035: whether `code` may compile (`compilation_type` 0 Function, with
+    /// the constructor's arguments, 1 direct eval, 2 indirect eval).
+    pub type JSCanCompileStringsCallback = unsafe extern "C" fn(
+        ctx: JSContextRef,
+        compilation_type: c_int,
+        code: JSStringRef,
+        argument_count: usize,
+        arguments: *const JSValueRef,
+        exception: *mut JSValueRef,
+    ) -> bool;
+    pub type JSGlobalContextSetCompileStringsCallbacksFn = unsafe extern "C" fn(
+        ctx: JSGlobalContextRef,
+        code_for_eval: Option<JSCodeForEvalCallback>,
+        can_compile_strings: Option<JSCanCompileStringsCallback>,
+    ) -> bool;
+    /// Patch 0035: 0 none, 1 report-only, 2 enforced, 3 enforced with eval enabled.
+    pub type JSGlobalContextSetTrustedTypesEnforcementFn = unsafe extern "C" fn(ctx: JSGlobalContextRef, enforcement: c_int);
+
     /// A custom accessor's getter (patched JSC, `JSObjectSetCustomAccessor`):
     /// called by inline caches with the receiver as `this_value` (any value,
     /// not only objects of the class) and the property name's unique string
@@ -984,6 +1006,11 @@ pub mod spi {
         pub adopt_global_proxy: Option<JSGlobalContextAdoptGlobalProxyFn>,
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
+        /// Patch 0034 (`JSObjectSetCustomValue`): a custom accessor that reads as a data property.
+        pub set_custom_value: Option<JSObjectSetCustomAccessorFn>,
+        /// Patch 0035: Trusted Types hooks for eval and Function.
+        pub set_compile_strings_callbacks: Option<JSGlobalContextSetCompileStringsCallbacksFn>,
+        pub set_trusted_types_enforcement: Option<JSGlobalContextSetTrustedTypesEnforcementFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
         pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
@@ -1176,6 +1203,18 @@ pub mod spi {
             adopt_global_proxy: None,
             add_impure_property: resolve!("JSAddImpureProperty"),
             set_custom_accessor: resolve!("JSObjectSetCustomAccessor"),
+            #[cfg(any(pyro_jsc_custom_value, not(pyro_jsc_static)))]
+            set_custom_value: resolve!("JSObjectSetCustomValue"),
+            #[cfg(not(any(pyro_jsc_custom_value, not(pyro_jsc_static))))]
+            set_custom_value: None,
+            #[cfg(any(pyro_jsc_compile_strings, not(pyro_jsc_static)))]
+            set_compile_strings_callbacks: resolve!("JSGlobalContextSetCompileStringsCallbacks"),
+            #[cfg(not(any(pyro_jsc_compile_strings, not(pyro_jsc_static))))]
+            set_compile_strings_callbacks: None,
+            #[cfg(any(pyro_jsc_compile_strings, not(pyro_jsc_static)))]
+            set_trusted_types_enforcement: resolve!("JSGlobalContextSetTrustedTypesEnforcement"),
+            #[cfg(not(any(pyro_jsc_compile_strings, not(pyro_jsc_static))))]
+            set_trusted_types_enforcement: None,
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
             set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),

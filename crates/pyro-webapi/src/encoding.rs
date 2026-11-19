@@ -276,21 +276,25 @@ pub fn btoa(input: &str) -> JsResult<String> {
 pub fn atob(input: &str) -> JsResult<String> {
     let cleaned: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
     let mut cleaned = cleaned;
+    // At most two `=` of padding, and only to a multiple of four.
     if cleaned.len().is_multiple_of(4) {
-        while cleaned.last() == Some(&b'=') && cleaned.len() % 4 != 1 {
-            cleaned.pop();
-            if cleaned.len() % 4 == 2 {
-                break;
-            }
-        }
-        while cleaned.last() == Some(&b'=') {
+        if cleaned.ends_with(b"==") {
+            cleaned.truncate(cleaned.len() - 2);
+        } else if cleaned.ends_with(b"=") {
             cleaned.pop();
         }
     }
     if cleaned.len() % 4 == 1 || cleaned.iter().any(|b| !(b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/')) {
         return Err(JsError::dom("InvalidCharacterError", "The string to be decoded is not correctly encoded."));
     }
-    let bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+    // Leftover bits of the last character are discarded, not an error.
+    let engine = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::new()
+            .with_decode_allow_trailing_bits(true)
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::RequireNone),
+    );
+    let bytes = engine
         .decode(&cleaned)
         .map_err(|_| JsError::dom("InvalidCharacterError", "The string to be decoded is not correctly encoded."))?;
     Ok(bytes.into_iter().map(|b| b as char).collect())
@@ -310,6 +314,13 @@ mod tests {
         assert_eq!(atob("aGVsbG8=").unwrap(), "hello");
         assert_eq!(atob(" aGVs bG8 ").unwrap(), "hello");
         assert!(atob("a").is_err());
+        // Forgiving-base64: unpadded input, leftover bits, at most two `=`.
+        assert_eq!(atob("YR").unwrap(), "a");
+        assert_eq!(atob("ab").unwrap(), "i");
+        assert_eq!(atob("ab\t=\n=").unwrap(), "i");
+        assert!(atob("====").is_err());
+        assert!(atob("abc=====").is_err());
+        assert!(atob("abcd====").is_err());
         assert!(btoa("ž").is_err());
         assert_eq!(atob(&btoa("\u{ff}\u{0}").unwrap()).unwrap(), "\u{ff}\u{0}");
     }

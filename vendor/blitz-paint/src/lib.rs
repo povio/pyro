@@ -3,6 +3,7 @@
 
 #![allow(clippy::collapsible_if)]
 
+mod broken_image_icon;
 mod blend;
 mod bounds;
 mod color;

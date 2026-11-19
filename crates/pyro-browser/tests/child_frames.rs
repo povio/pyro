@@ -48,6 +48,23 @@ fn initial_blank_is_synchronous_and_srcdoc_owns_its_document_and_worlds() {
     assert_eq!(eval(&root, "f.contentDocument.querySelector('#inside').textContent"), "shared");
 }
 
+/// A srcdoc document's `location.reload()` loads the iframe's `srcdoc` again (its URL
+/// `about:srcdoc` is never fetched); WPT notifications/global-teardown-crash reloads one.
+#[test]
+fn srcdoc_document_reloads_its_srcdoc() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.loads=0; globalThis.f=document.createElement('iframe'); \
+         f.srcdoc='<script>onload=()=>{parent.loads++; if (parent.loads===1) location.reload()}</script>'; \
+         document.body.appendChild(f)",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "loads + ':' + f.contentDocument.URL"), "2:about:srcdoc");
+}
+
 #[test]
 fn sandboxed_srcdoc_keeps_inspector_realms_but_blocks_author_script_and_parent_access() {
     let mut t = crate::browser_thread().unwrap();
@@ -248,12 +265,13 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             charset: None,
             body: b"<iframe></iframe><script>globalThis.late=true</script>".to_vec(),
             content_disposition: None,
-            header_csp: false,
+            header_csp: None,
             refresh: None,
             content_language: None,
             referrer_policy: None,
             timing: None,
             partial: None,
+                nosniff: false,
         }),
     );
     settle(&mut t);
@@ -532,7 +550,7 @@ fn listeners_run_across_documents_with_one_event_object() {
 }
 
 #[test]
-fn cross_document_wrappers_survive_gc_and_throw_after_the_child_navigates() {
+fn cross_document_wrappers_survive_gc_and_the_child_navigating_away() {
     let (mut t, page, root) = cross_document_page();
     eval(&root, "nodes[0].mark=7;nodes[0].addEventListener('x',()=>globalThis.fired=true)");
     eval(&root, "globalThis.first=nodes[0];globalThis.stale=nodes;globalThis.staleDoc=d;delete globalThis.nodes");
@@ -541,11 +559,12 @@ fn cross_document_wrappers_survive_gc_and_throw_after_the_child_navigates() {
     let child = t.browser.frames(page).into_iter().find(|f| f.parent.is_some()).unwrap();
     t.browser.navigate_frame(page, &child.id, NavigateOpts::address_bar("about:blank")).unwrap();
     settle(&mut t);
-    let destroyed = "Execution context was destroyed";
-    for expr in ["stale[0]", "stale.length", "staleDoc.querySelector('span')", "first.dataset.x"] {
-        let message = eval(&root, &format!("try{{{expr};'no throw'}}catch(e){{String(e.message||e)}}"));
-        assert!(message.contains(destroyed), "{expr}: {message}");
-    }
+    // The document it left stays usable (HTML: not fully active), its
+    // wrappers and their expandos with it.
+    assert_eq!(
+        eval(&root, "[stale[0] === first, first.mark, stale.length > 0, !!staleDoc.querySelector('span'), staleDoc.defaultView].join()"),
+        "true,7,true,true,"
+    );
     assert_eq!(eval(&root, "f.contentDocument!==staleDoc && f.contentDocument.URL"), "about:blank");
     t.browser.engine.collect_garbage_now();
 }
@@ -609,4 +628,357 @@ fn content_window_is_one_window_proxy_that_follows_the_frame_to_its_next_documen
     eval(&root, "globalThis.g=document.createElement('iframe');document.body.appendChild(g)");
     settle(&mut t);
     assert_eq!(eval(&root, "g.contentWindow!==held && g.contentWindow===frames[1]"), "true");
+}
+
+/// WPT html/semantics/permission-element/geolocation-element/iframe-use-after-free-crash.html:
+/// a document its frame navigated away from stays usable through a reference
+/// script saved (HTML: it is only not fully active), and its realm goes once
+/// nothing reaches it.
+#[test]
+fn a_navigated_away_document_stays_usable_while_held() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<p id=old>old</p>'; document.body.appendChild(f)");
+    settle(&mut t);
+    eval(&root, "globalThis.saved = f.contentDocument; globalThis.savedWindow = f.contentWindow");
+    eval(&root, "f.srcdoc='<p id=new>new</p>'");
+    settle(&mut t);
+    assert_eq!(eval(&root, "f.contentDocument.querySelector('p').id + ':' + (f.contentDocument !== saved)"), "new:true");
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const g = saved.createElement('geolocation'); g.setAttribute('watch', ''); saved.body.appendChild(g); \
+             return [saved.querySelector('p').id, saved.body.lastChild === g, g.ownerDocument === saved, saved.defaultView, \
+              saved.body.childElementCount].join() })()"
+        ),
+        "old,true,true,,2"
+    );
+    let engine = &t.browser.engine;
+    for _ in 0..3 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(engine.lingering_realms(), 1, "the saved document keeps its realm");
+    eval(&root, "saved = null; savedWindow = null");
+    for _ in 0..5 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(engine.lingering_realms(), 0, "nothing reaches the old document: its realm is disposed");
+}
+
+/// The documents an iframe navigates through linger only while something
+/// reaches them: after 50 navigations nobody holds, none is left (fork mode
+/// and long e2e runs keep one engine for many pages).
+#[test]
+fn documents_of_a_navigating_frame_are_released() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<p>0</p>'; document.body.appendChild(f)");
+    settle(&mut t);
+    for i in 1..=50 {
+        eval(
+            &root,
+            &format!(
+                "f.srcdoc='<p id=p{i}>{i}</p><script>globalThis.big = new Array(10000).fill(document.body); \
+                 document.addEventListener(\"click\", () => big); requestAnimationFrame(() => big)</script>'"
+            ),
+        );
+        settle(&mut t);
+    }
+    assert_eq!(eval(&root, "f.contentDocument.querySelector('p').id"), "p50");
+    let engine = &t.browser.engine;
+    for _ in 0..5 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(engine.lingering_realms(), 0, "every previous document was released");
+}
+
+/// IntersectionObserver across documents: the parent observes an element of
+/// its iframe's document (implicit root: the top-level viewport). The
+/// target is clipped by the iframe's viewport and placed through the owner
+/// element; the entry reports it in the target document's coordinates. A
+/// removed frame's target stops intersecting (WPT
+/// image-loading-lazy-subframe-detached-crash.html removes it from the
+/// callback).
+#[test]
+fn intersection_observer_sees_targets_in_child_documents() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "document.body.style.margin='0'; globalThis.f=document.createElement('iframe'); \
+         f.style.cssText='position:absolute; left:100px; top:50px; width:200px; height:100px; border:0'; \
+         f.srcdoc='<body style=\"margin:0\"><div id=near style=\"height:50px;width:50px\"></div>\
+           <div style=\"height:500px\"></div><div id=far style=\"height:50px;width:50px\"></div></body>'; \
+         document.body.appendChild(f)",
+    );
+    settle(&mut t);
+    eval(
+        &root,
+        "globalThis.seen=[]; globalThis.io=new IntersectionObserver(es => { for (const e of es) \
+           seen.push([e.target.id, e.isIntersecting, e.intersectionRatio, e.intersectionRect.x, e.intersectionRect.y, \
+             e.rootBounds.width].join(':')) }); \
+         io.observe(f.contentDocument.getElementById('near')); io.observe(f.contentDocument.getElementById('far'))",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "seen.sort().join(' ')"), "far:false:0:0:0:1920 near:true:1:0:0:1920");
+    // Scrolled to the end (500 px), `far` intersects; the owner's
+    // position does not leak into the target document's coordinates.
+    eval(&root, "seen.length=0; f.contentWindow.scrollTo(0, 520); io.takeRecords(); document.body.offsetTop");
+    eval(&root, "document.body.appendChild(document.createElement('p'))");
+    settle(&mut t);
+    assert_eq!(eval(&root, "seen.sort().join(' ')"), "far:true:1:0:50:1920 near:false:0:0:0:1920");
+    // The frame goes: its targets intersect nothing.
+    eval(&root, "seen.length=0; f.remove()");
+    settle(&mut t);
+    assert_eq!(eval(&root, "seen.map(s => s.split(':').slice(0, 2).join(':')).sort().join(' ')"), "far:false");
+}
+
+/// A `Content-Security-Policy` header's Trusted Types directives apply to the document
+/// (`require-trusted-types-for 'script'`: string HTML assignments throw) while its other
+/// directives are not enforced (`script-src 'none'` blocks nothing).
+#[test]
+fn csp_header_trusted_types_directives_apply_others_do_not() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<script>globalThis.out = []; const d = document.createElement('div'); \
+         try { d.innerHTML = '<b>x</b>'; out.push('assigned'); } catch (e) { out.push(e.name); } \
+         try { trustedTypes.createPolicy('other', {}); out.push('created'); } catch (e) { out.push(e.name); } \
+         const p = trustedTypes.createPolicy('p', { createHTML: s => s }); d.innerHTML = p.createHTML('<i>y</i>'); out.push(d.innerHTML);</script>",
+        Duration::ZERO,
+    );
+    loader.set_csp("http://site.test/", "script-src 'none'; require-trusted-types-for 'script'; trusted-types p");
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "out.join('|')"), "TypeError|TypeError|<i>y</i>");
+}
+
+/// SVG `<use>` instances: a closed user-agent shadow root with a deep clone
+/// of the referenced element, rebuilt when the reference or its subtree
+/// changes; nothing of it is reachable from script; an SVG handler's
+/// argument is `evt`.
+#[test]
+fn svg_use_elements_get_live_instances() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "document.body.innerHTML = '<svg><defs><g id=t><rect id=r width=10 height=10 onclick=\"window.arg = typeof evt\"/></g>\
+           <circle id=c r=5 /></defs><use id=u href=\"#t\"/></svg>'; 'ok'",
+    );
+    settle(&mut t);
+    let instance = |t: &BrowserThread| {
+        let dom = t.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+        let d = dom.dom.borrow();
+        let doc = dom.document();
+        let host = d.get_element_by_id(doc, "u").unwrap().unwrap();
+        d.shadow_root(host).unwrap().map(|sr| {
+            d.children(sr).unwrap().map(|c| d.outer_html(c).unwrap()).collect::<Vec<_>>().join("")
+        })
+    };
+    assert_eq!(instance(&t).as_deref(), Some(r#"<g id="t"><rect id="r" width="10" height="10" onclick="window.arg = typeof evt"></rect></g>"#));
+    assert_eq!(eval(&root, "[u.shadowRoot, document.getElementById('r').getRootNode() === document].join()"), ",true");
+    // The referenced subtree changes: the instance follows after the task.
+    eval(&root, "document.getElementById('r').setAttribute('width', '20'); 'ok'");
+    settle(&mut t);
+    assert!(instance(&t).unwrap().contains(r#"width="20""#));
+    // Another reference, then none.
+    eval(&root, "u.setAttribute('href', '#c'); 'ok'");
+    settle(&mut t);
+    assert_eq!(instance(&t).as_deref(), Some(r#"<circle id="c" r="5"></circle>"#));
+    eval(&root, "u.setAttribute('href', '#missing'); 'ok'");
+    settle(&mut t);
+    assert_eq!(instance(&t).as_deref(), Some(""));
+    // A cycle makes no instance.
+    eval(&root, "document.getElementById('t').append(u); u.setAttribute('href', '#t'); 'ok'");
+    settle(&mut t);
+    assert_eq!(instance(&t).as_deref(), Some(""));
+    // SVG handlers take `evt`.
+    eval(&root, "document.getElementById('r').dispatchEvent(new Event('click')); 'ok'");
+    assert_eq!(eval(&root, "arg"), "object");
+}
+
+/// SVG `<image>` fires `error` for an `href` that fetches no decodable image
+/// (WPT svg/interact/image-load-error-events.html covers `load`); the clone in a `<use>` instance loads too
+/// and its handler sees the clone (WPT css/selectors/crashtests/chrome-bug-565742178.html).
+#[test]
+fn svg_images_fire_error_in_use_instances_too() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.log = []; document.body.innerHTML = '<svg><defs><g id=t>\\
+         <image href=\"data:image/png;base64,AAAA\" onerror=\"log.push(\\'error:\\' + (evt.target.getRootNode() === document))\"/></g></defs>\\
+         <use href=\"#t\"/></svg>'; 'ok'",
+    );
+    settle(&mut t);
+    let mut log: Vec<String> = eval(&root, "log.join()").split(',').map(str::to_owned).collect();
+    log.sort();
+    assert_eq!(log, ["error:false", "error:true"]);
+}
+
+/// An `<object>` whose `data` is a document (`type="text/html"`, or an HTML file extension) has a
+/// child navigable as an iframe does: the document loads and scripts, `contentDocument` and
+/// `contentWindow` reach it, the element gets `load`; other objects keep none.
+#[test]
+fn an_object_showing_a_document_is_a_frame() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<object id=a type='text/html' data='/inner.html'>fallback</object><object id=b data='/inner.htm'></object>\
+         <object id=c data='/pic.png'>img</object><object id=d type='text/html'>no data</object>\
+         <script>globalThis.loads = 0; for (const id of ['a', 'b']) document.getElementById(id).onload = () => loads++;</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/inner.html", "text/html", "<p id=p>inner</p><script>window.answer = 42</script>", Duration::ZERO);
+    loader.insert("http://site.test/inner.htm", "text/html", "<p id=p>second</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(
+        eval(
+            &root,
+            "const o = id => document.getElementById(id); \
+             [loads, o('a').contentDocument.getElementById('p').textContent, o('a').contentWindow.answer, \
+              o('a').contentWindow.parent === window, o('b').contentDocument.getElementById('p').textContent, \
+              o('c').contentDocument, o('d').contentWindow, window.length].join('|')"
+        ),
+        "2|inner|42|true|second|||2"
+    );
+}
+
+/// HTML "the object element" processing: without a document `type` or URL, the response's
+/// Content-Type decides (an extensionless URL served as HTML, or `type` saying an image of an
+/// HTML response, is a document); `data`/`type` changes run the steps again (a child navigable
+/// comes, navigates or goes); an `<embed>` with an HTML `src` shows the document too.
+#[test]
+fn object_content_type_and_attribute_changes_decide_its_navigable() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<object id=a data='/page'>fallback</object><object id=b type='image/png' data='/page'></object>\
+         <object id=c data='/pic.png'></object><embed id=e src='/doc.html'>\
+         <script>globalThis.loads = 0; for (const id of ['a', 'b']) document.getElementById(id).onload = () => loads++;</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/page", "text/html", "<p id=p>page</p>", Duration::ZERO);
+    loader.insert("http://site.test/doc.html", "text/html", "<p id=p>doc</p>", Duration::ZERO);
+    loader.insert("http://site.test/other.html", "text/html", "<p id=p>other</p>", Duration::ZERO);
+    loader.insert("http://site.test/pic.png", "image/png", "not really a png", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(
+        eval(
+            &root,
+            "globalThis.o = id => document.getElementById(id); globalThis.text = id => o(id).contentDocument?.getElementById('p')?.textContent ?? 'none'; \
+             globalThis.frameTexts = () => [...Array(window.length)].map((_, i) => window[i].document.getElementById('p')?.textContent).sort().join(','); \
+             [loads, text('a'), text('b'), text('c'), frameTexts()].join('|')"
+        ),
+        "2|page|page|none|doc,page,page"
+    );
+    // `c` turns into a document object, `a` loses its document, `b` navigates elsewhere.
+    eval(&root, "o('c').type = 'text/html'; o('c').data = '/other.html'; o('a').data = '/pic.png'; o('b').data = '/doc.html';");
+    settle(&mut t);
+    assert_eq!(eval(&root, "[text('a'), text('b'), text('c'), frameTexts()].join('|')"), "none|doc|other|doc,doc,other");
+}
+
+/// An `<object>` is fetched first even when its `type` says text/html: a failed fetch fires
+/// `error` and leaves the fallback (no child navigable); one not being rendered is not fetched
+/// until it is, then shows its document.
+#[test]
+fn object_fallback_on_failure_and_document_once_rendered() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<object id=missing type='text/html' data='/missing.html'>fallback</object>\
+         <object id=hidden style='display:none' data='/doc.html'></object>\
+         <script>globalThis.events = []; for (const id of ['missing', 'hidden']) for (const t of ['load', 'error']) \
+           document.getElementById(id).addEventListener(t, () => events.push(id + ':' + t));</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/doc.html", "text/html", "<p id=p>doc</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(
+        eval(&root, "globalThis.o = id => document.getElementById(id); [events.join(), o('missing').contentDocument, o('hidden').contentDocument, window.length].join('|')"),
+        "missing:error|||0"
+    );
+    eval(&root, "o('hidden').style.display = 'inline';");
+    settle(&mut t);
+    assert_eq!(
+        eval(&root, "[events.join(), o('hidden').contentDocument?.getElementById('p')?.textContent, window.length].join('|')"),
+        "missing:error,hidden:load|doc|1"
+    );
+}
+
+/// HTML Window reuse: an iframe's first document of its own origin keeps
+/// the Window of its initial about:blank document, so what the parent put on
+/// `contentWindow` right after inserting the iframe (expandos, listeners,
+/// `onload`) is there for the loaded document. A second navigation gets a
+/// new Window (another origin does too, see
+/// `child_location_navigation_keeps_parent_and_sibling_realms`).
+#[test]
+fn first_same_origin_document_reuses_the_initial_window() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("https://example.test/main", "text/html", "<body></body>", Duration::ZERO);
+    loader.insert(
+        "https://example.test/child",
+        "text/html",
+        "<p id=c>child</p><script>window.seenByChild = typeof window.marker; addEventListener('load', () => parent.order.push('child-listener'))</script>",
+        Duration::from_millis(10),
+    );
+    loader.insert("https://example.test/next", "text/html", "<p id=n>next</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.order = []; globalThis.f = document.createElement('iframe'); f.src = '/child'; \
+         document.body.appendChild(f); globalThis.w = f.contentWindow; globalThis.blankDoc = w.document; \
+         w.marker = 'set'; w.addEventListener('load', () => order.push('parent-listener')); \
+         w.onload = () => order.push('onload');",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "f.contentDocument.getElementById('c').textContent"), "child");
+    assert_eq!(eval(&root, "f.contentWindow === w"), "true");
+    assert_eq!(eval(&root, "String(w.marker) + ' ' + w.seenByChild"), "set string");
+    assert_eq!(eval(&root, "w.document === f.contentDocument && w.document !== blankDoc"), "true");
+    assert_eq!(eval(&root, "order.join(',')"), "parent-listener,onload,child-listener");
+    // A second navigation of the reusing frame makes a new Window.
+    eval(&root, "f.src = '/next'");
+    settle(&mut t);
+    assert_eq!(
+        eval(&root, "f.contentDocument.getElementById('n').textContent + ' ' + String(w.marker)"),
+        "next undefined"
+    );
 }
