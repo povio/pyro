@@ -3915,7 +3915,13 @@ fn window_open_returns_a_minimal_popup_object() {
         value(&mut h, "(() => { try { w.location = 'http://[' } catch (e) { return e.name } })()"),
         json!("SyntaxError")
     );
-    value(&mut h, "w.location.assign('data:text/html,<title>third</title>'); 1");
+    // Of a cross-origin Location only the href setter and replace() are reachable (HTML
+    // CrossOriginProperties, Chrome): assign() throws, replace() navigates.
+    assert_eq!(
+        value(&mut h, "(() => { try { w.location.assign('data:text/html,<title>x</title>') } catch (e) { return e.name } })()"),
+        json!("SecurityError")
+    );
+    value(&mut h, "w.location.replace('data:text/html,<title>third</title>'); 1");
     h.until_event(|m| {
         m["method"] == "Page.frameNavigated"
             && m["params"]["frame"]["url"] == json!("data:text/html,<title>third</title>")
