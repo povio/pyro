@@ -576,6 +576,10 @@ impl BaseDocument {
                 let child = contents.for_child(&self.nodes, &self.nodes[child_id]);
                 let child_rect_in_self =
                     crate::util::ensure_stack(|| self.resolve_transforms(child_id, resolve_all, child));
+                // pyro: a box a line clamp discarded is no overflow (`layout::line_clamp`).
+                if self.nodes[child_id].flags.contains(NodeFlags::HIDDEN_BY_CLAMP) {
+                    continue;
+                }
                 overflow = unite_overflow(overflow, child_rect_in_self);
                 if let Some(padding) = scroll_padding {
                     overflow = unite_overflow(overflow, self.padded_inflow_box(child_id, padding, scale));
@@ -668,8 +672,11 @@ impl BaseDocument {
         let editor_layout = element.and_then(|e| e.text_input_data()).and_then(|i| i.editor.try_layout());
         let inline = element.and_then(|e| e.inline_layout_data.as_deref());
         let (text_layout, block_offset) = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)))?;
+        // pyro: the lines a line clamp discarded are no overflow (`layout::line_clamp`).
+        let kept = inline.and_then(|t| t.clamp.as_ref()).map_or(usize::MAX, |clamp| clamp.lines as usize);
         let width = text_layout
             .lines()
+            .take(kept)
             .map(|line| {
                 let m = line.metrics();
                 (m.offset + m.advance - m.hanging_advance) as f64
@@ -679,6 +686,7 @@ impl BaseDocument {
         // is not content.
         let height = text_layout
             .lines()
+            .take(kept)
             .filter(|line| !line.text_range().is_empty())
             .map(|line| line.metrics().block_max_coord as f64)
             .fold(0.0, f64::max);

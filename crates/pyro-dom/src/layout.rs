@@ -2323,7 +2323,8 @@ impl Layout {
                 continue;
             }
             let r = self.hit_test_client_rect(dom, result, el, geometry);
-            if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+            // (Nor is a box a line clamp discarded: `ExternalBox::hidden`.)
+            if b.hidden || !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
             }
             // A box split into fragments (columns) is hit in one of them: its rect is their union.

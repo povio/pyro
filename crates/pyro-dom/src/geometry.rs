@@ -53,6 +53,8 @@ pub struct ExternalBox {
     pub border: [f64; 4],
     pub padding: [f64; 4],
     pub position: BoxPosition,
+    /// Discarded by a line clamp: laid out, not painted, not hit.
+    pub hidden: bool,
 }
 
 /// One word of a text node on a line (document CSS px).
@@ -419,6 +421,8 @@ pub struct LayoutBox {
     pub order: u32,
     /// It or an ancestor is positioned: painted in the positioned layer.
     pub in_positioned: bool,
+    /// See [`ExternalBox::hidden`].
+    pub hidden: bool,
 }
 
 impl LayoutBox {
@@ -436,6 +440,7 @@ impl LayoutBox {
             position: b.position,
             order,
             in_positioned: b.position != BoxPosition::Static,
+            hidden: b.hidden,
         }
     }
 

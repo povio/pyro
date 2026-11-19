@@ -2589,6 +2589,10 @@ impl Node {
         if self.flags.contains(NodeFlags::INLINE_PASS_ENTRY) {
             return None;
         }
+        // pyro: nor is a box a line clamp discarded (`layout::line_clamp`): it is not painted.
+        if self.flags.contains(NodeFlags::HIDDEN_BY_CLAMP) {
+            return None;
+        }
 
         // Don't hit on visbility:hidden elements
         if let Some(style) = self.primary_styles() {

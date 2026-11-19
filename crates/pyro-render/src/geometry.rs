@@ -46,6 +46,9 @@ pub struct LayoutBox {
     pub border: [f64; 4],
     pub padding: [f64; 4],
     pub position: BoxPosition,
+    /// pyro: discarded by a line clamp (it or an ancestor in the clamping box): laid out, not
+    /// painted, and not hit (blitz-dom `NodeFlags::HIDDEN_BY_CLAMP`).
+    pub hidden: bool,
 }
 
 /// An element's `position`.
@@ -403,6 +406,7 @@ impl Geometry {
             border: [l.border.top, l.border.right, l.border.bottom, l.border.left].map(f64::from),
             padding: [l.padding.top, l.padding.right, l.padding.bottom, l.padding.left].map(f64::from),
             position: BoxPosition::Static,
+            hidden: hidden_by_clamp(doc, id),
         })
     }
 
@@ -452,6 +456,7 @@ impl Geometry {
             border: b.border.map(unit),
             padding: b.padding.map(unit),
             position: box_position(doc.get_node(id)?),
+            hidden: b.hidden,
         })
     }
 
@@ -1551,4 +1556,17 @@ impl Homography {
         const LIMIT: f64 = 1e7;
         bounds.map(|b| Rect::new(b.x0.max(-LIMIT), b.y0.max(-LIMIT), b.x1.min(LIMIT), b.y1.min(LIMIT)))
     }
+}
+
+/// pyro: whether a line clamp discarded `id` or a box it is laid out in (blitz-dom
+/// `NodeFlags::HIDDEN_BY_CLAMP`).
+fn hidden_by_clamp(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
+    let mut current = doc.get_node(id);
+    while let Some(node) = current {
+        if node.flags.contains(blitz_dom::node::NodeFlags::HIDDEN_BY_CLAMP) {
+            return true;
+        }
+        current = node.layout_parent.get().and_then(|parent| doc.get_node(parent));
+    }
+    false
 }

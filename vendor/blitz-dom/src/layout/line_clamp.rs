@@ -85,7 +85,14 @@ impl LayoutPassState<'_> {
         let limit = spec
             .auto
             // (A `min-height` above the `max-height` wins: WPT css-overflow `line-clamp-auto-014`.)
-            .then(|| inputs.known_dimensions.height.or(height.map(|h| h + box_sizing_inset)).or(max.map(|max| min.map_or(max, |min| min.max(max)))))
+            // (The used height: the authored one within `min-height` and `max-height`.)
+            .then(|| {
+                inputs
+                    .known_dimensions
+                    .height
+                    .or(height.map(|h| (h + box_sizing_inset).maybe_clamp(min, max)))
+                    .or(max.map(|max| min.map_or(max, |min| min.max(max))))
+            })
             .flatten()
             .map(|block_size| block_size - padding.bottom - border.bottom);
         let content_top = padding.top + border.top;
@@ -97,6 +104,15 @@ impl LayoutPassState<'_> {
         // what follows them is not painted (WPT css-overflow `line-clamp-012`,
         // `line-clamp-auto-020`).
         let bottom = self.end_blocks_at_clamp(root, block, bottom);
+        // pyro: what was discarded adds no scrollable overflow: the content ends at the clamp
+        // point (and its bottom padding).
+        let overflow = output.scrollable_overflow_rect;
+        if !overflow.is_reversed().y {
+            // (From the top of the padding box.)
+            let mut rect = overflow.rect();
+            rect.bottom = rect.bottom.min((bottom - border.top + padding.bottom).max(0.0));
+            output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
+        }
         if !auto_height {
             return;
         }
@@ -229,6 +245,9 @@ impl LayoutPassState<'_> {
                         && child.taffy_display() == taffy::Display::Block
                         // (A fieldset is a formatting context of its own.)
                         && child.data.downcast_element().is_some_and(|el| el.name.local != local_name!("fieldset"))
+                        // (A box that clamps its own lines keeps its clamp: WPT-less, review of
+                        // round 6. A standard line clamp is an independent formatting context.)
+                        && self.line_clamp_of(child_id).is_none()
                         && child.primary_styles().is_some_and(|style| {
                             use style::values::computed::Overflow;
                             let box_style = style.get_box();

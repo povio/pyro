@@ -7388,3 +7388,40 @@ fn node_argument_operations_answer_alike_on_both_dispatches() {
         "TypeError"
     );
 }
+
+#[test]
+fn scroll_into_view_scrolls_the_slot_of_a_closed_shadow_root() {
+    // The target's parent in the flat tree is the slot, a scroll container, whether the shadow
+    // root is open or closed (script's `assignedSlot` hides a closed root's slot).
+    for mode in ["open", "closed"] {
+        let e = env(
+            "<body><div id=host><div style='height:200px'></div><div id=target style='height:100px;width:100px'></div></div></body>",
+        );
+        let top = eval(
+            &e.main,
+            &format!(
+                "const root=host.attachShadow({{mode:'{mode}'}});const slot=document.createElement('slot');\
+                 slot.style='display:block;overflow:hidden;width:100px;height:100px';root.appendChild(slot);\
+                 target.scrollIntoView();String(slot.scrollTop)"
+            ),
+        );
+        assert_eq!(top, "200", "{mode} shadow root");
+        e.page.dispose();
+    }
+}
+
+#[test]
+fn content_a_line_clamp_discarded_is_neither_hit_nor_scrollable_overflow() {
+    let e = env(
+        "<body style='margin:0;font:20px/20px monospace'>\
+         <div id=clamp style='line-clamp:1;width:200px'>first line<div>second block <button id=btn style='width:80px;height:30px'>B</button></div></div>\
+         <div id=scroller style='line-clamp:1;overflow:auto;width:200px;margin-top:40px'>one<div style='height:300px'>tall</div></div></body>",
+    );
+    let hit = eval(
+        &e.main,
+        "const b=btn.getBoundingClientRect();const el=document.elementFromPoint(b.x+5,b.y+5);String(el&&el.id)",
+    );
+    assert_ne!(hit, "btn", "a discarded button is not hit");
+    assert_eq!(eval(&e.main, "String(scroller.scrollHeight===scroller.clientHeight)"), "true");
+    e.page.dispose();
+}
