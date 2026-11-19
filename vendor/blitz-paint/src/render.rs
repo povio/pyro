@@ -1544,12 +1544,32 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // canvas, video frame, inline SVG or document; CSS Contain 2 § 4.1).
                 let skipped = cx.style.get_box().slow_clone_content_visibility()
                     == style::values::specified::box_::ContentVisibility::Hidden;
+                // pyro: a `content: filter(<image>, ...)` image is drawn through its filters, in a
+                // layer over the content box (WPT filter-effects `filter-function-001`).
+                let content_filter = cx.content_image_filter();
+                if let Some(filter) = &content_filter {
+                    scene.push_layer(
+                        Fill::NonZero,
+                        BlendMode::default(),
+                        1.0,
+                        cx.transform,
+                        &cx.frame.content_box,
+                        Some(filter.clone()),
+                        None,
+                    );
+                }
                 #[cfg(feature = "svg")]
                 if !skipped {
                     cx.draw_svg(scene);
                 }
+                if !hidden && !skipped && content_filter.is_some() {
+                    cx.draw_image(scene);
+                }
+                if content_filter.is_some() {
+                    scene.pop_layer();
+                }
                 if !hidden {
-                    if !skipped {
+                    if !skipped && content_filter.is_none() {
                         cx.draw_image(scene);
                         cx.draw_selection_tint(scene);
                         cx.draw_content_gradient(scene);
@@ -5740,6 +5760,17 @@ impl ElementCx<'_, '_> {
         }
         let rect = self.frame.content_box;
         scene.fill(Fill::NonZero, self.transform, tint, None, &rect);
+    }
+
+    /// pyro: the filters of this element's `content` when it is one `filter()` image whose
+    /// image the element shows (`ElementData::content_image`).
+    fn content_image_filter(&self) -> Option<Arc<anyrender::Filter>> {
+        use style::values::computed::{Content, ContentItem};
+        use style::values::generics::image::GenericImage;
+        self.element.content_image.as_ref()?;
+        let Content::Items(items) = &self.style.get_counters().content else { return None };
+        let [ContentItem::Image(image @ GenericImage::Filter(_))] = &items.items[..] else { return None };
+        crate::filters::image_filter(image, self.scale, &self.style.clone_color(), self.context.dom).1
     }
 
     fn draw_image(&self, scene: &mut impl PaintScene) {

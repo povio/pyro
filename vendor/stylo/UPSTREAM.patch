@@ -6521,7 +6521,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
  
 diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 --- a/values/specified/image.rs	2026-11-11 19:55:57
-+++ b/values/specified/image.rs	2026-11-19 15:12:27
++++ b/values/specified/image.rs	2026-11-19 15:38:23
 @@ -38,7 +38,8 @@
  
  /// Specified values for an image according to CSS-IMAGES.
@@ -6632,12 +6632,10 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          )
      }
  
-@@ -298,6 +353,36 @@
-         input: &mut Parser,
-     ) -> Result<Image, ParseError> {
+@@ -300,6 +355,37 @@
          Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
-+    }
-+
+     }
+ 
 +    /// pyro: [`Self::parse_forbid_none`] without `filter()` images (`content`), which blitz-dom
 +    /// does not generate. Registered custom properties of `<image>` syntax keep `filter()`, as
 +    /// `background-image` does.
@@ -6649,7 +6647,8 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 +            context,
 +            input,
 +            CorsMode::None,
-+            ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
++            // pyro: `filter()` too: blitz-paint draws a content image through its filters.
++            ParseImageFlags::FORBID_NONE,
 +        )
 +    }
 +
@@ -6666,10 +6665,12 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 +            CorsMode::None,
 +            ParseImageFlags::FORBID_FILTER,
 +        )
-     }
- 
++    }
++
      /// Provides an alternate method for parsing, but only for urls.
-@@ -331,15 +416,12 @@
+     pub fn parse_only_url(
+         context: &ParserContext,
+@@ -331,15 +417,12 @@
  
  impl CrossFadeElement {
      fn parse_percentage(context: &ParserContext, input: &mut Parser) -> Option<Percentage> {

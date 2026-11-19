@@ -366,7 +366,8 @@ impl Image {
             context,
             input,
             CorsMode::None,
-            ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
+            // pyro: `filter()` too: blitz-paint draws a content image through its filters.
+            ParseImageFlags::FORBID_NONE,
         )
     }
 
