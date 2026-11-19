@@ -1119,8 +1119,12 @@ impl LayoutPassState<'_> {
         let text_indent = self.nodes[node_id]
             .primary_styles()
             .map(|s| s.slow_clone_text_indent())
-            // pyro: not on the lines of an anonymous block after its block's first line.
-            .filter(|indent| indent.hanging || crate::layout::first_line::starts_a_block(self.doc, node_id))
+            // pyro: not on the lines of an anonymous block after its block's first line, unless
+            // each line after a forced break is indented (`each-line`: the line after a block-level
+            // box too, WPT css-text `text-indent-each-line-after-block-level-box`).
+            .filter(|indent| {
+                indent.hanging || indent.each_line || crate::layout::first_line::starts_a_block(self.doc, node_id)
+            })
             .unwrap_or_else(GenericTextIndent::zero);
         // pyro: the first line of an anonymous block is the first formatted line of its parent
         // element only when the block is the parent's first box (CSS Text 3 § 8.1: "the first
