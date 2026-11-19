@@ -3399,6 +3399,7 @@ impl Layout {
         delta_y: f64,
     ) -> Vec<ScrollTarget> {
         let (mut dx, mut dy) = (delta_to_scroll(delta_x), delta_to_scroll(delta_y));
+        let mut pseudo_moved = false;
         if let Some(source) = self.synced_geometry_source(dom).cloned() {
             for (pseudo, which) in [
                 (1u8, style::selector_parser::PseudoElement::Before),
@@ -3438,13 +3439,17 @@ impl Layout {
                 if next != current {
                     self.pseudo_scroll.insert((target, pseudo), next);
                     self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                    pseudo_moved = true;
                 }
             }
         }
-        let mut moved = Vec::new();
+        // (A pseudo-element's scroll events go to its originating element, as Chromium sends them.)
+        let mut moved = if pseudo_moved { vec![ScrollTarget::Container(target)] } else { Vec::new() };
         for (axis, d) in [(Axis::Width, dx), (Axis::Height, dy)] {
             if let Some(t) = self.scroll_axis(dom, target, axis, d) {
-                moved.push(t);
+                if !moved.contains(&t) {
+                    moved.push(t);
+                }
             }
         }
         moved
