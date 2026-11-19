@@ -103,13 +103,16 @@ impl ElementCx<'_, '_> {
             } else {
                 range
             };
-            let outer_row_spanner = self.context.spanner_row_spanner.replace(row_spanner);
-            let outer_column_pass = self
-                .context
-                .column_pass_container
-                .replace((!fragment.spanner && vertical.is_none()).then_some(self.node.id));
-            let outer_spanner_row =
-                self.context.spanner_row_container.replace((fragment.spanner && vertical.is_none()).then_some(self.node.id));
+            // (Restored on every way out of this column, culled or painted.)
+            let row_guard = Restore::set(&self.context.spanner_row_spanner, row_spanner);
+            let column_guard = Restore::set(
+                &self.context.column_pass_container,
+                (!fragment.spanner && vertical.is_none()).then_some(self.node.id),
+            );
+            let spanner_row_guard = Restore::set(
+                &self.context.spanner_row_container,
+                (fragment.spanner && vertical.is_none()).then_some(self.node.id),
+            );
             let transform = base.pre_translate(offset);
             // The column's part of what is visible, for culling its content; a column out of
             // sight is not painted (`Rect::intersect` never gives a negative size: overlap it is).
@@ -175,9 +178,7 @@ impl ElementCx<'_, '_> {
             if !unclipped {
                 self.context.layer_manager.maybe_pop_layer(scene, pushed);
             }
-            self.context.column_pass_container.set(outer_column_pass);
-            self.context.spanner_row_container.set(outer_spanner_row);
-            self.context.spanner_row_spanner.set(outer_row_spanner);
+            drop((spanner_row_guard, column_guard, row_guard));
             // pyro: a box broken at the column's end fills the rest of the column (its fragment
             // is as tall as the column: Chromium; WPT css-multicol `multicol-fill-balance-041`).
             // (Not in the rows of an explicit `column-height`, where Chromium keeps a broken box
@@ -396,5 +397,24 @@ impl ElementCx<'_, '_> {
             }
             _ => fill(scene, color, &rect),
         }
+    }
+}
+
+/// pyro: a paint-context cell set for a while: its earlier value is put back when this is dropped,
+/// on every way out of the scope that set it.
+struct Restore<'c, T: Copy> {
+    cell: &'c std::cell::Cell<T>,
+    outer: T,
+}
+
+impl<'c, T: Copy> Restore<'c, T> {
+    fn set(cell: &'c std::cell::Cell<T>, value: T) -> Self {
+        Self { cell, outer: cell.replace(value) }
+    }
+}
+
+impl<T: Copy> Drop for Restore<'_, T> {
+    fn drop(&mut self) {
+        self.cell.set(self.outer);
     }
 }

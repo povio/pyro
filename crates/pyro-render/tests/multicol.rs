@@ -331,3 +331,27 @@ fn ordinary_page_cost_probe() {
     times.sort_by(f64::total_cmp);
     println!("ordinary page: min {:.2} ms, median {:.2} ms", times[0], times[times.len() / 2]);
 }
+
+/// pyro: a column out of sight is not painted and leaves its pass's state behind it: a nested
+/// container whose second column is off to the right, in the first column of the outer one, and
+/// after it the outer container's spanner and its second column, painted as ever (review: the
+/// culled column skipped restoring the column and spanner selectors).
+#[test]
+fn a_culled_column_leaves_later_boxes_painted() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:400px'>\
+             <div style='columns:2;column-gap:0;width:2000px'><div style='height:40px;background:green'></div></div>\
+             <div style='height:40px;background:green'></div>\
+             <div style='column-span:all;height:20px;background:blue'></div>\
+             <div style='height:40px;background:green'></div><div style='height:40px;background:green'></div></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[(10.0, 10.0, GREEN), (210.0, 10.0, GREEN), (10.0, 40.0, BLUE), (390.0, 40.0, BLUE), (10.0, 60.0, GREEN), (210.0, 60.0, GREEN), (10.0, 95.0, WHITE)],
+            "the boxes after the nested container",
+        );
+    }
+}
