@@ -1042,7 +1042,14 @@ fn build_inline_layout_with(
                         &mut BidiScan::default(),
                     );
                 }
-                let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
+                // pyro: `ruby-position` applies to the annotation container, which inherits it from
+                // the `<ruby>` (or is the `<rtc>`): an `<rt>`'s own value does not move it, as in
+                // Chromium (WPT css-inline `text-box-trim-ruby-start-001`).
+                let position = node
+                    .parent
+                    .and_then(|parent| nodes[parent].primary_styles())
+                    .map_or(itext.ruby_position, |parent| parent.get_inherited_text().ruby_position);
+                let under = matches!(position, RubyPosition::Under | RubyPosition::AlternateUnder);
                 (builder.build().0, under)
             }
             TextAnnotationKind::Emphasis => emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?,

@@ -12136,7 +12136,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -76,54 +646,505 @@
+@@ -76,54 +646,512 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -12542,7 +12542,14 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                        &mut BidiScan::default(),
 +                    );
 +                }
-+                let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
++                // pyro: `ruby-position` applies to the annotation container, which inherits it from
++                // the `<ruby>` (or is the `<rtc>`): an `<rt>`'s own value does not move it, as in
++                // Chromium (WPT css-inline `text-box-trim-ruby-start-001`).
++                let position = node
++                    .parent
++                    .and_then(|parent| nodes[parent].primary_styles())
++                    .map_or(itext.ruby_position, |parent| parent.get_inherited_text().ruby_position);
++                let under = matches!(position, RubyPosition::Under | RubyPosition::AlternateUnder);
 +                (builder.build().0, under)
 +            }
 +            TextAnnotationKind::Emphasis => emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?,
@@ -12648,7 +12655,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1164,51 @@
+@@ -143,6 +1171,51 @@
                      }
                  }
  
@@ -12700,7 +12707,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1227,44 @@
+@@ -161,41 +1234,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -12767,7 +12774,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1279,218 @@
+@@ -210,66 +1286,218 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -13007,7 +13014,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,17 +1505,139 @@
+@@ -284,17 +1512,139 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -13150,7 +13157,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1646,314 @@
+@@ -303,3 +1653,314 @@
          }
      }
  }
