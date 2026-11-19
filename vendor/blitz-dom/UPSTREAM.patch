@@ -19860,8 +19860,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
              }
 -            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
 +        }
- 
--            _ => taffy::LayoutOutput::HIDDEN,
++
 +        // Absolutely positioned children take no part in the table grid. Their
 +        // static position is the top-left of the table's content box.
 +        let context = table_wrapper.ctx;
@@ -19895,7 +19894,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    static_position,
 +                });
 +            }
-         }
++        }
 +
 +        // pyro: an absolutely positioned box whose containing block is a positioned row or row
 +        // group of this table (they have no boxes of their own) is laid out here, against the
@@ -19928,9 +19927,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        );
 +
 +        output
-     }
- }
- 
++    }
++}
++
 +impl LayoutPassState<'_> {
 +    /// pyro: the containing block of the absolutely positioned box `box_id` when it is a
 +    /// positioned row or row group of the table `table_id` (the nearest positioned ancestor of the
@@ -20015,7 +20014,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        }
 +        widest
 +    }
-+
+ 
+-            _ => taffy::LayoutOutput::HIDDEN,
 +    /// pyro: lays out a table's captions (`TableContext::captions`) above (`caption-side: top`)
 +    /// and below its grid, each a block as wide as the grid less its margins: the table's box is
 +    /// then its wrapper box, the grid (`output`, laid out) moved down by the captions above it, as
@@ -20057,7 +20057,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            };
 +            let caption_output = self.compute_child_layout(taffy_node_id(caption), caption_inputs);
 +            laid_out.push((caption, above, margin, caption_output));
-+        }
+         }
 +        let extent = |above: bool| -> f32 {
 +            laid_out
 +                .iter()
@@ -20131,9 +20131,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        output.baselines.first = output.baselines.first.map(|baseline| baseline + top);
 +        output.baselines.last = output.baselines.last.map(|baseline| baseline + top);
 +        top
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
 +enum ChildLayout {
 +    /// A leaf box, laid out.
@@ -20374,7 +20374,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2479,193 @@
+@@ -782,16 +2479,205 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -20527,6 +20527,18 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        // content's order to itself.
 +        let child = self.node_from_id(child_node_id);
 +        let flags = child.flags;
++        // pyro: a flex or grid container whose items paint with the inline content
++        // (`Node::items_paint_in_ancestor_phases`): its items that reach past its box overflow it.
++        if child.items_paint_in_ancestor_phases() {
++            let height = child.unrounded_layout().size.height;
++            let children = child.layout_children.borrow();
++            let overflows = children.as_deref().unwrap_or(&[]).iter().any(|&id| {
++                let item = &self.nodes[id];
++                let layout = item.unrounded_layout();
++                !item.is_out_of_flow() && (layout.location.y < -0.01 || layout.location.y + layout.size.height > height + 0.01)
++            });
++            return (false, overflows);
++        }
 +        if !flags.intersects(NodeFlags::FLOW_BOXES_OVERLAP | NodeFlags::FLOW_CONTENT_OVERFLOWS)
 +            || !child.paints_in_ancestor_phases()
 +        {
@@ -20572,7 +20584,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2718,30 @@
+@@ -844,6 +2730,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -20603,7 +20615,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2750,19 @@
+@@ -852,7 +2762,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20624,7 +20636,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2778,30 @@
+@@ -868,6 +2790,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -20655,7 +20667,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2906,201 @@
+@@ -972,3 +2918,201 @@
          })
      }
  }
@@ -24403,7 +24415,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1160,224 @@
+@@ -471,22 +1160,262 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -24537,6 +24549,44 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 -                style.clone_position(),
 -                Position::Relative | Position::Sticky
 -            )
++    /// pyro: whether this box is a block-level flex or grid container that paints in the phases of
++    /// an ancestor: its own box with the block backgrounds (CSS 2.1 Appendix E step 4) and its items,
++    /// which paint as inline blocks do (css-flexbox-1 § 4.4, css-grid-1 § 9.4), whole with the inline
++    /// content (step 7; WPT css-flexbox `flexbox-align-self-baseline-horiz-006`, an item overflowing
++    /// onto the next block's border). No layer root, no stacking context, no flex or grid item; the
++    /// painter phases it only when its paint children are all in-flow (`blitz-paint`).
++    pub fn items_paint_in_ancestor_phases(&self) -> bool {
++        use style::values::specified::box_::{DisplayInside, DisplayOutside};
++        let Some(style) = self.primary_styles() else {
++            return false;
++        };
++        let display = style.clone_display();
++        if display.outside() != DisplayOutside::Block || !matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid) {
++            return false;
++        }
++        if style.clone_float() != Float::None
++            || self.is_paint_layer_root()
++            || self.is_stacking_context_root(false)
++            || self.plane_3d().is_some()
++            || !style.get_effects().backdrop_filter.0.is_empty()
++            || self.element_data().is_some_and(|element| {
++                crate::layout::replaced::is_replaced(element)
++                    || matches!(
++                        element.name.local,
++                        local_name!("input") | local_name!("button") | local_name!("select") | local_name!("textarea")
++                            | local_name!("fieldset")
++                    )
++            })
++        {
++            return false;
++        }
++        !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
++            parent.primary_styles().is_some_and(|parent_style| {
++                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
++            })
++        })
++    }
++
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -24635,7 +24685,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1387,21 @@
+@@ -496,6 +1425,21 @@
      }
  }
  
@@ -24657,7 +24707,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1445,143 @@
+@@ -539,3 +1483,143 @@
          )
      }
  }

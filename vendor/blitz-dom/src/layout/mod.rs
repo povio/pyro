@@ -2628,6 +2628,18 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         // content's order to itself.
         let child = self.node_from_id(child_node_id);
         let flags = child.flags;
+        // pyro: a flex or grid container whose items paint with the inline content
+        // (`Node::items_paint_in_ancestor_phases`): its items that reach past its box overflow it.
+        if child.items_paint_in_ancestor_phases() {
+            let height = child.unrounded_layout().size.height;
+            let children = child.layout_children.borrow();
+            let overflows = children.as_deref().unwrap_or(&[]).iter().any(|&id| {
+                let item = &self.nodes[id];
+                let layout = item.unrounded_layout();
+                !item.is_out_of_flow() && (layout.location.y < -0.01 || layout.location.y + layout.size.height > height + 0.01)
+            });
+            return (false, overflows);
+        }
         if !flags.intersects(NodeFlags::FLOW_BOXES_OVERLAP | NodeFlags::FLOW_CONTENT_OVERFLOWS)
             || !child.paints_in_ancestor_phases()
         {

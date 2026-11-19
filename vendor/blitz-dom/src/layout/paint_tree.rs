@@ -1283,6 +1283,44 @@ impl Node {
         })
     }
 
+    /// pyro: whether this box is a block-level flex or grid container that paints in the phases of
+    /// an ancestor: its own box with the block backgrounds (CSS 2.1 Appendix E step 4) and its items,
+    /// which paint as inline blocks do (css-flexbox-1 § 4.4, css-grid-1 § 9.4), whole with the inline
+    /// content (step 7; WPT css-flexbox `flexbox-align-self-baseline-horiz-006`, an item overflowing
+    /// onto the next block's border). No layer root, no stacking context, no flex or grid item; the
+    /// painter phases it only when its paint children are all in-flow (`blitz-paint`).
+    pub fn items_paint_in_ancestor_phases(&self) -> bool {
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        let Some(style) = self.primary_styles() else {
+            return false;
+        };
+        let display = style.clone_display();
+        if display.outside() != DisplayOutside::Block || !matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid) {
+            return false;
+        }
+        if style.clone_float() != Float::None
+            || self.is_paint_layer_root()
+            || self.is_stacking_context_root(false)
+            || self.plane_3d().is_some()
+            || !style.get_effects().backdrop_filter.0.is_empty()
+            || self.element_data().is_some_and(|element| {
+                crate::layout::replaced::is_replaced(element)
+                    || matches!(
+                        element.name.local,
+                        local_name!("input") | local_name!("button") | local_name!("select") | local_name!("textarea")
+                            | local_name!("fieldset")
+                    )
+            })
+        {
+            return false;
+        }
+        !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
+            parent.primary_styles().is_some_and(|parent_style| {
+                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
+            })
+        })
+    }
+
     /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
     /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
     /// in its cells and before their inline content, floats and positioned boxes). Only a part

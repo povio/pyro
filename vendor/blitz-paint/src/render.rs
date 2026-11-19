@@ -1268,6 +1268,31 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             source_rect
         };
 
+        // pyro: a flex or grid container painted in its painter's phases (`items_in_phases`): its box
+        // with the block backgrounds, its items whole with the inline content, as inline blocks.
+        if phase != FlowPhase::All && node.items_paint_in_ancestor_phases() {
+            match phase {
+                FlowPhase::Background if !hidden => {
+                    cx.draw_outset_box_shadow(scene);
+                    if cx.context.backgrounds && self.canvas_background != Some(node_id) {
+                        cx.draw_background(scene);
+                    }
+                    cx.draw_inset_box_shadow(scene);
+                    cx.draw_border(scene);
+                }
+                FlowPhase::Foreground => {
+                    let children = node.paint_children.borrow().clone().unwrap_or_default();
+                    for child_id in children {
+                        self.flow_phase.set(FlowPhase::All);
+                        cx.draw_paint_child(scene, child_id, cx.transform, child_clip_rect);
+                    }
+                }
+                FlowPhase::Outline if !hidden => cx.draw_outline(scene),
+                _ => {}
+            }
+            return;
+        }
+
         // pyro: a scroll container painted in its painter's phases (`scroller_in_phases`): its own
         // box unclipped, its content clipped by its overflow clip and scrolled, its scrollbars
         // over its inline content.
@@ -5484,6 +5509,16 @@ impl ElementCx<'_, '_> {
             })
     }
 
+    /// pyro: whether `child` is a flex or grid container painted in this box's phases
+    /// (`Node::items_paint_in_ancestor_phases`), its paint children all in-flow items.
+    fn items_in_phases(&self, child: &Node) -> bool {
+        child.items_paint_in_ancestor_phases()
+            && child.paint_children.borrow().as_ref().is_some_and(|children| {
+                let tree = self.context.dom.as_ref().tree();
+                children.iter().all(|&id| self.paint_level(&tree[id]) == 0)
+            })
+    }
+
     fn paint_level(&self, child: &Node) -> u8 {
         let Some(style) = child.primary_styles() else {
             return 0;
@@ -5615,6 +5650,7 @@ impl ElementCx<'_, '_> {
                 || child.paints_in_table_phases()
                 || block_level_frame_in_phases(child)
                 || self.scroller_in_phases(child)
+                || self.items_in_phases(child)
             {
                 phase
             } else if phase == FlowPhase::Outline {
