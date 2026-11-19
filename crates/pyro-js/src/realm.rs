@@ -1444,6 +1444,31 @@ impl<'s> Scope<'s> {
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
 
+    /// The value `source` evaluates to in the engine's root context, made on
+    /// the first call with `key` and the same value for every realm of the
+    /// engine (the agent) after that. For state that the agent's realms
+    /// share, such as the internal slots of objects that script implements
+    /// per realm: an object made in a page's realm would keep that realm
+    /// alive, one made in the root context lives as long as the engine.
+    /// `source` must not depend on the realm asking.
+    pub fn agent_value(&self, key: &'static str, source: &str) -> JsResult<Value<'s>> {
+        let engine = self.engine_inner();
+        if let Some(v) = engine.agent_values.borrow().get(key) {
+            return Ok(v.get(self));
+        }
+        let root = engine.root_ctx();
+        let src = JsString::new(source);
+        let mut exc = ptr::null();
+        // SAFETY: the engine's root context, alive while the engine is; a
+        // value of its VM is usable in every context of the VM.
+        let v = unsafe { sys::JSEvaluateScript(root, src.as_raw(), ptr::null_mut(), ptr::null(), 1, &mut exc) };
+        check(root, exc)?;
+        // SAFETY: `v` is a live value of this engine, just made.
+        let held = unsafe { crate::Persistent::from_raw(root, v) }.ok_or(JsError::Type("no engine".into()))?;
+        engine.agent_values.borrow_mut().insert(key, held);
+        Ok(unsafe { Value::from_raw(self.ctx, v) })
+    }
+
     /// Parses without running; returns the SyntaxError on failure.
     pub fn check_syntax(&self, source: &str, url: Option<&str>) -> JsResult<()> {
         let src = JsString::new(source);
