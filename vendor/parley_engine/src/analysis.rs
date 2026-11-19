@@ -258,6 +258,23 @@ pub struct CharInfo {
 }
 
 impl CharInfo {
+    /// pyro: whether the character is a letter of a cursive script (CSS Text 3 § 8.2, the
+    /// scripts its appendix lists as cursive), to which letter-spacing does not apply. `None` for
+    /// a character of no particular script.
+    pub fn cursive_script(&self) -> Option<bool> {
+        match self.script {
+            Script::Common | Script::Inherited | Script::Unknown => None,
+            Script::Arabic
+            | Script::HanifiRohingya
+            | Script::Mandaic
+            | Script::Mongolian
+            | Script::Nko
+            | Script::PhagsPa
+            | Script::Syriac => Some(true),
+            _ => Some(false),
+        }
+    }
+
     const VARIATION_SELECTOR_SHIFT: u16 = 0;
     const REGION_INDICATOR_SHIFT: u16 = 1;
     const CONTROL_SHIFT: u16 = 2;

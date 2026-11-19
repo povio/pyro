@@ -5501,7 +5501,7 @@ index 0000000..246bca1
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..2a25c00 100644
+index 060a32d..614007b 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -5657,9 +5657,11 @@ index 060a32d..2a25c00 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -201,19 +240,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -200,20 +239,13 @@ pub(crate) fn shape_text<'a, B: Brush>(
+         let run_text_byte_start = shaped_run.range.byte_range.start;
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
++        let run_chars = shaped_run.range.char_range.clone();
  
 -        // Push inline boxes positioned before the start of this item.
 -        //
@@ -5680,13 +5682,22 @@ index 060a32d..2a25c00 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -228,27 +259,123 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,25 +260,130 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // we probably shouldn't itemize on them; we should just ensure we don't ligate if
              // they're non-zero).
              run_style,
 -            Spacing::new(run_style.word_spacing, run_style.letter_spacing),
-+            Spacing::new(run_style.word_spacing, run_style.letter_spacing)
-+                .with_scales(run_style.spacing_scales),
++            // pyro: no letter-spacing in a run of a cursive script (CSS Text 3 § 8.2: it would
++            // break the letters' joins), as in Blink. A run is of one script; its own letters say
++            // which (characters of no script take their neighbours').
++            Spacing::new(
++                run_style.word_spacing,
++                match analysis.char_info()[run_chars].iter().find_map(|info| info.cursive_script()) {
++                    Some(true) => 0.0,
++                    _ => run_style.letter_spacing,
++                },
++            )
++            .with_scales(run_style.spacing_scales),
              char_style_indices,
          );
      }
@@ -5727,9 +5738,9 @@ index 060a32d..2a25c00 100644
 +        | TextSpacingTrim::SpaceFirst
 +        | TextSpacingTrim::TrimStart
 +        | TextSpacingTrim::TrimBoth => SpacingTrim::Adjacent,
-     }
- }
- 
++    }
++}
++
 +/// pyro: the bidi level of each inline box. An atomic or out-of-flow box takes the level it
 +/// resolved to as U+FFFC (`Analysis::object_levels`); a span's start edge takes the level of what
 +/// follows it and its end edge that of what precedes it (the edges sit inside the span's bidi
@@ -5792,7 +5803,7 @@ index 060a32d..2a25c00 100644
 +            levels[index] = next;
 +        }
 +        next = level_of(slot, &levels).or(next);
-+    }
+     }
 +    // An edge with nothing on its side takes the other side's level.
 +    let (mut before, mut after) = (alloc::vec![None; inline_boxes.len()], None);
 +    let mut last = None;
@@ -5811,12 +5822,10 @@ index 060a32d..2a25c00 100644
 +        after = level_of(slot, &levels).or(after);
 +    }
 +    levels.into_iter().map(|level| level.unwrap_or(paragraph)).collect()
-+}
-+
+ }
+ 
  /// The font to use if a font query doesn't return any font candidates at all.
- #[derive(Debug)]
- enum LastResortFont {
-@@ -259,6 +386,15 @@ enum LastResortFont {
+@@ -259,6 +396,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -5832,7 +5841,7 @@ index 060a32d..2a25c00 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +420,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +430,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -5847,7 +5856,7 @@ index 060a32d..2a25c00 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +499,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +509,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -5886,7 +5895,7 @@ index 060a32d..2a25c00 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +536,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +546,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -5899,7 +5908,7 @@ index 060a32d..2a25c00 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -405,15 +574,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -405,15 +584,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                  return fontique::QueryStatus::Continue;
              };
  
@@ -5922,7 +5931,7 @@ index 060a32d..2a25c00 100644
                  },
                  self.analysis_data_sources,
              );
-@@ -473,3 +642,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +652,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }

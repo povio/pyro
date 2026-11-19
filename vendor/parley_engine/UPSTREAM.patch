@@ -1685,7 +1685,31 @@
          }
      }
  }
-@@ -232,6 +271,7 @@
+@@ -219,6 +258,23 @@
+ }
+ 
+ impl CharInfo {
++    /// pyro: whether the character is a letter of a cursive script (CSS Text 3 § 8.2, the
++    /// scripts its appendix lists as cursive), to which letter-spacing does not apply. `None` for
++    /// a character of no particular script.
++    pub fn cursive_script(&self) -> Option<bool> {
++        match self.script {
++            Script::Common | Script::Inherited | Script::Unknown => None,
++            Script::Arabic
++            | Script::HanifiRohingya
++            | Script::Mandaic
++            | Script::Mongolian
++            | Script::Nko
++            | Script::PhagsPa
++            | Script::Syriac => Some(true),
++            _ => Some(false),
++        }
++    }
++
+     const VARIATION_SELECTOR_SHIFT: u16 = 0;
+     const REGION_INDICATOR_SHIFT: u16 = 1;
+     const CONTROL_SHIFT: u16 = 2;
+@@ -232,6 +288,7 @@
      const EMOJI_PRESENTATION_SHIFT: u16 = 10;
      const EMOJI_MODIFIER_SHIFT: u16 = 11;
      const EMOJI_MODIFIER_BASE_SHIFT: u16 = 12;
@@ -1693,7 +1717,7 @@
  
      const VARIATION_SELECTOR_MASK: u16 = 1 << Self::VARIATION_SELECTOR_SHIFT;
      const REGION_INDICATOR_MASK: u16 = 1 << Self::REGION_INDICATOR_SHIFT;
-@@ -246,6 +286,7 @@
+@@ -246,6 +303,7 @@
      const EMOJI_PRESENTATION_MASK: u16 = 1 << Self::EMOJI_PRESENTATION_SHIFT;
      const EMOJI_MODIFIER_MASK: u16 = 1 << Self::EMOJI_MODIFIER_SHIFT;
      const EMOJI_MODIFIER_BASE_MASK: u16 = 1 << Self::EMOJI_MODIFIER_BASE_SHIFT;
@@ -1701,12 +1725,10 @@
  
      fn new(
          script: Script,
-@@ -279,6 +320,27 @@
-                 | (is_emoji_modifier as u16) << Self::EMOJI_MODIFIER_SHIFT
-                 | (is_emoji_modifier_base as u16) << Self::EMOJI_MODIFIER_BASE_SHIFT,
+@@ -281,6 +339,27 @@
          }
-+    }
-+
+     }
+ 
 +    /// pyro: sets whether there is a soft wrap opportunity before the character.
 +    #[inline(always)]
 +    fn set_soft_wrap_opportunity(&mut self, value: bool) {
@@ -1726,19 +1748,20 @@
 +    #[inline(always)]
 +    pub fn is_phrase_fallback(self) -> bool {
 +        self.flags & Self::PHRASE_FALLBACK_MASK != 0
-     }
- 
++    }
++
      /// Whether this character is a variation selector.
-@@ -807,22 +869,247 @@
-             properties.is_emoji_modifier_base(),
+     #[inline(always)]
+     pub fn is_variation_selector(self) -> bool {
+@@ -808,21 +887,246 @@
          ));
      }
-+
+ 
 +    quotation_mark_breaks(text, options, &mut analysis.info);
 +    keep_all_hyphen_breaks(text, options, &mut analysis.info);
 +    phrase_breaks(text, options, &data_sources, &mut analysis.info);
 +    no_soft_hyphen_breaks(text, options, &mut analysis.info);
- 
++
      if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
 -        analyzer.bidi.resolve(
 -            text.chars().map(|ch| {
@@ -1810,16 +1833,16 @@
 +        if analysis.paragraph_levels.iter().all(|&(_, level)| level == first) {
 +            analysis.paragraph_levels.clear();
 +        }
-     }
- }
- 
++    }
++}
++
 +/// pyro: `word-break: keep-all` keeps letters together, not what a hyphen-minus separates: the
 +/// line may break after one before a letter, as under `normal` (UAX #14: HY ÷ AL; ICU4X's
 +/// keep-all data drops it; WPT css-text `word-break-keep-all-u002d`).
 +fn keep_all_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
 +    if !text.contains('-') || !options.line_break.iter().any(|(_, config)| config.word_break == WordBreak::KeepAll) {
 +        return;
-+    }
+     }
 +    let config_at = |byte: usize| {
 +        options
 +            .line_break
@@ -1843,8 +1866,8 @@
 +            info[index + 1].set_soft_wrap_opportunity(true);
 +        }
 +    }
-+}
-+
+ }
+ 
 +/// pyro: a soft hyphen whose style ends no line there (`hyphens: none`) is no soft wrap
 +/// opportunity, so it does not narrow min-content sizes either; under `word-break: auto-phrase`
 +/// it is a phrase fallback. Runs after [`phrase_breaks`].

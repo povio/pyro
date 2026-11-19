@@ -239,6 +239,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
         let run_text_byte_start = shaped_run.range.byte_range.start;
         let run_style_index = char_style_indices[shaped_run.range.char_range.start];
         let run_style = &styles[usize::from(run_style_index)];
+        let run_chars = shaped_run.range.char_range.clone();
 
         // Push inline boxes positioned before the start of this item. pyro: each with its
         // own bidi level (`inline_box_levels`).
@@ -259,8 +260,17 @@ pub(crate) fn shape_text<'a, B: Brush>(
             // we probably shouldn't itemize on them; we should just ensure we don't ligate if
             // they're non-zero).
             run_style,
-            Spacing::new(run_style.word_spacing, run_style.letter_spacing)
-                .with_scales(run_style.spacing_scales),
+            // pyro: no letter-spacing in a run of a cursive script (CSS Text 3 § 8.2: it would
+            // break the letters' joins), as in Blink. A run is of one script; its own letters say
+            // which (characters of no script take their neighbours').
+            Spacing::new(
+                run_style.word_spacing,
+                match analysis.char_info()[run_chars].iter().find_map(|info| info.cursive_script()) {
+                    Some(true) => 0.0,
+                    _ => run_style.letter_spacing,
+                },
+            )
+            .with_scales(run_style.spacing_scales),
             char_style_indices,
         );
     }
