@@ -69,8 +69,9 @@ impl LayoutPassState<'_> {
     #[inline]
     pub(crate) fn layout_wm_of(&self, node_id: crate::NodeId) -> WritingMode {
         if Some(node_id) == self.root_id {
-            self.root_wm
-        } else if self.root_id.is_some_and(|root| {
+            return self.root_wm;
+        }
+        if self.root_id.is_some_and(|root| {
             let node = &self.nodes[node_id];
             node.is_anonymous()
                 && node.layout_parent.get() == Some(root)
@@ -81,10 +82,26 @@ impl LayoutPassState<'_> {
             // not its `::before` or `::after`, which have computed values of their own)
             // takes the root's used writing mode, the principal one (css-writing-modes-3 §8:
             // the root's direct content follows `<body>`'s writing mode).
-            self.root_wm
-        } else {
-            self.nodes[node_id].writing_mode()
+            return self.root_wm;
         }
+        // pyro: an inline box split around block-level content lays its pieces out as the block
+        // container around it does (CSS 2.1 § 9.2.1.1; its anonymous blocks inherit from that
+        // container too, `create_anonymous_block`): in that container's direction, which places
+        // its floats' and clearances' `inline-start`/`inline-end` (WPT css-logical
+        // `logical-values-float-clear-reftest`).
+        let mut id = node_id;
+        while self.nodes[id].is_split_inline() {
+            match self.nodes[id].parent {
+                Some(parent) if self.nodes[parent].primary_styles().is_some() => {
+                    if Some(parent) == self.root_id {
+                        return self.root_wm;
+                    }
+                    id = parent;
+                }
+                _ => break,
+            }
+        }
+        self.nodes[id].writing_mode()
     }
 
     /// Lay out `node_id`, translating between the parent's writing mode and the node's own at an

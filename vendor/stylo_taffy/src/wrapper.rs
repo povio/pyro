@@ -721,9 +721,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     #[inline]
     fn float(&self) -> taffy::Float {
         // pyro: `inline-start` and `inline-end` are sides of the containing block's inline axis:
-        // in a right-to-left one (the box's inherited direction stands in for it) they trade.
+        // in a right-to-left one they trade. The containing block's direction is that of the
+        // algorithm laying the box out (`layout_wm`), not the box's own (WPT css-logical
+        // `logical-values-float-clear-reftest`).
         let value = self.style.clone_float();
-        let float = match (value, self.style.writing_mode.is_bidi_ltr()) {
+        let float = match (value, self.layout_wm().is_bidi_ltr()) {
             (stylo::Float::InlineStart, false) => taffy::Float::Right,
             (stylo::Float::InlineEnd, false) => taffy::Float::Left,
             _ => convert::float(value),
@@ -735,7 +737,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     #[inline]
     fn clear(&self) -> taffy::Clear {
         let value = self.style.clone_clear();
-        let clear = match (value, self.style.writing_mode.is_bidi_ltr()) {
+        let clear = match (value, self.layout_wm().is_bidi_ltr()) {
             (stylo::Clear::InlineStart, false) => taffy::Clear::Right,
             (stylo::Clear::InlineEnd, false) => taffy::Clear::Left,
             _ => convert::clear(value),
