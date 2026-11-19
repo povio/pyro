@@ -151,7 +151,22 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  
      let box_style = style.get_box();
      if !box_style.transform.0.is_empty()
-@@ -341,12 +422,8 @@
+@@ -335,18 +416,23 @@
+     ) {
+         return true;
+     }
++    // pyro: on a box containment applies to: not a non-atomic inline box (its abspos descendants
++    // keep the containing block they had; WPT css-contain `contain-*-ignored-cases-ib-split-001`),
++    // nor an internal table box other than a cell.
+     if box_style
+         .contain
+         .intersects(Contain::LAYOUT | Contain::PAINT)
++        && {
++            use style::values::specified::box_::{DisplayInside, DisplayOutside};
++            let display = style.clone_display();
++            !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
++                && !(display.outside() == DisplayOutside::InternalTable && display.inside() != DisplayInside::TableCell)
++        }
      {
          return true;
      }
@@ -166,7 +181,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  
      let effects = style.get_effects();
      !effects.filter.0.is_empty() || !effects.backdrop_filter.0.is_empty()
-@@ -473,6 +550,10 @@
+@@ -473,6 +559,10 @@
          stylo::AlignFlags::FLEX_START => taffy::AlignContent::FLEX_START,
          stylo::AlignFlags::STRETCH => taffy::AlignContent::STRETCH,
          stylo::AlignFlags::FLEX_END => taffy::AlignContent::FLEX_END,
@@ -177,7 +192,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
          stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
          stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
-@@ -517,7 +598,10 @@
+@@ -517,7 +607,10 @@
          (_, stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Bottom)) => {
              taffy::AlignContent::END
          }
@@ -189,7 +204,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          _ => return None,
      };
      align.safety = taffy::AlignmentSafety::Safe;
-@@ -582,6 +666,9 @@
+@@ -582,6 +675,9 @@
          stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
          stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
          stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
@@ -199,7 +214,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
          stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
          stylo::AlignFlags::START => taffy::AlignItems::START,
-@@ -591,10 +678,12 @@
+@@ -591,10 +687,12 @@
          stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
          stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
          stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
@@ -215,7 +230,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          // Should never be hit. But no real reason to panic here.
          _ => return None,
      };
-@@ -967,6 +1056,8 @@
+@@ -967,6 +1065,8 @@
          display: self::display(display),
          box_sizing: self::box_sizing(style.clone_box_sizing()),
          item_is_table: display.inside() == stylo::DisplayInside::Table,
@@ -224,7 +239,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          item_is_replaced: false,
          item_is_compressible_replaced: false,
          position: self::position(style.clone_position()),
-@@ -995,7 +1086,21 @@
+@@ -995,7 +1095,21 @@
              width: self::max_size(&pos.max_width),
              height: self::max_size(&pos.max_height),
          },

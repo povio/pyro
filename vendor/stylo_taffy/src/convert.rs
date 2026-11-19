@@ -416,9 +416,18 @@ pub fn establishes_fixed_containing_block(style: &stylo::ComputedValues) -> bool
     ) {
         return true;
     }
+    // pyro: on a box containment applies to: not a non-atomic inline box (its abspos descendants
+    // keep the containing block they had; WPT css-contain `contain-*-ignored-cases-ib-split-001`),
+    // nor an internal table box other than a cell.
     if box_style
         .contain
         .intersects(Contain::LAYOUT | Contain::PAINT)
+        && {
+            use style::values::specified::box_::{DisplayInside, DisplayOutside};
+            let display = style.clone_display();
+            !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+                && !(display.outside() == DisplayOutside::InternalTable && display.inside() != DisplayInside::TableCell)
+        }
     {
         return true;
     }
