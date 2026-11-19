@@ -16484,7 +16484,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,518 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -16649,19 +16649,48 @@ new file mode 100644
 +        };
 +        let mut discarded: Vec<NodeId> = Vec::new();
 +        let mut count = 0u32;
-+        // The block holding the clamp line, how many of its lines stay, and the line's bottom.
-+        let mut clamp_line: Option<(NodeId, u32, f32)> = None;
++        // The clamp point: after `kept` lines of an inline root (`ClampPoint::Lines`), or after a
++        // block-level box whose lines are not the root's (`ClampPoint::Box`), and its bottom.
++        let mut clamp_line: Option<ClampPoint> = None;
 +        let mut clamped = false;
-+        // The last block whose lines all stay, how many it has and the last one's bottom.
-+        let mut last_lines: Option<(NodeId, u32, f32)> = None;
++        // The last clamp point before the one at hand: after the last line of a block whose lines
++        // all stay, or after a box of its own (WPT css-overflow `line-clamp-auto-034`, `-039`).
++        let mut last_lines: Option<ClampPoint> = None;
 +        // Blocks to visit (last first) with their top from the root's border box, and what the
 +        // blocks around them (in the root) add below their margin box: a margin their bottom
 +        // margin collapses with and, past it, bottom padding, borders and margins that do not
 +        // (`BelowBlock`). With the block's own, that must fit under a clamp line of
 +        // `line-clamp: auto` too (WPT css-overflow `line-clamp-auto-029`).
-+        let mut stack: Vec<(NodeId, f32, BelowBlock)> = vec![(root, 0.0, BelowBlock::default())];
-+        while let Some((id, top, around)) = stack.pop() {
++        // (`floor`: a clamp point in a box with a definite height ends that box at its bottom, as
++        // low as it reaches: WPT css-overflow `line-clamp-auto-035`. `whole`: a block-level box
++        // whose lines are not the root's, a clamp point after it.)
++        let mut stack: Vec<(NodeId, f32, BelowBlock, f32, bool)> =
++            vec![(root, 0.0, BelowBlock::default(), f32::NEG_INFINITY, false)];
++        while let Some((id, top, around, floor, whole)) = stack.pop() {
 +            let below = if id == root { 0.0 } else { around.under(self.nodes[id].unrounded_layout()) };
++            if whole {
++                let layout = self.nodes[id].unrounded_layout();
++                let bottom = top + layout.size.height;
++                let end = bottom + collapse_margins(layout.margin.bottom, around.margin) + around.solid;
++                let point = ClampPoint::Box(id, bottom);
++                if clamp_line.is_none() {
++                    if limit.is_some_and(|limit| end.max(floor) > limit + 0.01) {
++                        clamp_line = Some(last_lines.unwrap_or(ClampPoint::Lines(id, 0, content_top)));
++                        clamped = true;
++                    } else {
++                        last_lines = Some(point);
++                    }
++                } else if layout.size.height > 0.0 {
++                    clamped = true;
++                }
++                continue;
++            }
++            let floor = if id != root && !height_is_auto(&self.nodes[id]) {
++                let layout = self.nodes[id].unrounded_layout();
++                floor.max(top + layout.size.height + collapse_margins(layout.margin.bottom, around.margin) + around.solid)
++            } else {
++                floor
++            };
 +            if self.nodes[id].flags.is_inline_root() {
 +                // (What an earlier clamp hid in it shows again unless this one hides it.)
 +                let all: Vec<NodeId> = self.nodes[id].layout_children.borrow().iter().flatten().copied().collect();
@@ -16692,21 +16721,23 @@ new file mode 100644
 +                    // that ends past the limit.
 +                    let mut kept = (max_lines - count).min(lines);
 +                    if let Some(limit) = limit {
-+                        kept = (0..kept).find(|&index| line_bottom(index) + below > limit + 0.01).unwrap_or(kept);
++                        kept = (0..kept)
++                            .find(|&index| (line_bottom(index) + below).max(floor) > limit + 0.01)
++                            .unwrap_or(kept);
 +                    }
 +                    if kept == 0 {
 +                        // The clamp point is before this block's first line: after the last line
 +                        // of an earlier block, or before any line.
-+                        clamp_line = Some(last_lines.unwrap_or((id, 0, content_top)));
++                        clamp_line = Some(last_lines.unwrap_or(ClampPoint::Lines(id, 0, content_top)));
 +                        clamped = true;
 +                        if discards || last_lines.is_some() {
 +                            discarded.push(id);
 +                        }
 +                    } else if kept < lines || count + lines >= max_lines {
-+                        clamp_line = Some((id, kept, line_bottom(kept - 1)));
++                        clamp_line = Some(ClampPoint::Lines(id, kept, line_bottom(kept - 1)));
 +                        clamped = lines > kept;
 +                    } else {
-+                        last_lines = Some((id, lines, line_bottom(lines - 1)));
++                        last_lines = Some(ClampPoint::Lines(id, lines, line_bottom(lines - 1)));
 +                    }
 +                } else if clamp_line.is_some() && lines > 0 {
 +                    clamped = true;
@@ -16741,22 +16772,51 @@ new file mode 100644
 +                        && child.primary_styles().is_some_and(|style| {
 +                            use style::values::computed::Overflow;
 +                            let box_style = style.get_box();
-+                            !box_style.float.is_floating()
++                            // (A flow root's lines are its own: WPT css-overflow `line-clamp-auto-034`.)
++                            box_style.display.inside() != style::values::specified::box_::DisplayInside::FlowRoot
++                                && !box_style.float.is_floating()
 +                                && !crate::node::style_is_out_of_flow(&style)
 +                                && matches!(box_style.overflow_x, Overflow::Visible | Overflow::Clip)
 +                                && matches!(box_style.overflow_y, Overflow::Visible | Overflow::Clip)
 +                        });
-+                if in_context && (child.flags.is_inline_root() || child.layout_children.borrow().is_some()) {
++                let descends = in_context && (child.flags.is_inline_root() || child.layout_children.borrow().is_some());
++                // Any other box of the normal flow here is block-level and a clamp point after it.
++                let whole = !descends
++                    && !anonymous
++                    && child.is_element()
++                    && child.primary_styles().is_some_and(|style| {
++                        !style.get_box().float.is_floating()
++                            && !crate::node::style_is_out_of_flow(&style)
++                            && style.get_box().display != style::values::specified::box_::Display::None
++                    });
++                if descends || whole {
 +                    let layout = child.unrounded_layout();
 +                    // (The root is a formatting context of its own: its children's margins stay
 +                    // in it.)
 +                    let around = if id == root { BelowBlock::default() } else { around.inside(&self.nodes[id]) };
-+                    stack.push((child_id, top + layout.location.y, around));
++                    stack.push((child_id, top + layout.location.y, around, floor, whole));
 +                }
 +            }
 +            stack[first..].reverse();
 +        }
-+        let (id, kept, bottom) = clamp_line.filter(|_| clamped)?;
++        let (id, kept, bottom) = match clamp_line.filter(|_| clamped)? {
++            ClampPoint::Lines(id, kept, bottom) => (id, Some(kept), bottom),
++            // (No line ends at it: no ellipsis.)
++            ClampPoint::Box(id, bottom) => (id, None, bottom),
++        };
++        let Some(kept) = kept else {
++            for &other in &discarded {
++                self.hide_children_below(other, f32::NEG_INFINITY);
++            }
++            for id in discarded {
++                if let Some(text_layout) =
++                    self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
++                {
++                    text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), at_soft_wraps: discards });
++                }
++            }
++            return Some((bottom, id));
++        };
 +        self.set_clamp(id, kept, discards, &ellipsis_text);
 +        // pyro: the floats and atomic inlines of the clamp line's block below its clamp line,
 +        // and those of the blocks discarded after it, are hidden with the lines (WPT css-overflow
@@ -16934,6 +16994,14 @@ new file mode 100644
 +            BelowBlock { margin: 0.0, solid: layout.padding.bottom + layout.border.bottom + margin + self.solid }
 +        }
 +    }
++}
++
++/// pyro: where a line clamp's content ends: after `kept` lines of an inline root, or after a
++/// block-level box; with its bottom from the top of the clamp root's border box.
++#[derive(Clone, Copy)]
++enum ClampPoint {
++    Lines(NodeId, u32, f32),
++    Box(NodeId, f32),
 +}
 diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layout/list.rs
 --- a/packages/blitz-dom/src/layout/list.rs
