@@ -19,6 +19,7 @@
 // The reference renders are cached by URL and viewport (as wptrunner's screenshot cache), so a reference that many
 // tests share renders once per runner.
 
+import { documentError } from './lib.mjs';
 import path from 'node:path';
 
 /** CDP screenshot of the viewport as raw RGBA. pyro answers format "rgba" without encoding; other browsers get PNG. */
@@ -131,9 +132,12 @@ async function render(page, cdp, base, url, deadline, st) {
   // The page's time ran out before this render (the test took it all, a reference is next): a timeout, not a goto
   // error. A navigation that does not commit in time is one too.
   if (Date.now() >= deadline) return { timeout: true, late: true };
-  const committed = await page.goto(url === 'about:blank' ? url : `${base}/${url}`, { waitUntil: 'commit', timeout: left() })
-    .then(() => true, (e) => (Date.now() >= deadline && /Timeout/.test(String(e.message)) ? false : Promise.reject(e)));
-  if (!committed) return { timeout: true };
+  const response = await page.goto(url === 'about:blank' ? url : `${base}/${url}`, { waitUntil: 'commit', timeout: left() })
+    .then((r) => ({ r }), (e) => (Date.now() >= deadline && /Timeout/.test(String(e.message)) ? null : Promise.reject(e)));
+  if (!response) return { timeout: true };
+  // An error document (the server failed, the file is missing) is no render to compare: an error result.
+  const bad = documentError(response.r, url);
+  if (bad) throw new Error(bad);
   lap('goto');
   // A navigation inside the page destroys the context the wait runs in: wait again in the new one.
   for (;;) {
@@ -144,11 +148,14 @@ async function render(page, cdp, base, url, deadline, st) {
   }
 }
 
+/** The reference cache's key: the viewport and the full URL the reference loads from (the origin is the test's:
+ *  an http test and an https or www one with the same relative reference render it from different origins). */
+export const refKey = (viewport, base, url) => `${viewport.width}x${viewport.height} ${url === 'about:blank' ? url : `${base}/${url}`}`;
 const cache = new Map();
 const CACHE_MAX = 48; // ~92 MB of 800x600 RGBA renders
 /** A reference's render, from the cache when this runner rendered it before at this viewport. */
 async function renderRef(page, cdp, base, url, viewport, deadline, st) {
-  const key = `${viewport.width}x${viewport.height} ${url}`;
+  const key = refKey(viewport, base, url);
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); if (st) st.cached = (st.cached ?? 0) + 1; return hit; }
   if (st) st.renders = (st.renders ?? 0) + 1;

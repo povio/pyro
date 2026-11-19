@@ -570,6 +570,16 @@ export const skippable = (b) => !passCount(b) && (b.status !== 'complete' || b.m
 //   limit: a page that completed gets 10x its baseline duration, at least 10 s and at most the normal timeout, so a
 //     page that normally takes 0.5 s and now hangs (or flakes) costs 10 s instead of 15-45 s. Reruns use the normal
 //     timeout.
+// A test page's or reference's main document response, as `page.goto` returns it: why it is not a document to judge
+// (an HTTP error such as the proxy's 502 for a server that stopped answering, a missing file's 404), or null when it
+// is. about:blank has no response. A reftest or crashtest that renders an error document must never pass.
+export function documentError(response, url) {
+  if (url === 'about:blank') return null;
+  if (!response) return `no response for ${url}`;
+  const status = response.status();
+  return status >= 200 && status < 300 ? null : `HTTP ${status} for ${url}`;
+}
+
 // The server a gate run uses: wptserve with testdriver for reftests and crashtests (`--server static` serves them
 // with serve.mjs and leaves out the pages that need wptserve or testdriver), serve.mjs for testharness pages.
 export function serverFor(kind, server, testdriver) {
