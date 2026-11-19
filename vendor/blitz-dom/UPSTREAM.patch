@@ -19956,7 +19956,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2285 @@
+@@ -0,0 +1,2302 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -20079,6 +20079,9 @@ new file mode 100644
 +    pub offset: Point<f32>,
 +    /// A column spanner's row: no column rule beside it.
 +    pub spanner: bool,
++    /// pyro: how much of `height` reaches past the column's own height to the end of a
++    /// definite-height box's content box (its last row, for its rules): no content fills it.
++    pub extended: f32,
 +}
 +
 +impl ColumnFragment {
@@ -20851,6 +20854,7 @@ new file mode 100644
 +            let mut start = breaks.start;
 +            let end = breaks.end;
 +            let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
++            let mut last_row_extended = (f32::NAN, 0.0f32);
 +            loop {
 +                let row_height = box_end.map_or(available, |end| available.min(end - top).max(1.0));
 +                // (Past the fragment cap, what is left goes to one last column.)
@@ -20891,6 +20895,8 @@ new file mode 100644
 +                    let columns = breaks.fill_range(start, end, height, fragment_cap - placed.len()).columns;
 +                    let shown = if box_end.is_some() { row_height } else { height };
 +                    placed.extend(columns.into_iter().map(|(a, b)| (a, b, top, shown)));
++                    // (The row reaches past its balanced columns to the end of the box.)
++                    last_row_extended = (top, shown - height);
 +                    row_top = top + shown;
 +                    break;
 +                }
@@ -20903,6 +20909,7 @@ new file mode 100644
 +            let mut index = 0;
 +            let mut previous_top = f32::NAN;
 +            for (start, end, row, height) in placed {
++                let extended = if row == last_row_extended.0 { last_row_extended.1.max(0.0) } else { 0.0 };
 +                index = if row == previous_top { index + 1 } else { 0 };
 +                previous_top = row;
 +                let x = column_x(index);
@@ -20917,6 +20924,7 @@ new file mode 100644
 +                    height,
 +                    offset: Point { x: x - pb.left, y: row - start },
 +                    spanner: false,
++                    extended,
 +                });
 +            }
 +        }
@@ -20966,6 +20974,7 @@ new file mode 100644
 +                        height: piece,
 +                        offset: Point { x: x - pb.left, y: top - a },
 +                        spanner: false,
++                        extended: 0.0,
 +                    });
 +                    placed += 1;
 +                }
@@ -21046,6 +21055,7 @@ new file mode 100644
 +                            height: if row_top_of == last_top { last_height } else { height },
 +                            offset: Point { x: x - pb.left, y: snap(top - start) },
 +                            spanner: false,
++                            extended: 0.0,
 +                        });
 +                    }
 +                    row_top = last_top + last_height;
@@ -21061,6 +21071,7 @@ new file mode 100644
 +                            height: end - start,
 +                            offset: Point { x: -indent, y: snap(top - start) },
 +                            spanner: true,
++                            extended: 0.0,
 +                        });
 +                        row_top = top + (end - start);
 +                        // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -21130,6 +21141,7 @@ new file mode 100644
 +                        height: if row + 1 == rows { last_height } else { column_height },
 +                        offset: Point { x: x - pb.left, y: snap(top - start) },
 +                        spanner: false,
++                        extended: 0.0,
 +                    });
 +                }
 +                row_top += (rows - 1) as f32 * (column_height + row_gap) + last_height;
@@ -21152,6 +21164,7 @@ new file mode 100644
 +                    // (its padding, border and margin): its row starts at the container's edge.
 +                    offset: Point { x: -indent, y: snap(row_top - start) },
 +                    spanner: true,
++                    extended: 0.0,
 +                });
 +                row_top += end - start;
 +                // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -21171,7 +21184,9 @@ new file mode 100644
 +            let end = content_top + height;
 +            let last_top = fragments.last().map_or(0.0, |f| f.top);
 +            for fragment in fragments.iter_mut().rev().take_while(|f| !f.spanner && f.top == last_top) {
-+                fragment.height = fragment.height.max(end - fragment.top);
++                let height = fragment.height.max(end - fragment.top);
++                fragment.extended = height - fragment.height;
++                fragment.height = height;
 +            }
 +        }
 +        // The first shows what lies above the strip, the last what lies below.
@@ -22167,6 +22182,7 @@ new file mode 100644
 +            height: 100.0,
 +            offset: Point { x: offset.0, y: offset.1 },
 +            spanner: false,
++            extended: 0.0,
 +        }
 +    }
 +
@@ -22224,6 +22240,7 @@ new file mode 100644
 +            height: 30.0,
 +            offset: Point { x: 0.0, y: -100.0 },
 +            spanner: true,
++            extended: 0.0,
 +        };
 +        let columns = ColumnFragments {
 +            nested: None,

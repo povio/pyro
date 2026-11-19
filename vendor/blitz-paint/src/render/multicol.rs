@@ -93,12 +93,89 @@ impl ElementCx<'_, '_> {
             self.draw_marker(scene, pos);
             self.draw_children(scene, transform, if single { clip_rect } else { column_clip });
             self.context.layer_manager.maybe_pop_layer(scene, pushed);
+            // pyro: a box broken at the column's end fills the rest of the column (its fragment
+            // is as tall as the column: Chromium; WPT css-multicol `multicol-fill-balance-041`).
+            // (Not in the rows of an explicit `column-height`, where Chromium keeps a broken box
+            // to its content: WPT css-multicol `column-height-024`.)
+            let explicit_height = !matches!(
+                self.style.get_column().column_height,
+                style::values::generics::length::LengthPercentageOrAuto::Auto
+            );
+            if vertical.is_none() && !explicit_height && !fragment.spanner && fragment.end.is_finite() {
+                // (Where the strip's `end` is shown, to the column box's bottom.)
+                let free = (fragment.top + fragment.height - fragment.extended - (fragment.end + fragment.offset.y)) as f64;
+                if free > 0.5 / scale {
+                    let rest = Rect::new(-UNBOUNDED, end * scale, UNBOUNDED, (end + free) * scale);
+                    let shown = (screen * transform).transform_rect_bbox(rest);
+                    if clip_rect.overlaps(shown) {
+                        let pushed =
+                            self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, transform, &rest, None, None);
+                        self.draw_broken_boxes(scene, transform, self.node.id, Vec2::ZERO, fragment.end, free as f32, 0);
+                        self.context.layer_manager.maybe_pop_layer(scene, pushed);
+                    }
+                }
+            }
         }
         self.transform = base;
         self.context.multicol_pass.set(Some((self.node.id, true)));
         self.draw_children(scene, base, clip_rect);
         self.context.multicol_pass.set(outer_pass);
         true
+    }
+
+    /// pyro: the backgrounds and borders of the in-flow block boxes below `parent` (its border
+    /// box at `origin`, CSS px from the container's) that a column break at strip position `at`
+    /// goes through, as `free` CSS px taller: drawn under a clip to the rest of the column, they
+    /// fill it (a slice's block-end border stays out of view, `box-decoration-break: slice`).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_broken_boxes(
+        &self,
+        scene: &mut impl PaintScene,
+        transform: Affine,
+        parent: blitz_dom::NodeId,
+        origin: Vec2,
+        at: f32,
+        free: f32,
+        depth: usize,
+    ) {
+        if depth > 64 {
+            return;
+        }
+        let tree = self.context.dom.as_ref().tree();
+        let children = tree[parent].layout_children.borrow();
+        for &id in children.iter().flatten() {
+            let node = &tree[id];
+            let Some(style) = node.primary_styles() else { continue };
+            if node.is_out_of_flow() || node.element_data().is_none() {
+                continue;
+            }
+            let display = style.clone_display();
+            let block = matches!(
+                display.inside(),
+                style::values::specified::box_::DisplayInside::Flow | style::values::specified::box_::DisplayInside::FlowRoot
+            ) && display.outside() == style::values::specified::box_::DisplayOutside::Block;
+            let visible = |o: style::values::computed::Overflow| {
+                matches!(o, style::values::computed::Overflow::Visible | style::values::computed::Overflow::Clip)
+            };
+            let b = style.get_box();
+            if !block || !visible(b.overflow_x) || !visible(b.overflow_y) || node.column_fragments().is_some() {
+                continue;
+            }
+            let layout = *node.final_layout();
+            let top = origin.y as f32 + layout.location.y;
+            let bottom = top + layout.size.height;
+            if !(top < at - 0.01 && bottom > at + 0.01) {
+                continue;
+            }
+            let at_box = origin + Vec2::new(layout.location.x as f64, layout.location.y as f64);
+            let mut taller = layout;
+            taller.size.height += free;
+            let box_transform = transform.pre_translate(at_box * self.scale);
+            let cx = self.context.element_cx(node, taller, box_transform, None);
+            cx.draw_background(scene);
+            cx.draw_border(scene);
+            self.draw_broken_boxes(scene, transform, id, at_box, at, free, depth + 1);
+        }
     }
 
     /// The column rules of a multi-column container (`column-rule`): one in the middle of the

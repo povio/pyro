@@ -120,6 +120,9 @@ pub struct ColumnFragment {
     pub offset: Point<f32>,
     /// A column spanner's row: no column rule beside it.
     pub spanner: bool,
+    /// pyro: how much of `height` reaches past the column's own height to the end of a
+    /// definite-height box's content box (its last row, for its rules): no content fills it.
+    pub extended: f32,
 }
 
 impl ColumnFragment {
@@ -892,6 +895,7 @@ impl LayoutPassState<'_> {
             let mut start = breaks.start;
             let end = breaks.end;
             let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
+            let mut last_row_extended = (f32::NAN, 0.0f32);
             loop {
                 let row_height = box_end.map_or(available, |end| available.min(end - top).max(1.0));
                 // (Past the fragment cap, what is left goes to one last column.)
@@ -932,6 +936,8 @@ impl LayoutPassState<'_> {
                     let columns = breaks.fill_range(start, end, height, fragment_cap - placed.len()).columns;
                     let shown = if box_end.is_some() { row_height } else { height };
                     placed.extend(columns.into_iter().map(|(a, b)| (a, b, top, shown)));
+                    // (The row reaches past its balanced columns to the end of the box.)
+                    last_row_extended = (top, shown - height);
                     row_top = top + shown;
                     break;
                 }
@@ -944,6 +950,7 @@ impl LayoutPassState<'_> {
             let mut index = 0;
             let mut previous_top = f32::NAN;
             for (start, end, row, height) in placed {
+                let extended = if row == last_row_extended.0 { last_row_extended.1.max(0.0) } else { 0.0 };
                 index = if row == previous_top { index + 1 } else { 0 };
                 previous_top = row;
                 let x = column_x(index);
@@ -958,6 +965,7 @@ impl LayoutPassState<'_> {
                     height,
                     offset: Point { x: x - pb.left, y: row - start },
                     spanner: false,
+                    extended,
                 });
             }
         }
@@ -1007,6 +1015,7 @@ impl LayoutPassState<'_> {
                         height: piece,
                         offset: Point { x: x - pb.left, y: top - a },
                         spanner: false,
+                        extended: 0.0,
                     });
                     placed += 1;
                 }
@@ -1087,6 +1096,7 @@ impl LayoutPassState<'_> {
                             height: if row_top_of == last_top { last_height } else { height },
                             offset: Point { x: x - pb.left, y: snap(top - start) },
                             spanner: false,
+                            extended: 0.0,
                         });
                     }
                     row_top = last_top + last_height;
@@ -1102,6 +1112,7 @@ impl LayoutPassState<'_> {
                             height: end - start,
                             offset: Point { x: -indent, y: snap(top - start) },
                             spanner: true,
+                            extended: 0.0,
                         });
                         row_top = top + (end - start);
                         // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -1171,6 +1182,7 @@ impl LayoutPassState<'_> {
                         height: if row + 1 == rows { last_height } else { column_height },
                         offset: Point { x: x - pb.left, y: snap(top - start) },
                         spanner: false,
+                        extended: 0.0,
                     });
                 }
                 row_top += (rows - 1) as f32 * (column_height + row_gap) + last_height;
@@ -1193,6 +1205,7 @@ impl LayoutPassState<'_> {
                     // (its padding, border and margin): its row starts at the container's edge.
                     offset: Point { x: -indent, y: snap(row_top - start) },
                     spanner: true,
+                    extended: 0.0,
                 });
                 row_top += end - start;
                 // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -1212,7 +1225,9 @@ impl LayoutPassState<'_> {
             let end = content_top + height;
             let last_top = fragments.last().map_or(0.0, |f| f.top);
             for fragment in fragments.iter_mut().rev().take_while(|f| !f.spanner && f.top == last_top) {
-                fragment.height = fragment.height.max(end - fragment.top);
+                let height = fragment.height.max(end - fragment.top);
+                fragment.extended = height - fragment.height;
+                fragment.height = height;
             }
         }
         // The first shows what lies above the strip, the last what lies below.
@@ -2208,6 +2223,7 @@ mod tests {
             height: 100.0,
             offset: Point { x: offset.0, y: offset.1 },
             spanner: false,
+            extended: 0.0,
         }
     }
 
@@ -2265,6 +2281,7 @@ mod tests {
             height: 30.0,
             offset: Point { x: 0.0, y: -100.0 },
             spanner: true,
+            extended: 0.0,
         };
         let columns = ColumnFragments {
             nested: None,
