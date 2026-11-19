@@ -561,7 +561,10 @@ impl LayoutPassState<'_> {
                 let none = |size: &style::values::computed::ContainIntrinsicSize| {
                     matches!(size, ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone)
                 };
-                let empty = empty_container_size(&styles);
+                // (Measured for its min-content contribution, a multi-column container has its
+                // min-content width: WPT css-contain `contain-size-multicol-003`.)
+                let min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent;
+                let empty = empty_container_size(&styles, min_content);
                 if none(&position.contain_intrinsic_width) {
                     width = empty.width;
                 }
@@ -2946,8 +2949,9 @@ impl BaseDocument {
 /// pyro: the content size of a container with size containment and no `contain-intrinsic-size`:
 /// what it lays out without any content. A grid's explicit tracks of a fixed size and the gaps
 /// between its explicit tracks; a multi-column container's `column-count` columns of
-/// `column-width` and the gaps between them. Zero for every other box.
-fn empty_container_size(styles: &style::properties::ComputedValues) -> taffy::Size<f32> {
+/// `column-width` and the gaps between them (its min-content width: see below). Zero for every
+/// other box.
+fn empty_container_size(styles: &style::properties::ComputedValues, min_content: bool) -> taffy::Size<f32> {
     use style::values::specified::box_::DisplayInside;
     use taffy::{CompactLength, GridTemplateComponent};
     match styles.clone_display().inside() {
@@ -3004,7 +3008,15 @@ fn empty_container_size(styles: &style::properties::ComputedValues) -> taffy::Si
                 Gap::Normal => styles.slow_clone_font_size().used_size().px(),
                 Gap::LengthPercentage(gap) => gap.0.to_length().map_or(0.0, |length| length.px()),
             };
-            taffy::Size { width: count * width + (count - 1.0) * gap, height: 0.0 }
+            // (Its min-content width, as Blink's `ColumnLayoutAlgorithm::ComputeMinMaxSizes`: with
+            // a `column-width`, no wider than its content's, none; else the gaps between its
+            // columns.)
+            let width = match (min_content, &column.column_width) {
+                (true, LengthPercentageOrAuto::LengthPercentage(_)) => 0.0,
+                (true, LengthPercentageOrAuto::Auto) => (count - 1.0) * gap,
+                (false, _) => count * width + (count - 1.0) * gap,
+            };
+            taffy::Size { width, height: 0.0 }
         }
         _ => taffy::Size::ZERO,
     }
