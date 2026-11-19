@@ -1745,7 +1745,12 @@ fn collect_flex_lines<'a>(
         lines.push(FlexLine { items: flex_items.as_mut_slice(), cross_size: 0.0, offset_cross: 0.0 });
         lines
     } else {
-        let main_axis_available_space = match constants.max_size.main(constants.dir) {
+        // pyro: the max main size is the border box's: the lines wrap in its content box (less its
+        // padding, border and scrollbar gutters; WPT css-flexbox `content-height-with-scrollbars`
+        // with classic scrollbars).
+        let max_inner_main =
+            constants.max_size.main(constants.dir).map(|max| (max - constants.content_box_inset.main_axis_sum(constants.dir)).max(0.0));
+        let main_axis_available_space = match max_inner_main {
             Some(max_size) => AvailableSpace::Definite({
                 let available = available_space.main(constants.dir).into_option().unwrap_or(max_size);
                 // If the container's main size is not definite then it is at most the max main size,
