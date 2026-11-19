@@ -1391,7 +1391,8 @@ impl ElementCx<'_, '_> {
     /// pixels, or under a transform that is not a translation, keeps the position as it is.
     fn subpixel_image_rect(&self, pos: Point, size: Size, origin_rect: Rect, base: Affine) -> (Point, Size) {
         let [a, b, c, d, tx, ty] = (self.transform * base).as_coeffs();
-        if a != 1.0 || b != 0.0 || c != 0.0 || d != 1.0 {
+        // A zero-sized image paints nothing: it stays zero-sized, not snapped to a pixel.
+        if a != 1.0 || b != 0.0 || c != 0.0 || d != 1.0 || !(size.width > 0.0 && size.height > 0.0) {
             return (pos, size);
         }
         let (unrounded, _) = self.context.dom.physical_unrounded_geometry(self.node.id);

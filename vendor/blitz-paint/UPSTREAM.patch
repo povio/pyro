@@ -12750,7 +12750,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -249,18 +620,182 @@
+@@ -249,17 +620,181 @@
                  #[cfg(feature = "tracing")]
                  warn!("Implement image layer drawing for Image::PaintWorklet")
              }
@@ -12908,7 +12908,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                    };
 +                    self.draw_image_layer_in(scene, &inner, area, current_color);
 +                }
-             }
++            }
 +            // pyro: `filter()`: the image it filters, drawn in a layer with the filters over the
 +            // painting area (so a `drop-shadow()` stays inside it).
 +            GenericImage::Filter(_) => {
@@ -12938,10 +12938,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                if filtered {
 +                    scene.pop_layer();
 +                }
-+            }
+             }
          }
      }
- 
 @@ -275,7 +810,18 @@
              return;
          };
@@ -13151,7 +13150,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let parts = dom.table_cell_positioned_parts(self.node.id);
 +        if parts.iter().all(Option::is_none) {
 +            return;
-+        }
+         }
 +        let Some(table_node) = self.node.layout_parent.get().and_then(|id| dom.get_node(id)) else { return };
 +        let Some(SpecialElementData::TableRoot(table)) = table_node.element_data().map(|e| &e.special_data) else {
 +            return;
@@ -13182,7 +13181,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            if color != Color::TRANSPARENT {
 +                scene.fill(Fill::NonZero, self.transform, color, None, &shape);
 +            }
-         }
++        }
      }
  
 +    /// pyro: the outlines of a table's row groups and rows (they paint no box of their own: the
@@ -13377,7 +13376,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +1312,111 @@
+@@ -476,29 +1312,112 @@
              return;
          }
  
@@ -13472,7 +13471,8 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +    /// pixels, or under a transform that is not a translation, keeps the position as it is.
 +    fn subpixel_image_rect(&self, pos: Point, size: Size, origin_rect: Rect, base: Affine) -> (Point, Size) {
 +        let [a, b, c, d, tx, ty] = (self.transform * base).as_coeffs();
-+        if a != 1.0 || b != 0.0 || c != 0.0 || d != 1.0 {
++        // A zero-sized image paints nothing: it stays zero-sized, not snapped to a pixel.
++        if a != 1.0 || b != 0.0 || c != 0.0 || d != 1.0 || !(size.width > 0.0 && size.height > 0.0) {
 +            return (pos, size);
 +        }
 +        let (unrounded, _) = self.context.dom.physical_unrounded_geometry(self.node.id);
@@ -13502,7 +13502,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1427,163 @@
+@@ -509,95 +1428,163 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -13715,7 +13715,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
              origin_rect.width() / self.scale,
-@@ -629,24 +1615,50 @@
+@@ -629,24 +1616,50 @@
              bg_size.height,
          );
  
@@ -13779,7 +13779,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
              y: y.translate,
-@@ -681,35 +1693,84 @@
+@@ -681,35 +1694,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -13884,7 +13884,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1936,64 @@
+@@ -875,48 +1937,64 @@
      stride: f64,
  }
  
@@ -13978,7 +13978,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +2035,24 @@
+@@ -958,11 +2036,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -14008,7 +14008,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +2076,16 @@
+@@ -986,6 +2077,16 @@
      (count, stride)
  }
  
@@ -14025,7 +14025,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +2109,57 @@
+@@ -1009,3 +2110,57 @@
          -extend_length
      }
  }
