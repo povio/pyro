@@ -1469,24 +1469,35 @@ fn enabled_range(dom: &Dom, el: NodeId) -> bool {
         && !dom.is_disabled(el).unwrap_or(true)
 }
 
-/// Moves a range slider's value to the pointer's x (Chromium's slider: the fraction of the
-/// element's width, from its inline start, snapped to its step). True when the value changed.
-fn range_value_at(page: &Rc<PageDom>, el: NodeId, x: f64) -> bool {
-    let rect = {
+/// Moves a range slider's value to the pointer (Chromium's slider: the fraction of the element's
+/// extent along its inline axis, from the inline start, snapped to its step): x and the width in a
+/// horizontal writing mode, y and the height in a vertical one; the start is the left or top edge,
+/// the opposite one for `direction: rtl` (and for `sideways-lr`, whose inline axis runs bottom to
+/// top). True when the value changed.
+fn range_value_at(page: &Rc<PageDom>, el: NodeId, x: f64, y: f64) -> bool {
+    let (rect, writing_mode, direction) = {
         let dom = page.dom.borrow();
-        page.layout().bounding_client_rect(&dom, el)
+        let layout = page.layout();
+        let style = layout.style();
+        (
+            layout.bounding_client_rect(&dom, el),
+            style.computed_value(&dom, el, "writing-mode").unwrap_or_default(),
+            style.computed_value(&dom, el, "direction").unwrap_or_default(),
+        )
     };
-    if !(rect.width > 0.0) {
+    let vertical = writing_mode.starts_with("vertical") || writing_mode.starts_with("sideways");
+    let (pos, start, extent) = if vertical { (y, rect.y, rect.height) } else { (x, rect.x, rect.width) };
+    if !(extent > 0.0) {
         return false;
+    }
+    let mut fraction = ((pos - start) / extent).clamp(0.0, 1.0);
+    if (direction == "rtl") != (writing_mode == "sideways-lr") {
+        fraction = 1.0 - fraction;
     }
     let mut dom = page.dom.borrow_mut();
     let attr = |dom: &Dom, name: &str| dom.get_attribute(el, name).ok().flatten().and_then(pyro_dom::forms::parse_float);
     let min = attr(&dom, "min").unwrap_or(0.0);
     let max = attr(&dom, "max").unwrap_or(100.0).max(min);
-    let mut fraction = ((x - rect.x) / rect.width).clamp(0.0, 1.0);
-    if dom.directionality(el).is_ok_and(|d| d == pyro_dom::direction::Direction::Rtl) {
-        fraction = 1.0 - fraction;
-    }
     let before = dom.value(el).ok();
     let _ = dom.set_value_as_number(el, min + fraction * (max - min));
     dom.value(el).ok() != before
@@ -1501,7 +1512,7 @@ fn range_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
     }
     let start = page.dom.borrow().value(target).unwrap_or_default();
     *page.range_drag.borrow_mut() = Some((target, start));
-    if range_value_at(page, target, m.x) {
+    if range_value_at(page, target, m.x, m.y) {
         fire_simple(page, target, "input", true, false);
     }
 }
@@ -1511,7 +1522,7 @@ fn range_drag_move(page: &Rc<PageDom>, m: &MouseInput) {
     if !enabled_range(&page.dom.borrow(), el) {
         return;
     }
-    if range_value_at(page, el, m.x) {
+    if range_value_at(page, el, m.x, m.y) {
         fire_simple(page, el, "input", true, false);
     }
 }

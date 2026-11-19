@@ -672,6 +672,30 @@ fn web_locks_abort_uses_the_signal_algorithm() {
     assert_eq!(env.eval("abortDone"), "AbortError|two|false|true");
 }
 
+/// A range slider follows the pointer along its inline axis: x in a horizontal writing mode (from
+/// the right for `direction: rtl`), y in a vertical one.
+#[test]
+fn range_slider_drags_along_its_inline_axis() {
+    let env = Env::new("http://range.test/");
+    env.eval(
+        r#"document.body.style.margin = "0";
+           document.body.innerHTML = "<input type=range id=h style='position:absolute;left:0;top:0;width:200px;height:30px;margin:0'>" +
+             "<input type=range id=r dir=rtl style='position:absolute;left:0;top:40px;width:200px;height:30px;margin:0;direction:rtl'>" +
+             "<input type=range id=v style='position:absolute;left:300px;top:0;width:30px;height:200px;margin:0;writing-mode:vertical-lr'>";
+           "ok""#,
+    );
+    use pyro_webapi::input;
+    let press = |x: f64, y: f64| {
+        let m = input::MouseInput { x, y, button: input::MouseButton::Left, buttons: 1, click_count: 1, ..Default::default() };
+        input::dispatch_mouse(&env.page, input::MouseKind::Pressed, &m).unwrap();
+        input::dispatch_mouse(&env.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+    };
+    press(150.0, 15.0);
+    press(150.0, 55.0);
+    press(315.0, 150.0);
+    assert_eq!(env.eval("[h.value, r.value, v.value].join()"), "75,25,75");
+}
+
 /// navigator.mediaDevices: pyro has no capture device, so none is listed and getUserMedia() finds
 /// none; constraints are still checked.
 #[test]
