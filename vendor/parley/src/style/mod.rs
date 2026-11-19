@@ -306,6 +306,16 @@ pub enum AlignmentBaseline {
     /// pyro: css-inline-3 `alignment-baseline: middle`: align the span's x-middle baseline (half
     /// its x-height above its baseline) with the parent's. A box stays on the baseline.
     XMiddle,
+    /// pyro: css-inline-3 `alignment-baseline: alphabetic`.
+    Alphabetic,
+    /// pyro: css-inline-3 `alignment-baseline: ideographic` (the ideographic under baseline).
+    Ideographic,
+    /// pyro: css-inline-3 `alignment-baseline: central`.
+    Central,
+    /// pyro: css-inline-3 `alignment-baseline: mathematical`.
+    Mathematical,
+    /// pyro: css-inline-3 `alignment-baseline: hanging`.
+    Hanging,
 }
 
 /// A shift applied to a span (or [`InlineBox`]) after [`AlignmentBaseline`] alignment. Mirrors

@@ -588,6 +588,11 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
         stylo::AlignmentBaseline::TextTop => parley::AlignmentBaseline::TextOver,
         stylo::AlignmentBaseline::TextBottom => parley::AlignmentBaseline::TextUnder,
         stylo::AlignmentBaseline::Middle => parley::AlignmentBaseline::XMiddle,
+        stylo::AlignmentBaseline::Alphabetic => parley::AlignmentBaseline::Alphabetic,
+        stylo::AlignmentBaseline::Ideographic => parley::AlignmentBaseline::Ideographic,
+        stylo::AlignmentBaseline::Central => parley::AlignmentBaseline::Central,
+        stylo::AlignmentBaseline::Mathematical => parley::AlignmentBaseline::Mathematical,
+        stylo::AlignmentBaseline::Hanging => parley::AlignmentBaseline::Hanging,
     };
     let shift = match box_styles.get_baseline_shift() {
         stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Sub) => {

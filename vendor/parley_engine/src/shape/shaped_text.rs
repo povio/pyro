@@ -80,6 +80,12 @@ pub struct IdeographicBaselines {
     pub face_under: Option<f32>,
     /// `icft`: the top of the ideographic character face.
     pub face_over: Option<f32>,
+    /// pyro: `romn`: the alphabetic baseline (most fonts: 0, the glyph origin).
+    pub alphabetic: Option<f32>,
+    /// pyro: `hang`: the hanging baseline.
+    pub hanging: Option<f32>,
+    /// pyro: `math`: the mathematical baseline.
+    pub math: Option<f32>,
 }
 
 impl IdeographicBaselines {
@@ -115,6 +121,9 @@ impl IdeographicBaselines {
                 b"idtp" => out.ideographic_over = value,
                 b"icfb" => out.face_under = value,
                 b"icft" => out.face_over = value,
+                b"romn" => out.alphabetic = value,
+                b"hang" => out.hanging = value,
+                b"math" => out.math = value,
                 _ => {}
             }
         }

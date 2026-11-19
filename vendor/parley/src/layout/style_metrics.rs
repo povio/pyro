@@ -76,6 +76,10 @@ pub(crate) struct StyleMetrics {
     /// pyro: the ideographic em box and character face box of the first available font, as
     /// distances over and under the baseline (`[em over, em under, face over, face under]`).
     pub(crate) ideographic: [f32; 4],
+    /// pyro: the alphabetic, hanging and mathematical baselines of the first available font, as
+    /// heights over the glyph origin: its `BASE` table's, else 0, 80% and half of the ascent
+    /// (Blink's synthesized ones).
+    pub(crate) named: [f32; 3],
     /// pyro: distance from the baseline to the top of the content area: the ascent, or the edge
     /// `text-box-trim` trims it to.
     pub(crate) content_over: f32,
@@ -185,6 +189,11 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
             let face_under = base.face_under.map_or(under - em * 0.05, |v| -v);
             let face_over = base.face_over.unwrap_or(over - em * 0.05);
             metrics.ideographic = [over, under, face_over, face_under];
+            metrics.named = [
+                base.alphabetic.unwrap_or(0.),
+                base.hanging.unwrap_or(metrics.ascent * 0.8),
+                base.math.unwrap_or(metrics.ascent / 2.),
+            ];
         }
         if let Some(edge) = style.text_box_trim.over {
             metrics.content_over = metrics.text_edge(edge, true);
@@ -233,7 +242,8 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
                 metrics.aligned_subtree_root = index as u16;
             } else {
                 let own = Some((metrics.ascent, metrics.descent, metrics.x_height));
-                let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
+                let named = Some(metrics.named_baselines());
+                let shift = shift_from_parent(align, metrics.over, metrics.under, own, named, parent);
                 metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
                 // Rounded once from the accumulated offset (not per level) so the total error
                 // stays within half a pixel.
@@ -280,6 +290,7 @@ pub(crate) fn scale_style_metrics<B: Brush>(
         metrics.font = Some(font);
         metrics.font_size = font_size;
         metrics.ideographic = base.ideographic.map(|value| value * scale);
+        metrics.named = base.named.map(|value| value * scale);
         // A side `text-box-trim` trims stays trimmed (to its scaled edge).
         if base.content_over != base.ascent {
             metrics.content_over = base.content_over * scale;
@@ -310,7 +321,8 @@ pub(crate) fn scale_style_metrics<B: Brush>(
                 {
                     *length *= line_height / base_line_height;
                 }
-                let shift = shift_from_parent(align, metrics.over, metrics.under, own, parent);
+                let named = Some(metrics.named_baselines());
+                let shift = shift_from_parent(align, metrics.over, metrics.under, own, named, parent);
                 metrics.exact_baseline_offset = parent.exact_baseline_offset + shift;
                 metrics.baseline_offset = if quantize {
                     round_half_up(metrics.exact_baseline_offset)
@@ -438,6 +450,7 @@ impl StyleMetrics {
             x_height: if quantize { x_height.round() } else { x_height },
             cap_height: font.cap_height.unwrap_or(box_metrics.ascent),
             ideographic: [0.; 4],
+            named: [0., box_metrics.ascent * 0.8, box_metrics.ascent / 2.],
             content_over: box_metrics.ascent,
             content_under: box_metrics.descent,
             over: box_metrics.over,
@@ -476,6 +489,30 @@ impl StyleMetrics {
     }
 }
 
+/// pyro: a span's baselines as heights over its glyph origin (`StyleMetrics::named_baselines`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NamedBaselines {
+    pub(crate) alphabetic: f32,
+    pub(crate) ideographic: f32,
+    pub(crate) central: f32,
+    pub(crate) math: f32,
+    pub(crate) hanging: f32,
+}
+
+impl StyleMetrics {
+    /// pyro: the span's alphabetic, ideographic (under), central (the ideographic em box's
+    /// middle), mathematical and hanging baselines over its glyph origin.
+    pub(crate) fn named_baselines(&self) -> NamedBaselines {
+        NamedBaselines {
+            alphabetic: self.named[0],
+            ideographic: -self.ideographic[1],
+            central: (self.ideographic[0] - self.ideographic[1]) / 2.,
+            math: self.named[2],
+            hanging: self.named[1],
+        }
+    }
+}
+
 /// The baseline shift (positive upwards) of a box extending `over` above and `under` below its
 /// baseline, relative to the baseline of its `parent` span box, for a parent-relative
 /// `vertical-align` value: the `alignment-baseline` offset plus the `baseline-shift`.
@@ -486,10 +523,29 @@ pub(crate) fn shift_from_parent(
     under: f32,
     // pyro: a span's own font ascent, descent and x-height (none for an inline box).
     own: Option<(f32, f32, f32)>,
+    // pyro: a span's own named baselines (none for an inline box, whose baselines are
+    // synthesized from its edges: alphabetic and ideographic its under edge, central and
+    // mathematical its middle, hanging its over edge).
+    named: Option<NamedBaselines>,
     parent: &StyleMetrics,
 ) -> f32 {
+    let parent_named = parent.named_baselines();
     let alignment = match (align.alignment, own) {
-        (AlignmentBaseline::Baseline, _) => 0.,
+        // pyro: the dominant baseline, alphabetic: a font's `BASE` alphabetic baseline need
+        // not be its glyph origin (WPT css-inline `alignment-baseline-horizontal-002`).
+        (AlignmentBaseline::Baseline | AlignmentBaseline::Alphabetic, _) => {
+            parent_named.alphabetic - named.map_or(0., |own| own.alphabetic)
+        }
+        (AlignmentBaseline::Ideographic, _) => {
+            parent_named.ideographic - named.map_or(-under, |own| own.ideographic)
+        }
+        (AlignmentBaseline::Central, _) => {
+            parent_named.central - named.map_or((over - under) / 2., |own| own.central)
+        }
+        (AlignmentBaseline::Mathematical, _) => {
+            parent_named.math - named.map_or((over - under) / 2., |own| own.math)
+        }
+        (AlignmentBaseline::Hanging, _) => parent_named.hanging - named.map_or(over, |own| own.hanging),
         (AlignmentBaseline::TextTop, _) | (AlignmentBaseline::TextOver, None) => parent.ascent - over,
         (AlignmentBaseline::TextBottom, _) | (AlignmentBaseline::TextUnder, None) => under - parent.descent,
         (AlignmentBaseline::Middle, _) => parent.x_height / 2. - (over - under) / 2.,
@@ -556,7 +612,7 @@ pub(crate) fn inline_box_placement(
         .get(usize::from(parent_style))
         .copied()
         .unwrap_or_default();
-    let shift = shift_from_parent(inline_box.vertical_align, ascent, descent, None, &parent);
+    let shift = shift_from_parent(inline_box.vertical_align, ascent, descent, None, None, &parent);
     // pyro: on a central baseline the box's own (central) baseline goes to the middle of the
     // parent's content area, over its alphabetic baseline by half of ascent minus descent. Not
     // quantized: the content area's middle is where the dominant baseline of the line is

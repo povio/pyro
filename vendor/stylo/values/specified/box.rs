@@ -834,23 +834,23 @@ pub enum AlignmentBaseline {
     /// Use the text-under baseline.
     TextBottom,
     /// Use the alphabetic baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Alphabetic,
     /// Use the ideographic-under baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Ideographic,
     /// In general, use the x-middle baselines; except under text-orientation: upright
     /// (where the alphabetic and x-height baselines are essentially meaningless) use
     /// the central baseline instead.
     Middle,
     /// Use the central baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Central,
     /// Use the math baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Mathematical,
     /// Use the hanging baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Hanging,
     /// Use the text-over baseline.
     TextTop,
@@ -911,16 +911,11 @@ impl ToCss for AlignmentBaseline {
         dest.write_str(match value {
             Self::Baseline => "baseline",
             Self::TextBottom => "text-bottom",
-            #[cfg(feature = "gecko")]
             Self::Alphabetic => "alphabetic",
-            #[cfg(feature = "gecko")]
             Self::Ideographic => "ideographic",
             Self::Middle => "middle",
-            #[cfg(feature = "gecko")]
             Self::Central => "central",
-            #[cfg(feature = "gecko")]
             Self::Mathematical => "mathematical",
-            #[cfg(feature = "gecko")]
             Self::Hanging => "hanging",
             Self::TextTop => "text-top",
             #[cfg(feature = "gecko")]
