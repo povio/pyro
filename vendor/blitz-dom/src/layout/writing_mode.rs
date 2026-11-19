@@ -510,6 +510,15 @@ impl LayoutPassState<'_> {
         placer_size: Size<f32>,
         parent_frac: Point<f32>,
     ) {
+        // pyro: a node without a box (a text or comment node left among the layout children: a
+        // `display: contents` option's text in a list box) has no layout to round; it panicked
+        // (WPT selection/crashtests `selection-modify-extend-forward-on-option`).
+        if !matches!(
+            self.doc.nodes[dom_node_id(node_id)].data,
+            crate::NodeData::Element(_) | crate::NodeData::AnonymousBlock(_) | crate::NodeData::Document(_)
+        ) {
+            return;
+        }
         // pyro: only a vertical placer reads it (`physical_layout`).
         let is_scroll_container = placer_wm.is_vertical() && {
             let overflow = self.doc.nodes[dom_node_id(node_id)].layout_style().overflow();
@@ -586,6 +595,13 @@ impl LayoutPassState<'_> {
         placer_size: Size<f32>,
         parent_frac: Point<f32>,
     ) {
+        // (No box to round: `physicalise_and_round_inner`.)
+        if !matches!(
+            self.doc.nodes[dom_node_id(node_id)].data,
+            crate::NodeData::Element(_) | crate::NodeData::AnonymousBlock(_) | crate::NodeData::Document(_)
+        ) {
+            return;
+        }
         let is_scroll_container = placer_wm.is_vertical() && {
             let overflow = self.doc.nodes[dom_node_id(node_id)].layout_style().overflow();
             overflow.x.is_scroll_container() || overflow.y.is_scroll_container()

@@ -146,3 +146,16 @@ fn a_text_control_paints_block_and_underscore_carets_over_the_character_after_th
     let (x0, _, x1, _, _) = find(&image, [0, 0, 255]).expect("the covered character in the second colour");
     assert!(x0 >= 20 && x1 <= 39, "only the covered character: x {x0}..{x1}");
 }
+
+/// A `display: contents` option of a list box select leaves no text among the layout children:
+/// laying it out and rounding it panicked (`layout_data` of a text node; WPT selection/crashtests
+/// `selection-modify-extend-forward-on-option`).
+#[test]
+fn a_list_box_with_a_display_contents_option_renders() {
+    for display in ["contents", "none", "block"] {
+        render(
+            &format!("<select multiple style='display:table-cell'><option id=t style='display:{display}'>Test</option></select>"),
+            At::Text(0),
+        );
+    }
+}
