@@ -579,6 +579,11 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
                 DominantBaseline::TextTop => parley::AlignmentBaseline::TextOver,
                 DominantBaseline::TextBottom => parley::AlignmentBaseline::TextUnder,
                 DominantBaseline::Middle => parley::AlignmentBaseline::XMiddle,
+                DominantBaseline::Alphabetic => parley::AlignmentBaseline::Alphabetic,
+                DominantBaseline::Ideographic => parley::AlignmentBaseline::Ideographic,
+                DominantBaseline::Central => parley::AlignmentBaseline::Central,
+                DominantBaseline::Mathematical => parley::AlignmentBaseline::Mathematical,
+                DominantBaseline::Hanging => parley::AlignmentBaseline::Hanging,
                 _ => parley::AlignmentBaseline::Baseline,
             }
         }
@@ -593,6 +598,17 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
         stylo::AlignmentBaseline::Central => parley::AlignmentBaseline::Central,
         stylo::AlignmentBaseline::Mathematical => parley::AlignmentBaseline::Mathematical,
         stylo::AlignmentBaseline::Hanging => parley::AlignmentBaseline::Hanging,
+    };
+    // pyro: vertical lines of text that is not sideways align on the central baseline already
+    // (`inline::build`'s `central_baseline`): `central` aligns as `baseline` there, as `auto`
+    // does (WPT css-inline `dominant-baseline-auto` vertical-rl, expect-central).
+    let alignment = match alignment {
+        parley::AlignmentBaseline::Central
+            if style.writing_mode.is_vertical() && !style.writing_mode.is_sideways() =>
+        {
+            parley::AlignmentBaseline::Baseline
+        }
+        alignment => alignment,
     };
     let shift = match box_styles.get_baseline_shift() {
         stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Sub) => {
