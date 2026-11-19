@@ -2794,3 +2794,10 @@ text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style
 (WPT css/cssom `medialist-dynamic-001`). Covered by `a_style_element_media_attribute_limits_its_sheet` in
 `crates/pyro-render/tests/render.rs`.
 - Lane F1, `document.rs` `init_stylo_prefs`: `layout.css.text-wrap-style.pretty.enabled` (`text-wrap: pretty` lays out as `auto`); pyro-dom sets it, `motion-path-url` and `text-wrap-style.balance` as well, for declarations script parses before the engine starts.
+- Round 4 lane S4, `layout/multicol.rs`: a run of columns between or after column spanners balances within what is
+  left of a definite container height (more columns take the overflow). WPT css-multicol `multicol-span-all-012` and
+  2 more.
+- Round 4 lane S4, `node/node.rs` `is_stacking_context_root`: layout and paint containment make a stacking context
+  (CSS Contain 2 § 3.2, § 3.4) on a box they apply to (not a non-atomic inline, `display: contents`, or an internal
+  table box other than a cell). WPT css-contain `contain-paint-stacking-context-001a`,
+  `contain-layout-stacking-context-001`. `pyro-render/tests/containment_and_svg_background.rs`.

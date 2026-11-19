@@ -114,3 +114,15 @@ fn an_abspos_box_of_a_multicol_container_is_placed_against_it_not_in_a_column() 
     assert_eq!(rg_at(body, 20, 70), (255, 0), "the box at its place");
     assert_eq!(rg_at(body, 70, 20), (255, 255), "not in the second column");
 }
+
+#[test]
+fn columns_after_a_spanner_fit_what_is_left_of_a_definite_height() {
+    // WPT multicol-span-all-012: a 70px spanner, then 120px in 3 columns of a 100px-tall container:
+    // 30px are left, so the columns are 30px tall (4 of them, the last past the content box).
+    let body = "<div style='columns:3;width:75px;height:100px;column-gap:0'>\
+                <div style='column-span:all;width:100px;height:70px;background:#0f0'></div>\
+                <div style='height:120px;background:#f00'></div></div>";
+    assert_eq!(rg_at(body, 10, 99), (255, 0), "the first column reaches the container's end");
+    assert_eq!(rg_at(body, 90, 80), (255, 0), "a fourth column takes the rest");
+    assert_eq!(rg_at(body, 10, 105), (255, 255), "nothing below the container");
+}

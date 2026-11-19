@@ -620,7 +620,11 @@ impl LayoutPassState<'_> {
                 } else if spanners.is_empty() && fill_auto {
                     definite_height.unwrap_or(0.0)
                 } else {
-                    run.balance(count, if spanners.is_empty() { limit } else { None })
+                    // pyro: a run between or after spanners balances within what is left of a
+                    // definite height (css-multicol-1 § 7.2: the columns after a spanner fit
+                    // the rest of the container; overflow makes more columns).
+                    let left = definite_height.map(|height| (height - (row_top - content_top)).max(0.0));
+                    run.balance(count, if spanners.is_empty() { limit } else { left })
                 };
                 // pyro: `column-wrap: wrap`: each `count` columns make a row (css-multicol-2).
                 let per_row = if fixed_height.is_some() && multicol.wrap { count.max(1) } else { usize::MAX };

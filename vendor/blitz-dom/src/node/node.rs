@@ -2443,7 +2443,21 @@ impl Node {
                 return true;
             }
         }
-        // TODO: contain
+        // pyro: layout and paint containment make a stacking context (CSS Contain 2 § 3.2, § 3.4),
+        // on a box they apply to: not a non-atomic inline box, nor an internal table box other
+        // than a cell (WPT css-contain `contain-paint-stacking-context-*`).
+        {
+            use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
+            if box_style.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT) {
+                let display = box_style.display;
+                let inline_box = display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow;
+                let table_internal =
+                    display.outside() == DisplayOutside::InternalTable && display.inside() != DisplayInside::TableCell;
+                if !inline_box && !table_internal && !display.is_contents() && !display.is_none() {
+                    return true;
+                }
+            }
+        }
 
         false
     }

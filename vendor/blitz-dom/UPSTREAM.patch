@@ -17924,7 +17924,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,1314 @@
+@@ -0,0 +1,1318 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -18547,7 +18547,11 @@ new file mode 100644
 +                } else if spanners.is_empty() && fill_auto {
 +                    definite_height.unwrap_or(0.0)
 +                } else {
-+                    run.balance(count, if spanners.is_empty() { limit } else { None })
++                    // pyro: a run between or after spanners balances within what is left of a
++                    // definite height (css-multicol-1 § 7.2: the columns after a spanner fit
++                    // the rest of the container; overflow makes more columns).
++                    let left = definite_height.map(|height| (height - (row_top - content_top)).max(0.0));
++                    run.balance(count, if spanners.is_empty() { limit } else { left })
 +                };
 +                // pyro: `column-wrap: wrap`: each `count` columns make a row (css-multicol-2).
 +                let per_row = if fixed_height.is_some() && multicol.wrap { count.max(1) } else { usize::MAX };
@@ -31629,10 +31633,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,6 +2429,20 @@
+@@ -1369,7 +2429,35 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
+-        // TODO: contain
 +        // pyro: `will-change` of a property that would make a stacking context makes one (its
 +        // positioned descendants paint inside it, its backdrop-root group among them), as in
 +        // Gecko: the unconditional ones, `opacity`, the transforms and `perspective`.
@@ -31647,10 +31652,25 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                return true;
 +            }
 +        }
-         // TODO: contain
++        // pyro: layout and paint containment make a stacking context (CSS Contain 2 § 3.2, § 3.4),
++        // on a box they apply to: not a non-atomic inline box, nor an internal table box other
++        // than a cell (WPT css-contain `contain-paint-stacking-context-*`).
++        {
++            use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
++            if box_style.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT) {
++                let display = box_style.display;
++                let inline_box = display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow;
++                let table_internal =
++                    display.outside() == DisplayOutside::InternalTable && display.inside() != DisplayInside::TableCell;
++                if !inline_box && !table_internal && !display.is_contents() && !display.is_none() {
++                    return true;
++                }
++            }
++        }
  
          false
-@@ -1435,6 +2509,12 @@
+     }
+@@ -1435,6 +2523,12 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -31663,7 +31683,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2580,15 @@
+@@ -1500,11 +2594,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -31679,7 +31699,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2617,7 @@
+@@ -1533,6 +2631,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -31687,7 +31707,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2644,7 @@
+@@ -1559,7 +2658,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -31696,7 +31716,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2659,18 @@
+@@ -1574,12 +2673,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -31717,7 +31737,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2681,7 @@
+@@ -1590,7 +2695,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -31726,7 +31746,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2696,7 @@
+@@ -1605,7 +2710,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -31735,7 +31755,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2807,7 @@
+@@ -1716,7 +2821,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -31744,7 +31764,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2832,13 @@
+@@ -1741,8 +2846,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -31759,7 +31779,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2914,28 @@
+@@ -1818,8 +2928,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -31790,7 +31810,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +2993,36 @@
+@@ -1877,11 +3007,36 @@
                  }
              }
  
