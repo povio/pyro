@@ -1145,12 +1145,17 @@ impl BaseDocument {
             ImageLayerKind::Shape => (shape_image(&style), &mut elem.shape_images),
         };
 
-        let len = style_images.len();
+        // pyro: the layers' images, then the `url()`s of their `cross-fade()`s (`image_slots`); a
+        // `filter()` image loads the image it filters.
+        let slots = match kind {
+            ImageLayerKind::Background | ImageLayerKind::Mask => crate::util::image_slots(style_images),
+            _ => style_images.iter().map(crate::util::unfiltered_image).collect(),
+        };
+        let len = slots.len();
         elem_images.resize(len, None);
 
         for idx in 0..len {
-            // pyro: a `filter()` image loads the image it filters.
-            let style_image = crate::util::unfiltered_image(&style_images[idx]);
+            let style_image = slots[idx];
             let new_image = match style_image {
                 StyloImage::Url(ComputedUrl::Valid(new_url)) => {
                     let old_image = elem_images[idx].as_ref();

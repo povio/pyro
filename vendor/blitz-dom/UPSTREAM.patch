@@ -9862,7 +9862,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          let doc_id = self.id();
          let node = self.nodes.get_mut(node_id).unwrap();
          // Clone the primary style `Arc` into an owned value so the immutable
-@@ -577,19 +1129,28 @@
+@@ -577,19 +1129,33 @@
              return;
          };
  
@@ -9883,17 +9883,23 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +            ImageLayerKind::Shape => (shape_image(&style), &mut elem.shape_images),
          };
  
-         let len = style_images.len();
+-        let len = style_images.len();
++        // pyro: the layers' images, then the `url()`s of their `cross-fade()`s (`image_slots`); a
++        // `filter()` image loads the image it filters.
++        let slots = match kind {
++            ImageLayerKind::Background | ImageLayerKind::Mask => crate::util::image_slots(style_images),
++            _ => style_images.iter().map(crate::util::unfiltered_image).collect(),
++        };
++        let len = slots.len();
          elem_images.resize(len, None);
  
          for idx in 0..len {
 -            let style_image = &style_images[idx];
-+            // pyro: a `filter()` image loads the image it filters.
-+            let style_image = crate::util::unfiltered_image(&style_images[idx]);
++            let style_image = slots[idx];
              let new_image = match style_image {
                  StyloImage::Url(ComputedUrl::Valid(new_url)) => {
                      let old_image = elem_images[idx].as_ref();
-@@ -598,8 +1159,15 @@
+@@ -598,8 +1164,15 @@
                          continue;
                      }
  
@@ -9910,7 +9916,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                      if let Some(cached_image) = self.image_cache.get(url_str) {
                          #[cfg(feature = "tracing")]
                          tracing::info!("Loading image {url_str} from cache");
-@@ -621,18 +1189,20 @@
+@@ -621,18 +1194,20 @@
                          self.pending_images
                              .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
  
@@ -9936,7 +9942,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                              ),
                          );
  
-@@ -647,3 +1217,153 @@
+@@ -647,3 +1222,153 @@
          }
      }
  }
@@ -46332,10 +46338,19 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
                  (Image::Url(ComputedUrl::Valid(_)), None) => true,
                  (_, Some(_)) => true,
-@@ -1707,6 +2877,24 @@
-             &style.get_background().background_image.0,
-             &el.background_images,
-         ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
+@@ -1702,11 +2872,29 @@
+         })
+     }
+ 
++    // pyro: with the `url()`s of the layers' `cross-fade()`s (`util::image_slots`).
++    let slots = |images: &[Image]| -> Vec<Image> { crate::util::image_slots(images).into_iter().cloned().collect() };
+     node.data.downcast_element().is_some_and(|el| {
+-        out_of_sync(
+-            &style.get_background().background_image.0,
+-            &el.background_images,
+-        ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
++        out_of_sync(&slots(&style.get_background().background_image.0), &el.background_images)
++            || out_of_sync(&slots(&style.get_svg().mask_image.0), &el.mask_images)
 +            || out_of_sync(&crate::layout::damage::border_image_sources(style), &el.border_images)
 +            || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
 +            || out_of_sync(crate::layout::damage::shape_image(style), &el.shape_images)
@@ -49421,7 +49436,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  /// A point
-@@ -87,6 +140,100 @@
+@@ -87,6 +140,126 @@
      pub const ZERO: Self = Point { x: 0.0, y: 0.0 };
  }
  
@@ -49437,6 +49452,32 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +        },
 +        image => image,
 +    }
++}
++
++/// pyro: the images an image layer list (`background-image`, `mask-image`) loads, a slot each in
++/// the element's stored images (`ElementData::background_images`, `mask_images`): each layer's
++/// image (`unfiltered_image`), then the `url()` images of the layers' `cross-fade()`s (nested ones
++/// too), in order. blitz-paint finds a `cross-fade()` argument's image among them by its URL.
++pub fn image_slots(images: &[style::values::computed::Image]) -> Vec<&style::values::computed::Image> {
++    use style::values::generics::image::{GenericCrossFadeImage, GenericImage};
++    fn cross_fade_urls<'a>(image: &'a style::values::computed::Image, out: &mut Vec<&'a style::values::computed::Image>) {
++        let GenericImage::CrossFade(cross_fade) = image else { return };
++        for element in cross_fade.elements.iter() {
++            if let GenericCrossFadeImage::Image(image) = &element.image {
++                let image = unfiltered_image(image);
++                match image {
++                    GenericImage::Url(_) => out.push(image),
++                    GenericImage::CrossFade(_) => crate::util::ensure_stack(|| cross_fade_urls(image, out)),
++                    _ => {}
++                }
++            }
++        }
++    }
++    let mut slots: Vec<&style::values::computed::Image> = images.iter().map(unfiltered_image).collect();
++    for image in images {
++        cross_fade_urls(unfiltered_image(image), &mut slots);
++    }
++    slots
 +}
 +
 +/// pyro: whether `style`'s `content` is one image, which replaces the element's content (CSS
@@ -49522,7 +49563,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  // Debug print an RcDom
  pub fn walk_tree(indent: usize, node: &Node) {
      // Skip all-whitespace text nodes entirely
-@@ -156,11 +303,39 @@
+@@ -156,11 +329,39 @@
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
@@ -49563,7 +49604,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +429,93 @@
+@@ -254,3 +455,93 @@
          }
      };
  }

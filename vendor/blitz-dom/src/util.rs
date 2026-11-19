@@ -154,6 +154,32 @@ pub fn unfiltered_image(image: &style::values::computed::Image) -> &style::value
     }
 }
 
+/// pyro: the images an image layer list (`background-image`, `mask-image`) loads, a slot each in
+/// the element's stored images (`ElementData::background_images`, `mask_images`): each layer's
+/// image (`unfiltered_image`), then the `url()` images of the layers' `cross-fade()`s (nested ones
+/// too), in order. blitz-paint finds a `cross-fade()` argument's image among them by its URL.
+pub fn image_slots(images: &[style::values::computed::Image]) -> Vec<&style::values::computed::Image> {
+    use style::values::generics::image::{GenericCrossFadeImage, GenericImage};
+    fn cross_fade_urls<'a>(image: &'a style::values::computed::Image, out: &mut Vec<&'a style::values::computed::Image>) {
+        let GenericImage::CrossFade(cross_fade) = image else { return };
+        for element in cross_fade.elements.iter() {
+            if let GenericCrossFadeImage::Image(image) = &element.image {
+                let image = unfiltered_image(image);
+                match image {
+                    GenericImage::Url(_) => out.push(image),
+                    GenericImage::CrossFade(_) => crate::util::ensure_stack(|| cross_fade_urls(image, out)),
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut slots: Vec<&style::values::computed::Image> = images.iter().map(unfiltered_image).collect();
+    for image in images {
+        cross_fade_urls(unfiltered_image(image), &mut slots);
+    }
+    slots
+}
+
 /// pyro: whether `style`'s `content` is one image, which replaces the element's content (CSS
 /// Content 3 §2; `BaseDocument::flush_content_image`), unless the element is `display: contents`
 /// (WPT css-display `display-contents-replaced-content`).

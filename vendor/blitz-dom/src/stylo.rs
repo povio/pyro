@@ -2872,11 +2872,11 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
         })
     }
 
+    // pyro: with the `url()`s of the layers' `cross-fade()`s (`util::image_slots`).
+    let slots = |images: &[Image]| -> Vec<Image> { crate::util::image_slots(images).into_iter().cloned().collect() };
     node.data.downcast_element().is_some_and(|el| {
-        out_of_sync(
-            &style.get_background().background_image.0,
-            &el.background_images,
-        ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
+        out_of_sync(&slots(&style.get_background().background_image.0), &el.background_images)
+            || out_of_sync(&slots(&style.get_svg().mask_image.0), &el.mask_images)
             || out_of_sync(&crate::layout::damage::border_image_sources(style), &el.border_images)
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
             || out_of_sync(crate::layout::damage::shape_image(style), &el.shape_images)

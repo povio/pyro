@@ -659,7 +659,19 @@ impl ElementCx<'_, '_> {
                     );
                     match &element.image {
                         GenericCrossFadeImage::Image(image) => {
-                            let inner = ImageLayerStyles { stylo_image: image, ..*layer };
+                            // A `url()` image: its slot among the element's stored images
+                            // (`blitz_dom::util::image_slots`), found by its URL.
+                            let image_data = match blitz_dom::util::unfiltered_image(image) {
+                                GenericImage::Url(style::values::computed::url::ComputedUrl::Valid(url)) => self
+                                    .element
+                                    .background_images
+                                    .iter()
+                                    .chain(&self.element.mask_images)
+                                    .flatten()
+                                    .find(|data| *data.url == **url),
+                                _ => layer.image_data,
+                            };
+                            let inner = ImageLayerStyles { stylo_image: image, image_data, ..*layer };
                             self.draw_image_layer_in(scene, &inner, area, current_color);
                         }
                         GenericCrossFadeImage::Color(color) => {
