@@ -451,6 +451,10 @@ fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Opti
             } else {
                 (n.client_width() as f64, n.scroll_width() as f64)
             };
+            // pyro: the scroll range `scrollWidth`/`scrollHeight` give (the scrollable overflow
+            // resolved after layout: in-flow children's end margins too), as a scroll timeline's
+            // (WPT scroll-animations `css/scroll-timeline-update-reversed-animation`).
+            let size = size.max(resolved_scroll_size(doc, n, vertical));
             Some(Scroll { offset, max: (size - client).max(0.0), port: client })
         }
         None => {
@@ -467,5 +471,21 @@ fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Opti
             let size = if vertical { root.scroll_height() as f64 } else { root.scroll_width() as f64 };
             Some(Scroll { offset, max: (size - port).max(0.0), port })
         }
+    }
+}
+
+/// pyro: the scroll size along an axis from the box's resolved scrollable overflow (device px in
+/// its border box), from its padding box's start edge (as the layout queries' `scrollHeight`).
+fn resolved_scroll_size(doc: &BaseDocument, n: &Node, vertical: bool) -> f64 {
+    let scale = doc.viewport().scale_f64();
+    let o = n.scrollable_overflow().scale_from_origin(1.0 / scale);
+    let l = n.final_layout();
+    let reversed = l.scrollable_overflow_rect.is_reversed();
+    if vertical {
+        if reversed.y { (l.size.height - l.border.bottom) as f64 - o.y0 } else { o.y1 - l.border.top as f64 }
+    } else if reversed.x {
+        (l.size.width - l.border.right) as f64 - o.x0
+    } else {
+        o.x1 - l.border.left as f64
     }
 }

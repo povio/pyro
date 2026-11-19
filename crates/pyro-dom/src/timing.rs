@@ -236,11 +236,18 @@ pub struct AnimationTiming {
 }
 
 impl AnimationTiming {
-    /// Whether `other` is the same run: a change of its name or timing starts
-    /// the animation again, one of its [`AnimationStyle`] does not.
+    /// Whether `other` is the same run: only a change of its name starts the animation again;
+    /// its other `animation-*` values change the running animation (CSS Animations 1 § 3:
+    /// "changes to the values of animation properties while the animation is running apply as if
+    /// the animation had those values from when it began"; Chromium).
     pub fn same_run(&self, other: &AnimationTiming) -> bool {
         self.name == other.name
-            && self.duration_ms == other.duration_ms
+    }
+
+    /// Whether `other` gives the run other times (duration, delay, iteration count).
+    pub fn same_times(&self, other: &AnimationTiming) -> bool {
+        self.duration_ms == other.duration_ms
+            && self.duration_auto == other.duration_auto
             && self.delay_ms == other.delay_ms
             && self.iterations == other.iterations
     }

@@ -304,6 +304,22 @@ pub(crate) fn animate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: Value<'s>, a: &
     call(module, "animate", &[el, a.get(0), a.get(1)])
 }
 
+/// pyro: in a task, hands the page's module (when it has one) the CSS runs again: a run script
+/// controls changed, and its object takes the CSS properties script did not override.
+pub(crate) fn push_css_runs(page: &Rc<PageDom>) {
+    let weak = Rc::downgrade(page);
+    page.post_task(Box::new(move || {
+        let Some(page) = weak.upgrade().filter(|p| !p.is_disposed()) else { return };
+        let Some(realm) = page.main_world_realm() else { return };
+        let Ok(s) = realm.scope() else { return };
+        if matches!(existing(&s, &page), Ok(Some(_))) {
+            if let Err(error) = with_css_runs(&s, &page) {
+                s.report_exception(&error);
+            }
+        }
+    }));
+}
+
 /// Hands this realm's module the CSS animations and transitions the engine
 /// keeps; `None` when there are none and the module was never made.
 fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
