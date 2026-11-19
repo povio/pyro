@@ -438,6 +438,10 @@ pub struct Frame {
     pub name: String,
     pub base_url: String,
     pub(crate) sandbox: frames::Sandbox,
+    /// The container's policy for `fullscreen` when the frame's navigation began (HTML takes the
+    /// container policy then; a later attribute change applies to the next navigation):
+    /// whether it had `allowfullscreen`, and its `allow` attribute. Top-level frames: none.
+    pub(crate) fullscreen_container: (bool, Option<String>),
     pub url: String,
     pub loader_id: LoaderId,
     pub realms: Vec<FrameRealm>,
@@ -480,6 +484,7 @@ impl Frame {
             && self.name == other.name
             && self.base_url == other.base_url
             && self.sandbox == other.sandbox
+            && self.fullscreen_container == other.fullscreen_container
             && self.url == other.url
             && self.loader_id == other.loader_id
             && self.realms.len() == other.realms.len()
@@ -1341,6 +1346,7 @@ impl Browser {
             name: String::new(),
             base_url: "about:blank".into(),
             sandbox: Default::default(),
+            fullscreen_container: Default::default(),
             url: "about:blank".into(),
             loader_id: LoaderId(format!("{:032X}", self.next())),
             realms: Vec::new(),
@@ -1758,6 +1764,17 @@ impl Browser {
         // listeners answer (`pyro_webapi::lifecycle::before_unload`).
         if let Some(leaving) = self.doc(page).and_then(|doc| doc.main_frame.page_dom.clone()) {
             pyro_webapi::lifecycle::before_unload(&leaving);
+        }
+        // The container policy (`fullscreen`) is taken as the navigation begins: an `allowfullscreen`
+        // set while the response is on its way applies to the next navigation, not this one.
+        // (The document now shown keeps the policy it was made with.)
+        let container = self.doc(page).and_then(|d| d.main_frame.owner).and_then(|owner| {
+            let host = self.page(page.page).map(|p| p.frames.clone())?;
+            let dom = host.dom.borrow();
+            Some(frames::fullscreen_container(&dom, owner))
+        });
+        if let (Some(container), Some(mut state)) = (container, self.doc_mut(page)) {
+            state.main_frame.fullscreen_container = container;
         }
         // "The navigation must be a replace" when it leaves the initial
         // about:blank document, decided as it starts: a document.open()

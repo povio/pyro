@@ -46,7 +46,7 @@ pub mod typed_om;
 pub mod trusted_types;
 pub mod form_data;
 pub mod formdata;
-mod fullscreen;
+pub mod fullscreen;
 pub mod handlers;
 pub mod headers;
 pub mod highlights;

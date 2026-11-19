@@ -345,6 +345,8 @@ pub struct PageDom {
     input_activation: Cell<Option<std::time::Instant>>,
     /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
+    /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
+    fullscreen_allowed: Cell<bool>,
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
@@ -868,6 +870,7 @@ impl PageDom {
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
             fullscreen_stack: RefCell::new(Vec::new()),
+            fullscreen_allowed: Cell::new(true),
             planned_navigations: RefCell::new(Vec::new()),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
@@ -912,6 +915,14 @@ impl PageDom {
     }
     pub(crate) fn is_nested_frame(&self) -> bool {
         self.nested_frame.get()
+    }
+    /// Whether the document's permissions policy allows `fullscreen`: true for a top-level
+    /// document; the browser sets a child frame's ([`crate::fullscreen::allowed_in_frame`]).
+    pub fn set_fullscreen_allowed(&self, allowed: bool) {
+        self.fullscreen_allowed.set(allowed);
+    }
+    pub fn fullscreen_allowed(&self) -> bool {
+        self.fullscreen_allowed.get()
     }
     pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
         self.context_services.borrow().clone()
@@ -1124,7 +1135,7 @@ impl PageDom {
     pub fn set_opaque_origin(&self, opaque: bool) {
         self.opaque_origin.set(opaque);
     }
-    pub(crate) fn has_opaque_origin(&self) -> bool {
+    pub fn has_opaque_origin(&self) -> bool {
         self.opaque_origin.get()
     }
 

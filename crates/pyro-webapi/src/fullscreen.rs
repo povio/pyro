@@ -17,11 +17,50 @@ use pyro_js::{Deferred, JsError, JsResult, Scope, Value, WeakRealm};
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
 
-/// Whether the document may use fullscreen ("fullscreen enabled"): the `fullscreen` policy
-/// allows it in a top-level document; a document in a child frame needs its container's
-/// `allowfullscreen`, which pyro does not pass down, so it is not enabled there.
+/// Whether the document may use fullscreen ("fullscreen enabled": its permissions policy
+/// allows `fullscreen`), as the browser decided when it made the document
+/// ([`allowed_in_frame`] for a child frame's; always for a top-level one).
 pub(crate) fn enabled(page: &PageDom) -> bool {
-    !page.is_nested_frame()
+    page.fullscreen_allowed()
+}
+
+/// Permissions Policy "define an inherited policy for feature in container at origin" for
+/// `fullscreen`: a child frame's document may use fullscreen when its parent document may, and
+/// its container's policy allows the child's origin. The container policy is its `allow`
+/// attribute's `fullscreen` directive (an allowlist of `*`, `'self'` (the parent's origin),
+/// `'src'` (the frame's, the default with no tokens), `'none'` and origins), else
+/// `fullscreen *` when it has `allowfullscreen`. A container with neither denies fullscreen to
+/// every frame, same-origin ones included, as browsers do (HTML's legacy `allowfullscreen`
+/// behavior; WPT fullscreen/api/document-fullscreen-enabled-*, navigate-iframe). Origins are
+/// ASCII serializations; `None` is opaque (a sandboxed frame), which matches only `*`.
+pub fn allowed_in_frame(
+    parent_allowed: bool,
+    allowfullscreen: bool,
+    allow: Option<&str>,
+    parent_origin: Option<&str>,
+    child_origin: Option<&str>,
+) -> bool {
+    if !parent_allowed {
+        return false;
+    }
+    let same = |a: Option<&str>| a.is_some() && a == child_origin;
+    let declared = allow.and_then(|allow| {
+        allow.split(';').find_map(|directive| {
+            let mut tokens = directive.split_ascii_whitespace();
+            (tokens.next()? == "fullscreen").then(|| tokens.map(str::to_owned).collect::<Vec<_>>())
+        })
+    });
+    match declared {
+        Some(list) if list.is_empty() => same(child_origin),
+        Some(list) => list.iter().any(|t| match t.as_str() {
+            "*" => true,
+            "'self'" => same(parent_origin),
+            "'src'" => child_origin.is_some(),
+            "'none'" => false,
+            origin => same(Some(origin.trim_end_matches('/'))),
+        }),
+        None => allowfullscreen,
+    }
 }
 
 /// The document's fullscreen element: the topmost of its fullscreen elements that is still
@@ -157,4 +196,46 @@ pub(crate) fn exit<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>>
         settle(realm, d, None);
     }));
     Ok(promise)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::allowed_in_frame as allowed;
+
+    const A: Option<&str> = Some("http://a.test");
+    const B: Option<&str> = Some("http://b.test");
+
+    #[test]
+    fn no_container_policy_denies() {
+        // Neither allowfullscreen nor an `allow` declaration: no frame, same-origin included.
+        assert!(!allowed(true, false, None, A, A));
+        assert!(!allowed(true, false, None, A, B));
+        assert!(!allowed(true, false, Some("camera *"), A, A));
+        assert!(!allowed(true, false, None, A, None));
+        // A parent that may not use fullscreen allows no frame, whatever the container says.
+        assert!(!allowed(false, true, Some("fullscreen *"), A, A));
+    }
+
+    #[test]
+    fn allowfullscreen_is_fullscreen_star() {
+        assert!(allowed(true, true, None, A, B));
+        assert!(allowed(true, true, None, A, None));
+        // An `allow` that declares fullscreen wins over allowfullscreen.
+        assert!(!allowed(true, true, Some("fullscreen 'none'"), A, B));
+        // One that declares something else does not.
+        assert!(allowed(true, true, Some("camera *"), A, B));
+    }
+
+    #[test]
+    fn allow_attribute_allowlists() {
+        assert!(allowed(true, false, Some("fullscreen"), A, B)); // 'src'
+        assert!(allowed(true, false, Some("fullscreen 'src'"), A, B));
+        assert!(!allowed(true, false, Some("fullscreen 'self'"), A, B));
+        assert!(allowed(true, false, Some("fullscreen 'self'"), A, A));
+        assert!(allowed(true, false, Some("geolocation *; fullscreen http://b.test"), A, B));
+        assert!(allowed(true, false, Some("fullscreen http://b.test/"), A, B));
+        assert!(!allowed(true, false, Some("fullscreen http://c.test"), A, B));
+        assert!(allowed(true, false, Some("fullscreen *"), A, None));
+        assert!(!allowed(true, false, Some("fullscreen 'none'"), A, A));
+    }
 }

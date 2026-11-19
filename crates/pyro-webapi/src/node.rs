@@ -1782,7 +1782,8 @@ impl JsClass for Document {
         // document; another document (a DOMParser or createHTMLDocument one) has no browsing
         // context, so fullscreen is not enabled there and nothing in it is fullscreen.
         // (`[LegacyLenientSetter]`: assigning to them does nothing, and does not throw in strict mode.)
-        def.accessor("fullscreenEnabled", |s, n| Ok(s.boolean(n.id == n.page().document() && crate::fullscreen::enabled(n.page()))), |_s, _n, _v| Ok(()));
+        // Not enabled in a document that is no longer active (its frame navigated away).
+        def.accessor("fullscreenEnabled", |s, n| Ok(s.boolean(n.id == n.page().document() && n.page().dom.borrow().is_in_active_document(n.id) && crate::fullscreen::enabled(n.page()))), |_s, _n, _v| Ok(()));
         def.accessor("fullscreen", |s, n| Ok(s.boolean(n.id == n.page().document() && crate::fullscreen::element(n.page()).is_some())), |_s, _n, _v| Ok(()));
         def.accessor("fullscreenElement", |s, n| if n.id == n.page().document() { crate::fullscreen::element_for(s, n.page(), n.id) } else { Ok(s.null()) }, |_s, _n, _v| Ok(()));
         def.promise_method("exitFullscreen", 0, |s, n, _a| {

@@ -230,6 +230,7 @@ impl FrameHost {
             name,
             base_url: from.base_url.clone(),
             sandbox: Default::default(),
+            fullscreen_container: Default::default(),
             url: "about:blank".into(),
             loader_id: LoaderId(format!("{:032X}", self.next())),
             realms: Vec::new(),
@@ -700,6 +701,7 @@ impl FrameHost {
             dom_content_loaded: false,
             loaded: false,
             sandbox,
+            fullscreen_container: fullscreen_container(&self.dom.borrow(), node),
             unreachable: None,
         };
         self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
@@ -831,6 +833,11 @@ impl FrameHost {
             }
         }
     }
+}
+
+/// A frame container's `allowfullscreen` and `allow` attributes (`Frame::fullscreen_container`).
+pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId) -> (bool, Option<String>) {
+    (dom.get_attribute(owner, "allowfullscreen").ok().flatten().is_some(), dom.get_attribute(owner, "allow").ok().flatten().map(str::to_owned))
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

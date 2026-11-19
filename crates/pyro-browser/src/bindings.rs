@@ -785,6 +785,40 @@ pub(crate) fn blank_document_has_content(page_dom: &PageDom) -> bool {
         .any(|(i, node)| i == BLANK_NODES || dom.shadow_root(node).is_ok_and(|root| root.is_some()))
 }
 
+/// A frame's document's origin for policy checks: its URL's, an about: document's parent's,
+/// `None` when opaque (a sandboxed frame, a data: URL).
+fn frame_origin(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> Option<String> {
+    if opaque {
+        return None;
+    }
+    if url.starts_with("about:") {
+        let parent = host.parent_key(key);
+        if parent == key {
+            return None;
+        }
+        let pd = host.frame(parent).and_then(|f| f.page_dom.clone())?;
+        let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string())?;
+        return frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
+    }
+    let origin = crate::loader::origin_of(url);
+    (origin != "null").then_some(origin)
+}
+
+/// Whether a child frame's new document at `url` may use fullscreen
+/// ([`pyro_webapi::fullscreen::allowed_in_frame`]): its parent document may, and its
+/// container's `allow` / `allowfullscreen` (or the default allowlist) admit its origin.
+fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> bool {
+    let parent = host.parent_key(key);
+    let Some(frame) = host.frame(key) else { return false };
+    let Some(pd) = host.frame(parent).and_then(|f| f.page_dom.clone()) else { return false };
+    // The container policy as it was when this navigation began.
+    let (allowfullscreen, allow) = frame.fullscreen_container.clone();
+    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
+    let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
+    let child_origin = frame_origin(host, key, url, opaque);
+    pyro_webapi::fullscreen::allowed_in_frame(pd.fullscreen_allowed(), allowfullscreen, allow.as_deref(), parent_origin.as_deref(), child_origin.as_deref())
+}
+
 pub(crate) fn create(
     host: &Rc<crate::frames::FrameHost>,
     page: FrameKey,
@@ -825,6 +859,10 @@ pub(crate) fn create(
     }
     bindings.set_nested_frame(page.child.is_some());
     bindings.set_opaque_origin(frame.sandbox.opaque);
+    // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
+    if page.child.is_some() {
+        bindings.set_fullscreen_allowed(fullscreen_allowed_in(host, page, url, frame.sandbox.opaque));
+    }
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings
         .set_user_agent_override(settings.user_agent)
