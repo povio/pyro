@@ -535,7 +535,7 @@ fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, hei
     let mut layout = page.layout.borrow_mut();
     let origin = layout.bounding_client_rect(&dom, node);
     let (left, top) = (origin.left() + x, origin.top() + y);
-    let nearest = |start: f64, size: f64, viewport: f64, scroll: u32| -> Option<i32> {
+    let nearest = |start: f64, size: f64, viewport: f64, scroll: i32| -> Option<i32> {
         let end = start + size.max(0.0);
         let delta = if start < 0.0 {
             start
@@ -544,7 +544,8 @@ fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, hei
         } else {
             return None;
         };
-        Some((scroll as f64 + delta).max(0.0).trunc().min(i32::MAX as f64) as i32)
+        // (The viewport clamps it to its range, negative too: `window_scroll_to`.)
+        Some((scroll as f64 + delta).trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
     };
     let dx = nearest(left, width, layout.inner_width() as f64, layout.scroll_x());
     let dy = nearest(top, height, layout.inner_height() as f64, layout.scroll_y());

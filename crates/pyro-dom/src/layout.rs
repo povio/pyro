@@ -230,7 +230,9 @@ pub struct Layout {
     /// the last sync of the geometry source, which decides the minimum
     /// page scale (`None` before one).
     contents_width: std::cell::Cell<Option<f32>>,
-    window_scroll: (u32, u32),
+    /// pyro: signed: a root whose inline or block axis runs right to left (`direction: rtl`,
+    /// `vertical-rl`) scrolls from 0 at its start to negative offsets (CSSOM View 1 § 4).
+    window_scroll: (i32, i32),
     scroll_generation: u64,
     /// The `scroll_generation` last told to the geometry source for scroll timelines, and when
     /// (page clock, ms) ([`Self::push_scroll`]).
@@ -2546,12 +2548,33 @@ impl Layout {
     // ----- window scroll -----------------------------------------------------
 
     /// `window.scrollX` / `scrollY` (Window.zig:758-764).
-    pub fn scroll_x(&self) -> u32 {
+    pub fn scroll_x(&self) -> i32 {
         self.window_scroll.0
     }
 
-    pub fn scroll_y(&self) -> u32 {
+    pub fn scroll_y(&self) -> i32 {
         self.window_scroll.1
+    }
+
+    /// pyro: whether the viewport's horizontal scroll origin is at its right edge: the root
+    /// element's writing mode is `vertical-rl`/`sideways-rl`, or horizontal with `direction: rtl`
+    /// (its scroll offsets then run from 0 to negative values).
+    fn viewport_x_reversed(&self, dom: &Dom) -> bool {
+        use style::properties::longhands::writing_mode::computed_value::T as WritingMode;
+        let Some(root) = dom.document_element(self.document()).ok().flatten() else { return false };
+        self.style.stylo_style(dom, root).is_some_and(|s| match s.slow_clone_writing_mode() {
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
+            WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
+            _ => false,
+        })
+    }
+
+    /// pyro: the viewport's scroll range on each axis ([`Self::viewport_x_reversed`]).
+    fn viewport_scroll_range(&self, dom: &Dom) -> ((i32, i32), (i32, i32)) {
+        let (w, h) = self.document_scroll_size(dom);
+        let (mx, my) = (scroll_limit(w, self.inner_width()) as i32, scroll_limit(h, self.inner_height()) as i32);
+        let x = if self.viewport_x_reversed(dom) { (-mx, 0) } else { (0, mx) };
+        (x, (0, my))
     }
 
     /// `window.scrollTo` (Window.zig:780-794): each given axis is clamped to
@@ -2565,19 +2588,19 @@ impl Layout {
         // A scroll without a target (CSS Overflow 5 § 2.1).
         self.scroll_targets.remove(&None);
         // pyro: the viewport's snap positions (CSS Scroll Snap 1 § 6.2).
-        let current = (self.window_scroll.0 as i32, self.window_scroll.1 as i32);
+        let current = self.window_scroll;
         let (left, top) = {
             let (l, t) = self.snap_scroll(dom, None, current, left.map(i64::from), top.map(i64::from));
             (l.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32), t.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32))
         };
-        let (max_x, max_y) = if left.is_some_and(|l| l > 0) || top.is_some_and(|t| t > 0) {
-            let (w, h) = self.document_scroll_size(dom);
-            (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()))
+        // (Only an offset off the origin needs the range: one at the origin lands there.)
+        let (rx, ry) = if left.is_some_and(|l| l != 0) || top.is_some_and(|t| t > 0) {
+            self.viewport_scroll_range(dom)
         } else {
-            (0, 0)
+            ((0, 0), (0, 0))
         };
-        let new_x = left.map_or(self.window_scroll.0, |l| (l.max(0) as u32).min(max_x));
-        let new_y = top.map_or(self.window_scroll.1, |t| (t.max(0) as u32).min(max_y));
+        let new_x = left.map_or(self.window_scroll.0, |l| l.clamp(rx.0, rx.1));
+        let new_y = top.map_or(self.window_scroll.1, |t| t.clamp(ry.0, ry.1));
         if (new_x, new_y) == self.window_scroll {
             return false;
         }
@@ -2588,7 +2611,7 @@ impl Layout {
 
     /// `window.scrollBy` (Window.zig:853-860): relative, both axes written.
     pub fn window_scroll_by(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
-        let abs = |cur: u32, d: Option<i32>| (cur as i64 + d.unwrap_or(0) as i64).min(i32::MAX as i64) as i32;
+        let abs = |cur: i32, d: Option<i32>| (cur as i64 + d.unwrap_or(0) as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         let x = abs(self.window_scroll.0, left);
         let y = abs(self.window_scroll.1, top);
         self.window_scroll_to(dom, Some(x), Some(y))
@@ -2976,7 +2999,7 @@ impl Layout {
             }
             let current = match scroller {
                 Some(el) => self.element_scroll.get(&el).copied().unwrap_or((0, 0)),
-                None => (self.window_scroll.0 as i32, self.window_scroll.1 as i32),
+                None => self.window_scroll,
             };
             let (tx, ty) = (Some(current.0 as i64), Some(current.1 as i64));
             let alive = targets.map(|t| t.filter(|(el, _)| dom.is_connected(*el).unwrap_or(false)));
@@ -3003,9 +3026,11 @@ impl Layout {
                     }
                 }
                 None => {
-                    let (w, h) = self.document_scroll_size(dom);
-                    let max = (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()));
-                    let next = ((x.max(0) as u32).min(max.0), (y.max(0) as u32).min(max.1));
+                    let (rx, ry) = self.viewport_scroll_range(dom);
+                    let next = (
+                        x.clamp(rx.0 as i64, rx.1 as i64) as i32,
+                        y.clamp(ry.0 as i64, ry.1 as i64) as i32,
+                    );
                     if next != self.window_scroll {
                         self.window_scroll = next;
                         self.scroll_generation = self.scroll_generation.wrapping_add(1);
@@ -3307,9 +3332,8 @@ impl Layout {
             self.capture_scroll_anchor(dom, el);
         }
         if self.window_scroll != (0, 0) {
-            let (w, h) = self.document_scroll_size(dom);
-            let max = (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()));
-            let clamped = (self.window_scroll.0.min(max.0), self.window_scroll.1.min(max.1));
+            let (rx, ry) = self.viewport_scroll_range(dom);
+            let clamped = (self.window_scroll.0.clamp(rx.0, rx.1), self.window_scroll.1.clamp(ry.0, ry.1));
             if clamped != self.window_scroll {
                 self.window_scroll = clamped;
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
