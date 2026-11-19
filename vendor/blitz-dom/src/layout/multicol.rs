@@ -56,9 +56,80 @@ const MAX_COLUMNS: usize = 1000;
 /// pyro: how many column fragments one container makes at most, nested rows included (what is
 /// left past them goes to its last column).
 const MAX_FRAGMENTS: usize = 10_000;
+/// pyro: a container's column fragments as they are made. [`FragmentSink::push`] is the only way
+/// one is added: it checks and debits both the container's cap (`MAX_FRAGMENTS`) and the layout
+/// pass's budget (`COLUMN_FRAGMENT_BUDGET`) before it adds anything. The last fragment either
+/// allows is the rest of the strip from there (spanners and all), and nothing is added after it;
+/// with the budget spent a container makes none (its strip is shown as it is, one column).
+struct FragmentSink {
+    fragments: Vec<ColumnFragment>,
+    /// How many more the container may add.
+    room: usize,
+    /// What is left of the layout pass's budget (`LayoutPassState::column_fragment_budget`).
+    budget: usize,
+    closed: bool,
+    /// The end of the strip, and the first column's left edge and width (the last fragment's).
+    strip_end: f32,
+    x: f32,
+    width: f32,
+    pb_left: f32,
+}
+
+impl FragmentSink {
+    fn new(budget: usize, strip_end: f32, x: f32, width: f32, pb_left: f32) -> Self {
+        let room = budget.min(MAX_FRAGMENTS);
+        Self { fragments: Vec::new(), room, budget, closed: room == 0, strip_end, x, width, pb_left }
+    }
+
+    /// Whether nothing more is added (the last fragment is in, or there was no room at all).
+    fn closed(&self) -> bool {
+        self.closed
+    }
+
+    /// How many more fragments may be added (none once closed).
+    fn room(&self) -> usize {
+        if self.closed { 0 } else { self.room }
+    }
+
+    /// Adds `fragment`, or, where it takes the last room, one fragment holding the rest of the
+    /// strip from its start; once closed, nothing.
+    fn push(&mut self, fragment: ColumnFragment) {
+        if self.closed || self.room == 0 || self.budget == 0 {
+            self.closed = true;
+            return;
+        }
+        self.room -= 1;
+        self.budget -= 1;
+        let fragment = if self.room == 0 || self.budget == 0 {
+            self.closed = true;
+            let start = fragment.start;
+            ColumnFragment {
+                start,
+                end: f32::INFINITY,
+                x: self.x,
+                width: self.width,
+                top: fragment.top,
+                height: (self.strip_end - start).max(0.0),
+                offset: Point { x: self.x - self.pb_left, y: fragment.top - start },
+                spanner: false,
+                extended: 0.0,
+                exact_x: f32::NAN,
+            }
+        } else {
+            fragment
+        };
+        self.fragments.push(fragment);
+    }
+
+    /// The fragments, what is left of the budget, and whether it closed.
+    fn finish(self) -> (Vec<ColumnFragment>, usize, bool) {
+        (self.fragments, self.budget, self.closed)
+    }
+}
+
 /// pyro: how many column fragments a layout pass makes in all its multi-column containers, nested
-/// ones included (`LayoutPassState::column_fragment_budget`); past them a container makes one
-/// column (a page cannot make millions: a thousand columns in each of a thousand nested rows).
+/// ones included (`LayoutPassState::column_fragment_budget`); past them a container makes none,
+/// its strip shown as it is (`FragmentSink`; a page cannot make millions: a thousand columns in each of a thousand nested rows).
 pub(crate) const COLUMN_FRAGMENT_BUDGET: usize = 200_000;
 /// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
 /// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
@@ -896,7 +967,6 @@ impl LayoutPassState<'_> {
         // container's end if it must.
         let scale = self.doc.viewport.scale();
         let snap = |v: f32| (v * scale).round() / scale;
-        let mut fragments: Vec<ColumnFragment> = Vec::new();
         let mut row_top = content_top;
         let mut run_start = content_top;
         let column_x = |i: usize| {
@@ -913,8 +983,9 @@ impl LayoutPassState<'_> {
         // each outer column the box reaches: the first as tall as what is left of its outer
         // column, the others as tall as an outer column, each filled in turn; the row the content
         // ends in is balanced (unless `column-fill: auto`). A definite height ends the rows.
-        // pyro: the fragments this container may make (`COLUMN_FRAGMENT_BUDGET`, `MAX_FRAGMENTS`).
-        let fragment_cap = self.column_fragment_budget.clamp(2, MAX_FRAGMENTS);
+        // pyro: the fragments this container makes, within its cap and the pass's budget (the only
+        // place they are added: `FragmentSink::push`).
+        let mut sink = FragmentSink::new(self.column_fragment_budget, breaks.end, column_x(0), column_width, pb.left);
         let mut pushed = false;
         if let Some((outer_height, offset)) = nested_ctx {
             let box_end = definite_height.map(|height| content_top + height);
@@ -927,7 +998,7 @@ impl LayoutPassState<'_> {
             loop {
                 let row_height = box_end.map_or(available, |end| available.min(end - top).max(1.0));
                 // (Past the fragment cap, what is left goes to one last column.)
-                if placed.len() + count + 1 >= fragment_cap {
+                if placed.len() + count + 1 >= sink.room() {
                     placed.push((start, end, top, row_height));
                     row_top = top + row_height;
                     break;
@@ -969,7 +1040,7 @@ impl LayoutPassState<'_> {
                     } else {
                         row_height
                     };
-                    let columns = breaks.fill_range(start, end, height, fragment_cap - placed.len()).columns;
+                    let columns = breaks.fill_range(start, end, height, sink.room().saturating_sub(placed.len()).max(1)).columns;
                     let content = columns.iter().map(|&(a, b)| b - a).fold(0.0f32, f32::max).min(row_height);
                     let height = if sequential { content } else { height };
                     let shown = if box_end.is_some() { row_height } else { height };
@@ -994,7 +1065,7 @@ impl LayoutPassState<'_> {
                 let x = column_x(index);
                 let start = snap(start);
                 // (Not snapped: the rows meet the outer columns' breaks exactly.)
-                fragments.push(ColumnFragment {
+                sink.push(ColumnFragment {
                     start,
                     end: snap(end),
                     x,
@@ -1040,12 +1111,12 @@ impl LayoutPassState<'_> {
                     continue;
                 }
                 let piece = row_left.min(column_end - top).max(1.0);
-                let last = placed + count + 1 >= fragment_cap;
+                let last = count + 1 >= sink.room();
                 let run = breaks.fill_range(start, end, piece, if last { 1 } else { count + 1 });
                 for (index, &(a, b)) in run.columns.iter().take(count).enumerate() {
                     let x = column_x(index);
                     let a = snap(a);
-                    fragments.push(ColumnFragment {
+                    sink.push(ColumnFragment {
                         start: a,
                         end: snap(b),
                         x,
@@ -1104,10 +1175,13 @@ impl LayoutPassState<'_> {
             let mut top = content_top;
             let mut run_start = breaks.start;
             'parts: for part in 0..=spanners.len() {
+                if sink.closed() {
+                    break;
+                }
                 let run_end = spanners.get(part).map_or(breaks.end, |s| s.0 + lift(part));
                 let mut start = run_start;
                 while run_end > start + EPSILON {
-                    if fragments.len() + count + 2 >= fragment_cap {
+                    if sink.closed() {
                         break 'parts;
                     }
                     let available = (boundary(top) - top).max(1.0);
@@ -1121,7 +1195,7 @@ impl LayoutPassState<'_> {
                     for (index, (a, b)) in columns.into_iter().enumerate() {
                         let x = column_x(index);
                         let a = snap(a);
-                        fragments.push(ColumnFragment {
+                        sink.push(ColumnFragment {
                             start: a,
                             end: snap(b),
                             x,
@@ -1147,7 +1221,7 @@ impl LayoutPassState<'_> {
                         top = next_column(top);
                     }
                     let spanner_top = top - lift(part);
-                    fragments.push(ColumnFragment {
+                    sink.push(ColumnFragment {
                         start,
                         end,
                         x: pb.left,
@@ -1175,34 +1249,17 @@ impl LayoutPassState<'_> {
             if nested_ctx.is_some() || nested_rows_ctx.is_some() || nested_span_ctx.is_some() {
                 break;
             }
-            // pyro: once the cap is reached (a part and a spanner need room), the rest of the
-            // strip, spanners and all, is one last fragment (`MAX_FRAGMENTS`).
-            if fragments.len() + 2 >= fragment_cap {
-                let x = column_x(0);
-                let start = snap(run_start);
-                let rest = (breaks.end - run_start).max(0.0);
-                fragments.push(ColumnFragment {
-                    start,
-                    end: f32::INFINITY,
-                    x,
-                    width: column_width,
-                    top: row_top,
-                    height: rest,
-                    offset: Point { x: x - pb.left, y: snap(row_top - start) },
-                    spanner: false,
-                    extended: 0.0,
-                    exact_x: f32::NAN,
-                });
-                row_top += rest;
+            // pyro: once the cap is reached the rest of the strip, spanners and all, is in the
+            // last fragment (`FragmentSink`).
+            if sink.closed() {
                 break;
             }
             let run_end = spanners.get(part).map_or(breaks.end, |s| s.0 + lift(part));
-            if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
+            if run_end > run_start + EPSILON || (part == spanners.len() && sink.fragments.is_empty()) {
                 // (The part `run_start..run_end` of the strip: no copy of the breaks per part.)
                 let run = Part { breaks: &breaks, start: run_start, end: run_end };
                 // (What is left of the container's fragment cap: one cap for all its parts.)
-                // (Two kept: for the spanner after it, and for a last fragment after that.)
-                let left = fragment_cap.saturating_sub(fragments.len() + 2).max(1);
+                let left = sink.room().max(1);
                 // pyro: rows of an explicit `column-height` (`slotted`, below).
                 if let Some(rows) = slotted {
                     let (top, available) = rows.content_start(row_top);
@@ -1246,7 +1303,7 @@ impl LayoutPassState<'_> {
                         let x = column_x(index);
                         let top = snap(row_top_of);
                         let start = snap(start);
-                        fragments.push(ColumnFragment {
+                        sink.push(ColumnFragment {
                             start,
                             end: snap(end),
                             x,
@@ -1263,7 +1320,7 @@ impl LayoutPassState<'_> {
                     if let Some(&(start, end, indent)) = spanners.get(part) {
                         let (start, end) = (snap(start), snap(end));
                         let top = rows.spanner_top(row_top, end - start) - lift(part);
-                        fragments.push(ColumnFragment {
+                        sink.push(ColumnFragment {
                             start,
                             end,
                             x: pb.left,
@@ -1334,7 +1391,7 @@ impl LayoutPassState<'_> {
                     let x = column_x(index);
                     let top = snap(row_top + row as f32 * (column_height + row_gap));
                     let start = snap(start);
-                    fragments.push(ColumnFragment {
+                    sink.push(ColumnFragment {
                         start,
                         end: snap(end),
                         x,
@@ -1357,7 +1414,7 @@ impl LayoutPassState<'_> {
                     row_top = rows.spanner_top(row_top, end - start);
                 }
                 row_top -= lift(part);
-                fragments.push(ColumnFragment {
+                sink.push(ColumnFragment {
                     start,
                     end,
                     x: pb.left,
@@ -1375,6 +1432,11 @@ impl LayoutPassState<'_> {
                 // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
                 run_start = spanners[part].1 - spanner_leads.get(part).copied().unwrap_or(0.0);
             }
+        }
+        let (mut fragments, budget_left, capped) = sink.finish();
+        if capped {
+            // (The rest of the strip is in the last fragment; with none, the strip is shown as it is.)
+            row_top = fragments.last().map_or(content_top + (breaks.end - breaks.start).max(0.0), |f| f.top + f.height);
         }
         // pyro: in a box of a definite height the last row of columns (after the last spanner)
         // reaches the end of its content box, however short balancing made the content: the
@@ -1499,9 +1561,11 @@ impl LayoutPassState<'_> {
             baselines.last = shown(baselines.last);
         }
         if inputs.run_mode == RunMode::PerformLayout {
-            self.column_fragment_budget = self.column_fragment_budget.saturating_sub(columns.fragments.len());
+            // (Debited as they were made: `FragmentSink::push`.)
+            self.column_fragment_budget = budget_left;
             self.doc.has_multicol = true;
-            self.nodes[dom_id].layout_data_mut().columns = Some(Box::new(columns));
+            // (None made, the pass's budget spent: its strip is shown as it is.)
+            self.nodes[dom_id].layout_data_mut().columns = (!columns.fragments.is_empty()).then(|| Box::new(columns));
         }
 
         let size = Size { width, height };
@@ -2691,6 +2755,111 @@ fn held_whole(node: &crate::Node, style: &ComputedValues) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Attribute, DocumentConfig, DocumentMutator, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    /// A `<div>` with the `style` attribute `.0` and the children `.1`.
+    struct Div(String, Vec<Div>);
+
+    fn div(css: &str, children: Vec<Div>) -> Div {
+        Div(css.to_string(), children)
+    }
+
+    /// A document of these `<div>`s in its body (no margin), laid out in an 800 by 600 viewport.
+    fn laid_out(body: Vec<Div>) -> BaseDocument {
+        fn build(m: &mut DocumentMutator<'_>, d: Div) -> crate::NodeId {
+            let id = m.create_element(qual_name!("div", html), vec![Attribute { name: qual_name!("style"), value: d.0 }]);
+            let children: Vec<crate::NodeId> = d.1.into_iter().map(|c| build(m, c)).collect();
+            m.append_children(id, &children);
+            id
+        }
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(800, 600, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html", html), vec![]);
+        let body_id = m.create_element(qual_name!("body", html), vec![Attribute { name: qual_name!("style"), value: "margin:0".into() }]);
+        let children: Vec<crate::NodeId> = body.into_iter().map(|d| build(&mut m, d)).collect();
+        m.append_children(body_id, &children);
+        m.append_children(html, &[body_id]);
+        m.append_children(root, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        doc
+    }
+
+    /// How many column fragments each multi-column container of `doc` has (none: not listed).
+    fn fragment_counts(doc: &BaseDocument) -> Vec<usize> {
+        doc.nodes.iter().filter_map(|(_, node)| node.column_fragments().map(|c| c.fragments.len())).collect()
+    }
+
+    fn spanners(n: usize) -> Vec<Div> {
+        (0..n).map(|_| div("column-span:all;height:1px", vec![])).collect()
+    }
+
+    /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.
+    #[test]
+    fn adjacent_spanners_are_held_to_the_fragment_cap() {
+        let alone = laid_out(vec![div("columns:2;column-gap:0;width:400px", spanners(12_000))]);
+        assert_eq!(fragment_counts(&alone), vec![MAX_FRAGMENTS], "a container of its own");
+        // (Nested, of an auto height, in outer columns of a definite height: `nested_span_ctx`.)
+        let nested = laid_out(vec![div(
+            "columns:2;column-fill:auto;height:100px;width:400px",
+            vec![div("columns:2;column-gap:0", spanners(12_000))],
+        )]);
+        let counts = fragment_counts(&nested);
+        assert!(counts.iter().all(|&c| c <= MAX_FRAGMENTS), "{counts:?}");
+        assert!(counts.contains(&MAX_FRAGMENTS), "the inner one reaches the cap: {counts:?}");
+    }
+
+    #[test]
+    fn alternating_spanners_are_held_to_the_fragment_cap() {
+        let sections = || -> Vec<Div> {
+            (0..6_000).flat_map(|_| [div("height:20px", vec![]), div("column-span:all;height:1px", vec![])]).collect()
+        };
+        let alone = laid_out(vec![div("columns:2;column-gap:0;height:10px;width:400px", sections())]);
+        assert_eq!(fragment_counts(&alone), vec![MAX_FRAGMENTS], "a container of its own");
+        let nested = laid_out(vec![div(
+            "columns:2;column-fill:auto;height:100px;width:400px",
+            vec![div("columns:2;column-gap:0", sections())],
+        )]);
+        let counts = fragment_counts(&nested);
+        assert!(counts.iter().all(|&c| c <= MAX_FRAGMENTS), "{counts:?}");
+        assert!(counts.contains(&MAX_FRAGMENTS), "the inner one reaches the cap: {counts:?}");
+    }
+
+    #[test]
+    fn nested_containers_are_held_to_the_fragment_cap() {
+        // A thousand columns in each outer column, a pixel tall: rows without end (`nested_ctx`),
+        // and rows of an explicit `column-height` (`nested_rows_ctx`).
+        for inner in ["column-count:1000;column-gap:0", "column-count:1000;column-gap:0;column-height:1px;column-wrap:wrap"] {
+            let doc = laid_out(vec![div(
+                "columns:2;column-fill:auto;height:1px;width:400px",
+                vec![div(inner, vec![div("height:100000000px", vec![])]), div(inner, vec![div("height:100000000px", vec![])])],
+            )]);
+            let counts = fragment_counts(&doc);
+            assert!(counts.iter().all(|&c| c <= MAX_FRAGMENTS), "{inner}: {counts:?}");
+            assert!(counts.iter().sum::<usize>() <= COLUMN_FRAGMENT_BUDGET, "{inner}: {counts:?}");
+            // (A row of a thousand short of the cap stops there: the rest is its last column.)
+            assert!(counts.iter().any(|&c| c > MAX_FRAGMENTS - 1000), "{inner}: an inner one reaches the cap: {counts:?}");
+        }
+    }
+
+    /// pyro: no more than `COLUMN_FRAGMENT_BUDGET` in all, and none past it (no minimum each).
+    #[test]
+    fn many_containers_are_held_to_the_document_budget() {
+        let containers: Vec<Div> = (0..30)
+            .map(|_| div("columns:1;column-fill:auto;height:1px;width:10px", vec![div("height:100000px", vec![])]))
+            .collect();
+        let doc = laid_out(containers);
+        let counts = fragment_counts(&doc);
+        assert_eq!(counts.iter().sum::<usize>(), COLUMN_FRAGMENT_BUDGET, "{counts:?}");
+        assert!(counts.iter().all(|&c| c <= MAX_FRAGMENTS), "{counts:?}");
+        // (The containers past the budget have no fragments: not listed.)
+        assert_eq!(counts.len(), COLUMN_FRAGMENT_BUDGET / MAX_FRAGMENTS, "{counts:?}");
+    }
 
     fn breaks(strict: Vec<(f32, f32)>, loose: Vec<(f32, f32)>, end: f32) -> Breaks {
         Breaks {
