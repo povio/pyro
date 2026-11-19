@@ -1199,6 +1199,11 @@ details:not([open])>:not(summary:first-of-type) {
     display: none !important;
 }
 
+/* pyro: the slot its content renders in (its user-agent shadow tree's, as Chromium has it). */
+details::details-content {
+    display: block;
+}
+
 /* media elements */
 video {
     object-fit: contain;

@@ -726,7 +726,7 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_pseudo_element(&self) -> bool {
-        matches!(self.data, NodeData::AnonymousBlock(_))
+        matches!(self.data, NodeData::AnonymousBlock(_)) || self.is_details_content_slot()
     }
 
     // pyro: a scroll pseudo-element's box originates from the element it names, not from its
@@ -734,6 +734,10 @@ impl selectors::Element for BlitzNode<'_> {
     // nested in another one (a `::first-letter` box inside a `::first-line` box) originates
     // from the outer box, and so on up to an element (`ultimate_originating_element` walks it).
     fn pseudo_element_originating_element(&self) -> Option<Self> {
+        // pyro: a `<details>` element's content slot is its `::details-content`.
+        if self.is_details_content_slot() {
+            return TNode::parent_node(self).filter(|parent| parent.is_element());
+        }
         match self.scroll_pseudo() {
             Some((_, origin)) => Some(self.with(origin)),
             None => match TNode::parent_node(self) {
@@ -948,6 +952,11 @@ impl selectors::Element for BlitzNode<'_> {
         pe: &PseudoElement,
         _context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
+        // pyro: a `<details>` element's content slot is its `::details-content`, styled or not yet
+        // (its style is what is being computed when the slotted rules match it).
+        if self.is_details_content_slot() {
+            return *pe == PseudoElement::DetailsContent;
+        }
         // pyro: the box of a scroll pseudo-element; a button matches the arguments that select
         // its direction (`layout::scroll_markers`).
         if let Some((pseudo, origin)) = self.scroll_pseudo() {
@@ -1086,6 +1095,11 @@ impl<'a> TElement for BlitzNode<'a> {
     // pyro: the box of an element's `::before` or `::after` is that pseudo-element: the rules of
     // `::before::marker` / `::after::marker` are looked up for it (`layout::list`).
     fn implemented_pseudo_element(&self) -> Option<PseudoElement> {
+        // pyro: the slot a `<details>` element's content renders in (pyro-dom's render tree gives
+        // it the user-agent shadow tree Chromium gives it) is its `::details-content`.
+        if self.is_details_content_slot() {
+            return Some(PseudoElement::DetailsContent);
+        }
         if !matches!(self.data, NodeData::AnonymousBlock(_)) {
             return None;
         }

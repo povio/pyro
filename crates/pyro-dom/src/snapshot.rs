@@ -77,6 +77,15 @@ pub const LIGHT_INDEX_ATTR: &str = "light-index";
 /// Name ([`STATE_NS`]) of the attribute an `<svg>` panned or zoomed by script carries in render
 /// trees (`currentTranslate`, `currentScale`): `tx ty scale`.
 pub const SVG_PAN_ATTR: &str = "svg-pan";
+/// pyro: name ([`STATE_NS`]) of the attribute that marks the slot a `<details>` element's content
+/// renders in (the render tree gives a `<details>` the user-agent shadow tree Chromium gives it: a
+/// slot for its first `<summary>`, then this one for the rest), which the renderer styles as its
+/// `::details-content`.
+pub const DETAILS_CONTENT_ATTR: &str = "details-content";
+/// pyro: the bits a `<details>` element's render key carries for its summary slot, and with
+/// [`DETAILS_CONTENT_SLOT_KEY`] for its content slot (which generations never reach).
+pub const DETAILS_SUMMARY_SLOT_KEY: u64 = 1 << 61;
+pub const DETAILS_CONTENT_SLOT_KEY: u64 = 1 << 60;
 
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
@@ -169,6 +178,9 @@ enum Step {
     Close,
     /// Text standing for element `.0`'s children.
     Synthetic(u32, String, TextKind),
+    /// pyro: a slot of a `<details>` element's user-agent shadow tree (render key, whether it is
+    /// the content slot, its assigned nodes and their scope).
+    DetailsSlot(u64, bool, Vec<u32>, Scope),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -425,6 +437,23 @@ impl Dom {
                     sink.close("style");
                     continue;
                 }
+                Step::DetailsSlot(key, content, kids, kids_scope) => {
+                    let name = QualName::new(None, ns!(html), markup5ever::local_name!("slot"));
+                    let marker = |name: &str| RAttr {
+                        name: Cow::Owned(QualName::new(None, STATE_NS.into(), name.into())),
+                        value: Cow::Borrowed(""),
+                        valueless: true,
+                    };
+                    let mut attrs = vec![marker(ASSIGNED_SLOT_ATTR)];
+                    if content {
+                        attrs.push(marker(DETAILS_CONTENT_ATTR));
+                    }
+                    sink.open(key, "slot", &name, &attrs, false, false);
+                    tags.push("slot".into());
+                    stack.push(Step::Close);
+                    push_children(&mut stack, kids, kids_scope);
+                    continue;
+                }
                 Step::Enter(n, scope) => (n, scope),
             };
             match &self.n(n).kind {
@@ -612,9 +641,11 @@ impl Dom {
                         });
                     }
                     // A light child of a shadow host (rendered under the slot it is assigned to).
+                    // pyro: or of a `<details>` element (its user-agent shadow tree's slots).
                     let parent = self.n(n).parent;
                     if parent != NIL
-                        && self.n(parent).element().is_some_and(|p| p.shadow_root != NIL && !self.has_ua_shadow_idx(p.shadow_root))
+                        && (self.n(parent).element().is_some_and(|p| p.shadow_root != NIL && !self.has_ua_shadow_idx(p.shadow_root))
+                            || self.renders_details_slots(parent))
                     {
                         let index = self.child_idx_iter(parent).take_while(|&c| c != n).filter(|&c| self.n(c).is_element()).count();
                         attrs.push(RAttr {
@@ -625,7 +656,8 @@ impl Dom {
                     }
                     // A user-agent shadow root (`<use>` instance) renders as if absent.
                     let rendered_shadow = e.shadow_root != NIL && !self.has_ua_shadow_idx(e.shadow_root);
-                    if rendered_shadow {
+                    let details_slots = self.renders_details_slots(n);
+                    if rendered_shadow || details_slots {
                         attrs.push(marker(SHADOW_HOST_ATTR));
                     }
                     let tag = self.serialized_tag(n);
@@ -656,6 +688,17 @@ impl Dom {
                     }
                     if let Some((kids, kids_scope, _)) = slot_kids {
                         push_children(&mut stack, kids, kids_scope);
+                    } else if details_slots {
+                        // pyro: its first `<summary>` in the summary slot, everything else in the
+                        // content slot (Chromium's user-agent shadow tree for `<details>`).
+                        let kids: Vec<u32> = self.child_idx_iter(n).collect();
+                        let summary = kids.iter().copied().find(|&k| {
+                            self.n(k).element().is_some_and(|c| c.is_html() && &*c.name.local == "summary")
+                        });
+                        let rest: Vec<u32> = kids.iter().copied().filter(|&k| Some(k) != summary).collect();
+                        let key = render_key(id);
+                        stack.push(Step::DetailsSlot(key | DETAILS_SUMMARY_SLOT_KEY | DETAILS_CONTENT_SLOT_KEY, true, rest, scope));
+                        stack.push(Step::DetailsSlot(key | DETAILS_SUMMARY_SLOT_KEY, false, summary.into_iter().collect(), scope));
                     } else if rendered_shadow {
                         hosts.push((n, scope));
                         self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
@@ -763,7 +806,8 @@ impl Dom {
                     if e.is_html() && matches!(local, "script" | "noscript" | "template" | "iframe" | "frame") {
                         return Ok(false);
                     }
-                    if e.is_html() && matches!(local, "style" | "textarea" | "link" | "slot") {
+                    // pyro: and a `<details>` element, whose children render in its slots.
+                    if e.is_html() && matches!(local, "style" | "textarea" | "link" | "slot" | "details") {
                         return Err(());
                     }
                     if e.name.ns == ns!(svg) && local == "script" {
@@ -1151,6 +1195,16 @@ impl Dom {
 /// cascades its sheets in the order it made their elements.
 fn adopted_key(n: usize) -> u64 {
     (1 << 62) | n as u64
+}
+
+impl Dom {
+    /// pyro: whether element `n` is a `<details>` element the render tree gives its user-agent
+    /// shadow tree (its slots: `Step::DetailsSlot`): an HTML one that is no shadow host itself.
+    fn renders_details_slots(&self, n: u32) -> bool {
+        self.n(n).element().is_some_and(|e| {
+            e.is_html() && &*e.name.local == "details" && (e.shadow_root == NIL || self.has_ua_shadow_idx(e.shadow_root))
+        })
+    }
 }
 
 fn push_children(stack: &mut Vec<Step>, kids: Vec<u32>, scope: Scope) {

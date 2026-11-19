@@ -60,6 +60,15 @@ impl Node {
         self.flags.contains(NodeFlags::IS_SHADOW_HOST)
     }
 
+    /// pyro: whether the element is the slot a `<details>` element's content renders in
+    /// (pyro-dom's render tree marks it: `DETAILS_CONTENT_ATTR`): its `::details-content`.
+    pub fn is_details_content_slot(&self) -> bool {
+        self.is_assigned_slot()
+            && self.element_data().is_some_and(|data| {
+                data.attrs.iter().any(|attr| &*attr.name.ns == crate::PYRO_STATE_NS && &*attr.name.local == "details-content")
+            })
+    }
+
     /// Whether the element is a slot whose children are the nodes assigned to it.
     #[inline]
     pub fn is_assigned_slot(&self) -> bool {
