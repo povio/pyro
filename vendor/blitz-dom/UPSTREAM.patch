@@ -5012,7 +5012,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              .map(stylo_to_parley::query_font_family)
              .chain(fallback.map(parley::fontique::QueryFamily::Generic)),
      );
-@@ -50,10 +51,134 @@
+@@ -50,10 +51,165 @@
  impl FontMetricsProvider for BlitzFontMetricsProvider {
      fn query_font_metrics(
          &self,
@@ -5054,6 +5054,17 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +        };
 +        style::values::computed::Length::from(Au::from_f32_px(size))
 +    }
++
++    /// pyro: `line-height: normal` as layout uses it (`layout::first_letter`): the first
++    /// available font's ascent and descent in whole pixels, as Blink's, and its line gap.
++    fn normal_line_height(&self, font_styles: &FontStyles, size: CSSPixelLength) -> Option<CSSPixelLength> {
++        let (ascent, descent, gap, adjusted) = self.line_extents_for(font_styles, size.px(), ' ')?;
++        let height = ascent.round() + descent.round();
++        // (Chromium's taller ascent for Times, Helvetica and Courier, as parley's line boxes have
++        // it: `parley_engine::shape::chromium_ascent_adjustment`.)
++        let adjustment = if adjusted { (height * 0.15 + 0.5).floor() } else { 0.0 };
++        Some(CSSPixelLength::new(height + adjustment + gap.max(0.0).round()))
++    }
 +}
 +
 +impl BlitzFontMetricsProvider {
@@ -5066,6 +5077,22 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +        font_size: f32,
 +        text_char: char,
 +    ) -> Option<(f32, f32, f32, f32)> {
++        self.extents_and_family_for(font_styles, font_size, text_char).map(|(extents, _)| extents)
++    }
++
++    /// pyro: the ascent, descent and line gap of [`Self::extents_for`]'s font, and whether its
++    /// family is Times, Helvetica or Courier (which Chromium gives a taller ascent).
++    fn line_extents_for(&self, font_styles: &FontStyles, font_size: f32, text_char: char) -> Option<(f32, f32, f32, bool)> {
++        self.extents_and_family_for(font_styles, font_size, text_char)
++            .map(|((ascent, descent, gap, _), adjusted)| (ascent, descent, gap, adjusted))
++    }
++
++    fn extents_and_family_for(
++        &self,
++        font_styles: &FontStyles,
++        font_size: f32,
++        text_char: char,
++    ) -> Option<((f32, f32, f32, f32), bool)> {
 +        use parley::fontique::{QueryFont, QueryStatus};
 +        use skrifa::instance::{LocationRef, Size};
 +        use skrifa::metrics::Metrics;
@@ -5097,7 +5124,11 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +        );
 +        let metrics = Metrics::new(&font_ref, Size::new(font_size), LocationRef::from(&location));
 +        let cap_height = metrics.cap_height.unwrap_or(metrics.ascent);
-+        Some((metrics.ascent, -metrics.descent, metrics.leading, cap_height))
++        let adjusted = font_ref
++            .localized_strings(skrifa::string::StringId::FAMILY_NAME)
++            .english_or_first()
++            .is_some_and(|family| ["Times", "Helvetica", "Courier"].iter().any(|name| family.chars().eq(name.chars())));
++        Some(((metrics.ascent, -metrics.descent, metrics.leading, cap_height), adjusted))
 +    }
 +
 +    /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its
@@ -5148,7 +5179,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
      ) -> FontMetrics {
          use parley::fontique::{Query, QueryFont, QueryStatus};
          use skrifa::instance::{LocationRef, Size};
-@@ -70,6 +195,9 @@
+@@ -70,6 +226,9 @@
          // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
  
          let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
@@ -5158,7 +5189,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
          // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
  
          // fn name_of(font_ref: &skrifa::FontRef) -> String {
-@@ -87,6 +215,10 @@
+@@ -87,6 +246,10 @@
              query.matches_with(|q_font: &QueryFont| {
                  use skrifa::MetadataProvider;
  
@@ -5169,7 +5200,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                  else {
                      return QueryStatus::Continue;
-@@ -111,8 +243,11 @@
+@@ -111,8 +274,11 @@
              ch: char,
              font_size: f32,
              variations: &[FontVariation],
@@ -5181,7 +5212,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -134,10 +269,14 @@
+@@ -134,10 +300,14 @@
          fn metrics_of(
              query: &mut Query,
              ch: char,
@@ -5197,7 +5228,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -145,14 +284,61 @@
+@@ -145,14 +315,61 @@
                      .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
              );
              let location_ref = LocationRef::from(&location);
@@ -5264,7 +5295,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  .unwrap_or((0.0, None, None));
  
          FontMetrics {
-@@ -165,15 +351,4 @@
+@@ -165,15 +382,4 @@
              script_script_percent_scale_down: None,
          }
      }
@@ -20382,7 +20413,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2384 @@
+@@ -0,0 +1,2373 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -20607,8 +20638,6 @@ new file mode 100644
 +    /// pyro: the container has `column-height: 0`: its columns hold what cannot break whole
 +    /// (`fill`).
 +    whole_in_empty_columns: bool,
-+    /// pyro: see `Breaks::fill` (`degenerate`).
-+    cut_in_empty_columns: bool,
 +    /// pyro: line boxes and monolithic boxes a column holds whole even when they are taller than
 +    /// it, overflowing it (`held_whole`). Merged.
 +    whole: Vec<(f32, f32)>,
@@ -20776,12 +20805,6 @@ new file mode 100644
 +    /// part or row).
 +    fn fill_range(&self, from: f32, to: f32, height: f32, max_columns: usize) -> FillRun {
 +        let no_height = self.whole_in_empty_columns && height <= EPSILON;
-+        // pyro: columns of no height of a container whose own lines they show (an inline
-+        // formatting context root) cut those lines as before: a stopgap that keeps WPT
-+        // css-overflow `discard-multicol-*` as they were while the `lh` unit resolves to 0 under
-+        // `line-height: normal` (their `height: 2lh` boxes have no height). Chromium holds lines
-+        // whole in any column (`multicol-span-all-children-height-003`).
-+        let degenerate = self.cut_in_empty_columns && height <= EPSILON;
 +        let height = height.max(1.0);
 +        let mut run = FillRun { columns: Vec::new(), shortage: None, violations: 0 };
 +        let mut start = from;
@@ -20828,7 +20851,7 @@ new file mode 100644
 +                    // (`multicol-span-all-children-height-003`).
 +                    loose.unwrap_or_else(|| match containing(&self.loose, limit) {
 +                        Some((a, b)) if no_height && a <= start + EPSILON => b,
-+                        _ => match containing(&self.whole, limit).filter(|_| !degenerate) {
++                        _ => match containing(&self.whole, limit) {
 +                            Some((a, b)) if a <= start + EPSILON => b,
 +                            _ => limit,
 +                        },
@@ -21230,7 +21253,6 @@ new file mode 100644
 +            self.cache_clear(node_id);
 +        }
 +        breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
-+        breaks.cut_in_empty_columns = inline_root;
 +        // The strip's parts: runs of columns, and the spanners between them (strip ranges).
 +        let spanners = match spanning {
 +            Some(_) => self.doc.column_spanner_ranges(dom_id),
@@ -22165,7 +22187,6 @@ new file mode 100644
 +            strict: merge(found.strict),
 +            loose: merge(found.loose),
 +            whole_in_empty_columns: false,
-+            cut_in_empty_columns: false,
 +            whole: merge(found.whole),
 +            gaps: found.gaps,
 +            trims: found.trims,
@@ -22609,7 +22630,6 @@ new file mode 100644
 +            strict: merge(strict),
 +            loose: merge(loose),
 +            whole_in_empty_columns: false,
-+            cut_in_empty_columns: false,
 +            whole: Vec::new(),
 +            gaps: Vec::new(),
 +            trims: Vec::new(),

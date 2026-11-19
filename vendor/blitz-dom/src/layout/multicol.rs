@@ -222,8 +222,6 @@ struct Breaks {
     /// pyro: the container has `column-height: 0`: its columns hold what cannot break whole
     /// (`fill`).
     whole_in_empty_columns: bool,
-    /// pyro: see `Breaks::fill` (`degenerate`).
-    cut_in_empty_columns: bool,
     /// pyro: line boxes and monolithic boxes a column holds whole even when they are taller than
     /// it, overflowing it (`held_whole`). Merged.
     whole: Vec<(f32, f32)>,
@@ -391,12 +389,6 @@ impl Breaks {
     /// part or row).
     fn fill_range(&self, from: f32, to: f32, height: f32, max_columns: usize) -> FillRun {
         let no_height = self.whole_in_empty_columns && height <= EPSILON;
-        // pyro: columns of no height of a container whose own lines they show (an inline
-        // formatting context root) cut those lines as before: a stopgap that keeps WPT
-        // css-overflow `discard-multicol-*` as they were while the `lh` unit resolves to 0 under
-        // `line-height: normal` (their `height: 2lh` boxes have no height). Chromium holds lines
-        // whole in any column (`multicol-span-all-children-height-003`).
-        let degenerate = self.cut_in_empty_columns && height <= EPSILON;
         let height = height.max(1.0);
         let mut run = FillRun { columns: Vec::new(), shortage: None, violations: 0 };
         let mut start = from;
@@ -443,7 +435,7 @@ impl Breaks {
                     // (`multicol-span-all-children-height-003`).
                     loose.unwrap_or_else(|| match containing(&self.loose, limit) {
                         Some((a, b)) if no_height && a <= start + EPSILON => b,
-                        _ => match containing(&self.whole, limit).filter(|_| !degenerate) {
+                        _ => match containing(&self.whole, limit) {
                             Some((a, b)) if a <= start + EPSILON => b,
                             _ => limit,
                         },
@@ -845,7 +837,6 @@ impl LayoutPassState<'_> {
             self.cache_clear(node_id);
         }
         breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
-        breaks.cut_in_empty_columns = inline_root;
         // The strip's parts: runs of columns, and the spanners between them (strip ranges).
         let spanners = match spanning {
             Some(_) => self.doc.column_spanner_ranges(dom_id),
@@ -1780,7 +1771,6 @@ impl BaseDocument {
             strict: merge(found.strict),
             loose: merge(found.loose),
             whole_in_empty_columns: false,
-            cut_in_empty_columns: false,
             whole: merge(found.whole),
             gaps: found.gaps,
             trims: found.trims,
@@ -2224,7 +2214,6 @@ mod tests {
             strict: merge(strict),
             loose: merge(loose),
             whole_in_empty_columns: false,
-            cut_in_empty_columns: false,
             whole: Vec::new(),
             gaps: Vec::new(),
             trims: Vec::new(),

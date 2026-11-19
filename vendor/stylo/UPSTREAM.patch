@@ -319,8 +319,20 @@ diff -ruN a/data.rs b/data.rs
  
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
-+++ b/device/servo.rs	2026-11-19 02:31:52
-@@ -61,6 +61,10 @@
++++ b/device/servo.rs	2026-11-19 20:13:53
+@@ -52,6 +52,11 @@
+     ) -> FontMetrics;
+     /// Gets the base size given a generic font family.
+     fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length;
++    /// pyro: the used `line-height: normal` of `font` at `size` (from its first available
++    /// font's metrics), when the client can measure it: what the `lh` unit resolves against.
++    fn normal_line_height(&self, _font: &Font, _size: CSSPixelLength) -> Option<CSSPixelLength> {
++        None
++    }
+ }
+ 
+ #[derive(Debug, MallocSizeOf)]
+@@ -61,6 +66,10 @@
      /// An implementation of a trait which implements support for querying font metrics.
      #[ignore_malloc_size_of = "Owned by embedder"]
      font_metrics_provider: Box<dyn FontMetricsProvider>,
@@ -331,7 +343,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  }
  
  #[derive(Debug, MallocSizeOf, Clone, PartialEq)]
-@@ -118,6 +122,7 @@
+@@ -118,6 +127,7 @@
              extra: ExtraDeviceData {
                  media_data,
                  font_metrics_provider,
@@ -339,7 +351,24 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              },
          }
      }
-@@ -359,9 +364,17 @@
+@@ -132,8 +142,14 @@
+         _element: Option<()>,
+     ) -> NonNegativeLength {
+         (match font.line_height {
+-            // TODO: compute `normal` from the font metrics
+-            LineHeight::Normal => CSSPixelLength::new(0.),
++            // pyro: `normal` from the font metrics, when the client measures them.
++            LineHeight::Normal => {
++                self.used_font_metrics.store(true, Ordering::Relaxed);
++                self.extra
++                    .font_metrics_provider
++                    .normal_line_height(font, font.font_size.computed_size())
++                    .unwrap_or(CSSPixelLength::new(0.))
++            },
+             LineHeight::Number(number) => font.font_size.computed_size() * number.0,
+             LineHeight::Length(length) => length.0,
+         })
+@@ -359,9 +375,17 @@
      /// Returns the pointer capabilities of this [`Device`].
      pub fn all_pointer_capabilities(&self) -> PointerCapabilities {
          self.extra.media_data.all_pointer_capabilities
@@ -357,7 +386,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
          // Inspired by
          // https://searchfox.org/firefox-main/rev/0a7f146ccac85b8f413264042dcd764028d419ec/widget/nsXPLookAndFeel.cpp#1296
          let supports_dark_mode = color_scheme_flags.contains(ColorSchemeFlags::DARK);
-@@ -400,15 +413,17 @@
+@@ -400,15 +424,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -378,7 +407,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  SystemColor::Buttontext => srgb(245, 245, 245),
                  SystemColor::Canvas
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
-@@ -450,15 +465,17 @@
+@@ -450,15 +476,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow

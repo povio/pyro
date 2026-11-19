@@ -52,6 +52,11 @@ pub trait FontMetricsProvider: Debug + Sync {
     ) -> FontMetrics;
     /// Gets the base size given a generic font family.
     fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length;
+    /// pyro: the used `line-height: normal` of `font` at `size` (from its first available
+    /// font's metrics), when the client can measure it: what the `lh` unit resolves against.
+    fn normal_line_height(&self, _font: &Font, _size: CSSPixelLength) -> Option<CSSPixelLength> {
+        None
+    }
 }
 
 #[derive(Debug, MallocSizeOf)]
@@ -137,8 +142,14 @@ impl Device {
         _element: Option<()>,
     ) -> NonNegativeLength {
         (match font.line_height {
-            // TODO: compute `normal` from the font metrics
-            LineHeight::Normal => CSSPixelLength::new(0.),
+            // pyro: `normal` from the font metrics, when the client measures them.
+            LineHeight::Normal => {
+                self.used_font_metrics.store(true, Ordering::Relaxed);
+                self.extra
+                    .font_metrics_provider
+                    .normal_line_height(font, font.font_size.computed_size())
+                    .unwrap_or(CSSPixelLength::new(0.))
+            },
             LineHeight::Number(number) => font.font_size.computed_size() * number.0,
             LineHeight::Length(length) => length.0,
         })
