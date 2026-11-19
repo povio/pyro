@@ -5924,7 +5924,7 @@ index 0000000..ce15c33
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..7031e6c 100644
+index 060a32d..45b22d5 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -5978,7 +5978,7 @@ index 060a32d..7031e6c 100644
          core::iter::from_fn(move || {
              if item_start_char == char_count {
                  return None;
-@@ -119,24 +134,28 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -119,24 +134,33 @@ pub(crate) fn shape_text<'a, B: Brush>(
  
              // Items are at least one character long, therefore the item's own first character is
              // never a split point.
@@ -6006,11 +6006,16 @@ index 060a32d..7031e6c 100644
                          // split a run and we were not called, such as at a bidi boundary).
                          inline_box_iter.next();
                      } else if inline_box.index == byte_index {
-+                        atomic |= inline_box.kind == InlineBoxKind::InFlow;
++                        // pyro: an atomic inline, or the edge of an inline box with a margin,
++                        // border or padding, breaks the shaping context: no joining across it
++                        // (CSS Text 3 § 7.3, WPT css-text `shaping-009`).
++                        atomic |= inline_box.kind == InlineBoxKind::InFlow
++                            || (matches!(inline_box.kind, InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd)
++                                && inline_box.width > 0.0);
                          inline_box_iter.next();
                          split = true;
                      } else {
-@@ -145,41 +164,73 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -145,41 +169,73 @@ pub(crate) fn shape_text<'a, B: Brush>(
                  }
  
                  if split {
@@ -6088,7 +6093,7 @@ index 060a32d..7031e6c 100644
  
      scx.shape_text(
          text,
-@@ -190,6 +241,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -190,6 +246,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
          &mut layout.data.shaped_text,
      );
  
@@ -6096,7 +6101,7 @@ index 060a32d..7031e6c 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -200,20 +252,13 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -200,20 +257,13 @@ pub(crate) fn shape_text<'a, B: Brush>(
          let run_text_byte_start = shaped_run.range.byte_range.start;
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
@@ -6121,7 +6126,7 @@ index 060a32d..7031e6c 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -228,25 +273,149 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,25 +278,149 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // we probably shouldn't itemize on them; we should just ensure we don't ligate if
              // they're non-zero).
              run_style,
@@ -6283,7 +6288,7 @@ index 060a32d..7031e6c 100644
  }
  
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +428,15 @@ enum LastResortFont {
+@@ -259,6 +433,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -6299,7 +6304,7 @@ index 060a32d..7031e6c 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +462,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +467,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -6314,7 +6319,7 @@ index 060a32d..7031e6c 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +541,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +546,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -6353,7 +6358,7 @@ index 060a32d..7031e6c 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +578,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +583,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -6366,7 +6371,7 @@ index 060a32d..7031e6c 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -405,15 +616,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -405,15 +621,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                  return fontique::QueryStatus::Continue;
              };
  
@@ -6389,7 +6394,7 @@ index 060a32d..7031e6c 100644
                  },
                  self.analysis_data_sources,
              );
-@@ -473,3 +684,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +689,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }

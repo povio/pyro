@@ -74,8 +74,9 @@ pub struct ShapeOptions<'a> {
     pub language_override: Option<[u8; 4]>,
     /// pyro: how the item's fullwidth punctuation is trimmed (CSS `text-spacing-trim`).
     pub spacing_trim: SpacingTrim,
-    /// pyro: whether an atomic inline sits right before the item: its first character has no
-    /// punctuation before it to be trimmed against.
+    /// pyro: whether an atomic inline (or an inline box edge with width) sits right before the
+    /// item: its first character has no punctuation before it to be trimmed against, and no text
+    /// before it to join with.
     pub isolated_before: bool,
     /// pyro: whether an atomic inline sits right after the item.
     pub isolated_after: bool,
@@ -591,8 +592,19 @@ fn shape_segment(
             buffer.add(ch, i as u32);
         }
 
-        buffer.set_pre_context(&text[..range.byte_range.start]);
-        buffer.set_post_context(&text[range.byte_range.end..]);
+        // pyro: no context across an isolating box at the item's edges (`ShapeOptions::isolated_before`).
+        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
+            ""
+        } else {
+            &text[..range.byte_range.start]
+        };
+        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
+            ""
+        } else {
+            &text[range.byte_range.end..]
+        };
+        buffer.set_pre_context(pre);
+        buffer.set_post_context(post);
         buffer.set_direction(direction);
         buffer.set_script(hb_script);
 

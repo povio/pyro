@@ -910,7 +910,7 @@
      /// The language to shape the item with.
      pub language: Option<Language>,
      /// The font features to shape the item with.
-@@ -34,6 +62,23 @@
+@@ -34,6 +62,24 @@
      pub features: &'a [FontFeature],
      /// The font variations that are constant over an item.
      pub variations: &'a [FontVariation],
@@ -926,15 +926,16 @@
 +    pub language_override: Option<[u8; 4]>,
 +    /// pyro: how the item's fullwidth punctuation is trimmed (CSS `text-spacing-trim`).
 +    pub spacing_trim: SpacingTrim,
-+    /// pyro: whether an atomic inline sits right before the item: its first character has no
-+    /// punctuation before it to be trimmed against.
++    /// pyro: whether an atomic inline (or an inline box edge with width) sits right before the
++    /// item: its first character has no punctuation before it to be trimmed against, and no text
++    /// before it to join with.
 +    pub isolated_before: bool,
 +    /// pyro: whether an atomic inline sits right after the item.
 +    pub isolated_after: bool,
  }
  
  /// The font instance to shape an item with.
-@@ -85,24 +130,34 @@
+@@ -85,24 +131,34 @@
  
  /// Reusable scratch to shape text using [`Self::shape_text`].
  pub struct Shaper {
@@ -969,7 +970,7 @@
          }
      }
  }
-@@ -170,6 +225,7 @@
+@@ -170,6 +226,7 @@
                  "items must not span past the text"
              );
  
@@ -977,7 +978,7 @@
              loop {
                  let segment = itemizer
                      .next(
-@@ -178,10 +234,15 @@
+@@ -178,10 +235,15 @@
                      )
                      .expect("A segment must be yielded, given items tile the full text exactly");
  
@@ -993,7 +994,7 @@
                      &item.options,
                      &mut select_font,
                      analysis.char_info(),
-@@ -228,6 +289,7 @@
+@@ -228,6 +290,7 @@
      scx: &mut Shaper,
      text: &str,
      segment: &Segment,
@@ -1001,7 +1002,7 @@
      options: &ShapeOptions<'_>,
      select_font: &mut impl FontSelector,
      char_info: &[CharInfo],
-@@ -258,10 +320,21 @@
+@@ -258,10 +321,21 @@
          harfrust::Direction::LeftToRight
      };
      let hb_script = script_to_harfrust(segment.script);
@@ -1027,7 +1028,7 @@
      scx.features.clear();
      scx.features.extend(options.features.iter().map(|feature| {
          harfrust::Feature::new(
-@@ -272,15 +345,85 @@
+@@ -272,15 +346,85 @@
      }));
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
@@ -1116,7 +1117,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +434,104 @@
+@@ -291,12 +435,104 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -1222,7 +1223,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -309,7 +544,7 @@
+@@ -309,7 +545,7 @@
                  direction,
                  hb_script,
                  language.clone(),
@@ -1231,7 +1232,7 @@
                  Some(options.variations),
              ),
              || {
-@@ -318,7 +553,7 @@
+@@ -318,7 +554,7 @@
                      direction,
                      Some(hb_script),
                      language.as_ref(),
@@ -1240,7 +1241,7 @@
                  )
              },
          );
-@@ -328,8 +563,6 @@
+@@ -328,8 +564,6 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -1249,7 +1250,7 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,6 +573,21 @@
+@@ -340,11 +574,37 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -1271,7 +1272,25 @@
              buffer.add(ch, i as u32);
          }
  
-@@ -356,11 +604,11 @@
+-        buffer.set_pre_context(&text[..range.byte_range.start]);
+-        buffer.set_post_context(&text[range.byte_range.end..]);
++        // pyro: no context across an isolating box at the item's edges (`ShapeOptions::isolated_before`).
++        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
++            ""
++        } else {
++            &text[..range.byte_range.start]
++        };
++        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
++            ""
++        } else {
++            &text[range.byte_range.end..]
++        };
++        buffer.set_pre_context(pre);
++        buffer.set_post_context(post);
+         buffer.set_direction(direction);
+         buffer.set_script(hb_script);
+ 
+@@ -356,11 +616,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1286,7 +1305,7 @@
              text,
              range,
              segment,
-@@ -370,15 +618,24 @@
+@@ -370,15 +630,24 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -1313,7 +1332,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -395,6 +652,8 @@
+@@ -395,6 +664,8 @@
      // The end of the previous grapheme.
      let mut byte_end = text_range.start;
      let mut char_end = char_range.start;
@@ -1322,7 +1341,7 @@
  
      for grapheme_length in grapheme_lengths {
          let (byte_start, char_start) = (byte_end, char_end);
-@@ -409,26 +668,152 @@
+@@ -409,26 +680,152 @@
              .select_font(segment, options, char_cluster)
              .ok_or(())?;
  

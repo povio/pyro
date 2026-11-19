@@ -155,7 +155,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         // split a run and we were not called, such as at a bidi boundary).
                         inline_box_iter.next();
                     } else if inline_box.index == byte_index {
-                        atomic |= inline_box.kind == InlineBoxKind::InFlow;
+                        // pyro: an atomic inline, or the edge of an inline box with a margin,
+                        // border or padding, breaks the shaping context: no joining across it
+                        // (CSS Text 3 § 7.3, WPT css-text `shaping-009`).
+                        atomic |= inline_box.kind == InlineBoxKind::InFlow
+                            || (matches!(inline_box.kind, InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd)
+                                && inline_box.width > 0.0);
                         inline_box_iter.next();
                         split = true;
                     } else {
