@@ -1637,6 +1637,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     }
                     cx.draw_inline_layout(scene, content_position);
                     cx.draw_children_above(scene, cx.transform, child_clip_rect);
+                    if !cx.has_positioned_level_children() {
+                        cx.draw_inline_boxes_over_atomics(scene, content_position);
+                    }
                 }
             },
         );
@@ -4881,6 +4884,80 @@ impl ElementCx<'_, '_> {
         self.draw_children_above(scene, parent_style_transform, clip_rect);
     }
 
+    /// pyro: CSS 2.1 Appendix E paints a line's inline-level boxes in tree order: the background
+    /// and borders of an inline box that comes after an atomic inline (an inline-block, a form
+    /// control) go over it where they overlap (a label pulled back over its checkbox by a
+    /// negative margin). The inline content paints its boxes before the atomic inlines, which
+    /// paint after it (`FlowPhase::Foreground`): those later boxes are painted again over them,
+    /// clipped to where they meet.
+    fn draw_inline_boxes_over_atomics(&self, scene: &mut impl PaintScene, pos: Point) {
+        if !self.node.flags.is_inline_root() || !self.context.backgrounds {
+            return;
+        }
+        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
+        // The atomic inlines of the lines, by line, in layout space.
+        let mut atomics: Vec<(usize, NodeId, Rect)> = Vec::new();
+        for (index, line) in text_layout.layout.lines().enumerate() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::InlineBox(ibox) = item
+                    && ibox.kind == parley::InlineBoxKind::InFlow
+                {
+                    let rect = Rect::new(
+                        ibox.x as f64,
+                        ibox.y as f64,
+                        (ibox.x + ibox.width) as f64,
+                        (ibox.y + ibox.height) as f64,
+                    );
+                    atomics.push((index, NodeId::from_u64(ibox.id), rect));
+                }
+            }
+        }
+        if atomics.is_empty() {
+            return;
+        }
+        let doc = self.context.dom;
+        let precedes = |a: NodeId, b: NodeId| tree_precedes(doc, a, b);
+        let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>| {
+            for fragment in &fragments {
+                let fragment_rect = fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size));
+                for &(line, atomic, rect) in &atomics {
+                    if line != fragment.line || !precedes(atomic, fragment.node) {
+                        continue;
+                    }
+                    let atomic_rect = line_transform(line).transform_rect_bbox(rect);
+                    let meet = fragment_rect.intersect(atomic_rect);
+                    if meet.width() <= 0.0 || meet.height() <= 0.0 {
+                        continue;
+                    }
+                    PaintScene::push_clip_layer(scene, Fill::NonZero, Affine::IDENTITY, &meet);
+                    match horizontal {
+                        Some((transform, tops)) => self.paint_inline_box_fragment(scene, fragment, transform, tops),
+                        None => self.paint_inline_box_fragment(scene, fragment, line_transform(fragment.line), None),
+                    }
+                    PaintScene::pop_layer(scene);
+                }
+            }
+        };
+        if let Some(block_lr) = self.node.vertical_block_axis() {
+            if self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
+                return;
+            }
+            let line_transform = self.vertical_line_transform(text_layout, pos, block_lr);
+            let fragments = self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform));
+            paint(scene, fragments, &line_transform, None);
+        } else {
+            let subpixel_offset = text_layout.content_box_subpixel_offset;
+            let pos = Point {
+                x: pos.x + subpixel_offset.x as f64,
+                y: pos.y + subpixel_offset.y as f64 + text_layout.block_offset as f64,
+            };
+            let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+            let (_, tops) = self.text_placement(text_layout.block_offset as f64);
+            let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
+            paint(scene, fragments, &|_| transform, Some((transform, tops)));
+        }
+    }
+
     /// pyro: [`Self::draw_children`] without the stacking contexts of negative z-index.
     fn draw_children_above(
         &self,
@@ -4925,6 +5002,15 @@ impl ElementCx<'_, '_> {
         if self.outline_line().is_none() || self.node.column_fragments().is_some() || self.node.vertical_column_fragments().is_some() {
             return false;
         }
+        self.node.stacking_context.as_ref().is_some_and(|sc| sc.pos_z_hoisted_children().len() > 0)
+            || self.node.paint_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().any(|&id| self.is_positioned_level(id))
+            })
+    }
+
+    /// pyro: whether this element paints children at the positioned level or with a positive
+    /// `z-index` (`draw_inline_boxes_over_atomics` would paint over them).
+    fn has_positioned_level_children(&self) -> bool {
         self.node.stacking_context.as_ref().is_some_and(|sc| sc.pos_z_hoisted_children().len() > 0)
             || self.node.paint_children.borrow().as_ref().is_some_and(|children| {
                 children.iter().any(|&id| self.is_positioned_level(id))
@@ -5189,6 +5275,7 @@ impl ElementCx<'_, '_> {
             clip_rect,
             FlowPhase::Foreground,
         );
+        self.draw_inline_boxes_over_atomics(scene, content_position);
         if self.context.deferred_outlines.get() {
             self.draw_flow_children(scene, parent_style_transform, clip_rect, FlowPhase::Outline);
         }
@@ -5515,6 +5602,9 @@ impl ElementCx<'_, '_> {
             cx.draw_neg_z_children(scene, transform, clip_rect);
             cx.draw_inline_layout(scene, content_position);
             cx.draw_children_above(scene, transform, clip_rect);
+            if !cx.has_positioned_level_children() {
+                cx.draw_inline_boxes_over_atomics(scene, content_position);
+            }
         }
         if clips {
             scene.pop_layer();
@@ -6417,4 +6507,27 @@ fn blend_with_white(color: Color) -> Color {
     }
     let clamp = |v: i32| v.clamp(0, 255) as u8;
     Color::from_rgba8(clamp(out.0), clamp(out.1), clamp(out.2), out.3)
+}
+
+/// pyro: whether `a` comes before `b` in tree order and is not inside it (an inline box paints
+/// before its own content).
+fn tree_precedes(doc: &BaseDocument, a: NodeId, b: NodeId) -> bool {
+    let chain = |mut id: NodeId| {
+        let mut chain = vec![id];
+        while let Some(parent) = doc.get_node(id).and_then(|node| node.parent) {
+            chain.push(parent);
+            id = parent;
+        }
+        chain.reverse();
+        chain
+    };
+    let (ca, cb) = (chain(a), chain(b));
+    let common = ca.iter().zip(&cb).take_while(|(x, y)| x == y).count();
+    if common == 0 || common == ca.len() || common == cb.len() {
+        // Unrelated, or one inside the other.
+        return false;
+    }
+    let Some(parent) = doc.get_node(ca[common - 1]) else { return false };
+    let index = |id: NodeId| parent.children.iter().position(|&child| child == id);
+    matches!((index(ca[common]), index(cb[common])), (Some(x), Some(y)) if x < y)
 }
