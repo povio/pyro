@@ -161,6 +161,29 @@ impl LayoutPassState<'_> {
         );
     }
 
+    /// pyro: the content block size of the grid container `node_id` is an item of, when its
+    /// `height` (in its own axes) is a length: the space an orthogonal item has in its inline axis
+    /// while the grid's rows are not sized yet (as Blink; WPT css-grid
+    /// `grid-with-orthogonal-child-within-flexbox`).
+    fn grid_parent_definite_block_size(&self, node_id: NodeId) -> Option<f32> {
+        let parent = self.nodes[dom_node_id(node_id)].layout_parent.get()?;
+        let parent_node = &self.nodes[parent];
+        if parent_node.taffy_display() != taffy::Display::Grid {
+            return None;
+        }
+        let style = parent_node.layout_style_in(self.layout_wm_of(parent));
+        let height = taffy::CoreStyle::size(&style).height.into_raw();
+        if height.tag() != taffy::CompactLength::LENGTH_TAG {
+            return None;
+        }
+        let edges = taffy::CoreStyle::padding(&style).resolve_or_zero(None, resolve_calc_value).vertical_axis_sum()
+            + taffy::CoreStyle::border(&style).resolve_or_zero(None, resolve_calc_value).vertical_axis_sum();
+        Some(match taffy::CoreStyle::box_sizing(&style) {
+            taffy::BoxSizing::BorderBox => (height.value() - edges).max(0.0),
+            taffy::BoxSizing::ContentBox => height.value(),
+        })
+    }
+
     #[inline(never)]
     fn compute_orthogonal_child_layout(
         &mut self,
@@ -274,7 +297,10 @@ impl LayoutPassState<'_> {
                 let available = match (inputs.available_space.width, cb_block_definite) {
                     (AvailableSpace::Definite(size), _) => size,
                     (_, Some(size)) => size,
-                    _ => cb_limit.map_or(icb_inline, |limit| limit.min(icb_inline)),
+                    _ => cb_limit.map_or_else(
+                        || self.grid_parent_definite_block_size(node_id).unwrap_or(icb_inline),
+                        |limit| limit.min(icb_inline),
+                    ),
                 };
                 // pyro: in block flow, less the box's margins in that axis (percentages of the
                 // containing block's inline size; `auto` is zero), as a block's stretched size is

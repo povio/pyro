@@ -30442,7 +30442,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          }
  
          self.layout_wm = parent_wm;
-@@ -126,12 +130,45 @@
+@@ -126,12 +130,68 @@
          output
      }
  
@@ -30477,6 +30477,29 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 +        );
 +    }
 +
++    /// pyro: the content block size of the grid container `node_id` is an item of, when its
++    /// `height` (in its own axes) is a length: the space an orthogonal item has in its inline axis
++    /// while the grid's rows are not sized yet (as Blink; WPT css-grid
++    /// `grid-with-orthogonal-child-within-flexbox`).
++    fn grid_parent_definite_block_size(&self, node_id: NodeId) -> Option<f32> {
++        let parent = self.nodes[dom_node_id(node_id)].layout_parent.get()?;
++        let parent_node = &self.nodes[parent];
++        if parent_node.taffy_display() != taffy::Display::Grid {
++            return None;
++        }
++        let style = parent_node.layout_style_in(self.layout_wm_of(parent));
++        let height = taffy::CoreStyle::size(&style).height.into_raw();
++        if height.tag() != taffy::CompactLength::LENGTH_TAG {
++            return None;
++        }
++        let edges = taffy::CoreStyle::padding(&style).resolve_or_zero(None, resolve_calc_value).vertical_axis_sum()
++            + taffy::CoreStyle::border(&style).resolve_or_zero(None, resolve_calc_value).vertical_axis_sum();
++        Some(match taffy::CoreStyle::box_sizing(&style) {
++            taffy::BoxSizing::BorderBox => (height.value() - edges).max(0.0),
++            taffy::BoxSizing::ContentBox => height.value(),
++        })
++    }
++
 +    #[inline(never)]
      fn compute_orthogonal_child_layout(
          &mut self,
@@ -30488,7 +30511,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          let percent_basis = self.orthogonal_percent_basis.replace((
              dom_node_id(node_id),
              inputs.parent_size.width.unwrap_or(0.0),
-@@ -139,6 +176,15 @@
+@@ -139,6 +199,15 @@
  
          let mut inputs = inputs.transpose();
  
@@ -30504,7 +30527,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          // A block container stretches its in-flow children's inline size and passes it as a known
          // dimension. For an orthogonal child that is its block size, which is content-sized.
          // (An out-of-flow box's known dimensions come from its insets and are kept.)
-@@ -149,6 +195,12 @@
+@@ -149,6 +218,12 @@
                  .get()
                  .map(|parent| self.nodes[parent].taffy_display() == taffy::Display::Block)
                  .unwrap_or(true);
@@ -30517,7 +30540,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          if placed_by_block_container
              && taffy::CoreStyle::size(&node.layout_style())
                  .height
-@@ -164,6 +216,33 @@
+@@ -164,6 +239,33 @@
                  AvailableSpace::MinContent | AvailableSpace::MaxContent
              );
  
@@ -30551,7 +30574,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          if inputs.run_mode != RunMode::PerformHiddenLayout
              && inputs.known_dimensions.width.is_none()
              && !is_intrinsic_inline_measurement
-@@ -172,23 +251,41 @@
+@@ -172,23 +274,44 @@
                  taffy::CoreStyle::size(&self.nodes[dom_node_id(node_id)].layout_style())
                      .width
                      .is_auto();
@@ -30588,7 +30611,10 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 -                            viewport.height.to_f32_px()
 -                        }
 -                    }
-+                    _ => cb_limit.map_or(icb_inline, |limit| limit.min(icb_inline)),
++                    _ => cb_limit.map_or_else(
++                        || self.grid_parent_definite_block_size(node_id).unwrap_or(icb_inline),
++                        |limit| limit.min(icb_inline),
++                    ),
                  };
 +                // pyro: in block flow, less the box's margins in that axis (percentages of the
 +                // containing block's inline size; `auto` is zero), as a block's stretched size is
@@ -30603,7 +30629,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
                  let measure = |doc: &mut Self, available_space: AvailableSpace| {
                      let measure_inputs = LayoutInput {
                          run_mode: RunMode::ComputeSize,
-@@ -209,7 +306,43 @@
+@@ -209,7 +332,43 @@
                  };
                  let max_content = measure(self, AvailableSpace::MaxContent);
                  let min_content = measure(self, AvailableSpace::MinContent);
@@ -30648,7 +30674,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
                  inputs.known_dimensions_are_definite.width = true;
              }
          }
-@@ -220,10 +353,94 @@
+@@ -220,10 +379,94 @@
          output.transpose()
      }
  
@@ -30746,7 +30772,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
      pub(crate) fn physicalise_and_round_layout(&mut self, root: NodeId) {
          let viewport = self.stylist.device().au_viewport_size();
          let viewport = Size {
-@@ -231,119 +448,208 @@
+@@ -231,119 +474,208 @@
              height: viewport.height.to_f32_px(),
          };
          let root_wm = self.layout_wm_of(dom_node_id(root));
@@ -31031,7 +31057,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a
  /// node laid out in `child_wm`) into `parent_wm`, ahead of [`LayoutOutput::transpose`],
  /// which leaves them untouched. The block axis of `vertical-rl` runs against Taffy's
-@@ -486,6 +792,16 @@
+@@ -486,6 +818,16 @@
  
  /// `logical`, written by a placing algorithm running in `placer_wm` within a box of physical size
  /// `placer_size`, in physical coordinates.
@@ -31048,7 +31074,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  fn physical_layout(
      logical: Layout,
      placer_wm: WritingMode,
-@@ -531,11 +847,23 @@
+@@ -531,11 +873,23 @@
  }
  
  impl BaseDocument {
@@ -31073,7 +31099,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          &self,
          node_id: crate::NodeId,
      ) -> (crate::util::Point<f32>, Layout) {
-@@ -549,6 +877,10 @@
+@@ -549,6 +903,10 @@
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              has_vertical |= node.layout_data().writing_mode.is_vertical();
              current = node.containing_block();
@@ -31084,7 +31110,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          }
          if !has_vertical {
              return (pos, *self.nodes[node_id].unrounded_layout());
-@@ -557,12 +889,11 @@
+@@ -557,12 +915,11 @@
          let root_id = self.try_root_element().map(|root| root.id);
          let node = &self.nodes[node_id];
          let (mut pos, placer_wm, placer_size) = self.placer_geometry(node, node_id, root_id);
@@ -31098,7 +31124,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          );
          pos.x += layout.location.x - node.scroll_offset().x as f32;
          pos.y += layout.location.y - node.scroll_offset().y as f32;
-@@ -570,41 +901,46 @@
+@@ -570,41 +927,46 @@
      }
  
      /// Document-relative position, writing mode and physical size of the box that places `node`.
