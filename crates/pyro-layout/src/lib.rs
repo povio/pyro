@@ -433,6 +433,7 @@ impl BlitzGeometry {
             highlights: Vec::new(),
             control_selection: None,
             selected_replaced: Vec::new(),
+            caret: None,
         };
         if let Some(t) = t {
             SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);

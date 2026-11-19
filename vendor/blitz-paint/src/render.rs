@@ -177,6 +177,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// start, end).
     pub(crate) highlight_layers: Vec<crate::highlight::Layer>,
     pub(crate) highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>>,
+    /// pyro: the caret of the focused editing host, when it is not painted as a highlight (a
+    /// block caret over the character after it is: `Layer::Caret`).
+    pub(crate) caret: Option<crate::caret::CaretPaint>,
     /// pyro: the content of positioned inline boxes listed in the paint tree
     /// (`NodeFlags::INLINE_PASS_ENTRY`), left by their inline root for their own entry: the span's id ->
     /// (its inline root, the root's transform, the root's content position), painted in the positioned
@@ -253,6 +256,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         for (&node_id, &(start, end)) in &selection_ranges {
             highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
         }
+        // pyro: the caret, a block one over the character after it as the top highlight.
+        let mut caret = crate::caret::caret_paint(dom);
+        if let Some(paint) = &caret
+            && let Some(end) = paint.covers
+        {
+            let layer = highlight_layers.len();
+            highlight_layers.push(crate::highlight::Layer::Caret(paint.color, paint.text_color));
+            highlight_ranges.entry(paint.node).or_default().push((layer, paint.byte, end));
+            caret = None;
+        }
 
         let layer_manager = LayerManager::default();
         let effects = crate::layers::document_effects(dom);
@@ -285,6 +298,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             selection_ranges,
             highlight_layers,
             highlight_ranges,
+            caret,
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
             backgrounds: true,
@@ -3405,6 +3419,30 @@ impl ElementCx<'_, '_> {
             draw_text_context.text_shift = 0.0;
             draw_text_context.line_tops = None;
             draw_text_context.first_line = None;
+            drop(draw_text_context);
+            // pyro: the caret in this text (`caret`).
+            if let Some(caret) = self.context.caret.as_ref().filter(|caret| caret.node == self.node.id && !caret.empty) {
+                let layout = self.node.final_layout();
+                let content_width = (layout.size.width
+                    - layout.border.left
+                    - layout.border.right
+                    - layout.padding.left
+                    - layout.padding.right) as f64;
+                crate::caret::draw_text_caret(scene, caret, &text_layout.layout, |line| match tops {
+                    Some(tops) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+                    None => transform,
+                }, content_width, self.scale);
+            }
+        } else if let Some(caret) = self.context.caret.as_ref().filter(|caret| caret.node == self.node.id && caret.empty) {
+            // pyro: the caret of an empty editing host, at the start of its content box.
+            let layout = self.node.final_layout();
+            let content_width = (layout.size.width
+                - layout.border.left
+                - layout.border.right
+                - layout.padding.left
+                - layout.padding.right) as f64;
+            let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+            crate::caret::draw_empty_caret(scene, caret, transform, content_width, self.scale);
         }
     }
 
@@ -3917,18 +3955,34 @@ impl ElementCx<'_, '_> {
                 }
                 if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
                     let color = self.style.get_inherited_text().color;
+                    // pyro: a `caret-shape: block` caret covers the character after it (or is the
+                    // width of `0`), in a translucent text colour for `auto` (`caret.rs`).
+                    let block = self.style.get_inherited_ui().caret_shape
+                        == style::values::computed::CaretShape::Block;
                     let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
-                        ColorOrAuto::Auto => color,
-                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
+                        ColorOrAuto::Auto if block => {
+                            let color = color.as_srgb_color();
+                            color.with_alpha(color.components[3] * 0.5)
+                        }
+                        ColorOrAuto::Auto => color.as_srgb_color(),
+                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color).as_srgb_color(),
                     };
+                    let mut rect = convert_rect(&cursor);
+                    if block && input_data.editor.raw_selection().is_collapsed() {
+                        let index = input_data.editor.raw_selection().focus().index();
+                        let width = input_data
+                            .editor
+                            .try_layout()
+                            .and_then(|layout| parley::Cluster::from_byte_index(layout, index))
+                            .filter(|cluster| !cluster.is_hard_line_break())
+                            .map_or_else(
+                                || self.context.dom.zero_advance(self.node.id) as f64 * self.scale,
+                                |cluster| cluster.advance() as f64,
+                            );
+                        rect = Rect::new(rect.x0, rect.y0, rect.x0 + width, rect.y1);
+                    }
 
-                    scene.fill(
-                        Fill::NonZero,
-                        transform,
-                        caret_color.as_srgb_color(),
-                        None,
-                        &convert_rect(&cursor),
-                    );
+                    scene.fill(Fill::NonZero, transform, caret_color, None, &rect);
                 };
             }
 

@@ -44,7 +44,64 @@ impl HighlightName {
     }
 }
 
+/// pyro: where the caret is in the layout ([`BaseDocument::caret_position`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaretPosition {
+    /// In the text of an inline root: its node and a byte offset into its text
+    /// (`TextLayout::text`).
+    Text { root: NodeId, byte: usize },
+    /// In an element with no text (an empty editing host): the element.
+    Empty(NodeId),
+}
+
 impl BaseDocument {
+    /// pyro: the caret painted from now on (`None`: none): a text node and an offset in UTF-16
+    /// code units of its data, or an element with no text in it (offset 0).
+    pub fn set_dom_caret(&mut self, caret: Option<(NodeId, usize)>) {
+        self.dom_caret = caret;
+    }
+
+    /// pyro: the width of `0` in the first available font of `element` (CSS px), the width of a
+    /// block caret with no character after it.
+    pub fn zero_advance(&self, element: NodeId) -> f32 {
+        let Some(style) = self.nodes.get(element).and_then(|node| node.primary_styles()) else { return 0.0 };
+        let font = style.get_font();
+        let size = font.font_size.computed_size();
+        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: self.font_ctx.clone() };
+        provider.metrics_for(font, size, ' ').zero_advance_measure.map_or(size.px() * 0.5, |m| m.px())
+    }
+
+    /// pyro: where the caret ([`BaseDocument::set_dom_caret`]) is in the layout, and the element
+    /// whose style it takes (`caret-color`, `caret-shape`).
+    pub fn caret_position(&self) -> Option<(CaretPosition, NodeId)> {
+        let (node_id, offset) = self.dom_caret?;
+        let node = self.nodes.get(node_id)?;
+        if !node.flags.is_in_document() {
+            return None;
+        }
+        let NodeData::Text(data) = &node.data else {
+            return Some((CaretPosition::Empty(node_id), node_id));
+        };
+        let element = node.parent?;
+        for (root_id, root) in self.nodes.iter() {
+            let Some(layout) = root.element_data().and_then(|element| element.inline_layout_data.as_deref()) else {
+                continue;
+            };
+            if !root.flags.is_in_document() {
+                continue;
+            }
+            for (text_id, bytes) in &layout.text_nodes {
+                if *text_id != node_id {
+                    continue;
+                }
+                let Some(produced) = layout.text.get(bytes.clone()) else { continue };
+                let byte = bytes.start + produced_offset(&data.content, produced, offset);
+                return Some((CaretPosition::Text { root: root_id, byte }, element));
+            }
+        }
+        None
+    }
+
     /// pyro: the highlights painted from now on, bottom first (custom highlights by priority,
     /// then the target text), each with its ranges.
     pub fn set_dom_highlights(&mut self, highlights: Vec<(HighlightName, Vec<DomSelection>)>) {

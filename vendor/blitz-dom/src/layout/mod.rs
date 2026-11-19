@@ -850,6 +850,9 @@ impl LayoutPassState<'_> {
         } else {
             None
         };
+        // pyro: an editing host with no content keeps one line (Chromium's `HasLineIfEmpty`):
+        // the caret's.
+        let empty_editing_host = empty_editing_host(&self.nodes, dom_node_id(node_id));
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -1461,6 +1464,15 @@ impl LayoutPassState<'_> {
                     // pyro: a multi-column container (`layout::multicol`).
                     Display::Block | Display::FlowRoot if multicol::is_multicol_node(node) => {
                         ChildLayout::Multicol { inline_root: false }
+                    }
+                    Display::Block | Display::FlowRoot if empty_editing_host => {
+                        let line_height = resolved_line_height.unwrap_or(16.0);
+                        ChildLayout::Done(compute_leaf_layout(
+                            inputs,
+                            &node.layout_style(),
+                            resolve_calc_value,
+                            |_, _| taffy::Size { width: 0.0, height: line_height },
+                        ))
                     }
                     Display::Block => ChildLayout::Block,
                     Display::FlowRoot => ChildLayout::FlowRoot,
@@ -2749,4 +2761,36 @@ impl LayoutPassState<'_> {
         }
         None
     }
+}
+
+/// pyro: whether `node_id` is an editing host (an element whose `contenteditable` makes it
+/// editable, in an element that is not) with no content: no children but comments and white
+/// space.
+fn empty_editing_host(nodes: &crate::NodeTree, node_id: blitz_traits::node_id::NodeId) -> bool {
+    let editable = |id: blitz_traits::node_id::NodeId| -> Option<bool> {
+        let value = nodes[id].data.downcast_element()?.attr(local_name!("contenteditable"))?;
+        match value.to_ascii_lowercase().as_str() {
+            "" | "true" | "plaintext-only" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
+    };
+    if editable(node_id) != Some(true) {
+        return false;
+    }
+    let mut parent = nodes[node_id].parent;
+    while let Some(id) = parent {
+        if let Some(value) = editable(id) {
+            if value {
+                return false;
+            }
+            break;
+        }
+        parent = nodes[id].parent;
+    }
+    nodes[node_id].children.iter().all(|&child| match &nodes[child].data {
+        crate::NodeData::Comment { .. } => true,
+        crate::NodeData::Text(text) => text.content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')),
+        _ => false,
+    })
 }

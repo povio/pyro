@@ -259,6 +259,10 @@ pub struct Snapshot {
     pub control_selection: Option<(u64, u32, u32)>,
     /// The replaced elements the selection holds (their node keys), painted with its tint.
     pub selected_replaced: Vec<u64>,
+    /// The caret of the focused editing host: a text node's key and an offset in UTF-16 code
+    /// units of its data, or an element's key and 0 (no text at the caret), painted in
+    /// screenshots of a [`Live`] document.
+    pub caret: Option<(u64, u32)>,
 }
 
 /// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
@@ -1134,6 +1138,11 @@ impl Renderer {
                             .filter_map(|&key| m.node(key))
                             .collect();
                         m.doc.set_selected_replaced(replaced);
+                        let caret = snap
+                            .caret
+                            .filter(|_| selection_paint)
+                            .and_then(|(key, offset)| Some((m.node(key)?, offset as usize)));
+                        m.doc.set_dom_caret(caret);
                         // The focused text control's selection.
                         control = snap
                             .control_selection

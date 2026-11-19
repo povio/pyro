@@ -61,6 +61,9 @@ pub(crate) struct Highlight {
 pub(crate) enum Layer {
     Named(blitz_dom::HighlightName),
     Selection,
+    /// pyro: a block caret over the character after it: its colour and the colour of the text
+    /// under it (`None`: the text's own; `caret.rs`).
+    Caret(Color, Option<Color>),
 }
 
 /// A highlight's background: none, a colour, or the highlight's own text colour.
@@ -105,6 +108,13 @@ impl HighlightCache {
         let style = match &self.layers[layer] {
             Layer::Selection => selection_style(doc, node_id),
             Layer::Named(name) => named_style(doc, node_id, name),
+            &Layer::Caret(color, text) => Some(LayerStyle {
+                color: text,
+                background: Background::Color(color),
+                owner: None,
+                decoration: None,
+                style: None,
+            }),
         };
         self.styles.push(((node_id, layer), style.clone()));
         style

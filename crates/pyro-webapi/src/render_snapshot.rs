@@ -76,6 +76,10 @@ pub struct RenderSnapshot {
     /// The replaced elements (images, video, canvas) the document selection holds, in every
     /// form: their render keys (painted with the selection's tint).
     pub selected_replaced: Vec<u64>,
+    /// The caret in editable content, in every form: the render key of a text node and
+    /// an offset in UTF-16 code units of its data, or of an element with no text at the caret
+    /// and 0 (`caret_point`).
+    pub caret: Option<(u64, u32)>,
 }
 
 /// How a snapshot carries the document.
@@ -121,6 +125,7 @@ impl PageDom {
         let selection = crate::editing::selection_range(self);
         let dom = self.dom.borrow();
         let selected_replaced = selection.map_or_else(Vec::new, |range| replaced_in(&dom, self.document(), range));
+        let caret = selection.and_then(|range| caret_point(&dom, self.document(), range));
         let selection = selection.and_then(|range| text_selection(&dom, self.document(), range));
         let mut highlights = Vec::new();
         {
@@ -159,6 +164,7 @@ impl PageDom {
             highlights,
             control_selection,
             selected_replaced,
+            caret,
             ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
         }
     }
@@ -228,8 +234,46 @@ fn snapshot_of(
             highlights: Vec::new(),
             control_selection: None,
             selected_replaced: Vec::new(),
+            caret: None,
         }
     }
+}
+
+/// The caret as a renderer paints it ([`RenderSnapshot::caret`]): a collapsed selection in
+/// editable content (while no other element has focus), at the text there (the start of the text after it, else the end
+/// of the text before it), or the element it is in when no text is next to it (an empty host).
+fn caret_point(
+    dom: &pyro_dom::Dom,
+    document: NodeId,
+    (start, end): (crate::editing::Point, crate::editing::Point),
+) -> Option<(u64, u32)> {
+    use crate::editing::{deep_backward, deep_forward, editing_host, is_text};
+    if start != end {
+        return None;
+    }
+    // Chromium paints the caret of a collapsed selection in editable content while no other
+    // element has focus (a script's `collapse()` into an editing host does not focus it).
+    let host = editing_host(dom, start.0)?;
+    let focused = dom.focused(document).ok().flatten();
+    let body = dom.body(document).ok().flatten();
+    let root = dom.document_element(document).ok().flatten();
+    if focused.is_some_and(|focused| focused != host && Some(focused) != body && Some(focused) != root) {
+        return None;
+    }
+    let (node, offset) = if is_text(dom, start.0) {
+        start
+    } else {
+        let forward = deep_forward(dom, start);
+        let backward = deep_backward(dom, start);
+        if is_text(dom, forward.0) {
+            forward
+        } else if is_text(dom, backward.0) {
+            backward
+        } else {
+            (backward.0, 0)
+        }
+    };
+    Some((pyro_dom::snapshot::render_key(node), offset))
 }
 
 /// The document selection as a renderer paints it ([`RenderSnapshot::selection`]): each end in
