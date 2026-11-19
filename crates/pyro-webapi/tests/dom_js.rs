@@ -7528,3 +7528,16 @@ fn a_container_styled_to_snap_after_the_first_layout_starts_at_a_snap_position()
     assert_eq!(eval(&e.main, "s.style.scrollSnapType='y mandatory';String(s.scrollTop)"), "150");
     e.page.dispose();
 }
+
+#[test]
+fn a_zoomed_scroll_offset_read_back_follows_a_zoom_change() {
+    // `scrollTop = 50` at `zoom: 2` keeps 100 layout px; at `zoom: 1` that is 100 CSS px, not the
+    // 50 script wrote (review of round 6).
+    let e = env(
+        "<!doctype html><body style='margin:0'><div id=s style='zoom:2;width:100px;height:100px;overflow:hidden'>\
+         <div style='height:1000px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "s.scrollTop=50;String(s.scrollTop)"), "50");
+    assert_eq!(eval(&e.main, "s.style.zoom='1';String(s.scrollTop)"), "100");
+    e.page.dispose();
+}

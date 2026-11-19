@@ -257,7 +257,7 @@ pub struct Layout {
     /// pyro: the scroll offset script last gave an element on each axis in its CSS px (x, y), with
     /// the whole layout px it was kept as: read back while the offset is still that one, as a
     /// zoomed element's fractional offset ([`Self::css_scroll`]).
-    css_scroll: FxHashMap<NodeId, [Option<(f64, i32)>; 2]>,
+    css_scroll: FxHashMap<NodeId, [Option<(f64, i32, f64)>; 2]>,
     initial_snap_checked: std::cell::Cell<Option<u64>>,
     /// The engine laying the document out.
     external: Option<Rc<dyn GeometrySource>>,
@@ -2593,25 +2593,26 @@ impl Layout {
 
     /// pyro: records the offsets script asked for on `el` (CSS px of the element; `zoom` its
     /// effective zoom) after a write, on each axis whose kept offset is the asked one rounded (a
-    /// clamped one reads as kept).
+    /// clamped one reads as kept). Unzoomed, an offset reads as kept: whole px, as Chromium rounds
+    /// it (`scrollTop = 10.5` reads 11).
     pub fn note_css_scroll(&mut self, el: NodeId, x: Option<f64>, y: Option<f64>, zoom: f64) {
         let kept = [self.scroll_left(el), self.scroll_top(el)];
         let entry = self.css_scroll.entry(el).or_insert([None, None]);
         for (axis, asked) in [x, y].into_iter().enumerate() {
             if let Some(v) = asked {
                 let rounded = (v * zoom + 0.5).floor();
-                entry[axis] = (rounded == kept[axis] as f64).then_some((v, kept[axis]));
+                entry[axis] = (zoom != 1.0 && rounded == kept[axis] as f64).then_some((v, kept[axis], zoom));
             }
         }
     }
 
     /// pyro: `el`'s scroll offset on an axis (`top`: vertical) in its CSS px, for an element of
     /// effective zoom `zoom`: what script asked for while the kept offset is still the one it
-    /// became ([`Self::note_css_scroll`]), else the kept offset over the zoom.
+    /// became at the zoom it is at ([`Self::note_css_scroll`]), else the kept offset over the zoom.
     pub fn css_scroll(&self, el: NodeId, top: bool, zoom: f64) -> f64 {
         let kept = if top { self.scroll_top(el) } else { self.scroll_left(el) };
         match self.css_scroll.get(&el).and_then(|entry| entry[top as usize]) {
-            Some((value, at)) if at == kept => value,
+            Some((value, at, asked_zoom)) if at == kept && asked_zoom == zoom => value,
             _ => kept as f64 / zoom,
         }
     }
