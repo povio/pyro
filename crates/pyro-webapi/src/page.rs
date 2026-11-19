@@ -346,6 +346,8 @@ pub struct PageDom {
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
+    /// The document's frame's latest navigation ([`PageDom::navigation_started`]).
+    navigation_started: Cell<u64>,
     planned_navigation_seq: Cell<u64>,
     /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
     /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
@@ -866,6 +868,7 @@ impl PageDom {
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
             planned_navigations: RefCell::new(Vec::new()),
+            navigation_started: Cell::new(0),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
@@ -1160,9 +1163,34 @@ impl PageDom {
         self.input_activation.get().is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5))
     }
 
+    /// The number of the latest navigation of the document's own frame that
+    /// was started: HTML's "ongoing navigation" of the navigable, as far as
+    /// navigations that have not begun to load go. Every way to navigate the
+    /// frame takes a new number when it is asked for (`location`, a followed
+    /// link, `window.open` on the frame, a planned form submission, and
+    /// `document.open()`, which stops loading), and the task that then
+    /// navigates does so only while its number is still the latest: of the
+    /// navigations started before any of them began, the last one wins.
+    pub fn navigation_started(&self) -> u64 {
+        self.navigation_started.get()
+    }
+    /// Takes a new [`PageDom::navigation_started`] number: what was started
+    /// before and has not begun is superseded.
+    pub fn note_navigation_started(&self) -> u64 {
+        let n = self.navigation_started.get().wrapping_add(1);
+        self.navigation_started.set(n);
+        n
+    }
+
     /// HTML "plan to navigate" for a submitted form: a task navigates, and
     /// a later submission of the same form before it runs takes its place.
+    /// A submission that navigates the document's own frame is that frame's
+    /// latest navigation from now on ([`PageDom::navigation_started`]): it
+    /// supersedes those started before it, and one started before its task
+    /// runs supersedes it.
     pub(crate) fn plan_form_navigation(self: &Rc<Self>, form: NodeId, request: NavigationRequest) {
+        let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
+        let started = own_frame.then(|| self.note_navigation_started());
         let seq = self.planned_navigation_seq.get().wrapping_add(1);
         self.planned_navigation_seq.set(seq);
         {
@@ -1179,7 +1207,7 @@ impl PageDom {
                 planned.retain(|p| *p != (form, seq));
                 current
             };
-            if current && !page.is_disposed() {
+            if current && !page.is_disposed() && started.is_none_or(|n| n == page.navigation_started()) {
                 page.navigate(request);
             }
         }));
@@ -2057,6 +2085,7 @@ impl PageDom {
     /// [`PageDom::navigate`].
     pub fn note_navigation_request(&self) {
         self.navigation_requests.set(self.navigation_requests.get().wrapping_add(1));
+        self.note_navigation_started();
     }
     pub(crate) fn navigation_requests(&self) -> u32 {
         self.navigation_requests.get()

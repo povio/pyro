@@ -213,16 +213,17 @@ fn a_form_submission_fires_navigate_with_its_form_data_and_source_element() {
 }
 
 /// HTML "plan to navigate": a form submitted again before its task ran
-/// navigates once, with the later submission.
+/// navigates once, with the later submission; so does the frame when
+/// another form is submitted after it (the frame's latest navigation).
 #[test]
 fn a_later_submission_replaces_the_forms_planned_navigation() {
     let (mut t, page, _loader) = load(FORMS);
-    eval(&t, page, "post.submit(); post.a.value = 'second'; post.submit(); get.submit()");
+    eval(&t, page, "post.submit(); post.a.value = 'second'; post.submit()");
     settle(&mut t);
-    assert_eq!(
-        eval(&t, page, "log.join('|')"),
-        "push:/other:a=second:true:post:true|push:/other?q=x:null:false:get:true"
-    );
+    assert_eq!(eval(&t, page, "log.join('|')"), "push:/other:a=second:true:post:true");
+    eval(&t, page, "log = []; post.submit(); get.submit()");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "log.join('|')"), "push:/other?q=x:null:false:get:true");
 }
 
 /// HTML "Location-object navigate" and form submission: a document that
@@ -256,4 +257,48 @@ fn a_document_navigating_while_it_loads_replaces_its_entry() {
     eval(&t, page, "location.href = '/other'");
     settle(&mut t);
     assert_eq!(eval(&t, page, "[location.pathname, history.length].join()"), "/other,2");
+}
+
+/// Of the navigations of a frame started before any of them began to load,
+/// the last one wins (HTML "navigate" sets the navigable's ongoing
+/// navigation; a planned form navigation is one of them from `submit()` on,
+/// and `document.open()` stops it). Chrome's results for each case.
+#[test]
+fn the_last_navigation_started_in_a_task_wins_over_a_planned_form_navigation() {
+    const PAGE: &str = "<body><form id=f action='/submit' method=post><input name=a value=1>\
+        <button id=go onclick=\"location.href='/landed.html'\">go</button></form>\
+        <form id=g action='/submit' method=post onsubmit=\"location.href='/landed.html'\"><button id=send>send</button></form>\
+        <a id=link href='/landed.html' onclick='f.submit()'>link</a>\
+        <script>window.marker = 'first load';</script></body>";
+    // (script, where it ends, whether /submit is requested)
+    let cases = [
+        // A submit button whose click handler navigates: the submission is later.
+        ("go.click()", "/submit", true),
+        // A submit handler that navigates: the submission is planned after it.
+        ("send.click()", "/submit", true),
+        ("location.href = '/landed.html'; f.submit()", "/submit", true),
+        ("f.submit(); location.href = '/landed.html'", "/landed.html", false),
+        // A link whose click handler submits: the link is followed after it.
+        ("link.click()", "/landed.html", false),
+        ("f.submit(); location.reload()", "/app reloaded", false),
+        ("f.submit(); Promise.resolve().then(() => location.href = '/landed.html')", "/landed.html", false),
+        ("f.submit(); document.open(); document.write('<p id=written>written</p>'); document.close()", "/app written", false),
+    ];
+    for (script, ends_on, submits) in cases {
+        let (mut t, page, loader) = load(PAGE);
+        loader.insert("http://site.test/submit", "text/html", "<p>submitted</p>", Duration::ZERO);
+        loader.insert("http://site.test/landed.html", "text/html", "<p>landed</p>", Duration::ZERO);
+        eval(&t, page, "window.marker = 'scripted'; 0");
+        eval(&t, page, &format!("{script}; 0"));
+        settle(&mut t);
+        let ended = eval(
+            &t,
+            page,
+            "location.pathname + (document.getElementById('written') ? ' written' : \
+               location.pathname == '/app' && window.marker == 'first load' ? ' reloaded' : '')",
+        );
+        assert_eq!(ended, ends_on, "{script}");
+        let requested = loader.log.borrow().iter().any(|r| format!("{r:?}").contains("/submit"));
+        assert_eq!(requested, submits, "{script}: {:?}", loader.log.borrow());
+    }
 }

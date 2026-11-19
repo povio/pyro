@@ -200,6 +200,15 @@ impl PageHooks for Hooks {
     fn navigate(&self, mut request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
+        // A navigation of the document's own frame is its latest one
+        // (`PageDom::navigate` took the number): one started before its task
+        // runs, also from its `navigate` event, supersedes it.
+        let started = request
+            .target
+            .as_deref()
+            .is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"))
+            .then(|| self.frames.upgrade()?.frame(page)?.page_dom.as_ref().map(|d| d.navigation_started()))
+            .flatten();
         // `window.open` of a new browsing context: HTML creates its initial
         // about:blank document now, so the opener can script it before the
         // embedder makes the page (`Browser::create_page_with`).
@@ -275,7 +284,9 @@ impl PageHooks for Hooks {
         let stops = nav.filter(|_| own_frame).map(|nav| nav.stop_count());
         self.sched.post(TaskSource::Navigation, move |b| {
             if !b.doc(page).is_some_and(|p| {
-                p.main_frame.loader_id == loader && stops.is_none_or(|stops| p.nav.stop_count() == stops)
+                p.main_frame.loader_id == loader
+                    && stops.is_none_or(|stops| p.nav.stop_count() == stops)
+                    && started.is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n))
             }) {
                 return;
             }

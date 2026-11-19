@@ -4364,6 +4364,11 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     if let Some(mut old) = page.script_parser.borrow_mut().take() {
         old.end();
     }
+    // "Stop loading": a navigation of the frame that was started and has not
+    // begun (a planned form submission) is dropped.
+    if doc == page.document() {
+        page.note_navigation_started();
+    }
     page.written_scripts.borrow_mut().clear();
     page.written_pending.set(None);
     // Erase all event listeners and handlers of the document's nodes and window.
