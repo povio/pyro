@@ -3078,7 +3078,7 @@ impl ElementCx<'_, '_> {
                 });
 
             if let Some(block_lr) = self.node.vertical_block_axis() {
-                self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr);
+                self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr, None);
                 return;
             }
 
@@ -3354,6 +3354,7 @@ impl ElementCx<'_, '_> {
         text_layout: &blitz_dom::node::TextLayout,
         pos: Point,
         block_lr: bool,
+        only_pass: Option<NodeId>,
     ) {
         let block_offset = text_layout.block_offset as f64;
         let layout = self.node.final_layout();
@@ -3374,7 +3375,7 @@ impl ElementCx<'_, '_> {
             let inset = unrounded.border + unrounded.padding;
             let bottom = top + (unrounded.size.height - inset.top - inset.bottom) as f64;
             let transform = self.transform * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, bottom * self.scale]);
-            return self.draw_turned_lines(scene, text_layout, |_| transform);
+            return self.draw_turned_lines(scene, text_layout, |_| transform, pos, only_pass);
         }
         let line_transform = |index: usize| {
             let flip = if block_lr {
@@ -3388,7 +3389,7 @@ impl ElementCx<'_, '_> {
             self.transform
                 * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
         };
-        self.draw_turned_lines(scene, text_layout, line_transform);
+        self.draw_turned_lines(scene, text_layout, line_transform, pos, only_pass);
     }
 
     /// pyro: paints the content of the positioned inline box `span` of this inline root, as
@@ -3396,6 +3397,12 @@ impl ElementCx<'_, '_> {
     /// the paint tree (`draw_inline_pass_entry`). `pos` is the position `draw_inline_layout` was given.
     fn draw_inline_pass(&self, scene: &mut impl PaintScene, pos: Point, span: NodeId) {
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
+        // pyro: on vertical lines, as `draw_vertical_inline_layout` paints its passes (WPT
+        // css-position `position-sticky-writing-modes`).
+        if let Some(block_lr) = self.node.vertical_block_axis() {
+            self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr, Some(span));
+            return;
+        }
         let subpixel_offset = text_layout.content_box_subpixel_offset;
         let pos = Point {
             x: pos.x + subpixel_offset.x as f64,
@@ -3479,6 +3486,8 @@ impl ElementCx<'_, '_> {
         scene: &mut impl PaintScene,
         text_layout: &blitz_dom::node::TextLayout,
         line_transform: impl Fn(usize) -> Affine,
+        entry_pos: Point,
+        only_pass: Option<NodeId>,
     ) {
         let wm = self.style.writing_mode;
         let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
@@ -3489,6 +3498,37 @@ impl ElementCx<'_, '_> {
                     .counterclockwise(wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR)),
             )
         };
+        // pyro: one positioned inline box's pass: its fragments, then its text.
+        let paint_pass = |scene: &mut _, pass: Option<NodeId>| {
+            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
+                if self.fragment_in_pass(fragment.node, Some(pass)) {
+                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                }
+            }
+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            draw_text_context.positioned_pass = Some(pass);
+            for (index, line) in text_layout.layout.lines().enumerate() {
+                let turned = vertical(&line);
+                crate::text::stroke_text(
+                    scene,
+                    std::iter::once(line),
+                    self.context.dom,
+                    line_transform(index),
+                    TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+                    self.node.id,
+                    Some(&text_layout.text),
+                    &mut draw_text_context,
+                    turned,
+                    Some(&text_layout.layout),
+                );
+            }
+            draw_text_context.positioned_pass = None;
+        };
+        // (The pass of a box left for its paint-tree entry: `draw_inline_pass`.)
+        if let Some(span) = only_pass {
+            paint_pass(scene, Some(span));
+            return;
+        }
 
         // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`; not
         // with highlights or truncated lines).
@@ -3648,31 +3688,21 @@ impl ElementCx<'_, '_> {
         }
         draw_text_context.positioned_pass = None;
         drop(draw_text_context);
-        // pyro: then each positioned inline box: its fragments, then its text.
+        // pyro: then each positioned inline box: its fragments, then its text; a box listed in the
+        // paint tree (`NodeFlags::INLINE_PASS_ENTRY`) is left for its entry there, as on horizontal
+        // lines (`draw_inline_layout`).
         for &pass in passes.iter().skip(1) {
-            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
-                if self.fragment_in_pass(fragment.node, Some(pass)) {
-                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
-                }
+            if let Some(span) = pass
+                && self
+                    .context
+                    .dom
+                    .get_node(span)
+                    .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
+            {
+                self.context.inline_pass_entries.borrow_mut().insert(span, (self.node.id, self.transform, entry_pos));
+                continue;
             }
-            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-            draw_text_context.positioned_pass = Some(pass);
-            for (index, line) in text_layout.layout.lines().enumerate() {
-                let turned = vertical(&line);
-                crate::text::stroke_text(
-                    scene,
-                    std::iter::once(line),
-                    self.context.dom,
-                    line_transform(index),
-                    TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
-                    self.node.id,
-                    Some(&text_layout.text),
-                    &mut draw_text_context,
-                    turned,
-                    Some(&text_layout.layout),
-                );
-            }
-            draw_text_context.positioned_pass = None;
+            paint_pass(scene, pass);
         }
     }
 
