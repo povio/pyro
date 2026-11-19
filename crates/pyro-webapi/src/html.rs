@@ -730,6 +730,12 @@ pub enum ElClass {
     Generic,
     Svg,
     SvgGraphics,
+    SvgImage,
+    SvgForeignObject,
+    SvgUse,
+    SvgText,
+    SvgTSpan,
+    SvgTextPath,
     SvgA,
     SvgRoot,
     SvgClipPath,
@@ -783,8 +789,13 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "circle" => ElClass::SvgCircle,
             "ellipse" => ElClass::SvgEllipse,
             "line" => ElClass::SvgLine,
-            "g" | "polyline" | "polygon" | "path" | "text" | "tspan"
-            | "textPath" | "use" | "image" | "foreignObject" | "switch" | "defs" => ElClass::SvgGraphics,
+            "g" | "polyline" | "polygon" | "path" | "switch" | "defs" => ElClass::SvgGraphics,
+            "image" => ElClass::SvgImage,
+            "foreignObject" => ElClass::SvgForeignObject,
+            "use" => ElClass::SvgUse,
+            "text" => ElClass::SvgText,
+            "tspan" => ElClass::SvgTSpan,
+            "textPath" => ElClass::SvgTextPath,
             "clipPath" => ElClass::SvgClipPath,
             "mask" => ElClass::SvgMask,
             "pattern" => ElClass::SvgPattern,
@@ -987,6 +998,12 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
         SvgGraphics => s.wrap::<SvgGraphicsElement>(d, k),
+        SvgImage => s.wrap::<SvgImageElement>(d, k),
+        SvgForeignObject => s.wrap::<SvgForeignObjectElement>(d, k),
+        SvgUse => s.wrap::<SvgUseElement>(d, k),
+        SvgText => s.wrap::<SvgTextElement>(d, k),
+        SvgTSpan => s.wrap::<SvgTSpanElement>(d, k),
+        SvgTextPath => s.wrap::<SvgTextPathElement>(d, k),
         SvgA => s.wrap::<SvgAElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
         SvgClipPath => s.wrap::<SvgClipPathElement>(d, k),
@@ -1107,6 +1124,12 @@ pub fn interface_name(class: ElClass) -> &'static str {
         Generic => HtmlElement::NAME,
         Svg => SvgElement::NAME,
         SvgGraphics => SvgGraphicsElement::NAME,
+        SvgImage => SvgImageElement::NAME,
+        SvgForeignObject => SvgForeignObjectElement::NAME,
+        SvgUse => SvgUseElement::NAME,
+        SvgText => SvgTextElement::NAME,
+        SvgTSpan => SvgTSpanElement::NAME,
+        SvgTextPath => SvgTextPathElement::NAME,
         SvgA => SvgAElement::NAME,
         SvgRoot => SvgSvgElement::NAME,
         SvgClipPath => SvgClipPathElement::NAME,
@@ -1244,6 +1267,12 @@ pub(crate) fn wrap_new_html_element<'s>(
         Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
         Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
         SvgGraphics => crate::node::wrap_new_node::<SvgGraphicsElement>(s, page, el, new_target),
+        SvgImage => crate::node::wrap_new_node::<SvgImageElement>(s, page, el, new_target),
+        SvgForeignObject => crate::node::wrap_new_node::<SvgForeignObjectElement>(s, page, el, new_target),
+        SvgUse => crate::node::wrap_new_node::<SvgUseElement>(s, page, el, new_target),
+        SvgText => crate::node::wrap_new_node::<SvgTextElement>(s, page, el, new_target),
+        SvgTSpan => crate::node::wrap_new_node::<SvgTSpanElement>(s, page, el, new_target),
+        SvgTextPath => crate::node::wrap_new_node::<SvgTextPathElement>(s, page, el, new_target),
         SvgA => crate::node::wrap_new_node::<SvgAElement>(s, page, el, new_target),
         SvgRoot => crate::node::wrap_new_node::<SvgSvgElement>(s, page, el, new_target),
         SvgClipPath => crate::node::wrap_new_node::<SvgClipPathElement>(s, page, el, new_target),
@@ -3590,6 +3619,9 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
         Ok(s.undefined())
     });
     def.method("animationsPaused", 0, |s, n, _a| Ok(s.boolean(crate::smil::paused(n.page()))));
+    def.method("createSVGLength", 0, |s, n, _a| {
+        Ok(collections::create_svg_length(s, n.id)?.value())
+    });
 });
 // SVG 2 `<length>` attributes as `SVGAnimatedLength`s (`collections::SvgLengthAttr`: the attribute,
 // its initial value and the direction its percentages resolve in).
@@ -3632,6 +3664,49 @@ static LEN_405: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: 
 static LEN_408: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y2", initial: "0", dir: collections::SvgLengthDir::Height, slot: 408 };
 
 simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement);
+// The graphics elements that are boxes (SVG 2 `image`, `foreignObject`, `use`): their geometry as
+// SVGAnimatedLengths. (The elements were plain SVGGraphicsElements.)
+static LEN_411: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "textLength", initial: "0", dir: collections::SvgLengthDir::Other, slot: 411 };
+static LEN_414: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "startOffset", initial: "0", dir: collections::SvgLengthDir::Other, slot: 414 };
+simple_class!(SvgImageElement, "SVGImageElement", SvgGraphicsElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
+});
+simple_class!(SvgForeignObjectElement, "SVGForeignObjectElement", SvgGraphicsElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
+});
+simple_class!(SvgUseElement, "SVGUseElement", SvgGraphicsElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
+});
+// SVG 2 text content elements: `textLength` (and `startOffset` of a `textPath`) as
+// SVGAnimatedLengths. Not implemented yet: the text measuring methods, `lengthAdjust`, and the
+// `x`, `y`, `dx`, `dy` and `rotate` lists of the positioning elements.
+simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement, |def| {
+    def.getter("textLength", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_411)?.value()));
+    def.constant("LENGTHADJUST_UNKNOWN", 0.0);
+    def.constant("LENGTHADJUST_SPACING", 1.0);
+    def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
+});
+simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement);
+simple_class!(SvgTextElement, "SVGTextElement", SvgTextPositioningElement);
+simple_class!(SvgTSpanElement, "SVGTSpanElement", SvgTextPositioningElement);
+simple_class!(SvgTextPathElement, "SVGTextPathElement", SvgTextContentElement, |def| {
+    def.getter("startOffset", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_414)?.value()));
+    def.constant("TEXTPATH_METHODTYPE_UNKNOWN", 0.0);
+    def.constant("TEXTPATH_METHODTYPE_ALIGN", 1.0);
+    def.constant("TEXTPATH_METHODTYPE_STRETCH", 2.0);
+    def.constant("TEXTPATH_SPACINGTYPE_UNKNOWN", 0.0);
+    def.constant("TEXTPATH_SPACINGTYPE_AUTO", 1.0);
+    def.constant("TEXTPATH_SPACINGTYPE_EXACT", 2.0);
+});
 simple_class!(SvgRectElement, "SVGRectElement", SvgGeometryElement, |def| {
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -4695,6 +4770,14 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgFilterElement>();
     engine.register::<SvgMarkerElement>();
     engine.register::<SvgGeometryElement>();
+    engine.register::<SvgImageElement>();
+    engine.register::<SvgForeignObjectElement>();
+    engine.register::<SvgUseElement>();
+    engine.register::<SvgTextContentElement>();
+    engine.register::<SvgTextPositioningElement>();
+    engine.register::<SvgTextElement>();
+    engine.register::<SvgTSpanElement>();
+    engine.register::<SvgTextPathElement>();
     engine.register::<SvgRectElement>();
     engine.register::<SvgCircleElement>();
     engine.register::<SvgEllipseElement>();

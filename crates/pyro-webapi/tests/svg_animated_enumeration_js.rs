@@ -619,3 +619,48 @@ fn aria_element_reflection() {
         "l1,l2|true|true|true||||true||true|2|false"
     );
 }
+
+/// SVG lengths (round 5): a value shorter than a unit name is a number (`x="5"` read as invalid and
+/// gave the initial value), `image`, `use`, `foreignObject` and the text content elements have
+/// their interfaces and SVGAnimatedLengths, `createSVGLength()` gives a length that reflects no
+/// attribute, CSS units without a constant (`rem`, `vw`, `q`) convert with `unitType` 0, and
+/// `newValueSpecifiedUnits` converts both arguments before it checks the unit.
+/// WPT svg/types/scripted `SVGAnimatedLength-initial-values`, `SVGLength`, `SVGLength-px`,
+/// `SVGLength-rem`, `SVGLength-viewport`.
+#[test]
+fn svg_lengths_of_one_character_new_interfaces_detached_lengths_and_css_units() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const ns = "http://www.w3.org/2000/svg";
+              const make = (name) => document.createElementNS(ns, name);
+              const rect = make("rect");
+              rect.setAttribute("x", "5");
+              const out = [rect.x.baseVal.value, make("marker").markerWidth.baseVal.valueAsString];
+              const image = make("image"), use = make("use"), foreign = make("foreignObject");
+              const text = make("text"), tspan = make("tspan"), path = make("textPath");
+              out.push(image instanceof SVGImageElement, use instanceof SVGUseElement, foreign instanceof SVGForeignObjectElement);
+              out.push(text instanceof SVGTextElement && text instanceof SVGTextPositioningElement && text instanceof SVGTextContentElement);
+              out.push(tspan instanceof SVGTSpanElement, path instanceof SVGTextPathElement && !(path instanceof SVGTextPositioningElement));
+              image.setAttribute("width", "42");
+              out.push(image.width.baseVal.value, use.x.baseVal.valueAsString, text.textLength.baseVal.value, path.startOffset.baseVal.value);
+              const length = make("svg").createSVGLength();
+              out.push(length.unitType, length.valueAsString);
+              length.valueAsString = "2px";
+              length.convertToSpecifiedUnits(SVGLength.SVG_LENGTHTYPE_PERCENTAGE);
+              out.push(length.valueAsString);
+              length.valueAsString = "2em";
+              out.push(length.value);
+              rect.setAttribute("x", "2rem");
+              out.push(rect.x.baseVal.unitType, rect.x.baseVal.value);
+              rect.setAttribute("x", "4Q");
+              out.push(rect.x.baseVal.value.toFixed(2));
+              try { length.newValueSpecifiedUnits("aString", "aString"); out.push("no throw"); } catch (e) { out.push(e.name); }
+              try { length.newValueSpecifiedUnits("aString", 4); out.push("no throw"); } catch (e) { out.push(e.name); }
+              return out.join("|");
+            })()"#
+        ),
+        "5|3|true|true|true|true|true|true|42|0|0|0|1|0|2%|32|0|32|3.78|TypeError|NotSupportedError"
+    );
+}
