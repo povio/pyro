@@ -151,6 +151,9 @@ pub struct PageDom {
     /// exception is being dispatched at the Window, so an exception thrown
     /// by one of its listeners is reported without a second event.
     pub(crate) error_reporting: Cell<bool>,
+    /// Error events report_exception fired at a worker's global already: the
+    /// worker's later report of the same exception goes only to its owner.
+    pub(crate) reported_errors: Cell<u32>,
     /// (event id, realm) while an `error` event for an uncaught exception
     /// is dispatched: as in Chrome, only the listeners of the world that
     /// threw see it (an isolated world's error skips the page's `onerror`,
@@ -735,6 +738,7 @@ impl PageDom {
             next_event: Cell::new(1),
             error_reporting: Cell::new(false),
             error_event_world: Cell::new(None),
+            reported_errors: Cell::new(0),
             event_clock: RefCell::new(None),
             event_unforgeables: RefCell::new(FxHashMap::default()),
             animation_events: Default::default(),

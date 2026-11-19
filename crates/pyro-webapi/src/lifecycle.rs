@@ -205,6 +205,9 @@ pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
     };
     page.error_event_world.set(None);
     page.error_reporting.set(false);
+    if not_canceled {
+        page.reported_errors.set(page.reported_errors.get().saturating_add(1));
+    }
     !not_canceled
 }
 

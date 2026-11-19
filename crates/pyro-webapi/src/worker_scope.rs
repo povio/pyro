@@ -346,7 +346,11 @@ impl WorkerLoop {
         let filename = exception.url.clone().unwrap_or_default();
         let (line, column) = (exception.line.unwrap_or(0), exception.column.unwrap_or(0));
         let mut report = true;
-        if !self.in_error {
+        // The exception reporter fired the global's event already (uncanceled).
+        let fired = self.page.reported_errors.get();
+        if fired > 0 {
+            self.page.reported_errors.set(fired - 1);
+        } else if !self.in_error {
             if let Some(target) = self.page.window_target() {
                 let ev = EventCore::trusted(&self.page, EventInterface::ErrorEvent, "error", false, true);
                 {
@@ -1220,6 +1224,9 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     page.register_realm(&realm);
     realm.set_embedder(page.clone());
     realm.set_unhandled_rejection_handler(crate::event::dispatch_unhandled_rejection);
+    // HTML "report the error": the global's `error` event fires in the task
+    // that threw, its listeners before their microtasks.
+    realm.set_exception_reporter(Some(crate::lifecycle::report_exception));
     let helpers = crate::install_helpers(s)?;
     crate::encoding::install(s, helpers.get_atom("dataView")?)?;
     crate::headers::install(s, helpers.get_atom("headers")?)?;

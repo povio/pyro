@@ -209,3 +209,30 @@ fn head_of_a_data_url_has_no_body() {
         "Hello, World!"
     );
 }
+
+/// HTML "report the error" in a worker: the global's `error` event fires in
+/// the task that threw (before a timer it queued), every listener before the
+/// microtasks they queue, and the uncanceled error still reaches the Worker
+/// (html/semantics/scripting-1/the-script-element/microtasks/
+/// checkpoint-after-workerglobalscope-onerror.html).
+#[test]
+fn worker_error_listeners_run_in_the_throwing_task_before_their_microtasks() {
+    let host = ScriptServer::new(|_| {
+        r#"self.log = [];
+        addEventListener('error', () => { log.push('h1'); Promise.resolve().then(() => log.push('p1')); });
+        addEventListener('error', () => { log.push('h2'); Promise.resolve().then(() => log.push('p2')); });
+        setTimeout(() => postMessage(log.join()), 0);
+        throw new Error('x');"#
+            .to_owned()
+    });
+    let env = Env::new(&format!("{}/page", host.base));
+    env.eval(&format!(
+        "globalThis.msgs = []; globalThis.w = new Worker('{}/worker.js');
+         w.onmessage = e => msgs.push(e.data); w.onerror = e => msgs.push('error');",
+        host.base
+    ));
+    env.until("msgs.length >= 2");
+    assert_eq!(env.eval("msgs.slice().sort().join('|')"), "error|h1,h2,p1,p2");
+    env.eval("w.terminate()");
+    assert!(join_stopped(Duration::from_secs(5)), "the worker thread ends after terminate()");
+}
