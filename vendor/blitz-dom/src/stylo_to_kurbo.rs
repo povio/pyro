@@ -253,7 +253,7 @@ fn point_along(
     use kurbo::{ParamCurve, ParamCurveArclen, ParamCurveDeriv, PathSeg};
     let closed = path.elements().iter().any(|el| matches!(el, kurbo::PathEl::ClosePath));
     let segments: Vec<PathSeg> = path.segments().collect();
-    const ACCURACY: f64 = 1e-3;
+    const ACCURACY: f64 = 1e-7;
     let lengths: Vec<f64> = segments.iter().map(|s| s.arclen(ACCURACY)).collect();
     let total: f64 = lengths.iter().sum();
     let distance = offset_distance.resolve(CSSPixelLength::new(total as f32)).px() as f64;
@@ -456,9 +456,25 @@ impl MotionFrame {
         }
     }
 
-    /// The anchor point at `point` turned by `angle`, in the frame of the transform origin.
+    /// The anchor point at `point` turned by `angle`, in the frame of the transform origin. An
+    /// angle within 1e-4 rad of a quarter turn is that quarter turn: a path's tangent (a cubic's
+    /// derivative at a segment's end) is a hair off, and the rotation then antialiased edges
+    /// Chrome draws square.
     fn place(&self, point: kurbo::Point, angle: f64) -> Affine {
-        let motion = Affine::translate(point.to_vec2()) * Affine::rotate(angle) * Affine::translate(-self.anchor.to_vec2());
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let turns = (angle / quarter).round();
+        let rotation = if (angle - turns * quarter).abs() < 1e-4 {
+            // Exact sine and cosine of a multiple of 90deg.
+            match (turns as i64).rem_euclid(4) {
+                0 => Affine::IDENTITY,
+                1 => Affine::new([0.0, 1.0, -1.0, 0.0, 0.0, 0.0]),
+                2 => Affine::new([-1.0, 0.0, 0.0, -1.0, 0.0, 0.0]),
+                _ => Affine::new([0.0, -1.0, 1.0, 0.0, 0.0, 0.0]),
+            }
+        } else {
+            Affine::rotate(angle)
+        };
+        let motion = Affine::translate(point.to_vec2()) * rotation * Affine::translate(-self.anchor.to_vec2());
         let origin = Affine::translate(self.origin.to_vec2());
         origin.inverse() * motion * origin
     }
@@ -512,13 +528,13 @@ fn shape_transform(
                     }
                 }
             };
-            kurbo::Circle::new(center, radius.max(0.0)).to_path(0.01)
+            kurbo::Circle::new(center, radius.max(0.0)).to_path(1e-6)
         }
         GenericBasicShape::Ellipse(e) => {
             let center = center_of(&e.position);
             let rx = axis_radius(&e.semiaxis_x, center.x, area.x0, area.x1, w).max(0.0);
             let ry = axis_radius(&e.semiaxis_y, center.y, area.y0, area.y1, h).max(0.0);
-            kurbo::Ellipse::new(center, (rx, ry), 0.0).to_path(0.01)
+            kurbo::Ellipse::new(center, (rx, ry), 0.0).to_path(1e-6)
         }
         GenericBasicShape::Rect(inset) => {
             let rect = kurbo::Rect::new(

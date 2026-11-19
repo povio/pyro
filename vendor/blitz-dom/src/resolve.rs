@@ -1684,8 +1684,8 @@ impl BaseDocument {
         match &*el.name.local {
             "path" => kurbo::BezPath::from_svg(el.attr(markup5ever::local_name!("d"))?).ok(),
             "rect" => Some(kurbo::Rect::new(num("x"), num("y"), num("x") + num("width"), num("y") + num("height")).to_path(0.01)),
-            "circle" => Some(kurbo::Circle::new((num("cx"), num("cy")), num("r").max(0.0)).to_path(0.01)),
-            "ellipse" => Some(kurbo::Ellipse::new((num("cx"), num("cy")), (num("rx").max(0.0), num("ry").max(0.0)), 0.0).to_path(0.01)),
+            "circle" => Some(kurbo::Circle::new((num("cx"), num("cy")), num("r").max(0.0)).to_path(1e-6)),
+            "ellipse" => Some(kurbo::Ellipse::new((num("cx"), num("cy")), (num("rx").max(0.0), num("ry").max(0.0)), 0.0).to_path(1e-6)),
             "line" => {
                 let mut path = kurbo::BezPath::new();
                 path.move_to((num("x1"), num("y1")));
