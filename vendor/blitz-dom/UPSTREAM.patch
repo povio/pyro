@@ -15973,14 +15973,6 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                            f32::NEG_INFINITY,
 -                            f32::NEG_INFINITY,
 -                        );
--
--                        // if float.is_floated() {
--                        //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);
--                        //     println!(
--                        //         "w:{} h:{} x:{}, y:{}",
--                        //         layout.size.width, layout.size.height, 0, 0
--                        //     );
--                        // }
 +                                // pyro: a float placed with nothing before it on the line leaves
 +                                // the line to be retried from here, after the float: content that does
 +                                // not fit beside it moves down, the float stays (CSS 2.1 §9.5.1; WPT
@@ -15988,7 +15980,14 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                if fits_on_line && leads_line && has_active_floats {
 +                                    line_start_state = Some(breaker.state().clone());
 +                                }
-+
+ 
+-                        // if float.is_floated() {
+-                        //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);
+-                        //     println!(
+-                        //         "w:{} h:{} x:{}, y:{}",
+-                        //         layout.size.width, layout.size.height, 0, 0
+-                        //     );
+-                        // }
 +                                // if float.is_floated() {
 +                                //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);
 +                                //     println!(
@@ -16308,8 +16307,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                                    .find(|candidate| candidate.id == ibox.id)
 +                                    .map_or(0, |candidate| candidate.index);
 +                                first_in_flow_index(&line, &inline_layout.layout).is_some_and(|first| first < at)
-                             } else {
--                                line_top
++                            } else {
 +                                line_has_in_flow_content
 +                            };
 +                            // pyro: the static-position rectangle is the line box's block
@@ -16320,7 +16318,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                            let y = if preceded { line_bottom } else { line_top };
 +                            let x = if container_direction.is_rtl() {
 +                                final_size.width - container_pb.right + span_offset.x
-+                            } else {
+                             } else {
+-                                line_top
 +                                container_pb.left + span_offset.x
                              };
                              (
@@ -16372,7 +16371,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                                  ),
                                  y: AxisStaticPosition::from_alignment(
                                      align_self.resolve_self_relative(
-@@ -1238,10 +2560,11 @@
+@@ -1238,10 +2560,15 @@
                              },
                          });
                      } else if is_floated {
@@ -16380,7 +16379,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -                        layout.padding = padding; //.map(|p| p / scale);
 -                        layout.border = border; //.map(|p| p / scale);
 -                        layout.margin = margin;
++                        // pyro: its scrollbar gutters (classic scrollbars), as Taffy's layouts carry
++                        // them: clientWidth/Height (`CoreStyle::scrollbar_gutter_size`).
++                        let scrollbar_size = taffy::CoreStyle::scrollbar_gutter_size(&self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]));
 +                        self.nodes[NodeId::from_u64(ibox.id)].update_unrounded_layout(|layout| {
++                            layout.scrollbar_size = scrollbar_size;
 +                            layout.padding = padding; //.map(|p| p / scale);
 +                            layout.border = border; //.map(|p| p / scale);
 +                            layout.margin = margin;
@@ -16388,10 +16391,14 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      } else {
                          line_has_in_flow_content = true;
                          // Re-measure the box to get its border-box size (this hits the layout
-@@ -1250,6 +2573,14 @@
+@@ -1250,6 +2577,18 @@
                          let mut output =
                              self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                          let size = output.size;
++                        // pyro: its scrollbar gutters (classic scrollbars), as Taffy's layouts carry them.
++                        let scrollbar_size = taffy::CoreStyle::scrollbar_gutter_size(
++                            &self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]),
++                        );
 +                        // pyro: relatively positioned inline boxes around it move it too.
 +                        let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
 +                            Some(parent) if inline_layout.relative_spans => {
@@ -16403,7 +16410,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
  
                          let is_relative = position == taffy::Position::Relative;
-@@ -1266,23 +2597,44 @@
+@@ -1266,23 +2605,45 @@
                              taffy::Point::ZERO
                          };
  
@@ -16447,6 +16454,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                        };
 +                        node.update_unrounded_layout(|layout| {
 +                            layout.size = size;
++                            layout.scrollbar_size = scrollbar_size;
 +                            layout.scrollable_overflow_rect = overflow;
 +                            layout.location = location;
 +                            layout.padding = padding; //.map(|p| p / scale);
@@ -16461,7 +16469,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,20 +2649,126 @@
+@@ -1297,20 +2658,126 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -16591,7 +16599,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1320,12 +2778,7 @@
+@@ -1320,12 +2787,7 @@
              .unwrap()
              .inline_layout_data = Some(inline_layout);
  
@@ -16605,7 +16613,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          LayoutOutput {
              size: final_size,
-@@ -1360,14 +2813,19 @@
+@@ -1360,14 +2822,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -16628,7 +16636,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2842,306 @@
+@@ -1384,3 +2851,306 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }

@@ -2560,7 +2560,11 @@ impl LayoutPassState<'_> {
                             },
                         });
                     } else if is_floated {
+                        // pyro: its scrollbar gutters (classic scrollbars), as Taffy's layouts carry
+                        // them: clientWidth/Height (`CoreStyle::scrollbar_gutter_size`).
+                        let scrollbar_size = taffy::CoreStyle::scrollbar_gutter_size(&self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]));
                         self.nodes[NodeId::from_u64(ibox.id)].update_unrounded_layout(|layout| {
+                            layout.scrollbar_size = scrollbar_size;
                             layout.padding = padding; //.map(|p| p / scale);
                             layout.border = border; //.map(|p| p / scale);
                             layout.margin = margin;
@@ -2573,6 +2577,10 @@ impl LayoutPassState<'_> {
                         let mut output =
                             self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                         let size = output.size;
+                        // pyro: its scrollbar gutters (classic scrollbars), as Taffy's layouts carry them.
+                        let scrollbar_size = taffy::CoreStyle::scrollbar_gutter_size(
+                            &self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]),
+                        );
                         // pyro: relatively positioned inline boxes around it move it too.
                         let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
                             Some(parent) if inline_layout.relative_spans => {
@@ -2625,6 +2633,7 @@ impl LayoutPassState<'_> {
                         };
                         node.update_unrounded_layout(|layout| {
                             layout.size = size;
+                            layout.scrollbar_size = scrollbar_size;
                             layout.scrollable_overflow_rect = overflow;
                             layout.location = location;
                             layout.padding = padding; //.map(|p| p / scale);

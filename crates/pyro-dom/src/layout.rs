@@ -2831,14 +2831,27 @@ impl Layout {
                 v.trim_end_matches("px").parse::<f64>().unwrap_or(0.0)
             }
         };
+        // pyro: the scrollport: past a left or top classic scrollbar gutter, the viewport's less
+        // its gutters (Chrome: WPT css-scroll-snap `scroll-snap-type-on-root-element`).
         let (origin_x, origin_y, width, height) = match scroller {
             Some(el) => {
                 let r = self.bounding_client_rect(dom, el);
+                let gutters = self.layout_box(dom, el).map(|b| b.border);
                 let bl = px(&value(el, "border-left-width"), 0.0);
                 let bt = px(&value(el, "border-top-width"), 0.0);
+                let (bl, bt) = gutters.map_or((bl, bt), |b| (b[LEFT].max(bl), b[TOP].max(bt)));
                 (r.x + bl - current.0 as f64, r.y + bt - current.1 as f64, self.client_width(dom, el), self.client_height(dom, el))
             }
-            None => (-(current.0 as f64), -(current.1 as f64), self.inner_width() as f64, self.inner_height() as f64),
+            None => {
+                let [gl, gt, gr, gb] =
+                    self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()).unwrap_or([0.0; 4]);
+                (
+                    gl - current.0 as f64,
+                    gt - current.1 as f64,
+                    self.inner_width() as f64 - gl - gr,
+                    self.inner_height() as f64 - gt - gb,
+                )
+            }
         };
         let pad = |side: &str, basis: f64| {
             let v = value(styled, &format!("scroll-padding-{side}"));
