@@ -10984,3 +10984,34 @@ fn post_message_slash_matches_opaque_origins_by_identity() {
     h.run_for(200);
     assert_eq!(value(&mut h, "got.join()"), json!("star"));
 }
+
+/// A closed page's document leaves the DOM store it shares with its popups (or opener): closing the
+/// opener while its popup lives frees the opener's tree (Performance.getMetrics' `Nodes` counts the
+/// shared store's live nodes), after a garbage collection as a removed iframe's is.
+#[test]
+fn closing_the_opener_frees_its_document_in_the_shared_store() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><script>document.write('<div><span>x</span></div>'.repeat(300))</script>");
+    let opener = h.frame_id.clone();
+    h.page("Runtime.evaluate", json!({"expression": "window.open(); 1"}));
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    h.until_response(id);
+    let nodes = |h: &mut Harness, popup: &str| {
+        let r = h.call(Some(popup), "Performance.getMetrics", json!({}));
+        r["result"]["metrics"].as_array().unwrap_or_else(|| panic!("{r}")).iter().find(|m| m["name"] == "Nodes").unwrap()["value"].as_f64().unwrap()
+    };
+    let before = nodes(&mut h, &popup);
+    assert!(before > 600.0, "the opener's nodes are in the shared store: {before}");
+    let target = h.frame_id.clone();
+    h.call(None, "Target.closeTarget", json!({ "targetId": target }));
+    h.run_for(200);
+    h.call(Some(&popup), "Pyro.jscMemory", json!({"action": "collect"}));
+    h.call(Some(&popup), "Runtime.evaluate", json!({"expression": "1"}));
+    h.run_for(100);
+    let after = nodes(&mut h, &popup);
+    assert!(after < 100.0, "the closed opener's document is freed: before {before}, after {after}");
+}

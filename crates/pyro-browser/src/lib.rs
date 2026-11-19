@@ -2211,6 +2211,10 @@ impl Browser {
         let p = self.pages.remove(pos);
         if let Some(dom) = &p.main_frame.page_dom {
             dom.dispose();
+            // The document leaves its DOM store, as a navigated-away or removed frame's does: a
+            // popup shares its opener's store (and the opener its popups'), which outlives this page,
+            // so its tree is freed by the store's collection rather than with the store.
+            let _ = dom.dom.borrow_mut().set_document_active(dom.document(), false);
         }
         for r in &p.document.main_frame.realms {
             window::cancel_timers(&r.realm);
