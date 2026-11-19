@@ -227,6 +227,9 @@ pub(crate) struct Run {
     pub easing: String,
     /// The local time an animation paused by its style holds.
     pub paused_at: Option<f64>,
+    /// pyro: an animation's `animation-trigger` item, the element declaring the timeline trigger
+    /// it names and that `timeline-trigger` item (`None`: no trigger, or none of that name).
+    pub trigger: Option<(String, NodeId, String)>,
 }
 
 impl State {
@@ -594,6 +597,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         // pyro: a run script controls changed: its object takes the CSS properties script did not
         // override (`animations.js` `cssFollow`), in a task.
         let mut scripted_changed = false;
+        let mut any_trigger = false;
         // (Each known run is one wanted animation's: two of one name are two runs.)
         let mut claimed: FxHashSet<u64> = FxHashSet::default();
         for (el, pseudo, animation) in wanted {
@@ -661,7 +665,12 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 continue;
             }
             changed = true;
-            let paused = animation.style.paused;
+            // pyro: an animation with an `animation-trigger` waits for it, held just before its
+            // start (only its backwards fill shows) until its object (`animations.js`) runs the
+            // trigger's actions.
+            let triggered = animation.trigger.is_some();
+            any_trigger |= triggered;
+            let paused = animation.style.paused || triggered;
             let driven = timeline_driven_now(&style_of_target(style, &dom, el, pseudo), animation.index);
             let mut timeline = Timeline {
                 timeline_text: driven.then(|| timeline_text_of(style, &dom, el, pseudo, animation.index)).flatten(),
@@ -677,8 +686,8 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 live: Rc::new(Cell::new(true)),
                 ended: Rc::new(Cell::new(false)),
                 timing: Some(animation.clone()),
-                // Paused from the start: held at its beginning.
-                paused_at: paused.then_some(0.0),
+                // Paused from the start: held at its beginning (a triggered one just before it).
+                paused_at: if triggered { Some(-1e-6) } else { paused.then_some(0.0) },
                 epoch: Rc::new(Cell::new(true)),
                 progress: Rc::new(Cell::new(0)),
                 easing: None,
@@ -697,8 +706,8 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         if changed {
             state.bump();
         }
-        if scripted_changed {
-            crate::animations::push_css_runs(page);
+        if scripted_changed || any_trigger {
+            crate::animations::push_css_runs(page, any_trigger);
         }
         // Style change events of the elements whose style changed.
         if state.transitions_tracked(&dom, style) {
@@ -835,6 +844,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
     let dom = page.dom.borrow();
     let animations = state.animations.borrow();
     let transitions = state.transitions.borrow();
+    let rules = page.try_layout().map(|layout| state.rules(&dom, layout.style()));
     transitions
         .iter()
         .map(|t| (t, true))
@@ -871,6 +881,14 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                     false => "linear".to_owned(),
                 },
                 paused_at: t.paused_at,
+                trigger: t.timing.as_ref().and_then(|timing| timing.trigger.clone()).and_then(|item| {
+                    let name = item.split_whitespace().next()?.to_owned();
+                    let layout = page.try_layout()?;
+                    let style = layout.style();
+                    let style_of = |e: NodeId| style.stylo_style(&dom, e);
+                    let (source, decl) = rules.as_ref()?.timeline_trigger(&dom, page.document(), t.el, &name, &style_of)?;
+                    Some((item, source, decl))
+                }),
             }
         })
         .collect()

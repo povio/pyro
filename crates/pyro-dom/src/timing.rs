@@ -49,10 +49,14 @@ enum Longhand {
     TransitionDelay,
     TransitionTimingFunction,
     TransitionBehavior,
+    /// pyro: `animation-trigger` and `timeline-trigger` (CSS Animations 2, Web Animations 2
+    /// triggers): items kept as written (Stylo does not parse them).
+    AnimationTrigger,
+    TimelineTrigger,
 }
 
 impl Longhand {
-    const ALL: [Longhand; 14] = [
+    const ALL: [Longhand; 16] = [
         Longhand::AnimationName,
         Longhand::AnimationDuration,
         Longhand::AnimationDelay,
@@ -67,6 +71,8 @@ impl Longhand {
         Longhand::TransitionDelay,
         Longhand::TransitionTimingFunction,
         Longhand::TransitionBehavior,
+        Longhand::AnimationTrigger,
+        Longhand::TimelineTrigger,
     ];
 
     fn name(self) -> &'static str {
@@ -85,6 +91,8 @@ impl Longhand {
             Longhand::TransitionDelay => "transition-delay",
             Longhand::TransitionTimingFunction => "transition-timing-function",
             Longhand::TransitionBehavior => "transition-behavior",
+            Longhand::AnimationTrigger => "animation-trigger",
+            Longhand::TimelineTrigger => "timeline-trigger",
         }
     }
 
@@ -107,6 +115,7 @@ impl Longhand {
             Longhand::AnimationPlayState => "running",
             Longhand::AnimationComposition => "replace",
             Longhand::TransitionProperty => "all",
+            Longhand::AnimationTrigger | Longhand::TimelineTrigger => "none",
         }
     }
 }
@@ -233,6 +242,8 @@ pub struct AnimationTiming {
     /// How it plays: changing these does not start it again
     /// ([`AnimationTiming::same_run`]).
     pub style: AnimationStyle,
+    /// pyro: its `animation-trigger` item (`<trigger name> <action> [<action>]`), when not `none`.
+    pub trigger: Option<String>,
 }
 
 impl AnimationTiming {
@@ -322,7 +333,7 @@ struct CandidateCache {
 /// The cascaded value of each longhand for one element ([`TimingRules::lists`]):
 /// `None` is the initial value.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TimingLists([Option<Vec<String>>; 14]);
+pub struct TimingLists([Option<Vec<String>>; 16]);
 
 impl TimingLists {
     fn get(&self, longhand: Longhand) -> Option<&Vec<String>> {
@@ -476,6 +487,28 @@ impl TimingRules {
                 text.contains(":empty") || text.contains(":has") || text.contains("[style")
             })
         })
+    }
+
+    /// pyro: the element declaring timeline trigger `name` (`timeline-trigger: <name> <timeline>
+    /// <range>...`) and that item: `el` itself or its nearest ancestor declaring it, else the last
+    /// element in tree order that does (trigger names are document-global without
+    /// `trigger-scope`, which is not supported).
+    pub fn timeline_trigger(&self, dom: &Dom, doc: NodeId, el: NodeId, name: &str, style_of: StyleOf<'_>) -> Option<(NodeId, String)> {
+        let declares = |id: NodeId| -> Option<String> {
+            let lists = self.lists(dom, id, style_of);
+            lists.get(Longhand::TimelineTrigger)?.iter().find(|item| item.split_whitespace().next() == Some(name)).cloned()
+        };
+        let mut at = Some(el);
+        while let Some(id) = at {
+            if let Some(item) = declares(id) {
+                return Some((id, item));
+            }
+            at = dom.parent_element(id).ok().flatten();
+        }
+        self.candidates(dom, doc, Longhand::TimelineTrigger, "timeline-trigger")
+            .into_iter()
+            .filter_map(|id| declares(id).map(|item| (id, item)))
+            .last()
     }
 
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
@@ -702,6 +735,9 @@ impl TimingRules {
                         paused: lists.item(Longhand::AnimationPlayState, i) == "paused",
                         composition: keyword(Longhand::AnimationComposition, i, &COMPOSITIONS),
                     },
+                    trigger: Some(lists.item(Longhand::AnimationTrigger, i))
+                        .filter(|t| !t.is_empty() && *t != "none")
+                        .map(str::to_owned),
                 });
             }
         }
@@ -1234,6 +1270,18 @@ fn has_var(value: &str) -> bool {
 fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>> {
     use style::properties::{CSSWideKeyword, PropertyDeclaration};
     let longhands = longhands_of(property)?;
+    // pyro: the trigger properties, which Stylo does not parse: their items as written.
+    if let [l @ (Longhand::AnimationTrigger | Longhand::TimelineTrigger)] = longhands {
+        let value = value.trim();
+        let lower = value.to_ascii_lowercase();
+        let v = match lower.as_str() {
+            "inherit" => Value::Inherit,
+            "initial" | "unset" | "revert" | "revert-layer" => Value::Initial,
+            "" => return None,
+            _ => Value::List(split_commas(value).into_iter().map(|i| i.split_whitespace().collect::<Vec<_>>().join(" ")).collect()),
+        };
+        return Some(vec![(*l, v)]);
+    }
     let block = crate::stylo::declarations::parse_block(&format!("{property}: {value}"));
     let mut out = Vec::with_capacity(longhands.len());
     for longhand in longhands {

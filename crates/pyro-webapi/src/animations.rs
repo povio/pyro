@@ -306,13 +306,14 @@ pub(crate) fn animate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: Value<'s>, a: &
 
 /// pyro: in a task, hands the page's module (when it has one) the CSS runs again: a run script
 /// controls changed, and its object takes the CSS properties script did not override.
-pub(crate) fn push_css_runs(page: &Rc<PageDom>) {
+/// `create`: made when the realm has none (an animation with a trigger needs its object).
+pub(crate) fn push_css_runs(page: &Rc<PageDom>, create: bool) {
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
         let Some(page) = weak.upgrade().filter(|p| !p.is_disposed()) else { return };
         let Some(realm) = page.main_world_realm() else { return };
         let Ok(s) = realm.scope() else { return };
-        if matches!(existing(&s, &page), Ok(Some(_))) {
+        if create || matches!(existing(&s, &page), Ok(Some(_))) {
             if let Err(error) = with_css_runs(&s, &page) {
                 s.report_exception(&error);
             }
@@ -353,6 +354,12 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                 },
                 match &run.timeline {
                     Some((text, start, end)) => s.array(&[s.string(text), s.string(start), s.string(end)])?.value(),
+                    None => s.null(),
+                },
+                match &run.trigger {
+                    Some((actions, source, decl)) => s
+                        .array(&[s.string(actions), crate::node::wrap_node(s, page, *source)?.value(), s.string(decl)])?
+                        .value(),
                     None => s.null(),
                 },
             ])?

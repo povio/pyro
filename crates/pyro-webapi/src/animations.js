@@ -1750,7 +1750,7 @@
     }
     return null;
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText]) {
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger]) {
     // The engine hands over computed easings; one it could not compute is
     // the initial `ease`, as an easing invalid at computed-value time is.
     let parsed;
@@ -1771,6 +1771,10 @@
     a.cssName = name;
     a.cssId = id;
     a.cssTimelineKey = scrollDriven ? JSON.stringify(timelineText) : null;
+    if (trigger !== null && trigger !== undefined && !scrollDriven) {
+      armTrigger(a, trigger, held);
+      return object;
+    }
     if (scrollDriven) {
       a.scrollDriven = true;
       // (Its `animation-range`, as the engine places it.)
@@ -1805,6 +1809,131 @@
     track(a);
     updateFinished(a, true, false);
     return object;
+  }
+  // ----- animation triggers (CSS Animations 2 `animation-trigger`, `timeline-trigger`) ----
+  // pyro: a CSS animation with an `animation-trigger` naming a timeline trigger waits, held
+  // just before its start (its backwards fill shows), until the trigger's timeline enters the
+  // trigger's activation range: then its first action runs; leaving the active range (the
+  // `/`-given one, else the activation range) runs its second. Actions: play, play-once (once),
+  // play-forwards, play-backwards, pause, reset, replay, none. Its object controls it from then
+  // on (script's: `playState` overridden). `trigger-scope` is not supported.
+  const triggered = new Set();
+  let triggerListening = false;
+  function parseTriggerRanges(text) {
+    // `<range-start> <range-end>`: each `[<name>] [<length-percentage>]`; a lone name covers it.
+    const tokens = text.trim().split(/\s+/).filter(Boolean);
+    const groups = [];
+    for (const tok of tokens) {
+      const last = groups[groups.length - 1];
+      if (RANGE_NAMES.includes(tok) || last === undefined || last.offset !== null) groups.push({ name: null, offset: null });
+      const g = groups[groups.length - 1];
+      if (RANGE_NAMES.includes(tok)) g.name = tok; else g.offset = tok;
+    }
+    const text1 = g => [g.name, g.offset].filter(x => x !== null).join(' ');
+    if (groups.length === 0) return ['normal', 'normal'];
+    if (groups.length === 1) {
+      const g = groups[0];
+      if (g.offset === null) return [g.name + ' 0%', g.name + ' 100%'];
+      return [text1(g), 'normal'];
+    }
+    return [text1(groups[0]), text1(groups[1])];
+  }
+  function parseTrigger(decl, source) {
+    let rest = decl.trim().replace(/^\S+\s*/, '');
+    let timelineText;
+    const fn = /^(view|scroll)\(/.exec(rest);
+    if (fn) {
+      const close = rest.indexOf(')');
+      timelineText = rest.slice(0, close + 1);
+      rest = rest.slice(close + 1);
+    } else {
+      const m = /^(\S+)\s*/.exec(rest);
+      timelineText = m ? m[1] : 'auto';
+      rest = rest.slice(m ? m[0].length : 0);
+    }
+    const [enter, exit] = rest.split('/');
+    const parse = (pair, isEnd) => {
+      try { return parseRange(pair, isEnd, isEnd ? 'rangeEnd' : 'rangeStart'); } catch { return 'normal'; }
+    };
+    const [es, ee] = parseTriggerRanges(enter || '');
+    const range = [parse(es, false), parse(ee, true)];
+    let exitRange = range;
+    if (exit !== undefined) {
+      const [xs, xe] = parseTriggerRanges(exit);
+      exitRange = [parse(xs, false), parse(xe, true)];
+    }
+    return { timeline: cssTimeline(timelineText, source, null), range, exitRange };
+  }
+  function armTrigger(a, [actionsText, source, decl], held) {
+    const words = actionsText.trim().split(/\s+/).slice(1);
+    let t;
+    try { t = parseTrigger(decl, source); } catch { t = null; }
+    a.trigger = { enter: words[0] || 'play', exit: words[1] || 'none', state: 'idle', spec: t, once: false };
+    a.scripted = true;
+    override(a, 'playState');
+    // Untriggered: just before its start (Chromium shows only its backwards fill).
+    a.startTime = null;
+    a.holdTime = held !== null && held < 0 ? held : -1e-6;
+    track(a);
+    updateFinished(a, true, false);
+    triggered.add(a);
+    if (!triggerListening) {
+      triggerListening = true;
+      apply(addListener, globalThis, ['scroll', () => {
+        const later = fn => (requestFrame !== null ? apply(requestFrame, globalThis, [() => schedule(0, fn)]) : schedule(16, fn));
+        later(evaluateTriggers);
+      }, { capture: true, passive: true }]);
+    }
+    // (At the next frame: its timeline has the layout then.)
+    if (requestFrame !== null) apply(requestFrame, globalThis, [() => schedule(0, evaluateTriggers)]); else schedule(16, evaluateTriggers);
+  }
+  function evaluateTriggers() {
+    pushScroll();
+    for (const a of [...triggered]) {
+      if (!a.effect || !isConnected(a.effect.target)) { triggered.delete(a); continue; }
+      const tr = a.trigger;
+      const spec = tr.spec;
+      if (!spec || spec.timeline === null) continue;
+      const now = timelineTime(spec.timeline);
+      if (now === null) continue;
+      const within = ([rs, re]) => {
+        const r = rangeOffsets({ timeline: spec.timeline, rangeStart: rs, rangeEnd: re }) || [0, 100];
+        return now >= r[0] && now <= r[1];
+      };
+      if (tr.state !== 'active' && within(spec.range)) {
+        tr.state = 'active';
+        runTriggerAction(a, tr.enter);
+      } else if (tr.state === 'active' && !within(spec.exitRange)) {
+        tr.state = 'inactive';
+        runTriggerAction(a, tr.exit);
+      }
+    }
+  }
+  function runTriggerAction(a, action) {
+    const tr = a.trigger;
+    switch (action) {
+      case 'play': play(a, false); break;
+      case 'play-once': if (!tr.once) { tr.once = true; play(a, false); } break;
+      case 'play-forwards':
+        if (effectiveRate(a) < 0) a.pendingRate = -effectiveRate(a);
+        play(a, false);
+        break;
+      case 'play-backwards':
+        if (effectiveRate(a) > 0) a.pendingRate = -effectiveRate(a);
+        play(a, false);
+        break;
+      case 'pause': pause(a); break;
+      case 'reset':
+        pause(a);
+        silentlySetCurrentTime(a, effectiveRate(a) < 0 ? endOf(a) : 0);
+        updateFinished(a, true, false);
+        break;
+      case 'replay':
+        silentlySetCurrentTime(a, effectiveRate(a) < 0 ? endOf(a) : 0);
+        play(a, false);
+        break;
+      default: break;
+    }
   }
   // A frame of the engine's (animation_frame.rs, `FRAME_MS`).
   const FRAME_MS = 16;
