@@ -67,7 +67,8 @@ pub(crate) fn is_multicol_style(style: &ComputedValues) -> bool {
     }
     let display = style.clone_display();
     let block_container = match display.inside() {
-        DisplayInside::FlowRoot => true,
+        // pyro: a table cell is a block container too (Chromium makes it a multi-column one).
+        DisplayInside::FlowRoot | DisplayInside::TableCell => true,
         DisplayInside::Flow => display.outside() == DisplayOutside::Block,
         _ => false,
     };
