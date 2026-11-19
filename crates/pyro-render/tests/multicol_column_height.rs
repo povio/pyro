@@ -219,3 +219,26 @@ fn a_spanner_below_a_child_of_the_container_spans_its_columns() {
     assert_eq!(rg_at(&body, 25, 42), blue, "the box in the first column");
     assert_eq!(rg_at(&body, 75, 42), green, "the second column beside it");
 }
+
+/// Size containment sizes a box "as if it had no contents", which still counts what the container
+/// itself lays out: a grid's fixed tracks and gaps, a multi-column container's columns and gaps
+/// (css-contain `contain-size-grid-002`, `contain-size-multicol-001`). Both were 0 wide.
+#[test]
+fn a_size_contained_grid_or_multicol_container_keeps_its_tracks_and_columns() {
+    let b = boxes(
+        "<!doctype html><style>body{margin:0} div{position:absolute;contain:size}</style>\
+         <div id=g style='display:grid;gap:20px;grid-template-columns:auto 80px;grid-template-rows:40px 40px;font-size:80px'>x</div>\
+         <div id=m style='top:200px;columns:2 40px;column-gap:20px;min-height:100px'>filler filler filler filler</div>\
+         <div id=i style='top:400px;display:grid;grid-template-columns:80px;contain-intrinsic-size:30px 10px'>x</div>\
+         <div id=p style='top:500px'>plain</div>",
+        &["g", "m", "i", "p"],
+    );
+    // 0 + 20 + 80 by 40 + 20 + 40.
+    assert_eq!(b[0], [0.0, 0.0, 100.0, 100.0]);
+    // 40 + 20 + 40 wide; its `min-height`.
+    assert_eq!(b[1], [0.0, 200.0, 100.0, 300.0]);
+    // `contain-intrinsic-size` replaces it.
+    assert_eq!(b[2], [0.0, 400.0, 30.0, 410.0]);
+    // Any other box is empty.
+    assert_eq!(b[3], [0.0, 500.0, 0.0, 500.0]);
+}

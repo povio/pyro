@@ -2867,3 +2867,12 @@ sheet takes the new media list and is inserted again, without a new fetch (WPT h
 `href` was removed, so the sheet kept styling: WPT html/semantics/document-metadata `the-link-element/link-rel-attribute`),
 and a sheet whose fetch completes after that is dropped. With the token back the sheet is fetched again, as before.
 Test: `crates/pyro-browser/tests/stylesheets.rs` (`a_link_whose_rel_drops_stylesheet_...`).
+
+## The empty size of a size-contained container (round 5)
+
+`src/layout/mod.rs` (`empty_container_size`, `size_contained_size`): a box with size containment and no
+`contain-intrinsic-size` is sized "as if it had no contents" (css-contain-2 § 3.1), which for a container still counts
+what it lays out itself: a grid's explicit tracks of a fixed size and the gaps between its explicit tracks, and a
+multi-column container's `column-count` columns of `column-width` and their gaps. Both were 0 wide and tall (WPT
+css-contain `contain-size-grid-002`, `contain-size-multicol-001`, `-002`). Horizontal writing modes only. Test
+`a_size_contained_grid_or_multicol_container_keeps_its_tracks_and_columns` (pyro-render).
