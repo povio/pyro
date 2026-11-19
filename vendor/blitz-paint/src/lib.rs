@@ -15,6 +15,7 @@ mod highlight;
 mod kurbo_css;
 mod layers;
 mod palette;
+pub mod reach;
 mod render;
 mod sizing;
 mod text;

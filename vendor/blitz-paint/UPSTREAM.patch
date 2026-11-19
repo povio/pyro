@@ -4911,7 +4911,7 @@ diff --git a/packages/blitz-paint/src/layers.rs b/packages/blitz-paint/src/layer
 diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 --- a/packages/blitz-paint/src/lib.rs
 +++ b/packages/blitz-paint/src/lib.rs
-@@ -3,13 +3,18 @@
+@@ -3,13 +3,19 @@
  
  #![allow(clippy::collapsible_if)]
  
@@ -4927,10 +4927,11 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  mod kurbo_css;
  mod layers;
 +mod palette;
++pub mod reach;
  mod render;
  mod sizing;
  mod text;
-@@ -26,6 +31,11 @@
+@@ -26,6 +32,11 @@
      all(feature = "apple-font-embolden", target_os = "ios"),
  ));
  
@@ -4942,7 +4943,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  /// The default color for text selection highlights
  const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
  
-@@ -50,6 +60,90 @@
+@@ -50,6 +61,90 @@
      x_offset: u32,
      y_offset: u32,
  ) {
@@ -5033,7 +5034,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +153,7 @@
+@@ -59,7 +154,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -5042,7 +5043,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +162,10 @@
+@@ -68,6 +163,10 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -5053,12 +5054,10 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -76,8 +174,136 @@
-     //     CLIP_DEPTH_USED.load(atomic::Ordering::SeqCst),
-     //     CLIPS_WANTED.load(atomic::Ordering::SeqCst)
+@@ -78,6 +177,134 @@
      // );
-+}
-+
+ }
+ 
 +/// One glyph run [`paint_scene_recording_text`] drew.
 +#[derive(Clone, Debug)]
 +pub struct TextRun {
@@ -5074,8 +5073,8 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +    pub glyph_text: Vec<std::ops::Range<u32>>,
 +    /// The run's content area (ascent to descent), in the scene's coordinates.
 +    pub bounds: kurbo::Rect,
- }
- 
++}
++
 +impl TextRun {
 +    /// The run's glyphs in `kept` (indices in drawing order; pyro: `text-overflow` draws a
 +    /// part), whose atoms span `extent` (layout x).
@@ -5384,6 +5383,65 @@ new file mode 100644
 +            bytes.get_mut(at..at + 4)?.copy_from_slice(&[*b, *g, *r, *a]);
 +        }
 +        Some(FontData::new(Blob::new(Arc::new(bytes)), self.font.index))
++    }
++}
+diff --git a/packages/blitz-paint/src/reach.rs b/packages/blitz-paint/src/reach.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-paint/src/reach.rs
+@@ -0,0 +1,54 @@
++//! pyro: which intervals along a line reach into a query interval, output-sensitively (the atomic
++//! inlines of a line an inline box after them paints over: `ElementCx::draw_inline_boxes_over_atomics`).
++
++/// Intervals `[start, end)` sorted by start, with a segment tree of the furthest end in each run
++/// of them: a query visits only the subtrees holding an interval that reaches it, O((k + 1) log n)
++/// nodes for k answers, whatever intervals lie between (a wide one early in the line keeps
++/// reaching every later query without making the others answers).
++pub struct ReachIndex {
++    starts: Vec<f64>,
++    /// `max_end[size + i]` is interval `i`'s end; `max_end[n]` the furthest of its children's.
++    max_end: Vec<f64>,
++    size: usize,
++}
++
++impl ReachIndex {
++    /// `intervals` must be sorted by start.
++    pub fn new(intervals: impl ExactSizeIterator<Item = (f64, f64)>) -> Self {
++        let size = intervals.len().next_power_of_two();
++        let mut starts = Vec::with_capacity(intervals.len());
++        let mut max_end = vec![f64::NEG_INFINITY; 2 * size];
++        for (i, (start, end)) in intervals.enumerate() {
++            debug_assert!(starts.last().is_none_or(|&last| last <= start), "sorted by start");
++            starts.push(start);
++            max_end[size + i] = end;
++        }
++        for n in (1..size).rev() {
++            max_end[n] = max_end[2 * n].max(max_end[2 * n + 1]);
++        }
++        Self { starts, max_end, size }
++    }
++
++    /// The indices (ascending) of the intervals that start before `end` and end after `start`,
++    /// and how many tree nodes the search visited.
++    pub fn query(&self, start: f64, end: f64) -> (Vec<usize>, usize) {
++        let upto = self.starts.partition_point(|&s| s < end);
++        let mut out = Vec::new();
++        let mut visited = 0;
++        let mut stack = vec![(1usize, 0usize, self.size)];
++        while let Some((node, lo, hi)) = stack.pop() {
++            visited += 1;
++            if lo >= upto || self.max_end[node] <= start {
++                continue;
++            }
++            if hi - lo == 1 {
++                out.push(lo);
++                continue;
++            }
++            let mid = (lo + hi) / 2;
++            stack.push((2 * node + 1, mid, hi));
++            stack.push((2 * node, lo, mid));
++        }
++        (out, visited)
 +    }
 +}
 diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/render.rs
@@ -8402,7 +8460,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let (custom_thumb, custom_track) = match self.node.scrollbar_color() {
              ScrollbarColor::Auto => (None, None),
              ScrollbarColor::Colors { thumb, track } => {
-@@ -967,259 +3190,3559 @@
+@@ -967,259 +3190,3555 @@
          }
      }
  
@@ -10944,10 +11002,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>, vertical: bool| {
 +            let along = |rect: Rect| if vertical { (rect.y0, rect.y1) } else { (rect.x0, rect.x1) };
 +            // Per line with atomics: their device rects in tree order numbers, sorted by where
-+            // they start along the line, with the furthest end so far (to stop a search early).
++            // they start along the line, and the index of what reaches where (`ReachIndex`:
++            // output-sensitive, whatever boxes lie between).
 +            struct LineAtomics {
 +                atomics: Vec<(f64, f64, usize, Rect)>,
-+                max_end: Vec<f64>,
++                reach: crate::reach::ReachIndex,
 +            }
 +            let mut lines: Vec<Option<LineAtomics>> = Vec::new();
 +            lines.resize_with(atomics.len(), || None);
@@ -10966,22 +11025,17 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        })
 +                        .collect();
 +                    list.sort_by(|a, b| a.0.total_cmp(&b.0));
-+                    let mut furthest = f64::NEG_INFINITY;
-+                    let max_end = list.iter().map(|a| { furthest = furthest.max(a.1); furthest }).collect();
-+                    LineAtomics { atomics: list, max_end }
++                    let reach = crate::reach::ReachIndex::new(list.iter().map(|a| (a.0, a.1)));
++                    LineAtomics { atomics: list, reach }
 +                });
 +                let fragment_rect = fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size));
 +                let (start, end) = along(fragment_rect);
-+                // The atomics starting before the fragment ends, back to the last that may still
-+                // reach into it; in tree order, as the line paints them.
-+                let upto = line.atomics.partition_point(|a| a.0 < end);
-+                let mut from = upto;
-+                while from > 0 && line.max_end[from - 1] > start {
-+                    from -= 1;
-+                }
-+                let mut hits: Vec<(usize, Rect)> = line.atomics[from..upto]
-+                    .iter()
-+                    .filter(|a| a.1 > start && a.2 < fragment_order)
++                // The atomics that reach into the fragment, in tree order, as the line paints them.
++                let (reaching, _) = line.reach.query(start, end);
++                let mut hits: Vec<(usize, Rect)> = reaching
++                    .into_iter()
++                    .map(|i| &line.atomics[i])
++                    .filter(|a| a.2 < fragment_order)
 +                    .filter_map(|a| {
 +                        let meet = fragment_rect.intersect(a.3);
 +                        (meet.width() > 0.0 && meet.height() > 0.0).then_some((a.2, meet))
@@ -12191,7 +12245,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6752,60 @@
+@@ -1229,9 +6748,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12254,7 +12308,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6827,20 @@
+@@ -1253,9 +6823,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12278,7 +12332,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6851,209 @@
+@@ -1266,26 +6847,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12490,7 +12544,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7061,38 @@
+@@ -1293,15 +7057,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12530,7 +12584,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7103,108 @@
+@@ -1312,7 +7099,108 @@
          );
      }
  
@@ -12639,7 +12693,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7221,22 @@
+@@ -1329,9 +7217,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12665,7 +12719,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7252,28 @@
+@@ -1347,10 +7248,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12694,7 +12748,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7281,23 @@
+@@ -1358,8 +7277,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12719,7 +12773,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7321,27 @@
+@@ -1383,22 +7317,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12756,7 +12810,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7370,32 @@
+@@ -1427,6 +7366,32 @@
      }
  }
  
@@ -12789,7 +12843,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7407,13 @@
+@@ -1438,6 +7403,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12803,7 +12857,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7433,364 @@
+@@ -1457,12 +7429,364 @@
          }
      };
      let s_border = style.get_border();

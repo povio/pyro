@@ -5555,10 +5555,11 @@ impl ElementCx<'_, '_> {
         let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>, vertical: bool| {
             let along = |rect: Rect| if vertical { (rect.y0, rect.y1) } else { (rect.x0, rect.x1) };
             // Per line with atomics: their device rects in tree order numbers, sorted by where
-            // they start along the line, with the furthest end so far (to stop a search early).
+            // they start along the line, and the index of what reaches where (`ReachIndex`:
+            // output-sensitive, whatever boxes lie between).
             struct LineAtomics {
                 atomics: Vec<(f64, f64, usize, Rect)>,
-                max_end: Vec<f64>,
+                reach: crate::reach::ReachIndex,
             }
             let mut lines: Vec<Option<LineAtomics>> = Vec::new();
             lines.resize_with(atomics.len(), || None);
@@ -5577,22 +5578,17 @@ impl ElementCx<'_, '_> {
                         })
                         .collect();
                     list.sort_by(|a, b| a.0.total_cmp(&b.0));
-                    let mut furthest = f64::NEG_INFINITY;
-                    let max_end = list.iter().map(|a| { furthest = furthest.max(a.1); furthest }).collect();
-                    LineAtomics { atomics: list, max_end }
+                    let reach = crate::reach::ReachIndex::new(list.iter().map(|a| (a.0, a.1)));
+                    LineAtomics { atomics: list, reach }
                 });
                 let fragment_rect = fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size));
                 let (start, end) = along(fragment_rect);
-                // The atomics starting before the fragment ends, back to the last that may still
-                // reach into it; in tree order, as the line paints them.
-                let upto = line.atomics.partition_point(|a| a.0 < end);
-                let mut from = upto;
-                while from > 0 && line.max_end[from - 1] > start {
-                    from -= 1;
-                }
-                let mut hits: Vec<(usize, Rect)> = line.atomics[from..upto]
-                    .iter()
-                    .filter(|a| a.1 > start && a.2 < fragment_order)
+                // The atomics that reach into the fragment, in tree order, as the line paints them.
+                let (reaching, _) = line.reach.query(start, end);
+                let mut hits: Vec<(usize, Rect)> = reaching
+                    .into_iter()
+                    .map(|i| &line.atomics[i])
+                    .filter(|a| a.2 < fragment_order)
                     .filter_map(|a| {
                         let meet = fragment_rect.intersect(a.3);
                         (meet.width() > 0.0 && meet.height() > 0.0).then_some((a.2, meet))

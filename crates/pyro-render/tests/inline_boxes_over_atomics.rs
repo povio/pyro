@@ -97,3 +97,38 @@ fn thousands_of_alternating_atomic_inlines_and_boxes_paint_in_linear_time() {
         assert!(took.as_secs() < 10, "nowrap {nowrap}: {took:?}");
     }
 }
+
+/// A wide atomic inline first, its advance cancelled by a negative right margin, reaches every
+/// later box of the line: a search that walks back over every atomic that might still reach a
+/// span is quadratic here, with only one or two real overlaps per span. Each span still paints
+/// over the wide box.
+#[test]
+fn a_wide_first_atomic_inline_keeps_the_search_output_sensitive() {
+    let item = "<i style='display:inline-block;width:6px;height:6px'></i><b style='background:blue'>x</b>";
+    let html = format!(
+        "<!doctype html><body style='margin:0;font:8px/10px monospace'><div style='white-space:nowrap'>\
+         <i style='display:inline-block;width:400000px;height:6px;margin-right:-400000px;background:red'></i>{}</div>",
+        item.repeat(2000)
+    );
+    let image = render(&html, 800, 60);
+    let blue = (0..800).filter(|&x| (0..60).any(|y| rgb(&image, x, y) == [0, 0, 255])).count();
+    assert!(blue > 200, "the spans paint over the wide box ({blue} columns blue)");
+
+    // The search itself (`blitz_paint::reach::ReachIndex`), counted rather than timed: the same
+    // line of 100000 atomics, each span between two of them.
+    let n = 100_000usize;
+    let mut intervals = vec![(0.0, 1e9)];
+    intervals.extend((0..n).map(|i| (i as f64 * 20.0, i as f64 * 20.0 + 6.0)));
+    let index = blitz_paint::reach::ReachIndex::new(intervals.iter().copied());
+    let log = (n + 1).next_power_of_two().trailing_zeros() as usize + 1;
+    let mut total = 0;
+    for i in 0..n {
+        let (start, end) = (i as f64 * 20.0 + 6.0, i as f64 * 20.0 + 14.0);
+        let (hits, visited) = index.query(start, end);
+        assert_eq!(hits, vec![0], "only the wide atomic reaches the span after atomic {i}");
+        assert!(visited <= 4 * (hits.len() + 1) * log, "{visited} nodes visited for {} hits", hits.len());
+        total += visited;
+    }
+    // (The walk back over every earlier atomic visited n * n / 2 = 5e9.)
+    assert!(total < n * 4 * 2 * log, "{total}");
+}
