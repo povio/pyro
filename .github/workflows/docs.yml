@@ -5,7 +5,9 @@ name: Docs
 # The deploy needs the project's deploy key as the ROBODEV_DEPLOY_KEY secret
 # (Robodev project → Connect → Deploy keys); without it the deploy step is skipped.
 # The WPT status pages (/status/wpt.html) are generated from the wpt-results branch (bench/wpt/status-export.mjs),
-# so the site also rebuilds after each successful WPT run on main, whose `status` job pushes that branch. (A push to
+# so the site also rebuilds after each whole-suite run on main (WPT full: nightly, and after each push's WPT run), whose
+# `status` job pushes that branch. It does not rebuild after the gate run alone: that would publish a new commit
+# beside the previous commit's whole-suite numbers. (A push to
 # wpt-results itself starts nothing: GitHub reads a push's workflows from the pushed branch, which has none.)
 
 on:
@@ -21,7 +23,7 @@ on:
       - .github/workflows/docs.yml
       - bench/wpt/status-export.mjs
   workflow_run:
-    workflows: [WPT, WPT full]
+    workflows: [WPT full]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -36,7 +38,6 @@ concurrency:
 jobs:
   build:
     # WPT full exports from its own status job, which runs even when a shard failed.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.name == 'WPT full' }}
     runs-on: ubuntu-24.04
     defaults:
       run:
