@@ -549,12 +549,18 @@ pub(crate) fn shift_from_parent(
         (AlignmentBaseline::TextTop, _) | (AlignmentBaseline::TextOver, None) => parent.ascent - over,
         (AlignmentBaseline::TextBottom, _) | (AlignmentBaseline::TextUnder, None) => under - parent.descent,
         (AlignmentBaseline::Middle, _) => parent.x_height / 2. - (over - under) / 2.,
-        // (A box's x-middle baseline is synthesized as Blink does it here: its alphabetic
-        // baseline; WPT css-inline `alignment-baseline-horizontal-003`.)
-        (AlignmentBaseline::XMiddle, None) => 0.,
+        // pyro: the x-middle baseline is halfway between the alphabetic baseline and the
+        // x-height (the font's `BASE` alphabetic baseline need not be its glyph origin); a box's
+        // is synthesized at its middle (WPT css-inline `alignment-baseline-horizontal-002/003`).
+        (AlignmentBaseline::XMiddle, None) => {
+            (parent_named.alphabetic + parent.x_height) / 2. - (over - under) / 2.
+        }
         (AlignmentBaseline::TextOver, Some((ascent, _, _))) => parent.ascent - ascent,
         (AlignmentBaseline::TextUnder, Some((_, descent, _))) => descent - parent.descent,
-        (AlignmentBaseline::XMiddle, Some((_, _, x_height))) => parent.x_height / 2. - x_height / 2.,
+        (AlignmentBaseline::XMiddle, Some((_, _, x_height))) => {
+            (parent_named.alphabetic + parent.x_height) / 2.
+                - (named.map_or(0., |own| own.alphabetic) + x_height) / 2.
+        }
     };
     let shift = match align.shift {
         BaselineShift::Length(length) | BaselineShift::LineHeight(length) => length,

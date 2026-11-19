@@ -4464,7 +4464,7 @@ index 4eccc6c..9dc98a3 100644
  
          gaps
 diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
-index 7b7b147..7278cdc 100644
+index 7b7b147..cca543c 100644
 --- a/src/layout/style_metrics.rs
 +++ b/src/layout/style_metrics.rs
 @@ -56,7 +56,7 @@ use fontique::{Query, QueryFamily};
@@ -4870,7 +4870,7 @@ index 7b7b147..7278cdc 100644
          }
      }
  }
-@@ -277,16 +521,43 @@ pub(crate) fn shift_from_parent(
+@@ -277,16 +521,49 @@ pub(crate) fn shift_from_parent(
      align: VerticalAlign,
      over: f32,
      under: f32,
@@ -4907,12 +4907,18 @@ index 7b7b147..7278cdc 100644
 +        (AlignmentBaseline::TextTop, _) | (AlignmentBaseline::TextOver, None) => parent.ascent - over,
 +        (AlignmentBaseline::TextBottom, _) | (AlignmentBaseline::TextUnder, None) => under - parent.descent,
 +        (AlignmentBaseline::Middle, _) => parent.x_height / 2. - (over - under) / 2.,
-+        // (A box's x-middle baseline is synthesized as Blink does it here: its alphabetic
-+        // baseline; WPT css-inline `alignment-baseline-horizontal-003`.)
-+        (AlignmentBaseline::XMiddle, None) => 0.,
++        // pyro: the x-middle baseline is halfway between the alphabetic baseline and the
++        // x-height (the font's `BASE` alphabetic baseline need not be its glyph origin); a box's
++        // is synthesized at its middle (WPT css-inline `alignment-baseline-horizontal-002/003`).
++        (AlignmentBaseline::XMiddle, None) => {
++            (parent_named.alphabetic + parent.x_height) / 2. - (over - under) / 2.
++        }
 +        (AlignmentBaseline::TextOver, Some((ascent, _, _))) => parent.ascent - ascent,
 +        (AlignmentBaseline::TextUnder, Some((_, descent, _))) => descent - parent.descent,
-+        (AlignmentBaseline::XMiddle, Some((_, _, x_height))) => parent.x_height / 2. - x_height / 2.,
++        (AlignmentBaseline::XMiddle, Some((_, _, x_height))) => {
++            (parent_named.alphabetic + parent.x_height) / 2.
++                - (named.map_or(0., |own| own.alphabetic) + x_height) / 2.
++        }
      };
      let shift = match align.shift {
 -        BaselineShift::Length(length) => length,
@@ -4920,7 +4926,7 @@ index 7b7b147..7278cdc 100644
          // Constants as used by WebKit and Blink.
          BaselineShift::Sub => -(parent.font_size / 5.),
          BaselineShift::Super => parent.font_size / 3.,
-@@ -321,21 +592,39 @@ pub(crate) fn inline_box_placement(
+@@ -321,21 +598,39 @@ pub(crate) fn inline_box_placement(
      parent_style: u16,
      style_metrics: &[StyleMetrics],
      quantize: bool,
@@ -4964,7 +4970,7 @@ index 7b7b147..7278cdc 100644
          },
          ascent,
          descent,
-@@ -366,3 +655,11 @@ fn first_available_font<B: Brush>(
+@@ -366,3 +661,11 @@ fn first_available_font<B: Brush>(
          synthesis: font.synthesis,
      })
  }
