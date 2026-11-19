@@ -1099,6 +1099,17 @@ impl ScriptFetch {
     }
 }
 
+/// pyro: whether `resource` is CORS-cross-origin (its tainting "opaque", Fetch): the response's
+/// own tainting (a no-cors redirect chain through another origin is opaque though it ends at this
+/// one), else the final URL's origin for a loader that does not report it.
+pub(crate) fn is_opaque(resource: &Resource, cors: bool, document_origin: &str) -> bool {
+    resource.opaque
+        || (!cors && {
+            let origin = origin_of(&resource.url);
+            origin != "null" && origin != document_origin
+        })
+}
+
 /// SRI for a fetched response: `None` when it may be used, else the
 /// console message. A cross-origin response fetched without CORS is opaque
 /// and never matches (Fetch: integrity metadata on a no-cors request).
@@ -1109,15 +1120,7 @@ pub(crate) fn integrity_error(
     document_origin: &str,
 ) -> Option<String> {
     let integrity = integrity.filter(|v| !pyro_webapi::sri::is_empty(v))?;
-    // pyro: the response's own tainting (a no-cors redirect chain through another origin is
-    // opaque though it ends at this one), else the final URL's origin for a loader that does
-    // not report it.
-    let opaque = resource.opaque
-        || (!cors && {
-            let origin = origin_of(&resource.url);
-            origin != "null" && origin != document_origin
-        });
-    if opaque {
+    if is_opaque(resource, cors, document_origin) {
         return Some(format!(
             "Subresource Integrity: The resource '{}' has an integrity attribute, but the resource requires the \
              request to be CORS enabled to check the integrity, and it is not. The resource has been blocked \

@@ -241,3 +241,69 @@ fn css_import_rules_keep_their_own_request_and_final_url() {
     assert!(loader.log.borrow().iter().any(|u| u == "http://site.test/dir/b.css"), "{:?}", loader.log.borrow());
     assert!(!loader.log.borrow().iter().any(|u| u == "http://site.test/b.css"), "{:?}", loader.log.borrow());
 }
+
+/// CSSOM: a style sheet whose response is CORS-cross-origin is not origin-clean: reading its
+/// `cssRules` or `rules` and calling `insertRule` or `deleteRule` throw a SecurityError. That
+/// covers a `<link>`ed sheet from another origin fetched without CORS, an `@import`ed one, and a
+/// redirect through another origin that ends at the document's own (a tainted response), and a
+/// network error's sheet; a
+/// same-origin sheet and a CORS one stay readable (security review cycle 2, HIGH 2).
+#[test]
+fn rules_of_a_sheet_that_is_not_origin_clean_throw() {
+    struct Tainting(Rc<StaticLoader>);
+    impl pyro_browser::ResourceLoader for Tainting {
+        fn fetch(&self, browser: &mut pyro_browser::Browser, request: pyro_browser::FetchRequest, done: pyro_browser::FetchDone) {
+            // `/tainted.css` came back through another origin (no CORS): opaque, at its own URL.
+            let tainted = request.url.ends_with("/tainted.css");
+            self.0.fetch(browser, request, Box::new(move |b, result| done(b, result.map(|mut r| {
+                r.opaque |= tainted;
+                r
+            }))));
+        }
+    }
+    let (mut thread, page, loader) = setup(
+        "<link id=same rel=stylesheet href=same.css>\
+         <link id=other rel=stylesheet href=http://other.test/a.css>\
+         <link id=tainted rel=stylesheet href=tainted.css>\
+         <link id=cors rel=stylesheet crossorigin href=http://other.test/cors.css>\
+         <link id=failed rel=stylesheet href=missing.css>\
+         <style id=s>@import url(\"http://other.test/i.css\");</style>",
+    );
+    for (url, css) in [
+        ("http://site.test/same.css", "p { color: green }"),
+        ("http://other.test/a.css", "p { color: red }"),
+        ("http://site.test/tainted.css", "p { color: blue }"),
+        ("http://other.test/cors.css", "p { margin: 0 }"),
+        ("http://other.test/i.css", "p { padding: 0 }"),
+    ] {
+        loader.insert(url, "text/css", css, Duration::ZERO);
+    }
+    thread.browser.set_loader(Some(Rc::new(Tainting(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let probe = |id: &str| {
+        eval(
+            &thread,
+            page,
+            &format!(
+                "(() => {{ const e = document.getElementById('{id}'); \
+                 const sheet = e.localName === 'style' ? e.sheet.cssRules[0].styleSheet : e.sheet; \
+                 if (!sheet) return 'no sheet'; \
+                 return ['cssRules', 'rules', 'insertRule', 'deleteRule'].map(what => {{ try {{ \
+                   if (what === 'insertRule') sheet.insertRule('q {{ }}', 0); \
+                   else if (what === 'deleteRule') sheet.deleteRule(0); \
+                   else sheet[what].length; \
+                   return 'ok'; }} catch (x) {{ return x.name; }} }}).join(','); }})()"
+            ),
+        )
+    };
+    assert_eq!(probe("same"), "ok,ok,ok,ok");
+    let thrown = "SecurityError,SecurityError,SecurityError,SecurityError";
+    assert_eq!(probe("other"), thrown);
+    assert_eq!(probe("tainted"), thrown);
+    assert_eq!(probe("s"), thrown);
+    // A network error is no CORS-same-origin response either (as Chrome: the sheet it leaves).
+    assert_eq!(probe("failed"), thrown);
+    // A CORS request: the static loader answers it as a CORS-same-origin response.
+    assert_eq!(probe("cors"), "ok,ok,ok,ok");
+}

@@ -236,8 +236,10 @@ impl Browser {
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
             let Some(bindings) = weak.upgrade() else { return };
             // SRI: a mismatching (or opaque) response is a network error.
-            let result = result.and_then(|r| {
+            let result = result.and_then(|mut r| {
                 let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                // pyro: its tainting, which the sheet's origin-clean flag follows (CSSOM).
+                r.opaque = crate::loader::is_opaque(&r, cors, &origin);
                 match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
                     Some(e) => {
                         b.report_console_error(page, &e);
@@ -298,6 +300,9 @@ impl Browser {
         let environment = link_environment(bindings, node);
         let quirks = bindings.dom.borrow().is_quirks_mode(bindings.document());
         let sheet_url = result.as_ref().map(|r| r.url.clone()).unwrap_or_default();
+        // pyro: a CORS-cross-origin response's sheet is not origin-clean (CSSOM), nor (as
+        // Chrome) a network error's, which is no CORS-same-origin response either.
+        let opaque = result.as_ref().map_or(true, |r| r.opaque);
         if let Some(policy) = result.as_ref().ok().and_then(|r| r.referrer_policy) {
             sheets.referrer_policies.insert(sheet_url.clone(), policy);
         }
@@ -323,8 +328,10 @@ impl Browser {
         if let Some(text) = text {
             sheet.bytes = text.len();
             sheets.bytes += text.len();
+            bindings.set_sheet_origin_clean(node, !opaque);
             bindings.set_stylesheet_text(node, &text);
         } else {
+            bindings.set_sheet_origin_clean(node, !opaque);
             remove_sheet(bindings, node);
         }
         drop(state);
@@ -552,9 +559,13 @@ impl Browser {
         let request_key = pyro_dom::cssom::import_key(&url, &import);
         let document_origin = self.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
-            let result = result.and_then(|r| match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &document_origin) {
-                Some(message) => Err(message),
-                None => Ok(r),
+            let result = result.and_then(|mut r| {
+                // pyro: its tainting, which the sheet's origin-clean flag follows (CSSOM).
+                r.opaque = crate::loader::is_opaque(&r, cors, &document_origin);
+                match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &document_origin) {
+                    Some(message) => Err(message),
+                    None => Ok(r),
+                }
             });
             b.style_import_done(
                 page,
@@ -657,7 +668,7 @@ impl Browser {
             // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
             if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
                 // pyro: under its request (URL and modifiers), at its URL after redirects.
-                bindings.provide_imported_sheet(request_key, &r.url, &text);
+                bindings.provide_imported_sheet(request_key, &r.url, &text, r.opaque);
             }
             // The page's layouts take this sheet rather than fetching it
             // again (they read `file:` and `data:` URLs themselves), decoded

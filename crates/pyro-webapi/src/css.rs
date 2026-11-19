@@ -1332,10 +1332,12 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
         // pyro: the sheet of this rule's request (URL and modifiers), at its URL after redirects.
         let import = pyro_dom::cssom::import_request(&rule_prelude(r)).unwrap_or_default();
         let request = pyro_dom::cssom::import_key(&url, &import);
-        let Some((final_url, text)) = page.imported_sheets.borrow().get(&request).cloned() else { return Ok(s.null()) };
+        let Some((final_url, text, opaque)) = page.imported_sheets.borrow().get(&request).cloned() else {
+            return Ok(s.null());
+        };
         let media = media_text(&pyro_dom::cssom::import_split(&rule_prelude(r)).1);
         let rule = RuleData { owner: r.owner.hold()?, node: r.node.clone() };
-        let sheet = Constructed::imported(&page, final_url, &text, media, rule);
+        let sheet = Constructed::imported(&page, final_url, &text, media, rule, opaque);
         Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))?.value())
     });
     // The condition of `supports(...)`, or null.
@@ -1647,6 +1649,8 @@ pub struct Constructed {
 pub struct ImportInfo {
     href: String,
     rule: RuleData,
+    /// pyro: the sheet's response was CORS-cross-origin: not origin-clean (CSSOM).
+    opaque: bool,
 }
 
 impl Constructed {
@@ -1674,7 +1678,14 @@ impl Constructed {
 
     /// The sheet `rule` imports from `href`, with the rules of `text`. It
     /// applies nothing of its own: the style engine loads imports itself.
-    fn imported(page: &Rc<PageDom>, href: String, text: &str, media: String, rule: RuleData) -> Rc<Constructed> {
+    fn imported(
+        page: &Rc<PageDom>,
+        href: String,
+        text: &str,
+        media: String,
+        rule: RuleData,
+        opaque: bool,
+    ) -> Rc<Constructed> {
         static NEXT_SHEET: AtomicU64 = AtomicU64::new(1 << 40);
         let id = NEXT_SHEET.fetch_add(1, Ordering::Relaxed);
         let mut namespaces = Vec::new();
@@ -1694,7 +1705,7 @@ impl Constructed {
             }),
             media: RefCell::new(media),
             disabled: Cell::new(false),
-            import: Some(ImportInfo { href, rule }),
+            import: Some(ImportInfo { href, rule, opaque }),
         });
         sheet.model.list.replace(rules);
         sheet
@@ -1782,6 +1793,19 @@ impl SheetOwner {
     }
     fn is_constructed(&self) -> bool {
         matches!(self, SheetOwner::Constructed(c) if c.import.is_none())
+    }
+    /// pyro: CSSOM: reading or changing the rules of a sheet that is not origin-clean (its
+    /// response was CORS-cross-origin, a redirect through another origin too) throws.
+    fn check_origin_clean(&self) -> JsResult<()> {
+        let clean = match self {
+            SheetOwner::Node(h) => h.page.sheet_origin_clean(h.id),
+            SheetOwner::Constructed(c) => !c.import.as_ref().is_some_and(|i| i.opaque),
+        };
+        if clean {
+            Ok(())
+        } else {
+            Err(JsError::dom("SecurityError", "Cannot access rules"))
+        }
     }
     fn wrapper<'s>(&self, s: &Scope<'s>) -> JsResult<Object<'s>> {
         match self {
@@ -2140,6 +2164,7 @@ impl JsClass for CssStyleSheet {
         def.getter("rules", rules_value);
         def.method("insertRule", 1, |s, sh, a| {
             let rule = arg_string(&a, 0, "CSSStyleSheet.insertRule")?;
+            sh.owner.check_origin_clean()?;
             let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
             let model = sh.owner.model();
             let namespaces = model.namespaces.borrow().clone();
@@ -2151,6 +2176,7 @@ impl JsClass for CssStyleSheet {
             // Legacy: `addRule(selector, style, index)` inserts
             // `selector { style }` at `index` (the end by default); -1.
             let selector = if a.get(0).is_undefined() { "undefined".to_owned() } else { dom_string(a.get(0))? };
+            sh.owner.check_origin_clean()?;
             let block = if a.get(1).is_undefined() { "undefined".to_owned() } else { dom_string(a.get(1))? };
             let model = sh.owner.model();
             let index =
@@ -2164,6 +2190,7 @@ impl JsClass for CssStyleSheet {
         def.method("deleteRule", 1, |s, sh, a| {
             a.require(1, "CSSStyleSheet.deleteRule")?;
             let index = to_u32(a.get(0))? as usize;
+            sh.owner.check_origin_clean()?;
             let model = sh.owner.model();
             delete_from(&model.list, index)?;
             sh.owner.commit(&model);
@@ -2171,6 +2198,7 @@ impl JsClass for CssStyleSheet {
         });
         def.method("removeRule", 0, |s, sh, a| {
             let index = if a.get(0).is_undefined() { 0 } else { to_u32(a.get(0))? as usize };
+            sh.owner.check_origin_clean()?;
             let model = sh.owner.model();
             delete_from(&model.list, index)?;
             sh.owner.commit(&model);
@@ -2211,6 +2239,7 @@ impl JsClass for CssStyleSheet {
 }
 
 fn rules_value<'s>(s: &Scope<'s>, sh: &SheetData) -> JsResult<Value<'s>> {
+    sh.owner.check_origin_clean()?;
     rule_list(s, sh.owner.key(), &sh.owner, None)
 }
 
