@@ -126,3 +126,25 @@ fn columns_after_a_spanner_fit_what_is_left_of_a_definite_height() {
     assert_eq!(rg_at(body, 90, 80), (255, 0), "a fourth column takes the rest");
     assert_eq!(rg_at(body, 10, 105), (255, 255), "nothing below the container");
 }
+
+/// `column-height: 0`: a column holds a box of size containment whole (it is monolithic and
+/// overflows the column), so each of the ten 20px boxes has a column, two per row, the rows 0px
+/// tall and a 20px row gap apart. The boxes were cut at each column's end (css-multicol
+/// `column-height-023`).
+#[test]
+fn a_size_contained_box_is_not_cut_at_the_end_of_a_column_it_is_taller_than() {
+    let items: String = (0..10).map(|i| format!("<div id=i{i} style='contain:size;height:20px'></div>")).collect();
+    let ids: Vec<String> = (0..10).map(|i| format!("i{i}")).collect();
+    let mut wanted: Vec<&str> = vec!["c"];
+    wanted.extend(ids.iter().map(String::as_str));
+    let b = boxes(
+        &format!("<!doctype html><style>body{{margin:0}}</style><div id=c style='columns:2 / 0;width:100px;gap:20px 0;column-fill:auto'>{items}</div>"),
+        &wanted,
+    );
+    // Five rows of height 0 and four gaps.
+    assert_eq!(b[0], [0.0, 0.0, 100.0, 80.0]);
+    for (i, item) in b[1..].iter().enumerate() {
+        let (x, y) = ((i % 2) as f64 * 50.0, (i / 2) as f64 * 20.0);
+        assert_eq!(*item, [x, y, x + 50.0, y + 20.0], "box {i}");
+    }
+}

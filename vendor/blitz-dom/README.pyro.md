@@ -2799,6 +2799,11 @@ all, and a combining mark the transform removed (Greek uppercase drops the acute
   `column-height: auto` wraps at the container's definite height, its last row balanced under `column-fill: balance`.
   WPT css-multicol `column-height-*` 14 of 30 (abspos in a positioned multicol container and `column-height: 0` are
   not done). `pyro-render/tests/multicol_column_height.rs`.
+  Round 5 (`Breaks::whole`, `Breaks::fill`): a box of size containment taller than a column is not cut at the column's
+  end: the column holds it whole and it overflows (css-contain-2 § 3.1: it is monolithic). `column-height: 0` so gives
+  each such box a column (WPT `column-height-023`; `nested-past-fragmentation-line` too). Other boxes no break goes
+  into (nested multi-column containers, scroll containers, replaced elements) are still cut, which is how a nested
+  container continues in the next column.
 - Round 4 lane S4, `layout/multicol.rs` `fragmentable`: a box of size containment is monolithic (CSS Contain 2 § 3.1),
   so balancing does not split it (a `contain: size` float in columns). WPT css-multicol `multicol-fill-balance-*`,
   css-contain `contain-size-multicol-*`.

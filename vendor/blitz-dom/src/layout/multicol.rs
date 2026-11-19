@@ -195,6 +195,9 @@ struct Breaks {
     /// What no break may go through at all (unless it is taller than a column): line boxes and
     /// monolithic boxes. Merged.
     loose: Vec<(f32, f32)>,
+    /// pyro: the boxes of size containment among `loose`: never cut, even when taller than a
+    /// column. Merged.
+    whole: Vec<(f32, f32)>,
     /// The space between consecutive in-flow blocks (their margins): a column after a break in it
     /// starts at its end. Sorted by start.
     gaps: Vec<(f32, f32)>,
@@ -317,7 +320,15 @@ impl Breaks {
                     let (loose, loose_short) = Self::break_before(&self.loose, start, limit);
                     note(&mut run, loose_short);
                     // Taller than a column: cut where the column ends.
-                    loose.unwrap_or(limit)
+                    // pyro: but a box of size containment is not cut: the column holds it whole
+                    // and it overflows the column (css-contain-2 § 3.1, css-break-3 § 4.4: WPT
+                    // css-multicol `column-height-023`, columns of height 0). (Other boxes no break
+                    // goes into, nested multi-column containers among them, are still cut: that
+                    // is how they continue in the next column.)
+                    loose.unwrap_or_else(|| match containing(&self.whole, limit) {
+                        Some((a, b)) if a <= start + EPSILON => b,
+                        _ => limit,
+                    })
                 }
             };
             let (end, next) = self.break_at(end);
@@ -953,6 +964,7 @@ impl BaseDocument {
             end,
             strict: merge(found.strict),
             loose: merge(found.loose),
+            whole: merge(found.whole),
             gaps: found.gaps,
             trims: found.trims,
             forced: found.forced,
@@ -1119,6 +1131,9 @@ impl BaseDocument {
             } else {
                 found.strict.push((child_top, child_bottom));
                 found.loose.push((child_top, child_bottom));
+                if style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE) {
+                    found.whole.push((child_top, child_bottom));
+                }
             }
         }
     }
@@ -1129,6 +1144,8 @@ impl BaseDocument {
 struct Found {
     strict: Vec<(f32, f32)>,
     loose: Vec<(f32, f32)>,
+    /// pyro: see [`Breaks::whole`].
+    whole: Vec<(f32, f32)>,
     gaps: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::trims`].
     trims: Vec<(f32, f32, f32, f32)>,
@@ -1172,7 +1189,16 @@ mod tests {
     use super::*;
 
     fn breaks(strict: Vec<(f32, f32)>, loose: Vec<(f32, f32)>, end: f32) -> Breaks {
-        Breaks { start: 0.0, end, strict: merge(strict), loose: merge(loose), gaps: Vec::new(), trims: Vec::new(), forced: Vec::new() }
+        Breaks {
+            start: 0.0,
+            end,
+            strict: merge(strict),
+            loose: merge(loose),
+            whole: Vec::new(),
+            gaps: Vec::new(),
+            trims: Vec::new(),
+            forced: Vec::new(),
+        }
     }
 
     #[test]
