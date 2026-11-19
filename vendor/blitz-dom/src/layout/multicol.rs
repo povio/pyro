@@ -1483,7 +1483,10 @@ impl LayoutPassState<'_> {
         inputs.available_space.width = AvailableSpace::Definite(width);
         // (A table is as wide as its content needs in that width, not stretched: Chromium; WPT
         // css-multicol `multicol-span-all-005`.)
-        if ls.size().width.is_auto() && !node.flags.is_table_root() {
+        let replaced = node.element_data().is_some_and(super::replaced::is_replaced);
+        // (Nor a replaced element: its `auto` width is its own, Chromium; WPT css-multicol
+        // `replaced-content-spanner-auto-width`.)
+        if ls.size().width.is_auto() && !node.flags.is_table_root() && !replaced {
             inputs.known_dimensions.width = Some((width - margin.left - margin.right).max(0.0));
         }
         inputs

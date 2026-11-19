@@ -20319,7 +20319,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2381 @@
+@@ -0,0 +1,2384 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -21805,7 +21805,10 @@ new file mode 100644
 +        inputs.available_space.width = AvailableSpace::Definite(width);
 +        // (A table is as wide as its content needs in that width, not stretched: Chromium; WPT
 +        // css-multicol `multicol-span-all-005`.)
-+        if ls.size().width.is_auto() && !node.flags.is_table_root() {
++        let replaced = node.element_data().is_some_and(super::replaced::is_replaced);
++        // (Nor a replaced element: its `auto` width is its own, Chromium; WPT css-multicol
++        // `replaced-content-spanner-auto-width`.)
++        if ls.size().width.is_auto() && !node.flags.is_table_root() && !replaced {
 +            inputs.known_dimensions.width = Some((width - margin.left - margin.right).max(0.0));
 +        }
 +        inputs
