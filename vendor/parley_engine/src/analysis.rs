@@ -716,8 +716,6 @@ pub(crate) fn analyze_text(
     // Whether the preceding character is a break-space, i.e. a space, tab or ideographic space in
     // a `break_spaces` range.
     let mut prev_is_break_space = false;
-    // pyro: whether the previous character is in a `word-break: break-all` range.
-    let mut prev_is_break_all = false;
     let mut break_spaces_iter = options.break_spaces.iter().peekable();
     let mut break_anywhere_iter = options
         .line_break
@@ -852,15 +850,6 @@ pub(crate) fn analyze_text(
                             .unwrap_or(true),
                     false => is_icu_line,
                 };
-                // pyro: and break-all's opportunity between two letters also where its range ends
-                // (ICU's break-all covers the range alone; WPT css-text
-                // `word-break-break-all-inline-009`).
-                let leaves_break_all = prev_is_break_all
-                    && !is_break_all
-                    && is_grapheme_start
-                    && ch.is_alphanumeric()
-                    && prev_char.is_some_and(|prev: char| prev.is_alphanumeric());
-                let is_icu_line = is_icu_line || leaves_break_all;
                 (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
                     // (Nor before a word joiner or zero width space, which UAX #14 LB7 and LB11
                     // keep: `a &#x2060;b`.)
@@ -883,7 +872,6 @@ pub(crate) fn analyze_text(
         };
 
         prev_prev_char = prev_char;
-        prev_is_break_all = is_break_all;
         prev_char = Some(ch);
         prev_is_mandatory_linebreak = is_mandatory_linebreak;
 
