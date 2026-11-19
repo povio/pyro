@@ -1146,9 +1146,15 @@ impl LayoutPassState<'_> {
                         .and_then(|val| val.parse::<f32>().ok())
                         .unwrap_or(2.0);
 
-                    let cols = element_data
-                        .attr(local_name!("cols"))
-                        .and_then(|val| val.parse::<f32>().ok());
+                    // pyro: 20 when absent or not a valid positive integer (HTML § 4.10.11 "the
+                    // textarea element": the default character width), not a fixed 300px.
+                    let cols = Some(
+                        element_data
+                            .attr(local_name!("cols"))
+                            .and_then(|val| val.trim().parse::<u32>().ok())
+                            .filter(|&cols| cols > 0)
+                            .map_or(20.0, |cols| cols as f32),
+                    );
 
                     // `field-sizing: content` measures the editor's shaped text (or its
                     // placeholder), not the HTML rows/cols hints. Use a private layout for
