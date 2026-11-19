@@ -295,12 +295,16 @@ pub(crate) fn cell_layout_style(
     if inside != DisplayInside::TableCell {
         return None;
     }
-    let numeric_height = stylo_taffy::convert::dimension(&style.get_position().height)
-        .into_option()
-        .is_some();
+    // pyro: its block size, which is its `width` in a vertical writing mode (WPT css-sizing
+    // `block-size-with-min-or-max-content-table-1a/1b`, whose references size vertical cells so).
+    let vertical = style.writing_mode.is_vertical();
+    let position = style.get_position();
+    let (block_size, max_block_size) =
+        if vertical { (&position.width, &position.max_width) } else { (&position.height, &position.max_height) };
+    let numeric_height = stylo_taffy::convert::dimension(block_size).into_option().is_some();
     let collapsed = style.clone_border_collapse() == BorderCollapse::Collapse;
     // pyro: `max-height` does not apply to a table cell (Chromium ignores it).
-    let max_height = !matches!(style.get_position().max_height, style::values::computed::MaxSize::None);
+    let max_height = !matches!(max_block_size, style::values::computed::MaxSize::None);
     if !numeric_height && !collapsed && !max_height {
         return None;
     }
@@ -309,10 +313,13 @@ pub(crate) fn cell_layout_style(
         // TableCell retains this length as an intrinsic border-box minimum.
         // A definite height here would prevent the cell from growing to fit.
         if numeric_height {
-            derived.mutate_position().height = style::values::computed::Size::auto();
+            let position = derived.mutate_position();
+            *(if vertical { &mut position.width } else { &mut position.height }) = style::values::computed::Size::auto();
         }
         if max_height {
-            derived.mutate_position().max_height = style::values::computed::MaxSize::None;
+            let position = derived.mutate_position();
+            *(if vertical { &mut position.max_width } else { &mut position.max_height }) =
+                style::values::computed::MaxSize::None;
         }
         // Collapsed borders live in the table's grid gutters. They must not
         // also consume space inside the cell's own formatting context.
