@@ -1919,12 +1919,9 @@ pub enum RubyAlign {
     FromPrimitive,
     Hash,
     MallocSizeOf,
-    Parse,
     PartialEq,
     Serialize,
-    SpecifiedValueInfo,
     ToComputedValue,
-    ToCss,
     ToResolvedValue,
     ToShmem,
     ToTyped,
@@ -1933,6 +1930,58 @@ pub enum RubyAlign {
 pub enum TextCombineUpright {
     None,
     All,
+    /// pyro: `digits <integer [2,4]>?`: runs of up to that many ASCII digits are combined.
+    Digits2,
+    Digits3,
+    Digits4,
+}
+
+impl TextCombineUpright {
+    /// pyro: the most ASCII digits a run of `digits N` combines (`None` for other values).
+    pub fn digits(self) -> Option<usize> {
+        match self {
+            Self::Digits2 => Some(2),
+            Self::Digits3 => Some(3),
+            Self::Digits4 => Some(4),
+            _ => None,
+        }
+    }
+}
+
+impl Parse for TextCombineUpright {
+    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(Self::None);
+        }
+        if input.try_parse(|i| i.expect_ident_matching("all")).is_ok() {
+            return Ok(Self::All);
+        }
+        input.expect_ident_matching("digits")?;
+        match input.try_parse(|i| i.expect_integer()).unwrap_or(2) {
+            2 => Ok(Self::Digits2),
+            3 => Ok(Self::Digits3),
+            4 => Ok(Self::Digits4),
+            _ => Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
+        }
+    }
+}
+
+impl ToCss for TextCombineUpright {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        dest.write_str(match self {
+            Self::None => "none",
+            Self::All => "all",
+            Self::Digits2 => "digits 2",
+            Self::Digits3 => "digits 3",
+            Self::Digits4 => "digits 4",
+        })
+    }
+}
+
+impl SpecifiedValueInfo for TextCombineUpright {
+    fn collect_completion_keywords(f: KeywordsCollectFn) {
+        f(&["none", "all", "digits"]);
+    }
 }
 
 /// https://svgwg.org/svg2-draft/painting.html#TextRenderingProperty

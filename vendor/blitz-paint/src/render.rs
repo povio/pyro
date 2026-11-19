@@ -640,7 +640,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let Some(style) = node.primary_styles() else {
             return Affine::IDENTITY;
         };
-        if style.get_inherited_text().text_combine_upright != style::values::computed::TextCombineUpright::All
+        // (Stylo's box of combined text, or `layout::combined_text`'s, `all` or `digits N`.)
+        if !style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED)
             || style.writing_mode.is_vertical()
         {
             return Affine::IDENTITY;

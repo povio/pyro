@@ -34,18 +34,21 @@ fn root_combines(style: &ComputedValues) -> bool {
 pub(crate) fn prepare(doc: &mut BaseDocument, root: NodeId) {
     let Some(style) = doc.nodes[root].primary_styles().map(|style| Arc::clone(&*style)) else { return };
     let combines = root_combines(&style);
-    let texts: Vec<NodeId> = doc.nodes[root]
-        .children
-        .iter()
-        .copied()
-        .filter(|&id| matches!(doc.nodes[id].data, NodeData::Text(_)))
-        .collect();
-    for text_id in texts {
+    // The root's direct text, and the text of its inline elements (`digits N`).
+    let mut texts: Vec<(NodeId, Arc<ComputedValues>)> = Vec::new();
+    collect_texts(doc, root, &style, &mut texts);
+    for (text_id, parent_style) in texts {
         let content = match &doc.nodes[text_id].data {
             NodeData::Text(data) => data.content.clone(),
             _ => continue,
         };
-        let wanted = combines && !content.trim().is_empty();
+        let direct = doc.nodes[text_id].parent == Some(root);
+        let wanted = if direct && combines {
+            !content.trim().is_empty()
+        } else {
+            digits_combine(&parent_style, content.trim())
+        };
+        let style = parent_style;
         let existing = match &doc.nodes[text_id].data {
             NodeData::Text(data) => data.combined_box.filter(|&id| doc.nodes.contains_key(id)),
             _ => None,
@@ -77,6 +80,39 @@ pub(crate) fn prepare(doc: &mut BaseDocument, root: NodeId) {
             data.combined_box = Some(box_id);
         }
     }
+}
+
+/// pyro: the text nodes of the inline root `root`: its own and those of its inline elements
+/// (not of atomic inlines, which are roots of their own), each with its parent's style.
+fn collect_texts(doc: &BaseDocument, parent: NodeId, parent_style: &Arc<ComputedValues>, out: &mut Vec<(NodeId, Arc<ComputedValues>)>) {
+    for &child in &doc.nodes[parent].children {
+        let node = &doc.nodes[child];
+        match &node.data {
+            NodeData::Text(_) => out.push((child, Arc::clone(parent_style))),
+            NodeData::Element(_) => {
+                let Some(style) = node.primary_styles().map(|style| Arc::clone(&*style)) else { continue };
+                let display = style.get_box().display;
+                if display.is_contents()
+                    || (display.outside() == style::values::specified::box_::DisplayOutside::Inline
+                        && display.inside() == style::values::specified::box_::DisplayInside::Flow)
+                {
+                    collect_texts(doc, child, &style, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// pyro: `text-combine-upright: digits N` in a vertical line: text that is a run of one to N ASCII
+/// digits is combined (CSS Writing Modes 3 § 9.1.1). Digit runs inside other text are not split out.
+fn digits_combine(style: &ComputedValues, text: &str) -> bool {
+    let Some(limit) = style.get_inherited_text().text_combine_upright.digits() else { return false };
+    style.writing_mode.is_vertical()
+        && !style.writing_mode.is_sideways()
+        && !text.is_empty()
+        && text.chars().count() <= limit
+        && text.chars().all(|c| c.is_ascii_digit())
 }
 
 /// The box's style: the root's inherited properties, as Stylo adjusts a combined inline element
