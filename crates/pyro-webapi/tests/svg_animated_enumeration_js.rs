@@ -585,6 +585,52 @@ fn one_click_grants_fullscreen_activation_once() {
     assert_eq!(env.eval("log.join('|')"), "down granted|click TypeError");
 }
 
+/// Web Locks: an exclusive lock queues the next request until its callback's promise settles;
+/// query() reports held and pending requests; steal takes the lock (the holder's promise rejects
+/// with AbortError); the API exists only in a secure context.
+#[test]
+fn web_locks_queue_query_and_steal() {
+    let env = Env::new("https://locks.test/");
+    assert_eq!(env.eval(r#"['locks' in navigator, 'LockManager' in globalThis, 'Lock' in globalThis].join()"#), "true,true,true");
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const log = [];
+              let release;
+              const first = navigator.locks.request("a", (lock) => { log.push("first " + lock.name + " " + lock.mode); return new Promise((r) => { release = r; }); });
+              const second = navigator.locks.request("a", { mode: "shared" }, () => { log.push("second"); return "two"; });
+              await new Promise((r) => setTimeout(r, 0));
+              const q = await navigator.locks.query();
+              log.push("query " + q.held.map((h) => h.name + ":" + h.mode).join() + " / " + q.pending.map((h) => h.name + ":" + h.mode).join());
+              release("one");
+              log.push(await first, await second);
+              let hold;
+              const held = navigator.locks.request("b", () => new Promise((r) => { hold = r; }));
+              await new Promise((r) => setTimeout(r, 0));
+              const stole = navigator.locks.request("b", { steal: true }, () => "stolen");
+              log.push(await held.then(() => "kept", (e) => e.name), await stole);
+              log.push(await navigator.locks.request("-x", () => {}).then(() => "ok", (e) => e.name));
+              log.push(await navigator.locks.request("c", { ifAvailable: true }, (lock) => lock === null ? "null" : "got"));
+              hold();
+              globalThis.locksDone = log.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.locksDone !== undefined");
+    assert_eq!(
+        env.eval("locksDone"),
+        "first a exclusive|query a:exclusive / a:shared|second|one|two|AbortError|stolen|NotSupportedError|got"
+    );
+}
+
+/// Web Locks are `[SecureContext]`: absent, not undefined, in a window that is not secure.
+#[test]
+fn web_locks_absent_in_insecure_contexts() {
+    let env = Env::new("http://locks.test/");
+    assert_eq!(env.eval(r#"['locks' in navigator, 'LockManager' in globalThis, 'Lock' in globalThis].join()"#), "false,false,false");
+}
+
 /// A class change on an element above a `:has()` anchor restyles the anchor when a complex selector
 /// inside the argument reaches it (WPT css/selectors is-pseudo-containing-complex-in-has).
 #[test]
