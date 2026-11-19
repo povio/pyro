@@ -131,7 +131,7 @@ pub use page::{AvailableImage, FrameContainer,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
 };
-pub use popup::{PopupCommand, PopupState, PopupTicket};
+pub use popup::{popup_window_proxy, PopupCommand, PopupState, PopupTicket};
 pub use render_blocking::RenderBlocker;
 pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};

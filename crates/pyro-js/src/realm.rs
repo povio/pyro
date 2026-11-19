@@ -1578,14 +1578,23 @@ impl<'s> Scope<'s> {
     /// A WindowProxy of this realm for a Window it reaches through native
     /// functions (helpers.js `windowProxy`): `target()` answers the
     /// Window's global object when same origin, null while there is none
-    /// (`stand_in`'s members and the proxy's own expandos answer), `true`
-    /// when cross origin; `deny(name)` throws the SecurityError of a
+    /// (`stand_in`'s members and the proxy's own expandos answer), the
+    /// Window's origin (a string) when cross origin; `child(key)` a child
+    /// window by index or target name as this realm may see it cross origin
+    /// (undefined for none); `deny(name)` throws the SecurityError of a
     /// cross-origin access. Every WindowProxy internal method follows HTML
-    /// (CrossOriginProperties cross origin). `stand_in` and the Window are
-    /// never handed to page code through it.
-    pub fn window_proxy(&self, stand_in: Object<'_>, target: Object<'_>, deny: Object<'_>) -> JsResult<Object<'s>> {
+    /// (CrossOriginProperties and child windows cross origin, a cross-origin
+    /// Location, what is handed out kept per origin). `stand_in` and the
+    /// Window are never handed to page code through it.
+    pub fn window_proxy(
+        &self,
+        stand_in: Object<'_>,
+        target: Object<'_>,
+        child: Object<'_>,
+        deny: Object<'_>,
+    ) -> JsResult<Object<'s>> {
         let make = self.realm.cached_helper(self, "windowProxy")?;
-        make.call(None, &[stand_in.value(), target.value(), deny.value()])?
+        make.call(None, &[stand_in.value(), target.value(), child.value(), deny.value()])?
             .as_object()
             .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
     }

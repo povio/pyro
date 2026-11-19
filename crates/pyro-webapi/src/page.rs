@@ -759,6 +759,18 @@ pub trait PageHooks {
     fn frame_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _iframe: NodeId) -> Option<pyro_js::Value<'s>> {
         None
     }
+    /// A child window of this top-level page by index (`"0"`) or by
+    /// document-tree child navigable target name, as the window running in
+    /// `scope`, of another page (a popup's opener), sees it: the child's
+    /// global when the two are same origin, else a cross-origin window.
+    /// `None` when there is no such child.
+    fn foreign_child_window<'s>(
+        &self,
+        _scope: &pyro_js::Scope<'s>,
+        _key: &str,
+    ) -> pyro_js::JsResult<Option<pyro_js::Value<'s>>> {
+        Ok(None)
+    }
 }
 
 impl PageDom {

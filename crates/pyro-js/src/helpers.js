@@ -77,6 +77,7 @@
   const objectIs = O.is;
   const symbolToString = Symbol.prototype.toString;
   const mapEntries = MapC.prototype.entries, setValues = SetC.prototype.values;
+  const mapGet = MapC.prototype.get, mapSet = MapC.prototype.set;
   const mapSize = getOwnPropertyDescriptor(MapC.prototype, 'size').get;
   const setSize = getOwnPropertyDescriptor(SetC.prototype, 'size').get;
   const mapIterNext = getPrototypeOf(new MapC().entries()).next;
@@ -633,29 +634,42 @@
     // A WindowProxy for a Window the embedder reaches through `target()`:
     // the Window's global object when it is same origin with this realm,
     // null while it has none (the stand-in's own members and expandos
-    // then answer), true when it is cross origin. `standIn` is the native
-    // object with the members a WindowProxy keeps whatever its Window
-    // (`closed`, `close()`, `location`, `opener`, `postMessage()`...), and
+    // then answer), its origin (a string) when it is cross origin. `standIn`
+    // is the native object with the members a WindowProxy keeps whatever
+    // its Window (`closed`, `close()`, `location`, `opener`, `postMessage()`
+    // ...), `child(key)` answers a child window by index or by target name
+    // as this realm may see it cross origin (undefined for none), and
     // `deny(name)` throws the SecurityError of a cross-origin access. HTML's
     // WindowProxy internal methods: same origin, every one goes to the
-    // Window; cross origin, only CrossOriginProperties (the methods as
-    // functions of this realm, `location` settable) and `then` and the
-    // well-known symbols (undefined) are there, and anything else throws.
-    // Functions read through it run with the Window, not the proxy, as
-    // `this` (a WindowProxy is the Window to the bindings). Neither
-    // `standIn` nor the target is ever handed to page code.
-    windowProxy(standIn, target, deny) {
+    // Window; cross origin, only its child windows (by index and name),
+    // CrossOriginProperties (the methods as functions of this realm,
+    // `location` a cross-origin Location with only `href` (set) and
+    // `replace()`) and `then` and the well-known symbols (undefined) are
+    // there, and anything else throws. What is handed out cross origin is
+    // kept per (origin, key) as crossOriginPropertyDescriptorMap has it,
+    // apart from what same origin hands out. Functions read through it
+    // run with the Window, not the proxy, as `this` (a WindowProxy is the
+    // Window to the bindings). Neither `standIn` nor the target is ever
+    // handed to page code, and no list is made through page-observable
+    // hooks (species, spreading, iteration).
+    windowProxy(standIn, target, child, deny) {
       const ALWAYS = { __proto__: null, closed: 1, close: 1, focus: 1, blur: 1 };
       const SELF = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1 };
       const CROSS_GETTERS = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1 };
       const CROSS_METHODS = { __proto__: null, close: 1, focus: 1, blur: 1, postMessage: 1 };
-      const crossKeys = () => apply(arrayConcat, [], [['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'], [toStringTag, symbolHasInstance, symbolIsConcatSpreadable]]);
+      const CROSS_NAMES = ['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'];
       const undefinedNames = (k) => k === 'then' || k === toStringTag || k === symbolHasInstance || k === symbolIsConcatSpreadable;
       const isIndex = (k) => typeof k === 'string' && k !== '' && StringC(k >>> 0) === k && (k >>> 0) !== 4294967295;
+      const isCross = (w) => typeof w === 'string';
+      const named = (fn, name) => { try { defineProperty(fn, 'name', { __proto__: null, value: name }); } catch (_) {} };
+      const data = (value, enumerable) => ({ __proto__: null, value, writable: false, enumerable, configurable: true });
+      // Appends without [[Set]] (no setter of Array.prototype runs).
+      const append = (list, value) => { reflectDefine(list, list.length, data(value, true)); };
       const expandos = objectCreate(null);
       let proxy;
-      // Functions of the Window or the stand-in, each as one function that
-      // calls it with `self` for the proxy as `this` (kept per function).
+      // Same origin (and before the page): functions of the Window or the
+      // stand-in, each as one function that calls it with `self()` for the
+      // proxy as `this` (kept per function).
       const wrapped = new WeakMapC();
       const wrap = (fn, self) => {
         if (typeof fn !== 'function') return fn;
@@ -666,29 +680,104 @@
         }
         return w;
       };
-      const window = () => { const w = target(); return w === true ? null : w; };
+      // Cross origin: what was handed out, by origin and key.
+      const crossMap = new MapC();
+      const crossKept = (origin, key, make) => {
+        const id = origin + '\0' + (typeof key === 'symbol' ? apply(symbolToString, key, []) : key);
+        let v = apply(mapGet, crossMap, [id]);
+        if (v === undefined) {
+          v = make();
+          apply(mapSet, crossMap, [id, v]);
+        }
+        return v;
+      };
+      const window = () => { const w = target(); return w === null || isCross(w) ? null : w; };
       const standInSelf = () => standIn;
       const fromStandIn = (k) => SELF[k] ? proxy : wrap(reflectGet(standIn, k, standIn), standInSelf);
-      const crossDescriptor = (k) => {
-        if (CROSS_METHODS[k]) return { __proto__: null, value: fromStandIn(k), writable: false, enumerable: false, configurable: true };
-        if (CROSS_GETTERS[k]) {
-          const get = () => fromStandIn(k);
-          const set = k === 'location' ? (v) => { reflectSet(standIn, k, v, standIn); } : undefined;
-          return { __proto__: null, get, set, enumerable: false, configurable: true };
+      // A cross-origin method: a function of this realm calling the stand-in's.
+      const crossMethod = (origin, k) => crossKept(origin, k, () => {
+        const method = reflectGet(standIn, k, standIn);
+        const f = (...args) => apply(method, standIn, args);
+        named(f, k);
+        return f;
+      });
+      // The cross-origin Location: `href` to set, `replace()`, nothing else.
+      const crossLocation = (origin) => crossKept(origin, 'location', () => {
+        const location = () => reflectGet(standIn, 'location', standIn);
+        const replace = (url) => { const l = location(); apply(reflectGet(l, 'replace', l), l, [url]); };
+        named(replace, 'replace');
+        const setHref = (v) => { const l = location(); reflectSet(l, 'href', v, l); };
+        const keys = () => ['href', 'replace', 'then', toStringTag, symbolHasInstance, symbolIsConcatSpreadable];
+        const describe = (k) => {
+          if (k === 'replace') return data(replace, false);
+          if (k === 'href') return { __proto__: null, get: undefined, set: setHref, enumerable: false, configurable: true };
+          if (undefinedNames(k)) return data(undefined, false);
+          return deny(k);
+        };
+        return new ProxyC(objectCreate(null), {
+          __proto__: null,
+          get(t, k) { const d = describe(k); if ('value' in d) return d.value; return deny(k); },
+          set(t, k, v) { if (k === 'href') { setHref(v); return true; } return deny(k); },
+          has(t, k) { describe(k); return true; },
+          deleteProperty(t, k) { return deny(k); },
+          defineProperty(t, k) { return deny(k); },
+          getOwnPropertyDescriptor(t, k) { return describe(k); },
+          ownKeys() { return keys(); },
+          getPrototypeOf() { return null; },
+          setPrototypeOf(t, v) { return v === null; },
+          isExtensible() { return true; },
+          preventExtensions() { return false; },
+        });
+      });
+      // The getter and setter pair kept per (origin, key), described afresh.
+      const accessors = ({ get, set }) => ({ __proto__: null, describe: () => ({ __proto__: null, get, set, enumerable: false, configurable: true }) });
+      // HTML's CrossOriginGetOwnPropertyHelper and the child windows.
+      const crossDescriptor = (origin, k) => {
+        if (isIndex(k)) {
+          const w = child(k);
+          return w !== undefined ? data(w, false) : deny(k);
         }
-        if (undefinedNames(k)) return { __proto__: null, value: undefined, writable: false, enumerable: false, configurable: true };
+        if (CROSS_METHODS[k]) return data(crossMethod(origin, k), false);
+        if (CROSS_GETTERS[k]) {
+          return crossKept(origin, 'get ' + k, () => accessors((() => {
+            const get = () => (k === 'location' ? crossLocation(origin) : CROSS_METHODS[k] ? crossMethod(origin, k) : fromStandIn(k));
+            named(get, 'get ' + k);
+            let set;
+            if (k === 'location') {
+              set = (v) => { const l = reflectGet(standIn, 'location', standIn); reflectSet(l, 'href', v, l); };
+              named(set, 'set location');
+            }
+            return { __proto__: null, get, set };
+          })())).describe();
+        }
+        if (typeof k === 'string') {
+          const w = child(k);
+          if (w !== undefined) return data(w, false);
+        }
+        if (undefinedNames(k)) return data(undefined, false);
         return deny(k);
+      };
+      const crossGet = (origin, k) => {
+        const d = crossDescriptor(origin, k);
+        if ('value' in d) return d.value;
+        return d.get === undefined ? deny(k) : apply(d.get, proxy, []);
+      };
+      const crossKeys = () => {
+        const keys = [];
+        const length = reflectGet(standIn, 'length', standIn);
+        for (let i = 0; i < length; i++) append(keys, StringC(i));
+        for (let i = 0; i < CROSS_NAMES.length; i++) append(keys, CROSS_NAMES[i]);
+        append(keys, toStringTag);
+        append(keys, symbolHasInstance);
+        append(keys, symbolIsConcatSpreadable);
+        return keys;
       };
       const handler = {
         __proto__: null,
         get(t, k) {
-          if (ALWAYS[k]) return fromStandIn(k);
           const w = target();
-          if (w === true) {
-            if (CROSS_METHODS[k] || CROSS_GETTERS[k]) return fromStandIn(k);
-            if (undefinedNames(k)) return undefined;
-            return deny(k);
-          }
+          if (isCross(w)) return crossGet(w, k);
+          if (ALWAYS[k]) return fromStandIn(k);
           if (SELF[k]) return proxy;
           if (w === null) return k in expandos ? expandos[k] : fromStandIn(k);
           if (k === 'opener') return fromStandIn(k);
@@ -696,8 +785,11 @@
         },
         set(t, k, v) {
           const w = target();
-          if (w === true) {
-            if (k === 'location') return reflectSet(standIn, k, v, standIn);
+          if (isCross(w)) {
+            if (k === 'location') {
+              const l = reflectGet(standIn, 'location', standIn);
+              return reflectSet(l, 'href', v, l);
+            }
             return deny(k);
           }
           if (isIndex(k)) return false;
@@ -708,23 +800,23 @@
         },
         has(t, k) {
           const w = target();
-          if (w === true) {
-            if (CROSS_METHODS[k] || CROSS_GETTERS[k] || undefinedNames(k)) return true;
-            return deny(k);
+          if (isCross(w)) {
+            crossDescriptor(w, k);
+            return true;
           }
           if (w === null) return reflectHas(expandos, k) || ALWAYS[k] === 1 || SELF[k] === 1 || k === 'location' || k === 'opener';
           return reflectHas(w, k);
         },
         deleteProperty(t, k) {
           const w = target();
-          if (w === true) return deny(k);
+          if (isCross(w)) return deny(k);
           if (w === null) return reflectDelete(expandos, k);
           if (isIndex(k)) return !reflectHas(w, k);
           return reflectDelete(w, k);
         },
         defineProperty(t, k, d) {
           const w = target();
-          if (w === true) return deny(k);
+          if (isCross(w)) return deny(k);
           if (isIndex(k)) return false;
           // The proxy can only report configurable properties (its target
           // holds none), so a non-configurable one is refused.
@@ -733,7 +825,7 @@
         },
         getOwnPropertyDescriptor(t, k) {
           const w = target();
-          if (w === true) return crossDescriptor(k);
+          if (isCross(w)) return crossDescriptor(w, k);
           const d = reflectGOPD(w === null ? expandos : w, k);
           if (d === undefined) return undefined;
           d.configurable = true;
@@ -742,12 +834,12 @@
         },
         ownKeys() {
           const w = target();
-          if (w === true) return crossKeys();
+          if (isCross(w)) return crossKeys();
           return reflectOwnKeys(w === null ? expandos : w);
         },
         getPrototypeOf() {
           const w = target();
-          return w === true || w === null ? null : getPrototypeOf(w);
+          return w === null || isCross(w) ? null : getPrototypeOf(w);
         },
         setPrototypeOf(t, v) {
           return v === handler.getPrototypeOf();

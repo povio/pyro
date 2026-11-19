@@ -1054,7 +1054,7 @@ impl FrameHost {
             let value = pyro_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target };
+        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target, foreign: false };
         Ok(s.wrap::<CrossWindow>(data, Some(pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
             .value())
     }
@@ -1118,6 +1118,96 @@ impl FrameHost {
 
 /// The cross-origin stand-in for `opener`'s top-level window (one per
 /// realm), as frame `from` (the popup's top-level frame) sees it.
+/// Whether frames `a` and `b` (of any pages) are same origin.
+fn frames_same_origin(a: &Frame, b: &Frame) -> bool {
+    if a.origin == "null" || b.origin == "null" {
+        a.origin == b.origin && a.opaque_origin == b.opaque_origin
+    } else {
+        a.origin == b.origin
+    }
+}
+
+impl FrameHost {
+    /// Frame `target` of this page as window `accessor` of another page (a
+    /// popup's opener) sees it: its global when the two are same origin,
+    /// else a cross-origin window (`CrossWindowData::foreign`), one object
+    /// per frame and accessing realm.
+    pub(crate) fn foreign_window<'s>(
+        self: &Rc<Self>,
+        s: &pyro_js::Scope<'s>,
+        target: FrameKey,
+        accessor: (&Rc<FrameHost>, FrameKey),
+    ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        let (Some(theirs), Some(mine)) = (self.frame(target), accessor.0.frame(accessor.1)) else {
+            return Err(JsError::ContextDestroyed);
+        };
+        if frames_same_origin(&theirs, &mine) {
+            let realm = self.realm(target, None)?;
+            let scope = realm.scope()?;
+            let value = pyro_js::Persistent::new(&scope, scope.global().value());
+            return Ok(value.get(s));
+        }
+        let key = pyro_js::IdentityKey(
+            0x464f_5245_4947_4e00 ^ u64::from(self.page.0),
+            target.child.unwrap_or(u64::MAX),
+        );
+        if let Some(o) = s.lookup_identity(key) {
+            return Ok(o.value());
+        }
+        let data = CrossWindowData {
+            host: Rc::downgrade(self),
+            source: None,
+            from: Some((Rc::downgrade(accessor.0), accessor.1)),
+            target,
+            foreign: true,
+        };
+        Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+    }
+
+    /// The child window of frame `parent` with index `key` (`"0"`) or with
+    /// the target name `key`, as `foreign_window` gives it; `None` for none.
+    pub(crate) fn foreign_child<'s>(
+        self: &Rc<Self>,
+        s: &pyro_js::Scope<'s>,
+        parent: FrameKey,
+        key: &str,
+        accessor: (&Rc<FrameHost>, FrameKey),
+    ) -> pyro_js::JsResult<Option<pyro_js::Value<'s>>> {
+        let children = self.child_keys(parent);
+        let index = key.parse::<u32>().ok().filter(|i| i.to_string() == key);
+        let child = match index {
+            Some(i) => children.get(i as usize).copied(),
+            None if key.is_empty() => None,
+            None => children.iter().copied().find(|c| self.frame(*c).is_some_and(|f| f.name == key)),
+        };
+        child.map(|child| self.foreign_window(s, child, accessor)).transpose()
+    }
+
+    /// The `parent` or `top` of a `foreign` window, as its accessor sees it:
+    /// the popup's WindowProxy for the popup's top-level frame.
+    fn foreign_ancestor<'s>(
+        self: &Rc<Self>,
+        s: &pyro_js::Scope<'s>,
+        w: &CrossWindowData,
+        target: FrameKey,
+    ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        let Some((from, key)) = w.from.as_ref().and_then(|(h, k)| Some((h.upgrade()?, *k))) else {
+            return Err(JsError::ContextDestroyed);
+        };
+        if target != FrameKey::from(self.page) {
+            return self.foreign_window(s, target, (&from, key));
+        }
+        let opener = from.frame(key).and_then(|f| f.page_dom);
+        let popup = self.frame(target).and_then(|f| f.page_dom);
+        match (opener, popup) {
+            (Some(opener), Some(popup)) => {
+                Ok(pyro_webapi::popup_window_proxy(s, &opener, &popup)?.unwrap_or_else(|| s.null()))
+            }
+            _ => Ok(s.null()),
+        }
+    }
+}
+
 fn opener_proxy<'s>(
     s: &pyro_js::Scope<'s>,
     opener: &Rc<FrameHost>,
@@ -1127,7 +1217,8 @@ fn opener_proxy<'s>(
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into() };
+    let data =
+        CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into(), foreign: false };
     Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
 }
 
@@ -1206,8 +1297,12 @@ pub(crate) struct CrossWindowData {
     /// cross-origin and whose target is its own top and parent.
     source: Option<FrameKey>,
     /// For a popup's view of its opener: the popup's frame host and frame.
+    /// For a `foreign` window: the accessing window's.
     from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
     target: FrameKey,
+    /// A child window of a popup as its opener (`from`, another page) sees
+    /// it (`FrameHost::foreign_window`), rather than the popup's opener.
+    foreign: bool,
 }
 
 impl CrossWindowData {
@@ -1289,6 +1384,14 @@ impl pyro_js::JsClass for CrossWindow {
                 return if name == "closed" { Ok(Some(s.boolean(true))) } else { Err(JsError::ContextDestroyed) };
             };
             let value = match (name, w.source) {
+                ("window" | "self" | "frames", None) if w.foreign => {
+                    let Some((from, key)) = w.from.as_ref().and_then(|(h, k)| Some((h.upgrade()?, *k))) else {
+                        return Err(JsError::ContextDestroyed);
+                    };
+                    host.foreign_window(s, w.target, (&from, key))?
+                }
+                ("parent", None) if w.foreign => host.foreign_ancestor(s, w, host.parent_key(w.target))?,
+                ("top", None) if w.foreign => host.foreign_ancestor(s, w, host.page.into())?,
                 ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host, w.from.clone())?,
                 ("window" | "self" | "frames", Some(source)) => host.window_value(s, source, w.target)?,
                 ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
@@ -1326,9 +1429,16 @@ impl pyro_js::JsClass for CrossWindow {
         // `frames[i]` of a cross-origin window: its child windows, as the
         // accessing frame sees them.
         def.indexed(|s, w, index| {
-            let (Some(host), Some(source)) = (w.host.upgrade(), w.source) else { return Ok(None) };
+            let Some(host) = w.host.upgrade() else { return Ok(None) };
             let child = host.child_keys(w.target).get(index as usize).copied();
-            child.map(|child| host.window_value(s, source, child)).transpose()
+            match (w.source, &w.from) {
+                (Some(source), _) => child.map(|child| host.window_value(s, source, child)).transpose(),
+                (None, Some((from, key))) if w.foreign => {
+                    let Some(from) = from.upgrade() else { return Ok(None) };
+                    child.map(|child| host.foreign_window(s, child, (&from, *key))).transpose()
+                }
+                _ => Ok(None),
+            }
         });
         def.named_setter(|s, w, name, value| {
             // `w.location = url` navigates it, as `w.location.href = url` does.

@@ -375,7 +375,17 @@ pub(crate) fn wrap_popup<'s>(s: &Scope<'s>, page: &Rc<PageDom>, popup: &Rc<Popup
             Ok(s.rehome(scope.global().value()))
         }
         Ok(None) => Ok(s.null()),
-        Err(_) => Ok(s.boolean(true)),
+        // Cross origin: the popup's origin, which what is handed out is kept by.
+        Err(_) => {
+            let origin = data.popup.page().and_then(|p| crate::storage::document_origin(&p));
+            Ok(s.string(origin.as_deref().unwrap_or("null")))
+        }
+    })?;
+    let children = PopupData::new(page, popup.clone());
+    let child = s.function("", move |s, _, a| {
+        let key = a.get(0).to_string()?;
+        let Some(page) = children.popup.page() else { return Ok(s.undefined()) };
+        Ok(page.hooks().map(|h| h.foreign_child_window(s, &key)).transpose()?.flatten().unwrap_or_else(|| s.undefined()))
     })?;
     let deny = s.function("", |_s, _, a| {
         let name = a.get(0).to_string().unwrap_or_default();
@@ -384,11 +394,19 @@ pub(crate) fn wrap_popup<'s>(s: &Scope<'s>, page: &Rc<PageDom>, popup: &Rc<Popup
             format!("Blocked a frame from accessing property \"{name}\" of a cross-origin window."),
         ))
     })?;
-    let proxy = s.window_proxy(stand_in, target, deny)?;
+    let proxy = s.window_proxy(stand_in, target, child, deny)?;
     // The stand-in, kept alive by the proxy's handler, keeps the proxy: the
     // same object for every `window.open` of this popup.
     s.set_hidden(stand_in, PROXY, proxy.value())?;
     Ok(proxy.value())
+}
+
+/// The WindowProxy `opener`'s realm `s` has for the popup whose current
+/// document is `popup_page` (a child window's `parent` or `top`, seen from
+/// the opener), if `opener` opened it.
+pub fn popup_window_proxy<'s>(s: &Scope<'s>, opener: &Rc<PageDom>, popup_page: &Rc<PageDom>) -> JsResult<Option<Value<'s>>> {
+    let popup = opener.popups.borrow().iter().find(|(_, p)| p.page().is_some_and(|q| Rc::ptr_eq(&q, popup_page))).map(|(_, p)| p.clone());
+    popup.map(|popup| wrap_popup(s, opener, &popup)).transpose()
 }
 
 /// The stand-in's hidden reference to its WindowProxy.

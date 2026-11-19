@@ -653,6 +653,16 @@ impl PageHooks for Hooks {
         };
         host.sibling_realms(self.page, scope.realm_id())
     }
+    fn foreign_child_window<'s>(
+        &self,
+        scope: &pyro_js::Scope<'s>,
+        key: &str,
+    ) -> pyro_js::JsResult<Option<pyro_js::Value<'s>>> {
+        let Some(host) = self.frames.upgrade() else { return Ok(None) };
+        let Some(window) = scope.global_data::<crate::window::Window>() else { return Ok(None) };
+        let (Some(from), Some(from_key)) = (window.frame_host(), window.frame_key()) else { return Ok(None) };
+        host.foreign_child(scope, self.page, key, (&from, from_key))
+    }
     fn frame_window<'s>(&self, scope: &pyro_js::Scope<'s>, node: pyro_dom::NodeId) -> Option<pyro_js::Value<'s>> {
         let host = self.frames.upgrade()?;
         if !host.matches(self.page, &self.loader) {
