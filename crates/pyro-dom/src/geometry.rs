@@ -394,6 +394,11 @@ pub trait GeometrySource {
     fn element_displayed(&self, _key: u64) -> Option<bool> {
         None
     }
+    /// pyro: the column boxes of the multi-column container `key` (border box coordinates: x, y,
+    /// width, height); empty for any other element.
+    fn column_boxes(&self, _key: u64) -> Vec<[f64; 4]> {
+        Vec::new()
+    }
     /// pyro: the keys of the scroll containers that snap mandatorily (CSS Scroll Snap 1 § 6.3:
     /// their initial scroll position snaps).
     fn mandatory_snap_containers(&self) -> Vec<u64> {

@@ -952,6 +952,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }
 
+    fn column_boxes(&self, key: u64) -> Vec<[f64; 4]> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.column_boxes(self.page, key))).unwrap_or_default())
+    }
+
     fn mandatory_snap_containers(&self) -> Vec<u64> {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.mandatory_snap_containers(self.page))).unwrap_or_default())
     }

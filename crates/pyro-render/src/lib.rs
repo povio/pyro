@@ -914,6 +914,24 @@ impl Renderer {
     /// the elements whose values changed at its next resolve.
     /// The page's scroll offsets for its scroll-driven animations (`BaseDocument::set_timeline_scroll`),
     /// applied at its next sync or render.
+    /// pyro: the column boxes of the multi-column container `key` (its border box's coordinates:
+    /// x, y, width, height), spanners left out; empty for any other element.
+    pub fn column_boxes(&self, page: u64, key: u64) -> Vec<[f64; 4]> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        let Some(id) = m.node(key) else { return Vec::new() };
+        m.doc
+            .column_fragments(id)
+            .map(|columns| {
+                columns
+                    .fragments
+                    .iter()
+                    .filter(|f| !f.spanner)
+                    .map(|f| [f.x as f64, f.top as f64, f.width as f64, f.height as f64])
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// pyro: the keys of the page's scroll containers that snap mandatorily
     /// (blitz-dom `BaseDocument::mandatory_snap_containers`).
     pub fn mandatory_snap_containers(&self, page: u64) -> Vec<u64> {

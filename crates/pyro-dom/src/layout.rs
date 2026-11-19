@@ -2812,6 +2812,43 @@ impl Layout {
             }
             all.push((id, mine));
         }
+        // pyro: the columns of a multi-column scroll container are snap areas when its `::column`
+        // has a `scroll-snap-align` (CSS Multicol 2 § 4; WPT css-overflow
+        // `column-style-change-triggers-relayout`).
+        if let (Some(container), Some(source)) = (scroller, self.external.as_ref()) {
+            let columns = source.column_boxes(crate::snapshot::render_key(container));
+            let align = if columns.is_empty() {
+                String::new()
+            } else {
+                self.computed_pseudo_style_value(dom, container, &style::selector_parser::PseudoElement::Column, "scroll-snap-align")
+            };
+            if !align.is_empty() && align != "none" {
+                let mut parts = align.split_whitespace();
+                let block = parts.next().unwrap_or("none").to_owned();
+                let inline = parts.next().map(str::to_owned).unwrap_or_else(|| block.clone());
+                let (bl, bt) = (px(&value(container, "border-left-width"), 0.0), px(&value(container, "border-top-width"), 0.0));
+                let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
+                    "start" => Some(start - pad_start),
+                    "end" => Some(end - (size - pad_end)),
+                    "center" => Some((start + end) / 2.0 - (pad_start + (size - pad_start - pad_end) / 2.0)),
+                    _ => None,
+                };
+                for [cx, cy, cw, ch] in columns {
+                    let (left, right, top, bottom) = (cx - bl, cx - bl + cw, cy - bt, cy - bt + ch);
+                    let candidates = [
+                        snap_x.then(|| position(&inline, left, right, pl, pr, width)).flatten(),
+                        snap_y.then(|| position(&block, top, bottom, pt, pb, height)).flatten(),
+                    ];
+                    for axis in 0..2 {
+                        let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
+                        let c = c.max(0.0);
+                        if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
+                            best[axis] = Some((c, container));
+                        }
+                    }
+                }
+            }
+        }
         // Several boxes at the same position on an axis: the box at the snap position on both axes
         // wins (Chromium picks a box aligned on both before one aligned on a single axis).
         let picked = [best[0].map(|b| b.0), best[1].map(|b| b.0)];
