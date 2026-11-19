@@ -7581,7 +7581,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,502 +2586,3524 @@
+@@ -967,502 +2586,3548 @@
          }
      }
  
@@ -10054,9 +10054,33 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let (baseline, line_x) = self.marker_baseline(marker_layout);
 +        let item_layout = self.node.final_layout();
 +        let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
-+        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
++        let mut x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
 +            - f64::from(width + 7.0);
-+        let y = pos.y + f64::from(subpixel.y + baseline - height);
++        let mut y = pos.y + f64::from(subpixel.y + baseline - height);
++        // pyro: in a vertical writing mode the marker goes before the item's inline-start edge
++        // (its top; the bottom in `sideways-lr`), centred on its first line in the block axis.
++        if let Some(block_lr) = self.node.vertical_block_axis() {
++            let content_width = f64::from(item_layout.content_box_width());
++            let content_height = f64::from(item_layout.content_box_height());
++            let center = self
++                .element
++                .inline_layout_data
++                .as_ref()
++                .and_then(|text| {
++                    let line = text.layout.lines().next()?;
++                    let metrics = line.metrics();
++                    Some(f64::from(text.block_offset) + f64::from(metrics.block_min_coord + metrics.block_max_coord) / 2.0 / f64::from(text.layout.scale()))
++                })
++                .unwrap_or(0.0);
++            let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
++            let block = if block_lr { center } else { content_width - center };
++            x = pos.x + block - f64::from(width) / 2.0;
++            y = if sideways_lr {
++                pos.y + content_height + f64::from(item_layout.padding.bottom + item_layout.border.bottom) + 7.0
++            } else {
++                pos.y - f64::from(item_layout.padding.top + item_layout.border.top + height + 7.0)
++            };
++        }
 +        let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
 +        let Some(image) = image else {
 +            self.draw_marker_gradient(scene, origin, width, height);
