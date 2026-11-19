@@ -65,6 +65,9 @@ pub struct NodeTree {
     /// pyro: an element of this tree has been a shadow host (`crate::shadow`): until then,
     /// every node is in the document's tree and its DOM parent is its parent.
     pub(crate) has_shadow_hosts: bool,
+    /// pyro: the document's base URL without its fragment (`BaseDocument::url`), which a `url()`
+    /// naming an element of this document (`url(#m)`) resolves to.
+    pub(crate) base_url: String,
 }
 
 impl NodeTree {
@@ -80,6 +83,7 @@ impl NodeTree {
             content_language: None,
             shadow_roots: HashMap::new(),
             has_shadow_hosts: false,
+            base_url: String::new(),
         }
     }
 

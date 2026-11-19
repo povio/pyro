@@ -784,6 +784,7 @@ impl BaseDocument {
             .base_url
             .and_then(|url| DocumentUrl::from_str(&url).ok())
             .unwrap_or_default();
+        nodes.base_url = without_fragment(base_url.as_str()).to_owned();
 
         let net_provider = config
             .net_provider
@@ -1003,6 +1004,7 @@ impl BaseDocument {
     /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub fn set_base_url(&mut self, url: &str) {
         self.url = DocumentUrl::from(Url::parse(url).unwrap());
+        self.nodes.base_url = without_fragment(self.url.as_str()).to_owned();
     }
 
     /// The base url used for resolving linked resources (stylesheets, images, fonts, etc)
@@ -5368,4 +5370,9 @@ impl BaseDocument {
             doc.ensure_paint_tree();
         }
     }
+}
+
+/// pyro: `url` without its fragment.
+pub(crate) fn without_fragment(url: &str) -> &str {
+    url.split_once('#').map_or(url, |(before, _)| before)
 }

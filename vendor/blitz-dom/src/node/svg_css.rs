@@ -616,10 +616,12 @@ fn url_fragment(value: &str) -> Option<String> {
     (!fragment.is_empty()).then(|| fragment.to_string())
 }
 
-/// pyro: whether the first element of the document `node` is in with the id `id` (in tree
-/// order, as `getElementById` finds it) is an SVG `<mask>`.
+/// pyro: whether the first element with the id `id` (in tree order, as `getElementById` finds it)
+/// of the node tree `node` is in (the document's, or a shadow tree: ids are scoped to their tree)
+/// is an SVG `<mask>`.
 fn is_document_svg_mask(node: &Node, id: &str) -> bool {
     let tree = node.tree();
+    let scope = node.containing_shadow_host_id();
     let mut top = node;
     while let Some(parent) = top.parent {
         top = &tree[parent];
@@ -627,7 +629,7 @@ fn is_document_svg_mask(node: &Node, id: &str) -> bool {
     let mut stack = vec![top];
     while let Some(node) = stack.pop() {
         if let Some(data) = node.element_data() {
-            if data.attr(local_name!("id")) == Some(id) {
+            if data.attr(local_name!("id")) == Some(id) && node.containing_shadow_host_id() == scope {
                 return data.name.ns == ns!(svg) && &*data.name.local == "mask";
             }
         }
@@ -1969,8 +1971,15 @@ impl Writer<'_> {
                     let loaded = data.mask_images.get(i).and_then(Option::as_ref).is_some_and(|resource| {
                         resource.status == Status::Ok && matches!(resource.image, ImageData::Svg(_))
                     });
-                    url_fragment(&image.to_css_string())
-                        .filter(|fragment| !loaded && is_document_svg_mask(self.root, fragment))
+                    // Only a `url()` of this document (`url(#m)`): another document's that failed to
+                    // load (`missing.svg#m`) does not take a local `<mask>` of that id.
+                    let css = image.to_css_string();
+                    let url = css.trim().strip_prefix("url(").and_then(|u| u.strip_suffix(')')).unwrap_or("");
+                    let url = url.trim().trim_matches(|c| c == '"' || c == '\'');
+                    let this_document = !self.root.tree().base_url.is_empty()
+                        && crate::document::without_fragment(url) == self.root.tree().base_url;
+                    url_fragment(&css)
+                        .filter(|fragment| !loaded && this_document && is_document_svg_mask(self.root, fragment))
                 }) {
                     Some(fragment) => LayerSource::Mask(fragment),
                     None => match data.mask_images.get(i).and_then(Option::as_ref) {
