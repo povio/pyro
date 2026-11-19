@@ -53,6 +53,7 @@ pub(crate) fn filter_steps(
     dom: &BaseDocument,
     size: (f32, f32),
     references: &[Option<blitz_dom::node::ImageResourceData>],
+    source_tainted: bool,
 ) -> Option<Vec<FilterStep>> {
     if !filters.iter().any(|f| matches!(f, StyloFilter::Url(_))) {
         return None;
@@ -62,7 +63,9 @@ pub(crate) fn filter_steps(
     let mut any_graph = false;
     // Whether the source of what follows is tainted: a `drop-shadow()` coloured from
     // `currentcolor` (which a `:visited` link's colour can be) taints it.
-    let mut tainted = false;
+    // pyro: and a backdrop (`source_tainted`), as Chromium treats one: a displacement map read
+    // from it moves nothing (WPT filter-effects `backdrop-filter-svg-displacement`).
+    let mut tainted = source_tainted;
     for filter in filters {
         match filter {
             StyloFilter::Url(url) => {

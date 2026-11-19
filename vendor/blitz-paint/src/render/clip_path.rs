@@ -1509,7 +1509,7 @@ fn layered_filter(
     }
     let current_color = style.clone_color();
     let references = node.element_data().map_or(&[][..], |element| &element.reference_images[..]);
-    if let Some(steps) = crate::filters::filter_steps(list, scale, &current_color, dom, size, references) {
+    if let Some(steps) = crate::filters::filter_steps(list, scale, &current_color, dom, size, references, false) {
         return Some(steps);
     }
     let filter = crate::filters::convert_filters(list, scale, &current_color, dom)?;

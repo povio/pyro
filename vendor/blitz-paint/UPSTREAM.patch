@@ -733,7 +733,7 @@ diff --git a/packages/blitz-paint/src/debug_overlay.rs b/packages/blitz-paint/sr
 diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filters.rs
 --- a/packages/blitz-paint/src/filters.rs
 +++ b/packages/blitz-paint/src/filters.rs
-@@ -1,40 +1,831 @@
+@@ -1,40 +1,834 @@
  use blitz_dom::util::ToColorColor as _;
 +use blitz_dom::{BaseDocument, Node};
  use style::color::AbsoluteColor;
@@ -805,6 +805,7 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 +    dom: &BaseDocument,
 +    size: (f32, f32),
 +    references: &[Option<blitz_dom::node::ImageResourceData>],
++    source_tainted: bool,
 +) -> Option<Vec<FilterStep>> {
 +    if !filters.iter().any(|f| matches!(f, StyloFilter::Url(_))) {
 +        return None;
@@ -814,7 +815,9 @@ diff --git a/packages/blitz-paint/src/filters.rs b/packages/blitz-paint/src/filt
 +    let mut any_graph = false;
 +    // Whether the source of what follows is tainted: a `drop-shadow()` coloured from
 +    // `currentcolor` (which a `:visited` link's colour can be) taints it.
-+    let mut tainted = false;
++    // pyro: and a backdrop (`source_tainted`), as Chromium treats one: a displacement map read
++    // from it moves nothing (WPT filter-effects `backdrop-filter-svg-displacement`).
++    let mut tainted = source_tainted;
 +    for filter in filters {
 +        match filter {
 +            StyloFilter::Url(url) => {
@@ -6132,7 +6135,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          let should_clip = self.should_clip_node(node, &styles);
          let is_text_input = node
-@@ -482,10 +1032,66 @@
+@@ -482,10 +1032,67 @@
          // Cull elements that fall entirely outside the current clip rectangle. In addition to
          // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
          // also culls elements scrolled out of view inside a clipping/scrolling container.
@@ -6155,6 +6158,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            self.dom,
 +            (size.width, size.height),
 +            node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
++            false,
 +        );
 +        #[cfg(not(feature = "svg"))]
 +        let filter_steps: Option<Vec<()>> = None;
@@ -6203,7 +6207,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          {
              return;
          }
-@@ -508,10 +1114,20 @@
+@@ -508,10 +1115,20 @@
          }
  
          // Optimise zero-area (/very small area) clips by not rendering at all
@@ -6225,7 +6229,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              return;
          }
  
-@@ -528,23 +1144,64 @@
+@@ -528,23 +1145,64 @@
          // rectangle passed to descendants to the visible (clipped) region so that content
          // scrolled out of view is culled rather than drawn and clipped away. The box used
          // here matches the clip applied to the content below.
@@ -6298,7 +6302,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
          // CSS 2 `clip` property (absolutely positioned elements only). Applies to the whole of
          // the element's rendering (including outlines and shadows), so it is the outermost layer.
-@@ -552,6 +1209,43 @@
+@@ -552,6 +1210,44 @@
          if css_clip_rect.is_some_and(|rect| rect.is_zero_area()) {
              return;
          }
@@ -6315,6 +6319,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            self.dom,
 +            ((cx.frame.border_box.width() / self.scale) as f32, (cx.frame.border_box.height() / self.scale) as f32),
 +            node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
++            true,
 +        )
 +        .as_deref()
 +        {
@@ -6342,7 +6347,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let css_clip_layer_pushed = self.layer_manager.maybe_push_layer(
              scene,
              css_clip_rect.is_some(),
-@@ -566,40 +1260,103 @@
+@@ -566,40 +1262,103 @@
          // Use the viewport in scene coordinates so outlines, shadows and overflowing
          // descendants are not clipped to the element's border box.
          let blend = convert_blend_mode(effects.mix_blend_mode);
@@ -6466,7 +6471,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              |scene| {
                  // If the element has a CSS `mask`, then push an isolation layer for the
                  // masked content. The mask is applied when the layer is popped below.
-@@ -608,112 +1365,455 @@
+@@ -608,112 +1367,455 @@
                  // Save it so that the mask can be drawn untransformed by scroll offsets.
                  let unscrolled_transform = cx.transform;
  
@@ -7017,7 +7022,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn render_node(
          &self,
          scene: &mut impl PaintScene,
-@@ -722,11 +1822,19 @@
+@@ -722,11 +1824,19 @@
          clip_rect: Rect,
      ) {
          let node = &self.dom.as_ref().tree()[node_id];
@@ -7039,7 +7044,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -738,6 +1846,62 @@
+@@ -738,6 +1848,62 @@
          }
      }
  
@@ -7102,7 +7107,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn element_cx(
          &'dom self,
          node: &'dom Node,
-@@ -759,10 +1923,42 @@
+@@ -759,10 +1925,42 @@
          // todo: maybe cache this so we don't need to constantly be figuring it out
          // It is quite a bit of math to calculate during render/traverse
          // Also! we can cache the bezpaths themselves, saving us a bunch of work
@@ -7147,7 +7152,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          ElementCx {
              context: self,
              frame,
-@@ -784,6 +1980,59 @@
+@@ -784,6 +1982,59 @@
      }
  }
  
@@ -7207,7 +7212,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
      match image_rendering {
          ImageRendering::Auto => peniko::ImageQuality::Medium,
-@@ -818,6 +2067,77 @@
+@@ -818,6 +2069,77 @@
      }
  }
  
@@ -7285,7 +7290,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,390 +2156,3278 @@
+@@ -836,390 +2158,3278 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -10910,7 +10915,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +5437,50 @@
+@@ -1229,9 +5439,50 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -10963,7 +10968,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +5502,20 @@
+@@ -1253,9 +5504,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -10987,7 +10992,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +5526,209 @@
+@@ -1266,26 +5528,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -11199,7 +11204,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +5736,38 @@
+@@ -1293,15 +5738,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -11239,7 +11244,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +5778,108 @@
+@@ -1312,7 +5780,108 @@
          );
      }
  
@@ -11348,7 +11353,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +5896,22 @@
+@@ -1329,9 +5898,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -11374,7 +11379,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +5927,28 @@
+@@ -1347,10 +5929,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -11403,7 +11408,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +5956,23 @@
+@@ -1358,8 +5958,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -11428,7 +11433,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +5996,27 @@
+@@ -1383,22 +5998,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -11465,7 +11470,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +6045,14 @@
+@@ -1427,6 +6047,14 @@
      }
  }
  
@@ -11480,7 +11485,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +6064,13 @@
+@@ -1438,6 +6066,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -11494,7 +11499,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +6090,211 @@
+@@ -1457,12 +6092,211 @@
          }
      };
      let s_border = style.get_border();
@@ -18578,7 +18583,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +    }
 +    let current_color = style.clone_color();
 +    let references = node.element_data().map_or(&[][..], |element| &element.reference_images[..]);
-+    if let Some(steps) = crate::filters::filter_steps(list, scale, &current_color, dom, size, references) {
++    if let Some(steps) = crate::filters::filter_steps(list, scale, &current_color, dom, size, references, false) {
 +        return Some(steps);
 +    }
 +    let filter = crate::filters::convert_filters(list, scale, &current_color, dom)?;

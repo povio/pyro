@@ -1047,6 +1047,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             self.dom,
             (size.width, size.height),
             node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
+            false,
         );
         #[cfg(not(feature = "svg"))]
         let filter_steps: Option<Vec<()>> = None;
@@ -1222,6 +1223,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             self.dom,
             ((cx.frame.border_box.width() / self.scale) as f32, (cx.frame.border_box.height() / self.scale) as f32),
             node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
+            true,
         )
         .as_deref()
         {
