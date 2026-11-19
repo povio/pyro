@@ -3610,6 +3610,18 @@ impl ElementCx<'_, '_> {
         block_lr: bool,
         only_pass: Option<NodeId>,
     ) {
+        let line_transform = self.vertical_line_transform(text_layout, pos, block_lr);
+        self.draw_turned_lines(scene, text_layout, line_transform, pos, only_pass);
+    }
+
+    /// pyro: the transform from the layout space of each line (by index) of this vertical inline
+    /// layout to the scene, as [`Self::draw_vertical_inline_layout`] paints them.
+    pub(super) fn vertical_line_transform<'t>(
+        &'t self,
+        text_layout: &'t blitz_dom::node::TextLayout,
+        pos: Point,
+        block_lr: bool,
+    ) -> impl Fn(usize) -> Affine + 't {
         let block_offset = text_layout.block_offset as f64;
         let layout = self.node.final_layout();
         let content_width = (layout.size.width
@@ -3625,13 +3637,13 @@ impl ElementCx<'_, '_> {
         let top = pos.y + inline_start - inline_start.round();
         // pyro: `sideways-lr` turns its lines the other way, a quarter counterclockwise: they
         // run bottom to top, from the content box's bottom, with their line-over side on the left.
-        if self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
-            let inset = unrounded.border + unrounded.padding;
-            let bottom = top + (unrounded.size.height - inset.top - inset.bottom) as f64;
-            let transform = self.transform * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, bottom * self.scale]);
-            return self.draw_turned_lines(scene, text_layout, |_| transform, pos, only_pass);
-        }
-        let line_transform = |index: usize| {
+        let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
+        let inset = unrounded.border + unrounded.padding;
+        let bottom = top + (unrounded.size.height - inset.top - inset.bottom) as f64;
+        move |index: usize| {
+            if sideways_lr {
+                return self.transform * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, bottom * self.scale]);
+            }
             let flip = if block_lr {
                 text_layout.layout.get(index).map_or(0.0, |line| {
                     let metrics = line.metrics();
@@ -3642,8 +3654,7 @@ impl ElementCx<'_, '_> {
             };
             self.transform
                 * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
-        };
-        self.draw_turned_lines(scene, text_layout, line_transform, pos, only_pass);
+        }
     }
 
     /// pyro: paints the content of the positioned inline box `span` of this inline root, as

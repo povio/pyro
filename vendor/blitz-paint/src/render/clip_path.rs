@@ -948,9 +948,12 @@ impl ElementCx<'_, '_> {
         use style::values::computed::basic_shape::ClipPath as StyloClipPath;
         use style::values::generics::image::GenericImage;
 
-        if INLINE_EFFECTS.get() || self.node.vertical_block_axis().is_some() {
+        if INLINE_EFFECTS.get() {
             return false;
         }
+        // pyro: a vertical layout's lines each have their transform (`vertical_line_transform`):
+        // the fragments are placed in this element's space through them.
+        let vertical = self.node.vertical_block_axis();
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else {
             return false;
         };
@@ -999,6 +1002,17 @@ impl ElementCx<'_, '_> {
         if effects.is_empty() {
             return false;
         }
+        // pyro: a mask over vertical fragments (its strip is laid out horizontally) is not done:
+        // such a layout paints plainly, as before.
+        if vertical.is_some()
+            && effects.iter().any(|&id| {
+                dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                    style.get_svg().mask_image.0.iter().any(|image| !matches!(image, GenericImage::None))
+                })
+            })
+        {
+            return false;
+        }
         // The outermost ones: an inner one is painted with its ancestor.
         let all = effects.clone();
         effects.retain(|&id| {
@@ -1018,16 +1032,22 @@ impl ElementCx<'_, '_> {
             (pos.x + subpixel.x as f64) * self.scale,
             (pos.y + subpixel.y as f64 + text_layout.block_offset as f64) * self.scale,
         );
-        let transform = self.transform * Affine::translate(origin);
-        let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
-        let visible = self.visible_area() - origin;
+        let line_transform = vertical.map(|block_lr| self.vertical_line_transform(text_layout, pos, block_lr));
+        let (transform, (text_shift, tops), visible) = match vertical {
+            Some(_) => (self.transform, (0.0, None), self.visible_area()),
+            None => (
+                self.transform * Affine::translate(origin),
+                self.text_placement(text_layout.block_offset as f64),
+                self.visible_area() - origin,
+            ),
+        };
 
         // Each element's fragments, line by line.
         let scale = self.scale as f32;
         let length = |v: &LengthPercentage| v.resolve(CSSPixelLength::new(0.0)).px();
         let mut fragments: Vec<Vec<InlineFragment>> = vec![Vec::new(); effects.len()];
         let mut chain: Vec<(blitz_dom::NodeId, u16)> = Vec::new();
-        for line in layout.lines() {
+        for (line_index, line) in layout.lines().enumerate() {
             let metrics = line.metrics();
             // pyro: from the line's start, past the floats before it (`inline_box_fragments`).
             let content_end =
@@ -1149,7 +1169,7 @@ impl ElementCx<'_, '_> {
                 // border and let a sliver of what lies under it through (WPT
                 // `backdrop-filter-inline-positioning`).
                 let [a, b, c, d, tx, ty] = transform.as_coeffs();
-                let area = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
+                let area = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 && line_transform.is_none() {
                     let snap = |v: f64, t: f64| ((t + v) / self.scale).round() * self.scale - t;
                     let snapped = Rect::new(
                         snap(border_box.x0, tx),
@@ -1166,6 +1186,14 @@ impl ElementCx<'_, '_> {
                     )
                 } else {
                     area
+                };
+                // pyro: a vertical line's, in this element's space.
+                let (border_box, area) = match &line_transform {
+                    Some(line_transform) => {
+                        let to_element = self.transform.inverse() * line_transform(line_index);
+                        (to_element.transform_rect_bbox(border_box), to_element.transform_rect_bbox(area))
+                    }
+                    None => (border_box, area),
                 };
                 fragments[slot].push(InlineFragment { border_box, area });
             }
@@ -1195,7 +1223,9 @@ impl ElementCx<'_, '_> {
         // (`RunFilter`): drawing every run of the layout clipped to the areas made a paragraph's
         // cost grow with its faded spans times its length.
         let text = &self.context.draw_text_context;
+        // (Not over vertical lines, whose areas are in this element's space, not the layout's.)
         let set_filter = |areas: Option<Vec<Rect>>| {
+            let areas = areas.filter(|_| vertical.is_none());
             text.borrow_mut().run_filter = areas.map(|areas| crate::text::RunFilter { root, areas });
         };
 
@@ -1248,7 +1278,12 @@ impl ElementCx<'_, '_> {
             let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
             let single = fragments.len() == 1;
             // The first fragment has the start side, the last the end side (`slice`).
-            let (has_left, has_right) = if rtl { (single, true) } else { (true, single) };
+            let (has_left, has_right) = match (vertical, rtl) {
+                // (Vertical fragments break on their top and bottom.)
+                (Some(_), _) => (true, true),
+                (None, true) => (single, true),
+                (None, false) => (true, single),
+            };
             let edges = |left: bool, right: bool| {
                 (
                     taffy::Rect {
