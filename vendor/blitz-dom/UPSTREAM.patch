@@ -19666,7 +19666,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2009 @@
+@@ -0,0 +1,2011 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -20643,7 +20643,8 @@ new file mode 100644
 +                            spanner: true,
 +                        });
 +                        row_top = top + (end - start);
-+                        run_start = end;
++                        // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
++                        run_start = spanners[part].1;
 +                    }
 +                    continue;
 +                }
@@ -20733,7 +20734,8 @@ new file mode 100644
 +                    spanner: true,
 +                });
 +                row_top += end - start;
-+                run_start = end;
++                // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
++                run_start = spanners[part].1;
 +            }
 +        }
 +        // pyro: one row of columns in a box of a definite height: the column boxes (and their

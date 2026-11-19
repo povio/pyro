@@ -974,7 +974,8 @@ impl LayoutPassState<'_> {
                             spanner: true,
                         });
                         row_top = top + (end - start);
-                        run_start = end;
+                        // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
+                        run_start = spanners[part].1;
                     }
                     continue;
                 }
@@ -1064,7 +1065,8 @@ impl LayoutPassState<'_> {
                     spanner: true,
                 });
                 row_top += end - start;
-                run_start = end;
+                // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
+                run_start = spanners[part].1;
             }
         }
         // pyro: one row of columns in a box of a definite height: the column boxes (and their
