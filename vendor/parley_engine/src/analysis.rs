@@ -237,7 +237,15 @@ impl SegmenterKey {
         let ja_zh = match strictness {
             LineBreakStrictness::Normal | LineBreakStrictness::Loose => config
                 .language
-                .is_some_and(|language| matches!(language.language(), "ja" | "zh")),
+                // pyro: in a Chinese or Japanese writing system: the script subtag decides where
+                // there is one (`ja-Hang` is not, `en-Hrkt` is: WPT css-text
+                // `writing-system-line-break-001/002`), else the language.
+                .is_some_and(|language| match language.script() {
+                    Some(script) => {
+                        matches!(script, "Jpan" | "Hira" | "Kana" | "Hrkt" | "Hani" | "Hans" | "Hant" | "Bopo")
+                    }
+                    None => matches!(language.language(), "ja" | "zh"),
+                }),
             _ => false,
         };
         Self {
