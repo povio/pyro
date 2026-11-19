@@ -671,6 +671,9 @@ fn shape_segment(
     // and its font, held to be shaped with the grapheme after it: a joiner is no glyph of its own
     // but tells the letter after it how to join, which a font shaping with `morx` (macOS's Geeza
     // Pro) reads only from its own buffer, not the context (WPT css-text `word-break-break-all-004`).
+    // A soft hyphen too (a grapheme of its own, in a word): in the run of the letters around it
+    // when they share a font, so it does not cut the word's shaping in two (WPT css-text
+    // `hyphenate-character-005`).
     let mut pending_joiner: Option<(FontInstance, TextRange)> = None;
 
     for grapheme_length in grapheme_lengths {
@@ -686,7 +689,7 @@ fn shape_segment(
             .select_font(segment, options, char_cluster)
             .ok_or(())?;
 
-        if text[grapheme.byte_range.clone()].chars().all(|c| matches!(c, '\u{200c}' | '\u{200d}')) {
+        if text[grapheme.byte_range.clone()].chars().all(|c| matches!(c, '\u{ad}' | '\u{200c}' | '\u{200d}')) {
             if let Some((held_font, held)) = pending_joiner.take() {
                 grapheme.byte_range.start = held.byte_range.start;
                 grapheme.char_range.start = held.char_range.start;
