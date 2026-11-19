@@ -1588,7 +1588,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // the content, clipped and scrolled with it, and its content once per column
                 // (`render/multicol.rs`).
                 if paints_own_box {
-                    cx.draw_column_rules(scene);
+                    cx.draw_column_rules(scene, child_clip_rect);
                 }
                 if !cx.draw_columns(scene, content_position, child_clip_rect) {
                     // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.

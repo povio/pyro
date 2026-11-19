@@ -6787,7 +6787,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                // the content, clipped and scrolled with it, and its content once per column
 +                // (`render/multicol.rs`).
 +                if paints_own_box {
-+                    cx.draw_column_rules(scene);
++                    cx.draw_column_rules(scene, child_clip_rect);
 +                }
 +                if !cx.draw_columns(scene, content_position, child_clip_rect) {
 +                    // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.
@@ -13662,7 +13662,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  }
  
  /// The (outer half, inner half) colours of a single edge of a `groove`/`ridge`
-@@ -84,70 +91,411 @@
+@@ -84,70 +91,428 @@
  ///
  /// A `groove` looks carved into the page: its outer half is shaded like `inset`
  /// and its inner half like `outset`. `ridge` is the reverse (raised).
@@ -13781,9 +13781,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +/// Blink works in whole CSS px, so the pattern is laid out in them and then
 +/// stretched over the side.
 +///
-+/// `dots` holds the round dots already in `path`: two sides alike each have a
++/// `dots` holds the corner dots already in `path`: two sides alike each have a
 +/// dot in the corner they share, and the same dot twice in one fill would come
-+/// out bolder than the others (the coverage of its edge adds up).
++/// out bolder than the others (the coverage of its edge adds up). Only a side's
++/// end dots can be shared, so only those are kept there (a side's own dots never
++/// coincide, and checking each against all others would be quadratic).
++///
++/// pyro: `visible`: the part of the side (device px from `origin`, along it)
++/// that can show; marks wholly outside it are not made, the pattern keeping its
++/// place (a column rule a million pixels tall makes only the marks in view).
 +pub(super) fn straight_side_marks(
 +    path: &mut BezPath,
 +    dots: &mut Vec<(Point, f64)>,
@@ -13792,6 +13798,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    (along, across): (Vec2, Vec2),
 +    (length, thickness): (f64, f64),
 +    scale: f64,
++    visible: Option<(f64, f64)>,
 +) {
 +    let width = (thickness / scale).round().max(1.0);
 +    let len = (length / scale).round();
@@ -13799,6 +13806,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        return;
 +    }
 +    let unit = length / len;
++    // The visible part in the pattern's units (whole CSS px along the side).
++    let (seen_from, seen_to) = visible.map_or((f64::NEG_INFINITY, f64::INFINITY), |(a, b)| (a / unit, b / unit));
 +    let at = |a: f64, depth: f64| origin + along * (a * unit) + across * depth;
 +    let mut rect = |from: f64, to: f64| {
 +        if to > from {
@@ -13814,11 +13823,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    if !stroke_is_dashed(width, style) {
 +        // Round dots, the first and the last touching the ends of the side.
 +        let radius = thickness / 2.0;
++        // (The corner dots of the sides before this one.)
++        let shared = dots.len();
 +        let mut dot = |a: f64| {
 +            let center = at(a, radius);
 +            let same = |&(c, r): &(Point, f64)| r == radius && (c - center).hypot() < 0.25 * scale;
-+            if !dots.iter().any(same) {
-+                dots.push((center, radius));
++            if !dots[..shared].iter().any(same) {
++                if a <= width || a >= len - width {
++                    dots.push((center, radius));
++                }
 +                path.extend(Circle::new(center, radius).path_elements(0.1));
 +            }
 +        };
@@ -13827,8 +13840,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            return;
 +        }
 +        let period = dot_period(len, width, false);
-+        let mut distance = 0.0;
-+        while distance < len - width {
++        // (From the first dot that reaches into view.)
++        let first = ((seen_from - width) / period).floor().max(0.0);
++        let mut distance = first * period;
++        while distance < len - width && width / 2.0 + distance <= seen_to + width {
 +            dot(width / 2.0 + distance);
 +            distance += period;
 +        }
@@ -13886,10 +13901,12 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    match dash_pattern(len, width, style, false) {
 +        None => rect(start, end),
 +        Some((dash, gap)) => {
-+            let mut from = start;
-+            while from < end {
++            let pitch = dash + gap;
++            let skipped = ((seen_from - dash - start) / pitch).floor().max(0.0);
++            let mut from = start + skipped * pitch;
++            while from < end && from <= seen_to {
 +                rect(from, (from + dash).min(end));
-+                from += dash + gap;
++                from += pitch;
 +            }
 +        }
 +    }
@@ -14115,7 +14132,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let style = &*self.style;
          let border = style.get_border();
          let current_color = style.clone_color();
-@@ -196,7 +544,11 @@
+@@ -196,7 +561,11 @@
                      // `r`, inner radius `r - width`, concentric). For 0 < r < width CSS
                      // draws a rounded outer edge against a sharp inner corner, which a
                      // stroke can't represent — leave those to the per-edge fill.
@@ -14128,7 +14145,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                      let stroke_is_exact = is_exact(radii.top_left)
                          && is_exact(radii.top_right)
                          && is_exact(radii.bottom_right)
-@@ -222,11 +574,44 @@
+@@ -222,11 +591,44 @@
                      let ry = (bb.height() + pb.height()) / 4.0;
                      let e = kurbo::Ellipse::new(bb.center(), (rx, ry), 0.0);
                      scene.stroke(&stroke, self.transform, color, None, &e);
@@ -14173,7 +14190,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          // (colour, path) pairs to be filled. Several entries may share a colour;
          // they are grouped before filling so that adjacent same-coloured regions
          // are drawn together, avoiding anti-aliasing seams between them.
-@@ -234,6 +619,7 @@
+@@ -234,6 +636,7 @@
          // At most 8 entries: 4 edges, each of which can contribute 2 (the outer
          // and inner halves of a `groove`/`ridge`).
          let mut borders: SmallVec<[(Color, BezPath); 8]> = SmallVec::new();
@@ -14181,7 +14198,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          for &edge in &[Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
              let (color, edge_style) = match edge {
-@@ -244,7 +630,11 @@
+@@ -244,7 +647,11 @@
              };
              let color = color.resolve_to_absolute(&current_color).as_srgb_color();
  
@@ -14194,7 +14211,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
                  continue;
              }
  
-@@ -253,10 +643,9 @@
+@@ -253,10 +660,9 @@
                  // guard against drawing them anyway.
                  BorderStyle::None | BorderStyle::Hidden => {}
  
@@ -14208,7 +14225,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
                  // A double border is two solid lines separated by a gap, splitting
                  // the border width into three equal parts (outer line / gap / inner
-@@ -315,6 +704,20 @@
+@@ -315,6 +721,20 @@
              }
          }
  
@@ -14229,10 +14246,13 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -341,6 +744,175 @@
-         }
-     }
- 
+@@ -338,6 +758,175 @@
+             }
+             scene.fill(Fill::NonZero, self.transform, color, None, &path);
+             start = next;
++        }
++    }
++
 +    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
 +    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
 +    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
@@ -14271,7 +14291,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                        Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
 +                        Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
 +                    };
-+                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale);
++                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale, None);
 +                }
 +                _ => path.extend(&self.frame.border_edge_shape(edge)),
 +            }
@@ -14399,13 +14419,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            path.close_path();
 +            scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +            painted[i] = true;
-+        }
-+    }
-+
-     /// The border width (in device pixels) of a single edge.
-     fn edge_width(&self, edge: Edge) -> f64 {
-         match edge {
-@@ -351,163 +923,152 @@
+         }
+     }
+ 
+@@ -351,163 +940,152 @@
          }
      }
  
@@ -14667,11 +14684,11 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                    }
 +                };
 +                let (_, marks, dots) = &mut open[group];
-+                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale);
++                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale, None);
 +                continue;
              }
 +            let mut marks = BezPath::new();
-+            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale);
++            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale, None);
 +            // The side's box, an end cut back along the corner's diagonal where
 +            // it is mitred. Clockwise, `before` is at the start of the top and
 +            // right sides and at the end of the bottom and left ones.
@@ -14703,7 +14720,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      }
  
      pub(crate) fn draw_table_borders(&self, scene: &mut impl PaintScene) {
-@@ -522,6 +1083,10 @@
+@@ -522,6 +1100,10 @@
          let Some(grid_info) = &mut *table.computed_grid_info.borrow_mut() else {
              return;
          };
@@ -14714,7 +14731,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          let Some(border_style) = table.border_style.as_deref() else {
              return;
          };
-@@ -531,35 +1096,57 @@
+@@ -531,35 +1113,57 @@
          let cols = PhysicalTracks::from_tracks(&grid_info.columns);
          let rows = PhysicalTracks::from_tracks(&grid_info.rows);
  
@@ -14742,15 +14759,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          // No need to draw transparent borders (as they won't be visible anyway)
          if border_color == Color::TRANSPARENT {
--            return;
--        }
--
--        // Border widths are not adjusted for border-style in computed styles,
--        // so a border with `none`/`hidden` style must be treated as zero-width.
--        if border_style.border_top_style.none_or_hidden() {
              return;
          }
  
+-        // Border widths are not adjusted for border-style in computed styles,
+-        // so a border with `none`/`hidden` style must be treated as zero-width.
+-        if border_style.border_top_style.none_or_hidden() {
+-            return;
+-        }
+-
          // The borders are laid out as the gutters between the tracks, and as the border
          // of the table around them. Track positions are relative to the table's border box.
          let border_width = table.style.gap.map(|gap| gap.into_raw().value() as f64);
@@ -14788,7 +14805,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          };
  
          // Horizontal borders: the outer edges, then the gutters between adjacent row tracks.
-@@ -571,12 +1158,12 @@
+@@ -571,12 +1175,12 @@
              fill(left, bottom - border_width.height, right, bottom);
          }
          for (prev, next) in rows.iter().zip(rows.iter().skip(1)) {
@@ -14803,7 +14820,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,10 +1176,205 @@
+@@ -589,10 +1193,205 @@
          }
      }
  
@@ -15012,7 +15029,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
      /// ❌ ridge - Defines a 3D ridged border. The effect depends on the border-color value
      /// ❌ inset - Defines a 3D inset border. The effect depends on the border-color value
-@@ -600,33 +1382,102 @@
+@@ -600,33 +1399,140 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
@@ -15120,8 +15137,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -            | BorderStyle::Dashed
 -            | BorderStyle::Double => self.frame.outline(),
 -        };
--
--        scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +            | BorderStyle::Double => {
 +                // An outline pulled in to the middle of a small box leaves no
 +                // room inside it.
@@ -15130,13 +15145,52 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +            }
 +        }
-     }
- }
-+
++    }
++}
+ 
+-        scene.fill(Fill::NonZero, self.transform, color, None, &path);
 +fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool {
 +    a.width == b.width && a.color == b.color && a.is_double() == b.is_double()
 +}
 +
++
++#[cfg(test)]
++mod side_marks_tests {
++    use super::*;
++    use kurbo::PathEl;
++
++    fn starts(style: BorderStyle, length: f64, visible: Option<(f64, f64)>) -> (Vec<(i64, i64)>, usize) {
++        let mut path = BezPath::new();
++        let mut dots = Vec::new();
++        let axes = (Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0));
++        straight_side_marks(&mut path, &mut dots, style, Point::ZERO, axes, (length, 4.0), 1.0, visible);
++        let starts = path
++            .elements()
++            .iter()
++            .filter_map(|el| match el {
++                PathEl::MoveTo(p) => Some(((p.x * 64.0).round() as i64, (p.y * 64.0).round() as i64)),
++                _ => None,
++            })
++            .collect();
++        (starts, dots.len())
+     }
++
++    /// pyro: a dotted or dashed side a million pixels long (a column rule) makes the marks in
++    /// view only, where the whole side has them, and keeps only its corner dots for the
++    /// corners it shares (the dedup is not quadratic).
++    #[test]
++    fn a_tall_side_makes_only_its_visible_marks_in_place() {
++        for style in [BorderStyle::Dotted, BorderStyle::Dashed] {
++            let (all, corner_dots) = starts(style, 20_000.0, None);
++            let (seen, _) = starts(style, 20_000.0, Some((1_000.0, 2_000.0)));
++            assert!(!seen.is_empty() && seen.len() * 10 < all.len(), "{style:?}: {} of {}", seen.len(), all.len());
++            assert!(seen.iter().all(|s| all.contains(s)), "{style:?}: marks moved");
++            assert!(corner_dots <= 2);
++            let (huge, _) = starts(style, 4.0e6, Some((0.0, 1_000.0)));
++            assert!(huge.len() < 400, "{style:?}: {}", huge.len());
++        }
++    }
+ }
 diff --git a/packages/blitz-paint/src/render/border_image.rs b/packages/blitz-paint/src/render/border_image.rs
 new file mode 100644
 --- /dev/null
@@ -19418,7 +19472,7 @@ diff --git a/packages/blitz-paint/src/render/multicol.rs b/packages/blitz-paint/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/multicol.rs
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,194 @@
 +//! pyro: multi-column containers (blitz-dom `layout/multicol.rs`).
 +//!
 +//! A multi-column container's content is laid out in one strip a column wide; each column shows
@@ -19524,8 +19578,9 @@ new file mode 100644
 +
 +    /// The column rules of a multi-column container (`column-rule`): one in the middle of the
 +    /// gap between each two neighbouring columns of a row, as tall as the columns, snapped to
-+    /// whole pixels.
-+    pub(super) fn draw_column_rules(&self, scene: &mut impl PaintScene) {
++    /// whole pixels. `clip_rect` (screen space): what can show; dotted and dashed rules make
++    /// their marks there only.
++    pub(super) fn draw_column_rules(&self, scene: &mut impl PaintScene, clip_rect: Rect) {
 +        let Some(columns) = self.context.dom.column_fragments(self.node.id) else {
 +            return;
 +        };
@@ -19544,6 +19599,14 @@ new file mode 100644
 +        }
 +        let scale = self.scale;
 +        let thickness = (width * scale).round().max(1.0);
++        // The visible part of the element's space (device px), for dotted and dashed rules.
++        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
++        let visible = (screen * self.transform).inverse().transform_rect_bbox(clip_rect);
++        // (An unbounded clip gives no bound, not NaN.)
++        let (seen_from, seen_to) = (
++            if visible.y0.is_nan() { f64::NEG_INFINITY } else { visible.y0 },
++            if visible.y1.is_nan() { f64::INFINITY } else { visible.y1 },
++        );
 +        for pair in columns.fragments.windows(2) {
 +            let (a, b) = (&pair[0], &pair[1]);
 +            if a.spanner || b.spanner || (a.top - b.top).abs() > 0.5 {
@@ -19558,14 +19621,14 @@ new file mode 100644
 +                continue;
 +            }
 +            let rect = Rect::new(x0, y0, x0 + thickness, y1);
-+            self.draw_rule(scene, rect, style, color);
++            self.draw_rule(scene, rect, style, color, (seen_from - rect.y0, seen_to - rect.y0));
 +        }
 +    }
 +
 +    /// One column rule in `rect` (device px, the element's space), painted as Chromium paints
 +    /// it: as the left side of a box (`BoxBorderPainter::DrawLineForBoxSide`), its style the one
 +    /// a collapsed table border would have (`inset` as `ridge`, `outset` as `groove`).
-+    fn draw_rule(&self, scene: &mut impl PaintScene, rect: Rect, style: BorderStyle, color: peniko::Color) {
++    fn draw_rule(&self, scene: &mut impl PaintScene, rect: Rect, style: BorderStyle, color: peniko::Color, visible: (f64, f64)) {
 +        use super::border::{grooved_edge_colors, straight_side_marks};
 +        use crate::kurbo_css::Edge;
 +        let t = rect.width();
@@ -19596,6 +19659,7 @@ new file mode 100644
 +                    (Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0)),
 +                    (rect.height(), t),
 +                    self.scale,
++                    Some(visible),
 +                );
 +                scene.fill(Fill::NonZero, self.transform, color, None, &marks);
 +            }

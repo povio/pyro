@@ -103,8 +103,9 @@ impl ElementCx<'_, '_> {
 
     /// The column rules of a multi-column container (`column-rule`): one in the middle of the
     /// gap between each two neighbouring columns of a row, as tall as the columns, snapped to
-    /// whole pixels.
-    pub(super) fn draw_column_rules(&self, scene: &mut impl PaintScene) {
+    /// whole pixels. `clip_rect` (screen space): what can show; dotted and dashed rules make
+    /// their marks there only.
+    pub(super) fn draw_column_rules(&self, scene: &mut impl PaintScene, clip_rect: Rect) {
         let Some(columns) = self.context.dom.column_fragments(self.node.id) else {
             return;
         };
@@ -123,6 +124,14 @@ impl ElementCx<'_, '_> {
         }
         let scale = self.scale;
         let thickness = (width * scale).round().max(1.0);
+        // The visible part of the element's space (device px), for dotted and dashed rules.
+        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
+        let visible = (screen * self.transform).inverse().transform_rect_bbox(clip_rect);
+        // (An unbounded clip gives no bound, not NaN.)
+        let (seen_from, seen_to) = (
+            if visible.y0.is_nan() { f64::NEG_INFINITY } else { visible.y0 },
+            if visible.y1.is_nan() { f64::INFINITY } else { visible.y1 },
+        );
         for pair in columns.fragments.windows(2) {
             let (a, b) = (&pair[0], &pair[1]);
             if a.spanner || b.spanner || (a.top - b.top).abs() > 0.5 {
@@ -137,14 +146,14 @@ impl ElementCx<'_, '_> {
                 continue;
             }
             let rect = Rect::new(x0, y0, x0 + thickness, y1);
-            self.draw_rule(scene, rect, style, color);
+            self.draw_rule(scene, rect, style, color, (seen_from - rect.y0, seen_to - rect.y0));
         }
     }
 
     /// One column rule in `rect` (device px, the element's space), painted as Chromium paints
     /// it: as the left side of a box (`BoxBorderPainter::DrawLineForBoxSide`), its style the one
     /// a collapsed table border would have (`inset` as `ridge`, `outset` as `groove`).
-    fn draw_rule(&self, scene: &mut impl PaintScene, rect: Rect, style: BorderStyle, color: peniko::Color) {
+    fn draw_rule(&self, scene: &mut impl PaintScene, rect: Rect, style: BorderStyle, color: peniko::Color, visible: (f64, f64)) {
         use super::border::{grooved_edge_colors, straight_side_marks};
         use crate::kurbo_css::Edge;
         let t = rect.width();
@@ -175,6 +184,7 @@ impl ElementCx<'_, '_> {
                     (Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0)),
                     (rect.height(), t),
                     self.scale,
+                    Some(visible),
                 );
                 scene.fill(Fill::NonZero, self.transform, color, None, &marks);
             }

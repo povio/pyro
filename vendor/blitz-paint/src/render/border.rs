@@ -184,9 +184,15 @@ fn dot_period(length: f64, width: f64, closed: bool) -> f64 {
 /// Blink works in whole CSS px, so the pattern is laid out in them and then
 /// stretched over the side.
 ///
-/// `dots` holds the round dots already in `path`: two sides alike each have a
+/// `dots` holds the corner dots already in `path`: two sides alike each have a
 /// dot in the corner they share, and the same dot twice in one fill would come
-/// out bolder than the others (the coverage of its edge adds up).
+/// out bolder than the others (the coverage of its edge adds up). Only a side's
+/// end dots can be shared, so only those are kept there (a side's own dots never
+/// coincide, and checking each against all others would be quadratic).
+///
+/// pyro: `visible`: the part of the side (device px from `origin`, along it)
+/// that can show; marks wholly outside it are not made, the pattern keeping its
+/// place (a column rule a million pixels tall makes only the marks in view).
 pub(super) fn straight_side_marks(
     path: &mut BezPath,
     dots: &mut Vec<(Point, f64)>,
@@ -195,6 +201,7 @@ pub(super) fn straight_side_marks(
     (along, across): (Vec2, Vec2),
     (length, thickness): (f64, f64),
     scale: f64,
+    visible: Option<(f64, f64)>,
 ) {
     let width = (thickness / scale).round().max(1.0);
     let len = (length / scale).round();
@@ -202,6 +209,8 @@ pub(super) fn straight_side_marks(
         return;
     }
     let unit = length / len;
+    // The visible part in the pattern's units (whole CSS px along the side).
+    let (seen_from, seen_to) = visible.map_or((f64::NEG_INFINITY, f64::INFINITY), |(a, b)| (a / unit, b / unit));
     let at = |a: f64, depth: f64| origin + along * (a * unit) + across * depth;
     let mut rect = |from: f64, to: f64| {
         if to > from {
@@ -212,11 +221,15 @@ pub(super) fn straight_side_marks(
     if !stroke_is_dashed(width, style) {
         // Round dots, the first and the last touching the ends of the side.
         let radius = thickness / 2.0;
+        // (The corner dots of the sides before this one.)
+        let shared = dots.len();
         let mut dot = |a: f64| {
             let center = at(a, radius);
             let same = |&(c, r): &(Point, f64)| r == radius && (c - center).hypot() < 0.25 * scale;
-            if !dots.iter().any(same) {
-                dots.push((center, radius));
+            if !dots[..shared].iter().any(same) {
+                if a <= width || a >= len - width {
+                    dots.push((center, radius));
+                }
                 path.extend(Circle::new(center, radius).path_elements(0.1));
             }
         };
@@ -225,8 +238,10 @@ pub(super) fn straight_side_marks(
             return;
         }
         let period = dot_period(len, width, false);
-        let mut distance = 0.0;
-        while distance < len - width {
+        // (From the first dot that reaches into view.)
+        let first = ((seen_from - width) / period).floor().max(0.0);
+        let mut distance = first * period;
+        while distance < len - width && width / 2.0 + distance <= seen_to + width {
             dot(width / 2.0 + distance);
             distance += period;
         }
@@ -273,10 +288,12 @@ pub(super) fn straight_side_marks(
     match dash_pattern(len, width, style, false) {
         None => rect(start, end),
         Some((dash, gap)) => {
-            let mut from = start;
-            while from < end {
+            let pitch = dash + gap;
+            let skipped = ((seen_from - dash - start) / pitch).floor().max(0.0);
+            let mut from = start + skipped * pitch;
+            while from < end && from <= seen_to {
                 rect(from, (from + dash).min(end));
-                from += dash + gap;
+                from += pitch;
             }
         }
     }
@@ -782,7 +799,7 @@ impl ElementCx<'_, '_> {
                         Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
                         Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
                     };
-                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale);
+                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale, None);
                 }
                 _ => path.extend(&self.frame.border_edge_shape(edge)),
             }
@@ -1041,11 +1058,11 @@ impl ElementCx<'_, '_> {
                     }
                 };
                 let (_, marks, dots) = &mut open[group];
-                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale);
+                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale, None);
                 continue;
             }
             let mut marks = BezPath::new();
-            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale);
+            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale, None);
             // The side's box, an end cut back along the corner's diagonal where
             // it is mitred. Clockwise, `before` is at the start of the top and
             // right sides and at the end of the bottom and left ones.
@@ -1481,3 +1498,41 @@ fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool
     a.width == b.width && a.color == b.color && a.is_double() == b.is_double()
 }
 
+
+#[cfg(test)]
+mod side_marks_tests {
+    use super::*;
+    use kurbo::PathEl;
+
+    fn starts(style: BorderStyle, length: f64, visible: Option<(f64, f64)>) -> (Vec<(i64, i64)>, usize) {
+        let mut path = BezPath::new();
+        let mut dots = Vec::new();
+        let axes = (Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0));
+        straight_side_marks(&mut path, &mut dots, style, Point::ZERO, axes, (length, 4.0), 1.0, visible);
+        let starts = path
+            .elements()
+            .iter()
+            .filter_map(|el| match el {
+                PathEl::MoveTo(p) => Some(((p.x * 64.0).round() as i64, (p.y * 64.0).round() as i64)),
+                _ => None,
+            })
+            .collect();
+        (starts, dots.len())
+    }
+
+    /// pyro: a dotted or dashed side a million pixels long (a column rule) makes the marks in
+    /// view only, where the whole side has them, and keeps only its corner dots for the
+    /// corners it shares (the dedup is not quadratic).
+    #[test]
+    fn a_tall_side_makes_only_its_visible_marks_in_place() {
+        for style in [BorderStyle::Dotted, BorderStyle::Dashed] {
+            let (all, corner_dots) = starts(style, 20_000.0, None);
+            let (seen, _) = starts(style, 20_000.0, Some((1_000.0, 2_000.0)));
+            assert!(!seen.is_empty() && seen.len() * 10 < all.len(), "{style:?}: {} of {}", seen.len(), all.len());
+            assert!(seen.iter().all(|s| all.contains(s)), "{style:?}: marks moved");
+            assert!(corner_dots <= 2);
+            let (huge, _) = starts(style, 4.0e6, Some((0.0, 1_000.0)));
+            assert!(huge.len() < 400, "{style:?}: {}", huge.len());
+        }
+    }
+}
