@@ -2214,8 +2214,26 @@ impl BaseDocument {
                 // pyro: and its first descendants', which a box that the columns do not look into
                 // (a nested multi-column container) takes as its own (CSS Fragmentation 3 § 3.1;
                 // WPT css-multicol `spanner-fragmentation-009`).
-                if forces(style.get_box().break_before)
-                    || (!fragmentable(child, &style) && self.first_descendant_forces_break(child_id))
+                // (Not through layout containment: its forced breaks do not propagate, CSS Contain 2
+                // § 3.3.)
+                let contains_layout = style
+                    .get_box()
+                    .slow_clone_contain()
+                    .contains(style::values::specified::box_::Contain::LAYOUT);
+                // (A first child's `break-before` is its parent's, CSS Fragmentation 3 § 3.1, except
+                // that it does not leave a box of layout containment: then none, CSS Contain 2
+                // § 3.3; WPT css-contain `contain-layout-breaks-002`.)
+                let first_in_contained = previous.is_none()
+                    && node.primary_styles().is_some_and(|parent| {
+                        parent
+                            .get_box()
+                            .slow_clone_contain()
+                            .contains(style::values::specified::box_::Contain::LAYOUT)
+                    });
+                if (forces(style.get_box().break_before) && !first_in_contained)
+                    || (!fragmentable(child, &style)
+                        && !contains_layout
+                        && self.first_descendant_forces_break(child_id))
                 {
                     found.forced.push(child_top - layout.margin.top.max(0.0));
                 }
