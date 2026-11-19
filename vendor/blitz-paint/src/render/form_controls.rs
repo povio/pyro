@@ -170,7 +170,7 @@ impl ElementCx<'_, '_> {
     }
 
     /// pyro: whether the element's `appearance` is `none` (no native look, CSS UI 4).
-    fn native_appearance_none(&self) -> bool {
+    pub(super) fn native_appearance_none(&self) -> bool {
         use style::computed_values::appearance::T as Appearance;
         *self.style.get_box().get_appearance() == Appearance::None
     }

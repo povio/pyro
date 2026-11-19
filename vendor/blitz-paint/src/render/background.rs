@@ -162,6 +162,18 @@ impl<'a> ImageLayerStyles<'a> {
 
 impl ElementCx<'_, '_> {
     pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
+        // pyro: a checkbox, radio button or range input in its native appearance paints no author
+        // background (Chromium draws the widget alone; `appearance: none` draws the box).
+        use blitz_dom::local_name;
+        use style::dom::TElement as _;
+        if self.node.local_name() == "input"
+            && self.node.attr(local_name!("type")).is_some_and(|kind| {
+                ["checkbox", "radio", "range"].iter().any(|native| kind.trim().eq_ignore_ascii_case(native))
+            })
+            && !self.native_appearance_none()
+        {
+            return;
+        }
         let style = self.style.clone();
         self.draw_background_layers(scene, &style, &self.element.background_images, None, None);
     }
