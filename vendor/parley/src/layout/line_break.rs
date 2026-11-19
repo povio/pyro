@@ -2118,7 +2118,30 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 spacing,
                                 item.bidi_level.is_rtl(),
                             );
-                            if all_hang || next_x - hanging <= fit_advance + FIT_TOLERANCE {
+                            // pyro: a run of ideographic spaces that may be wrapped before (after a
+                            // space, not after an ideograph) goes to the next line, as in Blink,
+                            // rather than hang after what the line holds; it hangs where it
+                            // starts a line or follows what it may not be wrapped from (WPT
+                            // css-text `hyphens-auto-004`, `trailing-ideographic-space-005`).
+                            let wraps_before_ideographic_spaces = all_hang
+                                && self.state.line.has_inline_content
+                                && atom.characters().iter().all(|c| c.whitespace == Whitespace::IdeographicSpace)
+                                && {
+                                    // After spaces that follow the line's content: the white space
+                                    // before it back to the content is spaces alone, at least one.
+                                    let clusters = self.layout.data.shaped_text.shaped_clusters();
+                                    let start = atom.shaped_clusters_range().start as usize;
+                                    let mut index = start;
+                                    while index > 0 && clusters[index - 1].whitespace() == Whitespace::Space {
+                                        index -= 1;
+                                    }
+                                    clusters.get(start).is_some_and(|c| c.is_soft_wrap_opportunity_before())
+                                        && index < start
+                                        && index.checked_sub(1).is_some_and(|i| clusters[i].whitespace() == Whitespace::None)
+                                };
+                            if !wraps_before_ideographic_spaces
+                                && (all_hang || next_x - hanging <= fit_advance + FIT_TOLERANCE)
+                            {
                                 if max_height_exceeded {
                                     return self.max_height_break_data(line_height);
                                 }
