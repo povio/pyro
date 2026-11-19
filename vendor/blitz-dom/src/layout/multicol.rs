@@ -695,9 +695,15 @@ impl LayoutPassState<'_> {
 
         // pyro: the content's percentage heights resolve against the column height, the
         // container's content box height when it is definite (its border box here).
+        let is_cell = self.nodes[dom_id]
+            .primary_styles()
+            .is_some_and(|style| style.clone_display().inside() == DisplayInside::TableCell);
+        // (A known height that is no percentage basis does not count: a table cell's, stretched
+        // by its row, CSS 2.1 § 17.5.3.)
         let percent_height = inputs
             .known_dimensions
             .height
+            .filter(|_| inputs.known_dimensions_are_definite.height || !is_cell)
             .or(size.height.maybe_clamp(min_size.height, max_size.height))
             .map(|height| height.max(pb_sum.height));
 
@@ -1169,8 +1175,8 @@ impl LayoutPassState<'_> {
                 taffy::AlignContentKeyword::End | taffy::AlignContentKeyword::FlexEnd => snap(free),
                 _ => 0.0,
             };
+            // (The content moves; the column boxes, and their rules, stay the cell's.)
             for fragment in &mut fragments {
-                fragment.top += shift;
                 fragment.offset.y += shift;
             }
         }

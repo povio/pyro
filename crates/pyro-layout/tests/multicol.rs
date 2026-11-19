@@ -154,3 +154,21 @@ fn nested_rows_go_with_their_outer_fragmentation() {
         assert_eq!(rects(&p, "t"), rects(&fresh, "t"), "outer {outer:?}, sibling {sibling:?}");
     }
 }
+
+/// pyro: a multi-column table cell of `height: auto` stretched by its row gives its content no
+/// percentage basis (CSS 2.1 § 17.5.3), and `vertical-align: bottom` moves its content, not its
+/// column boxes (hit where it is shown).
+#[test]
+fn a_multicol_cell_stretched_by_its_row() {
+    let p = page(
+        "<!doctype html><body style='margin:0'>\
+         <table style='border-spacing:0'><tr><td style='columns:2;column-gap:0;width:100px;padding:0'>\
+         <div id=h style='height:100%'></div><div style='height:20px'></div></td>\
+         <td style='height:200px;padding:0;width:10px'></td></tr></table>\
+         <table style='border-spacing:0'><tr><td style='columns:2;column-gap:10px;column-rule:4px solid;width:100px;padding:0;vertical-align:bottom'>\
+         <div id=b style='height:40px'></div></td><td style='height:200px;padding:0;width:10px'></td></tr></table>",
+    );
+    assert_eq!(rect(&p, "h")[3], 0.0, "no percentage basis");
+    assert_eq!(rect(&p, "b")[1], 380.0, "the content at the bottom of the cell");
+    assert_eq!(p.layout.element_from_point(&p.dom, 10.0, 390.0), Some(p.id("b")));
+}
