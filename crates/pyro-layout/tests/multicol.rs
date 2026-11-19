@@ -213,3 +213,18 @@ fn a_spanner_takes_none_of_its_boxs_height() {
     assert_eq!(rect(&p, "s"), [0.0, 100.0, 200.0, 50.0]);
     assert_eq!(rect(&p, "b")[1], 150.0, "the box goes on below the spanner");
 }
+
+/// pyro: a nested container with rows of an explicit `column-height` lays them out in its outer
+/// columns: a row that does not fit what is left of one starts the next, the row gap before it
+/// truncated (Chromium; WPT css-multicol `column-height-027`).
+#[test]
+fn nested_column_height_rows_follow_the_outer_columns() {
+    let p = page(
+        "<!doctype html><body style='margin:0'><div style='columns:2;column-fill:auto;height:100px;gap:0;width:100px'>\
+         <div style='columns:2;column-fill:auto;column-height:25px;column-wrap:wrap;gap:10px 0'>\
+         <div id=t style='height:300px'></div></div></div>",
+    );
+    let r = rects(&p, "t");
+    assert_eq!(r.len(), 12, "{r:?}");
+    assert_eq!(r[6], [50.0, 0.0, 25.0, 25.0], "the fourth row at the top of the second outer column");
+}

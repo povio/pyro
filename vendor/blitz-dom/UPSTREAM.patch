@@ -19861,7 +19861,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2215 @@
+@@ -0,0 +1,2285 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -20720,6 +20720,10 @@ new file mode 100644
 +        let nested_ctx = (spanners.is_empty() && multicol.height.is_none() && !vertical)
 +            .then(|| self.nested_fragmentation.get(&dom_id).copied())
 +            .flatten();
++        // pyro: so nested with an explicit `column-height` and wrapping rows (css-multicol-2).
++        let nested_rows_ctx = (spanners.is_empty() && multicol.height.is_some() && multicol.wrap && !vertical)
++            .then(|| self.nested_fragmentation.get(&dom_id).copied())
++            .flatten();
 +
 +        // The fragments, row by row: as many columns as each run of content needs, past the
 +        // container's end if it must.
@@ -20821,8 +20825,74 @@ new file mode 100644
 +                });
 +            }
 +        }
++        // pyro: nested in another container's columns with rows of an explicit `column-height`
++        // (`nested_rows_ctx`): rows that height, `row-gap` apart, each filled in turn; a row that
++        // does not fit what is left of its outer column starts the next one, the gap before it
++        // truncated (Chromium; WPT css-multicol `column-height-027`, `-028`).
++        if let (Some((outer_height, offset)), Some(row_height)) = (nested_rows_ctx, multicol.height) {
++            let row_height = row_height.max(1.0);
++            let row_gap = multicol.row_gap(definite_height);
++            let end = breaks.end;
++            let mut start = breaks.start;
++            let mut top = content_top;
++            let mut placed = 0usize;
++            // What is left of the current row (a row taller than an outer column is cut there and
++            // goes on at the top of the next, its pieces filled in turn: `column-height-025`).
++            let mut row_left = row_height;
++            // Where the outer column that holds `y` ends (`y` at a boundary: the one it starts).
++            let boundary = |y: f32| ((offset + y) / outer_height + 1e-4).floor() * outer_height + outer_height - offset;
++            loop {
++                // (A new row after a gap: the outer column the gap starts in; a gap that reaches
++                // past its end is truncated there.)
++                let fresh = row_left == row_height;
++                let mut column_end = boundary(if fresh && placed > 0 { top - row_gap } else { top });
++                if top >= column_end - EPSILON {
++                    top = column_end;
++                    column_end = boundary(top);
++                }
++                let at_column_start = (top - (column_end - outer_height)).abs() <= EPSILON;
++                if fresh && top + row_height > column_end + EPSILON && !at_column_start {
++                    // A row that does not fit what is left of its outer column starts the next.
++                    top = column_end;
++                    continue;
++                }
++                let piece = row_left.min(column_end - top).max(1.0);
++                let last = placed + count + 1 >= fragment_cap;
++                let run = breaks.fill_range(start, end, piece, if last { 1 } else { count + 1 });
++                for (index, &(a, b)) in run.columns.iter().take(count).enumerate() {
++                    let x = column_x(index);
++                    let a = snap(a);
++                    fragments.push(ColumnFragment {
++                        start: a,
++                        end: snap(b),
++                        x,
++                        width: column_width,
++                        top,
++                        height: piece,
++                        offset: Point { x: x - pb.left, y: top - a },
++                        spanner: false,
++                    });
++                    placed += 1;
++                }
++                row_top = top + piece;
++                match run.columns.get(count) {
++                    Some(&(next, _)) if !last && next < end - EPSILON => {
++                        start = next;
++                        if piece < row_left - EPSILON {
++                            // The row goes on in the next outer column.
++                            row_left -= piece;
++                            top = row_top;
++                        } else {
++                            row_left = row_height;
++                            top = row_top + row_gap;
++                        }
++                    }
++                    _ => break,
++                }
++            }
++        }
 +        for part in 0..=spanners.len() {
-+            if nested_ctx.is_some() {
++            if nested_ctx.is_some() || nested_rows_ctx.is_some() {
 +                break;
 +            }
 +            let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
@@ -21064,7 +21134,7 @@ new file mode 100644
 +        // pyro: the baselines are where their lines are shown, in their columns (Chromium takes
 +        // the first baseline from the first column with a line; WPT css-multicol `baseline-001`).
 +        let mut baselines = strip.baselines;
-+        let columns = ColumnFragments { fragments, nested: nested_ctx, pushed };
++        let columns = ColumnFragments { fragments, nested: nested_ctx.or(nested_rows_ctx), pushed };
 +        if columns.fragments.len() > 1 && !vertical {
 +            for candidate in oof_candidates.as_mut_slice() {
 +                if candidate.containing_block.is_some() {
