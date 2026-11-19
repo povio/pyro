@@ -18309,7 +18309,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,1654 @@
+@@ -0,0 +1,1668 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -19652,8 +19652,11 @@ new file mode 100644
 +        };
 +        // The previous in-flow block's border-box bottom and bottom margin.
 +        let mut previous: Option<(f32, f32)> = None;
-+        // pyro: the previous in-flow block has `break-after: avoid`.
++        // pyro: the previous in-flow block has `break-after: avoid`; where a break avoided after it
++        // would go instead: its top when it has no content to break between (an empty box,
++        // breakable anywhere through its space, is kept whole then), else its bottom.
 +        let mut avoid_after = false;
++        let mut previous_unit_top: f32 = 0.0;
 +        for &child_id in children {
 +            let child = &self.nodes[child_id];
 +            let Some(style) = child.primary_styles() else {
@@ -19696,12 +19699,16 @@ new file mode 100644
 +                    use style::values::computed::BreakBetween as B;
 +                    matches!(b, B::Avoid | B::AvoidColumn)
 +                };
++                let leaf = child.layout_children.borrow().as_deref().is_none_or(|c| c.is_empty())
++                    && !child.flags.is_inline_root();
 +                if let Some((bottom, _)) = previous
 +                    && (avoids(style.get_box().break_before) || avoid_after)
 +                {
-+                    found.strict.push((bottom.min(child_top) - 2.0 * EPSILON, child_top + 2.0 * EPSILON));
++                    let end = if leaf { child_bottom } else { child_top };
++                    found.strict.push((previous_unit_top.min(bottom.min(child_top)) - 2.0 * EPSILON, end + 2.0 * EPSILON));
 +                }
 +                avoid_after = avoids(style.get_box().break_after);
++                previous_unit_top = if leaf { child_top } else { child_bottom };
 +                if let Some((bottom, margin)) = previous.filter(|&(b, _)| child_top >= b) {
 +                    // The collapsed margin, no more (clearance is no margin).
 +                    let margin = margin.max(layout.margin.top).max(0.0);
@@ -19713,6 +19720,13 @@ new file mode 100644
 +                });
 +            } else {
 +                found.floats.push((child_top, child_bottom));
++                // pyro: a monolithic float is not separated from its margins (Chromium does not
++                // truncate a float's margins at a break; WPT css-multicol `multicol-fill-balance-037`).
++                if !fragmentable(child, &style) {
++                    let margin_box = (child_top - layout.margin.top.max(0.0), child_bottom + layout.margin.bottom.max(0.0));
++                    found.strict.push(margin_box);
++                    found.loose.push(margin_box);
++                }
 +            }
 +            if fragmentable(child, &style) {
 +                if style.get_box().break_inside != BreakWithin::Auto {
