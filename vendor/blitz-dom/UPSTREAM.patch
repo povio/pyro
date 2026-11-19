@@ -46179,7 +46179,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  /// A point
-@@ -87,6 +140,97 @@
+@@ -87,6 +140,100 @@
      pub const ZERO: Self = Point { x: 0.0, y: 0.0 };
  }
  
@@ -46258,11 +46258,14 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +    let GenericBasicShape::Rect(inset) = &**shape else {
 +        return None;
 +    };
-+    let (w, h) = (CSSPixelLength::new(natural_width), CSSPixelLength::new(natural_height));
-+    let top = inset.rect.0.resolve(h).px();
-+    let right = inset.rect.1.resolve(w).px();
-+    let bottom = inset.rect.2.resolve(h).px();
-+    let left = inset.rect.3.resolve(w).px();
++    // pyro: the insets' lengths are computed, so zoomed (`zoom`), and the natural size is not:
++    // resolved against the zoomed size and unzoomed (WPT css-images `object-view-box-zoom`).
++    let zoom = style.effective_zoom.value().max(f32::MIN_POSITIVE);
++    let (w, h) = (CSSPixelLength::new(natural_width * zoom), CSSPixelLength::new(natural_height * zoom));
++    let top = inset.rect.0.resolve(h).px() / zoom;
++    let right = inset.rect.1.resolve(w).px() / zoom;
++    let bottom = inset.rect.2.resolve(h).px() / zoom;
++    let left = inset.rect.3.resolve(w).px() / zoom;
 +    let (width, height) = (natural_width - left - right, natural_height - top - bottom);
 +    (width > 0.0 && height > 0.0 && [left, top, width, height].iter().all(|v| v.is_finite()))
 +        .then_some((left, top, width, height))
@@ -46277,7 +46280,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  // Debug print an RcDom
  pub fn walk_tree(indent: usize, node: &Node) {
      // Skip all-whitespace text nodes entirely
-@@ -156,11 +300,39 @@
+@@ -156,11 +303,39 @@
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
  pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
@@ -46318,7 +46321,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +426,93 @@
+@@ -254,3 +429,93 @@
          }
      };
  }

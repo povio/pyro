@@ -215,11 +215,14 @@ pub fn object_view_box(
     let GenericBasicShape::Rect(inset) = &**shape else {
         return None;
     };
-    let (w, h) = (CSSPixelLength::new(natural_width), CSSPixelLength::new(natural_height));
-    let top = inset.rect.0.resolve(h).px();
-    let right = inset.rect.1.resolve(w).px();
-    let bottom = inset.rect.2.resolve(h).px();
-    let left = inset.rect.3.resolve(w).px();
+    // pyro: the insets' lengths are computed, so zoomed (`zoom`), and the natural size is not:
+    // resolved against the zoomed size and unzoomed (WPT css-images `object-view-box-zoom`).
+    let zoom = style.effective_zoom.value().max(f32::MIN_POSITIVE);
+    let (w, h) = (CSSPixelLength::new(natural_width * zoom), CSSPixelLength::new(natural_height * zoom));
+    let top = inset.rect.0.resolve(h).px() / zoom;
+    let right = inset.rect.1.resolve(w).px() / zoom;
+    let bottom = inset.rect.2.resolve(h).px() / zoom;
+    let left = inset.rect.3.resolve(w).px() / zoom;
     let (width, height) = (natural_width - left - right, natural_height - top - bottom);
     (width > 0.0 && height > 0.0 && [left, top, width, height].iter().all(|v| v.is_finite()))
         .then_some((left, top, width, height))
