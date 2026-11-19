@@ -324,7 +324,7 @@ pub(super) fn quote(style: &ComputedValues, depth: usize, lang: Option<&str>) ->
             let pair = pairs.get(depth).or(pairs.last())?;
             Some((pair.opening.to_string(), pair.closing.to_string()))
         }
-        Quotes::Auto => {
+        Quotes::Auto | Quotes::MatchParent => {
             let [open1, close1, open2, close2] = auto_quotes(lang.unwrap_or(""));
             Some(match depth {
                 0 => (open1.into(), close1.into()),
@@ -541,7 +541,7 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
             let value = walk.list_item(scope, pseudo_scope());
             walk.pseudo_items.insert((node_id, true), value);
         }
-        walk.quote_lang = parent_language(doc, node_id);
+        walk.quote_lang = quote_language(doc, node_id);
         texts[1] = walk.content(before, scope);
         walk.leave(pseudo_scope());
     }
@@ -556,7 +556,7 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
             let value = walk.list_item(scope, pseudo_scope());
             walk.pseudo_items.insert((node_id, false), value);
         }
-        walk.quote_lang = parent_language(doc, node_id);
+        walk.quote_lang = quote_language(doc, node_id);
         texts[0] = walk.content(after, scope);
         walk.leave(pseudo_scope());
     }
@@ -823,6 +823,23 @@ fn walk_generated_box(doc: &BaseDocument, scope: NodeId, node: NodeId, walk: &mu
 }
 
 /// pyro: the language of the parent of element `node`, for its pseudo-elements' quotes.
+/// pyro: the language `quotes: auto` chooses quote marks by for `node`'s quotes: its parent's
+/// language, or under `quotes: match-parent` the one its parent's quotes used (WPT css-content
+/// `quotes-match-parent-001`).
+fn quote_language(doc: &BaseDocument, node: NodeId) -> Option<String> {
+    let mut node = node;
+    for _ in 0..1024 {
+        let matches_parent = doc.nodes.get(node).and_then(|n| n.primary_styles()).is_some_and(|style| {
+            matches!(style.get_list().quotes, Quotes::MatchParent)
+        });
+        match doc.nodes.get(node).and_then(|n| n.parent).filter(|_| matches_parent) {
+            Some(parent) => node = parent,
+            None => break,
+        }
+    }
+    parent_language(doc, node)
+}
+
 fn parent_language(doc: &BaseDocument, node: NodeId) -> Option<String> {
     let parent = doc.nodes.get(node)?.parent?;
     crate::lang::language(&doc.nodes[parent]).map(str::to_string)

@@ -7339,6 +7339,32 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
      }
  }
  
+diff -ruN a/values/specified/list.rs b/values/specified/list.rs
+--- a/values/specified/list.rs	2026-11-11 19:55:57
++++ b/values/specified/list.rs	2026-11-19 19:52:43
+@@ -149,6 +149,9 @@
+     QuoteList(QuoteList),
+     /// auto (use lang-dependent quote marks)
+     Auto,
++    /// pyro: `match-parent` (CSS Content 3): the quote marks of the parent element's language
++    /// choice, as `auto` resolved there.
++    MatchParent,
+ }
+ 
+ impl Parse for Quotes {
+@@ -159,6 +162,12 @@
+         {
+             return Ok(Quotes::Auto);
+         }
++        if input
++            .try_parse(|input| input.expect_ident_matching("match-parent"))
++            .is_ok()
++        {
++            return Ok(Quotes::MatchParent);
++        }
+ 
+         if input
+             .try_parse(|input| input.expect_ident_matching("none"))
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
 +++ b/values/specified/mod.rs	2026-11-19 18:38:15
