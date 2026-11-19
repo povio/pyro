@@ -363,9 +363,10 @@ impl LayoutPassState<'_> {
         // Note: `pos` is content-box relative
         let margin_box = output.size + margin.sum_axes();
         // pyro: a float with a `shape-outside` float area (CSS Shapes 1)
+        let wm = self.layout_wm;
         let bands = self.nodes[node_id]
             .primary_styles()
-            .and_then(|style| crate::layout::shape_outside::float_bands_for(&style, margin_box, margin));
+            .and_then(|style| crate::layout::shape_outside::float_bands_for(&style, margin_box, margin, wm));
         let id = crate::taffy_node_id(node_id).into();
         let pos = match bands {
             Some(bands) => block_ctx.place_shaped_floated_box(id, margin_box, min_y, direction, clear, false, &bands),

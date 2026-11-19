@@ -200,10 +200,26 @@ pub(crate) fn float_bands(
     margin: [f32; 4],
     border: [f32; 4],
     padding: [f32; 4],
+    wm: stylo_taffy::WritingMode,
 ) -> Option<Vec<Band>> {
+    use stylo_taffy::WritingModeExt as _;
     let f = |e: [f32; 4]| e.map(f64::from);
-    let margin_box = Rect::new(0.0, 0.0, size.0 as f64, size.1 as f64);
-    let path = area(style, margin_box, f(margin), f(border), f(padding))?;
+    // `size` is in the float context's axes (Taffy's: x inline, y block), the edges are physical
+    // (top, right, bottom, left): the area is made physically, then mapped into those axes (the
+    // physical y is the inline axis of a vertical writing mode, the x its block axis, mirrored
+    // for `*-rl`).
+    let vertical = wm.swaps_axes();
+    let physical = if vertical { (size.1 as f64, size.0 as f64) } else { (size.0 as f64, size.1 as f64) };
+    let margin_box = Rect::new(0.0, 0.0, physical.0, physical.1);
+    let mut path = area(style, margin_box, f(margin), f(border), f(padding))?;
+    if vertical {
+        let affine = if wm.is_vertical_lr() {
+            kurbo::Affine::new([0.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+        } else {
+            kurbo::Affine::new([0.0, -1.0, 1.0, 0.0, 0.0, physical.0])
+        };
+        path.apply_affine(affine);
+    }
     let shape_margin = lp(&style.get_box().shape_margin.0, size.0 as f64).max(0.0);
     // The path's edges, flattened.
     let mut edges = Vec::new();
@@ -312,10 +328,15 @@ pub(crate) fn float_bands_for(
     style: &ComputedValues,
     margin_box: taffy::Size<f32>,
     margin: taffy::Rect<f32>,
+    wm: stylo_taffy::WritingMode,
 ) -> Option<Vec<Band>> {
+    use stylo_taffy::WritingModeExt as _;
     if matches!(style.get_box().shape_outside, ShapeOutside::None) {
         return None;
     }
+    // Percentage paddings: of the inline size (the margin box's less its inline margins).
+    let basis = (margin_box.width - margin.left - margin.right).max(0.0) as f64;
+    let margin = wm.physical_rect(margin);
     let (b, p) = (style.get_border(), style.get_padding());
     let side = |w: app_units::Au, s: style::values::computed::BorderStyle| if s.none_or_hidden() { 0.0 } else { w.to_f32_px() };
     let border = [
@@ -324,8 +345,7 @@ pub(crate) fn float_bands_for(
         side(b.border_bottom_width.0, b.border_bottom_style),
         side(b.border_left_width.0, b.border_left_style),
     ];
-    let basis = (margin_box.width - margin.left - margin.right).max(0.0) as f64;
     let pad = |v: &style::values::computed::NonNegativeLengthPercentage| lp(&v.0, basis) as f32;
     let padding = [pad(&p.padding_top), pad(&p.padding_right), pad(&p.padding_bottom), pad(&p.padding_left)];
-    float_bands(style, (margin_box.width, margin_box.height), [margin.top, margin.right, margin.bottom, margin.left], border, padding)
+    float_bands(style, (margin_box.width, margin_box.height), [margin.top, margin.right, margin.bottom, margin.left], border, padding, wm)
 }
