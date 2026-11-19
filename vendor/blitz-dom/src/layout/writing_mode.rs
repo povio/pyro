@@ -233,7 +233,8 @@ impl LayoutPassState<'_> {
             && node
                 .layout_parent
                 .get()
-                .map(|parent| self.nodes[parent].taffy_display() == taffy::Display::Block)
+                // pyro: a flow root too (`inline-block`, `flow-root`: a block container).
+                .map(|parent| matches!(self.nodes[parent].taffy_display(), taffy::Display::Block | taffy::Display::FlowRoot))
                 .unwrap_or(true);
         // (Only in block flow: a grid or flex item's containing block is its area, whose size an
         // intrinsic sizing pass leaves unknown on purpose, and an out-of-flow box's is definite.)
