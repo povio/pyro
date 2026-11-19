@@ -1214,6 +1214,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     // overlaps it (WPT css-pseudo `outside-marker-paint-order`).
                     cx.draw_marker(scene, content_position);
                     cx.draw_inline_layout(scene, content_position);
+                    // pyro: a block-level frame's document, its replaced content
+                    // (`block_level_frame_in_phases`).
+                    let skipped = cx.style.get_box().slow_clone_content_visibility()
+                        == style::values::specified::box_::ContentVisibility::Hidden;
+                    if !hidden && !skipped {
+                        cx.draw_sub_document(scene);
+                    }
                     if cx.outline_line().is_some() {
                         self.deferred_outlines.set(true);
                     }
@@ -5352,7 +5359,10 @@ impl ElementCx<'_, '_> {
             if self.paint_level(child) != 0 {
                 continue;
             }
-            let child_phase = if child.paints_in_ancestor_phases() || child.paints_in_table_phases() {
+            let child_phase = if child.paints_in_ancestor_phases()
+                || child.paints_in_table_phases()
+                || block_level_frame_in_phases(child)
+            {
                 phase
             } else if phase == FlowPhase::Outline {
                 // (A box painted whole paints its outline with it.)
@@ -6293,6 +6303,24 @@ impl<'dom, 'a> std::ops::Deref for ElementCx<'dom, 'a> {
     fn deref(&self) -> &Self::Target {
         self.context
     }
+}
+
+/// pyro: whether `node` is a block-level frame (an element showing a document: an `<iframe>`, or an
+/// `<object>`/`<embed>` given one) of the normal flow that makes no layer of its own, painted in
+/// its painter's phases: its background and borders with the other block backgrounds (CSS 2.1
+/// Appendix E step 4), its document with the inline content (step 7: "if the element is a
+/// block-level replaced element, then: the replaced content, atomically"), so a later block's
+/// background that overlaps it goes under its content (WPT css/CSS2/normal-flow
+/// `cross-domain-iframe-paint-order`). It was painted whole with the backgrounds.
+fn block_level_frame_in_phases(node: &blitz_dom::Node) -> bool {
+    node.element_data().is_some_and(|element| element.sub_doc_data().is_some())
+        && !node.is_inline_level()
+        && !node.is_stacking_context_root(false)
+        && node.primary_styles().is_some_and(|style| {
+            // (Its own overflow clip is the frame's, around its document only.)
+            style.clone_float() == style::values::computed::Float::None
+                && style.clone_position() == style::computed_values::position::T::Static
+        })
 }
 
 /// pyro: whether a recorded command is a layer that reads what lies under it as drawn so far: a
