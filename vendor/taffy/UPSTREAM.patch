@@ -8143,7 +8143,7 @@ index bb954acf..eb14e801 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..95e91b3a 100644
+index 2c6179a4..7359caa4 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -8238,7 +8238,7 @@ index 2c6179a4..95e91b3a 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,8 +708,144 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +708,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -8339,6 +8339,10 @@ index 2c6179a4..95e91b3a 100644
 +        }
 +    }
 +
++    // pyro: a height known before the box's content is measured (its `height`, both insets, a ratio)
++    // is definite; one its content gives is not, so its children's percentage heights behave as
++    // `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`).
++    let height_is_definite = known_dimensions.height.is_some();
      let final_size = match (known_dimensions.width, known_dimensions.height) {
          (Some(width), Some(height)) => Size { width, height },
 +        // pyro: an automatic width and height with a preferred aspect ratio: the shrink-to-fit width between
@@ -8383,7 +8387,16 @@ index 2c6179a4..95e91b3a 100644
          _ => {
              let measured_size = tree.measure_child_size_both(
                  candidate.node,
-@@ -828,7 +981,8 @@ pub(crate) fn perform_oof_layout(
+@@ -709,7 +866,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+ 
+     let layout_input = LayoutInput {
+         known_dimensions: final_size.map(Some),
+-        known_dimensions_are_definite: Size { width: true, height: true },
++        known_dimensions_are_definite: Size { width: true, height: height_is_definite },
+         parent_size: area_size.map(Some),
+         available_space,
+         sizing_mode: SizingMode::ContentSize,
+@@ -828,7 +985,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
@@ -8393,7 +8406,7 @@ index 2c6179a4..95e91b3a 100644
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1005,21 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1009,21 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -8426,7 +8439,7 @@ index 2c6179a4..95e91b3a 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1029,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1033,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {

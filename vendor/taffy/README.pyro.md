@@ -686,3 +686,11 @@ item without its content-based height (no definite basis or height, no growing) 
   only a `min-width` sizes itself its percentage gap counts as zero, then overflows (Chromium, measured; WPT css-grid
   `subgrid/grid-gap-003`; `crates/pyro-render/tests/subgrid_edge_tracks.rs`).
 - Lane F1 (CSS Shapes), `compute/float.rs` + `compute/block.rs` + `tree/traits.rs`: a float's `shape-outside` float area. `Segment::shape` holds the insets line boxes take where a float's area leaves them more room than its margin box. `FloatContext::shape_float` / `BlockContext::place_shaped_floated_box` set them from rows of the margin box with the area's horizontal extent (`LayoutBlockContainer::float_shape_bands`, implemented by blitz-dom). `find_content_slot` reads them; floats are still placed by margin boxes (CSS Shapes 1 § 3).
+
+## Content-derived abspos heights are not definite (WPT round 4, lane S1)
+
+`src/compute/oof.rs` (`height_is_definite`): an absolutely positioned box is laid out with its final size as known
+dimensions, but its height is definite (`LayoutInput::known_dimensions_are_definite`) only when it was known before
+its content was measured (its `height`, both insets, a ratio); one its content gives leaves its children's percentage
+heights `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`). Covered by
+`crates/pyro-render/tests/abspos_percentage_heights.rs`.
