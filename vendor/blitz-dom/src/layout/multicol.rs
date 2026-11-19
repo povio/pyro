@@ -868,9 +868,29 @@ impl LayoutPassState<'_> {
             Point { x: multicol.rtl, y: false },
         );
 
+        // pyro: an out-of-flow box placed by its static position (in the strip) is placed where
+        // that position is shown: in its column (Chromium places it in the fragment its static
+        // position falls in).
+        let mut oof_candidates = strip.oof_candidates;
+        let columns = ColumnFragments { fragments };
+        let vertical = self.nodes[dom_id].primary_styles().is_some_and(|style| style.writing_mode.is_vertical());
+        if columns.fragments.len() > 1 && !vertical {
+            for candidate in oof_candidates.as_mut_slice() {
+                if candidate.containing_block.is_some() {
+                    continue;
+                }
+                let (dx, dy) = columns.shift_at(candidate.static_position.y.area.start);
+                let position = &mut candidate.static_position;
+                position.x.area.start += dx;
+                position.x.area.end += dx;
+                position.y.area.start += dy;
+                position.y.area.end += dy;
+            }
+        }
+
         if inputs.run_mode == RunMode::PerformLayout {
             self.doc.has_multicol = true;
-            self.nodes[dom_id].layout_data_mut().columns = Some(Box::new(ColumnFragments { fragments }));
+            self.nodes[dom_id].layout_data_mut().columns = Some(Box::new(columns));
         }
 
         let size = Size { width, height };
@@ -881,7 +901,7 @@ impl LayoutPassState<'_> {
             top_margin: CollapsibleMarginSet::from_margin(margin.top),
             bottom_margin: CollapsibleMarginSet::from_margin(margin.bottom),
             margins_can_collapse_through: false,
-            oof_candidates: strip.oof_candidates,
+            oof_candidates,
             oof_positioning_area: Some(OofPositioningArea {
                 size: size - border.sum_axes(),
                 offset: Point { x: border.left, y: border.top },
