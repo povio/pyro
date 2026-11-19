@@ -2292,8 +2292,10 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
-    // HTML activation-triggering input: mousedown (and pointerup).
-    if matches!(kind, MouseKind::Pressed | MouseKind::Released) {
+    // HTML activation-triggering input events: for the mouse, mousedown (pointerdown) only; pointerup
+    // triggers activation for other pointer types, and this is the mouse. A release grants none, so one
+    // click whose mousedown handler consumed the activation leaves none for its click handler.
+    if kind == MouseKind::Pressed {
         page.notify_input_activation();
     }
     dispatch_mouse_inner(page, kind, m, intercept_drags, None)

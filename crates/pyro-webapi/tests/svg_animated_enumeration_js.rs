@@ -563,6 +563,28 @@ fn fullscreen_is_granted_with_transient_activation() {
     );
 }
 
+/// One mouse click is one activation: mousedown triggers it and the release does not, so a
+/// `mousedown` handler's granted request consumes it and the `click` handler's request of the
+/// same click is denied (HTML activation-triggering input events).
+#[test]
+fn one_click_grants_fullscreen_activation_once() {
+    let env = Env::new("http://fullscreen.test/");
+    env.eval(
+        r#"document.body.style.margin = "0";
+           document.body.innerHTML = "<div id=a style='width:200px;height:200px'></div><div id=b></div>";
+           globalThis.log = [];
+           a.addEventListener("mousedown", () => a.requestFullscreen().then(() => log.push("down granted"), (e) => log.push("down " + e.name)));
+           a.addEventListener("click", () => b.requestFullscreen().then(() => log.push("click granted"), (e) => log.push("click " + e.name)));
+           "ok""#,
+    );
+    use pyro_webapi::input;
+    let m = input::MouseInput { x: 50.0, y: 50.0, button: input::MouseButton::Left, buttons: 1, click_count: 1, ..Default::default() };
+    input::dispatch_mouse(&env.page, input::MouseKind::Pressed, &m).unwrap();
+    input::dispatch_mouse(&env.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+    env.until("log.length === 2");
+    assert_eq!(env.eval("log.join('|')"), "down granted|click TypeError");
+}
+
 /// A class change on an element above a `:has()` anchor restyles the anchor when a complex selector
 /// inside the argument reaches it (WPT css/selectors is-pseudo-containing-complex-in-has).
 #[test]
