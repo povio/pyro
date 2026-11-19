@@ -510,7 +510,11 @@ impl LayoutPassState<'_> {
             let display = styles.clone_display();
             // An inline replaced element is an atomic inline: it is contained (WPT css-sizing
             // `contain-intrinsic-size-012`, an `<img>`).
-            let replaced = node.data.downcast_element().is_some_and(replaced::is_replaced);
+            // (And an `<object>` showing an image or a document: an atomic inline too.)
+            let replaced = node
+                .data
+                .downcast_element()
+                .is_some_and(|el| replaced::is_replaced(el) || replaced::is_inline_box(el));
             // pyro: a drop-down select is sized as an empty one, by its own leaf layout (its
             // line and arrow stay: `leaf_layout_or_algorithm`).
             let dropdown = node.data.downcast_element().is_some_and(|el| {
@@ -582,6 +586,27 @@ impl LayoutPassState<'_> {
                 },
             },
         );
+        // pyro: the measure saw no width (a `width` the leaf resolves after measuring): with a
+        // ratio, measured again at the width it resolved, the other axis follows from it (WPT
+        // css-contain `contain-size-replaced-007`: `width: 100px; height: auto` and `width`/`height`
+        // attributes).
+        if let Some(ratio) = natural_ratio
+            && inputs.known_dimensions.height.is_none()
+            && output.size.width > 0.0
+            && output.size.height == 0.0
+        {
+            let known = taffy::Size { width: Some(output.size.width), height: None };
+            let again = taffy::compute_leaf_layout(
+                taffy::tree::LayoutInput { run_mode: RunMode::ComputeSize, known_dimensions: known, ..inputs },
+                &style,
+                resolve_calc_value,
+                |known_dimensions, _available_space| match known_dimensions.width {
+                    Some(width) => taffy::Size { width, height: width / ratio },
+                    None => taffy::Size { width: content.width, height: content.height },
+                },
+            );
+            return Some(again.size);
+        }
         Some(output.size)
     }
 
