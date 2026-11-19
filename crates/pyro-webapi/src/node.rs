@@ -1232,8 +1232,8 @@ impl JsClass for ShadowRoot {
     type Data = NodeData;
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
-        // Fullscreen API: nothing is ever fullscreen.
-        def.accessor("fullscreenElement", |s, _n| Ok(s.null()), |_s, _n, _v| Ok(()));
+        // Fullscreen API: the document's fullscreen element, retargeted against this shadow root.
+        def.accessor("fullscreenElement", |s, n| crate::fullscreen::element_for(s, n.page(), n.id), |_s, _n, _v| Ok(()));
         def.getter("host", |s, n| {
             let h = n.page().dom.borrow().fragment_host(n.id).js()?;
             node_value(s, n.page(), h)
@@ -1314,15 +1314,9 @@ impl JsClass for Element {
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
-        // Fullscreen API: pyro never shows an element fullscreen, so a request is denied the way
-        // Chromium denies one it may not grant (a TypeError); the handlers exist for pages to set.
+        // Fullscreen API (`crate::fullscreen`): granted with transient activation, denied otherwise.
         crate::handlers::define_fullscreen(def);
-        def.promise_method("requestFullscreen", 0, |s, _n, _a| {
-            let d = s.deferred()?;
-            let promise = d.promise.get(s);
-            d.reject(s, JsError::Type("Permissions check failed".into()).to_value(s))?;
-            Ok(promise)
-        });
+        def.promise_method("requestFullscreen", 0, |s, n, _a| crate::fullscreen::request(s, n.page(), n.id));
         // CSS Typed OM: the element's computed values as a StylePropertyMapReadOnly.
         def.method("computedStyleMap", 0, |s, n, _a| {
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
@@ -1784,13 +1778,17 @@ impl JsClass for Document {
         crate::handlers::define_global(def);
         crate::handlers::define_document(def);
         crate::handlers::define_fullscreen(def);
-        // Fullscreen API: pyro shows nothing fullscreen, so fullscreen is not enabled, no element
-        // is fullscreen, and exitFullscreen() rejects as it does with no fullscreen element.
+        // Fullscreen API (`crate::fullscreen`). These getters answer for the browsing context's
+        // document; another document (a DOMParser or createHTMLDocument one) has no browsing
+        // context, so fullscreen is not enabled there and nothing in it is fullscreen.
         // (`[LegacyLenientSetter]`: assigning to them does nothing, and does not throw in strict mode.)
-        def.accessor("fullscreenEnabled", |s, _n| Ok(s.boolean(false)), |_s, _n, _v| Ok(()));
-        def.accessor("fullscreen", |s, _n| Ok(s.boolean(false)), |_s, _n, _v| Ok(()));
-        def.accessor("fullscreenElement", |s, _n| Ok(s.null()), |_s, _n, _v| Ok(()));
-        def.promise_method("exitFullscreen", 0, |s, _n, _a| {
+        def.accessor("fullscreenEnabled", |s, n| Ok(s.boolean(n.id == n.page().document() && crate::fullscreen::enabled(n.page()))), |_s, _n, _v| Ok(()));
+        def.accessor("fullscreen", |s, n| Ok(s.boolean(n.id == n.page().document() && crate::fullscreen::element(n.page()).is_some())), |_s, _n, _v| Ok(()));
+        def.accessor("fullscreenElement", |s, n| if n.id == n.page().document() { crate::fullscreen::element_for(s, n.page(), n.id) } else { Ok(s.null()) }, |_s, _n, _v| Ok(()));
+        def.promise_method("exitFullscreen", 0, |s, n, _a| {
+            if n.id == n.page().document() {
+                return crate::fullscreen::exit(s, n.page());
+            }
             let d = s.deferred()?;
             let promise = d.promise.get(s);
             d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;

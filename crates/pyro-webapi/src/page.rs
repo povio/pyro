@@ -343,6 +343,8 @@ pub struct PageDom {
     completely_loaded: Cell<bool>,
     /// When trusted input last reached the document (transient activation).
     input_activation: Cell<Option<std::time::Instant>>,
+    /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
+    pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
@@ -865,6 +867,7 @@ impl PageDom {
             posted_tasks: Cell::new(0),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
+            fullscreen_stack: RefCell::new(Vec::new()),
             planned_navigations: RefCell::new(Vec::new()),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
@@ -1158,6 +1161,10 @@ impl PageDom {
     /// HTML "transient activation": trusted input within the last five seconds.
     pub fn has_transient_activation(&self) -> bool {
         self.input_activation.get().is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5))
+    }
+    /// HTML "consume user activation": the transient activation ends (sticky activation stays).
+    pub(crate) fn consume_transient_activation(&self) {
+        self.input_activation.set(None);
     }
 
     /// HTML "plan to navigate" for a submitted form: a task navigates, and

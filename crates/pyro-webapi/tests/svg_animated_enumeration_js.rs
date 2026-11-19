@@ -509,7 +509,7 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
               return out.join("|");
             })()"#
         ),
-        "TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|ok|true|true|true|true|true|true|true|TypeError|true|true|false|false||true"
+        "TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|ok|true|true|true|true|true|true|true|TypeError|true|true|true|false||true"
     );
     assert_eq!(
         env.eval(
@@ -524,6 +524,43 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
     );
     env.until("globalThis.fsOut !== undefined");
     assert_eq!(env.eval("fsOut"), "TypeError|TypeError");
+}
+
+/// Fullscreen API: a request with transient activation (trusted input) is granted (in a task; this
+/// environment runs tasks at once):
+/// `fullscreenchange` at the element, the document's fullscreen element, the promise resolves,
+/// and the activation is consumed; exitFullscreen() undoes it. A detached element is denied
+/// (`fullscreenerror`, TypeError) even with activation.
+#[test]
+fn fullscreen_is_granted_with_transient_activation() {
+    let env = Env::new("http://fullscreen.test/");
+    env.eval(r#"document.body.innerHTML = "<div id=t></div>"; globalThis.log = []; "ok""#);
+    let k = pyro_webapi::input::KeyInput { key: "a".into(), code: "KeyA".into(), text: "a".into(), ..Default::default() };
+    pyro_webapi::input::dispatch_key(&env.page, pyro_webapi::input::KeyKind::KeyDown, &k);
+    pyro_webapi::input::dispatch_key(&env.page, pyro_webapi::input::KeyKind::KeyUp, &k);
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const t = document.getElementById("t");
+              document.addEventListener("fullscreenchange", (e) => log.push("change " + e.target.id + " " + e.bubbles + " " + e.composed));
+              document.addEventListener("fullscreenerror", (e) => log.push("error " + (e.target.id || e.target.nodeName)));
+              const p = t.requestFullscreen();
+              await p;
+              log.push("granted " + (document.fullscreenElement === t) + " " + document.fullscreen);
+              try { await document.createElement("p").requestFullscreen(); } catch (e) { log.push(e.name); }
+              await document.exitFullscreen();
+              log.push("exited " + document.fullscreenElement);
+              try { await t.requestFullscreen(); } catch (e) { log.push("again " + e.name); }
+              globalThis.fsDone = log.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.fsDone !== undefined");
+    assert_eq!(
+        env.eval("fsDone"),
+        "change t true true|granted true true|error #document|TypeError|change t true true|exited null|error t|again TypeError"
+    );
 }
 
 /// A class change on an element above a `:has()` anchor restyles the anchor when a complex selector
