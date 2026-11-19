@@ -11147,3 +11147,39 @@ fn post_message_reaches_a_navigated_popup() {
     h.run_for(200);
     assert_eq!(value(&mut h, "got.join()"), json!("echo:one"));
 }
+
+/// A closed popup's document leaves the DOM store it shares with its opener and is freed, even while
+/// the opener keeps its WindowProxy (and a function it read through it): after close the proxy answers
+/// `closed` and holds nothing that keeps the popup's realm or DOM alive. Freeing takes two garbage
+/// collections (the first frees the popup's realm, whose finalizers release its node wrappers), as the
+/// Performance.getMetrics `Nodes` count of the shared store shows.
+#[test]
+fn closing_a_popup_frees_its_document_while_the_opener_keeps_its_handle() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><p>opener</p>");
+    let nodes = |h: &mut Harness| {
+        let r = h.page("Performance.getMetrics", json!({}));
+        r["result"]["metrics"].as_array().unwrap_or_else(|| panic!("{r}")).iter().find(|m| m["name"] == "Nodes").unwrap()["value"].as_f64().unwrap()
+    };
+    h.run_for(50);
+    let before = nodes(&mut h);
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression": "globalThis.w = window.open(); w.eval(\"document.body.innerHTML = '<div><span>x</span></div>'.repeat(300)\"); w.document.title; globalThis.f = w.eval; 1"}),
+    );
+    h.run_for(50);
+    assert!(nodes(&mut h) > before + 600.0, "the popup's nodes are in the shared store");
+    h.page("Runtime.evaluate", json!({"expression": "w.close(); 1"}));
+    h.run_for(300);
+    for _ in 0..2 {
+        h.page("Pyro.jscMemory", json!({"action": "collect"}));
+        for _ in 0..3 {
+            h.page("Runtime.evaluate", json!({"expression": "1"}));
+            h.run_for(30);
+        }
+    }
+    let after = nodes(&mut h);
+    assert!(after < before + 100.0, "the closed popup's document is freed: before {before}, after {after}");
+    let r = h.page("Runtime.evaluate", json!({"expression": "[w.closed, typeof w.document].join()", "returnByValue": true}));
+    assert_eq!(r["result"]["result"]["value"], json!("true,undefined"), "{r}");
+}
