@@ -201,6 +201,7 @@ pub(crate) fn float_bands(
     border: [f32; 4],
     padding: [f32; 4],
     wm: stylo_taffy::WritingMode,
+    containing_block_width: f32,
 ) -> Option<Vec<Band>> {
     use stylo_taffy::WritingModeExt as _;
     let f = |e: [f32; 4]| e.map(f64::from);
@@ -220,7 +221,8 @@ pub(crate) fn float_bands(
         };
         path.apply_affine(affine);
     }
-    let shape_margin = lp(&style.get_box().shape_margin.0, size.0 as f64).max(0.0);
+    // Percentages of the containing block's inline size.
+    let shape_margin = lp(&style.get_box().shape_margin.0, containing_block_width as f64).max(0.0);
     // The path's edges, flattened.
     let mut edges = Vec::new();
     let (mut start, mut last) = (Point::ZERO, Point::ZERO);
@@ -329,13 +331,14 @@ pub(crate) fn float_bands_for(
     margin_box: taffy::Size<f32>,
     margin: taffy::Rect<f32>,
     wm: stylo_taffy::WritingMode,
+    containing_block_width: f32,
 ) -> Option<Vec<Band>> {
     use stylo_taffy::WritingModeExt as _;
     if matches!(style.get_box().shape_outside, ShapeOutside::None) {
         return None;
     }
-    // Percentage paddings: of the inline size (the margin box's less its inline margins).
-    let basis = (margin_box.width - margin.left - margin.right).max(0.0) as f64;
+    // Percentage paddings: of the containing block's inline size.
+    let basis = containing_block_width.max(0.0) as f64;
     let margin = wm.physical_rect(margin);
     let (b, p) = (style.get_border(), style.get_padding());
     let side = |w: app_units::Au, s: style::values::computed::BorderStyle| if s.none_or_hidden() { 0.0 } else { w.to_f32_px() };
@@ -347,5 +350,5 @@ pub(crate) fn float_bands_for(
     ];
     let pad = |v: &style::values::computed::NonNegativeLengthPercentage| lp(&v.0, basis) as f32;
     let padding = [pad(&p.padding_top), pad(&p.padding_right), pad(&p.padding_bottom), pad(&p.padding_left)];
-    float_bands(style, (margin_box.width, margin_box.height), [margin.top, margin.right, margin.bottom, margin.left], border, padding, wm)
+    float_bands(style, (margin_box.width, margin_box.height), [margin.top, margin.right, margin.bottom, margin.left], border, padding, wm, containing_block_width)
 }

@@ -350,6 +350,7 @@ impl LayoutPassState<'_> {
         container_pb: taffy::Rect<f32>,
         oof_candidates: &mut OofCandidates,
         span_offset: taffy::Point<f32>,
+        containing_block_width: f32,
     ) {
         let PendingFloat {
             node_id,
@@ -366,7 +367,7 @@ impl LayoutPassState<'_> {
         let wm = self.layout_wm;
         let bands = self.nodes[node_id]
             .primary_styles()
-            .and_then(|style| crate::layout::shape_outside::float_bands_for(&style, margin_box, margin, wm));
+            .and_then(|style| crate::layout::shape_outside::float_bands_for(&style, margin_box, margin, wm, containing_block_width));
         let id = crate::taffy_node_id(node_id).into();
         let pos = match bands {
             Some(bands) => block_ctx.place_shaped_floated_box(id, margin_box, min_y, direction, clear, false, &bands),
@@ -1612,6 +1613,7 @@ impl LayoutPassState<'_> {
                                         container_pb,
                                         &mut oof_candidates,
                                         span_offset,
+                                        width / scale,
                                     );
                                 }
                                 has_active_floats = true;
@@ -1785,6 +1787,7 @@ impl LayoutPassState<'_> {
                                     container_pb,
                                     &mut oof_candidates,
                                     span_offset,
+                                    width / scale,
                                 );
 
                                 let min_y = state.line_y() / scale as f64;

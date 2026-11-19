@@ -2041,7 +2041,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 };
 
                 // pyro: a float with a `shape-outside` float area
-                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin) {
+                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin, container_inner_width) {
                     Some(bands) => block_ctx.place_shaped_floated_box(
                         item.node_id.into(),
                         margin_box,

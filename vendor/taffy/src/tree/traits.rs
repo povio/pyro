@@ -488,15 +488,17 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
 
     /// pyro: the float area of a floated child with the given margin box size and margins, from
     /// its `shape-outside`, as rows of the margin box with the area's horizontal extent in each
-    /// (see `FloatContext::shape_float`); `None` when it is the margin box.
+    /// (see `FloatContext::shape_float`); `None` when it is the margin box. `containing_block_width`
+    /// is the containing block's inline size (percentages of `shape-margin` and paddings).
     #[allow(clippy::type_complexity)]
     fn float_shape_bands(
         &self,
         child_node_id: NodeId,
         margin_box: crate::geometry::Size<f32>,
         margin: crate::geometry::Rect<f32>,
+        containing_block_width: f32,
     ) -> Option<Vec<(f32, f32, Option<(f32, f32)>)>> {
-        let _ = (child_node_id, margin_box, margin);
+        let _ = (child_node_id, margin_box, margin, containing_block_width);
         None
     }
 

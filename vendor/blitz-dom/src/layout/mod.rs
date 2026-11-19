@@ -2244,9 +2244,10 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         child_node_id: NodeId,
         margin_box: taffy::Size<f32>,
         margin: taffy::Rect<f32>,
+        containing_block_width: f32,
     ) -> Option<Vec<shape_outside::Band>> {
         let style = self.node_from_id(child_node_id).primary_styles()?;
-        shape_outside::float_bands_for(&style, margin_box, margin, self.layout_wm)
+        shape_outside::float_bands_for(&style, margin_box, margin, self.layout_wm, containing_block_width)
     }
 
     fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {

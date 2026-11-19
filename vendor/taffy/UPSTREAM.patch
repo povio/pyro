@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..0bcdac64 100644
+index 3cd3e713..4c198f9d 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -1188,7 +1188,7 @@ index 3cd3e713..0bcdac64 100644
 -                    adjoins_unresolved_strut,
 -                );
 +                // pyro: a float with a `shape-outside` float area
-+                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin) {
++                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin, container_inner_width) {
 +                    Some(bands) => block_ctx.place_shaped_floated_box(
 +                        item.node_id.into(),
 +                        margin_box,
@@ -9065,7 +9065,7 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..07fd15a8 100644
+index 7d4adf22..a0f2d0d9 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -239,6 +239,16 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
@@ -9202,7 +9202,7 @@ index 7d4adf22..07fd15a8 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +479,94 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +479,96 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
@@ -9215,15 +9215,17 @@ index 7d4adf22..07fd15a8 100644
 +
 +    /// pyro: the float area of a floated child with the given margin box size and margins, from
 +    /// its `shape-outside`, as rows of the margin box with the area's horizontal extent in each
-+    /// (see `FloatContext::shape_float`); `None` when it is the margin box.
++    /// (see `FloatContext::shape_float`); `None` when it is the margin box. `containing_block_width`
++    /// is the containing block's inline size (percentages of `shape-margin` and paddings).
 +    #[allow(clippy::type_complexity)]
 +    fn float_shape_bands(
 +        &self,
 +        child_node_id: NodeId,
 +        margin_box: crate::geometry::Size<f32>,
 +        margin: crate::geometry::Rect<f32>,
++        containing_block_width: f32,
 +    ) -> Option<Vec<(f32, f32, Option<(f32, f32)>)>> {
-+        let _ = (child_node_id, margin_box, margin);
++        let _ = (child_node_id, margin_box, margin, containing_block_width);
 +        None
 +    }
 +
