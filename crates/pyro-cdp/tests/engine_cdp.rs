@@ -10946,3 +10946,41 @@ fn devtools_evaluation_is_exempt_from_trusted_types() {
     );
     assert_eq!(r["result"]["result"]["value"], "EvalError", "a timer the call scheduled is page code: {r}");
 }
+
+/// postMessage's "/" target is the poster's origin, compared as an origin, not as its serialization:
+/// an opaque opener (a data: URL page) reaches its popup's initial about:blank (which inherits that
+/// very opaque origin), but once the popup is a document of another opaque origin its "/" does not
+/// reach the opener, though both serialize as "null"; "*" does.
+#[test]
+fn post_message_slash_matches_opaque_origins_by_identity() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>");
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    // The initial about:blank popup shares the opener's opaque origin: "/" reaches it.
+    assert_eq!(
+        value(&mut h, "globalThis.w = window.open(); w.received = []; w.addEventListener('message', (e) => w.received.push(e.data)); w.postMessage('same', '/'); 1"),
+        json!(1)
+    );
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.run_for(50);
+    assert_eq!(value(&mut h, "w.received.join()"), json!("same"));
+    // A document of another opaque origin: its "/" does not reach the opener, "*" does.
+    let page = "data:text/html,<script>opener.postMessage('slash', '/'); opener.postMessage('star', '*')</script>";
+    value(&mut h, &format!("w.location.href = {}; 1", json!(page)));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let events = h.until_response(id);
+    let popup_session = popup.clone();
+    if !events.iter().any(|m| m["method"] == "Page.loadEventFired" && m["sessionId"] == json!(popup_session)) {
+        h.until_event(move |m| m["method"] == "Page.loadEventFired" && m["sessionId"] == json!(popup));
+    }
+    h.run_for(200);
+    assert_eq!(value(&mut h, "got.join()"), json!("star"));
+}

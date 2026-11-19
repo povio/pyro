@@ -375,6 +375,9 @@ pub struct PageDom {
     pub(crate) range_drag: RefCell<Option<(NodeId, String)>>,
     /// The window's `load` event is being dispatched (`lifecycle::load`).
     pub(crate) dispatching_load: Cell<bool>,
+    /// The identity of the document's origin when it is opaque (the embedder's token, which an
+    /// about:blank document shares with its creator); `None`: this document's own.
+    opaque_origin_token: Cell<Option<u64>>,
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
@@ -930,6 +933,7 @@ impl PageDom {
             paint_worklet: RefCell::new(None),
             range_drag: RefCell::new(None),
             dispatching_load: Cell::new(false),
+            opaque_origin_token: Cell::new(None),
             planned_navigations: RefCell::new(Vec::new()),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
@@ -979,6 +983,22 @@ impl PageDom {
     /// document; the browser sets a child frame's ([`crate::fullscreen::allowed_in_frame`]).
     pub fn set_fullscreen_allowed(&self, allowed: bool) {
         self.fullscreen_allowed.set(allowed);
+    }
+    /// The embedder's identity for the document's origin, used when that origin is opaque.
+    pub fn set_opaque_origin_token(&self, token: u64) {
+        self.opaque_origin_token.set(Some(token));
+    }
+    /// A key that is equal for two documents exactly when their origins are the same: the tuple
+    /// origin's serialization, or for an opaque origin `opaque:<identity>` (an opaque origin is equal
+    /// only to itself, though every one serializes as "null").
+    pub fn origin_key(&self) -> String {
+        match crate::storage::document_origin(self) {
+            Some(origin) => origin,
+            None => match self.opaque_origin_token.get() {
+                Some(token) => format!("opaque:{token}"),
+                None => format!("opaque-document:{}", self.id()),
+            },
+        }
     }
     /// Whether the window's `load` event is being dispatched right now.
     pub fn is_dispatching_load(&self) -> bool {

@@ -324,12 +324,14 @@ impl PopupData {
     /// clone in the opener, delivered as a task in the popup's document.
     fn post_message<'s>(&self, s: &Scope<'s>, a: &Args<'s>) -> JsResult<()> {
         let sender = self.opener_origin().unwrap_or_else(|| "null".into());
-        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &sender)?;
+        // Matched by origin key: an opaque opener's "/" reaches only a popup of that same opaque
+        // origin (its initial about:blank), not one that navigated to another opaque origin.
+        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &self.page.origin_key())?;
         // Clone even when the message will be dropped (errors are reported
         // regardless of the target).
         let message = crate::structured_clone::encode_message(s, message, options)?;
         let Some(page) = self.popup.page() else { return Ok(()) };
-        if !wanted.allows(crate::storage::document_origin(&page).as_deref().unwrap_or("null")) {
+        if !wanted.allows(&page.origin_key()) {
             return Ok(());
         }
         deliver_message(&page, message, sender);
@@ -377,7 +379,8 @@ pub(crate) fn wrap_popup<'s>(s: &Scope<'s>, page: &Rc<PageDom>, popup: &Rc<Popup
         Ok(None) => Ok(s.null()),
         // Cross origin: the popup's origin, which what is handed out is kept by.
         Err(_) => {
-            let origin = data.popup.page().and_then(|p| crate::storage::document_origin(&p));
+            // By origin key: two different opaque origins keep different objects.
+            let origin = data.popup.page().map(|p| p.origin_key());
             Ok(s.string(origin.as_deref().unwrap_or("null")))
         }
     })?;

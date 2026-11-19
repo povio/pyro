@@ -1354,14 +1354,21 @@ pub(crate) fn post_message<'s>(
 ) -> pyro_js::JsResult<()> {
     let (source_host, source) = source.unwrap_or_else(|| (host.clone(), target));
     let incumbent = source_host.with_frame(source, |f| f.origin.clone()).unwrap_or_else(|| "null".into());
-    let (message, target_origin, options) = pyro_webapi::window_message::post_message_args(s, a, &incumbent)?;
-    let found = host.with_frame(target, |f| Some((f.page_dom.clone()?, f.main_realm()?.clone(), f.origin.clone())));
+    // Origins compared by key: an opaque origin ("null" serialized) equals only itself.
+    let incumbent_key = source_host.with_frame(source, frame_origin_key).unwrap_or_else(|| "opaque:gone".into());
+    let (message, target_origin, options) = pyro_webapi::window_message::post_message_args(s, a, &incumbent_key)?;
+    let found = host.with_frame(target, |f| Some((f.page_dom.clone()?, f.main_realm()?.clone(), frame_origin_key(f))));
     // A window whose document is gone receives nothing.
-    let Some((page, realm, origin)) = found.flatten() else { return Ok(()) };
-    let deliver = target_origin.allows(&origin);
+    let Some((page, realm, origin_key)) = found.flatten() else { return Ok(()) };
+    let deliver = target_origin.allows(&origin_key);
     let window = (!Rc::ptr_eq(&source_host, host) || source != target)
         .then(|| message_source(host, target, &source_host, source));
     pyro_webapi::window_message::send_window_message(s, message, options, &page, &realm, incumbent, window, deliver)
+}
+
+/// A frame's origin key (`PageDom::origin_key`'s): its tuple origin, or `opaque:<token>`.
+fn frame_origin_key(f: &Frame) -> String {
+    if f.origin == "null" { format!("opaque:{}", f.opaque_origin) } else { f.origin.clone() }
 }
 
 pub(crate) struct CrossWindow;

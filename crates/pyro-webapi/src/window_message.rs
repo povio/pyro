@@ -19,15 +19,15 @@ use crate::page::PageDom;
 pub enum TargetOrigin {
     /// `"*"`: any document.
     Any,
-    /// A serialized tuple origin; only a document of that origin receives it.
+    /// An origin, by key (`PageDom::origin_key`: a tuple origin's serialization, or an opaque
+    /// origin's identity for "/" from an opaque document); only a document of that origin receives it.
     Origin(String),
     /// An absolute URL with an opaque origin: no document matches it.
     Opaque,
 }
 
 impl TargetOrigin {
-    /// Whether a document of origin `origin` (serialized, "null" if opaque)
-    /// may receive the message.
+    /// Whether a document of origin key `origin` (`PageDom::origin_key`) may receive the message.
     pub fn allows(&self, origin: &str) -> bool {
         match self {
             Self::Any => true,
