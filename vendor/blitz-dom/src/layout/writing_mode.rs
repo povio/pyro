@@ -197,6 +197,7 @@ impl LayoutPassState<'_> {
                 .unwrap_or(true);
         // (Only in block flow: a grid or flex item's containing block is its area, whose size an
         // intrinsic sizing pass leaves unknown on purpose, and an out-of-flow box's is definite.)
+        let cb_block_definite = inputs.parent_size.width;
         if placed_by_block_container && inputs.parent_size.width.is_none() {
             inputs.parent_size.width = Some(icb_inline);
         }
@@ -259,10 +260,21 @@ impl LayoutPassState<'_> {
                 // fit-content against the available space in that axis: the containing block's
                 // block size if definite, else the initial containing block (nearest fixed-size
                 // scroll container not implemented).
-                let available = match (inputs.available_space.width, inputs.parent_size.width) {
+                // pyro: in block flow, an indefinite containing block's own `max-` block size
+                // (floored by its `min-` block size) limits it, up to the initial containing
+                // block's (WPT css-writing-modes `available-size-*`).
+                // (An `auto` block size its `min-` and `max-` sizes fix is not definite either.)
+                let cb_limit = if placed_by_block_container {
+                    self.containing_block_block_limit(node_id, parent_wm)
+                } else {
+                    None
+                };
+                let cb_block_definite = cb_block_definite
+                    .filter(|_| cb_limit.is_none() && !(placed_by_block_container && self.containing_block_size_contained_auto(node_id, parent_wm)));
+                let available = match (inputs.available_space.width, cb_block_definite) {
                     (AvailableSpace::Definite(size), _) => size,
                     (_, Some(size)) => size,
-                    _ => icb_inline,
+                    _ => cb_limit.map_or(icb_inline, |limit| limit.min(icb_inline)),
                 };
                 // pyro: in block flow, less the box's margins in that axis (percentages of the
                 // containing block's inline size; `auto` is zero), as a block's stretched size is
@@ -307,6 +319,53 @@ impl LayoutPassState<'_> {
         self.orthogonal_percent_basis = percent_basis;
         transpose_static_positions(&mut output, self.layout_wm, parent_wm);
         output.transpose()
+    }
+
+    /// pyro: whether the box's layout parent has size containment and an `auto` block size: its
+    /// block size (that of no content) is then no definite basis for an orthogonal child's inline size.
+    fn containing_block_size_contained_auto(&self, node_id: NodeId, parent_wm: WritingMode) -> bool {
+        let Some(parent) = self.nodes[dom_node_id(node_id)].layout_parent.get() else { return false };
+        let Some(computed) = self.nodes[parent].primary_styles() else { return false };
+        let position = computed.get_position();
+        let block_size = if parent_wm.is_vertical() { &position.width } else { &position.height };
+        matches!(block_size, style::values::computed::Size::Auto)
+            && computed.get_box().slow_clone_contain().intersects(style::values::computed::Contain::SIZE | style::values::computed::Contain::BLOCK_SIZE)
+    }
+
+    /// pyro: the limit an indefinite containing block (the box's layout parent) puts on an
+    /// orthogonal box's available inline space: its `max-` block size as a content-box length,
+    /// floored by its `min-` block size (css-writing-modes-3 §7.3.1), when its block size is `auto`.
+    /// Lengths only.
+    fn containing_block_block_limit(&self, node_id: NodeId, parent_wm: WritingMode) -> Option<f32> {
+        let parent = self.nodes[dom_node_id(node_id)].layout_parent.get()?;
+        let computed = self.nodes[parent].primary_styles()?;
+        let position = computed.get_position();
+        let block_size = if parent_wm.is_vertical() { &position.width } else { &position.height };
+        if !matches!(block_size, style::values::computed::Size::Auto) {
+            return None;
+        }
+        let length = |value: Option<&style::values::computed::LengthPercentage>| value.and_then(|v| v.to_length()).map(|l| l.px());
+        let (min, max) = if parent_wm.is_vertical() {
+            (
+                match &position.min_width { style::values::computed::Size::LengthPercentage(v) => length(Some(&v.0)), _ => None },
+                match &position.max_width { style::values::computed::MaxSize::LengthPercentage(v) => length(Some(&v.0)), _ => None },
+            )
+        } else {
+            (
+                match &position.min_height { style::values::computed::Size::LengthPercentage(v) => length(Some(&v.0)), _ => None },
+                match &position.max_height { style::values::computed::MaxSize::LengthPercentage(v) => length(Some(&v.0)), _ => None },
+            )
+        };
+        let max = max?;
+        let limit = max.max(min.unwrap_or(0.0));
+        // As a content-box length.
+        if computed.get_position().box_sizing == style::computed_values::box_sizing::T::BorderBox {
+            let style = self.nodes[parent].layout_style_in(parent_wm);
+            let pb = taffy::CoreStyle::padding(&style).resolve_or_zero(None, resolve_calc_value)
+                + taffy::CoreStyle::border(&style).resolve_or_zero(None, resolve_calc_value);
+            return Some((limit - pb.top - pb.bottom).max(0.0));
+        }
+        Some(limit)
     }
 
     /// pyro: an orthogonal box's `size`, `min-` and `max-` sizes in its inline axis as border-box
