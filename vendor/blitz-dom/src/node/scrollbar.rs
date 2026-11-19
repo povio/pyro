@@ -115,6 +115,25 @@ impl Node {
         })
     }
 
+    /// pyro: the classic scrollbar gutters at the start (left, top) edges of the padding box of a
+    /// box in a horizontal writing mode (`direction: rtl`, `both-edges`): its inline content
+    /// starts after them. Zero otherwise.
+    pub fn start_gutters(&self) -> taffy::Point<f32> {
+        let horizontal = self.primary_styles().is_some_and(|s| !s.writing_mode.is_vertical());
+        match self.classic_scrollbars().filter(|_| horizontal) {
+            Some(bars) => taffy::Point { x: bars.gutters.left, y: bars.gutters.top },
+            None => taffy::Point { x: 0.0, y: 0.0 },
+        }
+    }
+
+    /// pyro: where the node's inline content starts in its border box: its padding and border and
+    /// [`Self::start_gutters`] (the one place the inline content origin is read from).
+    pub fn content_box_origin(&self) -> taffy::Point<f32> {
+        let l = self.final_layout();
+        let g = self.start_gutters();
+        taffy::Point { x: l.padding.left + l.border.left + g.x, y: l.padding.top + l.border.top + g.y }
+    }
+
     /// The node's computed `scrollbar-width`.
     pub fn scrollbar_width(&self) -> ScrollbarWidth {
         self.primary_styles()

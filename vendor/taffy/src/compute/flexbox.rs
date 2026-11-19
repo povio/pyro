@@ -911,30 +911,19 @@ fn compute_constants(
         let overflow = style.overflow();
         overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
     };
-    let mut content_box_inset = padding + border;
-    content_box_inset.bottom += scrollbar_gutter.y;
-
-    match layout_direction {
-        Direction::Ltr => content_box_inset.right += scrollbar_gutter.x,
-        Direction::Rtl => content_box_inset.left += scrollbar_gutter.x,
+    // pyro: the gutters at their edges (`CoreStyle::scrollbar_gutter`: both inline edges for
+    // `scrollbar-gutter: stable both-edges`, the start edge for `direction: rtl`).
+    let gutter_edges = {
+        let g = style.scrollbar_gutter();
+        match (layout_direction, style.direction()) {
+            (Direction::Ltr, Direction::Rtl) | (Direction::Rtl, Direction::Ltr) => Rect { left: g.right, right: g.left, ..g },
+            _ => g,
+        }
     };
-
-    let padding_box_inset = border
-        + Rect {
-            left: if layout_direction.is_rtl() { scrollbar_gutter.x } else { 0.0 },
-            right: if layout_direction.is_rtl() { 0.0 } else { scrollbar_gutter.x },
-            top: 0.0,
-            bottom: scrollbar_gutter.y,
-        };
+    let content_box_inset = padding + border + gutter_edges;
+    let padding_box_inset = border + gutter_edges;
     #[cfg(feature = "content_size")]
-    let padding = Rect {
-        left: content_box_inset.left - border.left - if layout_direction.is_rtl() { scrollbar_gutter.x } else { 0.0 },
-        right: content_box_inset.right
-            - border.right
-            - if layout_direction.is_rtl() { 0.0 } else { scrollbar_gutter.x },
-        top: content_box_inset.top - border.top,
-        bottom: content_box_inset.bottom - border.bottom - scrollbar_gutter.y,
-    };
+    let padding = padding;
 
     let node_outer_size = known_dimensions;
     let node_inner_size = node_outer_size.maybe_sub(content_box_inset.sum_axes());
@@ -3569,20 +3558,10 @@ fn final_layout_pass(
             (constants.container_size.width - constants.border.horizontal_axis_sum() - constants.scrollbar_gutter.x)
                 .max(0.0);
         overflow_rect = overflow_rect.union(Rect {
-            left: if constants.layout_direction.is_rtl() {
-                (client_width
-                    - (constants.content_box_inset.left - constants.border.left - constants.scrollbar_gutter.x))
-                    .min(0.0)
-            } else {
-                0.0
-            },
-            right: if constants.layout_direction.is_rtl() {
-                client_width
-            } else {
-                constants.content_box_inset.right - constants.border.right - constants.scrollbar_gutter.x
-            },
+            left: if constants.layout_direction.is_rtl() { (client_width - constants.padding.left).min(0.0) } else { 0.0 },
+            right: if constants.layout_direction.is_rtl() { client_width } else { constants.padding.right },
             top: 0.0,
-            bottom: constants.content_box_inset.bottom - constants.border.bottom - constants.scrollbar_gutter.y,
+            bottom: constants.padding.bottom,
         });
     }
     overflow_rect

@@ -1174,7 +1174,12 @@ fn used_border(width: &style::values::computed::BorderSideWidth, style: style::v
 /// are then each rotated within their slot (see [`line_slot`]).
 pub(crate) fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
     let l = doc.physical_unrounded_layout(id);
-    let (left, top) = ((l.border.left + l.padding.left) as f64, (l.border.top + l.padding.top) as f64);
+    // pyro: after the start-edge classic scrollbar gutters (`Node::content_box_origin`).
+    let (gx, gy) = doc.get_node(id).map_or((0.0, 0.0), |n| {
+        let g = n.start_gutters();
+        (g.x, g.y)
+    });
+    let (left, top) = ((l.border.left + l.padding.left + gx) as f64, (l.border.top + l.padding.top + gy) as f64);
     let block_offset = text.block_offset as f64;
     match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
         None => Affine::translate((left, top + block_offset)),

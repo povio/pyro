@@ -667,7 +667,11 @@ impl LayoutPassState<'_> {
             };
             (multicol, padding, border, margin, size, min_size, max_size, clamps_block_size)
         };
-        let pb = padding + border;
+        // pyro: and its scrollbar gutters (classic scrollbars): its columns are in its content box,
+        // which they make smaller (Chrome: a 200px `overflow-x: scroll` container's columns are
+        // 185px tall, WPT css-overflow `scroll-markers/targeted-column-scroll-marker-selection-001`).
+        let gutter = taffy::CoreStyle::scrollbar_gutter(&self.nodes[dom_id].layout_style_in(self.layout_wm));
+        let pb = padding + border + gutter;
         let pb_sum = pb.sum_axes();
 
         // The border box's width.

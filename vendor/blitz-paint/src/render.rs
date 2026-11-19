@@ -944,11 +944,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let transform = self.scrolled_transform(node, transform);
         if node.flags.is_inline_root() {
             if let Some(layout) = &cx.element.inline_layout_data {
-                let layout_box = node.final_layout();
-                let x = (layout_box.padding.left + layout_box.border.left) as f64
-                    - node.scroll_offset().x;
-                let y = (layout_box.padding.top + layout_box.border.top) as f64
-                    - node.scroll_offset().y
+                let origin = node.content_box_origin();
+                let x = origin.x as f64 - node.scroll_offset().x;
+                let y = origin.y as f64 - node.scroll_offset().y
                     + layout.block_offset as f64;
                 let text_transform =
                     transform * Affine::translate((x * self.scale, y * self.scale));
@@ -2814,8 +2812,26 @@ impl ElementCx<'_, '_> {
             (self.node.client_width() as f64).max(0.0),
             (self.node.client_height() as f64).max(0.0),
         );
-        let scroll = (self.node.scroll_width() as f64, self.node.scroll_height() as f64);
-        let offset = *self.node.scroll_offset();
+        // The content's extent as the DOM reports it (`scrollWidth`/`scrollHeight`): the resolved
+        // scrollable overflow from the scrollport's start (non-reversed axes).
+        let scroll = {
+            let doc_scale = self.context.dom.as_ref().viewport().scale_f64();
+            let o = self.node.scrollable_overflow().scale_from_origin(1.0 / doc_scale);
+            let reversed = layout.scrollable_overflow_rect.is_reversed();
+            let w = if reversed.x { px1 - g.right as f64 - o.x0 } else { o.x1 - (px0 + g.left as f64) };
+            let h = if reversed.y { py1 - g.bottom as f64 - o.y0 } else { o.y1 - (py0 + g.top as f64) };
+            (w.max(client.0), h.max(client.1))
+        };
+        // The scroll offset from the start of the scroll range (which is negative in a reversed
+        // axis: `direction: rtl`, whose thumb starts at the right).
+        let offset = {
+            let reversed = layout.scrollable_overflow_rect.is_reversed();
+            let o = *self.node.scroll_offset();
+            blitz_dom::Point {
+                x: if reversed.x { o.x + (scroll.0 - client.0) } else { o.x },
+                y: if reversed.y { o.y + (scroll.1 - client.1) } else { o.y },
+            }
+        };
         // A padding box too small for its gutters shows no scrollbars (Chrome: WPT css-overflow
         // `overflow-body-propagation-016`, a 0x0 `overflow: scroll` box).
         if px1 - px0 < (g.left + g.right) as f64 || py1 - py0 < (g.top + g.bottom) as f64 {
@@ -3949,11 +3965,13 @@ impl ElementCx<'_, '_> {
         }
         let (position, layout) = self.context.dom.physical_unrounded_geometry(node.id);
         let painted = node.final_layout();
-        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
-        let painted_x = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
+        let g = node.start_gutters();
+        let (gx, gy) = (g.x as f64, g.y as f64);
+        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64 + gx;
+        let painted_x = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64 + gx;
         let tops = crate::text::LineTops {
-            origin: position.y as f64 + (layout.border.top + layout.padding.top) as f64 + block_offset,
-            painted: (position.y as f64).round() + (painted.border.top + painted.padding.top) as f64 + block_offset,
+            origin: position.y as f64 + (layout.border.top + layout.padding.top) as f64 + gy + block_offset,
+            painted: (position.y as f64).round() + (painted.border.top + painted.padding.top) as f64 + gy + block_offset,
             scale: self.scale,
         };
         (((start * 64.0).floor() / 64.0 - painted_x) * self.scale, Some(tops))

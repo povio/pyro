@@ -2429,7 +2429,33 @@ impl LayoutPassState<'_> {
             let border = html.border().resolve_or_zero(width, resolve_calc_value);
             height -= margin.top + margin.bottom + padding.top + padding.bottom + border.top + border.bottom;
         }
-        let margin = self.child_layout_style(node).margin().resolve_or_zero(width, resolve_calc_value);
+        let style = self.child_layout_style(node);
+        let mut margin = style.margin().resolve_or_zero(width, resolve_calc_value);
+        // pyro: the body's top margin as it collapsed with its first child's (Chrome: a `<p>`'s
+        // 16px margin through the body's 8px leaves 576px of a 600px viewport, not 584: WPT
+        // css-overflow `line-clamp/block-ellipsis-quirk-001` under classic scrollbars).
+        if is_body {
+            let pb = style.padding().resolve_or_zero(width, resolve_calc_value).top
+                + style.border().resolve_or_zero(width, resolve_calc_value).top;
+            drop(style);
+            if pb == 0.0 {
+                let first = node.layout_children.borrow().as_ref().and_then(|children| {
+                    children.iter().copied().find(|&c| {
+                        let child = &self.nodes[c];
+                        !child.is_out_of_flow()
+                            && child.primary_styles().is_some_and(|s| {
+                                s.get_box().display.outside() == DisplayOutside::Block
+                                    && s.get_box().float == style::computed_values::float::T::None
+                            })
+                    })
+                });
+                if let Some(first) = first {
+                    let child_top = self.child_layout_style(&self.nodes[first]).margin().resolve_or_zero(width, resolve_calc_value).top;
+                    let (a, b) = (margin.top, child_top);
+                    margin.top = a.max(b).max(0.0) + a.min(b).min(0.0);
+                }
+            }
+        }
         Some((height - margin.top - margin.bottom).max(0.0))
     }
 

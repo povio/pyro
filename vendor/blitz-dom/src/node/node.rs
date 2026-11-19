@@ -2756,10 +2756,7 @@ impl Node {
         // padded inline root are hit one padding down and right of where
         // they are painted.
         let content_box_offset = if self.flags.is_inline_root() {
-            taffy::Point {
-                x: self.final_layout().padding.left + self.final_layout().border.left,
-                y: self.final_layout().padding.top + self.final_layout().border.top,
-            }
+            self.content_box_origin()
         } else {
             taffy::Point { x: 0.0, y: 0.0 }
         };

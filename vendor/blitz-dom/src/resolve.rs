@@ -827,12 +827,19 @@ impl BaseDocument {
         let (text_layout, block_offset) = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)))?;
         // pyro: the lines a line clamp discarded are no overflow (`layout::line_clamp`).
         let kept = inline.and_then(|t| t.clamp.as_ref()).map_or(usize::MAX, |clamp| clamp.lines as usize);
+        // pyro: the clamp line of a clamp that discarded lines ends at its block ellipsis, which
+        // goes inside the line box: what it hides past it is no overflow (Chrome: WPT css-overflow
+        // `line-clamp/block-ellipsis-013`, a `white-space: pre` line wider than the viewport).
+        let clamp_line = (kept != usize::MAX && text_layout.len() > kept).then(|| kept.saturating_sub(1));
+        let content_width = (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0) as f64 * scale;
         let width = text_layout
             .lines()
             .take(kept)
-            .map(|line| {
+            .enumerate()
+            .map(|(i, line)| {
                 let m = line.metrics();
-                (m.offset + m.advance - m.hanging_advance) as f64
+                let w = (m.offset + m.advance - m.hanging_advance) as f64;
+                if Some(i) == clamp_line { w.min(content_width) } else { w }
             })
             .fold(0.0, f64::max);
         // The empty line parley adds after a final hard break (`<br>`)
@@ -843,8 +850,9 @@ impl BaseDocument {
             .filter(|line| !line.text_range().is_empty())
             .map(|line| line.metrics().block_max_coord as f64)
             .fold(0.0, f64::max);
-        let x0 = (l.border.left + l.padding.left) as f64 * scale;
-        let y0 = (l.border.top + l.padding.top + block_offset) as f64 * scale;
+        let g = self.nodes[node_id].start_gutters();
+        let x0 = (l.border.left + l.padding.left + g.x) as f64 * scale;
+        let y0 = (l.border.top + l.padding.top + g.y + block_offset) as f64 * scale;
         let style = self.nodes[node_id].primary_styles();
         // Text controls scroll their value whatever their `overflow`.
         let scrolls = editor_layout.is_some()
