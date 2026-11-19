@@ -952,13 +952,19 @@ impl LayoutPassState<'_> {
                     }
                 }
                 if run.columns.len() <= count || last_box_row {
-                    // (`column-fill: auto` without a definite height balances too.)
-                    let height = if matches!(multicol.fill, ColumnFill::Balance) || !fill_auto {
+                    // (`column-fill: auto` without a definite height balances too, a row that is
+                    // the container's only one; after rows before it, it fills its columns in
+                    // turn and is as tall as they hold: Chromium, WPT css-multicol
+                    // `multicol-nested-026`.)
+                    let sequential = matches!(multicol.fill, ColumnFill::Auto) && !fill_auto && !placed.is_empty();
+                    let height = if (matches!(multicol.fill, ColumnFill::Balance) || !fill_auto) && !sequential {
                         breaks.balance_range(start, end, count, Some(row_height)).min(row_height)
                     } else {
                         row_height
                     };
                     let columns = breaks.fill_range(start, end, height, fragment_cap - placed.len()).columns;
+                    let content = columns.iter().map(|&(a, b)| b - a).fold(0.0f32, f32::max).min(row_height);
+                    let height = if sequential { content } else { height };
                     let shown = if box_end.is_some() { row_height } else { height };
                     placed.extend(columns.into_iter().map(|(a, b)| (a, b, top, shown)));
                     // (The row reaches past its balanced columns to the end of the box.)
