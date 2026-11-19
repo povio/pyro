@@ -2191,7 +2191,7 @@ impl JsClass for CssStyleSheet {
             c.replace(&text);
             Ok(s.undefined())
         });
-        def.method("replace", 1, |s, sh, a| {
+        def.promise_method("replace", 1, |s, sh, a| {
             let deferred = s.deferred()?;
             let promise = deferred.promise.get(s);
             // A promise-returning operation: argument errors reject.

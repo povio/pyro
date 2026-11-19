@@ -704,3 +704,33 @@ fn svg_lengths_of_one_character_new_interfaces_detached_lengths_and_css_units() 
         "5|3|true|true|true|true|true|true|42|0|0|0|1|0|2%|32|0|32|3.78|TypeError|NotSupportedError"
     );
 }
+
+/// Web IDL details idlharness checks (round 5): a promise-returning operation called on another
+/// object rejects with the TypeError instead of throwing it (`ClassDef::promise_method`); the
+/// Fullscreen attributes are `[LegacyLenientSetter]` (assigning does nothing, also in strict
+/// mode); `new ProcessingInstruction(target, data)`.
+/// WPT dom/idlharness, css/cssom/idlharness, FileAPI/idlharness.
+#[test]
+fn promise_operations_reject_on_a_wrong_receiver_and_other_idl_details() {
+    let env = Env::new("http://idl.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              "use strict";
+              const out = [];
+              for (const [f, name] of [[CSSStyleSheet.prototype.replace, "replace"], [Blob.prototype.text, "text"],
+                                       [Document.prototype.exitFullscreen, "exitFullscreen"], [Element.prototype.requestFullscreen, "requestFullscreen"]]) {
+                try { out.push(f.call({}) instanceof Promise); } catch (e) { out.push(name + " threw"); }
+              }
+              try { document.fullscreenEnabled = true; document.fullscreen = true; document.fullscreenElement = document.body; out.push(document.fullscreen); }
+              catch (e) { out.push("setter threw"); }
+              const pi = new ProcessingInstruction("target", "data");
+              out.push(ProcessingInstruction.length, pi.target, pi.data, pi.ownerDocument === document);
+              try { new ProcessingInstruction(); out.push("no throw"); } catch (e) { out.push(e.name); }
+              try { new ProcessingInstruction("t", "?>"); out.push("no throw"); } catch (e) { out.push(e.name); }
+              return out.join("|");
+            })()"#
+        ),
+        "true|true|true|true|false|1|target|data|true|TypeError|InvalidCharacterError"
+    );
+}

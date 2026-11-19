@@ -142,19 +142,19 @@ impl JsClass for Blob {
             };
             Ok(s.wrap::<Blob>(BlobData { bytes: b.bytes.slice(start..end), mime, file: None }, None)?.value())
         });
-        def.method("text", 0, |s, b, _a| {
+        def.promise_method("text", 0, |s, b, _a| {
             let d = s.deferred()?;
             let text = String::from_utf8_lossy(&b.bytes).into_owned();
             d.resolve(s, s.string(&text))?;
             Ok(d.promise.get(s))
         });
-        def.method("arrayBuffer", 0, |s, b, _a| {
+        def.promise_method("arrayBuffer", 0, |s, b, _a| {
             let d = s.deferred()?;
             let ab = crate::encoding::array_buffer(s, &b.bytes)?;
             d.resolve(s, ab)?;
             Ok(d.promise.get(s))
         });
-        def.method("bytes", 0, |s, b, _a| {
+        def.promise_method("bytes", 0, |s, b, _a| {
             let d = s.deferred()?;
             let ab = crate::encoding::uint8_array(s, &b.bytes)?;
             d.resolve(s, ab)?;

@@ -916,6 +916,16 @@ impl JsClass for ProcessingInstruction {
     type Parent = CharacterData;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("target", |s, n| Ok(s.string(&n.page().dom.borrow().node_name(n.id).js()?)));
+        // `new ProcessingInstruction(target, data = "")` (DOM): as `createProcessingInstruction`
+        // on the current document.
+        def.constructor(1, |s, nt, a| {
+            a.require(1, "ProcessingInstruction")?;
+            let page = page_of(s)?;
+            let target = dom_string(a.get(0))?;
+            let data = if a.get(1).is_undefined() { String::new() } else { dom_string(a.get(1))? };
+            let id = page.dom.borrow_mut().create_processing_instruction(page.document(), &target, &data).js()?;
+            wrap_new_node::<ProcessingInstruction>(s, &page, id, nt)
+        });
         // Processing instruction attributes (WICG declarative partial updates, as Chromium): the
         // data read as quoted `name="value"` pairs; writes rewrite the data in place, so they are
         // characterData mutations.
@@ -1223,7 +1233,7 @@ impl JsClass for ShadowRoot {
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
         // Fullscreen API: nothing is ever fullscreen.
-        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
+        def.accessor("fullscreenElement", |s, _n| Ok(s.null()), |_s, _n, _v| Ok(()));
         def.getter("host", |s, n| {
             let h = n.page().dom.borrow().fragment_host(n.id).js()?;
             node_value(s, n.page(), h)
@@ -1307,7 +1317,7 @@ impl JsClass for Element {
         // Fullscreen API: pyro never shows an element fullscreen, so a request is denied the way
         // Chromium denies one it may not grant (a TypeError); the handlers exist for pages to set.
         crate::handlers::define_fullscreen(def);
-        def.method("requestFullscreen", 0, |s, _n, _a| {
+        def.promise_method("requestFullscreen", 0, |s, _n, _a| {
             let d = s.deferred()?;
             let promise = d.promise.get(s);
             d.reject(s, JsError::Type("Permissions check failed".into()).to_value(s))?;
@@ -1776,10 +1786,11 @@ impl JsClass for Document {
         crate::handlers::define_fullscreen(def);
         // Fullscreen API: pyro shows nothing fullscreen, so fullscreen is not enabled, no element
         // is fullscreen, and exitFullscreen() rejects as it does with no fullscreen element.
-        def.getter("fullscreenEnabled", |s, _n| Ok(s.boolean(false)));
-        def.getter("fullscreen", |s, _n| Ok(s.boolean(false)));
-        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
-        def.method("exitFullscreen", 0, |s, _n, _a| {
+        // (`[LegacyLenientSetter]`: assigning to them does nothing, and does not throw in strict mode.)
+        def.accessor("fullscreenEnabled", |s, _n| Ok(s.boolean(false)), |_s, _n, _v| Ok(()));
+        def.accessor("fullscreen", |s, _n| Ok(s.boolean(false)), |_s, _n, _v| Ok(()));
+        def.accessor("fullscreenElement", |s, _n| Ok(s.null()), |_s, _n, _v| Ok(()));
+        def.promise_method("exitFullscreen", 0, |s, _n, _a| {
             let d = s.deferred()?;
             let promise = d.promise.get(s);
             d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;
