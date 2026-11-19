@@ -151,3 +151,49 @@ fn alternating_collapsed_borders_are_linear() {
     let elapsed = start.elapsed();
     assert!(elapsed.as_secs_f64() < 20.0, "took {elapsed:?}");
 }
+
+/// A table's `max-width` caps the columns its `<col>` width hints ask for (Blink's column
+/// distribution path): both cells' contents fit in 150px, so the table is 150px wide.
+#[test]
+fn hinted_columns_keep_the_table_max_width() {
+    let img = render(
+        "<table style='max-width:150px;border-spacing:0;background:green'><col style='width:300px'><col>\
+         <tr><td style='padding:0;height:20px'><span style='display:inline-block;width:20px'></span></td>\
+         <td style='padding:0'><span style='display:inline-block;width:20px'></span></td></tr></table>",
+    );
+    assert_eq!(pixel(&img, 140, 10), GREEN);
+    assert_eq!(pixel(&img, 160, 10), [255, 255, 255]);
+}
+
+/// A cell's own `min-width` floors its column in Blink's distribution path as in the grid path.
+#[test]
+fn cell_min_width_floors_its_hinted_column() {
+    let img = render(
+        "<table style='border-spacing:0'><col style='width:30px'><col>\
+         <tr><td style='padding:0;height:20px;width:100px;min-width:250px;background:green'></td>\
+         <td style='padding:0'><span style='display:inline-block;width:10px'></span></td></tr></table>",
+    );
+    assert_eq!(pixel(&img, 240, 10), GREEN);
+}
+
+/// A relatively positioned float beside inline content: its containing block's direction (LTR)
+/// picks `left` over `right`, whatever the float's own direction.
+#[test]
+fn relative_float_offset_follows_the_containing_block_direction() {
+    let img = render(
+        "<div>x<div style='float:left;direction:rtl;position:relative;left:100px;right:20px;\
+         width:20px;height:20px;background:green'></div></div>",
+    );
+    assert_eq!(pixel(&img, 110, 5), GREEN);
+}
+
+/// A percentage `top` of a relatively positioned float beside inline content resolves against the
+/// definite height of its containing block.
+#[test]
+fn relative_float_percent_top_uses_a_definite_containing_block_height() {
+    let img = render(
+        "<div style='height:100px'>x<div style='float:left;position:relative;top:50%;\
+         width:20px;height:20px;background:green'></div></div>",
+    );
+    assert_eq!(pixel(&img, 10, 60), GREEN);
+}

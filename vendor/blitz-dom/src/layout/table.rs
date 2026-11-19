@@ -352,7 +352,8 @@ impl TableTreeWrapper<'_, '_> {
         let mut spanning = Vec::new();
         for (idx, cell) in ctx.cells.iter().enumerate() {
             let column = cell.column as usize;
-            let lo = measure(self, idx, taffy::AvailableSpace::MinContent);
+            // (Its own `min-width` floors both, as `compute_child_layout` does for the grid path.)
+            let lo = measure(self, idx, taffy::AvailableSpace::MinContent).max(cell_own_min_width(&cell.style, None).unwrap_or(0.0));
             let hi = measure(self, idx, taffy::AvailableSpace::MaxContent).max(lo);
             if cell.colspan > 1 || column >= n {
                 // pyro: a spanning cell's length `width` is its max-content contribution (its
@@ -482,14 +483,16 @@ impl TableTreeWrapper<'_, '_> {
             })
         };
         let min_width = border_box(style.min_size.width.maybe_resolve(parent, resolve_calc_value)).unwrap_or(0.0);
+        // (No wider than its `max-width` says, which its `min-width` beats: CSS 2.1 § 10.4.)
+        let max_width = border_box(style.max_size.width.maybe_resolve(parent, resolve_calc_value)).unwrap_or(f32::INFINITY);
         let inner = match inputs.known_dimensions.width {
             Some(w) => w - spacing,
             None => match border_box(style.size.width.maybe_resolve(parent, resolve_calc_value)) {
-                Some(w) => w.max(min_width) - spacing,
+                Some(w) => w.min(max_width).max(min_width) - spacing,
                 None => match inputs.available_space.width {
                     // A table shrinks to fit its columns.
                     taffy::AvailableSpace::Definite(a) => {
-                        (a.max(min_width) - spacing).min(grid_max.max(min_width - spacing))
+                        (a.min(max_width).max(min_width) - spacing).min(grid_max.max(min_width - spacing))
                     }
                     taffy::AvailableSpace::MinContent => sum_min.max(min_width - spacing),
                     taffy::AvailableSpace::MaxContent => grid_max.max(min_width - spacing),
@@ -3970,18 +3973,7 @@ impl TableTreeWrapper<'_, '_> {
             // Its own `min-width` still applies (and wins over `max-width`).
             let style = &cell.style;
             let parent = inputs.parent_size.width;
-            let own_min = {
-                use taffy::MaybeResolve as _;
-                style.min_size.width.maybe_resolve(parent, resolve_calc_value).map(|w| {
-                    let padding = style.padding.resolve_or_zero(parent, resolve_calc_value);
-                    let border = style.border.resolve_or_zero(parent, resolve_calc_value);
-                    let extra = padding.left + padding.right + border.left + border.right;
-                    match style.box_sizing {
-                        taffy::BoxSizing::ContentBox => w + extra,
-                        taffy::BoxSizing::BorderBox => w.max(extra),
-                    }
-                })
-            };
+            let own_min = cell_own_min_width(style, parent);
             output.size.width = output.size.width.max(min_width).max(own_min.unwrap_or(0.0));
             output.size.height = output.size.height.max(cell.min_height.unwrap_or(0.0));
             return output;
@@ -4672,4 +4664,18 @@ fn raise_max_width_to_columns(style: &mut taffy::Style<Atom>, content: f32, extr
     if style.max_size.width.maybe_resolve(parent, resolve_calc_value).is_some_and(|max: f32| max < grown) {
         style.max_size.width = style_helpers::length(grown);
     }
+}
+
+/// pyro: a cell's own `min-width` as the width of its border box.
+fn cell_own_min_width(style: &taffy::Style<Atom>, parent: Option<f32>) -> Option<f32> {
+    use taffy::MaybeResolve as _;
+    style.min_size.width.maybe_resolve(parent, resolve_calc_value).map(|w| {
+        let padding = style.padding.resolve_or_zero(parent, resolve_calc_value);
+        let border = style.border.resolve_or_zero(parent, resolve_calc_value);
+        let extra = padding.left + padding.right + border.left + border.right;
+        match style.box_sizing {
+            taffy::BoxSizing::ContentBox => w + extra,
+            taffy::BoxSizing::BorderBox => w.max(extra),
+        }
+    })
 }
