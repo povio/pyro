@@ -50075,7 +50075,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -541,17 +816,79 @@
+@@ -541,17 +816,83 @@
          font_style,
          font_weight,
          font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
@@ -50098,6 +50098,10 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
 +        isolates: false,
 +        // (Set where an inline element's span is built, `inline::build`.)
 +        wrap_avoid_depth: 0,
++        full_width_space: style
++            .get_inherited_text()
++            .text_transform
++            .contains(style::values::specified::text::TextTransform::FULL_WIDTH),
 +        hanging_punctuation: {
 +            use style::values::computed::HangingPunctuation as H;
 +            let value = itext_styles.hanging_punctuation;
@@ -50156,7 +50160,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +906,10 @@
+@@ -569,6 +910,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

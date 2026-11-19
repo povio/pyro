@@ -316,7 +316,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
         } else {
             self.resolve_style_id(pending.span)
         };
-        self.commit_styled_text(style_index, " ");
+        // pyro: `text-transform: full-width` makes the collapsed space U+3000.
+        let space = if self.tree[pending.span].style.full_width_space { "\u{3000}" } else { " " };
+        self.commit_styled_text(style_index, space);
         // pyro: the kept space is inside the spans whose end edges followed it.
         let end = self.text.len();
         self.edge_moves

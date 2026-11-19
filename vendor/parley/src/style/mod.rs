@@ -479,6 +479,8 @@ pub enum StyleProperty<'a, B: Brush> {
     WrapAvoidDepth(u8),
     /// pyro: CSS `hanging-punctuation` ([`TextStyle::hanging_punctuation`]).
     HangingPunctuation(u8),
+    /// pyro: [`TextStyle::full_width_space`].
+    FullWidthSpace(bool),
     /// pyro: whether the span is a bidi isolate ([`TextStyle::isolates`]).
     Isolates(bool),
     /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
@@ -572,6 +574,9 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: CSS `hanging-punctuation`: `FORCE_END` (2), `ALLOW_END` (4) and `LAST` (8) bits (the
     /// line breaker's; `first` is the caller's, a negative indent).
     pub hanging_punctuation: u8,
+    /// pyro: a collapsed space of the span is U+3000 (CSS `text-transform: full-width`, which
+    /// applies after white space collapsing).
+    pub full_width_space: bool,
     /// pyro: whether the span is a bidi isolate (CSS `unicode-bidi: isolate`, `isolate-override`
     /// or `plaintext`): shaping breaks at its edges (CSS Text 3 § 7.3). Not inherited: set on the
     /// span's own style.
@@ -693,6 +698,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             dictionary_breaks: true,
             wrap_avoid_depth: 0,
             hanging_punctuation: 0,
+            full_width_space: false,
             isolates: false,
             phrase_breaks: false,
             font_size_adjusted: false,

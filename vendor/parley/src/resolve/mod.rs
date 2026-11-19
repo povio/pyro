@@ -174,6 +174,7 @@ impl ResolveContext {
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
             StyleProperty::WrapAvoidDepth(value) => WrapAvoidDepth(*value),
             StyleProperty::HangingPunctuation(value) => HangingPunctuation(*value),
+            StyleProperty::FullWidthSpace(value) => FullWidthSpace(*value),
             StyleProperty::Isolates(value) => Isolates(*value),
             StyleProperty::PhraseBreaks(value) => PhraseBreaks(*value),
             StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
@@ -231,6 +232,7 @@ impl ResolveContext {
             dictionary_breaks: raw_style.dictionary_breaks,
             wrap_avoid_depth: raw_style.wrap_avoid_depth,
             hanging_punctuation: raw_style.hanging_punctuation,
+            full_width_space: raw_style.full_width_space,
             isolates: raw_style.isolates,
             phrase_breaks: raw_style.phrase_breaks,
             font_size_adjusted: raw_style.font_size_adjusted,
@@ -442,6 +444,7 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     DictionaryBreaks(bool),
     WrapAvoidDepth(u8),
     HangingPunctuation(u8),
+    FullWidthSpace(bool),
     Isolates(bool),
     /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
     PhraseBreaks(bool),
@@ -529,6 +532,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) wrap_avoid_depth: u8,
     /// pyro: see [`crate::TextStyle::hanging_punctuation`].
     pub(crate) hanging_punctuation: u8,
+    /// pyro: see [`crate::TextStyle::full_width_space`].
+    pub(crate) full_width_space: bool,
     /// pyro: the span is a bidi isolate (see [`crate::TextStyle::isolates`]).
     pub(crate) isolates: bool,
     /// pyro: whether lines break between phrases ([`TextStyle::phrase_breaks`]).
@@ -594,6 +599,7 @@ impl<B: Brush> ResolvedStyle<B> {
             DictionaryBreaks(value) => self.dictionary_breaks = value,
             WrapAvoidDepth(value) => self.wrap_avoid_depth = value,
             HangingPunctuation(value) => self.hanging_punctuation = value,
+            FullWidthSpace(value) => self.full_width_space = value,
             Isolates(value) => self.isolates = value,
             PhraseBreaks(value) => self.phrase_breaks = value,
             FontSizeAdjusted(value) => self.font_size_adjusted = value,
@@ -642,6 +648,7 @@ impl<B: Brush> ResolvedStyle<B> {
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
             WrapAvoidDepth(value) => self.wrap_avoid_depth == *value,
             HangingPunctuation(value) => self.hanging_punctuation == *value,
+            FullWidthSpace(value) => self.full_width_space == *value,
             Isolates(value) => self.isolates == *value,
             PhraseBreaks(value) => self.phrase_breaks == *value,
             FontSizeAdjusted(value) => self.font_size_adjusted == *value,

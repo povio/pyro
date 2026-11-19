@@ -834,6 +834,10 @@ pub(crate) fn style(
         isolates: false,
         // (Set where an inline element's span is built, `inline::build`.)
         wrap_avoid_depth: 0,
+        full_width_space: style
+            .get_inherited_text()
+            .text_transform
+            .contains(style::values::specified::text::TextTransform::FULL_WIDTH),
         hanging_punctuation: {
             use style::values::computed::HangingPunctuation as H;
             let value = itext_styles.hanging_punctuation;

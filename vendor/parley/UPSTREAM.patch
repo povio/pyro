@@ -4939,7 +4939,7 @@ index e967f50..68055ee 100644
  pub use layout::*;
  pub use style::*;
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..6880169 100644
+index f465832..c10260c 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -4951,7 +4951,7 @@ index f465832..6880169 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,22 @@ impl ResolveContext {
+@@ -169,6 +169,23 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
@@ -4960,6 +4960,7 @@ index f465832..6880169 100644
 +            StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
 +            StyleProperty::WrapAvoidDepth(value) => WrapAvoidDepth(*value),
 +            StyleProperty::HangingPunctuation(value) => HangingPunctuation(*value),
++            StyleProperty::FullWidthSpace(value) => FullWidthSpace(*value),
 +            StyleProperty::Isolates(value) => Isolates(*value),
 +            StyleProperty::PhraseBreaks(value) => PhraseBreaks(*value),
 +            StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
@@ -4974,7 +4975,7 @@ index f465832..6880169 100644
          }
      }
  
-@@ -210,6 +226,24 @@ impl ResolveContext {
+@@ -210,6 +227,25 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
@@ -4983,6 +4984,7 @@ index f465832..6880169 100644
 +            dictionary_breaks: raw_style.dictionary_breaks,
 +            wrap_avoid_depth: raw_style.wrap_avoid_depth,
 +            hanging_punctuation: raw_style.hanging_punctuation,
++            full_width_space: raw_style.full_width_space,
 +            isolates: raw_style.isolates,
 +            phrase_breaks: raw_style.phrase_breaks,
 +            font_size_adjusted: raw_style.font_size_adjusted,
@@ -4999,7 +5001,7 @@ index f465832..6880169 100644
          }
      }
  
-@@ -400,6 +434,43 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +436,44 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -5011,6 +5013,7 @@ index f465832..6880169 100644
 +    DictionaryBreaks(bool),
 +    WrapAvoidDepth(u8),
 +    HangingPunctuation(u8),
++    FullWidthSpace(bool),
 +    Isolates(bool),
 +    /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
 +    PhraseBreaks(bool),
@@ -5043,7 +5046,7 @@ index f465832..6880169 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +519,43 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +522,45 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -5057,6 +5060,8 @@ index f465832..6880169 100644
 +    pub(crate) wrap_avoid_depth: u8,
 +    /// pyro: see [`crate::TextStyle::hanging_punctuation`].
 +    pub(crate) hanging_punctuation: u8,
++    /// pyro: see [`crate::TextStyle::full_width_space`].
++    pub(crate) full_width_space: bool,
 +    /// pyro: the span is a bidi isolate (see [`crate::TextStyle::isolates`]).
 +    pub(crate) isolates: bool,
 +    /// pyro: whether lines break between phrases ([`TextStyle::phrase_breaks`]).
@@ -5087,7 +5092,7 @@ index f465832..6880169 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +589,22 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +594,23 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
@@ -5096,6 +5101,7 @@ index f465832..6880169 100644
 +            DictionaryBreaks(value) => self.dictionary_breaks = value,
 +            WrapAvoidDepth(value) => self.wrap_avoid_depth = value,
 +            HangingPunctuation(value) => self.hanging_punctuation = value,
++            FullWidthSpace(value) => self.full_width_space = value,
 +            Isolates(value) => self.isolates = value,
 +            PhraseBreaks(value) => self.phrase_breaks = value,
 +            FontSizeAdjusted(value) => self.font_size_adjusted = value,
@@ -5110,7 +5116,7 @@ index f465832..6880169 100644
          }
      }
  
-@@ -513,6 +637,22 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +643,23 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
@@ -5119,6 +5125,7 @@ index f465832..6880169 100644
 +            DictionaryBreaks(value) => self.dictionary_breaks == *value,
 +            WrapAvoidDepth(value) => self.wrap_avoid_depth == *value,
 +            HangingPunctuation(value) => self.hanging_punctuation == *value,
++            FullWidthSpace(value) => self.full_width_space == *value,
 +            Isolates(value) => self.isolates == *value,
 +            PhraseBreaks(value) => self.phrase_breaks == *value,
 +            FontSizeAdjusted(value) => self.font_size_adjusted == *value,
@@ -5133,7 +5140,7 @@ index f465832..6880169 100644
          }
      }
  
-@@ -527,6 +667,12 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +674,12 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
@@ -5147,7 +5154,7 @@ index f465832..6880169 100644
          }
      }
 diff --git a/src/resolve/tree.rs b/src/resolve/tree.rs
-index c102610..87b68cf 100644
+index c102610..1795cad 100644
 --- a/src/resolve/tree.rs
 +++ b/src/resolve/tree.rs
 @@ -16,6 +16,9 @@ struct StyleTreeNode<B: Brush> {
@@ -5409,10 +5416,14 @@ index c102610..87b68cf 100644
              return;
          }
  
-@@ -184,6 +317,90 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -183,7 +316,93 @@ impl<B: Brush> TreeStyleBuilder<B> {
+         } else {
              self.resolve_style_id(pending.span)
          };
-         self.commit_styled_text(style_index, " ");
+-        self.commit_styled_text(style_index, " ");
++        // pyro: `text-transform: full-width` makes the collapsed space U+3000.
++        let space = if self.tree[pending.span].style.full_width_space { "\u{3000}" } else { " " };
++        self.commit_styled_text(style_index, space);
 +        // pyro: the kept space is inside the spans whose end edges followed it.
 +        let end = self.text.len();
 +        self.edge_moves
@@ -5500,7 +5511,7 @@ index c102610..87b68cf 100644
      }
  
      /// The style table index of the span that text is currently being pushed into.
-@@ -211,6 +428,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -211,6 +430,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
              }),
          }
          self.last_item_is_inline_box = false;
@@ -5511,7 +5522,7 @@ index c102610..87b68cf 100644
      }
  
      /// The index of `span`'s style in the style table, adding it (and any ancestors that have not
-@@ -226,18 +447,43 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -226,18 +449,43 @@ impl<B: Brush> TreeStyleBuilder<B> {
          let parent_id = self.resolve_style_id(parent);
          let mut style = self.tree[span].style.clone();
          style.parent = parent_id;
@@ -5558,7 +5569,7 @@ index c102610..87b68cf 100644
      /// The index of `span`'s style with wrapping enabled, adding it to the table if necessary.
      fn resolve_wrappable_style_id(&mut self, span: usize) -> u16 {
          if self.tree[span].style.text_wrap_mode == TextWrapMode::Wrap {
-@@ -250,7 +496,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -250,7 +498,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
          let span_id = self.resolve_style_id(span);
          let mut style = self.style_table[usize::from(span_id)].clone();
          style.text_wrap_mode = TextWrapMode::Wrap;
@@ -5567,7 +5578,7 @@ index c102610..87b68cf 100644
          self.tree[span].wrappable_style_id = Some(style_id);
          style_id
      }
-@@ -272,6 +518,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -272,6 +520,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
              style,
              style_id: None,
              wrappable_style_id: None,
@@ -5575,7 +5586,7 @@ index c102610..87b68cf 100644
          });
          self.current_span = self.tree.len() - 1;
      }
-@@ -304,11 +551,17 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -304,11 +553,17 @@ impl<B: Brush> TreeStyleBuilder<B> {
          while self.tree[self.current_span].parent.is_some() {
              self.pop_style_span();
          }
@@ -5593,7 +5604,7 @@ index c102610..87b68cf 100644
  
          if style_runs.is_empty() {
              // If there's no text, the layout still needs the root style, e.g., to size a cursor.
-@@ -322,6 +575,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -322,6 +577,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
      }
  }
  
@@ -6491,7 +6502,7 @@ index 0000000..e8fc4f6
 +    }
 +}
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..7957eea 100644
+index d9977df..5075709 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -43,6 +43,158 @@ pub enum WhiteSpaceCollapse {
@@ -6752,7 +6763,7 @@ index d9977df..7957eea 100644
              _ => self,
          }
      }
-@@ -277,6 +469,39 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +469,41 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -6766,6 +6777,8 @@ index d9977df..7957eea 100644
 +    WrapAvoidDepth(u8),
 +    /// pyro: CSS `hanging-punctuation` ([`TextStyle::hanging_punctuation`]).
 +    HangingPunctuation(u8),
++    /// pyro: [`TextStyle::full_width_space`].
++    FullWidthSpace(bool),
 +    /// pyro: whether the span is a bidi isolate ([`TextStyle::isolates`]).
 +    Isolates(bool),
 +    /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
@@ -6792,7 +6805,7 @@ index d9977df..7957eea 100644
  }
  
  /// Unresolved styles.
-@@ -334,6 +559,104 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +561,107 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -6809,6 +6822,9 @@ index d9977df..7957eea 100644
 +    /// pyro: CSS `hanging-punctuation`: `FORCE_END` (2), `ALLOW_END` (4) and `LAST` (8) bits (the
 +    /// line breaker's; `first` is the caller's, a negative indent).
 +    pub hanging_punctuation: u8,
++    /// pyro: a collapsed space of the span is U+3000 (CSS `text-transform: full-width`, which
++    /// applies after white space collapsing).
++    pub full_width_space: bool,
 +    /// pyro: whether the span is a bidi isolate (CSS `unicode-bidi: isolate`, `isolate-override`
 +    /// or `plaintext`): shaping breaks at its edges (CSS Text 3 § 7.3). Not inherited: set on the
 +    /// span's own style.
@@ -6897,7 +6913,7 @@ index d9977df..7957eea 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +688,24 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +693,25 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
@@ -6906,6 +6922,7 @@ index d9977df..7957eea 100644
 +            dictionary_breaks: true,
 +            wrap_avoid_depth: 0,
 +            hanging_punctuation: 0,
++            full_width_space: false,
 +            isolates: false,
 +            phrase_breaks: false,
 +            font_size_adjusted: false,
