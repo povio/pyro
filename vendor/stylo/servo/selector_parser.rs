@@ -550,6 +550,25 @@ pub type Lang = Box<str>;
 #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToCss, ToShmem)]
 pub struct CustomState(pub AtomIdent);
 
+/// pyro: the argument of the functional `:has-slotted()` pseudo-class: the selectors (no
+/// pseudo-elements) one of a slot's flattened assigned elements must match.
+#[derive(Clone, Debug, PartialEq, ToShmem)]
+pub struct HasSlottedArgument(pub selectors::parser::SelectorList<SelectorImpl>);
+
+impl Eq for HasSlottedArgument {}
+
+impl std::hash::Hash for HasSlottedArgument {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_css_string().hash(state)
+    }
+}
+
+impl malloc_size_of::MallocSizeOf for HasSlottedArgument {
+    fn size_of(&self, _: &mut malloc_size_of::MallocSizeOfOps) -> usize {
+        0
+    }
+}
+
 /// A non tree-structural pseudo-class.
 /// See https://drafts.csswg.org/selectors-4/#structural-pseudos
 #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToShmem)]
@@ -600,6 +619,9 @@ pub enum NonTSPseudoClass {
     /// before and after its active one, in tree order.
     TargetBefore,
     TargetAfter,
+    /// pyro: `:has-slotted` and `:has-slotted(<selector-list>)` (CSS Scoping 1 § 3.2.5): a slot
+    /// whose flattened assigned nodes are not empty (of which an element matches the argument).
+    HasSlotted(Option<HasSlottedArgument>),
     UserInvalid,
     UserValid,
     Valid,
@@ -652,6 +674,15 @@ impl ToCss for NonTSPseudoClass {
             serialize_identifier(dir, dest)?;
             return dest.write_char(')');
         }
+        if let HasSlotted(ref argument) = *self {
+            dest.write_str(":has-slotted")?;
+            if let Some(argument) = argument {
+                dest.write_char('(')?;
+                argument.0.to_css(dest)?;
+                dest.write_char(')')?;
+            }
+            return Ok(());
+        }
 
         dest.write_str(match *self {
             Self::Active => ":active",
@@ -699,7 +730,7 @@ impl ToCss for NonTSPseudoClass {
             Self::UserValid => ":user-valid",
             Self::Valid => ":valid",
             Self::Visited => ":visited",
-            Self::Lang(_) | Self::Dir(_) => unreachable!(),
+            Self::Lang(_) | Self::Dir(_) | Self::HasSlotted(_) => unreachable!(),
         })
     }
 }
@@ -748,7 +779,11 @@ impl NonTSPseudoClass {
             Self::UserValid => ElementState::USER_VALID,
             Self::Valid => ElementState::VALID,
             Self::Visited => ElementState::VISITED,
-            Self::CustomState(_) | Self::Lang(_) | Self::Dir(_) | Self::ServoNonZeroBorder => {
+            Self::CustomState(_)
+            | Self::Lang(_)
+            | Self::Dir(_)
+            | Self::HasSlotted(_)
+            | Self::ServoNonZeroBorder => {
                 ElementState::empty()
             },
         }
@@ -866,6 +901,7 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "target-current" => NonTSPseudoClass::TargetCurrent,
             "target-before" => NonTSPseudoClass::TargetBefore,
             "target-after" => NonTSPseudoClass::TargetAfter,
+            "has-slotted" => NonTSPseudoClass::HasSlotted(None),
             "user-invalid" => NonTSPseudoClass::UserInvalid,
             "user-valid" => NonTSPseudoClass::UserValid,
             "valid" => NonTSPseudoClass::Valid,
@@ -919,6 +955,24 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             },
             "dir" if !after_part => {
                 NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
+            },
+            "has-slotted" => {
+                let list = selectors::parser::SelectorList::parse_disallow_pseudo(
+                    self,
+                    parser,
+                    selectors::parser::ParseRelative::No,
+                )?;
+                // Compound selectors, joined by sibling combinators only (WPT
+                // css/selectors/parsing `parse-has-slotted`: `div + div` but not `div > span`).
+                let ancestor = list.slice().iter().any(|selector| {
+                    selector.iter_raw_match_order().any(|component| {
+                        matches!(component, selectors::parser::Component::Combinator(c) if !c.is_sibling())
+                    })
+                });
+                if ancestor {
+                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
+                }
+                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
             },
             _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
         };

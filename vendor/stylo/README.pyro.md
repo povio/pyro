@@ -306,6 +306,8 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
 - `style_adjuster.rs` (`adjust_for_backface_in_3d_context`): `backface-visibility: hidden` on an element whose
   layout parent is `preserve-3d` sets `WillChangeBits::FIXPOS_CB_NON_SVG`, so it is the containing block of its
   absolutely and fixed positioned descendants, as in Chromium (round 6 lane paint).
+- `servo/selector_parser.rs`: `:has-slotted` and `:has-slotted(<selector-list>)` (CSS Scoping 1 § 3.2.5),
+  `NonTSPseudoClass::HasSlotted`, matched by blitz-dom on a slot's flattened slottables (round 6 lane paint).
 - `values/specified/align.rs` (`AlignFlags::FLOW_START`/`FLOW_END`): the `flow-start` and `flow-end` keywords
   (css-align-3) in `<content-position>` and `<self-position>`, serialized, flipped and listed like the others;
   stylo_taffy maps them to `flex-start`/`flex-end` (WPT `css/css-flexbox/alignment/flow-start-flow-end-*`).

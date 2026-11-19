@@ -114,6 +114,23 @@ impl Node {
         self.parent.filter(|&p| self.with(p).is_assigned_slot())
     }
 
+    /// pyro: whether `found` holds for one of this slot's flattened slottables (DOM "find
+    /// flattened slottables"): its assigned nodes, or else its fallback children (the flat tree's
+    /// children of a slot are one or the other), an element or text node each, a slot among them
+    /// standing for its own flattened slottables.
+    pub fn any_flattened_slottable(&self, found: &mut impl FnMut(&Node) -> bool) -> bool {
+        self.children.iter().any(|&id| {
+            let child = self.with(id);
+            match child.element_data() {
+                Some(data) if data.name.ns == markup5ever::ns!(html) && &*data.name.local == "slot" => {
+                    crate::util::ensure_stack(|| child.any_flattened_slottable(found))
+                }
+                Some(_) => found(child),
+                None => child.is_text_node() && found(child),
+            }
+        })
+    }
+
     /// The cascade data of the shadow root of this host.
     pub(crate) fn shadow_cascade_data(&self) -> Option<&style::stylist::CascadeData> {
         if !self.is_shadow_host() {

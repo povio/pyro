@@ -2985,7 +2985,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
      // so we can skip the diffing process for later flags if an earlier flag is true
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-16 21:15:31
++++ b/servo/selector_parser.rs	2026-11-19 13:42:59
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -3087,10 +3087,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              ColorSwatch => "::color-swatch",
              FileSelectorButton => "::file-selector-button",
              Placeholder => "::placeholder",
-@@ -116,6 +184,42 @@
+@@ -115,7 +183,43 @@
+ impl ::selectors::parser::PseudoElement for PseudoElement {
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
-     }
++    }
 +
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
@@ -3110,7 +3111,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
 +    fn accepts_state_pseudo_classes(&self) -> bool {
 +        self.is_scroll_marker() || self.is_scroll_button() || *self == Self::Column
-+    }
+     }
 +
 +    // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
 +    // and, as in Blink, by the pseudo-elements of form controls and `<details>`
@@ -3177,12 +3178,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          result
      }
  
-@@ -166,8 +285,45 @@
-     #[inline]
-     pub fn is_marker(&self) -> bool {
+@@ -168,6 +287,43 @@
          *self == PseudoElement::Marker
-+    }
-+
+     }
+ 
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -3204,8 +3203,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | PseudoElement::ScrollButtonLeft
 +                | PseudoElement::ScrollButtonRight
 +        )
-     }
- 
++    }
++
 +    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
 +    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
 +    /// node then matches each rule's argument against its direction).
@@ -3309,7 +3308,33 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// The type used for storing `:lang` arguments.
  pub type Lang = Box<str>;
  
-@@ -376,6 +562,9 @@
+@@ -364,6 +550,25 @@
+ #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+ pub struct CustomState(pub AtomIdent);
+ 
++/// pyro: the argument of the functional `:has-slotted()` pseudo-class: the selectors (no
++/// pseudo-elements) one of a slot's flattened assigned elements must match.
++#[derive(Clone, Debug, PartialEq, ToShmem)]
++pub struct HasSlottedArgument(pub selectors::parser::SelectorList<SelectorImpl>);
++
++impl Eq for HasSlottedArgument {}
++
++impl std::hash::Hash for HasSlottedArgument {
++    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
++        self.0.to_css_string().hash(state)
++    }
++}
++
++impl malloc_size_of::MallocSizeOf for HasSlottedArgument {
++    fn size_of(&self, _: &mut malloc_size_of::MallocSizeOfOps) -> usize {
++        0
++    }
++}
++
+ /// A non tree-structural pseudo-class.
+ /// See https://drafts.csswg.org/selectors-4/#structural-pseudos
+ #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToShmem)]
+@@ -376,6 +581,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -3319,7 +3344,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +594,12 @@
+@@ -405,6 +613,15 @@
      Required,
      ServoNonZeroBorder,
      Target,
@@ -3329,10 +3354,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    /// before and after its active one, in tree order.
 +    TargetBefore,
 +    TargetAfter,
++    /// pyro: `:has-slotted` and `:has-slotted(<selector-list>)` (CSS Scoping 1 § 3.2.5): a slot
++    /// whose flattened assigned nodes are not empty (of which an element matches the argument).
++    HasSlotted(Option<HasSlottedArgument>),
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +612,22 @@
+@@ -417,11 +634,22 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -3356,7 +3384,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -441,6 +647,11 @@
+@@ -441,6 +669,20 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
          }
@@ -3365,10 +3393,19 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            serialize_identifier(dir, dest)?;
 +            return dest.write_char(')');
 +        }
++        if let HasSlotted(ref argument) = *self {
++            dest.write_str(":has-slotted")?;
++            if let Some(argument) = argument {
++                dest.write_char('(')?;
++                argument.0.to_css(dest)?;
++                dest.write_char(')')?;
++            }
++            return Ok(());
++        }
  
          dest.write_str(match *self {
              Self::Active => ":active",
-@@ -481,11 +692,14 @@
+@@ -481,11 +723,14 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
@@ -3380,11 +3417,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              Self::Valid => ":valid",
              Self::Visited => ":visited",
 -            Self::Lang(_) => unreachable!(),
-+            Self::Lang(_) | Self::Dir(_) => unreachable!(),
++            Self::Lang(_) | Self::Dir(_) | Self::HasSlotted(_) => unreachable!(),
          })
      }
  }
-@@ -527,11 +741,14 @@
+@@ -527,11 +772,18 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -3396,31 +3433,54 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              Self::Valid => ElementState::VALID,
              Self::Visited => ElementState::VISITED,
 -            Self::CustomState(_) | Self::Lang(_) | Self::ServoNonZeroBorder => {
-+            Self::CustomState(_) | Self::Lang(_) | Self::Dir(_) | Self::ServoNonZeroBorder => {
++            Self::CustomState(_)
++            | Self::Lang(_)
++            | Self::Dir(_)
++            | Self::HasSlotted(_)
++            | Self::ServoNonZeroBorder => {
                  ElementState::empty()
              },
          }
-@@ -646,6 +863,9 @@
+@@ -646,6 +898,10 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
 +            "target-current" => NonTSPseudoClass::TargetCurrent,
 +            "target-before" => NonTSPseudoClass::TargetBefore,
 +            "target-after" => NonTSPseudoClass::TargetAfter,
++            "has-slotted" => NonTSPseudoClass::HasSlotted(None),
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -696,6 +916,9 @@
+@@ -696,6 +952,27 @@
              "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
 +            },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
++            },
++            "has-slotted" => {
++                let list = selectors::parser::SelectorList::parse_disallow_pseudo(
++                    self,
++                    parser,
++                    selectors::parser::ParseRelative::No,
++                )?;
++                // Compound selectors, joined by sibling combinators only (WPT
++                // css/selectors/parsing `parse-has-slotted`: `div + div` but not `div > span`).
++                let ancestor = list.slice().iter().any(|selector| {
++                    selector.iter_raw_match_order().any(|component| {
++                        matches!(component, selectors::parser::Component::Combinator(c) if !c.is_sibling())
++                    })
++                });
++                if ancestor {
++                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
++                }
++                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
              },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
-@@ -714,6 +937,10 @@
+@@ -714,6 +991,10 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -3431,7 +3491,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "details-content" => DetailsContent,
              "color-swatch" => ColorSwatch,
              "placeholder" => Placeholder,
-@@ -776,6 +1003,37 @@
+@@ -776,6 +1057,37 @@
          Ok(pseudo_element)
      }
  

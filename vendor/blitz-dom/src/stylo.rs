@@ -832,6 +832,23 @@ impl selectors::Element for BlitzNode<'_> {
                 _ => false,
             },
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
+            // pyro: a slot (of a shadow tree) with flattened slottables, one of them an element
+            // matching the argument (CSS Scoping 1 § 3.2.5), which is matched in its own tree.
+            NonTSPseudoClass::HasSlotted(ref argument) => {
+                let is_slot = self.element_data().is_some_and(|data| {
+                    data.name.ns == markup5ever::ns!(html) && &*data.name.local == "slot"
+                }) && self.containing_shadow_host_id().is_some();
+                is_slot
+                    && self.any_flattened_slottable(&mut |node: &Node| match argument {
+                        None => true,
+                        Some(argument) => {
+                            node.is_element()
+                                && context.nest(|context| {
+                                    selectors::matching::matches_selector_list(&argument.0, node, context)
+                                })
+                        }
+                    })
+            }
             // pyro: every link, visited or not, as browsers match `:link` for an element's style
             // (only the colours a visited link paints come from `:visited`).
             // A visited link's highlight styles (`::selection`) take it as visited, as Chromium's
