@@ -7,19 +7,10 @@ name: WPT full
 # plan). A pull request that changes this workflow or the wptserve glue runs the `smoke` job only: a handful of pages
 # through wptserve on lp-m1, which also checks the runner's Python.
 #
-# Sizes at a421f2fe (coverage.json, local samples): ~31,700 testharness pages at ~1.06 s, ~28,200 reftests at ~0.7 s,
-# ~2,100 crashtests; about 15 h of page time, 2 h on lp-m1's two machines at 4 jobs each, hence nightly and once after each push to
-# main (after its WPT run), not on pull requests.
-#
-# It must not starve the pull request runs (wpt.yml), which share lp-m1's two machines:
-# - Its shards run one at a time (max-parallel: 1), so one lp-m1 machine always stays free for other jobs.
-# - The shards are small (7, about 8 minutes each): a self-hosted runner takes queued jobs roughly first come,
-#   first served, so a pull request job queued meanwhile goes before the next shard; that is how the nightly yields.
-# - Serial, it takes about 70 min: pages that timed out in the committed baseline run on extra workers (--slow-jobs),
-#   and only pages whose result differs from it run again. Before (run 44235329366: every page twice, timeouts in
-#   the --jobs pool), a testharness quarter took 28-34 min, so 15 serial shards needed ~3 h 35 min.
-#   It starts at 03:07 UTC (04:07 CET), the quietest hour in the run history (2026-11-13..18: no other workflow
-#   started 03:00-04:00 on four of six days), and ends long before the working day (07:00 CET).
+# Seven balanced shards run up to four at a time on the expanded self-hosted macOS pool. Override the default with
+# the repository variable WPT_FULL_PARALLEL (1..7), or choose it on a manual run. This is job concurrency, not the
+# per-shard page-worker count: provision CPU/memory caps per physical machine when several runners share a Mac.
+# Full runs still queue without cancelling an in-progress report; PR smoke runs cancel only their older smoke run.
 
 on:
   schedule:
@@ -38,6 +29,11 @@ on:
         type: choice
         options: [lp-m1, macos-15]
         default: lp-m1
+      parallel:
+        description: Maximum simultaneous shards (respect physical-machine CPU and memory budgets)
+        type: choice
+        options: ['1', '2', '4', '7']
+        default: '4'
       runner-args:
         description: Extra gate.mjs run arguments for every shard (e.g. --dirs css/css-grid to measure one directory)
         type: string
@@ -80,13 +76,17 @@ jobs:
       browser-run: ${{ steps.find.outputs.run }}
       runner: ${{ steps.find.outputs.runner }}
       matrix: ${{ steps.find.outputs.matrix }}
+      parallel: ${{ steps.find.outputs.parallel }}
     steps:
       - id: find
         env:
           GH_TOKEN: ${{ github.token }}
           RUNNER: ${{ inputs.runner || 'lp-m1' }}
           KINDS: ${{ inputs.kinds || 'all' }}
+          PARALLEL: ${{ inputs.parallel || vars.WPT_FULL_PARALLEL || '4' }}
         run: |
+          case "$PARALLEL" in [1-7]) ;; *) echo "WPT_FULL_PARALLEL must be an integer from 1 to 7" >&2; exit 1 ;; esac
+          echo "parallel=$PARALLEL" >> "$GITHUB_OUTPUT"
           # The shards: 4 testharness, 2 reftest, 1 crashtest (about 8 minutes each), or one kind's.
           matrix=$(jq -cn --arg k "$KINDS" '[range(4) | {kind: "testharness", shard: ., of: 4}] + [range(2) | {kind: "reftest", shard: ., of: 2}]
             + [{kind: "crashtest", shard: 0, of: 1}] | map(select($k == "all" or .kind == $k))')
@@ -153,8 +153,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      # One shard at a time, so it never holds both lp-m1 machines (see the top of this file).
-      max-parallel: 1
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.parallel) }}
       matrix:
         include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:

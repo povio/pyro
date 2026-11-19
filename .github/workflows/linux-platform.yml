@@ -1,0 +1,35 @@
+name: Linux platform
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        type: string
+        required: true
+      release:
+        type: boolean
+        default: false
+      version:
+        type: string
+        default: ''
+      pgo:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  jsc:
+    uses: ./.github/workflows/jsc-linux.yml
+    with:
+      arch: ${{ inputs.arch }}
+  build:
+    needs: jsc
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      arch: ${{ inputs.arch }}
+      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      release: ${{ inputs.release }}
+      version: ${{ inputs.version }}
+      pgo: ${{ inputs.pgo }}

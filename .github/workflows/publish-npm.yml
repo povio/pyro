@@ -178,15 +178,9 @@ jobs:
       - name: Build browser (PGO)
         uses: ./.github/actions/pgo-build
       - name: Build comparison worker against the patched JavaScriptCore
-        env:
-          JSC_DIR: ${{ needs.jsc.outputs.dir }}
         run: |
-          export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
-          mkdir -p "$(dirname "$PYRO_JSC_DIR")"
-          # The runner keeps its home between jobs, and the jsc job leaves this build there: replace it with the
-          # artifact the release ships (mv would move the artifact inside it, or fail once it is there).
-          rm -rf "$PYRO_JSC_DIR"
-          mv patched-jsc "$PYRO_JSC_DIR"
+          # Keep the artifact local to this job; other runners may share this Mac's home directory.
+          export PYRO_JSC_DIR="$GITHUB_WORKSPACE/patched-jsc"
           cargo +stable build --locked --release --package pyro-render
           cp target/aarch64-apple-darwin/release-pgo/pyro target/release/pyro
       - name: Verify and stage binaries
@@ -223,11 +217,20 @@ jobs:
 
   # Linux x64 and arm64, both linked against the patched JavaScriptCore and
   # shipping it (and its ICU) beside the browser.
-  linux:
-    needs: [release, jsc]
-    uses: ./.github/workflows/linux-build.yml
+  linux-x64:
+    needs: release
+    uses: ./.github/workflows/linux-platform.yml
     with:
-      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      arch: x64
+      release: true
+      version: ${{ needs.release.outputs.version }}
+      pgo: true
+
+  linux-arm64:
+    needs: release
+    uses: ./.github/workflows/linux-platform.yml
+    with:
+      arch: arm64
       release: true
       version: ${{ needs.release.outputs.version }}
       pgo: true
@@ -251,7 +254,7 @@ jobs:
           retention-days: 7
 
   package:
-    needs: [release, build, fork, linux]
+    needs: [release, build, fork, linux-x64, linux-arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -369,7 +372,7 @@ jobs:
   # JavaScriptCore source and checksums (docs/RELEASING.md), assembled from the
   # builds above and tested from their extracted form before upload.
   github-release:
-    needs: [release, build, fork, linux, jsc, jsc-source, package, smoke]
+    needs: [release, build, fork, linux-x64, linux-arm64, jsc, jsc-source, package, smoke]
     runs-on: lp-m1
     timeout-minutes: 45
     permissions:

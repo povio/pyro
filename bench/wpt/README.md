@@ -16,8 +16,9 @@ also compares pyro's results with Chrome's.
 2. `jsc`: the patched JavaScriptCore (`jsc.yml`), only when neither it nor the browser is cached. The gate tests the
    fork build because the system framework lacks window named properties and import maps: ~3,200 more subtests fail
    with it, for that reason alone.
-3. `build`: `cargo build --profile release-fast` (dependencies cached by `Swatinem/rust-cache`, saved from `main`
-   only), the patched JavaScriptCore linked in, saved to the cache.
+3. `build`: `cargo build --profile wptiter` (release-fast without LTO, 16 codegen units, no debug information),
+   with patched JavaScriptCore linked in. Registry downloads use `Swatinem/rust-cache`; compiler objects use sccache,
+   including workspace and vendored path crates. Large target directories are not uploaded at job completion.
 4. `wpt`: one job on `lp-m1` (the matrix takes more shards: each takes its share of the pages, balanced by the
    baseline's durations). It restores the pinned WPT checkout (`fetch-wpt.sh`: revision `wpt-revision.txt`, only the
    paths in `wpt-paths.txt`, about 290 MB, cached) and runs the pages longest first at `--jobs 4`, the load the
@@ -27,6 +28,12 @@ also compares pyro's results with Chrome's.
    page reruns under about the load it first ran under.
 5. `gate` (Linux): merges the shards, checks them, writes the summary, and uploads a refreshed `baseline.json` as the
    `wpt-baseline` artifact when it changed and the gate passed or failed only for a stale or missing baseline.
+
+Automatic build orchestration lives in `wpt.yml`: `scripts/ci/plan.mjs` selects the former Linux and PGO path
+filters. Each Linux architecture has one JSC producer, shared by the WPT browser and native packaging/client checks;
+PGO replaces the plain native build when both filters match. macOS depends only on macOS JSC, and Linux architectures
+start independently. The Linux, PGO and JSC workflows retain manual entry points without launching duplicate push/PR
+runs. See [CI orchestration](../../docs/CI.md) for the graph and validation.
 
 Every run of a page counts: a subtest is **lost** if it passed in the baseline and in no run, and a page **broke** if
 it completed in the baseline and in no run. A gain needs every run: a subtest passing in all of them, or a page
@@ -509,7 +516,8 @@ As wptrunner does (`executors/base.py`, `test-wait.js`), in `reftest.mjs`:
 
 ### CI
 
-The `reftest` job runs `gate.mjs run --kind reftest` in one shard on the self-hosted `lp-m1`, one page per CPU, and
+The `reftest` job runs `gate.mjs run --kind reftest` in four balanced shards on the self-hosted `lp-m1` pool, with
+per-shard workers respecting `PYRO_CI_CPUS`, and
 `reftest-gate` checks the result on Linux, as `wpt` and `gate` do. They share the `prepare` and `build` jobs (the
 browser, built on `lp-m1`) and the WPT checkout (`wpt-paths.txt` now lists the reftest directories and their support
 files; about 290 MB with its git directory). Manual runs take `suites` (`reftest` leaves the testharness shards and the client job out),
@@ -683,7 +691,7 @@ The PR gate keeps `serve.mjs` and its plan until a CI run records baselines for 
 
 ## Whole suite
 
-`.github/workflows/wpt-full.yml` runs everything nightly (01:17 UTC, and by hand): `gate.mjs run --dirs all
+`.github/workflows/wpt-full.yml` runs everything nightly (03:07 UTC), after each main push's WPT run, and by hand: `gate.mjs run --dirs all
 --server wptserve --testdriver` for each kind, 4 testharness, 3 reftest and 1 crashtest shards on lp-m1 (or
 macos-15), with the newest main build's `wpt-browser`. Testharness shards run 16 pages side by side (the pages mostly
 wait: the browser used 12-14% of one core at 4), reftests and crashtests one per CPU. Scheduled runs rerun every
