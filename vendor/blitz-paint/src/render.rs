@@ -2536,11 +2536,17 @@ fn stroke_inline_text(
         }
         let truncation = line_truncation(node, text_layout, &line, index, scale as f32);
         context.cut = truncation.as_ref().map(|truncation| truncation.cut);
+        // pyro: a clamp line laid out again (`LineClamp::relaid`) has the root text it keeps on
+        // the baseline of a line of the ellipsis, at its top (WPT css-overflow `line-clamp-auto-041`).
+        let relaid_shift = clamp
+            .filter(|clamp| clamp.relaid && index + 1 == clamp.lines as usize)
+            .and_then(|clamp| clamp.ellipsis.lines().next().map(|l| l.metrics().baseline))
+            .map_or(0.0, |baseline| (line.metrics().block_min_coord + baseline - line.metrics().baseline) as f64);
         crate::text::stroke_text(
             scene,
             std::iter::once(line.clone()),
             dom,
-            transform,
+            transform * Affine::translate((0.0, relaid_shift)),
             options,
             node.id,
             Some(&text_layout.text),
