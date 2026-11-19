@@ -362,10 +362,10 @@ pub(super) fn initialize_grid_tracks(
         create_implicit_tracks(tracks, counts.positive_implicit + grid_area_tracks, iter, gap)
     }
 
-    // pyro: collapsed explicit rows (a table's `visibility: collapse` rows) and one gutter
+    // pyro: collapsed explicit rows and columns (a table's `visibility: collapse` ones) and one gutter
     // each: the one after, or before for a row with no other row after it.
-    if axis == AbsoluteAxis::Vertical {
-        let collapsed = style.collapsed_rows();
+    {
+        let collapsed = if axis == AbsoluteAxis::Vertical { style.collapsed_rows() } else { style.collapsed_columns() };
         if !collapsed.is_empty() {
             let first = counts.negative_implicit as usize;
             let rows = counts.len();

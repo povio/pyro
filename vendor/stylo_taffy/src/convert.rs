@@ -1052,6 +1052,7 @@ pub fn to_taffy_style(style: &stylo::ComputedValues) -> taffy::Style<Atom> {
         box_sizing: self::box_sizing(style.clone_box_sizing()),
         item_is_table: display.inside() == stylo::DisplayInside::Table,
         collapsed_rows: Default::default(),
+        collapsed_columns: Default::default(),
         item_is_replaced: false,
         item_is_compressible_replaced: false,
         position: self::position(style.clone_position()),

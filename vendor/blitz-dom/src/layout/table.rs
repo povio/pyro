@@ -1965,6 +1965,7 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     style.grid_template_rows = row_tracks(&rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
     style.collapsed_rows = rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    style.collapsed_columns = collapsed_columns(doc, &columns);
     if let Some(edges) = &collapsed_edges {
         let zero = style_helpers::length(0.0);
         style.gap = taffy::Size { width: zero, height: zero };
@@ -2866,6 +2867,7 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
     ctx.style.grid_template_rows = row_tracks(&ctx.rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
     ctx.style.collapsed_rows = ctx.rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    ctx.style.collapsed_columns = collapsed_columns(doc, &ctx.columns);
     if boxes_changed {
         let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
         let layout_children = before
@@ -2947,6 +2949,21 @@ fn collect_columns(
 
 /// The columns of a column (or of a column group without columns): `span` of them, as wide as its
 /// `width` says (its `min-width` and `max-width` too).
+/// pyro: the columns whose `<col>` (or column group) is `visibility: collapse` (CSS 2.1 § 17.5.5):
+/// sized with the others, then taking no width (taffy `Style::collapsed_columns`).
+fn collapsed_columns(doc: &BaseDocument, columns: &[TableColumn]) -> Vec<u16> {
+    columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| {
+            doc.nodes[column.node_id].primary_styles().is_some_and(|style| {
+                style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
+            })
+        })
+        .map(|(i, _)| i as u16)
+        .collect()
+}
+
 fn push_columns(
     node: &crate::Node,
     wm: WritingMode,

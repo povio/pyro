@@ -788,6 +788,10 @@ pub struct Style<S: CheapCloneStr = DefaultCheapStr> {
     /// rows, which take no space and no gutter (the cells' border spacing) either.
     #[cfg(feature = "grid")]
     pub collapsed_rows: GridTrackVec<u16>,
+    /// pyro: the explicit column tracks (indices) that are collapsed: a table's `visibility:
+    /// collapse` columns (CSS 2.1 § 17.5.5), sized with the others, then taking no space.
+    #[cfg(feature = "grid")]
+    pub collapsed_columns: GridTrackVec<u16>,
     /// Is it a replaced element like an image or video? Implies `is_compressible_replaced`.
     /// <https://html.spec.whatwg.org/multipage/rendering.html#replaced-elements>
     pub item_is_replaced: bool,
@@ -952,6 +956,8 @@ impl<S: CheapCloneStr> Style<S> {
         item_is_table: false,
         #[cfg(feature = "grid")]
         collapsed_rows: GridTrackVec::new(),
+        #[cfg(feature = "grid")]
+        collapsed_columns: GridTrackVec::new(),
         item_is_replaced: false,
         item_is_compressible_replaced: false,
         box_sizing: BoxSizing::BorderBox,
@@ -1532,6 +1538,10 @@ impl<S: CheapCloneStr> GridContainerStyle for Style<S> {
         &self.collapsed_rows
     }
     #[inline(always)]
+    fn collapsed_columns(&self) -> &[u16] {
+        &self.collapsed_columns
+    }
+    #[inline(always)]
     fn grid_auto_flow(&self) -> GridAutoFlow {
         self.grid_auto_flow
     }
@@ -1658,6 +1668,10 @@ impl<T: GridContainerStyle> GridContainerStyle for &'_ T {
         (*self).collapsed_rows()
     }
     #[inline(always)]
+    fn collapsed_columns(&self) -> &[u16] {
+        (*self).collapsed_columns()
+    }
+    #[inline(always)]
     fn grid_auto_flow(&self) -> GridAutoFlow {
         (*self).grid_auto_flow()
     }
@@ -1744,6 +1758,8 @@ mod tests {
             item_is_table: false,
             #[cfg(feature = "grid")]
             collapsed_rows: GridTrackVec::new(),
+            #[cfg(feature = "grid")]
+            collapsed_columns: GridTrackVec::new(),
             item_is_replaced: false,
             item_is_compressible_replaced: false,
             box_sizing: Default::default(),

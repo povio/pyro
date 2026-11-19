@@ -702,6 +702,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             subgrid::record_own_columns(tree, node, &columns, width);
         }
     }
+    // pyro: collapsed table columns lose their size once sized (`GridTrack::collapse_sized`)
+    columns.iter_mut().for_each(GridTrack::collapse_sized);
     let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
     inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
 
@@ -927,6 +929,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             None,
             None,
         );
+        columns.iter_mut().for_each(GridTrack::collapse_sized);
         if has_subgrid_items {
             subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, false, &subgrid_parent);
             subgrid::resolve_standalone_widths(tree, &mut items, own_item_count, &columns, &subgrid_parent);
