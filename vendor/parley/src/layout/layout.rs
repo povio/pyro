@@ -182,6 +182,14 @@ impl<B: Brush> Layout<B> {
         self.data.inline_boxes.iter_mut().map(|b| &mut b.inline_box)
     }
 
+    /// pyro: moves line `index` to start `offset` from its inline start (its alignment offset;
+    /// a line clamp aligns the clamp line with its ellipsis again).
+    pub fn set_line_offset(&mut self, index: usize, offset: f32) {
+        if let Some(line) = self.data.lines.get_mut(index) {
+            line.metrics.offset = offset;
+        }
+    }
+
     /// Returns an iterator over the lines in the layout.
     pub fn lines(
         &self,

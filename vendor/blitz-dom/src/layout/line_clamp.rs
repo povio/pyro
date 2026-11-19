@@ -509,7 +509,33 @@ impl LayoutPassState<'_> {
         };
         let ellipsis = shape(text);
         let hyphenated_ellipsis = if text.is_empty() { Box::default() } else { shape(&format!("-{text}")) };
+        // pyro: a right-aligned or centred clamp line whose content and ellipsis fit is aligned
+        // with the ellipsis (Chromium; WPT css-overflow `line-clamp/webkit-line-clamp-051`, `-052`).
+        let alignment = crate::stylo_to_parley::text_align(stylo_taffy::CopyStyleGetters::clone_text_align(&**style));
         drop(style);
+        let ellipsis_width = ellipsis.full_width().max(0.0);
+        if kept > 0
+            && ellipsis_width > 0.0
+            && !rtl
+            && let Some(text_layout) = doc.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
+        {
+            let index = kept as usize - 1;
+            let shift = text_layout.layout.get(index).and_then(|line| {
+                let atomic = line.items().any(|item| {
+                    matches!(item, parley::PositionedLayoutItem::InlineBox(ibox) if ibox.kind == parley::InlineBoxKind::InFlow)
+                });
+                let offset = line.metrics().offset;
+                let share = match alignment {
+                    parley::Alignment::Right | parley::Alignment::End => 1.0,
+                    parley::Alignment::Center => 0.5,
+                    _ => return None,
+                };
+                (!atomic && offset >= ellipsis_width * share - 0.01).then(|| offset - ellipsis_width * share)
+            });
+            if let Some(offset) = shift {
+                text_layout.layout.set_line_offset(index, offset);
+            }
+        }
         if let Some(text_layout) = doc.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut()) {
             text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, hyphenated_ellipsis, at_soft_wraps });
         }
