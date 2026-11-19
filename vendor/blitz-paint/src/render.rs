@@ -2255,7 +2255,13 @@ fn hidden_by_ellipsis(dom: &BaseDocument, node: &Node) -> bool {
         let Some(ibox) = ibox else { continue };
         let Some(truncation) = line_truncation(root, text_layout, &line, index, scale) else { return false };
         let cut = truncation.cut;
-        return if cut.keep_left { ibox.x + ibox.width > cut.edge + scale / 64.0 } else { ibox.x < cut.edge - scale / 64.0 };
+        // (A cut at a text offset keeps the start of the line in its direction: its edge is
+        // where that ends, `truncate_line_at_soft_wrap`.)
+        let keeps_left = match cut.split {
+            Some(_) => !line.is_rtl(),
+            None => cut.keep_left,
+        };
+        return if keeps_left { ibox.x + ibox.width > cut.edge + scale / 64.0 } else { ibox.x < cut.edge - scale / 64.0 };
     }
     false
 }
@@ -2327,8 +2333,7 @@ fn line_truncation_at<'a>(
     // pyro: a standard line clamp's ellipsis after the last soft wrap opportunity that leaves
     // room for it (CSS Overflow 4 `block-ellipsis`; WPT css-overflow `block-ellipsis-001`).
     if clamp.is_some_and(|clamp| clamp.at_soft_wraps)
-        && !rtl
-        && let Some((cut, x)) = truncate_line_at_soft_wrap(line, ellipsis, width, scale)
+        && let Some((cut, x)) = truncate_line_at_soft_wrap(line, ellipsis, width, scale, rtl)
     {
         return Some(LineTruncation { cut, x, ellipsis, text });
     }
@@ -2336,60 +2341,86 @@ fn line_truncation_at<'a>(
     Some(LineTruncation { cut, x, ellipsis, text })
 }
 
-/// pyro: a left-to-right line that ends with a standard line clamp's ellipsis: the line keeps
-/// what precedes its last soft wrap opportunity that leaves room for the ellipsis (less the
-/// spaces before it), and nothing when none does: a word too long to fit beside the ellipsis is
-/// displaced by it. `None` when the whole line fits beside the ellipsis (the cut of
-/// [`truncate_line`] keeps it all).
+/// pyro: a line that ends with a standard line clamp's ellipsis: the line keeps what precedes
+/// (in its paragraph's direction) its last soft wrap opportunity that leaves room for the
+/// ellipsis (less the spaces before it), and nothing when none does: a word too long to fit
+/// beside the ellipsis is displaced by it. Atomic inlines are content without opportunities of
+/// their own. `None` when the whole line fits beside the ellipsis (the cut of [`truncate_line`]
+/// keeps it all). The cut splits the text there; its edge is where the kept content ends (an
+/// atomic inline past it is hidden: `hidden_by_ellipsis`).
 fn truncate_line_at_soft_wrap(
     line: &parley::Line<'_, blitz_dom::node::TextBrush>,
     ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
     width: f32,
     scale: f32,
+    rtl: bool,
 ) -> Option<(crate::text::TextCut, f32)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
     // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
     let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
     let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
-    if metrics.offset + metrics.advance - metrics.hanging_advance + ellipsis_width <= width + epsilon {
-        return None;
-    }
-    // (Atomic inline boxes on the line: not cut at soft wraps.)
-    if line.items().any(|item| matches!(item, parley::PositionedLayoutItem::InlineBox(_))) {
-        return None;
-    }
-    let mut runs: Vec<_> = line
-        .items()
-        .filter_map(|item| match item {
-            parley::PositionedLayoutItem::GlyphRun(run) => Some(run),
-            parley::PositionedLayoutItem::InlineBox(_) => None,
-        })
-        .collect();
-    runs.sort_by(|a, b| a.offset().total_cmp(&b.offset()));
-    let mut content_end = metrics.offset;
-    // The last break that fits: its byte offset and where the content before it ends.
-    let mut best: Option<(usize, f32)> = None;
-    let mut first = true;
-    for run in &runs {
-        let mut x = run.offset();
-        for cluster in run.run().visual_clusters() {
-            if !first && cluster.is_soft_wrap_opportunity() && content_end + ellipsis_width <= width + epsilon {
-                best = Some((cluster.text_range().start, content_end));
+    // The line's atoms: (logical key, x0, x1, whether it is white space, the byte offset a soft
+    // wrap opportunity before it breaks at). A cluster's key is its text offset; an atomic
+    // inline's, that of the cluster before it in the line's direction (it has no text).
+    let mut atoms: Vec<(f64, f32, f32, bool, Option<usize>)> = Vec::new();
+    for item in line.items() {
+        match item {
+            parley::PositionedLayoutItem::GlyphRun(run) => {
+                let mut x = run.offset();
+                for cluster in run.run().visual_clusters() {
+                    let advance = cluster.advance();
+                    let space = cluster.is_space_or_nbsp() || cluster.is_hard_line_break() || advance <= 0.0;
+                    let opportunity = cluster.is_soft_wrap_opportunity().then(|| cluster.text_range().start);
+                    atoms.push((cluster.text_range().start as f64, x, x + advance, space, opportunity));
+                    x += advance;
+                }
             }
-            first = false;
-            x += cluster.advance();
-            if !cluster.is_space_or_nbsp() && !cluster.is_hard_line_break() && cluster.advance() > 0.0 {
-                content_end = x;
+            parley::PositionedLayoutItem::InlineBox(ibox) => {
+                if ibox.kind == parley::InlineBoxKind::InFlow {
+                    atoms.push((f64::NAN, ibox.x, ibox.x + ibox.width, false, None));
+                }
             }
         }
     }
+    atoms.sort_by(|a, b| a.1.total_cmp(&b.1));
+    if rtl {
+        atoms.reverse();
+    }
+    let mut previous = line.text_range().start as f64 - 1.0;
+    for atom in atoms.iter_mut() {
+        if atom.0.is_nan() {
+            atom.0 = previous + 0.5;
+        } else {
+            previous = atom.0;
+        }
+    }
+    atoms.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Where the content walked so far ends (its far edge in the line's direction), and whether
+    // the ellipsis fits beyond it.
+    let mut far = if rtl { metrics.offset + metrics.advance } else { metrics.offset };
+    let fits = |far: f32| if rtl { far - ellipsis_width >= -epsilon } else { far + ellipsis_width <= width + epsilon };
+    // The last break that fits: its byte offset and where the content before it ends.
+    let mut best: Option<(usize, f32)> = None;
+    for (index, &(_, x0, x1, space, opportunity)) in atoms.iter().enumerate() {
+        if index > 0
+            && let Some(offset) = opportunity
+            && fits(far)
+        {
+            best = Some((offset, far));
+        }
+        if !space {
+            far = if rtl { far.min(x0) } else { far.max(x1) };
+        }
+    }
     // (The whole line fits beside it once its trailing spaces and break hang.)
-    if content_end + ellipsis_width <= width + epsilon {
+    if fits(far) {
         return None;
     }
-    let (split, end) = best.unwrap_or((line.text_range().start, metrics.offset));
-    Some((crate::text::TextCut { edge: f32::INFINITY, keep_left: true, split: Some(split) }, end))
+    let line_start = if rtl { metrics.offset + metrics.advance } else { metrics.offset };
+    let (split, end) = best.unwrap_or((line.text_range().start, line_start));
+    let x = if rtl { end - ellipsis_width } else { end };
+    Some((crate::text::TextCut { edge: end, keep_left: true, split: Some(split) }, x))
 }
 
 /// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
