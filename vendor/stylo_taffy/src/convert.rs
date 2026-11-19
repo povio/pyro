@@ -204,6 +204,8 @@ pub fn max_size_keyword(val: &stylo::MaxSize) -> taffy::Dimension {
         stylo::MaxSize::MinContent => taffy::Dimension::min_content(),
         stylo::MaxSize::FitContent => taffy::Dimension::fit_content(),
         stylo::MaxSize::Stretch | stylo::MaxSize::WebkitFillAvailable => taffy::Dimension::stretch(),
+        // pyro: `fit-content(<length-percentage>)` (css-sizing-4), as `min-width` has it
+        stylo::MaxSize::FitContentFunction(val) => dimension(&stylo::Size::FitContentFunction(val.clone())),
         _ => taffy::Dimension::AUTO,
     }
 }

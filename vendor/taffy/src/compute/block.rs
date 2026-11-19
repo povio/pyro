@@ -1643,8 +1643,8 @@ fn clamp_width_by_keywords(
     if item.min_size_keyword.width.is_auto() && item.max_size_keyword.width.is_auto() {
         return width;
     }
-    let mut resolve = |keyword: Dimension| -> Option<f32> {
-        let resolution = resolve_sizing_keyword(keyword, stretch_width, container_width, |val, basis| tree.calc(val, basis))?;
+    let mut resolve = |keyword: Dimension, basis: Option<f32>| -> Option<f32> {
+        let resolution = resolve_sizing_keyword(keyword, stretch_width, basis, |val, basis| tree.calc(val, basis))?;
         Some(match resolution {
             SizingKeywordResolution::Exact(width) => width,
             SizingKeywordResolution::Measure(available_width) => {
@@ -1686,8 +1686,12 @@ fn clamp_width_by_keywords(
             }
         })
     };
-    let max = resolve(item.max_size_keyword.width);
-    let min = resolve(item.min_size_keyword.width);
+    // pyro: in an intrinsic sizing pass a percentage in `fit-content(<percentage>)` is cyclic
+    // (css-sizing-3 § 5.2.1): in `max-width` it is as if `none`, the max-content width is left; in
+    // `min-width` it counts as zero, the min-content width is left (WPT css-sizing
+    // `fit-content-length-percentage-012`, `-013`).
+    let max = resolve(item.max_size_keyword.width, container_width.or(Some(f32::INFINITY)));
+    let min = resolve(item.min_size_keyword.width, container_width.or(Some(0.0)));
     width.maybe_min(max).maybe_max(min)
 }
 
