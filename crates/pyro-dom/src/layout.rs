@@ -143,6 +143,10 @@ fn round_layout_unit(v: f64) -> f64 {
     (layout_unit(v) + 0.5).floor()
 }
 
+/// pyro: a box a scroller snapped to: an element, or the column of a multi-column scroll
+/// container at an index (`::column` snap areas).
+type SnapBox = (NodeId, Option<usize>);
+
 /// Chromium's `SnapSizeToPixel`: the pixel-snapped size of a box `size`
 /// long starting at `location`, so adjacent snapped boxes tile.
 fn snap_size_to_pixel(size: f64, location: f64) -> f64 {
@@ -248,7 +252,7 @@ pub struct Layout {
     scroll_anchors: FxHashMap<NodeId, (Rc<LayoutResult>, Option<(NodeId, String)>)>,
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
-    snapped: FxHashMap<Option<NodeId>, [Option<NodeId>; 2]>,
+    snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
@@ -2720,8 +2724,8 @@ impl Layout {
         current: (i32, i32),
         tx: Option<i64>,
         ty: Option<i64>,
-        only: Option<[Option<NodeId>; 2]>,
-    ) -> (Option<i64>, Option<i64>, [Option<NodeId>; 2]) {
+        only: Option<[Option<SnapBox>; 2]>,
+    ) -> (Option<i64>, Option<i64>, [Option<SnapBox>; 2]) {
         let none = [None, None];
         let unchanged = (tx, ty, none);
         if tx.is_none() && ty.is_none() {
@@ -2765,7 +2769,7 @@ impl Layout {
             if v == "auto" { 0.0 } else { px(&v, basis) }
         };
         let (pt, pr, pb, pl) = (pad("top", height), pad("right", width), pad("bottom", height), pad("left", width));
-        let mut best: [Option<(f64, NodeId)>; 2] = [None, None];
+        let mut best: [Option<(f64, SnapBox)>; 2] = [None, None];
         // Every box's snap position on each axis, to break ties (below).
         let mut all: Vec<(NodeId, [Option<f64>; 2])> = Vec::new();
         let target = [tx.map(|v| v as f64), ty.map(|v| v as f64)];
@@ -2835,7 +2839,7 @@ impl Layout {
             let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
             let mut mine = [None, None];
             for axis in 0..2 {
-                if only.is_some_and(|o| o[axis].is_some_and(|el| el != id)) {
+                if only.is_some_and(|o| o[axis].is_some_and(|b| b != (id, None))) {
                     continue;
                 }
                 let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
@@ -2843,7 +2847,7 @@ impl Layout {
                 let c = c.max(0.0);
                 mine[axis] = Some(c);
                 if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
-                    best[axis] = Some((c, id));
+                    best[axis] = Some((c, (id, None)));
                 }
             }
             all.push((id, mine));
@@ -2869,17 +2873,21 @@ impl Layout {
                     "center" => Some((start + end) / 2.0 - (pad_start + (size - pad_start - pad_end) / 2.0)),
                     _ => None,
                 };
-                for [cx, cy, cw, ch] in columns {
+                // (Each column by its index, which a re-snap follows: review of round 6.)
+                for (index, [cx, cy, cw, ch]) in columns.into_iter().enumerate() {
                     let (left, right, top, bottom) = (cx - bl, cx - bl + cw, cy - bt, cy - bt + ch);
                     let candidates = [
                         snap_x.then(|| position(&inline, left, right, pl, pr, width)).flatten(),
                         snap_y.then(|| position(&block, top, bottom, pt, pb, height)).flatten(),
                     ];
                     for axis in 0..2 {
+                        if only.is_some_and(|o| o[axis].is_some_and(|b| b != (container, Some(index)))) {
+                            continue;
+                        }
                         let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
                         let c = c.max(0.0);
                         if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
-                            best[axis] = Some((c, container));
+                            best[axis] = Some((c, (container, Some(index))));
                         }
                     }
                 }
@@ -2893,7 +2901,7 @@ impl Layout {
             let (Some(p), Some(q)) = (picked[axis], picked[other]) else { continue };
             let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 0.5);
             if let Some((id, _)) = all.iter().find(|(_, c)| close(c[axis], p) && close(c[other], q)) {
-                best[axis] = Some((p, *id));
+                best[axis] = Some((p, (*id, None)));
             }
         }
         let mut chosen = none;
@@ -2913,7 +2921,7 @@ impl Layout {
     /// to (or, when that box no longer has a snap position, to the nearest one), as Chromium
     /// re-snaps (CSS Scroll Snap 1 § 6.2.3). Adds the scrollers that moved to `moved`.
     fn resnap(&mut self, dom: &Dom, moved: &mut Vec<ScrollTarget>) {
-        let mut snapped: Vec<(Option<NodeId>, [Option<NodeId>; 2])> = self.snapped.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut snapped: Vec<(Option<NodeId>, [Option<SnapBox>; 2])> = self.snapped.iter().map(|(k, v)| (*k, *v)).collect();
         snapped.sort_by_key(|(k, _)| k.map(|k| (k.idx, k.gen)));
         for (scroller, targets) in snapped {
             if let Some(el) = scroller {
@@ -2927,7 +2935,7 @@ impl Layout {
                 None => (self.window_scroll.0 as i32, self.window_scroll.1 as i32),
             };
             let (tx, ty) = (Some(current.0 as i64), Some(current.1 as i64));
-            let alive = targets.map(|t| t.filter(|el| dom.is_connected(*el).unwrap_or(false)));
+            let alive = targets.map(|t| t.filter(|(el, _)| dom.is_connected(*el).unwrap_or(false)));
             let (mut x, mut y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, Some(alive));
             // The box it snapped to has no snap position any more: the nearest one.
             if chosen[0].is_none() && chosen[1].is_none() {

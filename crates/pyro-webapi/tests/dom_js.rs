@@ -7541,3 +7541,18 @@ fn a_zoomed_scroll_offset_read_back_follows_a_zoom_change() {
     assert_eq!(eval(&e.main, "s.style.zoom='1';String(s.scrollTop)"), "100");
     e.page.dispose();
 }
+
+#[test]
+fn a_resnap_follows_the_column_it_snapped_to() {
+    // The columns of a multi-column scroll container are snap areas (`::column`); snapped to the
+    // third (200px at 100px columns), it stays on the third when the columns grow to 200px: 400
+    // (review of round 6: the container was recorded, not the column).
+    let e = env(
+        "<!doctype html><style>#s{width:100px;height:100px;overflow:hidden;columns:1;column-gap:0;column-fill:auto;\
+         scroll-snap-type:x mandatory} #s::column{scroll-snap-align:start}</style>\
+         <body style='margin:0'><div id=s><div style='height:1000px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "s.scrollLeft=200;String(s.scrollLeft)"), "200");
+    assert_eq!(eval(&e.main, "s.style.width='200px';String(s.scrollLeft)"), "400");
+    e.page.dispose();
+}
