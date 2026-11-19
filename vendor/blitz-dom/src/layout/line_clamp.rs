@@ -174,8 +174,9 @@ impl LayoutPassState<'_> {
         // margin collapses with and, past it, bottom padding, borders and margins that do not
         // (`BelowBlock`). With the block's own, that must fit under a clamp line of
         // `line-clamp: auto` too (WPT css-overflow `line-clamp-auto-029`).
-        // (`floor`: a clamp point in a box with a definite height ends that box at its bottom, as
-        // low as it reaches: WPT css-overflow `line-clamp-auto-035`. `whole`: a block-level box
+        // (`floor`: a clamp point in a box with a definite height ends that box at its bottom
+        // (the innermost such box's), wherever the point is in it: WPT css-overflow
+        // `line-clamp-auto-035`, `-040`. `whole`: a block-level box
         // whose lines are not the root's, a clamp point after it.)
         let mut stack: Vec<(NodeId, f32, BelowBlock, f32, bool)> =
             vec![(root, 0.0, BelowBlock::default(), f32::NEG_INFINITY, false)];
@@ -187,7 +188,8 @@ impl LayoutPassState<'_> {
                 let end = bottom + collapse_margins(layout.margin.bottom, around.margin) + around.solid;
                 let point = ClampPoint::Box(id, bottom);
                 if clamp_line.is_none() {
-                    if limit.is_some_and(|limit| end.max(floor) > limit + 0.01) {
+                    let end = if floor.is_finite() { floor } else { end };
+                    if limit.is_some_and(|limit| end > limit + 0.01) {
                         clamp_line = Some(last_lines.unwrap_or(ClampPoint::Lines(id, 0, content_top)));
                         clamped = true;
                     } else {
@@ -200,7 +202,7 @@ impl LayoutPassState<'_> {
             }
             let floor = if id != root && !height_is_auto(&self.nodes[id]) {
                 let layout = self.nodes[id].unrounded_layout();
-                floor.max(top + layout.size.height + collapse_margins(layout.margin.bottom, around.margin) + around.solid)
+                top + layout.size.height + collapse_margins(layout.margin.bottom, around.margin) + around.solid
             } else {
                 floor
             };
@@ -235,7 +237,7 @@ impl LayoutPassState<'_> {
                     let mut kept = (max_lines - count).min(lines);
                     if let Some(limit) = limit {
                         kept = (0..kept)
-                            .find(|&index| (line_bottom(index) + below).max(floor) > limit + 0.01)
+                            .find(|&index| (if floor.is_finite() { floor } else { line_bottom(index) + below }) > limit + 0.01)
                             .unwrap_or(kept);
                     }
                     if kept == 0 {
@@ -292,7 +294,10 @@ impl LayoutPassState<'_> {
                                 && matches!(box_style.overflow_x, Overflow::Visible | Overflow::Clip)
                                 && matches!(box_style.overflow_y, Overflow::Visible | Overflow::Clip)
                         });
-                let descends = in_context && (child.flags.is_inline_root() || child.layout_children.borrow().is_some());
+                // (An empty block is a box of its own, a clamp point after it: WPT css-overflow
+                // `line-clamp-auto-039`.)
+                let descends = in_context
+                    && (child.flags.is_inline_root() || child.layout_children.borrow().as_ref().is_some_and(|c| !c.is_empty()));
                 // Any other box of the normal flow here is block-level and a clamp point after it.
                 let whole = !descends
                     && !anonymous
