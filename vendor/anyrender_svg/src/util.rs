@@ -274,6 +274,16 @@ pub(crate) fn decode_raw_raster_image(
         usvg::ImageKind::SVG(_) => unreachable!(),
     };
 
+    // pyro: a JPEG turned by its EXIF orientation, as an image in an SVG document shows it
+    // (`image-orientation: from-image`; WPT css-images `image-orientation-none-cross-origin-svg`).
+    if format == image::ImageFormat::Jpeg {
+        use image::ImageDecoder as _;
+        let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(data.as_slice()))?;
+        let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+        let mut dyn_image = image::DynamicImage::from_decoder(decoder)?;
+        dyn_image.apply_orientation(orientation);
+        return Ok(dyn_image.into_rgba8());
+    }
     let dyn_image = image::load_from_memory_with_format(data, format)?;
     Ok(dyn_image.into_rgba8())
 }

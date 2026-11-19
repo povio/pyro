@@ -162,6 +162,12 @@ impl ElementCx<'_, '_> {
         let svg_styles = self.style.get_svg();
         let image_data = &self.element.mask_images;
         let layer_count = svg_styles.mask_image.0.len();
+        // pyro: while one of its images is loading the mask lets nothing through: the element
+        // stays hidden, all of its layers waiting (as Chromium shows it; WPT css-masking
+        // `mask-image-multi-layer-while-loading`).
+        if image_data.iter().flatten().any(|image| image.status == blitz_dom::node::Status::Loading) {
+            return;
+        }
 
         for idx in (0..layer_count).rev() {
             let layer = ImageLayerStyles::from_svg(svg_styles, image_data, idx);

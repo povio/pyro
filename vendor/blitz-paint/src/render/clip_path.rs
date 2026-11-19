@@ -652,6 +652,13 @@ pub(super) mod svg_reference {
     /// pyro: the SVG document a `url()` names an element of, when it is another document that
     /// the element has loaded (`images`: its `reference_images`, or its `mask_images`), with the
     /// element's id: `clip-path: url(shapes.svg#clip)`, a `data:` URL too.
+    /// pyro: whether the document `url` names (another document's element) is still loading.
+    pub(crate) fn external_loading(images: &[Option<blitz_dom::node::ImageResourceData>], url: &ComputedUrl) -> bool {
+        use blitz_dom::node::Status;
+        let Some(url) = url.url() else { return false };
+        images.iter().flatten().any(|image| *image.url == **url && image.status == Status::Loading)
+    }
+
     pub(crate) fn external_reference(
         images: &[Option<blitz_dom::node::ImageResourceData>],
         url: &ComputedUrl,
@@ -889,6 +896,11 @@ impl ElementCx<'_, '_> {
                 (Some(target), node.attr(blitz_dom::local_name!("id"))?.to_string(), units)
             }
             None => {
+                // pyro: another document's `<clipPath>` still loading clips everything (an empty
+                // path, as Chromium has it; WPT css-masking `clip-path-url-reference-empty-while-loading`).
+                if external_loading(&self.element.reference_images, url) {
+                    return Some(ElementClip::Nothing);
+                }
                 let (source, id) = external_reference(&self.element.reference_images, url)?;
                 let (name, units) = blitz_dom::node::svg_source_element(&source, &id, "clipPathUnits")?;
                 if name != "clipPath" {
