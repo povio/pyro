@@ -846,7 +846,7 @@ impl LayoutPassState<'_> {
         let spanning = (!inline_root).then(|| (dom_id, content_width)).filter(|_| self.doc.has_column_spanners(dom_id));
         let outer_spanners = std::mem::replace(&mut self.column_spanners, spanning);
         let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height.map(|height| (dom_id, height)));
-        let content_top = pb.top;
+        let mut content_top = pb.top;
         // The column height.
         let definite_height = inputs
             .known_dimensions
@@ -885,6 +885,14 @@ impl LayoutPassState<'_> {
             // Taffy's block algorithm clamps the strip by the container's `min-height` and
             // `max-height` whatever the sizing mode: under either, the content's end is taken from
             // the laid-out content instead (empty space a `min-height` adds is no content to balance).
+            // pyro: a fieldset's columns start below its rendered legend where that is taller than its
+            // block-start border (block layout placed the legend over the border: taffy
+            // `block_child_is_rendered_legend`).
+            if let Some(legend) = self.doc.fieldset_rendered_legend(dom_id) {
+                let layout = self.nodes[legend].unrounded_layout();
+                let outer = layout.size.height + layout.margin.top + layout.margin.bottom;
+                content_top += (outer - (pb.top - padding_top_of(&self.nodes[dom_id], inputs.parent_size.width))).max(0.0);
+            }
             let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
             let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested);
             if !pushed_nested.is_empty() {
@@ -1545,14 +1553,18 @@ impl LayoutPassState<'_> {
             last.end = f32::INFINITY;
         }
         let columns_height = row_top - content_top;
+        // pyro: what a fieldset's rendered legend adds above its content box (see `content_top`).
+        let legend_extra = (content_top - pb.top).max(0.0);
 
         let height = inputs
             .known_dimensions
             .height
             .unwrap_or_else(|| {
-                size.height.unwrap_or(columns_height + pb_sum.height).maybe_clamp(min_size.height, max_size.height)
+                size.height
+                    .unwrap_or(columns_height + pb_sum.height + legend_extra)
+                    .maybe_clamp(min_size.height, max_size.height)
             })
-            .max(pb_sum.height);
+            .max(pb_sum.height + legend_extra);
 
         // pyro: a table cell's `vertical-align` (as `align-content`) moves its columns down in a
         // taller cell (`stylo_taffy::convert::table_cell_vertical_align`).
@@ -1700,8 +1712,13 @@ impl LayoutPassState<'_> {
         // measured on their own: a spanner's widths are the container's at least, not
         // multiplied by the column count (Chromium; WPT css-multicol `intrinsic-size-002`).
         let dom_id = dom_node_id(node_id);
-        let spanners: Vec<crate::NodeId> =
+        let mut spanners: Vec<crate::NodeId> =
             if inline_root { Vec::new() } else { self.doc.column_spanners_of(dom_id).into_iter().map(|(id, _)| id).collect() };
+        // pyro: a fieldset's rendered legend is measured on its own too: it is in no column (WPT
+        // css-overflow `scroll-markers/column-scroll-marker-004`).
+        if let Some(legend) = self.doc.fieldset_rendered_legend(dom_id).filter(|legend| !spanners.contains(legend)) {
+            spanners.push(legend);
+        }
         let outer_spanners = std::mem::replace(&mut self.column_spanners, (!spanners.is_empty()).then_some((dom_id, -1.0)));
         let mut min = measure(self, AvailableSpace::MinContent);
         let mut max = measure(self, AvailableSpace::MaxContent);
@@ -2287,7 +2304,10 @@ impl BaseDocument {
             if node.is_out_of_flow() {
                 continue;
             }
-            if node.primary_styles().is_some_and(|s| is_spanner_style(&s)) || (depth == 0 && self.is_rendered_legend(parent, id)) {
+            // pyro: a fieldset's rendered legend is no spanner: block layout places it over the
+            // fieldset's block-start border, outside the columns of its content box (taffy
+            // `block_child_is_rendered_legend`), and it paints unfragmented (blitz-paint `multicol_skips`).
+            if node.primary_styles().is_some_and(|s| is_spanner_style(&s)) {
                 found.push((id, offset));
             } else if self.column_span_styles && depth < 64 && self.carries_spanners(id) {
                 let location = node.unrounded_layout().location;
@@ -3336,4 +3356,9 @@ mod tests {
         assert_eq!(columns.columns_to_strip(Point { x: 200.0, y: 110.0 }), Point { x: 200.0, y: 210.0 });
         assert_eq!(columns.columns_to_strip(Point { x: 130.0, y: 140.0 }), Point { x: 10.0, y: 340.0 });
     }
+}
+
+/// pyro: the resolved top padding of `node` (its percentages against `basis`).
+fn padding_top_of(node: &crate::Node, basis: Option<f32>) -> f32 {
+    node.layout_style().padding().top.resolve_or_zero(basis, resolve_calc_value)
 }

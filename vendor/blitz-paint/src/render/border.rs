@@ -492,6 +492,26 @@ impl CenterLine {
 impl ElementCx<'_, '_> {
     /// Draw all borders for a node
     pub(crate) fn draw_border(&self, scene: &mut impl PaintScene) {
+        // pyro: a fieldset's block-start border is not drawn behind its rendered legend (HTML
+        // § 15.3.13: the gap is the legend's border box; Chromium).
+        if let Some((x0, x1)) = self.context.fieldset_legend_gap(self.node.id).filter(|(x0, x1)| x1 > x0) {
+            let bb = self.frame.border_box;
+            let top = bb.y0;
+            let band = self.frame.border_width.y0.max(1.0);
+            let mut clip = kurbo::BezPath::new();
+            let whole = bb.inflate(bb.width().max(bb.height()) + 1.0, bb.width().max(bb.height()) + 1.0);
+            clip.extend(kurbo::Shape::path_elements(&whole, 0.1));
+            let gap = kurbo::Rect::new(x0 as f64 * self.scale, top - 1.0, x1 as f64 * self.scale, top + band + 1.0);
+            clip.extend(kurbo::Shape::path_elements(&gap, 0.1));
+            scene.push_clip_layer(peniko::Fill::EvenOdd, self.transform, &clip);
+            self.draw_border_unclipped(scene);
+            scene.pop_layer();
+            return;
+        }
+        self.draw_border_unclipped(scene);
+    }
+
+    fn draw_border_unclipped(&self, scene: &mut impl PaintScene) {
         // A table without uniform collapsed borders draws them all (`draw_collapsed_edges`).
         // pyro: a collapsed table with cells draws its outer borders as the collapsed ones that
         // won there, never its own (`draw_table_borders`).

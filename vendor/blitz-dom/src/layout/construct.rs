@@ -729,7 +729,11 @@ fn place_rendered_legend(doc: &BaseDocument, container: NodeId, out: &mut Layout
         let child = &doc.nodes[id];
         child.data.downcast_element().is_some_and(|el| el.name.local == local_name!("legend"))
             && child.primary_styles().is_some_and(|style| {
-                !style.get_box().float.is_floating() && !crate::node::style_is_out_of_flow(&style)
+                // (A `display: none` legend generates no box: the next one is rendered; WPT
+                // container-queries `fieldset-legend-change`.)
+                !style.get_box().float.is_floating()
+                    && !crate::node::style_is_out_of_flow(&style)
+                    && !style.get_box().display.is_none()
             })
     }) else {
         return;

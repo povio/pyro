@@ -3777,6 +3777,23 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: the rendered legend of fieldset `fieldset` (HTML § 15.3.13): its first layout child when
+    /// that is a `<legend>` (`layout::construct::place_rendered_legend` puts it first), laid out over
+    /// the fieldset's block-start border.
+    pub fn fieldset_rendered_legend(&self, fieldset: NodeId) -> Option<NodeId> {
+        let node = self.nodes.get(fieldset)?;
+        if !node.is_fieldset() || node.flags.is_inline_root() {
+            return None;
+        }
+        let first = node.layout_children.borrow().as_ref()?.first().copied()?;
+        let legend = self.nodes.get(first)?;
+        (legend.data.downcast_element().is_some_and(|el| el.name.local == markup5ever::local_name!("legend"))
+            && legend.primary_styles().is_some_and(|style| {
+                !style.get_box().float.is_floating() && !crate::node::style_is_out_of_flow(&style)
+            }))
+        .then_some(first)
+    }
+
     /// pyro: whether the page declares its color schemes (a `<meta name=color-scheme>`).
     pub fn page_color_scheme_is_declared(&self) -> bool {
         !self.page_color_scheme.is_empty()

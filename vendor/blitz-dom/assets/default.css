@@ -357,6 +357,11 @@ legend {
     padding-inline-end: 2px;
 }
 
+/* pyro: HTML § 15.3.13 rendering: a legend's `align` places it over the fieldset's border. */
+legend[align=left i] { justify-self: left; }
+legend[align=center i] { justify-self: center; }
+legend[align=right i] { justify-self: right; }
+
 /* pyro: Chromium's computed style for options and groups. A
    drop-down select's children generate no boxes (layout/construct.rs); a
    list box's and loose ones do. */

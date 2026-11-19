@@ -322,10 +322,15 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +357,40 @@
+@@ -169,8 +357,45 @@
      padding-inline-end: 2px;
  }
  
++/* pyro: HTML § 15.3.13 rendering: a legend's `align` places it over the fieldset's border. */
++legend[align=left i] { justify-self: left; }
++legend[align=center i] { justify-self: center; }
++legend[align=right i] { justify-self: right; }
++
 +/* pyro: Chromium's computed style for options and groups. A
 +   drop-down select's children generate no boxes (layout/construct.rs); a
 +   list box's and loose ones do. */
@@ -364,7 +369,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +469,16 @@
+@@ -249,15 +474,16 @@
      unicode-bidi: isolate;
  }
  
@@ -386,7 +391,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +790,19 @@
+@@ -569,6 +795,19 @@
      text-align: center;
  }
  
@@ -406,7 +411,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,10 +1072,42 @@
+@@ -838,10 +1077,42 @@
      border-radius: 0 ! important;
  }
  
@@ -449,7 +454,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1117,18 @@
+@@ -851,8 +1122,18 @@
      user-select: none;
  }
  
@@ -468,7 +473,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1162,15 @@
+@@ -886,14 +1167,15 @@
      display: none;
  }
  
@@ -487,7 +492,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1199,11 @@
+@@ -922,6 +1204,11 @@
      display: none !important;
  }
  
@@ -499,7 +504,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -996,7 +1278,9 @@
+@@ -996,7 +1283,9 @@
      display: none;
  }
  
@@ -510,7 +515,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1412,48 @@
+@@ -1128,37 +1417,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -4312,7 +4317,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3706,94 @@
+@@ -2248,6 +3706,111 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4387,6 +4392,23 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        }
 +    }
 +
++    /// pyro: the rendered legend of fieldset `fieldset` (HTML § 15.3.13): its first layout child when
++    /// that is a `<legend>` (`layout::construct::place_rendered_legend` puts it first), laid out over
++    /// the fieldset's block-start border.
++    pub fn fieldset_rendered_legend(&self, fieldset: NodeId) -> Option<NodeId> {
++        let node = self.nodes.get(fieldset)?;
++        if !node.is_fieldset() || node.flags.is_inline_root() {
++            return None;
++        }
++        let first = node.layout_children.borrow().as_ref()?.first().copied()?;
++        let legend = self.nodes.get(first)?;
++        (legend.data.downcast_element().is_some_and(|el| el.name.local == markup5ever::local_name!("legend"))
++            && legend.primary_styles().is_some_and(|style| {
++                !style.get_box().float.is_floating() && !crate::node::style_is_out_of_flow(&style)
++            }))
++        .then_some(first)
++    }
++
 +    /// pyro: whether the page declares its color schemes (a `<meta name=color-scheme>`).
 +    pub fn page_color_scheme_is_declared(&self) -> bool {
 +        !self.page_color_scheme.is_empty()
@@ -4407,7 +4429,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3810,13 @@
+@@ -2264,12 +3827,13 @@
              return;
          }
  
@@ -4426,7 +4448,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +3861,19 @@
+@@ -2314,9 +3878,19 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
@@ -4447,7 +4469,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +4017,19 @@
+@@ -2460,10 +4034,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4467,7 +4489,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4186,35 @@
+@@ -2620,6 +4203,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4503,7 +4525,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4238,22 @@
+@@ -2643,12 +4255,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4531,7 +4553,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4282,7 @@
+@@ -2677,7 +4299,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4540,7 +4562,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4440,10 @@
+@@ -2835,6 +4457,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4551,7 +4573,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5391,7 @@
+@@ -3782,6 +5408,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4559,7 +4581,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5414,52 @@
+@@ -3804,6 +5431,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4612,7 +4634,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5502,121 @@
+@@ -3846,3 +5519,121 @@
          assert!(doc.has_changes());
      }
  }
@@ -6841,7 +6863,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          } else {
              let position = style
                  .map(|s| s.clone_position())
-@@ -391,12 +518,262 @@
+@@ -391,12 +518,266 @@
      }
  }
  
@@ -7057,7 +7079,11 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +        let child = &doc.nodes[id];
 +        child.data.downcast_element().is_some_and(|el| el.name.local == local_name!("legend"))
 +            && child.primary_styles().is_some_and(|style| {
-+                !style.get_box().float.is_floating() && !crate::node::style_is_out_of_flow(&style)
++                // (A `display: none` legend generates no box: the next one is rendered; WPT
++                // container-queries `fieldset-legend-change`.)
++                !style.get_box().float.is_floating()
++                    && !crate::node::style_is_out_of_flow(&style)
++                    && !style.get_box().display.is_none()
 +            })
 +    }) else {
 +        return;
@@ -7105,7 +7131,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  }
  
  fn collect_layout_children_with_wrap(
-@@ -410,31 +787,84 @@
+@@ -410,31 +791,84 @@
          *doc.nodes[container_node_id].display_constructed_as_mut() = display;
      }
  
@@ -7198,7 +7224,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,17 +874,98 @@
+@@ -444,17 +878,98 @@
              }
          }
  
@@ -7302,7 +7328,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -488,13 +999,43 @@
+@@ -488,13 +1003,43 @@
          } else {
              (0, false)
          };
@@ -7348,7 +7374,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +1071,9 @@
+@@ -530,7 +1075,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -7359,7 +7385,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +1096,9 @@
+@@ -553,9 +1100,9 @@
          }
  
          DisplayInside::Table => {
@@ -7371,7 +7397,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +1107,10 @@
+@@ -564,13 +1111,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -7389,7 +7415,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -581,9 +1121,34 @@
+@@ -581,9 +1125,34 @@
          // layout children (text nodes carry no style and cannot be laid out
          // as block/flex/grid items).
          _ => {
@@ -7424,7 +7450,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +1162,10 @@
+@@ -597,7 +1166,10 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -7436,7 +7462,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +1177,44 @@
+@@ -609,18 +1181,44 @@
              }
  
              // TODO: fix display:contents
@@ -7493,7 +7519,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +1223,14 @@
+@@ -629,6 +1227,14 @@
                  return;
              }
  
@@ -7508,7 +7534,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +1253,234 @@
+@@ -651,29 +1257,234 @@
      }
  }
  
@@ -7760,7 +7786,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1496,27 @@
+@@ -689,8 +1500,27 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -7788,7 +7814,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1545,11 @@
+@@ -719,11 +1549,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -7805,7 +7831,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1559,11 @@
+@@ -733,6 +1563,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -7817,7 +7843,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1581,110 @@
+@@ -750,53 +1585,110 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -7966,7 +7992,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1693,102 @@
+@@ -805,9 +1697,102 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -8071,7 +8097,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -821,15 +1802,33 @@
+@@ -821,15 +1806,33 @@
              child_display.outside()
          };
  
@@ -8107,7 +8133,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,23 +1843,95 @@
+@@ -844,23 +1847,95 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -8207,7 +8233,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +1946,22 @@
+@@ -875,6 +1950,22 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -8230,7 +8256,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +1981,9 @@
+@@ -894,6 +1985,9 @@
          unreachable!();
      };
  
@@ -8240,7 +8266,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +2013,69 @@
+@@ -923,6 +2017,69 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -8310,7 +8336,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +2097,25 @@
+@@ -944,6 +2101,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -8336,7 +8362,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +2125,41 @@
+@@ -953,10 +2129,41 @@
          );
      });
  
@@ -8379,7 +8405,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +2168,33 @@
+@@ -965,16 +2172,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -8414,7 +8440,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,50 +2212,98 @@
+@@ -992,50 +2216,98 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -21816,7 +21842,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3339 @@
+@@ -0,0 +1,3364 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22665,7 +22691,7 @@ new file mode 100644
 +        let spanning = (!inline_root).then(|| (dom_id, content_width)).filter(|_| self.doc.has_column_spanners(dom_id));
 +        let outer_spanners = std::mem::replace(&mut self.column_spanners, spanning);
 +        let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height.map(|height| (dom_id, height)));
-+        let content_top = pb.top;
++        let mut content_top = pb.top;
 +        // The column height.
 +        let definite_height = inputs
 +            .known_dimensions
@@ -22704,6 +22730,14 @@ new file mode 100644
 +            // Taffy's block algorithm clamps the strip by the container's `min-height` and
 +            // `max-height` whatever the sizing mode: under either, the content's end is taken from
 +            // the laid-out content instead (empty space a `min-height` adds is no content to balance).
++            // pyro: a fieldset's columns start below its rendered legend where that is taller than its
++            // block-start border (block layout placed the legend over the border: taffy
++            // `block_child_is_rendered_legend`).
++            if let Some(legend) = self.doc.fieldset_rendered_legend(dom_id) {
++                let layout = self.nodes[legend].unrounded_layout();
++                let outer = layout.size.height + layout.margin.top + layout.margin.bottom;
++                content_top += (outer - (pb.top - padding_top_of(&self.nodes[dom_id], inputs.parent_size.width))).max(0.0);
++            }
 +            let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
 +            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested);
 +            if !pushed_nested.is_empty() {
@@ -23364,14 +23398,18 @@ new file mode 100644
 +            last.end = f32::INFINITY;
 +        }
 +        let columns_height = row_top - content_top;
++        // pyro: what a fieldset's rendered legend adds above its content box (see `content_top`).
++        let legend_extra = (content_top - pb.top).max(0.0);
 +
 +        let height = inputs
 +            .known_dimensions
 +            .height
 +            .unwrap_or_else(|| {
-+                size.height.unwrap_or(columns_height + pb_sum.height).maybe_clamp(min_size.height, max_size.height)
++                size.height
++                    .unwrap_or(columns_height + pb_sum.height + legend_extra)
++                    .maybe_clamp(min_size.height, max_size.height)
 +            })
-+            .max(pb_sum.height);
++            .max(pb_sum.height + legend_extra);
 +
 +        // pyro: a table cell's `vertical-align` (as `align-content`) moves its columns down in a
 +        // taller cell (`stylo_taffy::convert::table_cell_vertical_align`).
@@ -23519,8 +23557,13 @@ new file mode 100644
 +        // measured on their own: a spanner's widths are the container's at least, not
 +        // multiplied by the column count (Chromium; WPT css-multicol `intrinsic-size-002`).
 +        let dom_id = dom_node_id(node_id);
-+        let spanners: Vec<crate::NodeId> =
++        let mut spanners: Vec<crate::NodeId> =
 +            if inline_root { Vec::new() } else { self.doc.column_spanners_of(dom_id).into_iter().map(|(id, _)| id).collect() };
++        // pyro: a fieldset's rendered legend is measured on its own too: it is in no column (WPT
++        // css-overflow `scroll-markers/column-scroll-marker-004`).
++        if let Some(legend) = self.doc.fieldset_rendered_legend(dom_id).filter(|legend| !spanners.contains(legend)) {
++            spanners.push(legend);
++        }
 +        let outer_spanners = std::mem::replace(&mut self.column_spanners, (!spanners.is_empty()).then_some((dom_id, -1.0)));
 +        let mut min = measure(self, AvailableSpace::MinContent);
 +        let mut max = measure(self, AvailableSpace::MaxContent);
@@ -24106,7 +24149,10 @@ new file mode 100644
 +            if node.is_out_of_flow() {
 +                continue;
 +            }
-+            if node.primary_styles().is_some_and(|s| is_spanner_style(&s)) || (depth == 0 && self.is_rendered_legend(parent, id)) {
++            // pyro: a fieldset's rendered legend is no spanner: block layout places it over the
++            // fieldset's block-start border, outside the columns of its content box (taffy
++            // `block_child_is_rendered_legend`), and it paints unfragmented (blitz-paint `multicol_skips`).
++            if node.primary_styles().is_some_and(|s| is_spanner_style(&s)) {
 +                found.push((id, offset));
 +            } else if self.column_span_styles && depth < 64 && self.carries_spanners(id) {
 +                let location = node.unrounded_layout().location;
@@ -25155,6 +25201,11 @@ new file mode 100644
 +        assert_eq!(columns.columns_to_strip(Point { x: 200.0, y: 110.0 }), Point { x: 200.0, y: 210.0 });
 +        assert_eq!(columns.columns_to_strip(Point { x: 130.0, y: 140.0 }), Point { x: 10.0, y: 340.0 });
 +    }
++}
++
++/// pyro: the resolved top padding of `node` (its percentages against `basis`).
++fn padding_top_of(node: &crate::Node, basis: Option<f32>) -> f32 {
++    node.layout_style().padding().top.resolve_or_zero(basis, resolve_calc_value)
 +}
 diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/src/layout/paint_tree.rs
 --- a/packages/blitz-dom/src/layout/paint_tree.rs

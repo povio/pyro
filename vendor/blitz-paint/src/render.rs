@@ -2240,6 +2240,36 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             .then_some(span)
     }
 
+    /// pyro: how far below a fieldset's border box top its block-start border is drawn: centred on
+    /// its rendered legend's margin box when that is taller than the border.
+    fn fieldset_border_shift(&self, fieldset: NodeId, layout: &Layout) -> Option<f32> {
+        let legend = self.dom.as_ref().fieldset_rendered_legend(fieldset)?;
+        let legend = self.dom.as_ref().get_node(legend)?.final_layout();
+        let outer = legend.size.height + legend.margin.top + legend.margin.bottom;
+        Some(((outer - layout.border.top) / 2.0).max(0.0))
+    }
+
+    /// pyro: a fieldset's rendered legend's border box (in the fieldset's border-box space, CSS px),
+    /// which the fieldset's overflow clip does not cut.
+    pub(crate) fn fieldset_legend_rect(&self, fieldset: NodeId) -> Option<kurbo::Rect> {
+        let legend = self.dom.as_ref().fieldset_rendered_legend(fieldset)?;
+        let layout = self.dom.as_ref().get_node(legend)?.final_layout();
+        Some(kurbo::Rect::new(
+            layout.location.x as f64,
+            layout.location.y as f64,
+            (layout.location.x + layout.size.width) as f64,
+            (layout.location.y + layout.size.height) as f64,
+        ))
+    }
+
+    /// pyro: the part of a fieldset's block-start border its rendered legend leaves out, its
+    /// border box's horizontal extent (in the fieldset's border-box space, CSS px).
+    pub(crate) fn fieldset_legend_gap(&self, fieldset: NodeId) -> Option<(f32, f32)> {
+        let legend = self.dom.as_ref().fieldset_rendered_legend(fieldset)?;
+        let legend = self.dom.as_ref().get_node(legend)?.final_layout();
+        Some((legend.location.x, legend.location.x + legend.size.width))
+    }
+
     fn element_cx(
         &'dom self,
         node: &'dom Node,
@@ -2294,7 +2324,23 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 }
                 None => create_css_rect(&style, &layout, scale),
             },
-            _ => create_css_rect(&style, &layout, scale),
+            // pyro: a fieldset paints its box from its block-start border, which is centred on its
+            // rendered legend when that is taller (HTML § 15.3.13, as Chromium).
+            _ => match self.fieldset_border_shift(node.id, &layout) {
+                Some(shift) if shift > 0.0 => {
+                    let mut shifted = layout;
+                    shifted.size.height = (layout.size.height - shift).max(0.0);
+                    let frame = create_css_rect(&style, &shifted, scale);
+                    CssBox::new(
+                        frame.border_box + Vec2::new(0.0, shift as f64 * scale),
+                        frame.border_width,
+                        frame.padding_width,
+                        frame.outline_width,
+                        frame.border_radii,
+                    )
+                }
+                _ => create_css_rect(&style, &layout, scale),
+            },
         };
 
         ElementCx {
@@ -5892,6 +5938,10 @@ impl ElementCx<'_, '_> {
         // Its containing block is the container itself, not a positioned (or transformed,
         // contained) inline or box between them, which is fragmented with the columns.
         let mut unfragmented = child.is_out_of_flow() && child.containing_block() == Some(container);
+        // pyro: a fieldset's rendered legend is over its border, in no column.
+        if self.context.dom.as_ref().fieldset_rendered_legend(container) == Some(child_id) {
+            return !only_unfragmented;
+        }
         let mut ancestor = child.parent;
         while unfragmented && let Some(id) = ancestor.filter(|&id| id != container) {
             let node = &tree[id];
@@ -6439,11 +6489,16 @@ impl ElementCx<'_, '_> {
                     f64::from(position.y - between.1 + location.y) * self.scale,
                 );
                 let frame = create_css_rect(&styles, node.final_layout(), self.scale);
-                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
+                let mut clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
                     frame.text_input_clip_path()
                 } else {
                     box_shadow::overflow_clip_path(&frame, &styles, self.scale)
                 };
+                // pyro: a fieldset's clip leaves its rendered legend out (`overflow_clip_path`).
+                if let Some(legend) = self.context.fieldset_legend_rect(id) {
+                    use kurbo::Shape as _;
+                    clip.extend(legend.scale_from_origin(self.scale).path_elements(0.1));
+                }
                 clips.push((id, parent_style_transform.pre_translate(origin), clip));
             }
             current = node.containing_block();

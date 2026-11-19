@@ -987,6 +987,109 @@ fn compute_inner(
     let resolved_border =
         raw_border.resolve_or_zero(Some(percentage_resolution_width), |val, basis| tree.calc(val, basis));
     let resolved_content_box_inset = resolved_padding + resolved_border + scrollbar_gutter;
+
+    // pyro: a fieldset's rendered legend (HTML § 15.3.13) is out of the flow of its content: laid out
+    // shrink-to-fit at the start of its inline axis (its auto margins align it), its margin box centred
+    // on the block-start border; the content starts below whichever of the border and the legend is
+    // taller (as Chromium: the anonymous fieldset content box). Put back among the items once they are
+    // laid out, its layout set (`block_child_is_rendered_legend`).
+    let mut content_box_inset = content_box_inset;
+    let mut resolved_content_box_inset = resolved_content_box_inset;
+    let mut rendered_legend: Option<(usize, BlockItem)> = None;
+    if let Some(index) = items
+        .iter()
+        .position(|item| !item.position.is_out_of_flow() && item.float == Float::None)
+        .filter(|&index| tree.block_child_is_rendered_legend(items[index].node_id))
+    {
+        let mut legend = items.remove(index);
+        let inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
+        let margin: Rect<Option<f32>> = Rect {
+            left: legend.margin.left.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+            right: legend.margin.right.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+            top: legend.margin.top.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+            bottom: legend.margin.bottom.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+        };
+        let (margin_left, margin_right) = (margin.left.unwrap_or(0.0), margin.right.unwrap_or(0.0));
+        let available = (inner_width - margin_left - margin_right).max(0.0);
+        let parent = Size { width: Some(inner_width), height: None };
+        let width = match legend.size.width {
+            Some(width) => width,
+            None => {
+                let mut measure = |space: AvailableSpace| {
+                    tree.measure_child_size(
+                        legend.node_id,
+                        Size::NONE,
+                        parent,
+                        Size { width: space, height: AvailableSpace::MaxContent },
+                        SizingMode::InherentSize,
+                        crate::AbsoluteAxis::Horizontal,
+                        Line::FALSE,
+                    )
+                };
+                let min_content = measure(AvailableSpace::MinContent);
+                let max_content = measure(AvailableSpace::MaxContent);
+                max_content.min(available).max(min_content)
+            }
+        }
+        .maybe_clamp(legend.min_size.width, legend.max_size.width)
+        .max(legend.padding_border_sum.width);
+        let mut output = tree.compute_child_layout(
+            legend.node_id,
+            LayoutInput {
+                run_mode,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size { width: Some(width), height: None },
+                known_dimensions_are_definite: Size { width: true, height: false },
+                parent_size: parent,
+                available_space: Size { width: AvailableSpace::Definite(width), height: AvailableSpace::MaxContent },
+                vertical_margins_are_collapsible: Line::FALSE,
+            },
+        );
+        let (margin_top, margin_bottom) = (margin.top.unwrap_or(0.0), margin.bottom.unwrap_or(0.0));
+        let outer_height = output.size.height + margin_top + margin_bottom;
+        let free = (inner_width - width - margin_left - margin_right).max(0.0);
+        let rtl = direction == Direction::Rtl;
+        let justify = legend.justify_self.map(|justify| justify.keyword);
+        let start_offset = match (justify, margin.left.is_none(), margin.right.is_none()) {
+            // (`justify-self`, which a legend's `align` gives it)
+            (Some(AlignItemsKeyword::Center), _, _) => free / 2.0,
+            (Some(AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::SelfEnd), _, _) => {
+                if rtl { 0.0 } else { free }
+            }
+            (Some(AlignItemsKeyword::Start | AlignItemsKeyword::FlexStart | AlignItemsKeyword::SelfStart), _, _) => {
+                if rtl { free } else { 0.0 }
+            }
+            (_, left_auto, right_auto) => match (left_auto, right_auto) {
+            (true, true) => free / 2.0,
+            (true, false) => free,
+            (false, true) => 0.0,
+            (false, false) if rtl => free,
+            (false, false) => 0.0,
+            },
+        };
+        let location = Point {
+            x: resolved_border.left + resolved_padding.left + margin_left + start_offset,
+            y: ((resolved_border.top - outer_height) / 2.0).max(0.0) + margin_top,
+        };
+        legend.final_layout = Some(Layout {
+            order: legend.order,
+            size: output.size,
+            #[cfg(feature = "content_size")]
+            scrollable_overflow_rect: output.scrollable_overflow_rect,
+            scrollbar_size: legend.scrollbar_size,
+            location,
+            padding: legend.padding,
+            border: legend.border,
+            margin: Rect { left: margin_left, right: margin_right, top: margin_top, bottom: margin_bottom },
+        });
+        legend.oof_candidates = output.oof_candidates.take();
+        let extra = (outer_height - resolved_border.top).max(0.0);
+        content_box_inset.top += extra;
+        resolved_content_box_inset.top += extra;
+        rendered_legend = Some((index, legend));
+    }
+
     #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
     let (
         mut inflow_overflow_rect,
@@ -1018,6 +1121,10 @@ fn compute_inner(
         is_scroll_container,
         block_ctx,
     );
+    if let Some((index, legend)) = rendered_legend.take() {
+        let index = index.min(items.len());
+        items.insert(index, legend);
+    }
 
     // Root BFCs contain floats: the content height extends to the bottom margin edge of any
     // floated descendant, and the container's bottom padding and border sit below that

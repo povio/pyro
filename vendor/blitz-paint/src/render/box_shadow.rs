@@ -205,6 +205,17 @@ impl ElementCx<'_, '_> {
     /// pyro: what this element clips its overflow to ([`overflow_clip_path`]): with a
     /// `border-shape`, the inner edge of its border.
     pub(super) fn overflow_clip_path(&self, style: &style::properties::ComputedValues) -> kurbo::BezPath {
+        let mut path = self.overflow_clip_path_of_box(style);
+        // pyro: a fieldset's `overflow` clips its anonymous content box, not its rendered legend
+        // (HTML § 15.3.13; WPT the-fieldset-and-legend-elements `legend-position-relative-2`).
+        if let Some(legend) = self.context.fieldset_legend_rect(self.node.id) {
+            use kurbo::Shape as _;
+            path.extend(legend.scale_from_origin(self.scale).path_elements(0.1));
+        }
+        path
+    }
+
+    fn overflow_clip_path_of_box(&self, style: &style::properties::ComputedValues) -> kurbo::BezPath {
         if let Some(shape) = self.border_shape() {
             return shape.inner_path();
         }
