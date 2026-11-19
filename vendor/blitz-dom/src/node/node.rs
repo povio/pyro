@@ -194,6 +194,7 @@ pub struct TransformContext {
     pub cb_size: (f64, f64),
     pub cb_border: [f64; 4],
     pub cb_padding: [f64; 4],
+    pub cb_radii: [kurbo::Vec2; 4],
 }
 
 /// pyro: a 3D rendering context as an element of it gives it to its children
@@ -896,6 +897,22 @@ impl Node {
         let Some(s) = self.primary_styles() else {
             return context;
         };
+        {
+            let b = s.get_border();
+            let (w, h) = context.cb_size;
+            let r = |c: &style::values::computed::BorderCornerRadius| {
+                kurbo::Vec2::new(
+                    c.0.width.0.resolve(style::values::computed::CSSPixelLength::new(w as f32)).px() as f64,
+                    c.0.height.0.resolve(style::values::computed::CSSPixelLength::new(h as f32)).px() as f64,
+                )
+            };
+            context.cb_radii = [
+                r(&b.border_top_left_radius),
+                r(&b.border_top_right_radius),
+                r(&b.border_bottom_right_radius),
+                r(&b.border_bottom_left_radius),
+            ];
+        }
         let box_styles = s.get_box();
         // pyro: an anonymous box (a table wrapper, row group or row around a cell) passes on the
         // 3D rendering context it is in, as Chromium's do (`accumulated` is its parent's there).
@@ -935,7 +952,7 @@ impl Node {
             let box_styles = s.get_box();
             let reference_box = self.transform_reference_box(box_styles.transform_box);
             // pyro: the containing block's geometry for `offset-path: ray()`, around the box.
-            let motion = matches!(box_styles.offset_path, style::values::generics::motion::GenericOffsetPath::OffsetPath { .. })
+            let motion = (!matches!(box_styles.offset_path, style::values::generics::motion::GenericOffsetPath::None))
                 .then(|| crate::stylo_to_kurbo::MotionContainingBlock {
                     border_box: kurbo::Rect::new(
                         -layout.location.x as f64,
@@ -945,6 +962,7 @@ impl Node {
                     ),
                     border: parent.cb_border,
                     padding: parent.cb_padding,
+                    radii: parent.cb_radii,
                 });
             let previous = crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.replace(motion));
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);

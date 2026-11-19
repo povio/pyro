@@ -87,6 +87,8 @@ pub(crate) fn init_stylo_prefs() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
+        // pyro: `offset-path: url()` to an SVG shape element (resolve.rs `motion_url_path`).
+        style_config::set_pref!("layout.css.motion-path-url.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
         // pyro: `font-format()`/`font-tech()` in `@supports`, `tech()` in `@font-face` sources.
         style_config::set_pref!("layout.css.font-tech.enabled", true);

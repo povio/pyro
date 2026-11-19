@@ -482,6 +482,9 @@ impl BaseDocument {
                 && !node.is_anonymous()
                 && !(containing.refresh && node.is_preserve_3d())
         };
+        // pyro: the SVG shape an `offset-path: url()` names, for `set_transform`.
+        let url_path = self.motion_url_path(node_id);
+        let _url_path = MotionUrlPath::set(url_path);
         if unchanged {
             if containing.refresh {
                 self.nodes[node_id].set_transform(scale as f32, &containing.context);
@@ -1599,10 +1602,82 @@ impl ContainingTransform {
                     cb_size: self.context.cb_size,
                     cb_border: self.context.cb_border,
                     cb_padding: self.context.cb_padding,
+                    cb_radii: self.context.cb_radii,
                     ..Default::default()
                 },
                 ..*self
             }
+        }
+    }
+}
+
+/// pyro: sets `stylo_to_kurbo::MOTION_URL_PATH` while it lives.
+struct MotionUrlPath(Option<kurbo::BezPath>);
+
+impl MotionUrlPath {
+    fn set(path: Option<kurbo::BezPath>) -> Self {
+        MotionUrlPath(crate::stylo_to_kurbo::MOTION_URL_PATH.with(|p| p.replace(path)))
+    }
+}
+
+impl Drop for MotionUrlPath {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        crate::stylo_to_kurbo::MOTION_URL_PATH.with(|p| *p.borrow_mut() = previous);
+    }
+}
+
+impl BaseDocument {
+    /// pyro: the geometry, in its user units, of the SVG shape element (`path`, `rect`, `circle`,
+    /// `ellipse`, `line`, `polyline`, `polygon`) that `node_id`'s `offset-path: url()` names in
+    /// this document; `None` for no `url()` or no such element.
+    fn motion_url_path(&self, node_id: NodeId) -> Option<kurbo::BezPath> {
+        use kurbo::Shape as _;
+        use style::values::generics::motion::{GenericOffsetPath, GenericOffsetPathFunction};
+        let styles = self.nodes[node_id].primary_styles()?;
+        let GenericOffsetPath::OffsetPath { path, .. } = &styles.get_box().offset_path else { return None };
+        let GenericOffsetPathFunction::Url(url) = &**path else { return None };
+        let fragment = url.url()?.fragment()?.to_owned();
+        let el = self.nodes.get(self.get_element_by_id(&fragment)?)?.element_data()?;
+        if el.name.ns != markup5ever::ns!(svg) {
+            return None;
+        }
+        let num = |name: &str| {
+            el.attr(markup5ever::LocalName::from(name))
+                .and_then(|v| v.trim().trim_end_matches("px").parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
+        let points = |close: bool| {
+            let text = el.attr(markup5ever::local_name!("points"))?;
+            let numbers: Vec<f64> = text
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|t| !t.is_empty())
+                .map_while(|t| t.parse().ok())
+                .collect();
+            let mut path = kurbo::BezPath::new();
+            for (i, pair) in numbers.chunks_exact(2).enumerate() {
+                let p = (pair[0], pair[1]);
+                if i == 0 { path.move_to(p) } else { path.line_to(p) }
+            }
+            if close {
+                path.close_path();
+            }
+            Some(path)
+        };
+        match &*el.name.local {
+            "path" => kurbo::BezPath::from_svg(el.attr(markup5ever::local_name!("d"))?).ok(),
+            "rect" => Some(kurbo::Rect::new(num("x"), num("y"), num("x") + num("width"), num("y") + num("height")).to_path(0.01)),
+            "circle" => Some(kurbo::Circle::new((num("cx"), num("cy")), num("r").max(0.0)).to_path(0.01)),
+            "ellipse" => Some(kurbo::Ellipse::new((num("cx"), num("cy")), (num("rx").max(0.0), num("ry").max(0.0)), 0.0).to_path(0.01)),
+            "line" => {
+                let mut path = kurbo::BezPath::new();
+                path.move_to((num("x1"), num("y1")));
+                path.line_to((num("x2"), num("y2")));
+                Some(path)
+            }
+            "polyline" => points(false),
+            "polygon" => points(true),
+            _ => None,
         }
     }
 }
