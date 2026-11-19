@@ -906,6 +906,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if hidden_by_ellipsis(self.dom.as_ref(), node) {
             return;
         }
+        // pyro: nor is a box after a line clamp's clamp point (blitz-dom `layout::line_clamp`).
+        if node.flags.contains(blitz_dom::node::NodeFlags::HIDDEN_BY_CLAMP) {
+            return;
+        }
 
         // pyro: a top-layer element paints above the document
         // (`paint_top_layer`), not here.

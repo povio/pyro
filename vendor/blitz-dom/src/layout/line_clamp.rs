@@ -20,9 +20,18 @@ use crate::node::{LineClamp, NodeFlags};
 use crate::NodeId;
 use markup5ever::local_name;
 
+/// pyro: how a box clamps its lines ([`LayoutPassState::line_clamp_of`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClampSpec {
+    /// The most lines it keeps (`u32::MAX`: no count).
+    pub(crate) lines: u32,
+    /// `line-clamp: auto`: no more lines than fit in its block size.
+    pub(crate) auto: bool,
+}
+
 impl LayoutPassState<'_> {
-    /// The line count `node_id` clamps its lines to (the legacy line clamp), if it does.
-    pub(crate) fn line_clamp_of(&self, node_id: NodeId) -> Option<u32> {
+    /// How `node_id` clamps its lines (the legacy line clamp, or `line-clamp`), if it does.
+    pub(crate) fn line_clamp_of(&self, node_id: NodeId) -> Option<ClampSpec> {
         use style::computed_value_flags::ComputedValueFlags;
         let style = self.nodes[node_id].primary_styles()?;
         let clamp = &style.get_box().line_clamp;
@@ -44,43 +53,75 @@ impl LayoutPassState<'_> {
         if !standard && !style.flags.contains(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES) {
             return None;
         }
-        let lines = clamp.max_lines.lines.into_rust()?;
-        u32::try_from(lines.0).ok().filter(|&lines| lines > 0)
+        // pyro: `line-clamp: auto` (and `<integer> auto`) clamps where the lines would overflow
+        // the box's block size (CSS Overflow 4 § 5.2 `max-lines`; WPT css-overflow
+        // `line-clamp-auto-*`).
+        let auto = standard && matches!(clamp.max_lines.kw, style::values::generics::box_::MaxLinesKeyword::Auto);
+        let lines = match clamp.max_lines.lines.clone().into_rust() {
+            Some(lines) => u32::try_from(lines.0).ok().filter(|&lines| lines > 0)?,
+            None if auto => u32::MAX,
+            None => return None,
+        };
+        Some(ClampSpec { lines, auto })
     }
 
     /// Clamps the lines of `root` (laid out to `output` from `inputs`) to `max_lines`: marks the
     /// line it ends at and ends an auto-height box there.
-    pub(crate) fn clamp_lines(&mut self, root: NodeId, max_lines: u32, inputs: LayoutInput, output: &mut LayoutOutput) {
-        let found = self.find_clamp_line(root, max_lines);
-        self.nodes[root].flags.set(NodeFlags::CLAMPS_LINES, found.is_some());
-        let Some(bottom) = found else { return };
+    pub(crate) fn clamp_lines(&mut self, root: NodeId, spec: ClampSpec, inputs: LayoutInput, output: &mut LayoutOutput) {
         let style = self.nodes[root].layout_style();
         use taffy::CoreStyle as _;
-        if inputs.known_dimensions.height.is_some() || !style.size().height.is_auto() {
-            return;
-        }
         let padding = style.padding().resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
         let border = style.border().resolve_or_zero(inputs.parent_size.width, resolve_calc_value);
         let min = style.min_size().height.maybe_resolve(inputs.parent_size.height, resolve_calc_value);
         let max = style.max_size().height.maybe_resolve(inputs.parent_size.height, resolve_calc_value);
+        let height = style.size().height.maybe_resolve(inputs.parent_size.height, resolve_calc_value);
         let inset = padding.top + border.top + padding.bottom + border.bottom;
         let box_sizing_inset = if style.box_sizing() == taffy::BoxSizing::ContentBox { inset } else { 0.0 };
         let (min, max) = (min.map(|v| v + box_sizing_inset), max.map(|v| v + box_sizing_inset));
-        let height = (bottom + padding.bottom + border.bottom).maybe_clamp(min, max).max(inset);
+        let auto_height = inputs.known_dimensions.height.is_none() && style.size().height.is_auto();
         drop(style);
+        // `auto`: the lines end where the content box does, at the box's block size (its height,
+        // else its maximum height), from the top of its border box.
+        let limit = spec
+            .auto
+            .then(|| inputs.known_dimensions.height.or(height.map(|h| h + box_sizing_inset)).or(max))
+            .flatten()
+            .map(|block_size| block_size - padding.bottom - border.bottom);
+        let content_top = padding.top + border.top;
+        let found = self.find_clamp_line(root, spec.lines, limit, content_top);
+        self.nodes[root].flags.set(NodeFlags::CLAMPS_LINES, found.is_some());
+        let Some((bottom, block)) = found else { return };
+        // pyro: the blocks the clamp line is in end after it (CSS Overflow 4 § 5.4: the content
+        // after the clamp point is discarded), their own bottom padding and border below it, and
+        // what follows them is not painted (WPT css-overflow `line-clamp-012`,
+        // `line-clamp-auto-020`).
+        let bottom = self.end_blocks_at_clamp(root, block, bottom);
+        if !auto_height {
+            return;
+        }
+        let height = (bottom + padding.bottom + border.bottom).maybe_clamp(min, max).max(inset);
         output.size.height = height;
     }
 
     /// Forgets the clamp a box that no longer clamps its lines left on them.
     pub(crate) fn unclamp_lines(&mut self, root: NodeId) {
-        self.find_clamp_line(root, u32::MAX);
+        self.find_clamp_line(root, u32::MAX, None, 0.0);
         self.nodes[root].flags.remove(NodeFlags::CLAMPS_LINES);
     }
 
     /// Walks the line boxes of `root`'s block formatting context in tree order and marks the
     /// one `max_lines` names as the clamp line when more lines follow it (every other block
     /// loses its mark). Returns that line's bottom from the top of `root`'s border box.
-    fn find_clamp_line(&mut self, root: NodeId, max_lines: u32) -> Option<f32> {
+    /// pyro: with `limit` (`line-clamp: auto`), no line whose bottom is past it stays: the clamp
+    /// line is then the last one above it (or none, the box keeping no line: its content ends at
+    /// `content_top`).
+    fn find_clamp_line(
+        &mut self,
+        root: NodeId,
+        max_lines: u32,
+        limit: Option<f32>,
+        content_top: f32,
+    ) -> Option<(f32, NodeId)> {
         let scale = self.doc.viewport.scale();
         // pyro: the clamp line is the box's last formatted line: `text-box-trim: trim-end` trims
         // its block-end side (WPT css-inline `text-box-trim-line-clamp-*`).
@@ -95,6 +136,8 @@ impl LayoutPassState<'_> {
         // The block holding the clamp line, how many of its lines stay, and the line's bottom.
         let mut clamp_line: Option<(NodeId, u32, f32)> = None;
         let mut clamped = false;
+        // The last block whose lines all stay, how many it has and the last one's bottom.
+        let mut last_lines: Option<(NodeId, u32, f32)> = None;
         // Blocks to visit (last first) with their top from the root's border box.
         let mut stack: Vec<(NodeId, f32)> = vec![(root, 0.0)];
         while let Some((id, top)) = stack.pop() {
@@ -106,18 +149,39 @@ impl LayoutPassState<'_> {
                 };
                 text_layout.clamp = None;
                 let lines = text_layout.counted_lines;
-                if clamp_line.is_none() && count + lines >= max_lines && lines > 0 {
-                    let kept = max_lines - count;
-                    let root_style = trims_end.then(|| node.primary_styles()).flatten();
-                    let text_layout = node.data.downcast_element().and_then(|el| el.inline_layout_data.as_ref()).unwrap();
-                    let bottom = text_layout.layout.get(kept as usize - 1).map_or(0.0, |line| {
-                        let trim = root_style
-                            .as_deref()
-                            .map_or(0.0, |style| super::text_box::fragment_line_trim(&line, style, false));
-                        (line.metrics().block_max_coord - trim) / scale
-                    });
-                    clamp_line = Some((id, kept, top + text_layout.line_box_top + bottom));
-                    clamped = lines > kept;
+                let root_style = trims_end.then(|| node.primary_styles()).flatten();
+                let text_layout = node.data.downcast_element().and_then(|el| el.inline_layout_data.as_ref()).unwrap();
+                // The bottom of line `index` from the top of the root's border box.
+                let line_bottom = |index: u32| {
+                    top + text_layout.line_box_top
+                        + text_layout.layout.get(index as usize).map_or(0.0, |line| {
+                            let trim = root_style
+                                .as_deref()
+                                .map_or(0.0, |style| super::text_box::fragment_line_trim(&line, style, false));
+                            (line.metrics().block_max_coord - trim) / scale
+                        })
+                };
+                if clamp_line.is_none() && lines > 0 {
+                    // The lines of this block that stay: no more than the count leaves, and none
+                    // that ends past the limit.
+                    let mut kept = (max_lines - count).min(lines);
+                    if let Some(limit) = limit {
+                        kept = (0..kept).find(|&index| line_bottom(index) > limit + 0.01).unwrap_or(kept);
+                    }
+                    if kept == 0 {
+                        // The clamp point is before this block's first line: after the last line
+                        // of an earlier block, or before any line.
+                        clamp_line = Some(last_lines.unwrap_or((id, 0, content_top)));
+                        clamped = true;
+                        if discards || last_lines.is_some() {
+                            discarded.push(id);
+                        }
+                    } else if kept < lines || count + lines >= max_lines {
+                        clamp_line = Some((id, kept, line_bottom(kept - 1)));
+                        clamped = lines > kept;
+                    } else {
+                        last_lines = Some((id, lines, line_bottom(lines - 1)));
+                    }
                 } else if clamp_line.is_some() && lines > 0 {
                     clamped = true;
                     if discards {
@@ -126,6 +190,11 @@ impl LayoutPassState<'_> {
                 }
                 count = count.saturating_add(lines);
                 continue;
+            }
+            // (What an earlier clamp hid shows again unless this one hides it.)
+            let all: Vec<NodeId> = self.nodes[id].layout_children.borrow().iter().flatten().copied().collect();
+            for child_id in all {
+                self.nodes[child_id].flags.remove(NodeFlags::HIDDEN_BY_CLAMP);
             }
             let children = self.nodes[id].layout_children.borrow();
             let Some(children) = children.as_ref() else { continue };
@@ -163,7 +232,57 @@ impl LayoutPassState<'_> {
                 text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default() });
             }
         }
-        Some(bottom)
+        Some((bottom, id))
+    }
+
+    /// pyro: ends the blocks from `block` (the one holding the clamp line, whose bottom is
+    /// `bottom` from the top of `root`'s border box) up to `root` at the clamp point: an auto
+    /// height ends below it by the block's bottom padding and border, and the boxes in flow after
+    /// each are hidden (`NodeFlags::HIDDEN_BY_CLAMP`). Returns where the content of `root` ends.
+    fn end_blocks_at_clamp(&mut self, root: NodeId, block: NodeId, bottom: f32) -> f32 {
+        let mut chain = Vec::new();
+        let mut id = block;
+        while id != root {
+            chain.push(id);
+            match self.nodes[id].layout_parent.get() {
+                Some(parent) => id = parent,
+                None => return bottom,
+            }
+        }
+        let top: f32 = chain.iter().map(|&id| self.nodes[id].unrounded_layout().location.y).sum();
+        // The clamp point in the coordinates of the block at hand.
+        let mut inner = bottom - top;
+        for (index, &id) in chain.iter().enumerate() {
+            use taffy::CoreStyle as _;
+            let auto = self.nodes[id].is_anonymous() || self.nodes[id].layout_style().size().height.is_auto();
+            let layout = *self.nodes[id].unrounded_layout();
+            let end = match auto {
+                true => {
+                    let top_inset = layout.padding.top + layout.border.top;
+                    (inner.max(top_inset) + layout.padding.bottom + layout.border.bottom).min(layout.size.height)
+                }
+                false => layout.size.height,
+            };
+            if end < layout.size.height {
+                self.nodes[id].update_unrounded_layout(|unrounded| unrounded.size.height = end);
+            }
+            let parent = chain.get(index + 1).copied().unwrap_or(root);
+            self.hide_boxes_after(parent, id);
+            inner = layout.location.y + end + layout.margin.bottom;
+        }
+        inner
+    }
+
+    /// pyro: hides the boxes in flow (floats too) among `parent`'s children after `child`.
+    fn hide_boxes_after(&mut self, parent: NodeId, child: NodeId) {
+        let children: Vec<NodeId> = self.nodes[parent].layout_children.borrow().iter().flatten().copied().collect();
+        let Some(at) = children.iter().position(|&id| id == child) else { return };
+        for &id in &children[at + 1..] {
+            let out_of_flow = self.nodes[id].primary_styles().is_some_and(|style| crate::node::style_is_out_of_flow(&style));
+            if !out_of_flow {
+                self.nodes[id].flags.insert(NodeFlags::HIDDEN_BY_CLAMP);
+            }
+        }
     }
 
     /// Marks the block `id` as ending at its line `kept` with an ellipsis, shaped in its style.

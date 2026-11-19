@@ -173,6 +173,8 @@ bitflags! {
         /// paints there, in tree order with the other positioned boxes (CSS 2.1 Appendix E step 8).
         /// Hit testing passes over it (its inline root hit-tests its text).
         const INLINE_PASS_ENTRY = 1 << 29;
+        /// pyro: a box after the clamp point of a line clamp (`layout::line_clamp`): not painted.
+        const HIDDEN_BY_CLAMP = 1 << 30;
     }
 }
 
