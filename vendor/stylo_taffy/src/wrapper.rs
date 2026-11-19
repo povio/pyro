@@ -63,6 +63,9 @@ bitflags! {
         const IS_ROOT = 1 << 13;
         /// pyro: the node never has scrollbars (a `<frameset>`: no scroll container in Chrome).
         const NO_SCROLLBARS = 1 << 14;
+        /// pyro: the node's document lays out classic scrollbars (`crate::scrollbars`); without
+        /// it scrollbars are overlay scrollbars, which take no space.
+        const CLASSIC_SCROLLBARS = 1 << 15;
     }
 }
 
@@ -278,7 +281,10 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     // `scrollbar-gutter` changes no layout; classic ones take their thickness.
     #[inline]
     fn scrollbar_width(&self) -> f32 {
-        crate::scrollbars::thickness(self.style.clone_scrollbar_width())
+        if !self.flags.contains(StyleFlags::CLASSIC_SCROLLBARS) {
+            return 0.0;
+        }
+        crate::scrollbars::thickness_in(crate::scrollbars::ScrollbarMode::Classic, self.style.clone_scrollbar_width())
     }
 
     // pyro: the gutters of classic scrollbars (`crate::scrollbars::GutterInputs::gutters`), in the
@@ -286,7 +292,8 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn scrollbar_gutter(&self) -> taffy::Rect<f32> {
         let zero = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
-        if crate::scrollbars::scrollbar_mode() == crate::scrollbars::ScrollbarMode::Overlay
+        // (Overlay scrollbars: one flag test, as cheap as the constant it replaced.)
+        if !self.flags.contains(StyleFlags::CLASSIC_SCROLLBARS)
             || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT | StyleFlags::NO_SCROLLBARS | StyleFlags::IS_REPLACED)
         {
             return zero;

@@ -68,6 +68,9 @@ pub struct NodeTree {
     /// pyro: the document's base URL without its fragment (`BaseDocument::url`), which a `url()`
     /// naming an element of this document (`url(#m)`) resolves to.
     pub(crate) base_url: String,
+    /// pyro: the document lays out classic scrollbars (`stylo_taffy::scrollbars`): the process's
+    /// mode when it was made, or [`crate::BaseDocument::set_classic_scrollbars`]'s.
+    pub(crate) classic_scrollbars: bool,
 }
 
 impl NodeTree {
@@ -84,6 +87,7 @@ impl NodeTree {
             shadow_roots: HashMap::new(),
             has_shadow_hosts: false,
             base_url: String::new(),
+            classic_scrollbars: stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic,
         }
     }
 

@@ -254,15 +254,16 @@ impl BaseDocument {
         // `overflow-clip-margin`, as resolved here) passes its scrollport, and stops showing when
         // it no longer does with the scrollbar. A change lays the document out again (as Chrome
         // does), a few times at most.
-        // Only a layout checks them, and the relayout a change makes may remove scrollbars but
-        // add none (Blink's `kForbidAddingAutoBars` while `in_overflow_relayout_`).
-        if stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic
+        // Only a layout checks them. The first check may add and remove scrollbars; the relayouts
+        // a change makes may add more (the overflow a first bar causes: a 100px box with 95x200
+        // content gets both bars, as in Chrome) but remove none, so the passes end.
+        if self.nodes.classic_scrollbars
             && std::mem::take(&mut self.layout_ran)
         {
             for pass in 0..3 {
-                let may_add = pass == 0;
-                let boxes_changed = self.update_auto_scrollbars(may_add);
-                let viewport_changed = self.update_viewport_scrollbars(may_add);
+                let may_remove = pass == 0;
+                let boxes_changed = self.update_auto_scrollbars(may_remove);
+                let viewport_changed = self.update_viewport_scrollbars(may_remove);
                 if !boxes_changed && !viewport_changed {
                     break;
                 }
@@ -1567,7 +1568,7 @@ impl BaseDocument {
         // make the initial containing block smaller, and the root starts after the left and top
         // ones. A pass that turns an `overflow: auto` box's or the viewport's scrollbar on or off
         // lays the document out again (as Chrome does), a few times at most.
-        let classic = stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic;
+        let classic = self.nodes.classic_scrollbars;
         if classic {
             self.viewport_scrollbars = self.viewport_scrollbars_for(self.viewport_scrollbars.shown);
         } else {
@@ -1687,10 +1688,25 @@ impl BaseDocument {
         taffy::Point { x: used(overflow.0), y: used(overflow.1) }
     }
 
+    /// pyro: lays this document out with classic scrollbars (`true`) or overlay scrollbars, whatever
+    /// the process's mode (`stylo_taffy::scrollbars`): for tests and for embedders.
+    pub fn set_classic_scrollbars(&mut self, classic: bool) {
+        if self.nodes.classic_scrollbars == classic {
+            return;
+        }
+        self.nodes.classic_scrollbars = classic;
+        for (_, node) in self.nodes.iter_mut() {
+            node.flags.remove(NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
+            node.clear_layout_cache();
+        }
+        self.mark_all_damaged();
+        self.last_layout_space = None;
+    }
+
     /// pyro: classic scrollbars: sets `viewport_unit_inset` from the root's style (the gutters that
     /// show whatever the document's size); whether it changed (queued as a device change).
     fn update_viewport_unit_inset(&mut self) -> bool {
-        let inset = if stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic {
+        let inset = if self.nodes.classic_scrollbars {
             let g = self.viewport_scrollbars_for(taffy::Point { x: false, y: false }).gutters;
             (g.left + g.right, g.top + g.bottom)
         } else {
@@ -1711,7 +1727,11 @@ impl BaseDocument {
         let Some(html) = self.try_root_element().and_then(|root| root.primary_styles()) else {
             return Default::default();
         };
-        let thickness = stylo_taffy::scrollbars::thickness(html.clone_scrollbar_width());
+        let thickness = if self.nodes.classic_scrollbars {
+            stylo_taffy::scrollbars::thickness_in(stylo_taffy::scrollbars::ScrollbarMode::Classic, html.clone_scrollbar_width())
+        } else {
+            0.0
+        };
         let overflow = self.viewport_overflow();
         use style::values::computed::Overflow;
         let shown = taffy::Point {
@@ -1736,7 +1756,7 @@ impl BaseDocument {
     /// pyro: classic scrollbars: after a layout pass, the viewport's `overflow: auto` scrollbars show
     /// when the document overflows its scrollport (and stop showing when it no longer does with
     /// them). Whether the gutters changed (the document is laid out again).
-    fn update_viewport_scrollbars(&mut self, may_add: bool) -> bool {
+    fn update_viewport_scrollbars(&mut self, may_remove: bool) -> bool {
         let Some(root) = self.try_root_element() else { return false };
         let size = self.stylist.device().au_viewport_size();
         let (width, height) = (size.width.to_f32_px(), size.height.to_f32_px());
@@ -1752,8 +1772,8 @@ impl BaseDocument {
             .max(layout.location.y as f64 + overflow.y1);
         let had = self.viewport_scrollbars.shown;
         let shown = taffy::Point {
-            x: right > port.x1 + 0.5 && (may_add || had.x),
-            y: bottom > port.y1 + 0.5 && (may_add || had.y),
+            x: right > port.x1 + 0.5 || (!may_remove && had.x),
+            y: bottom > port.y1 + 0.5 || (!may_remove && had.y),
         };
         let root_id = root.id;
         let next = self.viewport_scrollbars_for(shown);
@@ -1769,7 +1789,7 @@ impl BaseDocument {
     /// shows its scrollbar (`NodeFlags::AUTO_SCROLLBAR_X`/`_Y`), which takes a gutter; one whose content
     /// no longer overflows with it stops showing it. A box whose scrollbars changed is laid out again
     /// with its ancestors. Whether any changed.
-    fn update_auto_scrollbars(&mut self, may_add: bool) -> bool {
+    fn update_auto_scrollbars(&mut self, may_remove: bool) -> bool {
         use style::values::computed::Overflow;
         use style::values::computed::ui::ScrollbarWidth;
         let scale = self.viewport.scale_f64();
@@ -1810,26 +1830,37 @@ impl BaseDocument {
                 let reversed = layout.scrollable_overflow_rect.is_reversed();
                 let past_x = if reversed.x { o.x0 < port.x0 - slack } else { o.x1 > port.x1 + slack };
                 let past_y = if reversed.y { o.y0 < port.y0 - slack } else { o.y1 > port.y1 + slack };
-                if x == Overflow::Auto && past_x {
+                // A scrollbar needs room across it: a box of no height shows no horizontal one, of
+                // no width no vertical one (Chrome: WPT css-overflow `scrollbar-empty-002`).
+                let room_x = layout.size.height - b.top - b.bottom > 0.5;
+                let room_y = layout.size.width - b.left - b.right > 0.5;
+                if x == Overflow::Auto && past_x && room_x {
                     want |= NodeFlags::AUTO_SCROLLBAR_X;
                 }
-                if y == Overflow::Auto && past_y {
+                if y == Overflow::Auto && past_y && room_y {
                     want |= NodeFlags::AUTO_SCROLLBAR_Y;
                 }
             }
-            if !may_add {
-                want &= had;
+            if !may_remove {
+                want |= had;
             }
             if want != had {
                 changed.push((id, want));
             }
         }
+        // Each changed box and its ancestors are laid out again, each once: a walk up stops at an
+        // ancestor an earlier walk cleared (nested scrollers that all change cost the tree's size,
+        // not its depth squared).
+        let mut cleared = std::collections::HashSet::new();
         for &(id, want) in &changed {
             let node = &mut self.nodes[id];
             node.flags.remove(NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
             node.flags.insert(want);
             let mut current = Some(id);
             while let Some(id) = current {
+                if !cleared.insert(id) {
+                    break;
+                }
                 // (A table measures a changed cell again: its column widths.)
                 self.note_changed_table_cell(id, true);
                 let node = &mut self.nodes[id];

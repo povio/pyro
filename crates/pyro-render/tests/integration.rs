@@ -11,6 +11,7 @@ mod block_in_inline;
 mod border_image_orientation;
 mod borders_backgrounds;
 mod calc_size;
+mod classic_scrollbars;
 mod br_flex_item;
 mod clip_path_mask;
 mod css2_intrinsic_and_hints;

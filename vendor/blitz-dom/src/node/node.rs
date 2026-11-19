@@ -2177,6 +2177,9 @@ impl Node {
         if self.is_root_element() {
             flags |= stylo_taffy::StyleFlags::IS_ROOT;
         }
+        if self.tree().classic_scrollbars {
+            flags |= stylo_taffy::StyleFlags::CLASSIC_SCROLLBARS;
+        }
 
         #[cfg(feature = "writing-mode")]
         {

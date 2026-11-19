@@ -66,8 +66,9 @@ impl Node {
     /// (`TaffyStyloStyle::scrollbar_gutter`).
     pub fn classic_scrollbars(&self) -> Option<ClassicScrollbars> {
         use style::values::computed::{Overflow, ScrollbarGutter};
-        use stylo_taffy::scrollbars::{GutterInputs, ScrollbarMode, scrollbar_mode, thickness};
-        if scrollbar_mode() != ScrollbarMode::Classic
+        use stylo_taffy::scrollbars::{GutterInputs, ScrollbarMode, thickness_in};
+        let thickness = |w| thickness_in(ScrollbarMode::Classic, w);
+        if !self.tree().classic_scrollbars
             || self.is_root_element()
             || self.flags.contains(super::NodeFlags::OVERFLOW_TO_VIEWPORT)
         {
