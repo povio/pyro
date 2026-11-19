@@ -1142,3 +1142,6 @@ text split by position, not by the box's edge. Covered by `crates/pyro-render/te
   the isolation layer cut to the mask painting area, else the mask border image area; an image not loaded masks
   nothing. A `mask-border` is a backdrop root (`render.rs`). WPT css-masking `mask-border-*` interpolation and
   composition pages (+1,798 subtests).
+- Round 4 lane S4, `render/border.rs` `draw_outline`: a negative `outline-offset` pulls the outline in no further than
+  to the middle of the box in each axis apart (it was clamped by the smaller half in both). WPT css-ui `outline-014`,
+  `-015`, `negative-outline-offset`. `pyro-render/tests/outline_offset_clamp.rs`.

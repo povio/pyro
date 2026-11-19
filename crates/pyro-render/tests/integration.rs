@@ -160,5 +160,6 @@ mod content_visibility_hidden;
 mod text_combine_upright;
 mod containment_and_svg_background;
 mod multicol_column_height;
+mod outline_offset_clamp;
 mod viewport_overflow;
 mod vertical_lines_and_controls;

@@ -1376,8 +1376,17 @@ impl ElementCx<'_, '_> {
             }
         };
         let radii = self.frame.border_radii;
+        // pyro: a negative `outline-offset` pulls the outline in no further than to the middle of
+        // the box in each axis apart (Blink: a wide box's outline meets in the middle of its
+        // height, not of its width; WPT css-ui `outline-014`, `-015`).
+        let raw = self.style.get_outline().outline_offset.to_f64_px().trunc() * self.scale;
+        let (ox, oy) = if raw < 0.0 {
+            (raw.max(-(bb.width() / 2.0).floor()) + width, raw.max(-(bb.height() / 2.0).floor()) + width)
+        } else {
+            (outset, outset)
+        };
         let frame = CssBox::new(
-            Rect::new(bb.x0 - outset, bb.y0 - outset, bb.x1 + outset, bb.y1 + outset),
+            Rect::new(bb.x0 - ox, bb.y0 - oy, bb.x1 + ox, bb.y1 + oy),
             Insets::uniform(width),
             Insets::ZERO,
             0.0,
