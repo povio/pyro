@@ -206,19 +206,10 @@ impl UserAgentStylesheet {
     }
 
     /// The default user-agent stylesheet ([`DEFAULT_CSS`]), parsed once.
-    /// pyro: with classic scrollbars (the process's `stylo_taffy::scrollbars` mode), plus Blink's
-    /// StyleAdjuster rule that a textarea's `overflow: visible` is `auto` (its scrollbar shows).
     pub fn default_sheet() -> Self {
         static SHEET: LazyLock<UserAgentStylesheet> =
             LazyLock::new(|| UserAgentStylesheet::parse(DEFAULT_CSS));
-        static CLASSIC_SHEET: LazyLock<UserAgentStylesheet> = LazyLock::new(|| {
-            UserAgentStylesheet::parse(&format!("{DEFAULT_CSS}\ntextarea {{ overflow: auto; }}\n"))
-        });
-        if stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic {
-            CLASSIC_SHEET.clone()
-        } else {
-            SHEET.clone()
-        }
+        SHEET.clone()
     }
 
     pub fn sheet(&self) -> &DocumentStyleSheet {
