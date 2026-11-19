@@ -60,7 +60,66 @@ pub struct Request {
     pub headers: HeaderMap,
     pub body: Body,
     pub signal: Option<AbortSignal>,
+    /// pyro: how the request is made beyond its URL (CORS mode, integrity, referrer), as a CSS
+    /// `url()`'s request URL modifiers ask (CSS Values 5 § 4.5.4).
+    pub options: FetchOptions,
 }
+
+/// pyro: the credentials mode of a request in CORS mode (Fetch § 2.2.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CorsCredentials {
+    /// "same-origin" (`crossorigin=anonymous`, `cross-origin(anonymous)`).
+    SameOrigin,
+    /// "include" (`crossorigin=use-credentials`, `cross-origin(use-credentials)`).
+    Include,
+}
+
+/// pyro: a request's mode, integrity metadata and referrer, where they are not a sub-resource's
+/// defaults (no-cors, no integrity, the document as referrer with its policy).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct FetchOptions {
+    /// `Some`: the request's mode is "cors", with these credentials.
+    pub cors: Option<CorsCredentials>,
+    /// Integrity metadata (Subresource Integrity): a response whose body matches none of it is
+    /// a network error, as is a cross-origin one fetched without CORS.
+    pub integrity: Option<String>,
+    /// The request's referrer policy keyword (`None`: the document's policy).
+    pub referrer_policy: Option<String>,
+    /// The request's referrer (`None`: the document): the style sheet a `url()` was written in.
+    pub referrer: Option<Url>,
+}
+
+impl FetchOptions {
+    /// Whether these are a sub-resource's defaults.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The key a response to `url` fetched with these options is cached by: one fetched with
+    /// other options never stands in for it (a CORS response for a no-cors one, a response
+    /// checked against other integrity metadata, or one sent another referrer). A space is
+    /// never in a serialized URL.
+    pub fn cache_key(&self, url: &str) -> String {
+        if self.is_default() {
+            return url.to_owned();
+        }
+        if self.integrity.is_none() && self.referrer_policy.is_none() && self.referrer.is_none() {
+            return match self.cors {
+                Some(CorsCredentials::SameOrigin) => format!("cors-anonymous {url}"),
+                Some(CorsCredentials::Include) => format!("cors-use-credentials {url}"),
+                None => url.to_owned(),
+            };
+        }
+        format!(
+            "cors={:?} integrity={:?} referrer-policy={:?} referrer={:?} {url}",
+            self.cors,
+            self.integrity,
+            self.referrer_policy,
+            self.referrer.as_ref().map(Url::as_str),
+        )
+    }
+}
+
 impl Request {
     /// A get request to the specified Url and an empty body
     pub fn get(url: Url) -> Self {
@@ -71,6 +130,7 @@ impl Request {
             headers: HeaderMap::new(),
             body: Body::Empty,
             signal: None,
+            options: FetchOptions::default(),
         }
     }
 

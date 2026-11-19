@@ -342,7 +342,7 @@ fn single_content_image(style: &style::properties::ComputedValues) -> Option<Str
     match &style.get_counters().content {
         Content::Items(items) => match &items.items[..] {
             [ContentItem::Image(image)] => match crate::util::unfiltered_image(image) {
-                style::values::computed::Image::Url(style::url::ComputedUrl::Valid(url)) => Some(url.as_str().to_string()),
+                style::values::computed::Image::Url(style::url::ComputedUrl::Valid(url, _)) => Some(url.as_str().to_string()),
                 _ => None,
             },
             _ => None,

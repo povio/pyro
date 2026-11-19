@@ -78,16 +78,43 @@ struct ContextState {
 /// document's frame and loader, its URL as referrer.
 /// With `cors`, in CORS mode with credentials only to the same origin (`crossorigin="anonymous"`).
 fn subresource_request(frame: &Frame, page: PageId, url: String, kind: ResourceKind, cors: bool) -> FetchRequest {
+    let options = SubresourceOptions { crossorigin: cors.then(|| "anonymous".to_owned()), ..Default::default() };
+    subresource_request_with(frame, page, url, kind, &options)
+}
+
+/// pyro: what a renderer's sub-resource request carries beyond its URL, as a CSS `url()`'s
+/// request URL modifiers ask (CSS Values 5 § 4.5.4). The defaults are a sub-resource's: no-cors,
+/// no integrity metadata, the document as referrer with its policy.
+#[derive(Clone, Debug, Default)]
+pub struct SubresourceOptions {
+    /// `anonymous` or `use-credentials`: the request's mode is "cors", with those credentials.
+    pub crossorigin: Option<String>,
+    /// Integrity metadata: a response whose body matches none of it fails, as does a
+    /// cross-origin one fetched without CORS.
+    pub integrity: Option<String>,
+    /// The request's referrer (the style sheet a `url()` was written in); `None`: the document.
+    pub referrer: Option<String>,
+    /// The request's referrer policy; `None`: the document's.
+    pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+}
+
+fn subresource_request_with(
+    frame: &Frame,
+    page: PageId,
+    url: String,
+    kind: ResourceKind,
+    options: &SubresourceOptions,
+) -> FetchRequest {
     FetchRequest {
         post: None,
         url,
         kind,
         page,
-        referrer: Some(frame.base_url.clone()),
-        referrer_policy: None,
+        referrer: Some(options.referrer.clone().unwrap_or_else(|| frame.base_url.clone())),
+        referrer_policy: options.referrer_policy,
         frame_id: Some(frame.id.0.clone()),
         loader_id: Some(frame.loader_id.0.clone()),
-        crossorigin: cors.then(|| "anonymous".to_owned()),
+        crossorigin: options.crossorigin.clone(),
         initiator: None,
         module: None,
         part: None,
@@ -1207,9 +1234,38 @@ impl Browser {
     /// [`Browser::fetch_subresource`], with `cors` in CORS mode with credentials only to the same
     /// origin (`crossorigin="anonymous"`, as `shape-outside` images load).
     pub fn fetch_subresource_with(&mut self, page: PageId, url: String, kind: ResourceKind, cors: bool, done: FetchDone) {
-        let Some(request) = self.page(page).map(|p| subresource_request(&p.main_frame, page, url, kind, cors)) else {
+        let options = SubresourceOptions { crossorigin: cors.then(|| "anonymous".to_owned()), ..Default::default() };
+        self.fetch_subresource_options(page, url, kind, options, done)
+    }
+
+    /// pyro: [`Browser::fetch_subresource`] made as `options` say (a CSS `url()`'s request URL
+    /// modifiers): a response that fails the CORS check or the integrity check is an error.
+    pub fn fetch_subresource_options(
+        &mut self,
+        page: PageId,
+        url: String,
+        kind: ResourceKind,
+        options: SubresourceOptions,
+        done: FetchDone,
+    ) {
+        let Some(request) = self.page(page).map(|p| subresource_request_with(&p.main_frame, page, url, kind, &options))
+        else {
             self.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));
             return;
+        };
+        let done: FetchDone = match options.integrity {
+            None => done,
+            Some(integrity) => {
+                let cors = options.crossorigin.is_some();
+                let origin = self.page(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
+                Box::new(move |b, result| {
+                    let result = result.and_then(|r| match loader::integrity_error(&r, Some(&integrity), cors, &origin) {
+                        Some(message) => Err(message),
+                        None => Ok(r),
+                    });
+                    done(b, result)
+                })
+            }
         };
         let Some(loader) = self.loader_for(page) else {
             self.scheduler()

@@ -8139,7 +8139,7 @@ new file mode 100644
 +                }
 +                ContentItem::Image(image) => {
 +                    // pyro: an `image-set()` is the option it selected.
-+                    if let Image::Url(ComputedUrl::Valid(url)) = crate::util::unfiltered_image(image) {
++                    if let Image::Url(ComputedUrl::Valid(url, _)) = crate::util::unfiltered_image(image) {
 +                        pieces.push(Piece::Image(url.as_str().to_string(), crate::util::image_resolution(image).to_bits()));
 +                    }
 +                }
@@ -9722,7 +9722,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +            let Content::Items(items) = &style.get_counters().content else { return None };
 +            let [ContentItem::Image(image)] = &items.items[..] else { return None };
 +            match crate::util::unfiltered_image(image) {
-+                StyloImage::Url(ComputedUrl::Valid(url)) => {
++                StyloImage::Url(ComputedUrl::Valid(url, _)) => {
 +                    Some((url.as_str().to_string(), crate::util::image_resolution(image)))
 +                }
 +                _ => None,
@@ -9768,7 +9768,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      /// Flush the image layers of nodes whose style changed during the last
      /// style traversal (or whose pseudo-element boxes were (re)constructed).
      pub(crate) fn flush_pending_style_images(&mut self) {
-@@ -552,12 +1004,112 @@
+@@ -552,12 +1004,120 @@
              }
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
@@ -9811,11 +9811,16 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +        if candidates.is_empty() && elem.reference_images.is_empty() {
 +            return;
 +        }
-+        let urls: Vec<Option<ServoArc<url::Url>>> = candidates
++        // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5 § 4.5.4).
++        let urls: Vec<Option<(ServoArc<url::Url>, blitz_traits::net::FetchOptions)>> = candidates
 +            .into_iter()
 +            .map(|candidate| match candidate {
-+                ReferenceCandidate::Url(url) => Some(url.clone()),
-+                ReferenceCandidate::Attr(raw) => self.resolve_url(raw).map(ServoArc::new),
++                ReferenceCandidate::Url(url, modifiers) => {
++                    Some((url.clone(), crate::net::url_fetch_options(modifiers)))
++                }
++                ReferenceCandidate::Attr(raw) => {
++                    self.resolve_url(raw).map(|url| (ServoArc::new(url), Default::default()))
++                }
 +            })
 +            .collect();
 +        let old = elem.reference_images.clone();
@@ -9823,7 +9828,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +        let own = [document(self.url().as_str()), document(self.base_url().as_str())];
 +        let mut new: ThinVec<Option<ImageResourceData>> = ThinVec::with_capacity(urls.len());
 +        for (idx, url) in urls.into_iter().enumerate() {
-+            let Some(url) = url else {
++            let Some((url, options)) = url else {
 +                new.push(None);
 +                continue;
 +            };
@@ -9836,7 +9841,8 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                new.push(Some(ImageResourceData { url, status: Status::Ok, image: ImageData::None }));
 +                continue;
 +            }
-+            let url_str = url.as_str();
++            let key = options.cache_key(url.as_str());
++            let url_str = key.as_str();
 +            let kind = ImageType::Reference(idx);
 +            if let Some(cached_image) = self.image_cache.get(url_str) {
 +                new.push(Some(ImageResourceData { url: url.clone(), status: Status::Ok, image: cached_image.clone() }));
@@ -9845,15 +9851,17 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                new.push(Some(ImageResourceData::new(url.clone())));
 +            } else {
 +                self.pending_images.insert(url_str.to_string(), vec![(node_id, kind)]);
++                let mut request = crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref());
++                request.options = options.clone();
 +                self.net_provider.fetch(
 +                    doc_id,
-+                    crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref()),
++                    request,
 +                    ResourceHandler::boxed(
 +                        self.tx.clone(),
 +                        doc_id,
 +                        None,
 +                        self.shell_provider.clone(),
-+                        ImageHandler::new(kind),
++                        ImageHandler::new(kind).options(options),
 +                    ),
 +                );
 +                new.push(Some(ImageResourceData::new(url.clone())));
@@ -9882,7 +9890,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          let doc_id = self.id();
          let node = self.nodes.get_mut(node_id).unwrap();
          // Clone the primary style `Arc` into an owned value so the immutable
-@@ -577,19 +1129,33 @@
+@@ -577,29 +1137,63 @@
              return;
          };
  
@@ -9917,9 +9925,11 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 -            let style_image = &style_images[idx];
 +            let style_image = slots[idx];
              let new_image = match style_image {
-                 StyloImage::Url(ComputedUrl::Valid(new_url)) => {
+-                StyloImage::Url(ComputedUrl::Valid(new_url)) => {
++                StyloImage::Url(ComputedUrl::Valid(new_url, modifiers)) => {
                      let old_image = elem_images[idx].as_ref();
-@@ -598,8 +1164,15 @@
+                     let old_image_url = old_image.map(|data| &data.url);
+                     if old_image_url.is_some_and(|old_url| **new_url == **old_url) {
                          continue;
                      }
  
@@ -9928,23 +9938,34 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                    // § 4.1): one that fails the CORS check is no shape (`none`), and one loaded
 +                    // for an `<img>` never stands in for it. A same-origin (or `data:`) one is
 +                    // the same response either way, and shares the cache.
-+                    let cors = matches!(kind, ImageLayerKind::Shape) && crate::net::cors_checked(new_url, &self.url);
-+                    let key = if cors { crate::net::cors_image_key(new_url.as_str()) } else { new_url.as_str().to_owned() };
++                    //
++                    // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5
++                    // § 4.5.4), its response kept apart from the same URL fetched otherwise.
++                    let mut options = crate::net::url_fetch_options(modifiers.as_deref());
++                    if matches!(kind, ImageLayerKind::Shape) && options.cors.is_none() {
++                        options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
++                    }
++                    if options.cors.is_some()
++                        && options.integrity.is_none()
++                        && options.referrer_policy.is_none()
++                        && !crate::net::cors_checked(new_url, &self.url)
++                    {
++                        options = Default::default();
++                    }
++                    let key = options.cache_key(new_url.as_str());
                      // Check cache first
 -                    let url_str = new_url.as_str();
 +                    let url_str = key.as_str();
                      if let Some(cached_image) = self.image_cache.get(url_str) {
                          #[cfg(feature = "tracing")]
                          tracing::info!("Loading image {url_str} from cache");
-@@ -621,18 +1194,20 @@
+@@ -621,18 +1215,18 @@
                          self.pending_images
                              .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
  
 +                        let mut request =
 +                            crate::net::stamped_request((**new_url).clone(), self.abort_signal.as_ref());
-+                        if cors {
-+                            crate::net::mark_cors(&mut request);
-+                        }
++                        request.options = options.clone();
                          self.net_provider.fetch(
                              doc_id,
 -                            crate::net::stamped_request(
@@ -9958,11 +9979,11 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                                  None, // Don't pass node_id, we'll handle via pending_images
                                  self.shell_provider.clone(),
 -                                ImageHandler::new(kind.image_type(idx)),
-+                                ImageHandler::new(kind.image_type(idx)).cors(cors),
++                                ImageHandler::new(kind.image_type(idx)).options(options),
                              ),
                          );
  
-@@ -647,3 +1222,153 @@
+@@ -647,3 +1241,153 @@
          }
      }
  }
@@ -16579,7 +16600,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +    match &style.get_counters().content {
 +        Content::Items(items) => match &items.items[..] {
 +            [ContentItem::Image(image)] => match crate::util::unfiltered_image(image) {
-+                style::values::computed::Image::Url(style::url::ComputedUrl::Valid(url)) => Some(url.as_str().to_string()),
++                style::values::computed::Image::Url(style::url::ComputedUrl::Valid(url, _)) => Some(url.as_str().to_string()),
 +                _ => None,
 +            },
 +            _ => None,
@@ -33931,21 +33952,39 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  use std::sync::atomic::Ordering as Ao;
  use std::{
      io::Cursor,
-@@ -36,6 +37,32 @@
+@@ -36,6 +37,50 @@
      req
  }
  
 +/// pyro: marks `request` to be fetched in CORS mode with credentials only to the same origin
-+/// ("anonymous", as `shape-outside` images load), by the `Sec-Fetch-Mode: cors` header the request
-+/// goes out with (see [`is_cors_request`]): a cross-origin response the CORS check does not pass
-+/// is a network error. A provider that cannot make such a request must fail it.
++/// ("anonymous", as `shape-outside` images load): a cross-origin response the CORS check does not
++/// pass is a network error. A provider that cannot make such a request must fail it.
 +pub fn mark_cors(request: &mut Request) {
-+    request.headers.insert("sec-fetch-mode", blitz_traits::net::http::HeaderValue::from_static("cors"));
++    request.options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
 +}
 +
-+/// pyro: whether `request` is to be fetched in CORS mode ([`mark_cors`]).
++/// pyro: whether `request` is to be fetched in CORS mode ([`mark_cors`], `cross-origin()`).
 +pub fn is_cors_request(request: &Request) -> bool {
-+    request.headers.get("sec-fetch-mode").is_some_and(|v| v.as_bytes() == b"cors")
++    request.options.cors.is_some()
++}
++
++/// pyro: what a `url()`'s request URL modifiers ask of its request (CSS Values 5 § 4.5.4):
++/// `cross-origin()` its mode and credentials, `integrity()` its integrity metadata,
++/// `referrer-policy()` its referrer policy; with any of them, the style sheet the `url()` was
++/// written in is its referrer.
++pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) -> blitz_traits::net::FetchOptions {
++    use blitz_traits::net::{CorsCredentials, FetchOptions};
++    use style::url::CrossOriginModifier;
++    let Some(modifiers) = modifiers else { return FetchOptions::default() };
++    FetchOptions {
++        cors: modifiers.cross_origin.map(|mode| match mode {
++            CrossOriginModifier::Anonymous => CorsCredentials::SameOrigin,
++            CrossOriginModifier::UseCredentials => CorsCredentials::Include,
++        }),
++        integrity: modifiers.integrity.clone(),
++        referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
++        referrer: modifiers.referrer.as_ref().map(|url| (**url).clone()),
++    }
 +}
 +
 +/// pyro: whether a CORS fetch of `url` from the document at `document` is checked (and so may
@@ -33964,7 +34003,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Carries `@font-face` descriptors from CSS parsing through to font
  /// registration so `parley::Collection::register_fonts` can alias the bytes
  /// under the `font-family` declared in CSS rather than whatever family name
-@@ -52,16 +79,44 @@
+@@ -52,16 +97,44 @@
      /// parses this as a range; we record the lower bound, which equals the
      /// upper bound in the common single-value case.
      pub weight: Option<f32>,
@@ -34011,7 +34050,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// Stylesheet loaded for an `@import` rule, to be attached to the rule on the document thread
      ImportedCss(ServoArc<Locked<ImportRule>>, ServoArc<Stylesheet>),
      Font(Bytes, FontFaceOverrides),
-@@ -173,11 +228,22 @@
+@@ -173,11 +246,22 @@
  
          self.respond(
              resolved_url,
@@ -34035,7 +34074,22 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Maximum depth of nested `@import` rules. Imports nested deeper than this
  /// are refused, preventing unbounded recursion (e.g. a stylesheet whose
  /// resolved `@import` URL yields another stylesheet importing in turn, with
-@@ -288,6 +354,7 @@
+@@ -224,10 +308,13 @@
+         };
+ 
+         let url = import.url.url().unwrap().clone();
++        // pyro: fetched as the `url()`'s request URL modifiers say (CSS Values 5 § 4.5.4).
++        let mut request = stamped_request(url.as_ref().clone(), self.abort_signal.as_ref());
++        request.options = url_fetch_options(import.url.modifiers().map(|m| &**m));
+         let import = ServoArc::new(lock.wrap(import));
+         self.net_provider.fetch(
+             self.doc_id,
+-            stamped_request(url.as_ref().clone(), self.abort_signal.as_ref()),
++            request,
+             ResourceHandler::boxed(
+                 self.tx.clone(),
+                 self.doc_id,
+@@ -288,6 +375,7 @@
              &self.shell_provider,
              &self.data.lock.read(),
              self.data.loader.abort_signal.as_ref(),
@@ -34043,7 +34097,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          );
  
          let import_rule = self.data.import_rule.clone();
-@@ -387,6 +454,7 @@
+@@ -387,6 +475,7 @@
      shell_provider: &Arc<dyn ShellProvider>,
      read_guard: &SharedRwLockReadGuard,
      abort_signal: Option<&AbortSignal>,
@@ -34051,7 +34105,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  ) {
      fetch_font_face_rules(
          sheet.contents(read_guard).rules(read_guard).iter(),
-@@ -397,6 +465,7 @@
+@@ -397,6 +486,7 @@
          shell_provider,
          read_guard,
          abort_signal,
@@ -34059,7 +34113,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      )
  }
  
-@@ -409,10 +478,45 @@
+@@ -409,10 +499,45 @@
      node_id: Option<NodeId>,
      network_provider: &Arc<dyn NetProvider>,
      shell_provider: &Arc<dyn ShellProvider>,
@@ -34107,7 +34161,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +525,70 @@
+@@ -421,13 +546,70 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
@@ -34180,7 +34234,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -450,6 +611,11 @@
+@@ -450,6 +632,11 @@
          })
  }
  
@@ -34192,7 +34246,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +634,11 @@
+@@ -468,6 +655,11 @@
              return None;
          };
  
@@ -34204,7 +34258,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +735,10 @@
+@@ -564,7 +756,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -34216,22 +34270,31 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +759,106 @@
+@@ -585,37 +780,115 @@
  
  pub struct ImageHandler {
      kind: ImageType,
-+    /// pyro: fetched in CORS mode ([`mark_cors`]): answers under its [`cors_image_key`].
-+    cors: bool,
++    /// pyro: what the request was made with ([`mark_cors`], [`url_fetch_options`]): an image
++    /// fetched with other than the defaults answers under its [`FetchOptions::cache_key`].
++    ///
++    /// [`FetchOptions::cache_key`]: blitz_traits::net::FetchOptions::cache_key
++    options: blitz_traits::net::FetchOptions,
  }
  impl ImageHandler {
      pub fn new(kind: ImageType) -> Self {
 -        Self { kind }
-+        Self { kind, cors: false }
++        Self { kind, options: Default::default() }
 +    }
 +
 +    /// pyro: fetched in CORS mode ([`mark_cors`]) when `cors` is.
 +    pub fn cors(mut self, cors: bool) -> Self {
-+        self.cors = cors;
++        self.options.cors = cors.then_some(blitz_traits::net::CorsCredentials::SameOrigin);
++        self
++    }
++
++    /// pyro: fetched with `options` (a `url()`'s request URL modifiers).
++    pub fn options(mut self, options: blitz_traits::net::FetchOptions) -> Self {
++        self.options = options;
 +        self
      }
  }
@@ -34241,8 +34304,8 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 -        let result = self.data.parse(bytes);
 -        self.respond(resolved_url, result)
 +        let result = self.data.parse(&resolved_url, bytes);
-+        // pyro: an image fetched with CORS answers under its CORS key.
-+        let key = if self.data.cors { cors_image_key(&resolved_url) } else { resolved_url };
++        // pyro: an image fetched with CORS (or other options) answers under its key.
++        let key = self.data.options.cache_key(&resolved_url);
 +        self.respond(key, result)
      }
  }
@@ -34338,7 +34401,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +867,46 @@
+@@ -624,12 +897,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -34388,7 +34451,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +926,62 @@
+@@ -649,6 +956,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -34451,7 +34514,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1133,11 @@
+@@ -800,3 +1163,11 @@
          );
      }
  }
@@ -37563,8 +37626,8 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +/// pyro: one `url()` of an element that may name an element of another SVG document
 +/// ([`reference_candidates`]).
 +pub(crate) enum ReferenceCandidate<'a> {
-+    /// A computed `clip-path` or `filter` URL.
-+    Url(&'a style::servo_arc::Arc<url::Url>),
++    /// A computed `clip-path` or `filter` URL, and its request URL modifiers.
++    Url(&'a style::servo_arc::Arc<url::Url>, Option<&'a style::url::RequestUrlModifiers>),
 +    /// The URL written in an SVG element's `filter` or `mask` attribute (not a fragment alone).
 +    Attr(&'a str),
 +}
@@ -37584,12 +37647,12 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +    // engine resolves without the document's base: it is taken as written, below.
 +    let clip_path_attr = svg
 +        && element.attr(markup5ever::local_name!("clip-path")).is_some_and(|value| value.trim_start().starts_with("url("));
-+    if let (ClipPath::Url(ComputedUrl::Valid(url)), false) = (style.get_clip_path(), clip_path_attr) {
-+        out.push(ReferenceCandidate::Url(url));
++    if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
++        out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +    }
 +    for filter in style.get_effects().filter.0.iter() {
-+        if let GenericFilter::Url(ComputedUrl::Valid(url)) = filter {
-+            out.push(ReferenceCandidate::Url(url));
++        if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
++            out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +        }
 +    }
 +    if svg {
@@ -37625,8 +37688,8 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +    }
 +    std::iter::zip(candidates, element.reference_images.iter()).any(|(candidate, stored)| {
 +        match (candidate, stored) {
-+            (ReferenceCandidate::Url(url), Some(data)) => **url != *data.url,
-+            (ReferenceCandidate::Url(_), None) => true,
++            (ReferenceCandidate::Url(url, _), Some(data)) => **url != *data.url,
++            (ReferenceCandidate::Url(..), None) => true,
 +            // Resolved against the document's base: the stored URL ends with what is written.
 +            (ReferenceCandidate::Attr(raw), Some(data)) => {
 +                let stored = data.url.as_str();
@@ -46352,7 +46415,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,11 +2858,12 @@
+@@ -1689,24 +2858,43 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -46362,12 +46425,15 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
          std::iter::zip(style_images, stored).any(|(style_image, stored)| {
 -            match (style_image, stored) {
+-                (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
+-                (Image::Url(ComputedUrl::Valid(_)), None) => true,
 +            // pyro: a `filter()` image loads the image it filters.
 +            match (crate::util::unfiltered_image(style_image), stored) {
-                 (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
-                 (Image::Url(ComputedUrl::Valid(_)), None) => true,
++                (Image::Url(ComputedUrl::Valid(url, _)), Some(data)) => **url != *data.url,
++                (Image::Url(ComputedUrl::Valid(..)), None) => true,
                  (_, Some(_)) => true,
-@@ -1702,11 +2872,29 @@
+                 (_, None) => false,
+             }
          })
      }
  

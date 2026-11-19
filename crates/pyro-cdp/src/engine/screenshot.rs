@@ -187,6 +187,49 @@ impl Fetcher for PageFetcher {
     fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         self.load(url, true, done)
     }
+
+    fn fetch_with(
+        &self,
+        url: String,
+        options: &pyro_render::FetchOptions,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        let page = self.page;
+        let kind = kind_of(&url);
+        let options = subresource_options(options);
+        let _ = self.handle.post(move |b| {
+            let environment = b.document_encoding(page);
+            b.fetch_subresource_options(
+                page,
+                url,
+                kind,
+                options,
+                Box::new(move |_, result| {
+                    done(result.and_then(|r| {
+                        if (200..300).contains(&r.status) {
+                            Ok(r.render_body(environment.as_slice()))
+                        } else {
+                            Err(format!("HTTP {}", r.status))
+                        }
+                    }))
+                }),
+            );
+        });
+    }
+}
+
+/// pyro: a renderer's request options (a CSS `url()`'s request URL modifiers) as the browser
+/// takes them.
+pub(super) fn subresource_options(options: &pyro_render::FetchOptions) -> pyro_browser::SubresourceOptions {
+    pyro_browser::SubresourceOptions {
+        crossorigin: options.cors.map(|credentials| match credentials {
+            pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
+            pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
+        }),
+        integrity: options.integrity.clone(),
+        referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
+        referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
+    }
 }
 
 impl PageFetcher {

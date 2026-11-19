@@ -632,8 +632,8 @@ mod sized_tests {
 /// pyro: one `url()` of an element that may name an element of another SVG document
 /// ([`reference_candidates`]).
 pub(crate) enum ReferenceCandidate<'a> {
-    /// A computed `clip-path` or `filter` URL.
-    Url(&'a style::servo_arc::Arc<url::Url>),
+    /// A computed `clip-path` or `filter` URL, and its request URL modifiers.
+    Url(&'a style::servo_arc::Arc<url::Url>, Option<&'a style::url::RequestUrlModifiers>),
     /// The URL written in an SVG element's `filter` or `mask` attribute (not a fragment alone).
     Attr(&'a str),
 }
@@ -653,12 +653,12 @@ pub(crate) fn reference_candidates<'a>(
     // engine resolves without the document's base: it is taken as written, below.
     let clip_path_attr = svg
         && element.attr(markup5ever::local_name!("clip-path")).is_some_and(|value| value.trim_start().starts_with("url("));
-    if let (ClipPath::Url(ComputedUrl::Valid(url)), false) = (style.get_clip_path(), clip_path_attr) {
-        out.push(ReferenceCandidate::Url(url));
+    if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
+        out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
     }
     for filter in style.get_effects().filter.0.iter() {
-        if let GenericFilter::Url(ComputedUrl::Valid(url)) = filter {
-            out.push(ReferenceCandidate::Url(url));
+        if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
+            out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
         }
     }
     if svg {
@@ -694,8 +694,8 @@ pub(crate) fn references_out_of_sync(
     }
     std::iter::zip(candidates, element.reference_images.iter()).any(|(candidate, stored)| {
         match (candidate, stored) {
-            (ReferenceCandidate::Url(url), Some(data)) => **url != *data.url,
-            (ReferenceCandidate::Url(_), None) => true,
+            (ReferenceCandidate::Url(url, _), Some(data)) => **url != *data.url,
+            (ReferenceCandidate::Url(..), None) => true,
             // Resolved against the document's base: the stored URL ends with what is written.
             (ReferenceCandidate::Attr(raw), Some(data)) => {
                 let stored = data.url.as_str();

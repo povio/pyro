@@ -38,16 +38,34 @@ pub(crate) fn stamped_request(url: Url, signal: Option<&AbortSignal>) -> Request
 }
 
 /// pyro: marks `request` to be fetched in CORS mode with credentials only to the same origin
-/// ("anonymous", as `shape-outside` images load), by the `Sec-Fetch-Mode: cors` header the request
-/// goes out with (see [`is_cors_request`]): a cross-origin response the CORS check does not pass
-/// is a network error. A provider that cannot make such a request must fail it.
+/// ("anonymous", as `shape-outside` images load): a cross-origin response the CORS check does not
+/// pass is a network error. A provider that cannot make such a request must fail it.
 pub fn mark_cors(request: &mut Request) {
-    request.headers.insert("sec-fetch-mode", blitz_traits::net::http::HeaderValue::from_static("cors"));
+    request.options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
 }
 
-/// pyro: whether `request` is to be fetched in CORS mode ([`mark_cors`]).
+/// pyro: whether `request` is to be fetched in CORS mode ([`mark_cors`], `cross-origin()`).
 pub fn is_cors_request(request: &Request) -> bool {
-    request.headers.get("sec-fetch-mode").is_some_and(|v| v.as_bytes() == b"cors")
+    request.options.cors.is_some()
+}
+
+/// pyro: what a `url()`'s request URL modifiers ask of its request (CSS Values 5 § 4.5.4):
+/// `cross-origin()` its mode and credentials, `integrity()` its integrity metadata,
+/// `referrer-policy()` its referrer policy; with any of them, the style sheet the `url()` was
+/// written in is its referrer.
+pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) -> blitz_traits::net::FetchOptions {
+    use blitz_traits::net::{CorsCredentials, FetchOptions};
+    use style::url::CrossOriginModifier;
+    let Some(modifiers) = modifiers else { return FetchOptions::default() };
+    FetchOptions {
+        cors: modifiers.cross_origin.map(|mode| match mode {
+            CrossOriginModifier::Anonymous => CorsCredentials::SameOrigin,
+            CrossOriginModifier::UseCredentials => CorsCredentials::Include,
+        }),
+        integrity: modifiers.integrity.clone(),
+        referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
+        referrer: modifiers.referrer.as_ref().map(|url| (**url).clone()),
+    }
 }
 
 /// pyro: whether a CORS fetch of `url` from the document at `document` is checked (and so may
@@ -290,10 +308,13 @@ impl ServoStylesheetLoader for StylesheetLoader {
         };
 
         let url = import.url.url().unwrap().clone();
+        // pyro: fetched as the `url()`'s request URL modifiers say (CSS Values 5 § 4.5.4).
+        let mut request = stamped_request(url.as_ref().clone(), self.abort_signal.as_ref());
+        request.options = url_fetch_options(import.url.modifiers().map(|m| &**m));
         let import = ServoArc::new(lock.wrap(import));
         self.net_provider.fetch(
             self.doc_id,
-            stamped_request(url.as_ref().clone(), self.abort_signal.as_ref()),
+            request,
             ResourceHandler::boxed(
                 self.tx.clone(),
                 self.doc_id,
@@ -759,17 +780,26 @@ impl NetHandler for ResourceHandler<DocumentSrcHandler> {
 
 pub struct ImageHandler {
     kind: ImageType,
-    /// pyro: fetched in CORS mode ([`mark_cors`]): answers under its [`cors_image_key`].
-    cors: bool,
+    /// pyro: what the request was made with ([`mark_cors`], [`url_fetch_options`]): an image
+    /// fetched with other than the defaults answers under its [`FetchOptions::cache_key`].
+    ///
+    /// [`FetchOptions::cache_key`]: blitz_traits::net::FetchOptions::cache_key
+    options: blitz_traits::net::FetchOptions,
 }
 impl ImageHandler {
     pub fn new(kind: ImageType) -> Self {
-        Self { kind, cors: false }
+        Self { kind, options: Default::default() }
     }
 
     /// pyro: fetched in CORS mode ([`mark_cors`]) when `cors` is.
     pub fn cors(mut self, cors: bool) -> Self {
-        self.cors = cors;
+        self.options.cors = cors.then_some(blitz_traits::net::CorsCredentials::SameOrigin);
+        self
+    }
+
+    /// pyro: fetched with `options` (a `url()`'s request URL modifiers).
+    pub fn options(mut self, options: blitz_traits::net::FetchOptions) -> Self {
+        self.options = options;
         self
     }
 }
@@ -777,8 +807,8 @@ impl ImageHandler {
 impl NetHandler for ResourceHandler<ImageHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
         let result = self.data.parse(&resolved_url, bytes);
-        // pyro: an image fetched with CORS answers under its CORS key.
-        let key = if self.data.cors { cors_image_key(&resolved_url) } else { resolved_url };
+        // pyro: an image fetched with CORS (or other options) answers under its key.
+        let key = self.data.options.cache_key(&resolved_url);
         self.respond(key, result)
     }
 }

@@ -57,6 +57,7 @@ pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use hit::{HitProbe, HitVisit};
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
+pub use blitz_traits::net::{CorsCredentials, FetchOptions};
 pub use net::Fetcher;
 
 /// Whether the diagnostic timers run (`Pyro.geometryStats`,

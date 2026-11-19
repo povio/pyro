@@ -947,7 +947,7 @@ impl BaseDocument {
             let Content::Items(items) = &style.get_counters().content else { return None };
             let [ContentItem::Image(image)] = &items.items[..] else { return None };
             match crate::util::unfiltered_image(image) {
-                StyloImage::Url(ComputedUrl::Valid(url)) => {
+                StyloImage::Url(ComputedUrl::Valid(url, _)) => {
                     Some((url.as_str().to_string(), crate::util::image_resolution(image)))
                 }
                 _ => None,
@@ -1043,11 +1043,16 @@ impl BaseDocument {
         if candidates.is_empty() && elem.reference_images.is_empty() {
             return;
         }
-        let urls: Vec<Option<ServoArc<url::Url>>> = candidates
+        // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5 § 4.5.4).
+        let urls: Vec<Option<(ServoArc<url::Url>, blitz_traits::net::FetchOptions)>> = candidates
             .into_iter()
             .map(|candidate| match candidate {
-                ReferenceCandidate::Url(url) => Some(url.clone()),
-                ReferenceCandidate::Attr(raw) => self.resolve_url(raw).map(ServoArc::new),
+                ReferenceCandidate::Url(url, modifiers) => {
+                    Some((url.clone(), crate::net::url_fetch_options(modifiers)))
+                }
+                ReferenceCandidate::Attr(raw) => {
+                    self.resolve_url(raw).map(|url| (ServoArc::new(url), Default::default()))
+                }
             })
             .collect();
         let old = elem.reference_images.clone();
@@ -1055,7 +1060,7 @@ impl BaseDocument {
         let own = [document(self.url().as_str()), document(self.base_url().as_str())];
         let mut new: ThinVec<Option<ImageResourceData>> = ThinVec::with_capacity(urls.len());
         for (idx, url) in urls.into_iter().enumerate() {
-            let Some(url) = url else {
+            let Some((url, options)) = url else {
                 new.push(None);
                 continue;
             };
@@ -1068,7 +1073,8 @@ impl BaseDocument {
                 new.push(Some(ImageResourceData { url, status: Status::Ok, image: ImageData::None }));
                 continue;
             }
-            let url_str = url.as_str();
+            let key = options.cache_key(url.as_str());
+            let url_str = key.as_str();
             let kind = ImageType::Reference(idx);
             if let Some(cached_image) = self.image_cache.get(url_str) {
                 new.push(Some(ImageResourceData { url: url.clone(), status: Status::Ok, image: cached_image.clone() }));
@@ -1077,15 +1083,17 @@ impl BaseDocument {
                 new.push(Some(ImageResourceData::new(url.clone())));
             } else {
                 self.pending_images.insert(url_str.to_string(), vec![(node_id, kind)]);
+                let mut request = crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref());
+                request.options = options.clone();
                 self.net_provider.fetch(
                     doc_id,
-                    crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref()),
+                    request,
                     ResourceHandler::boxed(
                         self.tx.clone(),
                         doc_id,
                         None,
                         self.shell_provider.clone(),
-                        ImageHandler::new(kind),
+                        ImageHandler::new(kind).options(options),
                     ),
                 );
                 new.push(Some(ImageResourceData::new(url.clone())));
@@ -1157,7 +1165,7 @@ impl BaseDocument {
         for idx in 0..len {
             let style_image = slots[idx];
             let new_image = match style_image {
-                StyloImage::Url(ComputedUrl::Valid(new_url)) => {
+                StyloImage::Url(ComputedUrl::Valid(new_url, modifiers)) => {
                     let old_image = elem_images[idx].as_ref();
                     let old_image_url = old_image.map(|data| &data.url);
                     if old_image_url.is_some_and(|old_url| **new_url == **old_url) {
@@ -1169,8 +1177,21 @@ impl BaseDocument {
                     // § 4.1): one that fails the CORS check is no shape (`none`), and one loaded
                     // for an `<img>` never stands in for it. A same-origin (or `data:`) one is
                     // the same response either way, and shares the cache.
-                    let cors = matches!(kind, ImageLayerKind::Shape) && crate::net::cors_checked(new_url, &self.url);
-                    let key = if cors { crate::net::cors_image_key(new_url.as_str()) } else { new_url.as_str().to_owned() };
+                    //
+                    // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5
+                    // § 4.5.4), its response kept apart from the same URL fetched otherwise.
+                    let mut options = crate::net::url_fetch_options(modifiers.as_deref());
+                    if matches!(kind, ImageLayerKind::Shape) && options.cors.is_none() {
+                        options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
+                    }
+                    if options.cors.is_some()
+                        && options.integrity.is_none()
+                        && options.referrer_policy.is_none()
+                        && !crate::net::cors_checked(new_url, &self.url)
+                    {
+                        options = Default::default();
+                    }
+                    let key = options.cache_key(new_url.as_str());
                     // Check cache first
                     let url_str = key.as_str();
                     if let Some(cached_image) = self.image_cache.get(url_str) {
@@ -1196,9 +1217,7 @@ impl BaseDocument {
 
                         let mut request =
                             crate::net::stamped_request((**new_url).clone(), self.abort_signal.as_ref());
-                        if cors {
-                            crate::net::mark_cors(&mut request);
-                        }
+                        request.options = options.clone();
                         self.net_provider.fetch(
                             doc_id,
                             request,
@@ -1207,7 +1226,7 @@ impl BaseDocument {
                                 doc_id,
                                 None, // Don't pass node_id, we'll handle via pending_images
                                 self.shell_provider.clone(),
-                                ImageHandler::new(kind.image_type(idx)).cors(cors),
+                                ImageHandler::new(kind.image_type(idx)).options(options),
                             ),
                         );
 

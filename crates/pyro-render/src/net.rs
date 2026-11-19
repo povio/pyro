@@ -25,6 +25,25 @@ pub trait Fetcher: Send + Sync + 'static {
     fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         done(Err(format!("{url}: no CORS fetch")));
     }
+    /// [`Self::fetch`] with `options` other than a sub-resource's defaults (a CSS `url()`'s
+    /// request URL modifiers): its mode and credentials, integrity metadata, referrer and
+    /// referrer policy. A response the CORS check or the integrity check does not pass is an
+    /// error. A fetcher that cannot honour them all makes a CORS fetch of the URL when the mode
+    /// is "cors" and fails one with integrity metadata (the default).
+    fn fetch_with(
+        &self,
+        url: String,
+        options: &blitz_traits::net::FetchOptions,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        if options.integrity.is_some() {
+            done(Err(format!("{url}: no integrity check")));
+        } else if options.cors.is_some() {
+            self.fetch_cors(url, done);
+        } else {
+            self.fetch(url, done);
+        }
+    }
 }
 
 type Cache = Arc<Mutex<HashMap<String, Bytes>>>;
@@ -66,16 +85,18 @@ struct Provider {
 impl NetProvider for Provider {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.to_string();
-        let cors = blitz_dom::net::is_cors_request(&request);
-        // A CORS fetch's body is cached apart: one fetched without CORS never stands in for it.
-        let key = if cors { format!("cors-anonymous {url}") } else { url.clone() };
+        let options = request.options;
+        // A CORS fetch's body (or one fetched with other options) is cached apart: one fetched
+        // without CORS never stands in for it.
+        let key = options.cache_key(&url);
+        let plain = options.is_default();
         self.outstanding.fetch_add(1, Ordering::AcqRel);
         // A data: URL holds its body: neither the sheets nor the cache (keyed
         // by the whole, possibly megabytes long, URL) can hold it for less.
         let inline = url.starts_with("data:");
         let ready = if inline {
             None
-        } else if cors {
+        } else if !plain {
             self.cache.lock().ok().and_then(|c| c.get(&key).cloned())
         } else {
             // A sheet's text is decoded already: as UTF-8 behind a byte order
@@ -110,10 +131,15 @@ impl NetProvider for Provider {
             };
             let _ = tx.send((handler, url, bytes));
         });
-        if cors {
+        if plain {
+            fetcher.fetch(request.url.to_string(), done);
+        } else if options == (blitz_traits::net::FetchOptions {
+            cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
+            ..Default::default()
+        }) {
             fetcher.fetch_cors(request.url.to_string(), done);
         } else {
-            fetcher.fetch(request.url.to_string(), done);
+            fetcher.fetch_with(request.url.to_string(), &options, done);
         }
     }
 }

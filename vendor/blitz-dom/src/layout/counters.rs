@@ -303,7 +303,7 @@ impl Walk {
                 }
                 ContentItem::Image(image) => {
                     // pyro: an `image-set()` is the option it selected.
-                    if let Image::Url(ComputedUrl::Valid(url)) = crate::util::unfiltered_image(image) {
+                    if let Image::Url(ComputedUrl::Valid(url, _)) = crate::util::unfiltered_image(image) {
                         pieces.push(Piece::Image(url.as_str().to_string(), crate::util::image_resolution(image).to_bits()));
                     }
                 }

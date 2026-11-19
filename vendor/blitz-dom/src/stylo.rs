@@ -2864,8 +2864,8 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
         std::iter::zip(style_images, stored).any(|(style_image, stored)| {
             // pyro: a `filter()` image loads the image it filters.
             match (crate::util::unfiltered_image(style_image), stored) {
-                (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
-                (Image::Url(ComputedUrl::Valid(_)), None) => true,
+                (Image::Url(ComputedUrl::Valid(url, _)), Some(data)) => **url != *data.url,
+                (Image::Url(ComputedUrl::Valid(..)), None) => true,
                 (_, Some(_)) => true,
                 (_, None) => false,
             }
