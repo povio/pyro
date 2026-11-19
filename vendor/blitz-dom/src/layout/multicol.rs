@@ -1631,6 +1631,33 @@ impl Node {
 }
 
 impl BaseDocument {
+    /// pyro: whether a forced break before the first in-flow descendants of box `id` (no border
+    /// or padding between) goes before it.
+    fn first_descendant_forces_break(&self, id: crate::NodeId) -> bool {
+        let mut at = id;
+        for _ in 0..8 {
+            let layout = self.nodes[at].unrounded_layout();
+            if (layout.border.top > 0.0 || layout.padding.top > 0.0) && at != id {
+                return false;
+            }
+            let children = self.nodes[at].layout_children.borrow();
+            let Some(&first) = children.iter().flatten().find(|&&c| {
+                let node = &self.nodes[c];
+                !node.is_out_of_flow() && node.primary_styles().is_some_and(|s| !s.get_box().display.is_none())
+            }) else {
+                return false;
+            };
+            drop(children);
+            let Some(style) = self.nodes[first].primary_styles() else { return false };
+            use style::values::computed::BreakBetween as B;
+            if matches!(style.get_box().break_before, B::Column | B::Always) {
+                return true;
+            }
+            at = first;
+        }
+        false
+    }
+
     /// pyro: how far down `container`'s strip the content before spanner `spanner` reaches
     /// (container coordinates): the boxes before it in the flow and what overflows them, not the
     /// boxes it is in (their own size), nor out-of-flow boxes.
@@ -1657,9 +1684,10 @@ impl BaseDocument {
                 }
                 let layout = child.unrounded_layout();
                 let child_top = top + layout.location.y;
-                // (Its border box and its overflow: margins collapse with the spanner's.)
+                // (Its border box, less a negative bottom margin, and its overflow: positive
+                // margins collapse with the spanner's; WPT css-multicol `spanner-fragmentation-007`.)
                 let overflow = layout.scrollable_overflow_rect.bottom().abs();
-                bottom = bottom.max(child_top + layout.size.height.max(overflow));
+                bottom = bottom.max(child_top + (layout.size.height + layout.margin.bottom.min(0.0)).max(overflow));
             }
             drop(children);
             top += self.nodes[next].unrounded_layout().location.y;
@@ -2154,7 +2182,12 @@ impl BaseDocument {
                     // pagination takes; CSS Fragmentation 3 § 3.1.)
                     matches!(b, B::Column | B::Always)
                 };
-                if forces(style.get_box().break_before) {
+                // pyro: and its first descendants', which a box that the columns do not look into
+                // (a nested multi-column container) takes as its own (CSS Fragmentation 3 § 3.1;
+                // WPT css-multicol `spanner-fragmentation-009`).
+                if forces(style.get_box().break_before)
+                    || (!fragmentable(child, &style) && self.first_descendant_forces_break(child_id))
+                {
                     found.forced.push(child_top - layout.margin.top.max(0.0));
                 }
                 if forces(style.get_box().break_after) {
