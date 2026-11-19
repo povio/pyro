@@ -351,6 +351,8 @@ impl LayoutPassState<'_> {
         oof_candidates: &mut OofCandidates,
         span_offset: taffy::Point<f32>,
         containing_block_width: f32,
+        containing_block_height: Option<f32>,
+        containing_block_rtl: bool,
     ) {
         let PendingFloat {
             node_id,
@@ -380,18 +382,32 @@ impl LayoutPassState<'_> {
         // of their content (CSS 2.1 § 9.4.3), not where it is placed (WPT
         // `block-in-inline-float-between-001`).
         // pyro: and its own `position: relative` offset moves it from where it is placed (CSS 2.1
-        // § 9.4.3; WPT css-overflow `line-clamp-with-floats-008`). A percentage `top` is against
-        // a block size not known yet: `auto`.
+        // § 9.4.3; WPT css-overflow `line-clamp-with-floats-008`). Its containing block's
+        // direction decides between `left` and `right` (§ 9.4.3); a percentage `top` is against its
+        // containing block's height when that is definite, else `auto` (§ 9.3.2).
+        let cb_rtl = containing_block_rtl;
         let own = self.nodes[node_id]
             .primary_styles()
             .filter(|style| style.clone_position() == style::computed_values::position::T::Relative)
             .map_or(taffy::Point::ZERO, |style| {
-                let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
-                crate::layout::inline::relative::relative_offset(
+                let mut own = crate::layout::inline::relative::relative_offset(
                     &style,
-                    taffy::Size { width: containing_block_width, height: 0.0 },
-                    rtl,
-                )
+                    taffy::Size { width: containing_block_width, height: containing_block_height.unwrap_or(0.0) },
+                    cb_rtl,
+                );
+                let percent_y = |inset: &style::values::computed::Inset| {
+                    matches!(inset, style::values::computed::Inset::LengthPercentage(lp) if lp.has_percentage())
+                };
+                let position = style.get_position();
+                let y_inset = if !matches!(position.top, style::values::computed::Inset::Auto) {
+                    &position.top
+                } else {
+                    &position.bottom
+                };
+                if containing_block_height.is_none() && percent_y(y_inset) {
+                    own.y = 0.0;
+                }
+                own
             });
         let location = taffy::Point {
             x: pos.x + margin.left + container_pb.left + span_offset.x + own.x,
@@ -1483,6 +1499,9 @@ impl LayoutPassState<'_> {
                 let br_clears = std::mem::take(&mut inline_layout.br_clears);
                 let root_id = node_id;
                 let span_cb = taffy::Size { width: width / scale, height: 0.0 };
+                // (The content height of the container, the floats' containing block, when definite.)
+                let float_cb_height = known_dimensions.height.map(|height| (height - container_pb.vertical_axis_sum()).max(0.0));
+                let float_cb_rtl = self.nodes[node_id].layout_style().direction() == Direction::Rtl;
                 let float_span_offset = |nodes: &crate::NodeTree, float_id: NodeId| match nodes[float_id].parent {
                     Some(parent) if relative_spans => {
                         crate::layout::inline::inline_span_flow_offset(nodes, parent, root_id, span_cb)
@@ -1677,6 +1696,8 @@ impl LayoutPassState<'_> {
                                         &mut oof_candidates,
                                         span_offset,
                                         width / scale,
+                                        float_cb_height,
+                                        float_cb_rtl,
                                     );
                                 }
                                 has_active_floats = true;
@@ -1851,6 +1872,8 @@ impl LayoutPassState<'_> {
                                     &mut oof_candidates,
                                     span_offset,
                                     width / scale,
+                                    float_cb_height,
+                                    float_cb_rtl,
                                 );
 
                                 let min_y = state.line_y() / scale as f64;
