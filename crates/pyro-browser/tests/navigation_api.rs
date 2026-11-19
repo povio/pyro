@@ -301,4 +301,107 @@ fn the_last_navigation_started_in_a_task_wins_over_a_planned_form_navigation() {
         let requested = loader.log.borrow().iter().any(|r| format!("{r:?}").contains("/submit"));
         assert_eq!(requested, submits, "{script}: {:?}", loader.log.borrow());
     }
+    // A `javascript:` URL is no navigation to another document: its task
+    // runs the script whatever else was started (WPT
+    // url/javascript-urls.window.js follows two links in one task), and it
+    // does not stop a form submission planned before or after it.
+    const LINKS: &str = "const link = (code) => { const a = document.body.appendChild(document.createElement('a')); \
+        a.href = 'javascript:' + code + ';undefined'; return a; }; \
+        const ran = (n) => link(`sessionStorage.setItem('ran', (sessionStorage.getItem('ran') || '') + ${n})`);";
+    let cases = [
+        ("ran(1).click(); ran(2).click(); ran(3).click()", "/app", "123", false),
+        ("ran(1).click(); f.submit()", "/submit", "1", true),
+        ("f.submit(); ran(1).click(); ran(2).click()", "/submit", "12", true),
+        ("location.href = '/landed.html'; ran(1).click()", "/landed.html", "1", false),
+    ];
+    for (script, ends_on, ran, submits) in cases {
+        let (mut t, page, loader) = load(PAGE);
+        loader.insert("http://site.test/submit", "text/html", "<p>submitted</p>", Duration::ZERO);
+        loader.insert("http://site.test/landed.html", "text/html", "<p>landed</p>", Duration::ZERO);
+        eval(&t, page, &format!("sessionStorage.removeItem('ran'); {LINKS} {script}; 0"));
+        settle(&mut t);
+        assert_eq!(eval(&t, page, "location.pathname + ' ' + sessionStorage.getItem('ran')"), format!("{ends_on} {ran}"), "{script}");
+        let requested = loader.log.borrow().iter().any(|r| r.contains("/submit"));
+        assert_eq!(requested, submits, "{script}: {:?}", loader.log.borrow());
+    }
+}
+
+#[derive(Default)]
+struct Popups(std::cell::RefCell<Vec<String>>);
+impl pyro_browser::PageObserver for Popups {
+    fn on_page_event(&self, _page: PageId, event: &pyro_browser::PageEvent) {
+        if let pyro_browser::PageEvent::PopupRequested { url, .. } = event {
+            self.0.borrow_mut().push(url.clone());
+        }
+    }
+}
+
+/// What does not ask the frame for another document leaves its planned form
+/// navigation (and any navigation started) alone: a fragment navigation, a
+/// `javascript:` URL, a submission to another frame or a new window (that
+/// navigable's own ordering). A traversal is a task of its own: a
+/// submission after `history.back()` in the same task wins. Chrome's results.
+#[test]
+fn fragment_links_other_frames_and_traversals_leave_a_planned_form_navigation() {
+    const PAGE: &str = "<body><form id=f action='/submit'><input name=a value=1></form>\
+        <form id=blank action='/submit' target=_blank><input name=to value=blank></form>\
+        <form id=framed action='/submit' target=kid><input name=to value=kid></form>\
+        <iframe name=kid src='/kid'></iframe>\
+        <a id=hash href='#' onclick='f.submit()'>#</a><a id=named href='#x' onclick='f.submit()'>#x</a>\
+        <a id=totop href='#top' onclick='f.submit()'>#top</a><a id=js href='javascript:void(0)' onclick='f.submit()'>js</a>\
+        <a id=frag href='#y'>y</a><a id=stay href='#z' onclick='f.submit(); return false'>z</a>\
+        <a id=jssubmit href='javascript:f.submit()'>s</a></body>";
+    // (script, where the page ends, /submit requests in order of their query)
+    let cases: &[(&str, &str, &[&str])] = &[
+        // A. Same-document and javascript: links.
+        ("hash.click()", "/submit?a=1", &["a=1"]),
+        ("named.click()", "/submit?a=1", &["a=1"]),
+        ("totop.click()", "/submit?a=1", &["a=1"]),
+        ("js.click()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); frag.click()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); location.hash = '#x'", "/submit?a=1", &["a=1"]),
+        ("stay.click()", "/submit?a=1", &["a=1"]),
+        ("jssubmit.click()", "/submit?a=1", &["a=1"]),
+        // B. A submission to another navigable and a navigation of this one.
+        ("framed.submit(); location.href = '/landed.html'", "/landed.html", &["to=kid"]),
+        ("location.href = '/landed.html'; framed.submit()", "/landed.html", &["to=kid"]),
+        ("blank.submit(); location.href = '/landed.html'", "/landed.html", &["popup to=blank"]),
+        ("location.href = '/landed.html'; blank.submit()", "/landed.html", &["popup to=blank"]),
+        // C. History.
+        ("history.back(); f.submit()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.pushState(null, '', '/pushed')", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.replaceState(null, '', '/replaced')", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.back()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.go(0)", "/app2", &[]),
+    ];
+    let mut wrong = Vec::new();
+    for (script, ends_on, submits) in cases {
+        let (mut t, page, loader) = load("<body>first</body>");
+        let popups = Rc::new(Popups::default());
+        t.browser.set_observer(Some(popups.clone()));
+        loader.insert("http://site.test/app2", "text/html", PAGE, Duration::ZERO);
+        loader.insert("http://site.test/kid", "text/html", "<p>kid</p>", Duration::ZERO);
+        for query in ["a=1", "to=kid", "to=blank"] {
+            loader.insert(&format!("http://site.test/submit?{query}"), "text/html", "<p>submitted</p>", Duration::ZERO);
+        }
+        loader.insert("http://site.test/landed.html", "text/html", "<p>landed</p>", Duration::ZERO);
+        // /app, then /app2: there is an entry to go back to.
+        t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/app2")).unwrap();
+        settle(&mut t);
+        loader.log.borrow_mut().clear();
+        eval(&t, page, &format!("{script}; 0"));
+        settle(&mut t);
+        let ended = eval(&t, page, "location.pathname + location.search");
+        let mut seen: Vec<String> = loader
+            .log
+            .borrow()
+            .iter()
+            .filter_map(|url| url.split_once("/submit?").map(|(_, query)| query.to_string()))
+            .collect();
+        seen.extend(popups.0.borrow().iter().filter_map(|url| Some(format!("popup {}", url.split_once("/submit?")?.1))));
+        if ended != *ends_on || seen != *submits {
+            wrong.push(format!("{script}: ended on {ended}, requests {seen:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

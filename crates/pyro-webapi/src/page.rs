@@ -487,6 +487,11 @@ pub struct NavigationRequest {
     pub replace: bool,
 }
 
+/// Whether `url` parses as a `javascript:` URL (HTML "navigate to a javascript: URL").
+pub fn is_javascript_url(url: &str) -> bool {
+    pyro_net::Url::parse(url).is_ok_and(|url| url.scheme() == "javascript")
+}
+
 /// How a blocking `alert`/`confirm`/`prompt` was answered.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DialogAnswer {
@@ -626,6 +631,14 @@ pub trait PageHooks {
     fn request_animation_frame(&self) {}
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
+    /// HTML "plan to navigate" (a submitted form): the navigation `navigate`
+    /// would start, from one task queued now in the order of the frame's
+    /// other navigations, and only if `proceed()` says so when that task
+    /// runs (before the `navigate` event). An embedder without such a queue
+    /// returns the request: the page then calls `navigate` from a task.
+    fn navigate_planned(&self, request: NavigationRequest, _proceed: Rc<dyn Fn() -> bool>) -> Option<NavigationRequest> {
+        Some(request)
+    }
     /// The document's `window.open` result asked something of its popup,
     /// after (and in order with) the navigation that requested the popup.
     fn popup_command(&self, _popup: Rc<crate::popup::PopupState>, _command: crate::popup::PopupCommand) {}
@@ -1189,8 +1202,8 @@ impl PageDom {
     /// supersedes those started before it, and one started before its task
     /// runs supersedes it.
     pub(crate) fn plan_form_navigation(self: &Rc<Self>, form: NodeId, request: NavigationRequest) {
-        let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
-        let started = own_frame.then(|| self.note_navigation_started());
+        // Only a submission that asks this frame for another document: see `navigate`.
+        let started = self.starts_document_navigation(&request).then(|| self.note_navigation_started());
         let seq = self.planned_navigation_seq.get().wrapping_add(1);
         self.planned_navigation_seq.set(seq);
         {
@@ -1198,19 +1211,41 @@ impl PageDom {
             planned.retain(|(f, _)| *f != form);
             planned.push((form, seq));
         }
+        if self.scripting_disabled() && is_javascript_url(&request.url) {
+            return;
+        }
+        let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
         let page = Rc::downgrade(self);
-        self.post_task(Box::new(move || {
-            let Some(page) = page.upgrade() else { return };
+        // Asked when the navigation's task runs: this is still the form's
+        // planned navigation and the frame's latest one.
+        let proceed: Rc<dyn Fn() -> bool> = Rc::new(move || {
+            let Some(page) = page.upgrade() else { return false };
             let current = {
                 let mut planned = page.planned_navigations.borrow_mut();
                 let current = planned.contains(&(form, seq));
                 planned.retain(|p| *p != (form, seq));
                 current
             };
-            if current && !page.is_disposed() && started.is_none_or(|n| n == page.navigation_started()) {
-                page.navigate(request);
+            let proceed = current && !page.is_disposed() && started.is_none_or(|n| n == page.navigation_started());
+            if proceed && own_frame {
+                page.navigation_requests.set(page.navigation_requests.get().wrapping_add(1));
             }
-        }));
+            proceed
+        });
+        let Some(hooks) = self.hooks() else { return };
+        // The embedder's navigation queue keeps the submission in the order
+        // of the frame's other navigations and traversals; without one, a
+        // task of the page navigates.
+        if let Some(request) = hooks.navigate_planned(request, proceed.clone()) {
+            let page = Rc::downgrade(self);
+            self.post_task(Box::new(move || {
+                if proceed() {
+                    if let Some(hooks) = page.upgrade().and_then(|page| page.hooks()) {
+                        hooks.navigate(request);
+                    }
+                }
+            }));
+        }
     }
 
     /// Flush after parser/native mutation before entering page script. Native
@@ -2100,11 +2135,46 @@ impl PageDom {
             None => FrameContainer::Detached,
         }
     }
-    pub(crate) fn navigate(&self, req: NavigationRequest) {
-        if req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
-            self.note_navigation_request();
+    /// Whether `req` asks the document's own frame for another document:
+    /// not a request for another frame or a new window (that navigable's
+    /// business), a `javascript:` URL or a fragment navigation. Only such a
+    /// request takes a [`PageDom::navigation_started`] number.
+    pub fn starts_document_navigation(&self, req: &NavigationRequest) -> bool {
+        if !req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
+            return false;
         }
-        if self.scripting_disabled() && pyro_net::Url::parse(&req.url).is_ok_and(|url| url.scheme() == "javascript") {
+        let Ok(target) = pyro_net::Url::parse(&req.url) else { return true };
+        if target.scheme() == "javascript" {
+            return false;
+        }
+        let fragment = req.method == "GET" && req.body.is_none() && target.fragment().is_some() && {
+            let current = self.dom.try_borrow().ok().and_then(|dom| dom.document_url_parsed(self.document()).ok().flatten().cloned());
+            current.is_some_and(|mut current| {
+                let mut target = target.clone();
+                current.set_fragment(None);
+                target.set_fragment(None);
+                current == target
+            })
+        };
+        !fragment
+    }
+    pub(crate) fn navigate(&self, req: NavigationRequest) {
+        // A `javascript:` URL is no navigation of the frame to another
+        // document: a task runs its script. It takes no number
+        // ([`PageDom::navigation_started`]), so it neither supersedes what
+        // was started before it nor is superseded: several followed in one
+        // task all run, as in Chrome (WPT url/javascript-urls.window.js).
+        // Neither does a fragment navigation (HTML "navigate" returns to
+        // "navigate to a fragment" before it sets the ongoing navigation): a
+        // link to `#` whose click handler submits a form leaves the planned
+        // submission alone.
+        if req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
+            self.navigation_requests.set(self.navigation_requests.get().wrapping_add(1));
+        }
+        if self.starts_document_navigation(&req) {
+            self.note_navigation_started();
+        }
+        if self.scripting_disabled() && is_javascript_url(&req.url) {
             return;
         }
         if let Some(h) = self.hooks() {
