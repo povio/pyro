@@ -24,12 +24,13 @@
 //! unless `column-fill: auto` and the height is definite. Content that does not fit the
 //! container's height continues in columns past its inline end, as in Chromium.
 //!
-//! A column spanner (an in-flow block child with `column-span: all`) is laid out in the strip as
-//! wide as the container's content box (`LayoutPassState::column_spanners`) and shown as a row of
-//! its own: the content before it is balanced into a row of columns above it, the content after
-//! it into a row below.
+//! A column spanner (an in-flow block with `column-span: all` that is the container's child, or
+//! a descendant through in-flow block boxes that make no formatting context of their own) is laid
+//! out in the strip as wide as the container's content box (`LayoutPassState::column_spanners`)
+//! and shown as a row of its own: the content before it is balanced into a row of columns above
+//! it, the content after it into a row below.
 //!
-//! Not supported: spanners deeper in the content (laid out in a column), `break-before`/
+//! Not supported: `break-before`/
 //! `break-after` forced column breaks, and vertical writing modes (the container is laid out as a
 //! single column there).
 
@@ -195,6 +196,9 @@ struct Breaks {
     /// What no break may go through at all (unless it is taller than a column): line boxes and
     /// monolithic boxes. Merged.
     loose: Vec<(f32, f32)>,
+    /// pyro: the container has `column-height: 0`: its columns hold what cannot break whole
+    /// (`fill`).
+    whole_in_empty_columns: bool,
     /// The space between consecutive in-flow blocks (their margins): a column after a break in it
     /// starts at its end. Sorted by start.
     gaps: Vec<(f32, f32)>,
@@ -203,6 +207,57 @@ struct Breaks {
     trims: Vec<(f32, f32, f32, f32)>,
     /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
     forced: Vec<f32>,
+}
+
+/// pyro: the rows of a multi-column container with an explicit `column-height` and wrapping
+/// columns (css-multicol-2), as Chromium lays them out (measured on Chrome 158 with WPT
+/// css-multicol `column-height-006`, `-017`..`-020`): row `k` is the slot `origin + k * stride`,
+/// `height` tall, `stride` being the column height plus the row gap. Column content and spanners
+/// share a slot: content before a spanner is balanced within what is left of its slot, a spanner
+/// follows it at once when it fits in the rest of the slot (or starts a slot; it may then reach
+/// past the slot's end, into the gap and the slots after it) and otherwise starts the next slot,
+/// and content after a spanner goes on in what is left of the slot the spanner ends in.
+#[derive(Clone, Copy)]
+struct RowSlots {
+    origin: f32,
+    height: f32,
+    stride: f32,
+}
+
+impl RowSlots {
+    /// The slot `y` is in or after: its top and its end.
+    fn slot(&self, y: f32) -> (f32, f32) {
+        if self.stride <= EPSILON {
+            return (y, y + self.height);
+        }
+        let index = ((y - self.origin) / self.stride + 1e-4).floor().max(0.0);
+        let top = self.origin + index * self.stride;
+        (top, top + self.height)
+    }
+
+    /// The top of the slot after the one that starts at `top`.
+    fn next(&self, top: f32) -> f32 {
+        top + self.stride
+    }
+
+    /// Where column content goes that follows what ended at `y`, and the height its first row
+    /// has: the rest of the slot `y` is in, or the next slot whole.
+    fn content_start(&self, y: f32) -> (f32, f32) {
+        let (top, end) = self.slot(y);
+        if (y - top).abs() <= EPSILON {
+            (top, self.height)
+        } else if y < end - EPSILON {
+            (y, end - y)
+        } else {
+            (self.next(top), self.height)
+        }
+    }
+
+    /// Where a spanner `height` tall goes that follows what ended at `y`.
+    fn spanner_top(&self, y: f32, height: f32) -> f32 {
+        let (top, end) = self.slot(y);
+        if (y - top).abs() <= EPSILON || y + height <= end + EPSILON { y } else { self.next(top) }
+    }
 }
 
 /// How a strip fills columns of one height.
@@ -280,6 +335,7 @@ impl Breaks {
     /// The strip in columns of height `height`, at most `max_columns` of them (the last takes the
     /// rest).
     fn fill(&self, height: f32, max_columns: usize) -> FillRun {
+        let no_height = self.whole_in_empty_columns && height <= EPSILON;
         let height = height.max(1.0);
         let mut run = FillRun { columns: Vec::new(), shortage: None, violations: 0 };
         let mut start = self.start;
@@ -317,7 +373,17 @@ impl Breaks {
                     let (loose, loose_short) = Self::break_before(&self.loose, start, limit);
                     note(&mut run, loose_short);
                     // Taller than a column: cut where the column ends.
-                    loose.unwrap_or(limit)
+                    // pyro: but in columns of `column-height: 0` nothing fits a slice: what
+                    // cannot break (a line, a monolithic box) is held whole and overflows its
+                    // column (WPT css-multicol `column-height-023`). In any other column it is
+                    // cut, as Chromium cuts monolithic content taller than its fragmentainer (WPT
+                    // css-contain `contain-size-breaks-001`, `contain-size-multicol-004`), also in
+                    // the 1px columns of a container with no height left
+                    // (`multicol-span-all-children-height-003`).
+                    loose.unwrap_or_else(|| match containing(&self.loose, limit) {
+                        Some((a, b)) if no_height && a <= start + EPSILON => b,
+                        _ => limit,
+                    })
                 }
             };
             let (end, next) = self.break_at(end);
@@ -580,7 +646,8 @@ impl LayoutPassState<'_> {
         // `max-height` whatever the sizing mode: under either, the content's end is taken from
         // the laid-out content instead (empty space a `min-height` adds is no content to balance).
         let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-        let breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
+        let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end);
+        breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
         // The strip's parts: runs of columns, and the spanners between them (strip ranges).
         let spanners = match spanning {
             Some(_) => self.doc.column_spanner_ranges(dom_id),
@@ -608,10 +675,89 @@ impl LayoutPassState<'_> {
             let step = i as f32 * (column_width + gap);
             snap(if multicol.rtl { pb.left + content_width - column_width - step } else { pb.left + step })
         };
+        // pyro: an explicit `column-height` with wrapping columns lays the rows out on a grid
+        // (`RowSlots`), which the spanners take part in.
+        let slotted = multicol.height.filter(|_| multicol.wrap && !spanners.is_empty()).map(|height| {
+            let height = height.max(0.0);
+            RowSlots { origin: content_top, height, stride: height + multicol.row_gap(definite_height) }
+        });
         for part in 0..=spanners.len() {
             let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
             if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
                 let run = Breaks { start: run_start, end: run_end, ..breaks.clone() };
+                // pyro: rows of an explicit `column-height` (`slotted`, below).
+                if let Some(rows) = slotted {
+                    let (top, available) = rows.content_start(row_top);
+                    // The row the run starts in may be partly taken (after a spanner): its
+                    // columns are as tall as what is left of it, the rows after it whole.
+                    let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
+                    let mut rest = Some(run.clone());
+                    let mut row = (top, available);
+                    if available < rows.height - EPSILON {
+                        let first = run.fill(available, count + 1).columns;
+                        rest = first.get(count).map(|&(start, _)| Breaks { start, ..run.clone() });
+                        placed.extend(first.into_iter().take(count).map(|(a, b)| (a, b, top, available)));
+                        row = (rows.next(rows.slot(top).0), rows.height);
+                    }
+                    if let Some(rest) = rest {
+                        for (i, (a, b)) in rest.fill(rows.height, MAX_COLUMNS).columns.into_iter().enumerate() {
+                            placed.push((a, b, row.0 + (i / count.max(1)) as f32 * rows.stride, rows.height));
+                        }
+                    }
+                    // `column-fill: balance` balances the last row within its height.
+                    let mut last_height = placed.last().map_or(0.0, |p| p.3);
+                    if matches!(multicol.fill, ColumnFill::Balance)
+                        && let Some(&(_, _, last_top, limit)) = placed.last()
+                    {
+                        let from = placed.iter().position(|p| p.2 == last_top).unwrap_or(0);
+                        let tail = Breaks { start: placed[from].0, end: run_end, ..breaks.clone() };
+                        let height = tail.balance(count, Some(limit)).min(limit);
+                        let refilled = tail.fill(height, MAX_COLUMNS).columns;
+                        if refilled.len() <= count {
+                            placed.truncate(from);
+                            placed.extend(refilled.into_iter().map(|(a, b)| (a, b, last_top, height)));
+                            last_height = height;
+                        }
+                    }
+                    let mut index = 0;
+                    let mut previous_top = f32::NAN;
+                    let last_top = placed.last().map_or(top, |p| p.2);
+                    for (start, end, row_top_of, height) in placed {
+                        index = if row_top_of == previous_top { index + 1 } else { 0 };
+                        previous_top = row_top_of;
+                        let x = column_x(index);
+                        let top = snap(row_top_of);
+                        let start = snap(start);
+                        fragments.push(ColumnFragment {
+                            start,
+                            end: snap(end),
+                            x,
+                            width: column_width,
+                            top,
+                            height: if row_top_of == last_top { last_height } else { height },
+                            offset: Point { x: x - pb.left, y: snap(top - start) },
+                            spanner: false,
+                        });
+                    }
+                    row_top = last_top + last_height;
+                    if let Some(&(start, end, indent)) = spanners.get(part) {
+                        let (start, end) = (snap(start), snap(end));
+                        let top = rows.spanner_top(row_top, end - start);
+                        fragments.push(ColumnFragment {
+                            start,
+                            end,
+                            x: pb.left,
+                            width: content_width,
+                            top,
+                            height: end - start,
+                            offset: Point { x: -indent, y: snap(top - start) },
+                            spanner: true,
+                        });
+                        row_top = top + (end - start);
+                        run_start = end;
+                    }
+                    continue;
+                }
                 // pyro: `column-wrap: wrap` with `column-height: auto` wraps columns as tall as
                 // the container's definite height.
                 let fixed_height = multicol.height.or(definite_height.filter(|_| multicol.wrap));
@@ -669,8 +815,13 @@ impl LayoutPassState<'_> {
                 }
                 row_top += (rows - 1) as f32 * (column_height + row_gap) + last_height;
             }
-            if let Some(&(start, end)) = spanners.get(part) {
+            if let Some(&(start, end, indent)) = spanners.get(part) {
                 let (start, end) = (snap(start), snap(end));
+                // pyro: in rows of an explicit `column-height` a spanner has its place in the
+                // rows' grid (`RowSlots::spanner_top`).
+                if let Some(rows) = slotted {
+                    row_top = rows.spanner_top(row_top, end - start);
+                }
                 fragments.push(ColumnFragment {
                     start,
                     end,
@@ -678,7 +829,9 @@ impl LayoutPassState<'_> {
                     width: content_width,
                     top: row_top,
                     height: end - start,
-                    offset: Point { x: 0.0, y: snap(row_top - start) },
+                    // pyro: a spanner below a child of the container is as far in as that box
+                    // (its padding, border and margin): its row starts at the container's edge.
+                    offset: Point { x: -indent, y: snap(row_top - start) },
                     spanner: true,
                 });
                 row_top += end - start;
@@ -801,13 +954,13 @@ impl LayoutPassState<'_> {
             return inputs;
         };
         let node = &self.nodes[node_id];
-        if node.layout_parent.get() != Some(container) || node.is_out_of_flow() {
+        if node.is_out_of_flow() {
             return inputs;
         }
         let Some(style) = node.primary_styles() else {
             return inputs;
         };
-        if !is_spanner_style(&style) {
+        if !is_spanner_style(&style) || !self.spans_columns_of(container, node_id) {
             return inputs;
         }
         let ls = node.layout_style();
@@ -890,19 +1043,78 @@ impl BaseDocument {
         }
     }
 
-    /// The column spanners of `container`: its in-flow block children with `column-span: all`
-    /// (a spanner deeper in its content is laid out in a column).
-    fn column_spanners_of(&self, container: crate::NodeId) -> Vec<crate::NodeId> {
-        let children = self.nodes[container].layout_children.borrow();
-        children
-            .iter()
-            .flatten()
-            .copied()
-            .filter(|&id| {
-                let node = &self.nodes[id];
-                !node.is_out_of_flow() && node.primary_styles().is_some_and(|s| is_spanner_style(&s))
-            })
-            .collect()
+    /// pyro: whether a spanner inside `id` spans the columns of the container above it: `id` is an
+    /// in-flow block box that makes no formatting context of its own (a spanner is in the
+    /// container's block formatting context, css-multicol-1 § 6) and that a break may go into.
+    fn carries_spanners(&self, id: crate::NodeId) -> bool {
+        let node = &self.nodes[id];
+        if node.is_out_of_flow() {
+            return false;
+        }
+        node.primary_styles().is_some_and(|style| {
+            use style::values::specified::box_::Contain;
+            let b = style.get_box();
+            // (A box that is the containing block of fixed descendants keeps its content to
+            // itself: a transform, a filter, layout or paint containment; WPT css-multicol
+            // `multicol-span-all-010`, `-017`.)
+            let contained = !b.transform.0.is_empty()
+                || b.slow_clone_perspective() != style::values::computed::Perspective::None
+                || b.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
+                || !style.get_effects().filter.0.is_empty();
+            !contained
+                && style.clone_float() == Float::None
+                && style.clone_display().inside() == DisplayInside::Flow
+                && style.clone_display().outside() == DisplayOutside::Block
+                && fragmentable(node, &style)
+        })
+    }
+
+    /// pyro: whether `id` (of spanner style) is a spanner of `container`: its child, or below it
+    /// through boxes that carry spanners.
+    fn spans_columns_of(&self, container: crate::NodeId, id: crate::NodeId) -> bool {
+        let mut at = self.nodes[id].layout_parent.get();
+        // (Deep trees: a spanner's chain to its container is short, or it is none.)
+        for _ in 0..64 {
+            match at {
+                Some(parent) if parent == container => return true,
+                Some(parent) if self.carries_spanners(parent) => at = self.nodes[parent].layout_parent.get(),
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// The column spanners of `container` in order: its in-flow block children with
+    /// `column-span: all`, and those below its children through boxes that carry spanners
+    /// (`carries_spanners`). With each, the offset of its parent's box from the container's
+    /// (laid-out positions: zero while the strip is not laid out).
+    fn column_spanners_of(&self, container: crate::NodeId) -> Vec<(crate::NodeId, Point<f32>)> {
+        let mut found = Vec::new();
+        self.collect_column_spanners(container, Point::ZERO, 0, &mut found);
+        found
+    }
+
+    fn collect_column_spanners(
+        &self,
+        parent: crate::NodeId,
+        offset: Point<f32>,
+        depth: usize,
+        found: &mut Vec<(crate::NodeId, Point<f32>)>,
+    ) {
+        let children = self.nodes[parent].layout_children.borrow();
+        for id in children.iter().flatten().copied() {
+            let node = &self.nodes[id];
+            if node.is_out_of_flow() {
+                continue;
+            }
+            if node.primary_styles().is_some_and(|s| is_spanner_style(&s)) {
+                found.push((id, offset));
+            } else if self.column_span_styles && depth < 64 && self.carries_spanners(id) {
+                let location = node.unrounded_layout().location;
+                let below = Point { x: offset.x + location.x, y: offset.y + location.y };
+                self.collect_column_spanners(id, below, depth + 1, found);
+            }
+        }
     }
 
     /// Whether `container` has column spanners (see [`Self::column_spanners_of`]).
@@ -910,15 +1122,17 @@ impl BaseDocument {
         !self.column_spanners_of(container).is_empty()
     }
 
-    /// The strip ranges of `container`'s column spanners, their margins included, in order.
-    fn column_spanner_ranges(&self, container: crate::NodeId) -> Vec<(f32, f32)> {
-        let mut ranges: Vec<(f32, f32)> = Vec::new();
-        for id in self.column_spanners_of(container) {
+    /// The strip ranges of `container`'s column spanners, their margins included, in order, and
+    /// how far each spanner's parent is from the container's left edge.
+    fn column_spanner_ranges(&self, container: crate::NodeId) -> Vec<(f32, f32, f32)> {
+        let mut ranges: Vec<(f32, f32, f32)> = Vec::new();
+        for (id, offset) in self.column_spanners_of(container) {
             let layout = self.nodes[id].unrounded_layout();
-            let start = layout.location.y - layout.margin.top.max(0.0);
-            let end = layout.location.y + layout.size.height + layout.margin.bottom.max(0.0);
-            let start = ranges.last().map_or(start, |&(_, previous)| start.max(previous));
-            ranges.push((start, end.max(start)));
+            let y = offset.y + layout.location.y;
+            let start = y - layout.margin.top.max(0.0);
+            let end = y + layout.size.height + layout.margin.bottom.max(0.0);
+            let start = ranges.last().map_or(start, |&(_, previous, _)| start.max(previous));
+            ranges.push((start, end.max(start), offset.x));
         }
         ranges
     }
@@ -953,6 +1167,7 @@ impl BaseDocument {
             end,
             strict: merge(found.strict),
             loose: merge(found.loose),
+            whole_in_empty_columns: false,
             gaps: found.gaps,
             trims: found.trims,
             forced: found.forced,
@@ -1172,7 +1387,16 @@ mod tests {
     use super::*;
 
     fn breaks(strict: Vec<(f32, f32)>, loose: Vec<(f32, f32)>, end: f32) -> Breaks {
-        Breaks { start: 0.0, end, strict: merge(strict), loose: merge(loose), gaps: Vec::new(), trims: Vec::new(), forced: Vec::new() }
+        Breaks {
+            start: 0.0,
+            end,
+            strict: merge(strict),
+            loose: merge(loose),
+            whole_in_empty_columns: false,
+            gaps: Vec::new(),
+            trims: Vec::new(),
+            forced: Vec::new(),
+        }
     }
 
     #[test]

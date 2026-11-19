@@ -1,7 +1,8 @@
 // The Navigation API (`window.navigation`) for one realm, made on its first
 // use. `native` reaches the frame's session history (nav.rs):
 //   watch(hook): hook('navigate', type, url, hashChange, cancelable,
-//     canIntercept, destinationKey) fires `navigate` for a navigation the
+//     canIntercept, destinationKey, formData, sourceElement) fires
+//     `navigate` for a navigation the
 //     page started some other way (link, location, history, traversal) and
 //     returns 'proceed', 'cancel' or 'intercept'; hook('commit', type) follows
 //     once it committed in this document.
@@ -331,7 +332,7 @@
     }
   };
 
-  const fireNavigate = (type, url, hashChange, cancelable, canIntercept, key, result, info, state) => {
+  const fireNavigate = (type, url, hashChange, cancelable, canIntercept, key, result, info, state, formData, sourceElement) => {
     if (ongoing !== null) fail(ongoing, abortError('The navigation was aborted by a new navigation.'));
     const from = current();
     let destination;
@@ -355,7 +356,7 @@
     const controller = new AbortControllerC();
     const event = new NavigateEvent('navigate', {
       navigationType: type, destination, canIntercept, userInitiated: false, hashChange, signal: controller.signal,
-      info, cancelable,
+      info, cancelable, formData, sourceElement,
     });
     const d = eventData.get(event);
     const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state };
@@ -416,8 +417,8 @@
     );
   };
 
-  native.watch((kind, a, b, c, d, e, f) => {
-    if (kind === 'navigate') return fireNavigate(a, b, c, d, e, f, null, undefined, undefined);
+  native.watch((kind, a, b, c, d, e, f, formData, sourceElement) => {
+    if (kind === 'navigate') return fireNavigate(a, b, c, d, e, f, null, undefined, undefined, formData, sourceElement);
     if (kind === 'commit') onCommit(a);
     return undefined;
   });

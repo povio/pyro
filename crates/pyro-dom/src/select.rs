@@ -870,7 +870,12 @@ impl Dom {
                     && self.is_mutable_text_idx(idx)
                     && self.control_value_idx(idx).is_empty()
             }
-            Focus => self.focused_idx(self.n(idx).owner_doc) == idx,
+            // The focused element, and every shadow host whose shadow tree holds it (at any depth
+            // of nested shadow trees).
+            Focus => {
+                let f = self.focused_idx(self.n(idx).owner_doc);
+                f != NIL && (f == idx || self.shadow_host_of_focused(idx, f))
+            }
             FocusVisible => {
                 let doc = self.n(idx).owner_doc;
                 self.focused_idx(doc) == idx && self.focus_visible_flag(doc)
@@ -885,7 +890,12 @@ impl Dom {
             }
             Defined => !e.name.local.contains('-') || e.flags & crate::node::element_flags::CUSTOM_DEFINED != 0,
             Default => {
-                (e.is_html() && matches!(&*e.name.local, "input") && e.attr_local(&local_name!("checked")).is_some())
+                // A checkbox or radio button checked by default (HTML :default); other input
+                // types ignore `checked`.
+                (e.is_html()
+                    && matches!(&*e.name.local, "input")
+                    && matches!(self.input_type_idx(idx), crate::forms::InputType::Checkbox | crate::forms::InputType::Radio)
+                    && e.attr_local(&local_name!("checked")).is_some())
                     || (e.is_html()
                         && e.name.local == local_name!("option")
                         && e.attr_local(&local_name!("selected")).is_some())
@@ -1113,4 +1123,30 @@ fn simple(sel: &Selectors) -> Option<Simple<'_>> {
         }
         _ => return None,
     })
+}
+
+impl Dom {
+    /// Whether `host` is a shadow host with `focused` in its shadow tree, or in a shadow tree
+    /// nested in it (`:focus` on shadow hosts).
+    fn shadow_host_of_focused(&self, host: u32, focused: u32) -> bool {
+        let mut cur = focused;
+        loop {
+            let p = self.n(cur).parent;
+            if p == NIL {
+                return false;
+            }
+            match &self.n(p).kind {
+                crate::node::NodeKind::Fragment(f) if f.shadow.is_some() => {
+                    if f.host == host {
+                        return true;
+                    }
+                    if f.host == NIL {
+                        return false;
+                    }
+                    cur = f.host;
+                }
+                _ => cur = p,
+            }
+        }
+    }
 }

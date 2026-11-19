@@ -126,3 +126,119 @@ fn columns_after_a_spanner_fit_what_is_left_of_a_definite_height() {
     assert_eq!(rg_at(body, 90, 80), (255, 0), "a fourth column takes the rest");
     assert_eq!(rg_at(body, 10, 105), (255, 255), "nothing below the container");
 }
+
+/// `column-height: 0`: a column holds a box of size containment whole (it is monolithic and
+/// overflows the column), so each of the ten 20px boxes has a column, two per row, the rows 0px
+/// tall and a 20px row gap apart. The boxes were cut at each column's end (css-multicol
+/// `column-height-023`).
+#[test]
+fn a_size_contained_box_is_not_cut_at_the_end_of_a_column_it_is_taller_than() {
+    let items: String = (0..10).map(|i| format!("<div id=i{i} style='contain:size;height:20px'></div>")).collect();
+    let ids: Vec<String> = (0..10).map(|i| format!("i{i}")).collect();
+    let mut wanted: Vec<&str> = vec!["c"];
+    wanted.extend(ids.iter().map(String::as_str));
+    let b = boxes(
+        &format!("<!doctype html><style>body{{margin:0}}</style><div id=c style='columns:2 / 0;width:100px;gap:20px 0;column-fill:auto'>{items}</div>"),
+        &wanted,
+    );
+    // Five rows of height 0 and four gaps.
+    assert_eq!(b[0], [0.0, 0.0, 100.0, 80.0]);
+    for (i, item) in b[1..].iter().enumerate() {
+        let (x, y) = ((i % 2) as f64 * 50.0, (i / 2) as f64 * 20.0);
+        assert_eq!(*item, [x, y, x + 50.0, y + 20.0], "box {i}");
+    }
+}
+
+/// Rows of an explicit `column-height` are a grid of slots that spanners take part in (Chromium's
+/// layout, measured on Chrome 158; css-multicol `column-height-017`..`-020`). With 20px columns
+/// and a 10px row gap: 50px of content fills row 0 and is balanced in row 1 (30..35), the 10px
+/// spanner follows at once (35..45), the content after it goes on in what is left of that row
+/// (45..50), then in the rows at 60 and 90. A spanner that does not fit in the rest of its row
+/// starts the next row and may reach into the gap after it.
+#[test]
+fn spanners_share_the_rows_of_an_explicit_column_height() {
+    let green = (0, 128);
+    let red = (255, 0);
+    let body = "<div style='width:100px;height:100px;background:#f00'>\
+                <div style='columns:2;column-height:20px;column-wrap:wrap;gap:10px 0'>\
+                <div style='height:50px;background:green'></div>\
+                <div style='column-span:all;height:10px;background:green'></div>\
+                <div style='height:70px;background:green'></div></div></div>";
+    for (y, want, what) in [
+        (10, green, "row 0"),
+        (25, red, "the gap after row 0"),
+        (32, green, "the balanced rest of the content before the spanner"),
+        (40, green, "the spanner, right after it"),
+        (47, green, "the content after the spanner, in what is left of the row"),
+        (55, red, "the gap after row 1"),
+        (70, green, "row 2"),
+        (85, red, "the gap after row 2"),
+        (95, green, "row 3"),
+    ] {
+        assert_eq!(rg_at(body, 25, y), want, "{what} (y {y}, left column)");
+        assert_eq!(rg_at(body, 75, y), want, "{what} (y {y}, right column)");
+    }
+    // A 25px spanner after 20px of content (balanced: 10px a column) does not fit in the 10px left
+    // of row 0: it starts row 1 (30..55), reaching into the gap, and the content after it row 2.
+    let body = "<div style='width:100px;height:100px;background:#f00'>\
+                <div style='columns:2;column-height:20px;column-wrap:wrap;gap:10px 0'>\
+                <div style='height:20px;background:green'></div>\
+                <div style='column-span:all;height:25px;background:green'></div>\
+                <div style='height:60px;background:green'></div></div></div>";
+    for (y, want, what) in [(5, green, "the balanced content"), (15, red, "the rest of row 0"), (25, red, "the gap"), (40, green, "the spanner"), (53, green, "the spanner in the gap"), (57, red, "the rest of the gap"), (70, green, "row 2")] {
+        assert_eq!(rg_at(body, 25, y), want, "{what} (y {y})");
+    }
+}
+
+/// A `column-span: all` box below a child of the container spans the columns too, as long as the
+/// boxes between them are plain in-flow blocks (css-multicol-1 § 6: it is in the container's
+/// formatting context). It was laid out inside a column. A wrapper that keeps its content to
+/// itself (a transform here) has no spanner in it.
+#[test]
+fn a_spanner_below_a_child_of_the_container_spans_its_columns() {
+    let (green, blue, white) = ((0, 128), (0, 0), (255, 255));
+    let content = "<div style='height:40px;background:green'></div>\
+                   <h3 style='column-span:all;height:10px;margin:0;background:#00f'></h3>\
+                   <div style='height:40px;background:green'></div>";
+    let body = format!("<div style='columns:2;width:100px;gap:0'><div>{content}</div></div>");
+    // Two 20px columns, the spanner's row at 20..30, two more 20px columns.
+    for (x, y, want, what) in [
+        (25, 10, green, "the first column above the spanner"),
+        (75, 10, green, "the second column above the spanner"),
+        (25, 25, blue, "the spanner"),
+        (75, 25, blue, "the spanner over the second column"),
+        (25, 40, green, "the first column below the spanner"),
+        (75, 40, green, "the second column below the spanner"),
+        (75, 55, white, "below the container"),
+    ] {
+        assert_eq!(rg_at(&body, x, y), want, "{what} at ({x}, {y})");
+    }
+    // In a transformed wrapper the box is no spanner: 90px of content in two 45px columns, the
+    // blue box at 40..45 of the first only.
+    let body = format!("<div style='columns:2;width:100px;gap:0'><div style='transform:scale(1)'>{content}</div></div>");
+    assert_eq!(rg_at(&body, 25, 42), blue, "the box in the first column");
+    assert_eq!(rg_at(&body, 75, 42), green, "the second column beside it");
+}
+
+/// Size containment sizes a box "as if it had no contents", which still counts what the container
+/// itself lays out: a grid's fixed tracks and gaps, a multi-column container's columns and gaps
+/// (css-contain `contain-size-grid-002`, `contain-size-multicol-001`). Both were 0 wide.
+#[test]
+fn a_size_contained_grid_or_multicol_container_keeps_its_tracks_and_columns() {
+    let b = boxes(
+        "<!doctype html><style>body{margin:0} div{position:absolute;contain:size}</style>\
+         <div id=g style='display:grid;gap:20px;grid-template-columns:auto 80px;grid-template-rows:40px 40px;font-size:80px'>x</div>\
+         <div id=m style='top:200px;columns:2 40px;column-gap:20px;min-height:100px'>filler filler filler filler</div>\
+         <div id=i style='top:400px;display:grid;grid-template-columns:80px;contain-intrinsic-size:30px 10px'>x</div>\
+         <div id=p style='top:500px'>plain</div>",
+        &["g", "m", "i", "p"],
+    );
+    // 0 + 20 + 80 by 40 + 20 + 40.
+    assert_eq!(b[0], [0.0, 0.0, 100.0, 100.0]);
+    // 40 + 20 + 40 wide; its `min-height`.
+    assert_eq!(b[1], [0.0, 200.0, 100.0, 300.0]);
+    // `contain-intrinsic-size` replaces it.
+    assert_eq!(b[2], [0.0, 400.0, 30.0, 410.0]);
+    // Any other box is empty.
+    assert_eq!(b[3], [0.0, 500.0, 0.0, 500.0]);
+}

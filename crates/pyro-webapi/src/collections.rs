@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pyro_dom::{attr_name_hash, CollectionWatch, Dom, NodeId};
@@ -1655,15 +1655,21 @@ pub struct SvgLengthAttr {
     pub slot: u64,
 }
 
-/// SVGLength unit types, in the order of their constants (0 is unknown, 1 a plain number).
-const LENGTH_UNITS: [&str; 11] = ["", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc"];
+/// SVGLength unit types, in the order of their constants (0 is unknown, 1 a plain number), then
+/// the CSS units without a constant, whose `unitType` is `SVG_LENGTHTYPE_UNKNOWN` (SVG 2: any CSS
+/// `<length>` is a length; Chromium and Firefox convert them too).
+const LENGTH_UNITS: [&str; 17] =
+    ["", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc", "rem", "vw", "vh", "vmin", "vmax", "q"];
+/// The unit types a script can name (`SVG_LENGTHTYPE_*`).
+const NAMED_LENGTH_UNITS: usize = 11;
 
 /// Parses an SVG `<length>`: a number and an optional unit, matched ASCII case-insensitively
 /// (`None` when it is not one).
 fn parse_svg_length(text: &str) -> Option<(f64, u16)> {
     let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
     for (kind, unit) in LENGTH_UNITS.iter().enumerate().skip(2) {
-        let n = text.len().checked_sub(unit.len())?;
+        // (A value shorter than the unit, "3" against "em", is still a number.)
+        let Some(n) = text.len().checked_sub(unit.len()) else { continue };
         if text.is_char_boundary(n) && text[n..].eq_ignore_ascii_case(unit) {
             if let Some(v) = svg_number(&text[..n]) {
                 return Some((v, kind as u16));
@@ -1682,10 +1688,17 @@ pub struct SvgLengthData {
     el: NodeHold,
     a: &'static SvgLengthAttr,
     anim: bool,
+    /// The value and unit of a length that reflects no attribute (`SVGSVGElement.createSVGLength()`):
+    /// it has no element, so its font-relative units use the initial font size and a percentage is
+    /// its number of user units (SVG 2, as Chromium).
+    detached: Option<Cell<(f64, u16)>>,
 }
 
 impl SvgLengthData {
     fn get(&self) -> (f64, u16) {
+        if let Some(own) = &self.detached {
+            return own.get();
+        }
         let dom = self.el.page.dom.borrow();
         dom.get_attribute(self.el.id, self.a.attr)
             .ok()
@@ -1701,12 +1714,19 @@ impl SvgLengthData {
         Ok(())
     }
     fn write(&self, value: f64, kind: u16) -> JsResult<()> {
+        if let Some(own) = &self.detached {
+            own.set((value, kind));
+            return Ok(());
+        }
         self.el.page.dom.borrow_mut().set_attribute(self.el.id, self.a.attr, &length_to_string(value, kind)).js()
     }
     /// User units per unit of `kind` for this element (0 when a percentage has no viewport).
     fn factor(&self, kind: u16) -> f64 {
         match kind {
             1 | 5 => 1.0,
+            2 if self.detached.is_some() => 1.0,
+            3 if self.detached.is_some() => 16.0,
+            4 if self.detached.is_some() => 8.0,
             2 => self.viewport_percent(),
             3 | 4 => {
                 let page = &self.el.page;
@@ -1719,6 +1739,25 @@ impl SvgLengthData {
             8 => 96.0,
             9 => 4.0 / 3.0,
             10 => 16.0,
+            11 if self.detached.is_some() => 16.0,
+            11 => {
+                let page = &self.el.page;
+                let dom = page.dom.borrow();
+                let root = dom.document_element(page.document()).ok().flatten();
+                page.layout().style().computed_font_size(&dom, root)
+            }
+            12..=15 => {
+                let layout = self.el.page.layout();
+                let viewport = layout.viewport();
+                let (w, h) = (viewport.width as f64, viewport.height as f64);
+                match kind {
+                    12 => w / 100.0,
+                    13 => h / 100.0,
+                    14 => w.min(h) / 100.0,
+                    _ => w.max(h) / 100.0,
+                }
+            }
+            16 => 96.0 / 2.54 / 40.0,
             _ => 1.0,
         }
     }
@@ -1763,7 +1802,7 @@ impl SvgLengthData {
 
 fn length_kind(v: Value<'_>) -> JsResult<u16> {
     let kind = (to_u32(v)? & 0xffff) as u16;
-    if kind == 0 || kind as usize >= LENGTH_UNITS.len() {
+    if kind == 0 || kind as usize >= NAMED_LENGTH_UNITS {
         return Err(JsError::dom("NotSupportedError", "The unit type provided is invalid."));
     }
     Ok(kind)
@@ -1795,7 +1834,10 @@ impl JsClass for SvgLength {
         {
             def.constant(name, i as f64);
         }
-        def.getter("unitType", |s, t| Ok(s.number(t.get().1 as f64)));
+        def.getter("unitType", |s, t| {
+            let kind = t.get().1 as usize;
+            Ok(s.number(if kind < NAMED_LENGTH_UNITS { kind as f64 } else { 0.0 }))
+        });
         def.accessor(
             "value",
             |s, t| {
@@ -1840,8 +1882,10 @@ impl JsClass for SvgLength {
         def.method("newValueSpecifiedUnits", 2, |s, t, a| {
             t.writable()?;
             a.require(2, "SVGLength.newValueSpecifiedUnits")?;
-            let k = length_kind(a.get(0))?;
+            // (Both arguments convert before the unit is checked: Web IDL.)
+            to_u32(a.get(0))?;
             let n = finite_float(a.get(1), "SVGLength")?;
+            let k = length_kind(a.get(0))?;
             t.write(n, k)?;
             Ok(s.undefined())
         });
@@ -1871,7 +1915,21 @@ fn svg_length<'s>(s: &Scope<'s>, el: &NodeHold, a: &'static SvgLengthAttr, anim:
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o);
     }
-    s.wrap::<SvgLength>(SvgLengthData { el: NodeHold::new(&el.page, el.id)?, a, anim }, Some(key))
+    s.wrap::<SvgLength>(SvgLengthData { el: NodeHold::new(&el.page, el.id)?, a, anim, detached: None }, Some(key))
+}
+
+static DETACHED_LENGTH: SvgLengthAttr = SvgLengthAttr { attr: "", initial: "0", dir: SvgLengthDir::Other, slot: 0 };
+
+/// `SVGSVGElement.createSVGLength()`: a new length of 0 user units that reflects no attribute.
+pub fn create_svg_length<'s>(s: &Scope<'s>, svg: NodeId) -> JsResult<Object<'s>> {
+    let page = page_rc(s)?;
+    let data = SvgLengthData {
+        el: NodeHold::new(&page, svg)?,
+        a: &DETACHED_LENGTH,
+        anim: false,
+        detached: Some(Cell::new((0.0, 1))),
+    };
+    s.wrap::<SvgLength>(data, None)
 }
 
 /// `SVGAnimatedLength`: `baseVal` reflects the attribute, `animVal` reads it.

@@ -72,6 +72,8 @@ pub struct DocumentMutator<'doc> {
     // Tracked nodes for deferred processing when mutations have completed
     title_node: Option<NodeId>,
     style_nodes: HashSet<NodeId>,
+    /// pyro: `<link>` elements whose `media` changed (`BaseDocument::refresh_link_media` at flush).
+    link_media_nodes: HashSet<NodeId>,
     form_nodes: HashSet<NodeId>,
 
     /// Whether an element/attribute that affect animation status has been seen
@@ -106,6 +108,7 @@ impl DocumentMutator<'_> {
             eager_op_queue: Vec::new(),
             title_node: None,
             style_nodes: HashSet::new(),
+            link_media_nodes: HashSet::new(),
             form_nodes: HashSet::new(),
             recompute_is_animating: false,
             mutations_occurred: false,
@@ -415,6 +418,13 @@ impl DocumentMutator<'_> {
         {
             self.style_nodes.insert(node_id);
         }
+        // pyro: a `<link>`'s `media` is its sheet's media list too (`refresh_link_media`).
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("link"))
+        {
+            self.link_media_nodes.insert(node_id);
+        }
 
         if name.local == local_name!("id") && node_is_in_document {
             if let Some(old_id) = self.doc.nodes[node_id]
@@ -511,7 +521,8 @@ impl DocumentMutator<'_> {
             return;
         }
 
-        if *attr == local_name!("disabled") && element.can_be_disabled() {
+        // pyro: an element with pyro-dom's state tokens gets `:enabled`/`:disabled` from them.
+        if *attr == local_name!("disabled") && element.can_be_disabled() && !element.has_pyro_state() {
             node.disable();
             return;
         }
@@ -613,6 +624,13 @@ impl DocumentMutator<'_> {
         {
             self.style_nodes.insert(node_id);
         }
+        // pyro: a `<link>`'s `media` is its sheet's media list too (`refresh_link_media`).
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("link"))
+        {
+            self.link_media_nodes.insert(node_id);
+        }
 
         if name.local == local_name!("id") && node_is_in_document {
             if let Some(old_id) = self.doc.nodes[node_id]
@@ -699,7 +717,7 @@ impl DocumentMutator<'_> {
         let tag = &element.name.local;
         let attr = &name.local;
 
-        if *attr == local_name!("disabled") && element.can_be_disabled() {
+        if *attr == local_name!("disabled") && element.can_be_disabled() && !element.has_pyro_state() {
             node.enable();
             return;
         }
@@ -711,7 +729,8 @@ impl DocumentMutator<'_> {
             element.set_checkbox_input_checked(false);
         } else if (tag, attr) == tag_and_attr!("canvas", "src") {
             self.recompute_is_animating = true;
-        } else if (tag, attr) == tag_and_attr!("link", "href") {
+        } else if (tag, attr) == tag_and_attr!("link", "href") || (tag, attr) == tag_and_attr!("link", "rel") {
+            // pyro: without its `rel` too (as a `rel` without `stylesheet`: `load_linked_stylesheet`).
             self.unload_stylesheet(node_id);
         } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
             // Fall back to loading from the `src` attribute (if any)
@@ -1533,6 +1552,9 @@ impl<'doc> DocumentMutator<'doc> {
         for id in self.style_nodes.drain() {
             self.doc.process_style_element(id);
         }
+        for id in self.link_media_nodes.drain() {
+            self.doc.refresh_link_media(id);
+        }
 
         for id in self.form_nodes.drain() {
             self.doc.reset_form_owner(id);
@@ -1789,13 +1811,18 @@ impl<'doc> DocumentMutator<'doc> {
         let rel_attr = node.attr(local_name!("rel"));
         let href_attr = node.attr(local_name!("href"));
 
+        // pyro: a link that is no stylesheet link any more (its `rel` lost the `stylesheet` token,
+        // or it has no `href`) stops styling: its sheet goes (HTML: the link no longer creates an
+        // external resource link; WPT html/semantics/document-metadata `link-rel-attribute`).
         let (Some(rels), Some(href)) = (rel_attr, href_attr) else {
+            self.unload_stylesheet(target_id);
             return;
         };
         if !rels
             .split_ascii_whitespace()
             .any(|rel| rel.eq_ignore_ascii_case("stylesheet"))
         {
+            self.unload_stylesheet(target_id);
             return;
         }
 

@@ -101,6 +101,104 @@ impl ColorFunction<SpecifiedColor> {
         self.origin_color().is_some()
     }
 
+    /// pyro: whether a component of the function is a `calc()`.
+    pub fn has_calc_component(&self) -> bool {
+        fn calc<T>(component: &ColorComponent<T>) -> bool {
+            matches!(component, ColorComponent::Calc(..))
+        }
+        match self {
+            Self::Rgb(_, c0, c1, c2, alpha) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Hsl(_, c0, c1, c2, alpha) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Hwb(_, c0, c1, c2, alpha) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Lab(_, c0, c1, c2, alpha) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Lch(_, c0, c1, c2, alpha) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Oklab(_, c0, c1, c2, alpha) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Oklch(_, c0, c1, c2, alpha) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Color(_, c0, c1, c2, alpha, _) => calc(c0) || calc(c1) || calc(c2) || calc(alpha),
+            Self::Alpha(_, alpha) => calc(alpha),
+        }
+    }
+
+    /// pyro: the specified value of a function without an origin color that keeps its function
+    /// form (one with a `calc()` component: css-color-4 § 15, as Chromium serializes it; WPT
+    /// css-color `parsing/color-valid-*`): each component that is no `calc()` becomes the number
+    /// the function resolves it to (a percentage against its reference range, an angle in
+    /// degrees, clamped as the function clamps it), so `lab(200 calc(50%) 50%)` is
+    /// `lab(100 calc(50%) 62.5)`. The `calc()` components stay as they are.
+    pub fn normalize_plain_components(&mut self) {
+        fn number(
+            component: &mut ColorComponent<NumberOrPercentageComponent>,
+            basis: f32,
+            clamp: Option<(f32, f32)>,
+        ) {
+            if let ColorComponent::Value(value) = component {
+                let mut n = value.to_number(basis);
+                if let Some((lo, hi)) = clamp {
+                    n = n.clamp(lo, hi);
+                }
+                *component = ColorComponent::Value(NumberOrPercentageComponent::Number(n));
+            }
+        }
+        fn hue(component: &mut ColorComponent<NumberOrAngleComponent>) {
+            if let ColorComponent::Value(value) = component {
+                *component = ColorComponent::Value(NumberOrAngleComponent::Number(normalize_hue(value.degrees())));
+            }
+        }
+        let unbounded = Some((0.0, f32::INFINITY));
+        match self {
+            Self::Rgb(_, r, g, b, alpha) => {
+                for c in [r, g, b] {
+                    number(c, 255.0, Some((0.0, 255.0)));
+                }
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Hsl(_, h, s, l, alpha) => {
+                hue(h);
+                // (As Chromium: a negative saturation is 0; nothing else is clamped here.)
+                number(s, 100.0, unbounded);
+                number(l, 100.0, None);
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Hwb(_, h, w, b, alpha) => {
+                hue(h);
+                number(w, 100.0, None);
+                number(b, 100.0, None);
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Lab(_, l, a, b, alpha) => {
+                number(l, 100.0, Some((0.0, 100.0)));
+                number(a, 125.0, None);
+                number(b, 125.0, None);
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Lch(_, l, c, h, alpha) => {
+                number(l, 100.0, Some((0.0, 100.0)));
+                number(c, 150.0, unbounded);
+                hue(h);
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Oklab(_, l, a, b, alpha) => {
+                number(l, 1.0, Some((0.0, 1.0)));
+                number(a, 0.4, None);
+                number(b, 0.4, None);
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Oklch(_, l, c, h, alpha) => {
+                number(l, 1.0, Some((0.0, 1.0)));
+                number(c, 0.4, unbounded);
+                hue(h);
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Color(_, c0, c1, c2, alpha, _) => {
+                for c in [c0, c1, c2] {
+                    number(c, 1.0, None);
+                }
+                number(alpha, 1.0, Some((0.0, 1.0)));
+            },
+            Self::Alpha(..) => {},
+        }
+    }
+
     /// Try to compute the color function to a computed color.
     ///
     /// If the origin color (if any) is absolute, the function is resolved to an

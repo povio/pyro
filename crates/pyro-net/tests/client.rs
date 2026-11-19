@@ -140,6 +140,12 @@ fn start_server() -> Server {
                             &[("Location", "/headers".into()), ("Referrer-Policy", "unknown, no-referrer".into())],
                             b"",
                         ),
+                        (_, "/back-redirect") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://127.0.0.1:{port}/headers"))],
+                            b"",
+                        ),
                         (_, "/cross-redirect") => respond(
                             &mut stream,
                             "302 Found",
@@ -1032,6 +1038,22 @@ fn referrer_policy_and_fetch_metadata() {
     let lines = header_lines(&c, cross);
     assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/", s.port)), "{lines:?}");
     assert!(has(&lines, "sec-fetch-site: cross-site"), "{lines:?}");
+
+    // A cross-origin hop that redirects back to the referrer's origin: the
+    // last hop starts from what the cross-origin one was sent (Fetch sets
+    // the request's referrer to the computed value), not from the page URL.
+    let back = |policy: ReferrerPolicy| {
+        let mut req = fetch("/headers", policy);
+        req.url = Url::parse(&format!("http://localhost:{}/back-redirect", s.port)).unwrap();
+        req.mode = RequestMode::NoCors;
+        header_lines(&c, req)
+    };
+    let lines = back(ReferrerPolicy::OriginWhenCrossOrigin);
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/", s.port)), "{lines:?}");
+    let lines = back(ReferrerPolicy::SameOrigin);
+    assert!(!lines.iter().any(|l| l.starts_with("referer")), "{lines:?}");
+    let lines = back(ReferrerPolicy::UnsafeUrl);
+    assert!(has(&lines, &format!("referer: http://127.0.0.1:{}/page?q=1", s.port)), "{lines:?}");
 
     // A browser-initiated navigation: none, navigate, document, ?1.
     let lines = header_lines(&c, Request::get(url(&s, "/headers"), Destination::Document));

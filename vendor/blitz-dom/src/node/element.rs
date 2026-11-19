@@ -651,6 +651,12 @@ impl ElementData {
         self.attrs.iter().any(|attr| name == attr.name.local)
     }
 
+    /// pyro: whether pyro-dom's render tree gave the element its [`crate::PYRO_STATE_NS`] `state`
+    /// tokens (which then carry `:enabled`/`:disabled`).
+    pub(crate) fn has_pyro_state(&self) -> bool {
+        self.attrs.iter().any(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
+    }
+
     pub fn can_be_disabled(&self) -> bool {
         local_names!("button", "input", "select", "textarea").contains(&self.name.local)
     }
@@ -823,6 +829,12 @@ impl ElementData {
             .map(|a| a.value.as_str());
         let bits = crate::has_invalidation::pyro_state_bits(lp);
         self.element_state.remove(crate::has_invalidation::PYRO_STATES);
+        // pyro: `:enabled`/`:disabled` come from the tokens when they say either (pyro-dom knows
+        // options, optgroups, fieldsets and what a disabled fieldset disables); otherwise Blitz's
+        // own `disabled` attribute handling stands.
+        if bits.intersects(ElementState::ENABLED | ElementState::DISABLED) {
+            self.element_state.remove(ElementState::ENABLED | ElementState::DISABLED);
+        }
         self.element_state.insert(bits);
         if self.name.local == local_name!("option") {
             let selected = self.has_attr(local_name!("selected"));

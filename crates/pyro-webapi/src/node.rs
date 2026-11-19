@@ -916,7 +916,192 @@ impl JsClass for ProcessingInstruction {
     type Parent = CharacterData;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("target", |s, n| Ok(s.string(&n.page().dom.borrow().node_name(n.id).js()?)));
+        // `new ProcessingInstruction(target, data = "")` (DOM): as `createProcessingInstruction`
+        // on the current document.
+        def.constructor(1, |s, nt, a| {
+            a.require(1, "ProcessingInstruction")?;
+            let page = page_of(s)?;
+            let target = dom_string(a.get(0))?;
+            let data = if a.get(1).is_undefined() { String::new() } else { dom_string(a.get(1))? };
+            let id = page.dom.borrow_mut().create_processing_instruction(page.document(), &target, &data).js()?;
+            wrap_new_node::<ProcessingInstruction>(s, &page, id, nt)
+        });
+        // Processing instruction attributes (WICG declarative partial updates, as Chromium): the
+        // data read as quoted `name="value"` pairs; writes rewrite the data in place, so they are
+        // characterData mutations.
+        def.pure_method("hasAttributes", 0, |s, n, _a| Ok(s.boolean(!pi_attributes(n)?.is_empty())));
+        def.pure_method("getAttributeNames", 0, |s, n, _a| {
+            let names: Vec<String> = pi_attributes(n)?.into_iter().map(|(k, _)| k).collect();
+            let items: Vec<Value<'_>> = names.iter().map(|k| s.string(k)).collect();
+            Ok(s.array(&items)?.value())
+        });
+        def.pure_method("getAttribute", 1, |s, n, a| {
+            a.require(1, "ProcessingInstruction.getAttribute")?;
+            let name = dom_string(a.get(0))?;
+            Ok(pi_attributes(n)?.into_iter().find(|(k, _)| *k == name).map_or_else(|| s.null(), |(_, v)| s.string(&v)))
+        });
+        def.pure_method("hasAttribute", 1, |s, n, a| {
+            a.require(1, "ProcessingInstruction.hasAttribute")?;
+            let name = dom_string(a.get(0))?;
+            Ok(s.boolean(pi_attributes(n)?.iter().any(|(k, _)| *k == name)))
+        });
+        def.method("setAttribute", 2, |s, n, a| {
+            a.require(2, "ProcessingInstruction.setAttribute")?;
+            let name = pi_attribute_name(a.get(0))?;
+            let value = dom_string(a.get(1))?;
+            let mut attrs = pi_attributes(n)?;
+            match attrs.iter_mut().find(|(k, _)| *k == name) {
+                Some(slot) => slot.1 = value,
+                None => attrs.push((name, value)),
+            }
+            pi_write(n, &attrs)?;
+            Ok(s.undefined())
+        });
+        def.method("removeAttribute", 1, |s, n, a| {
+            a.require(1, "ProcessingInstruction.removeAttribute")?;
+            let name = dom_string(a.get(0))?;
+            let mut attrs = pi_attributes(n)?;
+            let before = attrs.len();
+            attrs.retain(|(k, _)| *k != name);
+            if attrs.len() != before {
+                pi_write(n, &attrs)?;
+            }
+            Ok(s.undefined())
+        });
+        def.method("toggleAttribute", 1, |s, n, a| {
+            a.require(1, "ProcessingInstruction.toggleAttribute")?;
+            let name = pi_attribute_name(a.get(0))?;
+            let force = (!a.get(1).is_undefined()).then(|| a.get(1).to_bool());
+            let mut attrs = pi_attributes(n)?;
+            let present = attrs.iter().any(|(k, _)| *k == name);
+            let result = match (present, force) {
+                (true, Some(true)) | (false, Some(false)) => present,
+                (true, _) => {
+                    attrs.retain(|(k, _)| *k != name);
+                    pi_write(n, &attrs)?;
+                    false
+                }
+                (false, _) => {
+                    attrs.push((name, String::new()));
+                    pi_write(n, &attrs)?;
+                    true
+                }
+            };
+            Ok(s.boolean(result))
+        });
     }
+}
+
+/// A processing instruction's attributes: its data as whitespace-separated `name="value"` (or
+/// single-quoted) pairs, character references decoded; anything else (an unquoted value) is no
+/// attributes at all. A repeated name keeps its first value.
+fn pi_attributes(n: &NodeData) -> JsResult<Vec<(String, String)>> {
+    let data = n.page().dom.borrow().char_data(n.id).js()?.to_owned();
+    Ok(parse_pi_attributes(&data).unwrap_or_default())
+}
+
+fn parse_pi_attributes(data: &str) -> Option<Vec<(String, String)>> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut rest = data.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    while !rest.is_empty() {
+        let end = rest.find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '>' | '/'))?;
+        let (name, tail) = rest.split_at(end);
+        if name.is_empty() {
+            return None;
+        }
+        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace()).strip_prefix('=')?;
+        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace());
+        let quote = tail.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+        let close = tail[1..].find(quote)? + 1;
+        let value = decode_char_refs(&tail[1..close]);
+        if !out.iter().any(|(k, _)| k == name) {
+            out.push((name.to_owned(), value));
+        }
+        rest = &tail[close + 1..];
+        if !rest.is_empty() && !rest.starts_with(|c: char| c.is_ascii_whitespace()) {
+            return None;
+        }
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    }
+    Some(out)
+}
+
+/// Decodes the character references an attribute serialization writes (`&amp;`, `&quot;`,
+/// `&lt;`, `&gt;`, `&nbsp;`, `&apos;`, numeric ones); others stay as written.
+fn decode_char_refs(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(semi) = rest.find(';').filter(|&j| j <= 10) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "quot" => Some('"'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "nbsp" => Some('\u{a0}'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .map(|h| u32::from_str_radix(h, 16))
+                .or_else(|| entity.strip_prefix('#').map(|d| d.parse::<u32>()))
+                .and_then(|r| r.ok())
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A name `setAttribute`/`toggleAttribute` accept (DOM "valid attribute local name"): not empty,
+/// no ASCII whitespace, NULL, `/`, `>` or `=`.
+fn pi_attribute_name(v: Value<'_>) -> JsResult<String> {
+    let name = dom_string(v)?;
+    if name.is_empty() || name.contains(|c: char| c.is_ascii_whitespace() || matches!(c, '\0' | '/' | '>' | '=')) {
+        return Err(JsError::dom("InvalidCharacterError", "The attribute name is not valid."));
+    }
+    Ok(name)
+}
+
+/// Rewrites the data from `attrs`, serialized as an element's attributes are.
+fn pi_write(n: &NodeData, attrs: &[(String, String)]) -> JsResult<()> {
+    let mut text = String::new();
+    for (i, (k, v)) in attrs.iter().enumerate() {
+        if i > 0 {
+            text.push(' ');
+        }
+        text.push_str(k);
+        text.push_str("=\"");
+        for c in v.chars() {
+            match c {
+                '&' => text.push_str("&amp;"),
+                '"' => text.push_str("&quot;"),
+                '<' => text.push_str("&lt;"),
+                '>' => text.push_str("&gt;"),
+                '\u{a0}' => text.push_str("&nbsp;"),
+                c => text.push(c),
+            }
+        }
+        text.push('"');
+    }
+    n.page().dom.borrow_mut().set_char_data(n.id, &text).js()
 }
 
 pub struct DocumentType;
@@ -1048,7 +1233,7 @@ impl JsClass for ShadowRoot {
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
         // Fullscreen API: nothing is ever fullscreen.
-        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
+        def.accessor("fullscreenElement", |s, _n| Ok(s.null()), |_s, _n, _v| Ok(()));
         def.getter("host", |s, n| {
             let h = n.page().dom.borrow().fragment_host(n.id).js()?;
             node_value(s, n.page(), h)
@@ -1132,7 +1317,7 @@ impl JsClass for Element {
         // Fullscreen API: pyro never shows an element fullscreen, so a request is denied the way
         // Chromium denies one it may not grant (a TypeError); the handlers exist for pages to set.
         crate::handlers::define_fullscreen(def);
-        def.method("requestFullscreen", 0, |s, _n, _a| {
+        def.promise_method("requestFullscreen", 0, |s, _n, _a| {
             let d = s.deferred()?;
             let promise = d.promise.get(s);
             d.reject(s, JsError::Type("Permissions check failed".into()).to_value(s))?;
@@ -1601,10 +1786,11 @@ impl JsClass for Document {
         crate::handlers::define_fullscreen(def);
         // Fullscreen API: pyro shows nothing fullscreen, so fullscreen is not enabled, no element
         // is fullscreen, and exitFullscreen() rejects as it does with no fullscreen element.
-        def.getter("fullscreenEnabled", |s, _n| Ok(s.boolean(false)));
-        def.getter("fullscreen", |s, _n| Ok(s.boolean(false)));
-        def.getter("fullscreenElement", |s, _n| Ok(s.null()));
-        def.method("exitFullscreen", 0, |s, _n, _a| {
+        // (`[LegacyLenientSetter]`: assigning to them does nothing, and does not throw in strict mode.)
+        def.accessor("fullscreenEnabled", |s, _n| Ok(s.boolean(false)), |_s, _n, _v| Ok(()));
+        def.accessor("fullscreen", |s, _n| Ok(s.boolean(false)), |_s, _n, _v| Ok(()));
+        def.accessor("fullscreenElement", |s, _n| Ok(s.null()), |_s, _n, _v| Ok(()));
+        def.promise_method("exitFullscreen", 0, |s, _n, _a| {
             let d = s.deferred()?;
             let promise = d.promise.get(s);
             d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;

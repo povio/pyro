@@ -7,3 +7,7 @@ workspace's dependency versions written in. Drop it (and its `[patch.crates-io]`
 carries these commits.
 - `html_sink.rs` (`HtmlProvider::parse_svg_document`): parses an SVG image's source as XML (blitz-dom
   `svg_image_documents`).
+
+- Round 5, `src/html_sink.rs` (`create_comment`): the data of a comment that started with `<?` carries the mark of the
+  vendored html5ever (`pi::MARK`, vendor/html5ever/README.pyro.md); it is stripped. The render document keeps such
+  markup as a comment.

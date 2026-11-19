@@ -5,7 +5,8 @@
 /// (width, height) in image pixels, or `None` when the bytes are not a
 /// supported image or the header is truncated or invalid.
 pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
-    let dims = png(bytes).or_else(|| gif(bytes)).or_else(|| jpeg(bytes)).or_else(|| webp(bytes))?;
+    let dims =
+        png(bytes).or_else(|| gif(bytes)).or_else(|| jpeg(bytes)).or_else(|| webp(bytes)).or_else(|| bmp(bytes))?;
     // An EXIF orientation that turns the image a quarter (5 to 8) shows it with its sides
     // exchanged (`image-orientation: from-image`, the initial value).
     let dims = if matches!(exif_orientation(bytes), Some(5..=8)) { (dims.1, dims.0) } else { dims };
@@ -105,6 +106,21 @@ fn gif(b: &[u8]) -> Option<(u32, u32)> {
     Some((le16(b, 6)?, le16(b, 8)?))
 }
 
+/// A Windows bitmap (`BM`, then a BITMAPINFOHEADER or later: width and
+/// height as signed 32-bit values at 18 and 22, a negative height for rows
+/// stored top down; the 12-byte BITMAPCOREHEADER has 16-bit ones).
+fn bmp(b: &[u8]) -> Option<(u32, u32)> {
+    if !b.starts_with(b"BM") {
+        return None;
+    }
+    let le32 = |at: usize| Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?));
+    if le32(14)? == 12 {
+        return Some((le16(b, 18)?, le16(b, 20)?));
+    }
+    let (w, h) = (le32(18)? as i32, le32(22)? as i32);
+    (w > 0 && h != 0 && h != i32::MIN).then(|| (w as u32, h.unsigned_abs()))
+}
+
 fn jpeg(b: &[u8]) -> Option<(u32, u32)> {
     if !b.starts_with(&[0xff, 0xd8]) {
         return None;
@@ -193,6 +209,22 @@ mod tests {
         let mut vp8 = b"RIFF\0\0\0\0WEBPVP8 \0\0\0\0\0\0\0\x9d\x01\x2a".to_vec();
         vp8.extend_from_slice(&[0x80, 0x02, 0xe0, 0x01]);
         assert_eq!(dimensions(&vp8), Some((640, 480)));
+    }
+
+    #[test]
+    fn reads_bmp_headers() {
+        let mut bmp = vec![0u8; 54];
+        bmp[..2].copy_from_slice(b"BM");
+        bmp[14] = 40;
+        bmp[18..22].copy_from_slice(&300i32.to_le_bytes());
+        bmp[22..26].copy_from_slice(&2i32.to_le_bytes());
+        assert_eq!(dimensions(&bmp), Some((300, 2)));
+        // Rows stored top down.
+        bmp[22..26].copy_from_slice(&(-7i32).to_le_bytes());
+        assert_eq!(dimensions(&bmp), Some((300, 7)));
+        assert_eq!(dimensions(&bmp[..24]), None);
+        bmp[18..22].copy_from_slice(&0i32.to_le_bytes());
+        assert_eq!(dimensions(&bmp), None);
     }
 
     #[test]

@@ -226,6 +226,9 @@ pub struct PageDom {
     /// Resource Timing: the document's entry buffer (`resource_timing`).
     pub(crate) resource_timings: crate::resource_timing::ResourceTimings,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
+    /// ARIA element reflection (`ariaLabelledByElements`, ...): per element and attribute, the
+    /// elements set explicitly and the frozen array last returned (html.rs `AriaRefs`).
+    pub(crate) aria_refs: RefCell<FxHashMap<(NodeId, &'static str), crate::html::AriaRefs>>,
     pub(crate) focus_transition: RefCell<Option<FocusTransition>>,
     pub(crate) editing_target: Cell<Option<NodeId>>,
     clicking: RefCell<Vec<NodeId>>,
@@ -332,6 +335,23 @@ pub struct PageDom {
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// The CSS-connected font faces of the document as of an author sheets key (`css_font_faces`).
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
+    /// Tasks queued through [`PageDom::post_task`] so far.
+    posted_tasks: Cell<u64>,
+    /// HTML "completely loaded": the document's `load` and `pageshow` have
+    /// been dispatched. Until then a navigation its script starts without a
+    /// user gesture replaces its history entry.
+    completely_loaded: Cell<bool>,
+    /// When trusted input last reached the document (transient activation).
+    input_activation: Cell<Option<std::time::Instant>>,
+    /// HTML "planned navigation" of each form with one: the number of its
+    /// latest submission, whose queued task is the one that navigates.
+    planned_navigations: RefCell<Vec<(NodeId, u64)>>,
+    /// The document's frame's latest navigation ([`PageDom::navigation_started`]).
+    navigation_started: Cell<u64>,
+    planned_navigation_seq: Cell<u64>,
+    /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
+    /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
+    pub(crate) rejection_batch: RefCell<Option<(pyro_js::RealmId, u64, Rc<RefCell<Vec<u64>>>)>>,
     /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
     pub(crate) font_loads: Cell<u32>,
     font_delay_since: Cell<Option<std::time::Instant>>,
@@ -452,6 +472,24 @@ pub struct NavigationRequest {
     pub opener: bool,
     /// `window.open`'s returned object watches this popup.
     pub popup: Option<Rc<crate::popup::PopupTicket>>,
+    /// The request's own referrer policy: a link's `referrerpolicy` state,
+    /// no-referrer for `rel=noreferrer` (`None`: the document's policy).
+    pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The element the navigation comes from (Navigation API
+    /// `NavigateEvent.sourceElement`): the followed link, or the submitted
+    /// form's submitter (the form itself without one). `None` for a
+    /// navigation script started (`window.open`).
+    pub source: Option<NodeId>,
+    /// A POST form submission's entry list (`NavigateEvent.formData`).
+    pub form_entries: Option<crate::formdata::FormEntries>,
+    /// The navigation replaces the document's history entry (HTML history
+    /// handling "replace"): see [`PageDom::navigates_by_replacing`].
+    pub replace: bool,
+}
+
+/// Whether `url` parses as a `javascript:` URL (HTML "navigate to a javascript: URL").
+pub fn is_javascript_url(url: &str) -> bool {
+    pyro_net::Url::parse(url).is_ok_and(|url| url.scheme() == "javascript")
 }
 
 /// How a blocking `alert`/`confirm`/`prompt` was answered.
@@ -593,6 +631,14 @@ pub trait PageHooks {
     fn request_animation_frame(&self) {}
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
+    /// HTML "plan to navigate" (a submitted form): the navigation `navigate`
+    /// would start, from one task queued now in the order of the frame's
+    /// other navigations, and only if `proceed()` says so when that task
+    /// runs (before the `navigate` event). An embedder without such a queue
+    /// returns the request: the page then calls `navigate` from a task.
+    fn navigate_planned(&self, request: NavigationRequest, _proceed: Rc<dyn Fn() -> bool>) -> Option<NavigationRequest> {
+        Some(request)
+    }
     /// The document's `window.open` result asked something of its popup,
     /// after (and in order with) the navigation that requested the popup.
     fn popup_command(&self, _popup: Rc<crate::popup::PopupState>, _command: crate::popup::PopupCommand) {}
@@ -693,6 +739,7 @@ pub trait PageHooks {
 impl PageDom {
     pub fn new(dom: DomRef, document: NodeId) -> Rc<PageDom> {
         dom.borrow_mut().watch_iframes(document).expect("page document");
+        dom.borrow_mut().set_document_scripting(document, true).expect("page document");
         Rc::new_cyclic(|this| PageDom {
             this: this.clone(),
             frame_sized: Cell::new(false),
@@ -781,6 +828,7 @@ impl PageDom {
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
+            aria_refs: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),
             clicking: RefCell::new(Vec::new()),
@@ -829,6 +877,13 @@ impl PageDom {
             imported_sheets: RefCell::new(FxHashMap::default()),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
+            posted_tasks: Cell::new(0),
+            completely_loaded: Cell::new(false),
+            input_activation: Cell::new(None),
+            planned_navigations: RefCell::new(Vec::new()),
+            navigation_started: Cell::new(0),
+            planned_navigation_seq: Cell::new(0),
+            rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
             font_delay_since: Cell::new(None),
             used_font_families: RefCell::new(None),
@@ -1051,6 +1106,7 @@ impl PageDom {
         }
         self.connected_iframes.borrow_mut().clear();
         self.document.set(doc);
+        self.note_document_scripting();
         self.opaque_storage.clear();
         // Object URLs belong to the replaced document.
         drop(self.blob_urls.take());
@@ -1063,6 +1119,14 @@ impl PageDom {
     /// unaffected; parser, dynamic-script and timer checks belong to the embedder.
     pub fn set_scripting_disabled(&self, disabled: bool) {
         self.scripting_disabled.set(disabled);
+        self.note_document_scripting();
+    }
+    /// HTML "scripting is enabled" for the page's document: a page is a
+    /// browsing context, so its document has it unless the sandbox forbids
+    /// scripts. Kept on the document for the fragment parser and serializer
+    /// (`noscript`), next to what the document's parser is told.
+    fn note_document_scripting(&self) {
+        let _ = self.dom.borrow_mut().set_document_scripting(self.document(), !self.scripting_disabled());
     }
     pub fn scripting_disabled(&self) -> bool {
         self.scripting_disabled.get()
@@ -1086,6 +1150,102 @@ impl PageDom {
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
         self.sticky_activation.get()
+    }
+
+    /// HTML "completely finish loading": `load` and `pageshow` are done.
+    pub fn set_completely_loaded(&self) {
+        self.completely_loaded.set(true);
+    }
+    /// A navigation this document starts now replaces its own entry: HTML
+    /// has `location` and form submissions do so while the document is not
+    /// completely loaded and the user has not interacted with it (a script
+    /// that redirects while the page loads leaves no entry to go back to).
+    pub fn navigates_by_replacing(&self) -> bool {
+        !self.completely_loaded.get() && !self.has_transient_activation()
+    }
+    /// HTML "activation notification" for trusted input (a key or pointer
+    /// press): sticky activation, and transient activation for the next
+    /// five seconds (Chrome's duration). A CDP evaluation's `userGesture`
+    /// is sticky only: automation clients poll with it while a page loads.
+    pub(crate) fn notify_input_activation(&self) {
+        self.sticky_activation.set(true);
+        self.input_activation.set(Some(std::time::Instant::now()));
+    }
+    /// HTML "transient activation": trusted input within the last five seconds.
+    pub fn has_transient_activation(&self) -> bool {
+        self.input_activation.get().is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5))
+    }
+
+    /// The number of the latest navigation of the document's own frame that
+    /// was started: HTML's "ongoing navigation" of the navigable, as far as
+    /// navigations that have not begun to load go. Every way to navigate the
+    /// frame takes a new number when it is asked for (`location`, a followed
+    /// link, `window.open` on the frame, a planned form submission, and
+    /// `document.open()`, which stops loading), and the task that then
+    /// navigates does so only while its number is still the latest: of the
+    /// navigations started before any of them began, the last one wins.
+    pub fn navigation_started(&self) -> u64 {
+        self.navigation_started.get()
+    }
+    /// Takes a new [`PageDom::navigation_started`] number: what was started
+    /// before and has not begun is superseded.
+    pub fn note_navigation_started(&self) -> u64 {
+        let n = self.navigation_started.get().wrapping_add(1);
+        self.navigation_started.set(n);
+        n
+    }
+
+    /// HTML "plan to navigate" for a submitted form: a task navigates, and
+    /// a later submission of the same form before it runs takes its place.
+    /// A submission that navigates the document's own frame is that frame's
+    /// latest navigation from now on ([`PageDom::navigation_started`]): it
+    /// supersedes those started before it, and one started before its task
+    /// runs supersedes it.
+    pub(crate) fn plan_form_navigation(self: &Rc<Self>, form: NodeId, request: NavigationRequest) {
+        // Only a submission that asks this frame for another document: see `navigate`.
+        let started = self.starts_document_navigation(&request).then(|| self.note_navigation_started());
+        let seq = self.planned_navigation_seq.get().wrapping_add(1);
+        self.planned_navigation_seq.set(seq);
+        {
+            let mut planned = self.planned_navigations.borrow_mut();
+            planned.retain(|(f, _)| *f != form);
+            planned.push((form, seq));
+        }
+        if self.scripting_disabled() && is_javascript_url(&request.url) {
+            return;
+        }
+        let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
+        let page = Rc::downgrade(self);
+        // Asked when the navigation's task runs: this is still the form's
+        // planned navigation and the frame's latest one.
+        let proceed: Rc<dyn Fn() -> bool> = Rc::new(move || {
+            let Some(page) = page.upgrade() else { return false };
+            let current = {
+                let mut planned = page.planned_navigations.borrow_mut();
+                let current = planned.contains(&(form, seq));
+                planned.retain(|p| *p != (form, seq));
+                current
+            };
+            let proceed = current && !page.is_disposed() && started.is_none_or(|n| n == page.navigation_started());
+            if proceed && own_frame {
+                page.navigation_requests.set(page.navigation_requests.get().wrapping_add(1));
+            }
+            proceed
+        });
+        let Some(hooks) = self.hooks() else { return };
+        // The embedder's navigation queue keeps the submission in the order
+        // of the frame's other navigations and traversals; without one, a
+        // task of the page navigates.
+        if let Some(request) = hooks.navigate_planned(request, proceed.clone()) {
+            let page = Rc::downgrade(self);
+            self.post_task(Box::new(move || {
+                if proceed() {
+                    if let Some(hooks) = page.upgrade().and_then(|page| page.hooks()) {
+                        hooks.navigate(request);
+                    }
+                }
+            }));
+        }
     }
 
     /// Flush after parser/native mutation before entering page script. Native
@@ -1933,7 +2093,12 @@ impl PageDom {
         }
     }
 
+    /// How many tasks [`Self::post_task`] queued: two reads that agree had no task queued between.
+    pub(crate) fn posted_tasks(&self) -> u64 {
+        self.posted_tasks.get()
+    }
     pub(crate) fn post_task(&self, task: Box<dyn FnOnce()>) {
+        self.posted_tasks.set(self.posted_tasks.get().wrapping_add(1));
         match self.hooks() {
             Some(h) => h.post_task(task),
             None => task(),
@@ -1955,6 +2120,7 @@ impl PageDom {
     /// [`PageDom::navigate`].
     pub fn note_navigation_request(&self) {
         self.navigation_requests.set(self.navigation_requests.get().wrapping_add(1));
+        self.note_navigation_started();
     }
     pub(crate) fn navigation_requests(&self) -> u32 {
         self.navigation_requests.get()
@@ -1969,11 +2135,46 @@ impl PageDom {
             None => FrameContainer::Detached,
         }
     }
-    pub(crate) fn navigate(&self, req: NavigationRequest) {
-        if req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
-            self.note_navigation_request();
+    /// Whether `req` asks the document's own frame for another document:
+    /// not a request for another frame or a new window (that navigable's
+    /// business), a `javascript:` URL or a fragment navigation. Only such a
+    /// request takes a [`PageDom::navigation_started`] number.
+    pub fn starts_document_navigation(&self, req: &NavigationRequest) -> bool {
+        if !req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
+            return false;
         }
-        if self.scripting_disabled() && pyro_net::Url::parse(&req.url).is_ok_and(|url| url.scheme() == "javascript") {
+        let Ok(target) = pyro_net::Url::parse(&req.url) else { return true };
+        if target.scheme() == "javascript" {
+            return false;
+        }
+        let fragment = req.method == "GET" && req.body.is_none() && target.fragment().is_some() && {
+            let current = self.dom.try_borrow().ok().and_then(|dom| dom.document_url_parsed(self.document()).ok().flatten().cloned());
+            current.is_some_and(|mut current| {
+                let mut target = target.clone();
+                current.set_fragment(None);
+                target.set_fragment(None);
+                current == target
+            })
+        };
+        !fragment
+    }
+    pub(crate) fn navigate(&self, req: NavigationRequest) {
+        // A `javascript:` URL is no navigation of the frame to another
+        // document: a task runs its script. It takes no number
+        // ([`PageDom::navigation_started`]), so it neither supersedes what
+        // was started before it nor is superseded: several followed in one
+        // task all run, as in Chrome (WPT url/javascript-urls.window.js).
+        // Neither does a fragment navigation (HTML "navigate" returns to
+        // "navigate to a fragment" before it sets the ongoing navigation): a
+        // link to `#` whose click handler submits a form leaves the planned
+        // submission alone.
+        if req.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self")) {
+            self.navigation_requests.set(self.navigation_requests.get().wrapping_add(1));
+        }
+        if self.starts_document_navigation(&req) {
+            self.note_navigation_started();
+        }
+        if self.scripting_disabled() && is_javascript_url(&req.url) {
             return;
         }
         if let Some(h) = self.hooks() {

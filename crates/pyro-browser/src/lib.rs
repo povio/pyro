@@ -83,6 +83,7 @@ fn subresource_request(frame: &Frame, page: PageId, url: String, kind: ResourceK
         kind,
         page,
         referrer: Some(frame.base_url.clone()),
+        referrer_policy: None,
         frame_id: Some(frame.id.0.clone()),
         loader_id: Some(frame.loader_id.0.clone()),
         crossorigin: None,
@@ -150,6 +151,11 @@ pub struct NavigateOpts {
     /// `frameStartedLoading` and before lifecycle events.
     pub cdp_request_id: Option<u64>,
     pub referrer: Option<String>,
+    /// The policy the request is sent with (its initiator's: a link's or
+    /// frame's `referrerpolicy`, `rel=noreferrer`, the document that
+    /// navigates another frame); `None`: the navigated frame's current
+    /// document's.
+    pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
 }
 
 impl NavigateOpts {
@@ -160,6 +166,7 @@ impl NavigateOpts {
             reason: NavigationReason::AddressBar,
             cdp_request_id: None,
             referrer: None,
+            referrer_policy: None,
         }
     }
 }
@@ -485,6 +492,11 @@ pub struct DocumentState {
     /// The loader and URL of `pending_loader` when the frame's scripts
     /// started it, which `document.open()` stops (HTML "stop loading").
     pub(crate) pending_script: Option<(LoaderId, String)>,
+    /// The loader of `pending_loader` when it is a planned form navigation
+    /// of this frame: a history traversal to another document queued before
+    /// it committed does not take its place (Chrome: `f.submit();
+    /// history.back()` submits, as `history.back(); f.submit()` does).
+    pub(crate) pending_planned: Option<LoaderId>,
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
@@ -1294,6 +1306,7 @@ impl Browser {
                 reason: NavigationReason::InitialFrameNavigation,
                 cdp_request_id: None,
                 referrer: None,
+                referrer_policy: None,
             },
         )?;
         Ok(id)
@@ -1317,6 +1330,7 @@ impl Browser {
                 pending_loader: None,
                 pending_cancel: None,
                 pending_script: None,
+                pending_planned: None,
                 nav,
                 load: None,
                 stylesheets: Default::default(),

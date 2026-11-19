@@ -1672,7 +1672,10 @@ impl StyleEngine {
         let mut connected = 0u64;
         let mut connected_rest = Vec::new();
         for (i, sheet) in self.sheets.iter().enumerate() {
-            let on = dom.is_alive(sheet.owner) && dom.is_connected(sheet.owner).unwrap_or(false);
+            // (A link whose `rel` lost `stylesheet` applies nothing, as one that left the document.)
+            let on = dom.is_alive(sheet.owner)
+                && dom.is_connected(sheet.owner).unwrap_or(false)
+                && !(matches!(sheet.source, SheetSource::Text(_)) && link_not_stylesheet(dom, sheet.owner));
             if i < 64 {
                 connected |= u64::from(on) << i;
             } else {

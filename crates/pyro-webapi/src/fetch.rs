@@ -245,6 +245,13 @@ impl PageDom {
         *self.referrer.referrer.borrow_mut() = value.unwrap_or_default();
         self.referrer.header_policy.set(header);
     }
+    /// Sets `document.referrer` to the `Referer` the navigation request's
+    /// last hop sent (empty: none) and the document response's
+    /// `Referrer-Policy` header.
+    pub fn set_sent_referrer(&self, referrer: String, header: Option<pyro_net::ReferrerPolicy>) {
+        *self.referrer.referrer.borrow_mut() = referrer;
+        self.referrer.header_policy.set(header);
+    }
     /// The `Referrer-Policy` header of a worker's main script response.
     pub(crate) fn set_referrer_policy_header(&self, header: Option<pyro_net::ReferrerPolicy>) {
         self.referrer.header_policy.set(header);
@@ -258,27 +265,12 @@ impl PageDom {
     /// strict-origin-when-cross-origin. Read when a request is made (the head
     /// is found in constant time and scanned over its children only).
     pub fn referrer_policy(&self) -> pyro_net::ReferrerPolicy {
-        let dom = self.dom.borrow();
-        let mut policy = self.referrer.header_policy.get();
-        if let Ok(Some(head)) = dom.head(self.document()) {
-            for child in dom.children(head).into_iter().flatten() {
-                let Ok(e) = dom.element(child) else { continue };
-                if !e.is_html() || *e.local_name() != *"meta" {
-                    continue;
-                }
-                let named = dom.get_attribute(child, "name").ok().flatten().is_some_and(|n| {
-                    n.trim_matches(|c: char| c.is_ascii_whitespace()).eq_ignore_ascii_case("referrer")
-                });
-                if let Some(p) = named
-                    .then(|| dom.get_attribute(child, "content").ok().flatten())
-                    .flatten()
-                    .and_then(pyro_net::ReferrerPolicy::from_meta)
-                {
-                    policy = Some(p);
-                }
-            }
-        }
-        policy.unwrap_or_default()
+        self.dom
+            .borrow()
+            .meta_referrer_policy(self.document())
+            .and_then(pyro_net::ReferrerPolicy::parse)
+            .or(self.referrer.header_policy.get())
+            .unwrap_or_default()
     }
     /// The document's URL, parsed (see `Dom::document_url_parsed`).
     pub(crate) fn document_url_parsed(&self) -> Option<pyro_net::Url> {

@@ -1,0 +1,111 @@
+Pyro patch 0036: the promise rejection tracker for the embedder.
+
+The C API reports rejected promises only through JSGlobalContextSetUnhandledRejectionCallback:
+once the microtask queue is empty, for the promises rejected since that have no handler. An
+embedder could not learn that a handler was added to a promise later (HTML's rejectionhandled
+event, and dropping a promise from its about-to-be-notified list between the checkpoint and the
+task that reports it). JSGlobalContextSetPromiseRejectionTracker (API/JSForkPrivate.h) gives
+JSAPIGlobalObject a per-global callback for the HostPromiseRejectionTracker operations the
+embedder asks for (a bit set: one that needs only Handle is not called for every rejection),
+called as they happen with the promise and its reason; the default tracking stays as it is.
+
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+index 76cd1f68..65d6dbc5 100644
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+@@ -97,6 +97,19 @@ void JSAPIGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globa
+     Base::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+ }
+ 
++// HostPromiseRejectionTracker for the embedder (JSGlobalContextSetPromiseRejectionTracker): told of
++// the operations it asked for as they happen, before the default tracking (the VM's list of rejected promises,
++// which the unhandled rejection callback is called for once the microtask queue is empty).
++void JSAPIGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
++{
++    auto* thisObject = uncheckedDowncast<JSAPIGlobalObject>(globalObject);
++    if (thisObject->m_promiseRejectionTrackerCallback && (thisObject->m_promiseRejectionTrackerOperations & (1u << static_cast<unsigned>(operation)))) {
++        auto callback = reinterpret_cast<JSPromiseRejectionTrackerCallback>(thisObject->m_promiseRejectionTrackerCallback);
++        callback(toRef(globalObject), toRef(promise), toRef(globalObject, promise->result()), static_cast<int>(operation));
++    }
++    Base::promiseRejectionTracker(globalObject, promise, operation);
++}
++
+ // Trusted Types for eval and Function, through the embedder's callbacks
+ // (JSGlobalContextSetCompileStringsCallbacks): without them, the defaults.
+ String JSAPIGlobalObject::codeForEval(JSGlobalObject* globalObject, JSValue value)
+@@ -505,6 +518,17 @@ bool JSGlobalContextSetCompileStringsCallbacks(JSGlobalContextRef ctx, JSCodeFor
+     return true;
+ }
+ 
++bool JSGlobalContextSetPromiseRejectionTracker(JSGlobalContextRef ctx, JSPromiseRejectionTrackerCallback callback, unsigned operations)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject)
++        return false;
++    apiGlobalObject->setPromiseRejectionTrackerCallback(reinterpret_cast<void*>(callback), operations);
++    return true;
++}
++
+ void JSGlobalContextSetTrustedTypesEnforcement(JSGlobalContextRef ctx, JSTrustedTypesEnforcement enforcement)
+ {
+     JSGlobalObject* globalObject = toJS(ctx);
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+index b3770a73..cda5062d 100644
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+@@ -77,6 +77,12 @@ public:
+         m_codeForEvalCallback = codeForEval;
+         m_canCompileStringsCallback = canCompileStrings;
+     }
++    // A JSPromiseRejectionTrackerCallback (JSForkPrivate.h), or null.
++    void setPromiseRejectionTrackerCallback(void* callback, unsigned operations)
++    {
++        m_promiseRejectionTrackerCallback = callback;
++        m_promiseRejectionTrackerOperations = operations;
++    }
+ #endif
+ 
+ private:
+@@ -92,11 +98,14 @@ private:
+ #if !JSC_OBJC_API_ENABLED
+     static String codeForEval(JSGlobalObject*, JSValue);
+     static bool canCompileStrings(JSGlobalObject*, CompilationType, String, const ArgList&);
++    static void promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
+ #endif
+ 
+ #if !JSC_OBJC_API_ENABLED
+     void* m_codeForEvalCallback { nullptr };
+     void* m_canCompileStringsCallback { nullptr };
++    void* m_promiseRejectionTrackerCallback { nullptr };
++    unsigned m_promiseRejectionTrackerOperations { 0 };
+     void* m_moduleLoaderCallback { nullptr };
+     void* m_moduleLoaderInfo { nullptr };
+     void* m_moduleBaseURLCallback { nullptr };
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 0d6e7592..58a6de4e 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -292,6 +292,21 @@ typedef enum {
+ /* The global's `require-trusted-types-for 'script'` state for eval and Function. */
+ JS_EXPORT void JSGlobalContextSetTrustedTypesEnforcement(JSGlobalContextRef ctx, JSTrustedTypesEnforcement enforcement);
+ 
++/* Promise rejection tracking (HTML's HostPromiseRejectionTracker): `callback` is called as it
++   happens when a promise of `ctx`'s realm is rejected without a handler (`operation`
++   kJSPromiseRejectionReject) and when a handler is first added to a rejected promise
++   (kJSPromiseRejectionHandle), with the promise and its rejection reason, for the operations
++   whose bit (1 << operation) is set in `operations`. It may not run JavaScript. The unhandled
++   rejection callback (JSGlobalContextSetUnhandledRejectionCallback) is still called, once the
++   microtask queue is empty, for the promises rejected since that have no handler by then. NULL
++   removes the callback. False when `ctx` is not a C-API global. */
++enum {
++    kJSPromiseRejectionReject = 0,
++    kJSPromiseRejectionHandle = 1,
++};
++typedef void (*JSPromiseRejectionTrackerCallback)(JSContextRef ctx, JSObjectRef promise, JSValueRef reason, int operation);
++JS_EXPORT bool JSGlobalContextSetPromiseRejectionTracker(JSGlobalContextRef ctx, JSPromiseRejectionTrackerCallback callback, unsigned operations);
++
+ #ifdef __cplusplus
+ }
+ #endif

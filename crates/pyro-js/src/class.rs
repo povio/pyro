@@ -391,6 +391,21 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
+    /// Adds a promise-returning operation (Web IDL "create an operation function": an exception
+    /// thrown by the steps of an operation whose return type is a promise becomes a promise
+    /// rejected with it). That covers the receiver check too, so calling the function on another
+    /// object rejects with the "Illegal invocation" TypeError instead of throwing it
+    /// (WPT idlharness: `CSSStyleSheet.replace`, `Blob.text`, `Element.requestFullscreen`).
+    pub fn promise_method(&mut self, name: &'static str, length: u32, f: MethodFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: promise_method_invoke::<C>, f: f as *const () },
+            pure: None,
+        });
+        self
+    }
+
     /// Adds an operation that runs no JavaScript, changes nothing script can
     /// observe and may be run again after an error (`matches`,
     /// `getAttribute`, `querySelector`): it takes the lean dispatch, as a
@@ -1955,6 +1970,25 @@ unsafe fn method_invoke<C: JsClass>(
         return member_in_receiver_realm(scope, realm, |s| f(s, data, Args { ctx: s.ctx, raw }).map(|v| v.raw));
     }
     f(scope, data, args).map(|v| v.raw)
+}
+
+/// [`method_invoke`] for [`ClassDef::promise_method`]: an error (but a termination) is a promise
+/// of the current realm rejected with its exception.
+unsafe fn promise_method_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    match unsafe { method_invoke::<C>(scope, this, args, f) } {
+        Err(error) if !matches!(error, JsError::Terminated) => {
+            let deferred = scope.deferred()?;
+            let promise = deferred.promise.get(scope);
+            deferred.reject(scope, error.to_value(scope))?;
+            Ok(promise.raw)
+        }
+        result => result,
+    }
 }
 
 /// [`method_invoke`] from the receiver's payload header `h`, in the receiver's

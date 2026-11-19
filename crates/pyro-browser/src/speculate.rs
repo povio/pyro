@@ -188,6 +188,7 @@ impl Requester {
             kind,
             page: self.page,
             referrer: Some(referrer),
+            referrer_policy: None,
             frame_id: Some(self.frame_id.clone()),
             loader_id: Some(self.loader_id.clone()),
             crossorigin,
@@ -337,7 +338,10 @@ impl Browser {
             let Some(src) = info.src.as_deref() else { return };
             let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| requester.base_url.clone());
             let Some(url) = crate::loader::resolve_url(&base, src) else { return };
-            requester.request(url, ResourceKind::Script, info.crossorigin.clone(), None)
+            let mut request = requester.request(url, ResourceKind::Script, info.crossorigin.clone(), None);
+            // As the element's own request will be sent (it takes this one).
+            request.referrer_policy = pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref());
+            request
         };
         self.speculate(page, vec![request]);
     }

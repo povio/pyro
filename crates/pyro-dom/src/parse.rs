@@ -231,9 +231,21 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         created
     }
     fn create_comment(&self, text: StrTendril) -> u32 {
+        // `<?target data>` in HTML (vendor/html5ever `pi`): the tokenizer marks the bogus comment
+        // it read; it is a processing instruction when its target is one, else the comment.
+        let text: &str = &text;
+        let text = match text.strip_prefix(html5ever::pi::MARK) {
+            Some(marked) => {
+                if let Some((target, data)) = html5ever::pi::parse(marked) {
+                    return self.create_pi(target.into(), data.into());
+                }
+                marked
+            }
+            None => text,
+        };
         self.dom.with(|d| {
             let owner = self.doc_owner(d);
-            d.alloc_raw(NodeKind::Comment(text.to_string()), owner)
+            d.alloc_raw(NodeKind::Comment(text.to_owned()), owner)
         })
     }
     fn create_pi(&self, target: StrTendril, data: StrTendril) -> u32 {
@@ -1214,6 +1226,9 @@ fn parse_fragment_with(
     };
     let owner = dom.n(ctx).owner_doc;
     let owner_id = dom.id_of(owner);
+    // HTML fragment parsing: the scripting flag is that of the context
+    // element's node document (`noscript` content is text only with it).
+    let scripting_enabled = dom.scripting_of(owner);
     // Temporary document for the parser; nodes are adopted into `owner`.
     let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
     dom.set_allow_declarative_shadow_roots(tmp_id, allow_declarative_shadow_roots)?;
@@ -1225,7 +1240,7 @@ fn parse_fragment_with(
     {
         let sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
         let opts = html5ever::driver::ParseOpts {
-            tree_builder: TreeBuilderOpts { scripting_enabled: true, ..Default::default() },
+            tree_builder: TreeBuilderOpts { scripting_enabled, ..Default::default() },
             ..Default::default()
         };
         let parser = html5ever::driver::parse_fragment(sink, opts, ctx_name, ctx_attrs, true);

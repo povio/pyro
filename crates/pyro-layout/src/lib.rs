@@ -566,7 +566,7 @@ impl BlitzGeometry {
 /// instead of every later layout query of the page failing.
 fn guarded<T>(r: &mut Renderer, page: u64, f: impl FnOnce(&mut Renderer) -> Option<T>) -> Option<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut *r))).unwrap_or_else(|_| {
-        r.forget(page);
+        r.forget_document(page);
         None
     })
 }
@@ -621,7 +621,8 @@ impl BlitzGeometry {
             RENDERER.with(|r| {
                 if let Ok(mut r) = r.try_borrow_mut() {
                     if let Some(r) = r.as_mut() {
-                        r.forget(self.page);
+                        // (The page lives on: its scroll offsets stay for the new document.)
+                        r.forget_document(self.page);
                     }
                 }
             });

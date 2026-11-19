@@ -2438,7 +2438,10 @@ impl Node {
                 WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL
                     | WillChangeBits::OPACITY
                     | WillChangeBits::TRANSFORM
-                    | WillChangeBits::PERSPECTIVE,
+                    | WillChangeBits::PERSPECTIVE
+                    // pyro: `contain` too (some of its values make one; WPT css-contain
+                    // `contain-paint-stacking-context-001b`).
+                    | WillChangeBits::CONTAIN,
             ) {
                 return true;
             }

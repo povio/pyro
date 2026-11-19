@@ -86,6 +86,11 @@ impl Dom {
     pub fn inner_html(&self, id: NodeId) -> DomResult<String> {
         let i = self.check(id)?;
         let mut out = String::new();
+        // HTML fragment serialization: a node that serializes as void has no contents, whatever
+        // children script gave it.
+        if self.n(i).element().is_some_and(|e| e.is_html() && is_void(&e.name.local)) {
+            return Ok(out);
+        }
         let src = match self.n(i).element() {
             Some(e) if e.template_contents != NIL => e.template_contents,
             _ => i,
@@ -403,13 +408,17 @@ impl Dom {
                     }
                     NodeKind::Text(s) | NodeKind::CData(s) => {
                         let p = self.n(n).parent;
+                        // `noscript` text is raw only where scripting is
+                        // enabled for the node: not in a DOMParser, XHR or
+                        // script-created document, nor in template contents.
                         let raw = p != NIL
                             && self.n(p).element().is_some_and(|e| {
                                 e.is_html()
-                                    && matches!(
-                                        &*e.name.local,
-                                        "style" | "script" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext"
-                                    )
+                                    && match &*e.name.local {
+                                        "style" | "script" | "xmp" | "iframe" | "noembed" | "noframes" | "plaintext" => true,
+                                        "noscript" => self.scripting_of(self.n(n).owner_doc),
+                                        _ => false,
+                                    }
                             });
                         if raw {
                             out.push_str(s);
@@ -427,7 +436,8 @@ impl Dom {
                         out.push_str(&pi.target);
                         out.push(' ');
                         out.push_str(&pi.data);
-                        out.push('>');
+                        // (`?>`: HTML parses `<?target data?>` as a processing instruction.)
+                        out.push_str("?>");
                     }
                     NodeKind::Attr(_) => {}
                     NodeKind::Doctype(d) => {

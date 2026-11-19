@@ -440,6 +440,46 @@ fn relative_colors_keep_missing_components() {
     );
 }
 
+/// A color function with a `calc()` component keeps its function form as its specified value, the
+/// `calc()`s simplified and the other components as the numbers the function resolves them to
+/// (css-color-4 § 15, as Chromium); legacy `rgb()`, `hsl()` and `hwb()` with numeric `calc()`s
+/// still resolve; computed values resolve, with a NaN lightness, component or hue as 0.
+/// WPT css-color `parsing/color-valid-lab`, `-color-function`, `-rgb`, `-hsl`, `-hwb`, `color-computed-lab`.
+#[test]
+fn color_functions_keep_calc_in_their_specified_value() {
+    let env = Env::new("http://color.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const el = document.createElement("div");
+              document.body.appendChild(el);
+              const out = [];
+              for (const v of [
+                "lab(calc(50 * 3) calc(0.5 - 1) calc(1.5) / calc(-0.5 + 1))",
+                "lab(200 calc(50%) 50%)",
+                "lch(calc(50%) -100 50deg / 50%)",
+                "color(srgb calc(50%) 50% 0.5)",
+                "oklch(none 0.2 calc(0.5))",
+                "rgb(calc(infinity), 0, 0)",
+                "rgb(calc(50% + (sign(1em - 10px) * 10%)), 400%, 0%, 50%)",
+                "hsl(calc(0 / 0) 100% 50%)",
+                "lab(50 20 30)",
+              ]) {
+                el.style.color = "";
+                el.style.color = v;
+                out.push(el.style.color);
+              }
+              for (const v of ["lab(calc(NaN) 0 0)", "lch(50 10 calc(infinity))", "lab(calc(50 * 3) 0 0)"]) {
+                el.style.color = v;
+                out.push(getComputedStyle(el).color);
+              }
+              return out.join("|");
+            })()"#
+        ),
+        "lab(calc(150) calc(-0.5) calc(1.5) / calc(0.5))|lab(100 calc(50%) 62.5)|lch(calc(50%) 0 50 / 0.5)|color(srgb calc(50%) 0.5 0.5)|oklch(none 0.2 calc(0.5))|rgb(255, 0, 0)|rgb(calc(50% + (10% * sign(1em - 10px))) 255 0 / 0.5)|rgb(255, 0, 0)|lab(50 20 30)|lab(0 0 0)|lch(50 10 0)|lab(100 0 0)"
+    );
+}
+
 /// DOM IDL details (WPT dom/idlharness): operations throw a TypeError when called with fewer
 /// arguments than they require; Range and StaticRange inherit their boundary points from
 /// AbstractRange; Element's `slot` is unscopable; the Fullscreen API exists, with nothing ever
@@ -484,4 +524,213 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
     );
     env.until("globalThis.fsOut !== undefined");
     assert_eq!(env.eval("fsOut"), "TypeError|TypeError");
+}
+
+/// A class change on an element above a `:has()` anchor restyles the anchor when a complex selector
+/// inside the argument reaches it (WPT css/selectors is-pseudo-containing-complex-in-has).
+#[test]
+fn has_invalidation_reaches_ancestors_of_the_anchor() {
+    let env = Env::new("http://has.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              document.head.insertAdjacentHTML("beforeend", "<style>div { color: grey } .red:has(#descendant:is(.a .b)) { color: red }</style>");
+              document.body.innerHTML = '<div id="parent"><div id="scope" class="red"><div><div id="descendant" class="b"></div></div></div></div>';
+              const scope = document.getElementById("scope");
+              const out = [getComputedStyle(scope).color];
+              document.getElementById("parent").classList.add("a");
+              out.push(getComputedStyle(scope).color);
+              document.getElementById("parent").classList.remove("a");
+              out.push(getComputedStyle(scope).color);
+              return out.join("|");
+            })()"##
+        ),
+        "rgb(128, 128, 128)|rgb(255, 0, 0)|rgb(128, 128, 128)"
+    );
+}
+
+/// Processing instruction attributes (WPT dom/nodes/processing-instruction-attributes): the data
+/// read as quoted pairs; writes rewrite it in place as characterData mutations; invalid names throw.
+#[test]
+fn processing_instruction_attributes() {
+    let env = Env::new("http://pi.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              const pi = document.createProcessingInstruction("t", 'a="b" x="yy"');
+              const mo = new MutationObserver(() => {});
+              mo.observe(pi, { characterData: true, attributes: true });
+              const out = [pi.hasAttributes(), pi.getAttributeNames().join(","), pi.getAttribute("x"), pi.getAttribute("X")];
+              pi.setAttribute("x", 'q"<');
+              out.push(pi.data, pi.getAttribute("x"), mo.takeRecords().map(r => r.type).join());
+              pi.removeAttribute("x");
+              pi.toggleAttribute("c");
+              out.push(pi.data, document.createProcessingInstruction("t", "a=b").hasAttributes());
+              try { pi.setAttribute("a=", "v"); out.push("no throw"); } catch (e) { out.push(e.name); }
+              return out.join("|");
+            })()"##
+        ),
+        r#"true|a,x|yy||a="b" x="q&quot;&lt;"|q"<|characterData|a="b" c=""|false|InvalidCharacterError"#
+    );
+}
+
+/// `:enabled`/`:disabled` in style matching follow HTML: options and optgroups, and the controls a
+/// disabled fieldset or optgroup disables; `:default` takes `checked` only on checkboxes and radios
+/// (WPT css/selectors invalidation has-with-pseudo-class, input-pseudo-classes-in-has).
+#[test]
+fn enabled_disabled_and_default_in_style_matching() {
+    let env = Env::new("http://states.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              document.head.insertAdjacentHTML("beforeend", "<style>* { color: black } :disabled { color: red } :enabled { color: green } :default { outline-color: blue }</style>");
+              document.body.innerHTML = '<fieldset id=fs><input id=inner></fieldset><select><optgroup id=og><option id=op>x</option></optgroup></select><input id=text checked><input id=box type=checkbox checked>';
+              const c = (id) => getComputedStyle(document.getElementById(id)).color;
+              const out = [c("inner"), c("og"), c("op"), c("fs")];
+              document.getElementById("fs").disabled = true;
+              document.getElementById("og").disabled = true;
+              out.push(c("inner"), c("og"), c("op"), c("fs"));
+              document.getElementById("fs").disabled = false;
+              out.push(c("inner"));
+              const o = (id) => getComputedStyle(document.getElementById(id)).outlineColor;
+              out.push(o("text") === o("inner"), o("box"));
+              return out.join("|");
+            })()"##
+        ),
+        "rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(0, 128, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(0, 128, 0)|true|rgb(0, 0, 255)"
+    );
+}
+
+/// `:focus` matches the shadow hosts whose shadow trees hold the focused element, at any depth
+/// (WPT shadow-dom/focus/focus-pseudo-matches-on-shadow-host).
+#[test]
+fn focus_matches_shadow_hosts_of_the_focused_element() {
+    let env = Env::new("http://focus.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              const outer = document.createElement("div");
+              document.body.appendChild(outer);
+              const inner = document.createElement("div");
+              outer.attachShadow({ mode: "open" }).appendChild(inner);
+              const input = document.createElement("input");
+              inner.attachShadow({ mode: "closed" }).appendChild(input);
+              const other = document.createElement("input");
+              document.body.appendChild(other);
+              input.focus();
+              const out = [outer.matches(":focus"), inner.matches(":focus"), document.body.matches(":focus"), document.querySelector(":focus") === outer];
+              other.focus();
+              out.push(outer.matches(":focus"), other.matches(":focus"));
+              return out.join("|");
+            })()"##
+        ),
+        "true|true|false|true|false|true"
+    );
+}
+
+/// ARIA element reflection (WPT html/dom/aria-element-reflection): ids resolve in the element's
+/// tree, explicitly set elements win while the attribute reads "", arrays are frozen and the same
+/// object while their elements stay the same, and references out of scope read as null.
+#[test]
+fn aria_element_reflection() {
+    let env = Env::new("http://aria.test/");
+    assert_eq!(
+        env.eval(
+            r##"(() => {
+              document.body.innerHTML = '<div id=l1>a</div><div id=l2>b</div><input id=in aria-labelledby="l1 missing l2" aria-activedescendant="l2">';
+              const input = document.getElementById("in"), l1 = document.getElementById("l1"), l2 = document.getElementById("l2");
+              const out = [input.ariaLabelledByElements.map(e => e.id).join(","), input.ariaActiveDescendantElement === l2,
+                           input.ariaLabelledByElements === input.ariaLabelledByElements, Object.isFrozen(input.ariaLabelledByElements),
+                           input.ariaOwnsElements, input.ariaControlsElements];
+              input.ariaActiveDescendantElement = l1;
+              l1.id = "renamed";
+              out.push(input.getAttribute("aria-activedescendant"), input.ariaActiveDescendantElement === l1);
+              l1.remove();
+              out.push(input.ariaActiveDescendantElement);
+              input.ariaDescribedByElements = [l2];
+              out.push(input.ariaDescribedByElements[0] === l2);
+              input.setAttribute("aria-describedby", "l2 l2");
+              out.push(input.ariaDescribedByElements.length);
+              input.ariaDescribedByElements = null;
+              out.push(input.hasAttribute("aria-describedby"));
+              return out.join("|");
+            })()"##
+        ),
+        "l1,l2|true|true|true||||true||true|2|false"
+    );
+}
+
+/// SVG lengths (round 5): a value shorter than a unit name is a number (`x="5"` read as invalid and
+/// gave the initial value), `image`, `use`, `foreignObject` and the text content elements have
+/// their interfaces and SVGAnimatedLengths, `createSVGLength()` gives a length that reflects no
+/// attribute, CSS units without a constant (`rem`, `vw`, `q`) convert with `unitType` 0, and
+/// `newValueSpecifiedUnits` converts both arguments before it checks the unit.
+/// WPT svg/types/scripted `SVGAnimatedLength-initial-values`, `SVGLength`, `SVGLength-px`,
+/// `SVGLength-rem`, `SVGLength-viewport`.
+#[test]
+fn svg_lengths_of_one_character_new_interfaces_detached_lengths_and_css_units() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const ns = "http://www.w3.org/2000/svg";
+              const make = (name) => document.createElementNS(ns, name);
+              const rect = make("rect");
+              rect.setAttribute("x", "5");
+              const out = [rect.x.baseVal.value, make("marker").markerWidth.baseVal.valueAsString];
+              const image = make("image"), use = make("use"), foreign = make("foreignObject");
+              const text = make("text"), tspan = make("tspan"), path = make("textPath");
+              out.push(image instanceof SVGImageElement, use instanceof SVGUseElement, foreign instanceof SVGForeignObjectElement);
+              out.push(text instanceof SVGTextElement && text instanceof SVGTextPositioningElement && text instanceof SVGTextContentElement);
+              out.push(tspan instanceof SVGTSpanElement, path instanceof SVGTextPathElement && !(path instanceof SVGTextPositioningElement));
+              image.setAttribute("width", "42");
+              out.push(image.width.baseVal.value, use.x.baseVal.valueAsString, text.textLength.baseVal.value, path.startOffset.baseVal.value);
+              const length = make("svg").createSVGLength();
+              out.push(length.unitType, length.valueAsString);
+              length.valueAsString = "2px";
+              length.convertToSpecifiedUnits(SVGLength.SVG_LENGTHTYPE_PERCENTAGE);
+              out.push(length.valueAsString);
+              length.valueAsString = "2em";
+              out.push(length.value);
+              rect.setAttribute("x", "2rem");
+              out.push(rect.x.baseVal.unitType, rect.x.baseVal.value);
+              rect.setAttribute("x", "4Q");
+              out.push(rect.x.baseVal.value.toFixed(2));
+              try { length.newValueSpecifiedUnits("aString", "aString"); out.push("no throw"); } catch (e) { out.push(e.name); }
+              try { length.newValueSpecifiedUnits("aString", 4); out.push("no throw"); } catch (e) { out.push(e.name); }
+              return out.join("|");
+            })()"#
+        ),
+        "5|3|true|true|true|true|true|true|42|0|0|0|1|0|2%|32|0|32|3.78|TypeError|NotSupportedError"
+    );
+}
+
+/// Web IDL details idlharness checks (round 5): a promise-returning operation called on another
+/// object rejects with the TypeError instead of throwing it (`ClassDef::promise_method`); the
+/// Fullscreen attributes are `[LegacyLenientSetter]` (assigning does nothing, also in strict
+/// mode); `new ProcessingInstruction(target, data)`.
+/// WPT dom/idlharness, css/cssom/idlharness, FileAPI/idlharness.
+#[test]
+fn promise_operations_reject_on_a_wrong_receiver_and_other_idl_details() {
+    let env = Env::new("http://idl.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              "use strict";
+              const out = [];
+              for (const [f, name] of [[CSSStyleSheet.prototype.replace, "replace"], [Blob.prototype.text, "text"],
+                                       [Document.prototype.exitFullscreen, "exitFullscreen"], [Element.prototype.requestFullscreen, "requestFullscreen"]]) {
+                try { out.push(f.call({}) instanceof Promise); } catch (e) { out.push(name + " threw"); }
+              }
+              try { document.fullscreenEnabled = true; document.fullscreen = true; document.fullscreenElement = document.body; out.push(document.fullscreen); }
+              catch (e) { out.push("setter threw"); }
+              const pi = new ProcessingInstruction("target", "data");
+              out.push(ProcessingInstruction.length, pi.target, pi.data, pi.ownerDocument === document);
+              try { new ProcessingInstruction(); out.push("no throw"); } catch (e) { out.push(e.name); }
+              try { new ProcessingInstruction("t", "?>"); out.push("no throw"); } catch (e) { out.push(e.name); }
+              return out.join("|");
+            })()"#
+        ),
+        "true|true|true|true|false|1|target|data|true|TypeError|InvalidCharacterError"
+    );
 }

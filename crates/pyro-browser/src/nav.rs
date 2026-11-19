@@ -153,6 +153,20 @@ pub(crate) enum NavigateDecision {
     Intercept,
 }
 
+/// Where a navigation comes from, for its `navigate` event.
+#[derive(Default)]
+pub(crate) struct NavigateSource {
+    /// `NavigateEvent.sourceElement`: the link or the form (its submitter)
+    /// and the bindings of the document it is in, when that document is
+    /// same-origin with the one that navigates (the caller checks). The
+    /// event of another page reads null.
+    pub element: Option<(Rc<pyro_webapi::PageDom>, NodeId)>,
+    /// `NavigateEvent.formData`: a POST form submission's entry list.
+    pub form_entries: Option<pyro_webapi::formdata::FormEntries>,
+    /// History handling "replace" (a form submitted while its document loads).
+    pub replace: bool,
+}
+
 impl PageNav {
     pub(crate) fn new(
         page: PageId,
@@ -478,9 +492,13 @@ impl PageNav {
     }
 
     fn navigate(&self, url: String, history: HistoryHandling) {
-        if let Some(page) = self.page_dom.borrow().upgrade() {
+        // The frame's latest navigation from now on: it supersedes those
+        // started before it (a planned form submission too), and a later
+        // one supersedes it (`PageDom::navigation_started`).
+        let started = self.page_dom.borrow().upgrade().map(|page| {
             page.note_navigation_request();
-        }
+            page.navigation_started()
+        });
         let sequence = self.script_navigation.get().wrapping_add(1);
         self.script_navigation.set(sequence);
         let page = self.page;
@@ -494,7 +512,10 @@ impl PageNav {
             // Another document, or this one was opened since (stop loading).
             if !b.doc(page).is_some_and(|p| {
                 let st = p.nav.state.borrow();
-                st.doc_seq == document && st.stops == stops && p.nav.script_navigation.get() == sequence
+                st.doc_seq == document
+                    && st.stops == stops
+                    && p.nav.script_navigation.get() == sequence
+                    && started.is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n))
             }) {
                 return;
             }
@@ -505,6 +526,7 @@ impl PageNav {
                 cdp_request_id: None,
                 // The document that navigates (`location`, `window.open`).
                 referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
+                referrer_policy: None,
             };
             if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);
@@ -537,10 +559,19 @@ impl PageNav {
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
+            // A traversal to another document does not take the place of
+            // the frame's planned form navigation that has begun.
+            if entry.doc != current_doc
+                && b.doc(page).is_some_and(|p| p.pending_planned.is_some() && p.pending_planned.as_ref() == p.pending_loader())
+            {
+                return;
+            }
             if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
                 // Only a same-document traversal can be canceled or intercepted.
                 let same = entry.doc == current_doc;
-                if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key)) == NavigateDecision::Cancel
+                let source = NavigateSource::default();
+                if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source)
+                    == NavigateDecision::Cancel
                     && same
                 {
                     return;
@@ -570,6 +601,7 @@ impl PageNav {
                     reason: NavigationReason::History,
                     cdp_request_id: None,
                     referrer: None,
+                    referrer_policy: None,
                 };
                 if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
                     b.report_navigation_error(page, &e);
@@ -583,15 +615,16 @@ impl PageNav {
     /// document's URL but for a fragment it has, the URL changes at once, in
     /// place when it is the same URL, and `hashchange` is queued. Returns
     /// false for any other URL, which is a navigation to load.
-    pub(crate) fn navigate_to_fragment(&self, url: &str) -> bool {
+    pub(crate) fn navigate_to_fragment_from(&self, url: &str, source: &NavigateSource) -> bool {
         let (Ok(current), Ok(mut target)) = (Url::parse(&self.url()), Url::parse(url)) else { return false };
         if target.fragment().is_none() || !same_document_except_fragment(&current, &target) {
             return false;
         }
         self.take_fragment_directive(&mut target);
-        let kind = if current == target { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        let kind =
+            if current == target || source.replace { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
         let navigation_type = if kind == SameDocumentKind::Replace { "replace" } else { "push" };
-        match self.navigate_event(navigation_type, target.as_str(), true) {
+        match self.navigate_event_from(navigation_type, target.as_str(), source) {
             NavigateDecision::Cancel => return true,
             NavigateDecision::Intercept => {
                 self.commit_intercepted(target.as_str(), navigation_type);
@@ -754,7 +787,17 @@ impl PageNav {
         url: &str,
         cancelable: bool,
     ) -> NavigateDecision {
-        self.navigate_event_to(navigation_type, url, cancelable, None)
+        self.navigate_event_to(navigation_type, url, cancelable, None, &NavigateSource::default())
+    }
+
+    /// [`PageNav::navigate_event`] for a followed link or a submitted form.
+    pub(crate) fn navigate_event_from(
+        &self,
+        navigation_type: &'static str,
+        url: &str,
+        source: &NavigateSource,
+    ) -> NavigateDecision {
+        self.navigate_event_to(navigation_type, url, true, None, source)
     }
 
     /// [`PageNav::navigate_event`] for a traversal to the entry with `key`.
@@ -764,6 +807,7 @@ impl PageNav {
         url: &str,
         cancelable: bool,
         key: Option<u64>,
+        source: &NavigateSource,
     ) -> NavigateDecision {
         if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
             return NavigateDecision::Proceed;
@@ -786,6 +830,19 @@ impl PageNav {
             let Some(realm) = realm.upgrade() else { continue };
             let Ok(s) = realm.scope() else { continue };
             let Some(f) = hook.get(&s).as_object() else { continue };
+            // The entry list becomes a FormData of the event's realm; the
+            // element keeps the wrapper of its own document's realm.
+            let form_data = source
+                .form_entries
+                .as_ref()
+                .and_then(|entries| pyro_webapi::formdata::form_data_object(&s, entries).ok())
+                .map_or(s.null(), |o| o.value());
+            let element = source
+                .element
+                .as_ref()
+                .filter(|(from, _)| Rc::ptr_eq(&from.dom, &page.dom))
+                .and_then(|(from, id)| pyro_webapi::wrap_node(&s, from, *id).ok())
+                .map_or(s.null(), |o| o.value());
             let args = [
                 s.string("navigate"),
                 s.string(navigation_type),
@@ -794,6 +851,8 @@ impl PageNav {
                 s.boolean(cancelable),
                 s.boolean(can_intercept),
                 s.string(&key.map(|k| k.to_string()).unwrap_or_default()),
+                form_data,
+                element,
             ];
             match f.call(None, &args).and_then(|v| v.to_string()) {
                 Ok(answer) if answer == "cancel" => decision = NavigateDecision::Cancel,
@@ -996,7 +1055,10 @@ fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
         nav.run_javascript_url(target.as_str());
         return Ok(());
     }
-    navigate_to(nav, target, replace);
+    // HTML "Location-object navigate": a document that has not completely
+    // loaded, with no user gesture, replaces its entry.
+    let loading = nav.page_dom.borrow().upgrade().is_some_and(|page| page.navigates_by_replacing());
+    navigate_to(nav, target, replace || loading);
     Ok(())
 }
 

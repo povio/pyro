@@ -106,7 +106,10 @@ impl Env {
             Err(e) => format!("THROW {}", e.details(&s).text()),
         }
     }
+    /// The navigations so far: a submitted form navigates from a task
+    /// (HTML "plan to navigate"), so the queued tasks run first.
     fn navigations(&self) -> Vec<String> {
+        self.run_tasks();
         std::mem::take(&mut *self.hooks.navigations.borrow_mut())
     }
     fn run_tasks(&self) {
@@ -364,10 +367,14 @@ fn implicit_submission_follows_chrome() {
     assert_eq!(e.navigations(), vec!["GET http://localhost:5173/c?".to_owned()]);
     e.eval("document.getElementById('t5').focus()");
     e.key("Enter", "\r");
+    // Each submission's task runs before the next: a later submission of
+    // the same form would replace its planned navigation.
+    let mut navigations = e.navigations();
     e.eval("document.getElementById('s2').focus()");
     e.key("Enter", "\r");
+    navigations.extend(e.navigations());
     assert_eq!(
-        e.navigations(),
+        navigations,
         vec!["GET http://localhost:5173/d?s=one".to_owned(), "GET http://localhost:5173/d?s=two".to_owned()],
         "the default button, then the focused submit button"
     );

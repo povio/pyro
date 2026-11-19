@@ -573,6 +573,25 @@ rules: each cell keeps half of the borders around it (`LayoutData::collapsed_bor
 `LayoutStyles::cell`) and the table half of its outer ones, as Chromium's boxes do. Uniform tables keep the gutter.
 Values in `bench/pdf/fixtures/chrome-156/table-collapse.json`, tests in `crates/pyro-render/tests/table_collapsed_borders.rs`.
 
+Round 5, tables in vertical writing modes and `direction: rtl` (`CollapsedEdges::sides`, `taffy_rect`, `physical_sides`,
+`grid_to_physical`): the edges are indexed by the grid's own rows and columns (row 0 the first row, column 0 the first
+column, whichever way the writing mode and direction run them), and `sides` names the physical border of a box that
+faces the row-start, column-end, row-end and column-start side of its grid area. Conflict resolution, the cells' half
+borders and the table's own border are then the same code in every writing mode: `offer_box` reads a box's physical
+borders through `sides`, `apply_collapsed_borders` and `collapsed_table_border` hand the widths back in Taffy's axes
+(the grid's) and as physical sides (`Node::set_collapsed_border`, the cell's own style). A vertical table always keeps
+its edges (`edges_in_use`): the uniform-gutter shortcut reads the first cell's physical borders and is painted as such.
+Before, collapsed borders were resolved in horizontal tables only (a vertical table had none: its cells stacked on one
+another, WPT css-writing-modes `border-conflict-element-v*`), and an `rtl` table offered a cell's left border to its
+column-start line (its right). blitz-paint's `draw_collapsed_edges` works in the grid's space and maps each rectangle
+to the table's box. Captions of a vertical table are laid out too (`lay_out_table_captions` runs in the table's axes:
+`caption-side: top` is its block-start side; WPT `caption-side-v*`). `auto_column_widths`: a table narrower than its
+columns' min-content widths takes them also when a spanning cell's max-content width is wider than its columns' (its
+min-content width fits); it was left to the grid, which kept the table's `width` (WPT `row-progression-v*`, and the
+same table in a horizontal writing mode). `collect_table_cells`: an absolutely positioned child of a row group keeps
+its construction damage (the group's children had it removed before the out-of-flow check, so the box was never built:
+WPT css-contain `contain-paint-015`..`017`). Tests: `crates/pyro-render/tests/vertical_tables.rs`.
+
 `src/layout/table.rs`: the table places its cells once, as it is built (`place_cells`, stored as
 `TableContext::placement`), and hands the areas to the grid through taffy's `LayoutGridContainer::track_counts`
 and `resolved_placement` (see `vendor/taffy/README.pyro.md`). It runs the grid's `row dense`
@@ -1385,7 +1404,7 @@ Tests: `an_image_marker_ends_7px_before_the_item_on_its_first_baseline`,
   fixed up. A table, row group or row whose children are all proper ones (or white space, hidden or out of flow)
   and that has no pseudo-element boxes is built from its children as they are, as before (no allocation, one
   style read per child). Tables in a vertical writing mode keep the former construction (their stray children are
-  left out).
+  left out; round 5 lays out their captions, see "Collapsed tables without uniform borders").
 - `src/layout/table.rs` (`offer_box`): a box without borders offers none to the collapsed borders (most rows,
   groups and columns); the cells' grid areas are worked out once for the collapsed borders and their cells.
 - `src/layout/mod.rs` (`lay_out_table_captions`, `table_captions_min_width`), `src/layout/table.rs`
@@ -2780,6 +2799,26 @@ all, and a combining mark the transform removed (Greek uppercase drops the acute
   `column-height: auto` wraps at the container's definite height, its last row balanced under `column-fill: balance`.
   WPT css-multicol `column-height-*` 14 of 30 (abspos in a positioned multicol container and `column-height: 0` are
   not done). `pyro-render/tests/multicol_column_height.rs`.
+  Round 5 (`Breaks::whole_in_empty_columns`, `Breaks::fill`): in a container with `column-height: 0` what cannot
+  break (a line, a monolithic box) is not cut at the column's end: the column holds it whole and it overflows, so
+  each such box has a column (WPT `column-height-023`). In every other column it is still cut where the column ends,
+  as Chromium cuts monolithic content taller than its fragmentainer (WPT css-contain `contain-size-breaks-001`,
+  `contain-size-multicol-004`; `multicol-span-all-children-height-003` for the 1px columns of a container with no
+  height left). A first version kept every size-contained box whole and lost those two css-contain pages.
+  `RowSlots` (a container with an explicit `column-height`, wrapping columns and spanners): the rows are a grid of
+  slots `column-height + row-gap` apart, as Chromium lays them out (measured on Chrome 158). Content before a spanner
+  is balanced within what is left of its slot, the spanner follows at once when it fits in the rest of the slot (or
+  starts a slot, and may then reach past its end) and otherwise starts the next slot, and content after it goes on in
+  what is left of the slot it ends in. It was placed right after the rows, and the rows after it at its end (WPT
+  `column-height-017`..`-020`). Not done: nested containers with rows (`-007`, `-008`, `-025`, `-027`..`-029`).
+  Spanners below the container's children (`column_spanners_of`, `carries_spanners`, `spans_columns_of`): a
+  `column-span: all` box spans the columns when the boxes between it and the container are in-flow blocks that make no
+  formatting context and keep no fixed descendants (no transform, perspective, filter, layout or paint containment),
+  as css-multicol-1 § 6 and Chromium. It was laid out inside a column. The search below the children runs only once
+  a style traversal has seen `column-span: all` (`BaseDocument::column_span_styles`, sticky); a spanner's row starts at
+  the container's edge whatever its ancestors' padding (`ColumnFragment::offset`). WPT css-multicol `column-height-006`,
+  `-013`, `multicol-span-all-013`, `-margin-003`, `-block-sibling-003`, `spanner-in-opacity`,
+  `ancestor-toggle-spanner-001`, `remove-transform-descendant-becomes-spanner`.
 - Round 4 lane S4, `layout/multicol.rs` `fragmentable`: a box of size containment is monolithic (CSS Contain 2 § 3.1),
   so balancing does not split it (a `contain: size` float in columns). WPT css-multicol `multicol-fill-balance-*`,
   css-contain `contain-size-multicol-*`.
@@ -2805,3 +2844,36 @@ text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style
 - Lane F2, `mask-border`: `mask-border-source` loads as the element's second `border_images` entry
   (`layout/damage.rs` `border_image_sources`, also the stylo.rs out-of-sync check); a `mask-border` makes a stacking
   context (`node.rs`), as `mask-image` does.
+(WPT css/cssom `medialist-dynamic-001`); a `<link>`'s, at flush (`link_media_nodes`, `refresh_link_media`): its loaded
+sheet takes the new media list and is inserted again, without a new fetch (WPT html/semantics
+`the-link-element/stylesheet-media-change-no-fetch`). Covered by `a_style_element_media_attribute_limits_its_sheet` in
+`crates/pyro-render/tests/render.rs` and `crates/pyro-render/tests/link_media.rs`.
+- Lane S2, `has_invalidation.rs` `AttributeChange::before`: an attribute change of an element no `:has()` search
+  visited still runs the relative selector invalidation when the sheets have a `:has()` (or the element is in a shadow
+  tree): a complex selector inside the argument can reach it from the searched subtree (`.a:has(.c:is(.b .c))` with
+  `.b` above the anchor, or `.p + .b ~ .d .c` with `.b` a sibling of one of its ancestors), and Stylo's dependency
+  lookup decides, as in Gecko. WPT css/selectors `is-pseudo-containing-complex-in-has` +42,
+  `not-pseudo-containing-complex-in-has` +40.
+- Lane S2, `:enabled`/`:disabled` from pyro-dom: `has_invalidation.rs` `pyro_state_bits` reads `enabled` and
+  `disabled` state tokens; `node/element.rs` `sync_lp_attribute_state` takes both bits from the tokens when they say
+  either, and `mutator.rs` leaves an element with pyro-dom's state tokens out of Blitz's own `disabled` attribute
+  handling (which knows only button/input/select/textarea and their own attribute). Options, optgroups, fieldsets
+  and the controls a disabled fieldset or optgroup disables now match as in HTML. WPT css/selectors
+  `has-with-pseudo-class`.
+
+## A link that is no stylesheet link any more
+
+`src/mutator.rs` (`load_linked_stylesheet`, `clear_attribute_impl`), `src/document.rs` (`Resource::Css`): setting a
+`<link>`'s `rel` to a value without `stylesheet`, or removing `rel`, unloads its sheet (upstream unloaded it only when
+`href` was removed, so the sheet kept styling: WPT html/semantics/document-metadata `the-link-element/link-rel-attribute`),
+and a sheet whose fetch completes after that is dropped. With the token back the sheet is fetched again, as before.
+Test: `crates/pyro-browser/tests/stylesheets.rs` (`a_link_whose_rel_drops_stylesheet_...`).
+
+## The empty size of a size-contained container (round 5)
+
+`src/layout/mod.rs` (`empty_container_size`, `size_contained_size`): a box with size containment and no
+`contain-intrinsic-size` is sized "as if it had no contents" (css-contain-2 § 3.1), which for a container still counts
+what it lays out itself: a grid's explicit tracks of a fixed size and the gaps between its explicit tracks, and a
+multi-column container's `column-count` columns of `column-width` and their gaps. Both were 0 wide and tall (WPT
+css-contain `contain-size-grid-002`, `contain-size-multicol-001`, `-002`). Horizontal writing modes only. Test
+`a_size_contained_grid_or_multicol_container_keeps_its_tracks_and_columns` (pyro-render).

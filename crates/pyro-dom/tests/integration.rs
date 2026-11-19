@@ -29,6 +29,7 @@ mod top_layer;
 mod tree;
 mod tree_scope;
 mod walk_summary;
+mod html_processing_instructions;
 mod xml;
 mod xml_navigation;
 mod xml_template;

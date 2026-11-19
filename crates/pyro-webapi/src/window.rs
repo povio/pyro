@@ -807,6 +807,15 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
         content_type: None,
         opener,
         popup: ticket,
+        // The `noreferrer` feature: no referrer (the others: the document's policy).
+        referrer_policy: features
+            .split(|c: char| c == ',' || c.is_ascii_whitespace())
+            .filter_map(|f| f.split('=').next())
+            .any(|f| f == "noreferrer")
+            .then_some(pyro_net::ReferrerPolicy::NoReferrer),
+        source: None,
+        form_entries: None,
+        replace: false,
     });
     match popup {
         Some(popup) => {

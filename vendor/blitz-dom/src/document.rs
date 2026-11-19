@@ -642,6 +642,10 @@ pub struct BaseDocument {
     /// pyro: a style traversal styled an element with `text-box-trim` (sticky): inline layouts
     /// look for the trims of their first and last lines (`layout::text_box`).
     pub(crate) text_box_trim_styles: bool,
+    /// pyro: a style traversal styled an element `column-span: all` (sticky): a multi-column
+    /// container looks for spanners below its children too (`layout::multicol`); without one its
+    /// children are all it reads.
+    pub(crate) column_span_styles: bool,
     /// pyro: the generated text of each element's `::after` and `::before` with counters and
     /// quotes evaluated (`layout::counters`), while `generated_counters`.
     pub(crate) generated_text: HashMap<NodeId, crate::layout::counters::GeneratedText>,
@@ -888,6 +892,7 @@ impl BaseDocument {
             first_line_reparented: Default::default(),
             generated_counters: false,
             text_box_trim_styles: false,
+            column_span_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
             marker_counters: false,
@@ -1804,6 +1809,17 @@ impl BaseDocument {
         self.add_stylesheet_for_node(sheet, target_id);
     }
 
+    /// pyro: a `<link>`'s `media` changed: its sheet (each fetch parses its own) takes the new
+    /// media list and is inserted again, so the cascade sees it.
+    pub(crate) fn refresh_link_media(&mut self, node_id: NodeId) {
+        let Some(sheet) = self.nodes_to_stylesheet.get(&node_id).cloned() else {
+            return;
+        };
+        let media = self.node_media_list(node_id).unwrap_or_else(MediaList::empty);
+        *sheet.0.media.write_with(&mut self.guard.write()) = media;
+        self.add_stylesheet_for_node(sheet, node_id);
+    }
+
     /// pyro: the media list of the `media` attribute of the `<style>` or `<link>` element
     /// `node_id`; `None` without one (or an empty one: all media).
     pub(crate) fn node_media_list(&self, node_id: NodeId) -> Option<MediaList> {
@@ -2213,17 +2229,27 @@ impl BaseDocument {
         match resource {
             Resource::Css(css, page_css) => {
                 let node_id = res.node_id.unwrap();
-                // pyro: a `<link media>` is its sheet's media list (each fetch parses its own sheet).
-                if let Some(media) = self.node_media_list(node_id) {
-                    *css.0.media.write_with(&mut self.guard.write()) = media;
-                }
-                self.add_stylesheet_for_node(css, node_id);
-                match page_css {
-                    Some(text) => {
-                        self.linked_page_css.insert(node_id, text);
+                // pyro: a link that stopped being a stylesheet link while its sheet was fetched
+                // (its `rel` lost `stylesheet`, or its `href` went) takes no sheet.
+                let still_links = self.nodes.get(node_id).is_some_and(|node| {
+                    node.attr(local_name!("href")).is_some()
+                        && node
+                            .attr(local_name!("rel"))
+                            .is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+                });
+                if still_links {
+                    // pyro: a `<link media>` is its sheet's media list (each fetch parses its own sheet).
+                    if let Some(media) = self.node_media_list(node_id) {
+                        *css.0.media.write_with(&mut self.guard.write()) = media;
                     }
-                    None => {
-                        self.linked_page_css.remove(&node_id);
+                    self.add_stylesheet_for_node(css, node_id);
+                    match page_css {
+                        Some(text) => {
+                            self.linked_page_css.insert(node_id, text);
+                        }
+                        None => {
+                            self.linked_page_css.remove(&node_id);
+                        }
                     }
                 }
             }

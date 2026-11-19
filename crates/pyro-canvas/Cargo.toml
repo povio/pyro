@@ -9,7 +9,7 @@ license.workspace = true
 # All already in the tree through pyro-render (Blitz/anyrender), with the same
 # versions and features: this crate compiles nothing new but itself.
 bytemuck = "1"
-image = { version = "0.25.6", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+image = { version = "0.25.6", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 kurbo = "0.13.1"
 parley = { version = "0.12", default-features = false, features = ["system", "bytemuck"] }
 peniko = "0.6.0"

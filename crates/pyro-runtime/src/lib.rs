@@ -387,9 +387,46 @@ struct Inner<S> {
     /// Virtual time ([`Scheduler::set_virtual_now`]): the instant delayed
     /// timers count from instead of the real time.
     virtual_now: Cell<Option<Instant>>,
+    /// Frame timers ([`Scheduler::set_frame_timer`]) not run yet: deadline,
+    /// timer and the time the loop leaves to other work after a frame. Each
+    /// also has its heap entry; entries of timers that ran or were cleared
+    /// are dropped when the list is next looked at.
+    frames: RefCell<Vec<(Instant, TimerId, Duration)>>,
+    /// When the last frame timer finished and how long it ran.
+    frame_ran: Cell<Option<(Instant, Duration)>>,
 }
 
 impl<S> Inner<S> {
+    /// The earliest frame timer that is due at `now` and may run ahead of
+    /// everything else that is ready: the time the last frame left to other
+    /// work has passed. None under virtual time, where timers run in
+    /// deadline order only.
+    fn due_frame(&self, now: Instant) -> Option<TimerId> {
+        let mut frames = self.frames.borrow_mut();
+        if frames.is_empty() {
+            return None;
+        }
+        {
+            let timers = self.timers.borrow();
+            frames.retain(|(_, id, _)| timers.contains_key(id));
+        }
+        if self.virtual_now.get().is_some() {
+            return None;
+        }
+        let last = self.frame_ran.get();
+        let (i, _) = frames
+            .iter()
+            .enumerate()
+            .filter(|(_, (at, _, gap))| *at <= now && last.is_none_or(|(end, ran)| now >= end + ran.max(*gap)))
+            .min_by_key(|(_, (at, _, _))| *at)?;
+        Some(frames.swap_remove(i).1)
+    }
+
+    /// Whether `id` is a frame timer that has not run yet.
+    fn is_frame(&self, id: TimerId) -> bool {
+        self.frames.borrow().iter().any(|(_, f, _)| *f == id)
+    }
+
     fn insert_timer(&self, id: TimerId, timer: Timer<S>) {
         if timer.keeps_alive {
             self.keepalive.set(self.keepalive.get() + 1);
@@ -471,6 +508,32 @@ impl<S: 'static> Scheduler<S> {
         keeps_alive: bool,
         task: impl Fn(&mut S) + 'static,
     ) -> TimerId {
+        self.set_timer_at(delay, repeat, keeps_alive, task).0
+    }
+
+    /// A one-shot timer for a rendering opportunity (an animation frame).
+    /// Once due it runs before every other ready task and timer, whatever
+    /// became ready first: HTML updates the rendering between tasks, however
+    /// many are waiting, so a page whose timers are always behind still gets
+    /// its frames on time (and a client waiting for a frame its answer).
+    /// After a frame the loop leaves other ready work as long as the frame
+    /// took (`delay` at least) before the next one may run ahead again, so a
+    /// chain of frames, each longer than the interval, has half of the thread
+    /// at most and cannot starve tasks; until then (and under virtual time)
+    /// the timer takes its turn by deadline like any other.
+    pub fn set_frame_timer(&self, delay: Duration, keeps_alive: bool, task: impl Fn(&mut S) + 'static) -> TimerId {
+        let (id, at) = self.set_timer_at(delay, false, keeps_alive, task);
+        self.inner.frames.borrow_mut().push((at, id, delay));
+        id
+    }
+
+    fn set_timer_at(
+        &self,
+        delay: Duration,
+        repeat: bool,
+        keeps_alive: bool,
+        task: impl Fn(&mut S) + 'static,
+    ) -> (TimerId, Instant) {
         let id = TimerId(self.inner.next_timer.get());
         self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
         self.inner.scheduled.set(self.inner.scheduled.get() + 1);
@@ -480,7 +543,7 @@ impl<S: 'static> Scheduler<S> {
             _ => Instant::now(),
         };
         self.push_deadline(base + delay, id);
-        id
+        (id, base + delay)
     }
 
     /// Schedules `task` to run once the loop has nothing else ready: no
@@ -522,6 +585,9 @@ impl<S: 'static> Scheduler<S> {
         let shifted: Vec<_> =
             heap.drain().map(|Reverse((at, seq, id))| Reverse((at.checked_sub(by).unwrap_or(at), seq, id))).collect();
         heap.extend(shifted);
+        for frame in self.inner.frames.borrow_mut().iter_mut() {
+            frame.0 = frame.0.checked_sub(by).unwrap_or(frame.0);
+        }
     }
 
     /// Makes every pending timer due `by` later; their order is kept.
@@ -529,6 +595,9 @@ impl<S: 'static> Scheduler<S> {
         let mut heap = self.inner.heap.borrow_mut();
         let shifted: Vec<_> = heap.drain().map(|Reverse((at, seq, id))| Reverse((at + by, seq, id))).collect();
         heap.extend(shifted);
+        for frame in self.inner.frames.borrow_mut().iter_mut() {
+            frame.0 += by;
+        }
     }
 
     /// Virtual time: delayed timers set from now on count from `now`
@@ -719,6 +788,8 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     idle: RefCell::new(VecDeque::new()),
                     remote_pending: Arc::default(),
                     virtual_now: Cell::new(None),
+                    frames: RefCell::new(Vec::new()),
+                    frame_ran: Cell::new(None),
                 }),
             },
             tx: Some(tx),
@@ -803,6 +874,24 @@ impl<S: LoopState + 'static> EventLoop<S> {
     /// Runs one ready task or due timer. Returns false if nothing was ready.
     pub fn run_one(&mut self, state: &mut S) -> bool {
         self.pull_remote();
+        // A due frame timer first (see `Scheduler::set_frame_timer`). Its heap
+        // entry goes stale and is skipped like a cleared timer's.
+        if !self.sched.inner.frames.borrow().is_empty() {
+            if let Some(id) = self.sched.inner.due_frame(Instant::now()) {
+                let task = self.sched.inner.timers.borrow().get(&id).map(|t| t.task.clone());
+                if let Some(task) = task {
+                    self.sched.inner.remove_timer(id);
+                    let start = Instant::now();
+                    begin_task();
+                    task(state);
+                    next_task();
+                    state.after_task();
+                    end_task();
+                    self.sched.inner.frame_ran.set(Some((Instant::now(), start.elapsed())));
+                    return true;
+                }
+            }
+        }
         // Remote tasks (posted from other threads: network completions, CDP
         // deliveries), local tasks and due timers run in readiness order:
         // remote post time, local queue time, timer due time. Each source
@@ -909,6 +998,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 timers.get(&id).map(|t| (t.task.clone(), t.interval))
             };
             let Some((task, interval)) = timer else { continue }; // cleared
+            let frame = self.sched.inner.is_frame(id).then(Instant::now);
             match interval {
                 Some(d) => self.sched.push_deadline(now + d.max(Duration::from_millis(1)), id),
                 None => {
@@ -920,6 +1010,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
             next_task();
             state.after_task();
             end_task();
+            if let Some(start) = frame {
+                self.sched.inner.frame_ran.set(Some((Instant::now(), start.elapsed())));
+            }
             return true;
         }
     }
@@ -1639,6 +1732,88 @@ mod tests {
         let last_task = st.log.iter().rposition(|l| l.starts_with("task")).unwrap();
         assert!(first_tick < last_task, "ticks starved behind the chain: {:?}", st.log);
         assert_eq!(st.log.iter().filter(|l| *l == "tick").count(), 3);
+    }
+
+    /// `n` zero-delay timers that each busy-wait 1 ms and set themselves
+    /// again: a page whose timers are always behind.
+    fn timer_backlog(s: &Scheduler<St>, n: u32) {
+        fn again(s: &Scheduler<St>, k: u32) {
+            let s2 = s.clone();
+            s.set_timer(Duration::ZERO, false, true, move |st| {
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(1) {}
+                st.log.push(format!("timer{k}"));
+                if st.log.len() < 400 {
+                    again(&s2, k);
+                }
+            });
+        }
+        for k in 0..n {
+            again(s, k);
+        }
+    }
+
+    #[test]
+    fn a_due_frame_timer_runs_ahead_of_a_backlog_of_due_timers() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        timer_backlog(&s, 50);
+        // Set after the 50 timers, due 5 ms later: by deadline alone it would
+        // wait for a whole round of the backlog (50 ms).
+        s.set_frame_timer(Duration::from_millis(5), true, |st| st.log.push("frame".into()));
+        let mut st = St::default();
+        lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(10)));
+        let frame = st.log.iter().position(|l| l == "frame").expect("frame ran");
+        // 5 ms of 1 ms timers, then the frame (slack for a loaded machine).
+        assert!((3..=20).contains(&frame), "frame at {frame}: {:?}", &st.log[..frame.min(60)]);
+    }
+
+    #[test]
+    fn frame_timers_leave_other_work_as_long_as_the_frame_took() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        timer_backlog(&s, 20);
+        // A frame loop whose frames (8 ms) are longer than the interval (4 ms):
+        // each next frame is due as soon as the last one ends.
+        fn frame(s: &Scheduler<St>) {
+            let s2 = s.clone();
+            s.set_frame_timer(Duration::from_millis(4), true, move |st| {
+                st.log.push("frame".into());
+                if st.log.len() < 400 {
+                    frame(&s2);
+                }
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(8) {}
+            });
+        }
+        frame(&s);
+        let mut st = St::default();
+        lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(20)));
+        let frames = st.log.iter().filter(|l| *l == "frame").count();
+        let timers = st.log.len() - frames;
+        // 8 ms of 1 ms timers after every 8 ms frame: about 8 timers per frame.
+        assert!(frames >= 20, "{frames} frames: {:?}", st.log);
+        assert!(timers >= 4 * frames, "timers starved: {timers} timers, {frames} frames");
+        assert!(!st.log.windows(2).any(|w| w[0] == "frame" && w[1] == "frame"), "two frames in a row: {:?}", st.log);
+    }
+
+    #[test]
+    fn cleared_and_virtual_time_frame_timers_do_not_run_ahead() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let cleared = s.set_frame_timer(Duration::ZERO, true, |st| st.log.push("cleared".into()));
+        assert!(s.clear_timer(cleared));
+        // Virtual time: deadline order only, on the embedder's clock.
+        let now = Instant::now() + Duration::from_secs(3600);
+        s.set_virtual_now(Some(now));
+        s.set_timer(Duration::from_millis(1), false, true, |st| st.log.push("timer".into()));
+        s.set_frame_timer(Duration::from_millis(2), true, |st| st.log.push("frame".into()));
+        let mut st = St::default();
+        assert!(!lp.run_one(&mut st));
+        s.advance_timers(Duration::from_secs(3600));
+        std::thread::sleep(Duration::from_millis(3));
+        while lp.run_one(&mut st) {}
+        assert_eq!(st.log, ["timer", "frame"]);
     }
 
     #[test]

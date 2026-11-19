@@ -1499,6 +1499,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     }
                     // pyro: the stacking contexts with a negative z-index go under the box's own
                     // inline content (CSS 2.1 Appendix E, step 3 before step 7).
+                    cx.register_negative_inline_spans(content_position);
                     cx.draw_neg_z_children(scene, cx.transform, child_clip_rect);
                     if !hidden {
                         cx.draw_marker(scene, content_position);
@@ -4670,6 +4671,39 @@ impl ElementCx<'_, '_> {
         }
         for &(_, _, pushed) in open.iter().rev() {
             self.context.layer_manager.maybe_pop_layer(scene, pushed);
+        }
+    }
+
+    /// pyro: a positioned inline box of this inline root with a negative `z-index`, listed in this
+    /// box's own stacking context, is painted before the root's inline content, which is what
+    /// leaves it its place and position (`inline_pass_entries`): its entry found nothing and the
+    /// root then skipped it, so its text was never painted (WPT css-contain `contain-layout-016`,
+    /// `contain-paint-020`). The root says where it is before the negative layer is painted.
+    /// `pos` is the position `draw_inline_layout` is given.
+    fn register_negative_inline_spans(&self, pos: Point) {
+        if !self.node.flags.is_inline_root() {
+            return;
+        }
+        let Some(hoisted) = &self.node.stacking_context else { return };
+        for child in hoisted.neg_z_hoisted_children() {
+            let Some(span) = self.context.dom.get_node(child.node_id) else { continue };
+            if !span.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
+                continue;
+            }
+            // (Its inline root: the nearest one above it.)
+            let mut at = span.parent;
+            let mut root = None;
+            while let Some(id) = at {
+                let Some(node) = self.context.dom.get_node(id) else { break };
+                if node.flags.is_inline_root() {
+                    root = Some(id);
+                    break;
+                }
+                at = node.parent;
+            }
+            if root == Some(self.node.id) {
+                self.context.inline_pass_entries.borrow_mut().insert(child.node_id, (self.node.id, self.transform, pos));
+            }
         }
     }
 

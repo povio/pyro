@@ -458,11 +458,28 @@ impl LayoutPassState<'_> {
                 ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
             };
             let position = styles.get_position();
-            let (width, height) = (length(&position.contain_intrinsic_width), length(&position.contain_intrinsic_height));
+            let (mut width, mut height) =
+                (length(&position.contain_intrinsic_width), length(&position.contain_intrinsic_height));
             #[cfg(feature = "writing-mode")]
             let vertical = self.layout_wm.is_vertical();
             #[cfg(not(feature = "writing-mode"))]
             let vertical = false;
+            // pyro: "sized as if it had no contents" (css-contain-2 § 3.1) still counts what the
+            // container itself lays out: a grid's tracks of a fixed size and its gaps, the
+            // columns and gaps of a multi-column container (WPT css-contain
+            // `contain-size-grid-002`, `contain-size-multicol-001`; both were 0 wide).
+            if !vertical {
+                let none = |size: &style::values::computed::ContainIntrinsicSize| {
+                    matches!(size, ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone)
+                };
+                let empty = empty_container_size(&styles);
+                if none(&position.contain_intrinsic_width) {
+                    width = empty.width;
+                }
+                if none(&position.contain_intrinsic_height) {
+                    height = empty.height;
+                }
+            }
             if vertical { taffy::Size { width: height, height: width } } else { taffy::Size { width, height } }
         };
         let style = self.child_layout_style(node);
@@ -1784,6 +1801,7 @@ impl LayoutPassState<'_> {
     /// and below its grid, each a block as wide as the grid less its margins: the table's box is
     /// then its wrapper box, the grid (`output`, laid out) moved down by the captions above it, as
     /// its cells (whose positions the grid set). Returns the height of the captions above.
+    /// (In the table's axes: above is its block-start side, the left of a `vertical-lr` table.)
     #[inline(never)]
     fn lay_out_table_captions(
         &mut self,
@@ -2608,6 +2626,73 @@ impl BaseDocument {
 /// pyro: `contain` with the size containment a size container has (`container-type: size` is
 /// size containment, `inline-size` inline-size containment; css-contain-3 §2): its content does
 /// not size it (WPT css-conditional `container-queries/flex-basis-with-container-type`).
+/// pyro: the content size of a container with size containment and no `contain-intrinsic-size`:
+/// what it lays out without any content. A grid's explicit tracks of a fixed size and the gaps
+/// between its explicit tracks; a multi-column container's `column-count` columns of
+/// `column-width` and the gaps between them. Zero for every other box.
+fn empty_container_size(styles: &style::properties::ComputedValues) -> taffy::Size<f32> {
+    use style::values::specified::box_::DisplayInside;
+    use taffy::{CompactLength, GridTemplateComponent};
+    match styles.clone_display().inside() {
+        DisplayInside::Grid => {
+            let style: taffy::Style<Atom> = stylo_taffy::to_taffy_style(styles);
+            let track = |min: CompactLength, max: CompactLength| -> f32 {
+                if max.tag() == CompactLength::LENGTH_TAG {
+                    max.value()
+                } else if min.tag() == CompactLength::LENGTH_TAG {
+                    min.value()
+                } else {
+                    0.0
+                }
+            };
+            let axis = |tracks: &[GridTemplateComponent<Atom>], gap: taffy::LengthPercentage| -> f32 {
+                let (mut count, mut sum) = (0usize, 0.0f32);
+                for component in tracks {
+                    match component {
+                        GridTemplateComponent::Single(t) => {
+                            count += 1;
+                            sum += track(t.min.into_raw(), t.max.into_raw());
+                        }
+                        GridTemplateComponent::Repeat(repeat) => {
+                            if let taffy::RepetitionCount::Count(n) = repeat.count {
+                                count += n as usize * repeat.tracks.len();
+                                sum += n as f32
+                                    * repeat.tracks.iter().map(|t| track(t.min.into_raw(), t.max.into_raw())).sum::<f32>();
+                            }
+                        }
+                    }
+                }
+                let gap = if gap.into_raw().tag() == CompactLength::LENGTH_TAG { gap.into_raw().value() } else { 0.0 };
+                sum + gap * count.saturating_sub(1) as f32
+            };
+            taffy::Size {
+                width: axis(&style.grid_template_columns, style.gap.width),
+                height: axis(&style.grid_template_rows, style.gap.height),
+            }
+        }
+        _ if multicol::is_multicol_style(styles) => {
+            use style::values::generics::column::ColumnCount;
+            use style::values::generics::length::LengthPercentageOrAuto;
+            use style::values::computed::length::NonNegativeLengthPercentageOrNormal as Gap;
+            let column = styles.get_column();
+            let count = match column.column_count {
+                ColumnCount::Integer(n) => n.0.max(1) as f32,
+                ColumnCount::Auto => 1.0,
+            };
+            let width = match &column.column_width {
+                LengthPercentageOrAuto::LengthPercentage(width) => width.0.px(),
+                LengthPercentageOrAuto::Auto => 0.0,
+            };
+            let gap = match &styles.get_position().column_gap {
+                Gap::Normal => styles.slow_clone_font_size().used_size().px(),
+                Gap::LengthPercentage(gap) => gap.0.to_length().map_or(0.0, |length| length.px()),
+            };
+            taffy::Size { width: count * width + (count - 1.0) * gap, height: 0.0 }
+        }
+        _ => taffy::Size::ZERO,
+    }
+}
+
 pub(crate) fn effective_size_containment(styles: &style::properties::ComputedValues) -> style::values::computed::Contain {
     use style::values::computed::Contain;
     use style::values::specified::box_::ContainerType;

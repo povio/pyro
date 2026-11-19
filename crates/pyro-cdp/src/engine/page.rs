@@ -471,6 +471,7 @@ impl EngineHost {
             reason: NavigationReason::AddressBar,
             cdp_request_id: Some(cmd.command.id),
             referrer,
+            referrer_policy: None,
         };
         let result = if native.parent.is_some() {
             self.thread.browser.navigate_frame(page_id, &frame, opts)

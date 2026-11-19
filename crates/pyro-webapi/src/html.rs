@@ -730,6 +730,12 @@ pub enum ElClass {
     Generic,
     Svg,
     SvgGraphics,
+    SvgImage,
+    SvgForeignObject,
+    SvgUse,
+    SvgText,
+    SvgTSpan,
+    SvgTextPath,
     SvgA,
     SvgRoot,
     SvgClipPath,
@@ -783,8 +789,13 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "circle" => ElClass::SvgCircle,
             "ellipse" => ElClass::SvgEllipse,
             "line" => ElClass::SvgLine,
-            "g" | "polyline" | "polygon" | "path" | "text" | "tspan"
-            | "textPath" | "use" | "image" | "foreignObject" | "switch" | "defs" => ElClass::SvgGraphics,
+            "g" | "polyline" | "polygon" | "path" | "switch" | "defs" => ElClass::SvgGraphics,
+            "image" => ElClass::SvgImage,
+            "foreignObject" => ElClass::SvgForeignObject,
+            "use" => ElClass::SvgUse,
+            "text" => ElClass::SvgText,
+            "tspan" => ElClass::SvgTSpan,
+            "textPath" => ElClass::SvgTextPath,
             "clipPath" => ElClass::SvgClipPath,
             "mask" => ElClass::SvgMask,
             "pattern" => ElClass::SvgPattern,
@@ -987,6 +998,12 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
         SvgGraphics => s.wrap::<SvgGraphicsElement>(d, k),
+        SvgImage => s.wrap::<SvgImageElement>(d, k),
+        SvgForeignObject => s.wrap::<SvgForeignObjectElement>(d, k),
+        SvgUse => s.wrap::<SvgUseElement>(d, k),
+        SvgText => s.wrap::<SvgTextElement>(d, k),
+        SvgTSpan => s.wrap::<SvgTSpanElement>(d, k),
+        SvgTextPath => s.wrap::<SvgTextPathElement>(d, k),
         SvgA => s.wrap::<SvgAElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
         SvgClipPath => s.wrap::<SvgClipPathElement>(d, k),
@@ -1107,6 +1124,12 @@ pub fn interface_name(class: ElClass) -> &'static str {
         Generic => HtmlElement::NAME,
         Svg => SvgElement::NAME,
         SvgGraphics => SvgGraphicsElement::NAME,
+        SvgImage => SvgImageElement::NAME,
+        SvgForeignObject => SvgForeignObjectElement::NAME,
+        SvgUse => SvgUseElement::NAME,
+        SvgText => SvgTextElement::NAME,
+        SvgTSpan => SvgTSpanElement::NAME,
+        SvgTextPath => SvgTextPathElement::NAME,
         SvgA => SvgAElement::NAME,
         SvgRoot => SvgSvgElement::NAME,
         SvgClipPath => SvgClipPathElement::NAME,
@@ -1244,6 +1267,12 @@ pub(crate) fn wrap_new_html_element<'s>(
         Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
         Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
         SvgGraphics => crate::node::wrap_new_node::<SvgGraphicsElement>(s, page, el, new_target),
+        SvgImage => crate::node::wrap_new_node::<SvgImageElement>(s, page, el, new_target),
+        SvgForeignObject => crate::node::wrap_new_node::<SvgForeignObjectElement>(s, page, el, new_target),
+        SvgUse => crate::node::wrap_new_node::<SvgUseElement>(s, page, el, new_target),
+        SvgText => crate::node::wrap_new_node::<SvgTextElement>(s, page, el, new_target),
+        SvgTSpan => crate::node::wrap_new_node::<SvgTSpanElement>(s, page, el, new_target),
+        SvgTextPath => crate::node::wrap_new_node::<SvgTextPathElement>(s, page, el, new_target),
         SvgA => crate::node::wrap_new_node::<SvgAElement>(s, page, el, new_target),
         SvgRoot => crate::node::wrap_new_node::<SvgSvgElement>(s, page, el, new_target),
         SvgClipPath => crate::node::wrap_new_node::<SvgClipPathElement>(s, page, el, new_target),
@@ -1338,6 +1367,151 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     // ARIA reflection (ARIAMixin) for the attributes Playwright/Testing
     // Library read through properties.
     reflect_aria(def);
+    reflect_aria_elements(def);
+}
+
+/// ARIA element reflection state of one element's attribute (see `PageDom::aria_refs`).
+#[derive(Default)]
+pub(crate) struct AriaRefs {
+    /// The elements an IDL setter set (the content attribute then reads `""`).
+    explicit: Option<Vec<NodeId>>,
+    /// The frozen array last returned, per realm, with the elements it holds.
+    cache: Option<(pyro_js::RealmId, Vec<NodeId>, pyro_js::Persistent)>,
+}
+
+/// Whether `target` is a descendant of one of `el`'s shadow-including ancestors (HTML "reflect"
+/// for element references): its tree is `el`'s, or that of a shadow host around `el`.
+fn aria_reference_valid(dom: &Dom, el: NodeId, target: NodeId) -> bool {
+    let (Ok(target_root), Ok(mut root)) = (dom.root_node(target, false), dom.root_node(el, false)) else {
+        return false;
+    };
+    loop {
+        if root == target_root {
+            return true;
+        }
+        match dom.fragment_host(root) {
+            Ok(Some(host)) => match dom.root_node(host, false) {
+                Ok(r) => root = r,
+                Err(_) => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
+/// The elements `attr` of `el` refers to: the ones set explicitly while the attribute still reads
+/// `""`, else the first element of `el`'s tree with each id the attribute lists (`single`: the
+/// whole value is one id).
+fn aria_elements(page: &PageDom, el: NodeId, attr: &'static str, single: bool) -> Vec<NodeId> {
+    let dom = page.dom.borrow();
+    let Some(value) = dom.get_attribute(el, attr).ok().flatten().map(str::to_owned) else { return Vec::new() };
+    if value.is_empty() {
+        if let Some(explicit) = page.aria_refs.borrow().get(&(el, attr)).and_then(|r| r.explicit.clone()) {
+            return explicit
+                .into_iter()
+                .filter(|&t| dom.element(t).is_ok() && aria_reference_valid(&dom, el, t))
+                .collect();
+        }
+    }
+    let Ok(root) = dom.root_node(el, false) else { return Vec::new() };
+    let lookup = |id: &str| dom.get_element_by_id(root, id).ok().flatten();
+    if single {
+        lookup(&value).into_iter().collect()
+    } else {
+        value.split_ascii_whitespace().filter_map(lookup).collect()
+    }
+}
+
+fn set_aria_explicit(page: &PageDom, el: NodeId, attr: &'static str, elements: Option<Vec<NodeId>>) -> JsResult<()> {
+    let present = elements.is_some();
+    page.aria_refs.borrow_mut().entry((el, attr)).or_default().explicit = elements;
+    let mut dom = page.dom.borrow_mut();
+    if present {
+        dom.set_attribute(el, attr, "").js()
+    } else {
+        dom.remove_attribute(el, attr).js().map(|_| ())
+    }
+}
+
+/// An Element argument of an element-reflecting setter.
+fn aria_element_arg(s: &Scope<'_>, v: Value<'_>, page: &PageDom) -> JsResult<NodeId> {
+    let id = crate::node::node_arg(s, v, "set")?;
+    if page.dom.borrow().element(id).is_err() {
+        return Err(JsError::Type("Failed to set the property: the value is not of type 'Element'.".into()));
+    }
+    Ok(id)
+}
+
+fn reflect_aria_elements(def: &mut ClassDef<Element>) {
+    def.accessor(
+        "ariaActiveDescendantElement",
+        |s, n| {
+            let page = n.page();
+            let found = aria_elements(page, n.id, "aria-activedescendant", true).into_iter().next();
+            node_value(s, page, found)
+        },
+        |s, n, v| {
+            let page = n.page();
+            let elements = if v.is_null() || v.is_undefined() { None } else { Some(vec![aria_element_arg(s, v, page)?]) };
+            set_aria_explicit(page, n.id, "aria-activedescendant", elements)
+        },
+    );
+    macro_rules! aria_elements {
+        ($prop:literal, $attr:literal) => {
+            def.accessor(
+                $prop,
+                |s, n| aria_elements_get(s, n.page(), n.id, $attr),
+                |s, n, v| aria_elements_set(s, n.page(), n.id, $attr, v),
+            );
+        };
+    }
+    aria_elements!("ariaControlsElements", "aria-controls");
+    aria_elements!("ariaDescribedByElements", "aria-describedby");
+    aria_elements!("ariaDetailsElements", "aria-details");
+    aria_elements!("ariaErrorMessageElements", "aria-errormessage");
+    aria_elements!("ariaFlowToElements", "aria-flowto");
+    aria_elements!("ariaLabelledByElements", "aria-labelledby");
+    aria_elements!("ariaOwnsElements", "aria-owns");
+}
+
+/// `FrozenArray<Element>?` getter: null without the attribute; the same frozen array while the
+/// elements stay the same.
+fn aria_elements_get<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, attr: &'static str) -> JsResult<Value<'s>> {
+    if page.dom.borrow().get_attribute(el, attr).ok().flatten().is_none() {
+        return Ok(s.null());
+    }
+    let elements = aria_elements(page, el, attr, false);
+    let realm = s.realm_id();
+    if let Some((r, cached, array)) = page.aria_refs.borrow().get(&(el, attr)).and_then(|a| a.cache.as_ref()) {
+        if *r == realm && *cached == elements {
+            return Ok(array.get(s));
+        }
+    }
+    let mut items = Vec::with_capacity(elements.len());
+    for &e in &elements {
+        items.push(crate::node::wrap_node(s, page, e)?.value());
+    }
+    let array = s.array(&items)?.value();
+    let freeze = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("freeze")?;
+    let array = freeze.as_object().expect("Object.freeze").call(None, &[array])?;
+    page.aria_refs.borrow_mut().entry((el, attr)).or_default().cache =
+        Some((realm, elements, pyro_js::Persistent::new(s, array)));
+    Ok(array)
+}
+
+fn aria_elements_set(s: &Scope<'_>, page: &Rc<PageDom>, el: NodeId, attr: &'static str, v: Value<'_>) -> JsResult<()> {
+    if v.is_null() || v.is_undefined() {
+        return set_aria_explicit(page, el, attr, None);
+    }
+    let list = v
+        .as_object()
+        .ok_or_else(|| JsError::Type("Failed to set the property: the value is not a sequence.".into()))?;
+    let len = to_u32(list.get_atom("length")?)?;
+    let mut elements = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        elements.push(aria_element_arg(s, list.get_index(i)?, page)?);
+    }
+    set_aria_explicit(page, el, attr, Some(elements))
 }
 
 fn reflect_aria(def: &mut ClassDef<Element>) {
@@ -3445,6 +3619,9 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
         Ok(s.undefined())
     });
     def.method("animationsPaused", 0, |s, n, _a| Ok(s.boolean(crate::smil::paused(n.page()))));
+    def.method("createSVGLength", 0, |s, n, _a| {
+        Ok(collections::create_svg_length(s, n.id)?.value())
+    });
 });
 // SVG 2 `<length>` attributes as `SVGAnimatedLength`s (`collections::SvgLengthAttr`: the attribute,
 // its initial value and the direction its percentages resolve in).
@@ -3487,6 +3664,49 @@ static LEN_405: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: 
 static LEN_408: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y2", initial: "0", dir: collections::SvgLengthDir::Height, slot: 408 };
 
 simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement);
+// The graphics elements that are boxes (SVG 2 `image`, `foreignObject`, `use`): their geometry as
+// SVGAnimatedLengths. (The elements were plain SVGGraphicsElements.)
+static LEN_411: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "textLength", initial: "0", dir: collections::SvgLengthDir::Other, slot: 411 };
+static LEN_414: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "startOffset", initial: "0", dir: collections::SvgLengthDir::Other, slot: 414 };
+simple_class!(SvgImageElement, "SVGImageElement", SvgGraphicsElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
+});
+simple_class!(SvgForeignObjectElement, "SVGForeignObjectElement", SvgGraphicsElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
+});
+simple_class!(SvgUseElement, "SVGUseElement", SvgGraphicsElement, |def| {
+    def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
+    def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
+    def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
+    def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
+});
+// SVG 2 text content elements: `textLength` (and `startOffset` of a `textPath`) as
+// SVGAnimatedLengths. Not implemented yet: the text measuring methods, `lengthAdjust`, and the
+// `x`, `y`, `dx`, `dy` and `rotate` lists of the positioning elements.
+simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement, |def| {
+    def.getter("textLength", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_411)?.value()));
+    def.constant("LENGTHADJUST_UNKNOWN", 0.0);
+    def.constant("LENGTHADJUST_SPACING", 1.0);
+    def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
+});
+simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement);
+simple_class!(SvgTextElement, "SVGTextElement", SvgTextPositioningElement);
+simple_class!(SvgTSpanElement, "SVGTSpanElement", SvgTextPositioningElement);
+simple_class!(SvgTextPathElement, "SVGTextPathElement", SvgTextContentElement, |def| {
+    def.getter("startOffset", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_414)?.value()));
+    def.constant("TEXTPATH_METHODTYPE_UNKNOWN", 0.0);
+    def.constant("TEXTPATH_METHODTYPE_ALIGN", 1.0);
+    def.constant("TEXTPATH_METHODTYPE_STRETCH", 2.0);
+    def.constant("TEXTPATH_SPACINGTYPE_UNKNOWN", 0.0);
+    def.constant("TEXTPATH_SPACINGTYPE_AUTO", 1.0);
+    def.constant("TEXTPATH_SPACINGTYPE_EXACT", 2.0);
+});
 simple_class!(SvgRectElement, "SVGRectElement", SvgGeometryElement, |def| {
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -4144,6 +4364,11 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     if let Some(mut old) = page.script_parser.borrow_mut().take() {
         old.end();
     }
+    // "Stop loading": a navigation of the frame that was started and has not
+    // begun (a planned form submission) is dropped.
+    if doc == page.document() {
+        page.note_navigation_started();
+    }
     page.written_scripts.borrow_mut().clear();
     page.written_pending.set(None);
     // Erase all event listeners and handlers of the document's nodes and window.
@@ -4550,6 +4775,14 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgFilterElement>();
     engine.register::<SvgMarkerElement>();
     engine.register::<SvgGeometryElement>();
+    engine.register::<SvgImageElement>();
+    engine.register::<SvgForeignObjectElement>();
+    engine.register::<SvgUseElement>();
+    engine.register::<SvgTextContentElement>();
+    engine.register::<SvgTextPositioningElement>();
+    engine.register::<SvgTextElement>();
+    engine.register::<SvgTSpanElement>();
+    engine.register::<SvgTextPathElement>();
     engine.register::<SvgRectElement>();
     engine.register::<SvgCircleElement>();
     engine.register::<SvgEllipseElement>();

@@ -316,7 +316,7 @@ fn is_valid_email(a: &str) -> bool {
 mod datetime;
 
 impl Dom {
-    fn html_local(&self, idx: u32) -> Option<&LocalName> {
+    pub(crate) fn html_local(&self, idx: u32) -> Option<&LocalName> {
         self.n(idx).element().filter(|e| e.is_html()).map(|e| &e.name.local)
     }
     fn is_input(&self, idx: u32) -> bool {

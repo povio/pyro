@@ -347,6 +347,9 @@ impl Prescan {
                 self.stopped = true;
                 emit(Prescanned::ReferrerPolicy);
             }
+        } else if attr(attrs, "referrerpolicy").is_some() {
+            // The element's request carries its own referrer policy, which a
+            // speculative request (the document's) would not: left to the element.
         } else if is("img") {
             if self.picture_depth == 0 && attr(attrs, "srcset").is_none() {
                 if let Some(src) = attr(attrs, "src").filter(|v| !v.trim().is_empty()) {
@@ -383,6 +386,10 @@ impl Prescan {
     /// is classic (not fetched with `nomodule`); `module` is a module;
     /// anything else is a data block.
     fn script(&self, attrs: &Attrs<'_>, emit: &mut impl FnMut(Prescanned)) {
+        // Its request carries its own referrer policy: left to the element.
+        if attr(attrs, "referrerpolicy").is_some() {
+            return;
+        }
         let Some(src) = attr(attrs, "src").filter(|v| !v.is_empty()) else { return };
         let module = match attr(attrs, "type") {
             Some(t) if !t.is_empty() => {
@@ -739,6 +746,15 @@ mod tests {
     fn breakout_tags_end_foreign_content() {
         let items = scan(r#"<svg><circle/><img src="/in-svg.png"><script src="/html.js"></script>"#);
         assert_eq!(items, [Prescanned::Image { src: "/in-svg.png".into() }, script("/html.js")]);
+    }
+
+    #[test]
+    fn an_element_with_its_own_referrer_policy_is_not_speculated() {
+        let found = scan(
+            r#"<script src="/a.js" referrerpolicy="origin"></script><img src="/a.png" referrerpolicy=no-referrer>
+            <link rel=stylesheet href="/a.css" referrerpolicy="unsafe-url"><script src="/b.js"></script>"#,
+        );
+        assert_eq!(found, vec![Prescanned::Script { src: "/b.js".into(), module: false, crossorigin: None }]);
     }
 
     #[test]

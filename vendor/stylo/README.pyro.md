@@ -443,3 +443,13 @@ without a style context (custom properties left as they are): pyro serializes a 
   `layout.css.masking.enabled`, with border-image's types and interpolation; the `mask-border` shorthand
   (`shorthands.rs` `mask_border`: border-image's grammar plus the mode). `BorderImageSlice::zero` and
   `BorderImageSideWidth::auto` in `values/computed/border.rs`. blitz-paint renders it.
+- Round 5 (css-color, specified values): `color/parsing.rs` `parse_color_with`, `color/color_function.rs`
+  `has_calc_component`, `normalize_plain_components`: a color function without an origin color that has a `calc()`
+  component keeps its function form as its specified value, the `calc()`s as they simplify and every other component
+  as the number the function resolves it to (percentage against its reference range, angle in degrees, clamped as the
+  function clamps), as css-color-4 § 15 and Chromium: `lab(200 calc(50%) 50%)` is `lab(100 calc(50%) 62.5)`. Upstream
+  resolved the function in the parser whenever it could (`lab(100 62.5 62.5)`). The legacy `rgb()`, `hsl()` and `hwb()`
+  still resolve when their `calc()`s are numbers. `values/specified/color.rs` `Color::to_computed_color`: a function
+  that resolves at computed-value time gets the NaN adjustment absolute colors get (it was only done for colors the
+  parser had resolved), and a NaN hue of `lch()`/`oklch()` computes to 0. WPT css-color `parsing/color-valid-*`,
+  `color-computed-lab`; test `color_functions_keep_calc_in_their_specified_value` (pyro-webapi).

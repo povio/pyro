@@ -166,7 +166,10 @@ fn needs_fixup(doc: &BaseDocument, parent: NodeId, level: Level) -> bool {
 /// generating no box, which the table build passes over).
 ///
 /// A table in a vertical writing mode is built as before the fixup (`None`): its children that are
-/// not its proper children are left out (its captions and anonymous boxes are not laid out in its axes).
+/// not its proper children are left out. (Its captions are laid out; the anonymous boxes wait for
+/// `text-combine-upright` on text that is no element's: WPT css-writing-modes
+/// `text-combine-upright-inherit-all-002` has such text in a table without rows, and lays it out
+/// sideways once the table is fixed up.)
 pub(crate) fn fixup_children(
     doc: &mut BaseDocument,
     parent: NodeId,
