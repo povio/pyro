@@ -138,3 +138,16 @@ fn align_content_in_scroller_in_columns() {
     assert_eq!(pixel(&img, 10, 50), GREEN, "centred");
     assert_ne!(pixel(&img, 10, 5), GREEN, "not at the top");
 }
+
+/// One row of thousands of cells with alternating top borders: runs that never join. Offering
+/// each cell's border joins runs only at its own edges (the whole line was walked per offer).
+#[test]
+fn alternating_collapsed_borders_are_linear() {
+    let cells: String = (0..8000)
+        .map(|i| format!("<td style='padding:0;width:1px;border-top:2px solid {}'></td>", if i % 2 == 0 { "red" } else { "blue" }))
+        .collect();
+    let start = std::time::Instant::now();
+    render(&format!("<table style='border-collapse:collapse'><tr>{cells}</tr></table>"));
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_secs_f64() < 20.0, "took {elapsed:?}");
+}

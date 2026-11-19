@@ -1020,16 +1020,22 @@ impl EdgeLine {
             }
         }
         push(&mut pieces, at, b, f(CollapsedEdge::NONE));
+        let count = pieces.len();
         self.runs.splice(first..last, pieces);
-        // Runs equal to their neighbours outside the range join them.
-        self.runs.dedup_by(|next, prev| {
-            if prev.1 == next.0 && prev.2 == next.2 {
-                prev.1 = next.1;
+        // Runs equal to their neighbours outside the range join them: only at the range's two
+        // edges (joining over the whole line made per-segment offers quadratic).
+        let join = |runs: &mut Vec<(u32, u32, CollapsedEdge)>, i: usize| {
+            if i > 0 && i < runs.len() && runs[i - 1].1 == runs[i].0 && runs[i - 1].2 == runs[i].2 {
+                runs[i - 1].1 = runs[i].1;
+                runs.remove(i);
                 true
             } else {
                 false
             }
-        });
+        };
+        // (The end first: joining at the start shifts the end's index.)
+        join(&mut self.runs, first + count);
+        join(&mut self.runs, first);
     }
 
     /// Replaces the segments `range` by `len` without borders, moving those after.
@@ -4413,6 +4419,21 @@ pub(crate) mod tests {
         assert_eq!(line.get(2).width, 0.0);
         assert_eq!(line.get(1_000_001).width, 2.0);
         assert!(line.all_width(1_000_002, 2.0) == false);
+    }
+
+    /// pyro: offers of alternating edges, segment by segment, cost linear time: runs join only at
+    /// the edges of the range offered (the whole line was walked per offer).
+    #[test]
+    fn edge_line_alternating_offers_are_linear() {
+        use super::{CollapsedEdge, EdgeLine};
+        let edge = |width: f32| CollapsedEdge { width, ..CollapsedEdge::NONE };
+        let mut line = EdgeLine::default();
+        let start = std::time::Instant::now();
+        for c in 0..100_000 {
+            line.update(c..c + 1, |_| edge(if c % 2 == 0 { 1.0 } else { 2.0 }));
+        }
+        assert_eq!(line.runs.len(), 100_000);
+        assert!(start.elapsed().as_secs_f64() < 2.0, "took {:?}", start.elapsed());
     }
 
     #[test]
