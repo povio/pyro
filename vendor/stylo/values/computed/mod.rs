@@ -129,7 +129,7 @@ pub use self::text::{
 pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextIndent};
 pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
 pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
-pub use self::text::{TextAutospace, TextFit, WordSpaceTransform, TextSpacingTrim, TextUnderlinePosition};
+pub use self::text::{TextAutospace, TextFit, WhiteSpaceTrim, WordSpaceTransform, TextSpacingTrim, TextUnderlinePosition};
 pub use self::text::{TextBoxEdge, TextBoxTrim};
 pub use self::text::{
     TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,

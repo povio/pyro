@@ -702,6 +702,7 @@ class Longhand(Property):
                 "TextAlignLast",
                 "TextAutospace",
                 "WordSpaceTransform",
+                "WhiteSpaceTrim",
                 "TextSpacingTrim",
                 "TextBoxEdge",
                 "TextBoxTrim",

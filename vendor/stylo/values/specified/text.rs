@@ -1377,6 +1377,42 @@ bitflags! {
     }
 }
 
+/// pyro: the `white-space-trim` property: which collapsible white space at a box's edges is
+/// discarded.
+///
+/// https://drafts.csswg.org/css-text-4/#white-space-trim
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToCss,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(single = "none", mixed = "discard-before,discard-after,discard-inner"))]
+#[repr(C)]
+pub struct WhiteSpaceTrim(u8);
+bitflags! {
+    impl WhiteSpaceTrim: u8 {
+        /// Nothing is discarded.
+        const NONE = 0;
+        /// The collapsible white space immediately before the box's start.
+        const DISCARD_BEFORE = 1 << 0;
+        /// The collapsible white space immediately after the box's end.
+        const DISCARD_AFTER = 1 << 1;
+        /// The collapsible white space at the start and end of the box's content.
+        const DISCARD_INNER = 1 << 2;
+    }
+}
+
 /// pyro: the `word-space-transform` property: what word separators zero width spaces and `<wbr>`
 /// become.
 ///

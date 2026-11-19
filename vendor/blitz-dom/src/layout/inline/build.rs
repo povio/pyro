@@ -12,6 +12,7 @@ use style::{
 };
 use stylo_taffy::CopyStyleGetters;
 
+use style::values::computed::WhiteSpaceTrim;
 use crate::{
     NodeData,
     layout::list::BULLET_FONT_FAMILY,
@@ -1309,7 +1310,15 @@ fn build_inline_layout_with(
                                     );
                             }
 
+                            // pyro: CSS Text 4 `white-space-trim`.
+                            let trim = node.primary_styles().map_or(WhiteSpaceTrim::NONE, |s| s.get_text().white_space_trim);
+                            if trim.contains(WhiteSpaceTrim::DISCARD_BEFORE) {
+                                builder.discard_pending_whitespace();
+                            }
                             builder.push_style_span(style);
+                            if trim.contains(WhiteSpaceTrim::DISCARD_INNER) {
+                                builder.discard_next_whitespace();
+                            }
                             // pyro: emphasis marks over the span's own text; a `<ruby>`'s first
                             // base starts here.
                             if let Some(style) = node.primary_styles() {
@@ -1432,6 +1441,9 @@ fn build_inline_layout_with(
                             }
                             // pyro: a span that holds nothing still has its strut in the line (CSS
                             // 2.1 § 10.8: its font and line height count in the line's height).
+                            if trim.contains(WhiteSpaceTrim::DISCARD_INNER) {
+                                builder.discard_pending_whitespace();
+                            }
                             if held == (builder.text().len(), bidi_scan.atomic_boxes) {
                                 builder.push_empty_box_strut();
                                 bidi_scan.empty_box_struts = true;
@@ -1444,10 +1456,18 @@ fn build_inline_layout_with(
                                 bidi_scan.open_controls.pop();
                             }
                             builder.pop_style_span();
+                            if trim.contains(WhiteSpaceTrim::DISCARD_AFTER) {
+                                builder.discard_next_whitespace();
+                            }
                         }
                     }
                     // Inline box
                     (_, _) => {
+                        // pyro: CSS Text 4 `white-space-trim` around an atomic inline.
+                        let trim = node.primary_styles().map_or(WhiteSpaceTrim::NONE, |s| s.get_text().white_space_trim);
+                        if box_kind == InlineBoxKind::InFlow && trim.contains(WhiteSpaceTrim::DISCARD_BEFORE) {
+                            builder.discard_pending_whitespace();
+                        }
                         if box_kind == InlineBoxKind::InFlow {
                             bidi_scan.atomic_boxes += 1;
                             text_transformer.word_break(builder);
@@ -1475,6 +1495,9 @@ fn build_inline_layout_with(
                             glue: box_kind == InlineBoxKind::InFlow
                                 && node.primary_styles().is_some_and(|style| style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED)),
                         });
+                        if box_kind == InlineBoxKind::InFlow && trim.contains(WhiteSpaceTrim::DISCARD_AFTER) {
+                            builder.discard_next_whitespace();
+                        }
                     }
                 };
             }

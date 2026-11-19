@@ -202,7 +202,7 @@ index 0000000..0930692
 +    }
 +}
 diff --git a/src/builder.rs b/src/builder.rs
-index 4d5dcf2..2cb43a7 100644
+index 4d5dcf2..f9c4de4 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
 @@ -35,6 +35,11 @@ impl BuilderOptions<'_> {
@@ -257,7 +257,7 @@ index 4d5dcf2..2cb43a7 100644
      pub fn push_style_modification_span<'s, 'iter>(
          &mut self,
          properties: impl IntoIterator<Item = &'iter StyleProperty<'s, B>>,
-@@ -266,6 +290,22 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -266,6 +290,34 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
          self.lcx.tree_style_builder.push_text(text);
      }
  
@@ -270,6 +270,18 @@ index 4d5dcf2..2cb43a7 100644
 +        self.lcx.tree_style_builder.push_bidi_control(control);
 +    }
 +
++    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pushed and not
++    /// yet resolved (before a `discard-before` box, at the end of a `discard-inner` one).
++    pub fn discard_pending_whitespace(&mut self) {
++        self.lcx.tree_style_builder.discard_pending_whitespace();
++    }
++
++    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pushed next, up
++    /// to the next content (after a `discard-after` box, at the start of a `discard-inner` one).
++    pub fn discard_next_whitespace(&mut self) {
++        self.lcx.tree_style_builder.discard_next_whitespace();
++    }
++
 +    /// pyro: pushes the strut of an inline box that holds nothing (U+2061, an invisible
 +    /// zero-width character with the current span's style), so that the box's font and line
 +    /// height take part in its line's height. It is no content to white space processing.
@@ -280,7 +292,7 @@ index 4d5dcf2..2cb43a7 100644
      /// Returns the pushed text so far, after whitespace processing, but excluding any trailing
      /// collapsible whitespace.
      ///
-@@ -284,10 +324,19 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -284,10 +336,19 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
          self.lcx.tree_style_builder.has_pending_whitespace()
      }
  
@@ -303,7 +315,7 @@ index 4d5dcf2..2cb43a7 100644
          }
  
          // TODO: arrange type better here to factor out the index
-@@ -297,7 +346,27 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -297,7 +358,27 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
              inline_box,
              parent_style_index,
              baseline_offset: 0.,
@@ -331,7 +343,7 @@ index 4d5dcf2..2cb43a7 100644
      }
  
      /// Sets the paragraph's base direction.
-@@ -315,12 +384,9 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -315,12 +396,9 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
      }
  
      #[inline]
@@ -346,7 +358,7 @@ index 4d5dcf2..2cb43a7 100644
  
          // Call generic layout builder method
          build_into_layout(layout, &text, self.lcx, self.fcx, self.options);
-@@ -334,6 +400,22 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
+@@ -334,6 +412,22 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
          let text = self.build_into(&mut layout);
          (layout, text)
      }
@@ -369,7 +381,7 @@ index 4d5dcf2..2cb43a7 100644
  }
  
  fn build_into_layout<B: Brush>(
-@@ -355,6 +437,35 @@ fn build_into_layout<B: Brush>(
+@@ -355,6 +449,35 @@ fn build_into_layout<B: Brush>(
          "at least one style run is required"
      );
  
@@ -405,7 +417,7 @@ index 4d5dcf2..2cb43a7 100644
      crate::analysis::analyze_text(
          lcx,
          text,
-@@ -366,6 +477,7 @@ fn build_into_layout<B: Brush>(
+@@ -366,6 +489,7 @@ fn build_into_layout<B: Brush>(
      layout.data.scale = options.scale;
      layout.data.quantize = options.quantize;
      layout.data.base_level = lcx.analysis.paragraph_level();
@@ -413,7 +425,7 @@ index 4d5dcf2..2cb43a7 100644
      layout.data.text_len = text.len();
  
      // Characters not covered by any style run (e.g. the space substituted for empty text during
-@@ -386,6 +498,14 @@ fn build_into_layout<B: Brush>(
+@@ -386,6 +510,14 @@ fn build_into_layout<B: Brush>(
          .data
          .styles
          .extend(lcx.style_table.iter().map(|s| s.as_layout_style()));
@@ -428,7 +440,7 @@ index 4d5dcf2..2cb43a7 100644
  
      // Sort the inline boxes as subsequent code assumes that they are in text index order.
      // Note: It's important that this is a stable sort to allow users to control the order of contiguous inline boxes
-@@ -393,6 +513,23 @@ fn build_into_layout<B: Brush>(
+@@ -393,6 +525,23 @@ fn build_into_layout<B: Brush>(
      // TODO: consider dropping the sort and requiring `push_inline_box` callers to push boxes in text index order
      // (as `TreeBuilder` already does).
      lcx.inline_boxes.sort_by_key(|b| b.inline_box.index);
@@ -452,7 +464,7 @@ index 4d5dcf2..2cb43a7 100644
  
      {
          super::shape::shape_text(
-@@ -406,6 +543,7 @@ fn build_into_layout<B: Brush>(
+@@ -406,6 +555,7 @@ fn build_into_layout<B: Brush>(
              text,
              layout,
              &lcx.analysis_data_sources,
@@ -460,7 +472,7 @@ index 4d5dcf2..2cb43a7 100644
          );
      }
  
-@@ -415,13 +553,30 @@ fn build_into_layout<B: Brush>(
+@@ -415,13 +565,30 @@ fn build_into_layout<B: Brush>(
          fcx,
          &lcx.style_table,
          &layout.data.shaped_text,
@@ -4888,7 +4900,7 @@ index f465832..40f0f5b 100644
          }
      }
 diff --git a/src/resolve/tree.rs b/src/resolve/tree.rs
-index c102610..db5e8fc 100644
+index c102610..64f6475 100644
 --- a/src/resolve/tree.rs
 +++ b/src/resolve/tree.rs
 @@ -16,6 +16,9 @@ struct StyleTreeNode<B: Brush> {
@@ -4938,7 +4950,12 @@ index c102610..db5e8fc 100644
  /// Builder for constructing a tree of styles
  #[derive(Clone)]
  pub(crate) struct TreeStyleBuilder<B: Brush> {
-@@ -50,6 +76,19 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
+@@ -47,9 +73,24 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
+     /// same inline formatting context, so that it can collapse across span and inline box
+     /// boundaries and be removed at the end of the text.
+     pending_whitespace: Option<PendingWhitespace>,
++    /// pyro: the collapsible white space that comes next is discarded (`white-space-trim`).
++    discard_leading_whitespace: bool,
      /// Whether the most recently pushed item is an inline box, in which case pending collapsible
      /// whitespace is not at the start of the inline formatting context.
      last_item_is_inline_box: bool,
@@ -4958,9 +4975,11 @@ index c102610..db5e8fc 100644
  }
  
  impl<B: Brush> Default for TreeStyleBuilder<B> {
-@@ -62,6 +101,11 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
+@@ -61,7 +102,13 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
+             text: String::new(),
              current_span: usize::MAX,
              pending_whitespace: None,
++            discard_leading_whitespace: false,
              last_item_is_inline_box: false,
 +            deferred_edges: Vec::new(),
 +            edge_moves: Vec::new(),
@@ -4970,7 +4989,7 @@ index c102610..db5e8fc 100644
          }
      }
  }
-@@ -72,6 +116,12 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -72,6 +119,12 @@ impl<B: Brush> TreeStyleBuilder<B> {
          self.tree[self.current_span].style.clone()
      }
  
@@ -4983,7 +5002,7 @@ index c102610..db5e8fc 100644
      /// Prepares the builder for accepting a tree of styles and text.
      ///
      /// The provided `root_style` is the default style applied to all text unless overridden.
-@@ -80,8 +130,13 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -80,8 +133,13 @@ impl<B: Brush> TreeStyleBuilder<B> {
          self.style_table.clear();
          self.style_runs.clear();
          self.text.clear();
@@ -4997,7 +5016,7 @@ index c102610..db5e8fc 100644
  
          // The root style is always materialised at index 0 so that it can act as the parent of
          // every other style (and as the strut for otherwise empty lines).
-@@ -93,6 +148,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -93,6 +151,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
              style: root_style,
              style_id: Some(0),
              wrappable_style_id: None,
@@ -5005,10 +5024,13 @@ index c102610..db5e8fc 100644
          });
          self.current_span = 0;
      }
-@@ -103,6 +159,24 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -101,6 +160,25 @@ impl<B: Brush> TreeStyleBuilder<B> {
+     /// treated as whitespace at the start of the inline formatting context.
+     pub(crate) fn set_last_item_is_inline_box(&mut self) {
          self.last_item_is_inline_box = true;
-     }
- 
++        self.discard_leading_whitespace = false;
++    }
++
 +    /// pyro: a span's start or end edge was pushed as inline box `box_index` at the end of the
 +    /// text so far. White space pending before it collapses with any after it: if it is kept
 +    /// (content follows it), the edge moves behind it (see [`Self::take_edge_moves`]): the space
@@ -5025,12 +5047,10 @@ index c102610..db5e8fc 100644
 +    /// index behind that white space.
 +    pub(crate) fn take_edge_moves(&mut self) -> Vec<(usize, usize)> {
 +        core::mem::take(&mut self.edge_moves)
-+    }
-+
+     }
+ 
      /// Applies white space processing to `text` in the current span and commits the result, leaving
-     /// any trailing collapsible whitespace pending.
-     pub(crate) fn push_text(&mut self, text: &str) {
-@@ -117,7 +191,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -117,16 +195,22 @@ impl<B: Brush> TreeStyleBuilder<B> {
                      // Pending whitespace is always from a `WhiteSpaceCollapse::Collapse` or
                      // `WhiteSpaceCollapse::PreserveBreaks` span, and following CSS Text 4 § 4.3.1 Rule 1
                      // must be removed if it immediately precedes a preserved segment break.
@@ -5039,7 +5059,22 @@ index c102610..db5e8fc 100644
                  }
                  self.flush_pending_whitespace();
                  self.commit_text(span, text);
-@@ -134,8 +208,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
++                self.discard_leading_whitespace = false;
+             }
+             mode @ (WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::PreserveBreaks) => {
+                 let mut rest = text;
+                 while !rest.is_empty() {
+                     let whitespace_len =
+                         rest.find(|c| !mode.is_collapsible(c)).unwrap_or(rest.len());
++                    if whitespace_len > 0 && self.discard_leading_whitespace {
++                        // pyro: `white-space-trim` discards it (`discard_leading_whitespace`).
++                        rest = &rest[whitespace_len..];
++                        continue;
++                    }
+                     if whitespace_len > 0 {
+                         // The collapsed space is attributed to the span the whitespace sequence
+                         // started in, but is a wrap opportunity if any of the spans it collapses
+@@ -134,8 +218,9 @@ impl<B: Brush> TreeStyleBuilder<B> {
                          let wrappable = self.tree[span].style.text_wrap_mode == TextWrapMode::Wrap;
                          let pending = self
                              .pending_whitespace
@@ -5050,7 +5085,7 @@ index c102610..db5e8fc 100644
                          rest = &rest[whitespace_len..];
                          continue;
                      }
-@@ -146,7 +221,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -146,7 +231,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
                          // reach this point, so only `LS` and `PS` are treated as forced breaks. In
                          // `PreserveBreaks` mode `CR` and `LF` are not collapsible and are also
                          // preserved as forced breaks.
@@ -5059,7 +5094,7 @@ index c102610..db5e8fc 100644
                          let break_len = rest.chars().next().unwrap().len_utf8();
                          self.commit_text(span, &rest[..break_len]);
                          rest = &rest[break_len..];
-@@ -155,6 +230,21 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -155,8 +240,24 @@ impl<B: Brush> TreeStyleBuilder<B> {
                      let text_len = rest
                          .find(|c| mode.is_collapsible(c) || is_segment_break(c))
                          .unwrap_or(rest.len());
@@ -5080,8 +5115,11 @@ index c102610..db5e8fc 100644
 +                    }
                      self.flush_pending_whitespace();
                      self.commit_text(span, &rest[..text_len]);
++                    self.discard_leading_whitespace = false;
                      rest = &rest[text_len..];
-@@ -173,8 +263,22 @@ impl<B: Brush> TreeStyleBuilder<B> {
+                 }
+             }
+@@ -173,8 +274,22 @@ impl<B: Brush> TreeStyleBuilder<B> {
          // Whitespace at the start of the inline formatting context is removed, as is whitespace
          // immediately following a preserved segment break. Whitespace following a preserved space
          // or tab is retained, as only collapsible whitespace collapses.
@@ -5106,7 +5144,7 @@ index c102610..db5e8fc 100644
              return;
          }
  
-@@ -184,6 +288,76 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -184,6 +299,90 @@ impl<B: Brush> TreeStyleBuilder<B> {
              self.resolve_style_id(pending.span)
          };
          self.commit_styled_text(style_index, " ");
@@ -5115,6 +5153,20 @@ index c102610..db5e8fc 100644
 +        self.edge_moves
 +            .extend(self.deferred_edges.drain(..).map(|index| (index, end)));
 +        self.commit_deferred_controls();
++    }
++
++    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pending now
++    /// (`discard-before`, or the end of `discard-inner`).
++    pub(crate) fn discard_pending_whitespace(&mut self) {
++        if self.pending_whitespace.is_some() {
++            self.drop_pending_whitespace();
++        }
++    }
++
++    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space that comes next,
++    /// up to the next content (`discard-after`, or the start of `discard-inner`).
++    pub(crate) fn discard_next_whitespace(&mut self) {
++        self.discard_leading_whitespace = true;
 +    }
 +
 +    /// pyro: removes pending collapsible white space (it precedes a preserved segment break, or
@@ -5183,7 +5235,7 @@ index c102610..db5e8fc 100644
      }
  
      /// The style table index of the span that text is currently being pushed into.
-@@ -211,6 +385,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -211,6 +410,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
              }),
          }
          self.last_item_is_inline_box = false;
@@ -5194,7 +5246,7 @@ index c102610..db5e8fc 100644
      }
  
      /// The index of `span`'s style in the style table, adding it (and any ancestors that have not
-@@ -226,18 +404,43 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -226,18 +429,43 @@ impl<B: Brush> TreeStyleBuilder<B> {
          let parent_id = self.resolve_style_id(parent);
          let mut style = self.tree[span].style.clone();
          style.parent = parent_id;
@@ -5241,7 +5293,7 @@ index c102610..db5e8fc 100644
      /// The index of `span`'s style with wrapping enabled, adding it to the table if necessary.
      fn resolve_wrappable_style_id(&mut self, span: usize) -> u16 {
          if self.tree[span].style.text_wrap_mode == TextWrapMode::Wrap {
-@@ -250,7 +453,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -250,7 +478,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
          let span_id = self.resolve_style_id(span);
          let mut style = self.style_table[usize::from(span_id)].clone();
          style.text_wrap_mode = TextWrapMode::Wrap;
@@ -5250,7 +5302,7 @@ index c102610..db5e8fc 100644
          self.tree[span].wrappable_style_id = Some(style_id);
          style_id
      }
-@@ -272,6 +475,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -272,6 +500,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
              style,
              style_id: None,
              wrappable_style_id: None,
@@ -5258,7 +5310,7 @@ index c102610..db5e8fc 100644
          });
          self.current_span = self.tree.len() - 1;
      }
-@@ -304,11 +508,17 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -304,11 +533,17 @@ impl<B: Brush> TreeStyleBuilder<B> {
          while self.tree[self.current_span].parent.is_some() {
              self.pop_style_span();
          }
@@ -5276,7 +5328,7 @@ index c102610..db5e8fc 100644
  
          if style_runs.is_empty() {
              // If there's no text, the layout still needs the root style, e.g., to size a cursor.
-@@ -322,6 +532,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -322,6 +557,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
      }
  }
  

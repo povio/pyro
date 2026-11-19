@@ -73,6 +73,8 @@ pub(crate) struct TreeStyleBuilder<B: Brush> {
     /// same inline formatting context, so that it can collapse across span and inline box
     /// boundaries and be removed at the end of the text.
     pending_whitespace: Option<PendingWhitespace>,
+    /// pyro: the collapsible white space that comes next is discarded (`white-space-trim`).
+    discard_leading_whitespace: bool,
     /// Whether the most recently pushed item is an inline box, in which case pending collapsible
     /// whitespace is not at the start of the inline formatting context.
     last_item_is_inline_box: bool,
@@ -100,6 +102,7 @@ impl<B: Brush> Default for TreeStyleBuilder<B> {
             text: String::new(),
             current_span: usize::MAX,
             pending_whitespace: None,
+            discard_leading_whitespace: false,
             last_item_is_inline_box: false,
             deferred_edges: Vec::new(),
             edge_moves: Vec::new(),
@@ -157,6 +160,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
     /// treated as whitespace at the start of the inline formatting context.
     pub(crate) fn set_last_item_is_inline_box(&mut self) {
         self.last_item_is_inline_box = true;
+        self.discard_leading_whitespace = false;
     }
 
     /// pyro: a span's start or end edge was pushed as inline box `box_index` at the end of the
@@ -195,12 +199,18 @@ impl<B: Brush> TreeStyleBuilder<B> {
                 }
                 self.flush_pending_whitespace();
                 self.commit_text(span, text);
+                self.discard_leading_whitespace = false;
             }
             mode @ (WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::PreserveBreaks) => {
                 let mut rest = text;
                 while !rest.is_empty() {
                     let whitespace_len =
                         rest.find(|c| !mode.is_collapsible(c)).unwrap_or(rest.len());
+                    if whitespace_len > 0 && self.discard_leading_whitespace {
+                        // pyro: `white-space-trim` discards it (`discard_leading_whitespace`).
+                        rest = &rest[whitespace_len..];
+                        continue;
+                    }
                     if whitespace_len > 0 {
                         // The collapsed space is attributed to the span the whitespace sequence
                         // started in, but is a wrap opportunity if any of the spans it collapses
@@ -247,6 +257,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
                     }
                     self.flush_pending_whitespace();
                     self.commit_text(span, &rest[..text_len]);
+                    self.discard_leading_whitespace = false;
                     rest = &rest[text_len..];
                 }
             }
@@ -293,6 +304,20 @@ impl<B: Brush> TreeStyleBuilder<B> {
         self.edge_moves
             .extend(self.deferred_edges.drain(..).map(|index| (index, end)));
         self.commit_deferred_controls();
+    }
+
+    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pending now
+    /// (`discard-before`, or the end of `discard-inner`).
+    pub(crate) fn discard_pending_whitespace(&mut self) {
+        if self.pending_whitespace.is_some() {
+            self.drop_pending_whitespace();
+        }
+    }
+
+    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space that comes next,
+    /// up to the next content (`discard-after`, or the start of `discard-inner`).
+    pub(crate) fn discard_next_whitespace(&mut self) {
+        self.discard_leading_whitespace = true;
     }
 
     /// pyro: removes pending collapsible white space (it precedes a preserved segment break, or

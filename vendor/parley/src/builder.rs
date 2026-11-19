@@ -299,6 +299,18 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
         self.lcx.tree_style_builder.push_bidi_control(control);
     }
 
+    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pushed and not
+    /// yet resolved (before a `discard-before` box, at the end of a `discard-inner` one).
+    pub fn discard_pending_whitespace(&mut self) {
+        self.lcx.tree_style_builder.discard_pending_whitespace();
+    }
+
+    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pushed next, up
+    /// to the next content (after a `discard-after` box, at the start of a `discard-inner` one).
+    pub fn discard_next_whitespace(&mut self) {
+        self.lcx.tree_style_builder.discard_next_whitespace();
+    }
+
     /// pyro: pushes the strut of an inline box that holds nothing (U+2061, an invisible
     /// zero-width character with the current span's style), so that the box's font and line
     /// height take part in its line's height. It is no content to white space processing.
