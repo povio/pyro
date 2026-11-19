@@ -2146,7 +2146,9 @@ impl Node {
                     natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }
             }
-            if el.name.local == local_name!("button") {
+            // pyro: not the box of a `::scroll-button()` (an anonymous `button` node), laid out as
+            // any box is (WPT css-overflow `scroll-markers/scroll-buttons-disabled-snapping`).
+            if el.name.local == local_name!("button") && !matches!(self.data, NodeData::AnonymousBlock(_)) {
                 flags |= stylo_taffy::StyleFlags::IS_BUTTON;
             }
             if el.is_button_input() {
