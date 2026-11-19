@@ -220,7 +220,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) hoisted_in_column: std::cell::Cell<bool>,
     /// pyro: while a multi-column inline root paints its lines in a column: the column's strip
     /// range (CSS px), for the positioned boxes left to their paint-tree entries.
-    pub(crate) inline_column_range: std::cell::Cell<Option<(f32, f32)>>,
+    pub(crate) inline_column_range: std::cell::Cell<Option<(NodeId, f32, f32)>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -2137,26 +2137,30 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let Some(entries) = self.inline_pass_entries.borrow_mut().remove(&span_id) else { return };
         for (root_id, transform, pos, column) in entries {
             // (Each column's lines in its column only.)
-            let pushed = column.map(|(start, end)| {
+            let range = column.map(|(start, end)| {
                 const UNBOUNDED: f64 = 1e9;
-                let range = Rect::new(
-                    -UNBOUNDED,
-                    (start as f64 * self.scale).max(-UNBOUNDED),
-                    UNBOUNDED,
-                    (end as f64 * self.scale).min(UNBOUNDED),
-                );
-                self.layer_manager.maybe_push_layer(scene, true, peniko::BlendMode::default(), 1.0, transform, &range, None, None)
+                Rect::new(-UNBOUNDED, (start as f64 * self.scale).max(-UNBOUNDED), UNBOUNDED, (end as f64 * self.scale).min(UNBOUNDED))
             });
-            self.draw_inline_pass_entry_in(scene, span_id, root_id, transform, pos);
-            if let Some(pushed) = pushed {
-                self.layer_manager.maybe_pop_layer(scene, pushed);
-            }
+            self.draw_inline_pass_entry_in(scene, span_id, root_id, transform, pos, range);
         }
     }
 
+
+
     /// pyro: one entry of `draw_inline_pass_entry`: `span_id`'s content laid out by the inline root
-    /// `root_id` at `transform` and content position `pos`.
-    fn draw_inline_pass_entry_in(&self, scene: &mut impl PaintScene, span_id: NodeId, root_id: NodeId, transform: Affine, pos: Point) {
+    /// `root_id` at `transform` and content position `pos`; its lines and atomic inlines clipped to
+    /// `column` (a column's range of a multi-column container, in `transform`'s space), the
+    /// out-of-flow boxes it keeps not (they are placed in the columns themselves: WPT css-break
+    /// `out-of-flow-in-multicolumn-089`).
+    fn draw_inline_pass_entry_in(&self, scene: &mut impl PaintScene, span_id: NodeId, root_id: NodeId, transform: Affine, pos: Point, column: Option<Rect>) {
+        let push_column = |scene: &mut _| {
+            column.map(|range| self.layer_manager.maybe_push_layer(scene, true, peniko::BlendMode::default(), 1.0, transform, &range, None, None))
+        };
+        let pop_column = |scene: &mut _, pushed: Option<_>| {
+            if let Some(pushed) = pushed {
+                self.layer_manager.maybe_pop_layer(scene, pushed);
+            }
+        };
         let Some(root) = self.dom.get_node(root_id) else { return };
         let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
         // pyro: an inline stacking context keeping out-of-flow boxes (blitz-dom
@@ -2175,7 +2179,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 None,
             );
         }
+        let pushed = push_column(scene);
         cx.draw_inline_pass(scene, pos, span_id);
+        pop_column(scene, pushed);
         if !owned.is_empty() {
             let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
             // pyro: under its clip path (WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
@@ -2208,7 +2214,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
             let child_transform = transform.pre_translate(Vec2::new(sticky.0 * self.scale, sticky.1 * self.scale));
             let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
+            let pushed = push_column(scene);
             self.render_node(scene, child_id, child_transform, everything);
+            pop_column(scene, pushed);
         }
     }
 
@@ -4010,10 +4018,29 @@ impl ElementCx<'_, '_> {
                 {
                     // pyro: in a multi-column inline root, the column that shows the box records it
                     // (`PaintContext::inline_column_range`).
-                    // (Each column that shows one of its lines.)
-                    let shown_here = self.context.inline_column_range.get().is_none_or(|(start, end)| {
+                    // (Each column that shows one of its lines. The range is the container's strip's:
+                    // in this root's box when it is below the container.)
+                    let column = self.context.inline_column_range.get().and_then(|(container, start, end)| {
+                        let tree = self.context.dom.as_ref().tree();
+                        let mut top = 0.0f32;
+                        let mut at = Some(self.node.id);
+                        let mut steps = 0;
+                        while let Some(node) = at.filter(|&n| n != container) {
+                            steps += 1;
+                            if steps > 256 {
+                                return None;
+                            }
+                            top += tree[node].final_layout().location.y;
+                            at = tree[node].layout_parent.get();
+                        }
+                        at.map(|_| (start - top, end - top))
+                    });
+                    // (And each column, for one that keeps out-of-flow boxes: they are placed in the
+                    // columns themselves, `draw_inline_pass_entry_in`.)
+                    let shown_here = column.is_none_or(|(start, end)| {
                         let mut own = fragments.iter().filter(|fragment| fragment.node == span).peekable();
                         own.peek().is_none()
+                            || !clip_path::owned_hoisted(self.context.dom.as_ref(), span).is_empty()
                             || own.any(|fragment| {
                                 // (Its line's top in the root's box: the strip.)
                                 let layout = &text_layout.layout;
@@ -4022,7 +4049,7 @@ impl ElementCx<'_, '_> {
                                 y >= start - 0.5 && y < end - 0.5
                             })
                     });
-                    match self.context.inline_column_range.get() {
+                    match column {
                         Some(range) if shown_here => self
                             .context
                             .inline_pass_entries
@@ -6012,19 +6039,29 @@ impl ElementCx<'_, '_> {
             // (A positioned inline box listed in the paint tree paints its lines from the entries
             // its root recorded, each clipped to its column (`inline_pass_entries`): once, not
             // sorted by its box: WPT css-position `position-absolute-in-inline-007a`.)
-            if self
+            // (One whose root is below the container records its entry in each column, without a
+            // range: it is painted in each column, cut at both edges, whatever its box's place:
+            // WPT css-break `out-of-flow-in-multicolumn-048`, `-089`.)
+            let inline_entry = self
                 .context
                 .dom
                 .get_node(child_id)
-                .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
-            {
+                .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY));
+            // (One with no entries paints its box and what it keeps itself: once, unsorted, as
+            // the out-of-flow boxes it keeps are placed in the columns themselves: WPT css-break
+            // `out-of-flow-in-multicolumn-089`.)
+            let (ranged, unranged) = match self.context.inline_pass_entries.borrow().get(&child_id) {
+                Some(entries) if inline_entry => (entries.iter().any(|entry| entry.3.is_some()), entries.iter().all(|entry| entry.3.is_none())),
+                _ => (inline_entry, false),
+            };
+            if ranged && !unranged {
                 self.context.column_range.set(None);
                 self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
                 self.context.column_range.set(Some((container, start, end, transform, outer_range)));
                 return;
             }
             let range = outer_range;
-            let share = self.column_share(container, child_id, start, end);
+            let share = if unranged { ColumnShare::Cut } else { self.column_share(container, child_id, start, end) };
             match share {
                 ColumnShare::Outside => return,
                 ColumnShare::Inside | ColumnShare::Cut => {

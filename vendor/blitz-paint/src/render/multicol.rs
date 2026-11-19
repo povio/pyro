@@ -135,7 +135,7 @@ impl ElementCx<'_, '_> {
             let outer_inline_range = self
                 .context
                 .inline_column_range
-                .replace((!single && vertical.is_none()).then_some((fragment.start, fragment.end)));
+                .replace((!single && vertical.is_none()).then_some((self.node.id, fragment.start, fragment.end)));
             // (A spanner's row, unclipped in the block axis, shows its spanner alone: not the
             // container's own lines, which are the columns', nor its marker, unless the row is
             // its first fragment: WPT css-multicol `multicol-list-item-005`,
@@ -146,7 +146,6 @@ impl ElementCx<'_, '_> {
             if row_spanner.is_none() || fragment.start == f32::NEG_INFINITY {
                 self.draw_marker(scene, pos);
             }
-            self.context.inline_column_range.set(outer_inline_range);
             // pyro: the container's boxes are not clipped to the column in the block axis, as in
             // Chromium: a box the column holds whole is painted with what overflows it, above or
             // below; a box a break goes through is sliced; a box another column holds is left to
@@ -175,6 +174,9 @@ impl ElementCx<'_, '_> {
                 self.context.spanner_row_except.set(outer_except);
                 self.context.spanner_row_spanner.set(outer_row_spanner);
             }
+            // (Kept while the column's boxes paint too: an inline root below the container
+            // records its positioned boxes for the column as the container's own lines do.)
+            self.context.inline_column_range.set(outer_inline_range);
             if !unclipped {
                 self.context.layer_manager.maybe_pop_layer(scene, pushed);
             }
