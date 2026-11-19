@@ -6,7 +6,7 @@ use peniko::{Color, Fill};
 use smallvec::SmallVec;
 use style::{
     computed_values::border_collapse::T as BorderCollapse,
-    values::computed::{BorderStyle, OutlineStyle},
+    values::computed::{BorderStyle, ColorOrAuto, OutlineStyle},
 };
 
 use crate::{
@@ -1482,21 +1482,47 @@ impl ElementCx<'_, '_> {
     /// further in than to the middle of the box.
     pub(super) fn outline_line(&self) -> Option<(BorderStyle, Color, f64, f64)> {
         let outline = self.style.get_outline();
+        // pyro: `outline-color: auto` is the accent colour of an `auto` outline when there is one,
+        // else currentcolor (CSS UI 4).
+        let current = self.style.clone_color();
+        let color = match (&outline.outline_color.0, outline.outline_style) {
+            (ColorOrAuto::Color(color), _) => color.resolve_to_absolute(&current),
+            (ColorOrAuto::Auto, OutlineStyle::Auto) => match &self.style.get_inherited_ui().accent_color {
+                ColorOrAuto::Color(accent) => accent.resolve_to_absolute(&current),
+                ColorOrAuto::Auto => current,
+            },
+            (ColorOrAuto::Auto, _) => current,
+        }
+        .as_srgb_color();
         let style = match outline.outline_style {
-            OutlineStyle::Auto => return None,
+            // pyro: `auto` is Chromium's focus ring: a 2px solid line in the outline's colour
+            // whatever its width, across the edge `outline-offset` from the border box (one pixel
+            // out, one in); `outline-offset: inset` keeps it inside the border box (CSS UI 4).
+            OutlineStyle::Auto => {
+                if color.components[3] <= 0.0 {
+                    return None;
+                }
+                let scale = self.scale;
+                let bb = self.frame.border_box;
+                let offset = (outline.outline_offset.px(0.0).trunc() * scale)
+                    .max(-(bb.width() / 2.0).floor())
+                    .max(-(bb.height() / 2.0).floor());
+                let outset = match outline.outline_offset {
+                    style::values::computed::OutlineOffset::Inset => 0.0,
+                    _ => offset + scale,
+                };
+                return Some((BorderStyle::Solid, color, 2.0 * scale, outset));
+            }
             OutlineStyle::BorderStyle(style) => style,
         };
-        let color = outline
-            .outline_color
-            .resolve_to_absolute(&self.style.clone_color())
-            .as_srgb_color();
         if style.none_or_hidden() || self.frame.outline_width <= 0.0 || color.components[3] <= 0.0 {
             return None;
         }
         let scale = self.scale;
         let width = (self.frame.outline_width / scale).floor().max(1.0) * scale;
         let bb = self.frame.border_box;
-        let offset = (outline.outline_offset.to_f64_px().trunc() * scale)
+        // (`inset`: minus the outline's used width, CSS UI 4.)
+        let offset = (outline.outline_offset.px(width / scale).trunc() * scale)
             .max(-(bb.width() / 2.0).floor())
             .max(-(bb.height() / 2.0).floor());
         Some((style, color, width, offset + width))
@@ -1556,7 +1582,24 @@ impl ElementCx<'_, '_> {
                 return;
             }
         }
-        let bb = self.frame.border_box;
+        // pyro: an `auto` outline (a focus ring) goes around the boxes of the element's
+        // descendants that overflow it too, unless it clips them (Chromium's outline rects with
+        // block ink overflow; WPT css-ui `outline-with-padding-001`).
+        let bb = {
+            use style::computed_values::overflow_x::T as Overflow;
+            let bb = self.frame.border_box;
+            let box_ = self.style.get_box();
+            match self.style.get_outline().outline_style {
+                OutlineStyle::Auto
+                    if self.text_input.is_none()
+                        && box_.overflow_x == Overflow::Visible
+                        && box_.overflow_y == Overflow::Visible =>
+                {
+                    bb.union(*self.node.scrollable_overflow())
+                }
+                _ => bb,
+            }
+        };
         // A rounded corner grows with the outline, and a square one stays
         // square.
         let corner = |r: Vec2| {
@@ -1570,7 +1613,11 @@ impl ElementCx<'_, '_> {
         // pyro: a negative `outline-offset` pulls the outline in no further than to the middle of
         // the box in each axis apart (Blink: a wide box's outline meets in the middle of its
         // height, not of its width; WPT css-ui `outline-014`, `-015`).
-        let raw = self.style.get_outline().outline_offset.to_f64_px().trunc() * self.scale;
+        let raw = match self.style.get_outline().outline_style {
+            // (`auto`: its inner edge, [`Self::outline_line`].)
+            OutlineStyle::Auto => outset - width,
+            _ => self.style.get_outline().outline_offset.px(width / self.scale).trunc() * self.scale,
+        };
         let (ox, oy) = if raw < 0.0 {
             (raw.max(-(bb.width() / 2.0).floor()) + width, raw.max(-(bb.height() / 2.0).floor()) + width)
         } else {

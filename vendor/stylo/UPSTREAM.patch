@@ -810,7 +810,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-19 18:38:15
++++ b/properties/longhands.toml	2026-11-19 20:50:37
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -1096,7 +1096,31 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
  spec = "https://drafts.fxtf.org/motion-1/#offset-rotate-property"
  servo_restyle_damage = "rebuild_box"
-@@ -1536,7 +1563,6 @@
+@@ -1498,8 +1525,9 @@
+ affects = "layout"
+ 
+ [outline-color]
+-type = "Color"
+-initial = "computed_value::T::currentcolor()"
++# pyro: `auto | <color>` (CSS UI 4).
++type = "color::OutlineColor"
++initial = "generics::color::OutlineColor::auto()"
+ struct = "outline"
+ ignored_when_colors_disabled = true
+ spec = "https://drafts.csswg.org/css-ui/#propdef-outline-color"
+@@ -1507,8 +1535,9 @@
+ affects = "paint"
+ 
+ [outline-offset]
+-type = "BorderSideOffset"
+-initial = "app_units::Au(0)"
++# pyro: and `inset` (CSS UI 4).
++type = "OutlineOffset"
++initial = "computed::OutlineOffset::Length(computed::Length::zero())"
+ struct = "outline"
+ spec = "https://drafts.csswg.org/css-ui/#propdef-outline-offset"
+ servo_restyle_damage = "repaint"
+@@ -1536,7 +1565,6 @@
  type = "OverflowAnchor"
  initial = "computed::OverflowAnchor::Auto"
  struct = "box"
@@ -1104,7 +1128,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  gecko_pref = "layout.css.scroll-anchoring.enabled"
  spec = "https://drafts.csswg.org/css-scroll-anchoring/#exclusion-api"
  animation_type = "discrete"
-@@ -1666,7 +1692,6 @@
+@@ -1666,7 +1694,6 @@
  type = "SVGPaintOrder"
  initial = "computed::SVGPaintOrder::normal()"
  struct = "inherited_svg"
@@ -1112,7 +1136,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#PaintOrder"
  affects = "paint"
-@@ -1791,7 +1816,6 @@
+@@ -1791,7 +1818,6 @@
  type = "Resize"
  initial = "computed::Resize::None"
  struct = "box"
@@ -1120,7 +1144,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  gecko_ffi_name = "mResize"
  spec = "https://drafts.csswg.org/css-ui/#propdef-resize"
-@@ -1843,7 +1867,6 @@
+@@ -1843,7 +1869,6 @@
  type = "ScrollSnapAlign"
  initial = "computed::ScrollSnapAlign::none()"
  struct = "box"
@@ -1128,15 +1152,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-align"
  animation_type = "discrete"
  affects = "paint"
-@@ -1852,16 +1875,34 @@
+@@ -1852,16 +1877,34 @@
  type = "ScrollSnapStop"
  initial = "computed::ScrollSnapStop::Normal"
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
-+animation_type = "discrete"
-+affects = "paint"
-+
+ animation_type = "discrete"
+ affects = "paint"
+ 
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -1152,11 +1176,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
- affects = "paint"
- 
++affects = "paint"
++
  [scroll-snap-type]
  type = "ScrollSnapType"
  initial = "computed::ScrollSnapType::none()"
@@ -1165,7 +1189,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-type"
  animation_type = "discrete"
  affects = "paint"
-@@ -1932,7 +1973,6 @@
+@@ -1932,7 +1975,6 @@
  type = "ScrollbarGutter"
  initial = "computed::ScrollbarGutter::AUTO"
  struct = "box"
@@ -1173,7 +1197,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-overflow-3/#scrollbar-gutter-property"
  affects = "layout"
-@@ -1941,7 +1981,6 @@
+@@ -1941,7 +1983,6 @@
  type = "Opacity"
  initial = "0.0"
  struct = "box"
@@ -1181,7 +1205,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-image-threshold-property"
  affects = "layout"
  
-@@ -1949,7 +1988,6 @@
+@@ -1949,7 +1990,6 @@
  type = "NonNegativeLengthPercentage"
  initial = "computed::NonNegativeLengthPercentage::zero()"
  struct = "box"
@@ -1189,7 +1213,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-margin-property"
  affects = "layout"
  
-@@ -1957,7 +1995,6 @@
+@@ -1957,7 +1997,6 @@
  type = "basic_shape::ShapeOutside"
  initial = "generics::basic_shape::ShapeOutside::None"
  struct = "box"
@@ -1197,7 +1221,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-outside-property"
  affects = "layout"
  
-@@ -1975,7 +2012,6 @@
+@@ -1975,7 +2014,6 @@
  type = "Color"
  initial = "computed::Color::BLACK"
  struct = "svg"
@@ -1205,7 +1229,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/pservers.html#StopColorProperties"
  affects = "paint"
  
-@@ -1983,7 +2019,6 @@
+@@ -1983,7 +2021,6 @@
  type = "Opacity"
  initial = "1.0"
  struct = "svg"
@@ -1213,7 +1237,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/pservers.html#StopOpacityProperty"
  affects = "paint"
  
-@@ -2117,7 +2152,6 @@
+@@ -2117,7 +2154,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -1221,7 +1245,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2272,10 +2306,10 @@
+@@ -2272,10 +2308,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -1233,7 +1257,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2284,10 +2318,10 @@
+@@ -2284,10 +2320,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -1245,7 +1269,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2296,10 +2330,10 @@
+@@ -2296,10 +2332,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -1257,7 +1281,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2308,10 +2342,10 @@
+@@ -2308,10 +2344,10 @@
  type = "ViewTimelineInset"
  initial = "computed::ViewTimelineInset::default()"
  struct = "ui"
@@ -1269,7 +1293,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2320,10 +2354,10 @@
+@@ -2320,10 +2356,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -1281,7 +1305,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2350,7 +2384,6 @@
+@@ -2350,7 +2386,6 @@
  type = "VectorEffect"
  initial = "computed::VectorEffect::none()"
  struct = "svg"
@@ -1289,7 +1313,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/coords.html#VectorEffects"
  affects = "layout"
-@@ -2521,7 +2554,6 @@
+@@ -2521,7 +2556,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
  struct = "inherited_text"
@@ -1297,7 +1321,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  ignored_when_colors_disabled = true
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-color"
  affects = "paint"
-@@ -2530,7 +2562,6 @@
+@@ -2530,7 +2564,6 @@
  type = "LineWidth"
  initial = "app_units::Au(0)"
  struct = "inherited_text"
@@ -1305,7 +1329,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2586,8 +2617,58 @@
+@@ -2586,8 +2619,58 @@
  struct = "inherited_text"
  spec = "https://drafts.csswg.org/css-text-3/#tab-size-property"
  extra_gecko_aliases = ["-moz-tab-size"]
@@ -1319,8 +1343,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-text-3/#hanging-punctuation-property"
 +servo_restyle_damage = "rebuild_box"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[text-group-align]
 +type = "TextGroupAlign"
 +initial = "computed::text::TextGroupAlign::None"
@@ -1339,8 +1363,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-text-4/#wrap-inside"
 +servo_restyle_damage = "rebuild_box"
- affects = "layout"
- 
++affects = "layout"
++
 +[white-space-trim]
 +type = "WhiteSpaceTrim"
 +initial = "computed::text::WhiteSpaceTrim::NONE"
@@ -1364,7 +1388,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace]
  type = "TextAutospace"
  initial = "computed::text::TextAutospace::NO_AUTOSPACE"
-@@ -2597,6 +2678,28 @@
+@@ -2597,6 +2680,28 @@
  gecko_pref = "layout.css.text-autospace.enabled"
  has_effect_on_gecko_scrollbars = false
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
@@ -1393,7 +1417,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  
  [text-autospace-size]
-@@ -2635,7 +2738,6 @@
+@@ -2635,7 +2740,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -1401,7 +1425,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2767,7 @@
+@@ -2665,6 +2769,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -1409,12 +1433,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3274,15 @@
- boxed = true
- logical_group = "border-radius"
+@@ -3173,6 +3278,15 @@
  logical = true
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -1422,10 +1444,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
- affects = "paint"
- 
++affects = "paint"
++
  [corner-top-left-shape]
-@@ -3383,9 +3495,9 @@
+ type = "CornerShape"
+ initial = "computed::CornerShape::round()"
+@@ -3383,9 +3497,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -1436,7 +1460,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3393,7 +3505,6 @@
+@@ -3393,7 +3507,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1444,7 +1468,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
-@@ -3403,7 +3514,6 @@
+@@ -3403,7 +3516,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1452,7 +1476,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
-@@ -3413,7 +3523,6 @@
+@@ -3413,7 +3525,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1460,7 +1484,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
-@@ -3423,7 +3532,6 @@
+@@ -3423,7 +3534,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1468,7 +1492,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
-@@ -3433,7 +3541,6 @@
+@@ -3433,7 +3543,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1476,7 +1500,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.4"
-@@ -3444,7 +3551,6 @@
+@@ -3444,7 +3553,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1484,7 +1508,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.5"
-@@ -3455,7 +3561,6 @@
+@@ -3455,7 +3563,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1492,7 +1516,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.6"
-@@ -3466,7 +3571,6 @@
+@@ -3466,7 +3573,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1500,7 +1524,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.7"
-@@ -3567,7 +3671,6 @@
+@@ -3567,7 +3673,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1508,7 +1532,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-top"
-@@ -3577,7 +3680,6 @@
+@@ -3577,7 +3682,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1516,7 +1540,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-right"
-@@ -3587,7 +3689,6 @@
+@@ -3587,7 +3691,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1524,7 +1548,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-bottom"
-@@ -3597,7 +3698,6 @@
+@@ -3597,7 +3700,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1532,7 +1556,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-left"
-@@ -3607,7 +3707,6 @@
+@@ -3607,7 +3709,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1540,7 +1564,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.4"
-@@ -3618,7 +3717,6 @@
+@@ -3618,7 +3719,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1548,7 +1572,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.5"
-@@ -3629,7 +3727,6 @@
+@@ -3629,7 +3729,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1556,7 +1580,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.6"
-@@ -3640,7 +3737,6 @@
+@@ -3640,7 +3739,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1564,7 +1588,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.7"
-@@ -3694,6 +3790,7 @@
+@@ -3694,6 +3792,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -1572,10 +1596,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +3827,18 @@
- type = "TopLayer"
- initial = "computed::TopLayer::None"
- 
+@@ -3726,6 +3825,18 @@
+ spec = "Internal (not web-exposed)"
+ animation_type = "none"
+ enabled_in = "ua"
++affects = "layout"
++type = "TopLayer"
++initial = "computed::TopLayer::None"
++
 +# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
 +# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
 +# the top layer, past their removal (pyro-dom, blitz-paint).
@@ -1584,14 +1612,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-position-4/#overlay"
 +animation_type = "discrete"
-+affects = "layout"
-+type = "TopLayer"
-+initial = "computed::TopLayer::None"
-+
- [scroll-behavior]
- struct = "box"
- servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,13 +3879,31 @@
+ affects = "layout"
+ type = "TopLayer"
+ initial = "computed::TopLayer::None"
+@@ -3770,13 +3881,31 @@
  
  [column-fill]
  struct = "column"
@@ -1601,7 +1625,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  type = "ColumnFill"
  initial = "computed::ColumnFill::Balance"
-+
+ 
 +# pyro: css-multicol-2 `column-height` and `column-wrap` (blitz-dom lays them out: multicol.rs).
 +[column-height]
 +type = "length::NonNegativeLengthOrAuto"
@@ -1611,7 +1635,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-multicol-2/#ch"
 +servo_restyle_damage = "rebuild_box"
 +affects = "layout"
- 
++
 +[column-wrap]
 +struct = "column"
 +spec = "https://drafts.csswg.org/css-multicol-2/#cwr"
@@ -1624,7 +1648,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [column-span]
  struct = "column"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
-@@ -3901,9 +4028,9 @@
+@@ -3901,9 +4030,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -1635,7 +1659,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +4039,6 @@
+@@ -3912,7 +4041,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -1643,7 +1667,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +4047,6 @@
+@@ -3921,7 +4049,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -1651,7 +1675,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +4055,6 @@
+@@ -3930,7 +4057,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -1659,7 +1683,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +4063,6 @@
+@@ -3939,7 +4065,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -1667,7 +1691,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4093,6 +4216,17 @@
+@@ -4093,6 +4218,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -1685,10 +1709,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4110,6 +4244,61 @@
+@@ -4109,7 +4245,62 @@
+ affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
- 
++
 +[mask-border-source]
 +type = "Image"
 +initial = "computed::Image::None"
@@ -1707,7 +1732,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-slice"
 +boxed = true
 +affects = "paint"
-+
+ 
 +[mask-border-width]
 +type = "BorderImageWidth"
 +initial = "computed::BorderImageWidth::all(computed::BorderImageSideWidth::auto())"
@@ -1747,7 +1772,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [mask-mode]
  struct = "svg"
  servo_pref = "layout.css.masking.enabled"
-@@ -4249,7 +4438,7 @@
+@@ -4249,7 +4440,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -1756,7 +1781,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4287,9 +4476,64 @@
+@@ -4287,9 +4478,64 @@
  affects = "layout"
  gecko_ffi_name = "mBoxOrient"
  aliases = ["-webkit-box-orient"]
@@ -1821,7 +1846,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4588,8 @@
+@@ -4344,8 +4590,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -2068,7 +2093,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-19 02:49:19
++++ b/properties/shorthands.rs	2026-11-19 20:56:41
 @@ -265,6 +265,152 @@
                  self.corner_bottom_left_shape,
              )
@@ -2316,11 +2341,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
          {
              if self.column_width.is_auto() {
 -                return self.column_count.to_css(dest);
--            }
--            self.column_width.to_css(dest)?;
--            if !self.column_count.is_auto() {
--                dest.write_char(' ')?;
-                 self.column_count.to_css(dest)?;
++                self.column_count.to_css(dest)?;
 +            } else {
 +                self.column_width.to_css(dest)?;
 +                if !self.column_count.is_auto() {
@@ -2328,11 +2349,15 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +                    self.column_count.to_css(dest)?;
 +                }
              }
+-            self.column_width.to_css(dest)?;
+-            if !self.column_count.is_auto() {
+-                dest.write_char(' ')?;
+-                self.column_count.to_css(dest)?;
 +            // pyro: `column-height`, after a slash when it is not `auto`.
 +            if !self.column_height.is_auto() {
 +                dest.write_str(" / ")?;
 +                self.column_height.to_css(dest)?;
-+            }
+             }
              Ok(())
          }
      }
@@ -2386,7 +2411,44 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod animation_range {
      pub use crate::properties::generated::shorthands::animation_range::*;
  
-@@ -3399,8 +3562,9 @@
+@@ -2092,7 +2255,13 @@
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+         Ok(expanded! {
+-            outline_color: unwrap_or_initial!(outline_color, color),
++            // pyro: (`auto` in the shorthand is the style.)
++            outline_color: unwrap_or_initial!(
++                outline_color,
++                color.map(|color| crate::values::generics::color::OutlineColor(
++                    crate::values::generics::color::ColorOrAuto::Color(color)
++                ))
++            ),
+             outline_style: unwrap_or_initial!(outline_style, style),
+             outline_width: unwrap_or_initial!(outline_width, width),
+         })
+@@ -2103,15 +2272,17 @@
+         where
+             W: fmt::Write,
+         {
++            // pyro: in the border shorthands' canonical order, width, style, colour (CSSOM;
++            // WPT css-ui `parsing/outline-valid`).
+             let mut writer = SequenceWriter::new(dest, " ");
+-            if *self.outline_color != outline_color::get_initial_specified_value() {
+-                writer.item(self.outline_color)?;
++            if *self.outline_width != outline_width::get_initial_specified_value() {
++                writer.item(self.outline_width)?;
+             }
+             if *self.outline_style != outline_style::get_initial_specified_value() {
+                 writer.item(self.outline_style)?;
+             }
+-            if *self.outline_width != outline_width::get_initial_specified_value() {
+-                writer.item(self.outline_width)?;
++            if *self.outline_color != outline_color::get_initial_specified_value() {
++                writer.item(self.outline_color)?;
+             }
+             if !writer.has_written() {
+                 self.outline_style.to_css(dest)?;
+@@ -3399,8 +3570,9 @@
                      dest.write_str(", ")?;
                  }
  
@@ -2398,19 +2460,17 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  let has_timing_function = !self.animation_timing_function.0[i].is_ease();
                  let has_delay = !self.animation_delay.0[i].is_zero();
                  let has_iteration_count = !self.animation_iteration_count.0[i].is_one();
-@@ -3680,20 +3844,10 @@
- 
-                 if has_repeat {
+@@ -3682,18 +3854,8 @@
                      writer.item(repeat)?;
--                }
--
+                 }
+ 
 -                #[cfg(feature = "gecko")]
 -                {
 -                    if has_origin || (has_clip && *clip != Clip::NoClip) {
 -                        writer.item(origin)?;
 -                    }
-                 }
- 
+-                }
+-
 -                #[cfg(feature = "servo")]
 -                {
 -                    if has_origin || has_clip {
@@ -5218,8 +5278,50 @@ diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
      generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/border.rs b/values/computed/border.rs
 --- a/values/computed/border.rs	2026-11-11 19:55:57
-+++ b/values/computed/border.rs	2026-11-19 02:49:19
-@@ -129,6 +129,12 @@
++++ b/values/computed/border.rs	2026-11-19 20:43:48
+@@ -92,6 +92,41 @@
+ /// A computed value for outline-offset
+ pub type BorderSideOffset = Au;
+ 
++/// pyro: a computed value for outline-offset: a length, or `inset` (minus the outline's width).
++#[derive(
++    Animate,
++    Clone,
++    ComputeSquaredDistance,
++    Copy,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    ToAnimatedValue,
++    ToAnimatedZero,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(C, u8)]
++pub enum OutlineOffset {
++    /// (A computed length, for animation; app-unit precise.)
++    Length(CSSPixelLength),
++    /// `inset`.
++    #[animation(error)]
++    Inset,
++}
++
++impl OutlineOffset {
++    /// The offset (CSS px) for an outline of `width` CSS px.
++    pub fn px(&self, width: f64) -> f64 {
++        match self {
++            OutlineOffset::Length(length) => length.px() as f64,
++            OutlineOffset::Inset => -width,
++        }
++    }
++}
++
+ /// A computed value for the `border-image-width` property.
+ pub type BorderImageWidth = Rect<BorderImageSideWidth>;
+ 
+@@ -129,6 +164,12 @@
      pub fn one() -> Self {
          GenericBorderImageSideWidth::Number(NonNegative(1.))
      }
@@ -5232,7 +5334,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  }
  
  impl BorderImageSlice {
-@@ -140,6 +146,15 @@
+@@ -140,6 +181,15 @@
              fill: false,
          }
      }
@@ -5271,6 +5373,16 @@ diff -ruN a/values/computed/box.rs b/values/computed/box.rs
  
  /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
  pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
+diff -ruN a/values/computed/color.rs b/values/computed/color.rs
+--- a/values/computed/color.rs	2026-11-11 19:55:57
++++ b/values/computed/color.rs	2026-11-19 20:50:37
+@@ -155,3 +155,6 @@
+ 
+ /// caret-color
+ pub type CaretColor = GenericCaretColor<Color>;
++
++/// pyro: outline-color.
++pub type OutlineColor = crate::values::generics::color::GenericOutlineColor<Color>;
 diff -ruN a/values/computed/column.rs b/values/computed/column.rs
 --- a/values/computed/column.rs	2026-11-11 19:55:57
 +++ b/values/computed/column.rs	2026-11-19 00:44:34
@@ -5360,7 +5472,16 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-19 18:38:15
++++ b/values/computed/mod.rs	2026-11-19 20:40:18
+@@ -60,7 +60,7 @@
+ pub use self::basic_shape::FillRule;
+ pub use self::border::{
+     BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
+-    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, BorderSpacing,
++    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, OutlineOffset, BorderSpacing,
+     BoxDecorationBreak, FloatEdge, LineWidth,
+ };
+ pub use self::box_::{
 @@ -69,14 +69,14 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
@@ -5563,7 +5684,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  #[derive(
 diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 --- a/values/generics/color.rs	2026-11-11 19:55:57
-+++ b/values/generics/color.rs	2026-11-19 12:14:45
++++ b/values/generics/color.rs	2026-11-19 20:50:37
 @@ -240,6 +240,9 @@
  
  /// Caret color is effectively a ColorOrAuto, but resolves `auto` to
@@ -5574,7 +5695,7 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
  #[derive(
      Animate,
      Clone,
-@@ -252,17 +255,30 @@
+@@ -252,22 +255,66 @@
      ToAnimatedValue,
      ToAnimatedZero,
      ToComputedValue,
@@ -5592,9 +5713,9 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
      pub fn auto() -> Self {
 -        GenericCaretColor(GenericColorOrAuto::Auto)
 +        GenericCaretColor(GenericColorOrAuto::Auto, GenericColorOrAuto::Auto)
-+    }
-+}
-+
+     }
+ }
+ 
 +impl<C: ToCss> ToCss for GenericCaretColor<C> {
 +    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
 +    where
@@ -5606,9 +5727,45 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 +            text.to_css(dest)?;
 +        }
 +        Ok(())
-     }
- }
++    }
++}
++
+ pub use self::GenericCaretColor as CaretColor;
  
++/// pyro: outline-color, `auto | <color>` (CSS UI 4): `auto` is the accent colour (else
++/// currentcolor) of an `outline-style: auto` outline, currentcolor for the other styles.
++#[derive(
++    Animate,
++    Clone,
++    ComputeSquaredDistance,
++    Copy,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    Parse,
++    SpecifiedValueInfo,
++    ToAnimatedValue,
++    ToAnimatedZero,
++    ToComputedValue,
++    ToCss,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(transparent)]
++pub struct GenericOutlineColor<C>(pub GenericColorOrAuto<C>);
++
++impl<C> GenericOutlineColor<C> {
++    /// Returns the `auto` value.
++    pub fn auto() -> Self {
++        GenericOutlineColor(GenericColorOrAuto::Auto)
++    }
++}
++
++pub use self::GenericOutlineColor as OutlineColor;
++
+ /// A light-dark(<light>, <dark>) function.
+ #[derive(
+     Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToShmem, ToCss, ToResolvedValue,
 diff -ruN a/values/generics/image.rs b/values/generics/image.rs
 --- a/values/generics/image.rs	2026-11-11 19:55:57
 +++ b/values/generics/image.rs	2026-11-15 07:03:49
@@ -5904,7 +6061,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
              self.sink.to_css(dest)?;
 diff -ruN a/values/resolved/color.rs b/values/resolved/color.rs
 --- a/values/resolved/color.rs	2026-11-11 19:55:57
-+++ b/values/resolved/color.rs	2026-11-19 12:16:04
++++ b/values/resolved/color.rs	2026-11-19 20:50:37
 @@ -30,10 +30,29 @@
      }
  }
@@ -5936,7 +6093,7 @@ diff -ruN a/values/resolved/color.rs b/values/resolved/color.rs
  
      #[inline]
      fn to_resolved_value(self, context: &Context) -> Self::ResolvedValue {
-@@ -41,13 +60,20 @@
+@@ -41,13 +60,47 @@
              generics::ColorOrAuto::Color(color) => color,
              generics::ColorOrAuto::Auto => generics::Color::currentcolor(),
          };
@@ -5961,6 +6118,33 @@ diff -ruN a/values/resolved/color.rs b/values/resolved/color.rs
 +        )
      }
  }
++
++impl ToResolvedValue for computed::OutlineColor {
++    // pyro: `auto` stays `auto` for an `outline-style: auto` outline, and is currentcolor for the
++    // other styles (CSS UI 4); a colour is an rgba colour.
++    type ResolvedValue = computed::ColorOrAuto;
++
++    #[inline]
++    fn to_resolved_value(self, context: &Context) -> Self::ResolvedValue {
++        use crate::values::specified::OutlineStyle;
++        match self.0 {
++            generics::ColorOrAuto::Auto
++                if matches!(context.style.get_outline().outline_style, OutlineStyle::Auto) =>
++            {
++                generics::ColorOrAuto::Auto
++            },
++            generics::ColorOrAuto::Auto => {
++                generics::ColorOrAuto::Color(computed::Color::currentcolor().to_resolved_value(context))
++            },
++            generics::ColorOrAuto::Color(color) => generics::ColorOrAuto::Color(color.to_resolved_value(context)),
++        }
++    }
++
++    #[inline]
++    fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
++        generics::OutlineColor(resolved)
++    }
++}
 diff -ruN a/values/specified/align.rs b/values/specified/align.rs
 --- a/values/specified/align.rs	2026-11-11 19:55:57
 +++ b/values/specified/align.rs	2026-11-17 01:17:02
@@ -6242,6 +6426,64 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
      }
  }
  
+diff -ruN a/values/specified/border.rs b/values/specified/border.rs
+--- a/values/specified/border.rs	2026-11-11 19:55:57
++++ b/values/specified/border.rs	2026-11-19 20:43:48
+@@ -292,9 +292,54 @@
+     #[inline]
+     fn from_computed_value(computed: &Au) -> Self {
+         Self(Length::from_px(computed.to_f32_px()))
++    }
++}
++
++/// pyro: a specified value for outline-offset: a length, or `inset` (CSS UI 4: the outline is
++/// drawn inside the border box, its offset minus its width).
++#[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
++pub enum OutlineOffset {
++    /// A length.
++    Length(BorderSideOffset),
++    /// `inset`.
++    Inset,
++}
++
++impl Parse for OutlineOffset {
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|input| input.expect_ident_matching("inset")).is_ok() {
++            return Ok(OutlineOffset::Inset);
++        }
++        BorderSideOffset::parse(context, input).map(OutlineOffset::Length)
+     }
+ }
+ 
++impl ToComputedValue for OutlineOffset {
++    type ComputedValue = crate::values::computed::border::OutlineOffset;
++
++    #[inline]
++    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
++        use crate::values::computed::border::OutlineOffset as Computed;
++        match self {
++            OutlineOffset::Length(length) => {
++                Computed::Length(crate::values::computed::Length::new(length.to_computed_value(context).to_f32_px()))
++            },
++            OutlineOffset::Inset => Computed::Inset,
++        }
++    }
++
++    #[inline]
++    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
++        use crate::values::computed::border::OutlineOffset as Computed;
++        match computed {
++            Computed::Length(length) => {
++                OutlineOffset::Length(BorderSideOffset::from_computed_value(&Au::from_f32_px(length.px())))
++            },
++            Computed::Inset => OutlineOffset::Inset,
++        }
++    }
++}
++
+ impl BorderImageSideWidth {
+     /// Returns `1`.
+     #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
 +++ b/values/specified/box.rs	2026-11-19 19:52:41
@@ -6837,19 +7079,19 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
          context: &ParserContext,
 diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 --- a/values/specified/color.rs	2026-11-11 19:55:57
-+++ b/values/specified/color.rs	2026-11-19 12:14:45
-@@ -840,6 +840,11 @@
-                     ColorSpace::Lab | ColorSpace::Oklab | ColorSpace::Lch | ColorSpace::Oklch
++++ b/values/specified/color.rs	2026-11-19 20:50:37
+@@ -841,6 +841,11 @@
                  ) {
                      $color.components.0 = normalize($color.components.0);
-+                }
+                 }
 +                // pyro: nor can a computed hue (`lch(50 10 calc(infinity))` is `lch(50 10 0)`,
 +                // as in Chromium; WPT css-color `parsing/color-computed-lab`).
 +                if matches!($color.color_space, ColorSpace::Lch | ColorSpace::Oklch) {
 +                    $color.components.2 = normalize($color.components.2);
-                 }
++                }
  
                  // Computed RGB and XYZ components can not be NaN.
+                 if !$color.is_legacy_syntax() && $color.color_space.is_rgb_or_xyz_like() {
 @@ -859,7 +864,15 @@
                  ComputedColor::Absolute(color)
              },
@@ -6867,8 +7109,13 @@ diff -ruN a/values/specified/color.rs b/values/specified/color.rs
              },
              Color::LightDark(ref ld) => ld.compute(context.ok_or(())?),
              Color::ColorMix(ref mix) => {
-@@ -997,7 +1010,15 @@
+@@ -995,9 +1008,20 @@
+ /// caret-color
+ pub type CaretColor = GenericCaretColor<Color>;
  
++/// pyro: outline-color.
++pub type OutlineColor = crate::values::generics::color::GenericOutlineColor<Color>;
++
  impl Parse for CaretColor {
      fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
 -        ColorOrAuto::parse(context, input).map(GenericCaretColor)
@@ -7461,7 +7708,16 @@ diff -ruN a/values/specified/list.rs b/values/specified/list.rs
              .try_parse(|input| input.expect_ident_matching("none"))
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-19 18:38:15
++++ b/values/specified/mod.rs	2026-11-19 20:40:18
+@@ -39,7 +39,7 @@
+ pub use self::basic_shape::FillRule;
+ pub use self::border::{
+     BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
+-    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, BorderSpacing, BorderStyle,
++    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, OutlineOffset, BorderSpacing, BorderStyle,
+     BoxDecorationBreak, FloatEdge, LineWidth,
+ };
+ pub use self::box_::{
 @@ -48,7 +48,7 @@
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
      Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,

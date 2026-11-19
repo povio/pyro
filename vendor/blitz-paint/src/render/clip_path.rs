@@ -1161,7 +1161,7 @@ impl ElementCx<'_, '_> {
                 let outline = style.get_outline();
                 let mut reach = match outline.outline_style {
                     style::values::computed::OutlineStyle::BorderStyle(line) if line.none_or_hidden() => 0.0,
-                    _ => outline.outline_width.0.to_f64_px() + outline.outline_offset.to_f64_px().max(0.0),
+                    _ => outline.outline_width.0.to_f64_px() + outline.outline_offset.px(outline.outline_width.0.to_f64_px()).max(0.0),
                 };
                 for shadow in style.get_effects().box_shadow.0.iter().filter(|shadow| !shadow.inset) {
                     let offset = (shadow.base.horizontal.px() as f64).abs().max((shadow.base.vertical.px() as f64).abs());

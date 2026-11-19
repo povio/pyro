@@ -284,6 +284,37 @@ impl<C: ToCss> ToCss for GenericCaretColor<C> {
 
 pub use self::GenericCaretColor as CaretColor;
 
+/// pyro: outline-color, `auto | <color>` (CSS UI 4): `auto` is the accent colour (else
+/// currentcolor) of an `outline-style: auto` outline, currentcolor for the other styles.
+#[derive(
+    Animate,
+    Clone,
+    ComputeSquaredDistance,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    Parse,
+    SpecifiedValueInfo,
+    ToAnimatedValue,
+    ToAnimatedZero,
+    ToComputedValue,
+    ToCss,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(transparent)]
+pub struct GenericOutlineColor<C>(pub GenericColorOrAuto<C>);
+
+impl<C> GenericOutlineColor<C> {
+    /// Returns the `auto` value.
+    pub fn auto() -> Self {
+        GenericOutlineColor(GenericColorOrAuto::Auto)
+    }
+}
+
+pub use self::GenericOutlineColor as OutlineColor;
+
 /// A light-dark(<light>, <dark>) function.
 #[derive(
     Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToShmem, ToCss, ToResolvedValue,

@@ -155,3 +155,6 @@ pub type ColorOrAuto = GenericColorOrAuto<Color>;
 
 /// caret-color
 pub type CaretColor = GenericCaretColor<Color>;
+
+/// pyro: outline-color.
+pub type OutlineColor = crate::values::generics::color::GenericOutlineColor<Color>;

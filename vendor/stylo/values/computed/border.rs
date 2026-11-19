@@ -92,6 +92,41 @@ impl ToResolvedValue for BorderSideWidth {
 /// A computed value for outline-offset
 pub type BorderSideOffset = Au;
 
+/// pyro: a computed value for outline-offset: a length, or `inset` (minus the outline's width).
+#[derive(
+    Animate,
+    Clone,
+    ComputeSquaredDistance,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    ToAnimatedValue,
+    ToAnimatedZero,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(C, u8)]
+pub enum OutlineOffset {
+    /// (A computed length, for animation; app-unit precise.)
+    Length(CSSPixelLength),
+    /// `inset`.
+    #[animation(error)]
+    Inset,
+}
+
+impl OutlineOffset {
+    /// The offset (CSS px) for an outline of `width` CSS px.
+    pub fn px(&self, width: f64) -> f64 {
+        match self {
+            OutlineOffset::Length(length) => length.px() as f64,
+            OutlineOffset::Inset => -width,
+        }
+    }
+}
+
 /// A computed value for the `border-image-width` property.
 pub type BorderImageWidth = Rect<BorderImageSideWidth>;
 

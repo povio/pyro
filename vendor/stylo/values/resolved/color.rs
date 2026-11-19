@@ -77,3 +77,30 @@ impl ToResolvedValue for computed::CaretColor {
         )
     }
 }
+
+impl ToResolvedValue for computed::OutlineColor {
+    // pyro: `auto` stays `auto` for an `outline-style: auto` outline, and is currentcolor for the
+    // other styles (CSS UI 4); a colour is an rgba colour.
+    type ResolvedValue = computed::ColorOrAuto;
+
+    #[inline]
+    fn to_resolved_value(self, context: &Context) -> Self::ResolvedValue {
+        use crate::values::specified::OutlineStyle;
+        match self.0 {
+            generics::ColorOrAuto::Auto
+                if matches!(context.style.get_outline().outline_style, OutlineStyle::Auto) =>
+            {
+                generics::ColorOrAuto::Auto
+            },
+            generics::ColorOrAuto::Auto => {
+                generics::ColorOrAuto::Color(computed::Color::currentcolor().to_resolved_value(context))
+            },
+            generics::ColorOrAuto::Color(color) => generics::ColorOrAuto::Color(color.to_resolved_value(context)),
+        }
+    }
+
+    #[inline]
+    fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
+        generics::OutlineColor(resolved)
+    }
+}

@@ -236,7 +236,7 @@ impl ElementCx<'_, '_> {
                         style::values::computed::OutlineStyle::BorderStyle(style) => !style.none_or_hidden(),
                     };
                     if drawn {
-                        let reach = outline.outline_width.0.to_f64_px() + outline.outline_offset.to_f64_px().max(0.0);
+                        let reach = outline.outline_width.0.to_f64_px() + outline.outline_offset.px(outline.outline_width.0.to_f64_px()).max(0.0);
                         out = out.max(reach);
                     }
                 }

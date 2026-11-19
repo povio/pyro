@@ -60,7 +60,7 @@ pub use self::background::{
 pub use self::basic_shape::FillRule;
 pub use self::border::{
     BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
-    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, BorderSpacing,
+    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, OutlineOffset, BorderSpacing,
     BoxDecorationBreak, FloatEdge, LineWidth,
 };
 pub use self::box_::{
