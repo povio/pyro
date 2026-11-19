@@ -1197,6 +1197,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 item.height = old.height;
                 item.baseline = old.baseline;
                 item.last_baseline = old.last_baseline;
+                item.dominant_baseline = old.dominant_baseline;
                 continue;
             }
             Some(Some(moved)) => moved,
@@ -1252,6 +1253,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         item.height = placed.height;
         item.baseline = placed.baseline;
         item.last_baseline = placed.last_baseline;
+        item.dominant_baseline = placed.dominant_baseline;
         if index < positioned.len() {
             positioned[index] = placed;
         } else if table_rows {
@@ -1443,8 +1445,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // Determine the grid container baselines
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
-    let (grid_container_baseline, grid_container_last_baseline) = if contain.suppresses_baseline() {
-        (None, None)
+    let (grid_container_baseline, grid_container_last_baseline, grid_container_dominant) = if contain.suppresses_baseline() {
+        (None, None, None)
     } else {
         // Get the row index of the first row containing items
         let first_row = items.iter().map(|item| item.row_indexes.start).min().unwrap();
@@ -1462,6 +1464,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
         };
         let first = item.y_position + item.baseline.unwrap_or(item.height);
+        // pyro: and in the item's dominant baseline, where it has one (a cell of a vertical table).
+        // (A grid keeps its alphabetic baseline, as in Blink; a table exports its cells'.)
+        let dominant = item.dominant_baseline.filter(|_| table_rows).map(|baseline| item.y_position + baseline);
 
         // pyro: the last baseline from the last row (css-grid-1 §10.1): its items in a last-baseline group, else
         // its last item in grid order
@@ -1472,7 +1477,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
         let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
         let last = item.y_position + item.last_baseline.unwrap_or(item.height);
-        (Some(first), Some(last))
+        (Some(first), Some(last), dominant)
     };
 
     // A scroll container's own padding at the end of the content is part of its scrollable
@@ -1504,7 +1509,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let mut output = LayoutOutput::from_sizes_and_baselines(
         container_border_box,
         scrollable_overflow_rect,
-        Baselines::new(grid_container_baseline, grid_container_last_baseline),
+        Baselines { dominant_first: grid_container_dominant, ..Baselines::new(grid_container_baseline, grid_container_last_baseline) },
     );
     output.oof_candidates = oof_candidates;
     output.oof_positioning_area = oof_positioning_area;

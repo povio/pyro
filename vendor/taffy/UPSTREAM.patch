@@ -3270,7 +3270,7 @@ index 82d0bd0a..96713914 100644
  }
 +
 diff --git a/src/compute/grid/alignment.rs b/src/compute/grid/alignment.rs
-index b84e8751..c2ff3566 100644
+index b84e8751..2fa5de37 100644
 --- a/src/compute/grid/alignment.rs
 +++ b/src/compute/grid/alignment.rs
 @@ -5,9 +5,10 @@ use crate::compute::common::alignment::{
@@ -3509,7 +3509,7 @@ index b84e8751..c2ff3566 100644
  
      let scrollbar_size = Size {
          width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
-@@ -415,40 +516,105 @@ pub(super) fn align_and_position_item(
+@@ -415,40 +516,108 @@ pub(super) fn align_and_position_item(
          bubbled_candidates.append(&mut item_candidates);
      }
  
@@ -3546,6 +3546,7 @@ index b84e8751..c2ff3566 100644
 +        height,
 +        baseline: child_first_baseline(layout_output.baselines.first, height, overflow.y),
 +        last_baseline: child_first_baseline(layout_output.baselines.last, height, overflow.y),
++        dominant_baseline: layout_output.baselines.dominant_first.filter(|_| !overflow.y.is_scroll_container()),
 +        layout,
 +        area: grid_area,
 +        y_offset,
@@ -3575,6 +3576,8 @@ index b84e8751..c2ff3566 100644
 +    pub baseline: Option<f32>,
 +    /// pyro: its last baseline
 +    pub last_baseline: Option<f32>,
++    /// pyro: see `GridItem::dominant_baseline`
++    pub dominant_baseline: Option<f32>,
 +    /// The layout it was given, and the grid area it was positioned in
 +    pub layout: Layout,
 +    pub area: Rect<f32>,
@@ -3643,7 +3646,7 @@ index b84e8751..c2ff3566 100644
  }
  
  /// Align and size a grid item along a single axis
-@@ -460,11 +626,14 @@ pub(super) fn align_item_within_area(
+@@ -460,11 +629,14 @@ pub(super) fn align_item_within_area(
      position: Position,
      inset: Line<Option<f32>>,
      margin: Line<Option<f32>>,
@@ -3661,7 +3664,7 @@ index b84e8751..c2ff3566 100644
      let grid_area_size = f32_max(grid_area.end - grid_area.start, 0.0);
      let free_space = f32_max(grid_area_size - resolved_size - non_auto_margin.sum(), 0.0);
  
-@@ -472,8 +641,8 @@ pub(super) fn align_item_within_area(
+@@ -472,8 +644,8 @@ pub(super) fn align_item_within_area(
      let auto_margin_count = margin.start.is_none() as u8 + margin.end.is_none() as u8;
      let auto_margin_size = if auto_margin_count > 0 { free_space / auto_margin_count as f32 } else { 0.0 };
      let resolved_margin = Line {
@@ -3672,7 +3675,7 @@ index b84e8751..c2ff3566 100644
      };
  
      let overflows = resolved_size + non_auto_margin.sum() > grid_area_size;
-@@ -481,7 +650,8 @@ pub(super) fn align_item_within_area(
+@@ -481,7 +653,8 @@ pub(super) fn align_item_within_area(
  
      // Compute offset in the axis
      let alignment_based_offset = match alignment_keyword {
@@ -3682,7 +3685,7 @@ index b84e8751..c2ff3566 100644
          AlignItemsKeyword::Start
          | AlignItemsKeyword::FlexStart
          | AlignItemsKeyword::Baseline
-@@ -492,7 +662,7 @@ pub(super) fn align_item_within_area(
+@@ -492,7 +665,7 @@ pub(super) fn align_item_within_area(
                  resolved_margin.start
              }
          }
@@ -3691,7 +3694,7 @@ index b84e8751..c2ff3566 100644
              if direction.is_rtl() {
                  resolved_margin.start
              } else {
-@@ -524,7 +694,7 @@ pub(super) fn align_item_within_area(
+@@ -524,7 +697,7 @@ pub(super) fn align_item_within_area(
          alignment_based_offset
      };
  
@@ -3934,7 +3937,7 @@ index 037a2d1c..88347ca7 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..5ef35b16 100644
+index f0109c6e..6c81710d 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -4243,39 +4246,7 @@ index f0109c6e..5ef35b16 100644
 +        if let Some(context) = &own_subgrid {
 +            subgrid::clamp_placements(&mut placements, context);
 +        }
- 
--    // 5. Grid Item Placement
--    // Match items (children) to a definite grid position (row start/end and column start/end position)
--    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
--    // `items` is in document order from here on (placement only fills in each item's grid area). The track
--    // sizing and baseline passes sort references to the items rather than the items themselves.
--    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
--
--    // Extract track counts from previous step (auto-placement can expand the number of tracks)
--    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
--    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
--
--    // 5. Initialize Tracks
--    // Initialize (explicit and implicit) grid tracks (and gutters)
--    // This resolves the min and max track sizing functions for all tracks and gutters
--    let mut columns = GridTrackVec::new();
--    let mut rows = GridTrackVec::new();
--    initialize_grid_tracks(
--        &mut columns,
--        final_col_counts,
--        &style,
--        AbsoluteAxis::Horizontal,
--        col_auto_repetition_count,
--        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
--    );
--    initialize_grid_tracks(
--        &mut rows,
--        final_row_counts,
--        &style,
--        AbsoluteAxis::Vertical,
--        row_auto_repetition_count,
--        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
--    );
++
 +        // 4. Implicit Grid: Estimate Track Counts
 +        // 5. Grid Item Placement
 +        // Match items (children) to a definite grid position (row start/end and column start/end position).
@@ -4339,7 +4310,7 @@ index f0109c6e..5ef35b16 100644
 +                (area.start.0 as isize) <= index as isize && (index as isize) < area.end.0 as isize
 +            }),
 +        };
- 
++
 +        // 5. Initialize Tracks
 +        // Initialize (explicit and implicit) grid tracks (and gutters)
 +        // This resolves the min and max track sizing functions for all tracks and gutters
@@ -4370,8 +4341,40 @@ index f0109c6e..5ef35b16 100644
 +                subgrid::subgrid_tracks(&mut rows, axis);
 +            }
 +        }
-+
-+
+ 
+-    // 5. Grid Item Placement
+-    // Match items (children) to a definite grid position (row start/end and column start/end position)
+-    let mut cell_occupancy_matrix = CellOccupancyMatrix::with_track_counts(est_col_counts, est_row_counts);
+-    // `items` is in document order from here on (placement only fills in each item's grid area). The track
+-    // sizing and baseline passes sort references to the items rather than the items themselves.
+-    place_grid_items(&mut cell_occupancy_matrix, &mut items, &placements, style.grid_auto_flow());
+-
+-    // Extract track counts from previous step (auto-placement can expand the number of tracks)
+-    let final_col_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Horizontal);
+-    let final_row_counts = *cell_occupancy_matrix.track_counts(AbsoluteAxis::Vertical);
+-
+-    // 5. Initialize Tracks
+-    // Initialize (explicit and implicit) grid tracks (and gutters)
+-    // This resolves the min and max track sizing functions for all tracks and gutters
+-    let mut columns = GridTrackVec::new();
+-    let mut rows = GridTrackVec::new();
+-    initialize_grid_tracks(
+-        &mut columns,
+-        final_col_counts,
+-        &style,
+-        AbsoluteAxis::Horizontal,
+-        col_auto_repetition_count,
+-        |column_index| cell_occupancy_matrix.column_is_occupied(column_index),
+-    );
+-    initialize_grid_tracks(
+-        &mut rows,
+-        final_row_counts,
+-        &style,
+-        AbsoluteAxis::Vertical,
+-        row_auto_repetition_count,
+-        |row_index| cell_occupancy_matrix.row_is_occupied(row_index),
+-    );
+ 
 +        // 6. Track Sizing
 +
 +        // Convert grid placements in origin-zero coordinates to indexes into the GridTrack (rows and columns) vectors
@@ -4815,7 +4818,7 @@ index f0109c6e..5ef35b16 100644
      for (index, item) in items.iter_mut().enumerate() {
          // Tracks are stored in logical order. In RTL the physical offsets are assigned
          // right-to-left, so an item's physical left edge is derived from its logical end
-@@ -739,25 +1166,97 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -739,25 +1166,99 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                  columns[item.column_indexes.end as usize].offset
              },
          };
@@ -4850,6 +4853,7 @@ index f0109c6e..5ef35b16 100644
 +                item.height = old.height;
 +                item.baseline = old.baseline;
 +                item.last_baseline = old.last_baseline;
++                item.dominant_baseline = old.dominant_baseline;
 +                continue;
 +            }
 +            Some(Some(moved)) => moved,
@@ -4923,6 +4927,7 @@ index f0109c6e..5ef35b16 100644
 +        item.height = placed.height;
 +        item.baseline = placed.baseline;
 +        item.last_baseline = placed.last_baseline;
++        item.dominant_baseline = placed.dominant_baseline;
 +        if index < positioned.len() {
 +            positioned[index] = placed;
 +        } else if table_rows {
@@ -4931,7 +4936,7 @@ index f0109c6e..5ef35b16 100644
  
          #[cfg(feature = "content_size")]
          {
-@@ -765,6 +1264,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -765,6 +1266,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          }
      }
  
@@ -4956,7 +4961,7 @@ index f0109c6e..5ef35b16 100644
      // Position hidden and absolutely positioned children, merging in the candidates bubbled out
      // of in-flow children's subtrees (`items` is sorted by `source_order`, i.e. child index)
      let mut order = items.len() as u32;
-@@ -841,7 +1358,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -841,7 +1360,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
              };
              drop(child_style);
  
@@ -4965,7 +4970,7 @@ index f0109c6e..5ef35b16 100644
                  node: child,
                  order,
                  position,
-@@ -869,19 +1386,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -869,19 +1388,17 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      // resolve the grid areas of out-of-flow boxes whose containing block is this grid
      let areas =
          name_resolver.populate_detailed_line_resolvers(&mut detailed_row_line_names, &mut detailed_column_line_names);
@@ -4993,7 +4998,7 @@ index f0109c6e..5ef35b16 100644
              items: items.iter().map(DetailedGridItemsInfo::from_grid_item).collect(),
              areas,
          },
-@@ -926,25 +1441,38 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -926,25 +1443,41 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return output;
      }
  
@@ -5002,8 +5007,8 @@ index f0109c6e..5ef35b16 100644
      // Layout containment suppresses the box's baseline for baseline-alignment purposes
 -    let grid_container_baseline: Option<f32> = if contain.suppresses_baseline() {
 -        None
-+    let (grid_container_baseline, grid_container_last_baseline) = if contain.suppresses_baseline() {
-+        (None, None)
++    let (grid_container_baseline, grid_container_last_baseline, grid_container_dominant) = if contain.suppresses_baseline() {
++        (None, None, None)
      } else {
          // Get the row index of the first row containing items
          let first_row = items.iter().map(|item| item.row_indexes.start).min().unwrap();
@@ -5022,9 +5027,13 @@ index f0109c6e..5ef35b16 100644
 -            first_row_items.find(|item| item.participates_in_baseline_alignment()).unwrap_or(first_item)
 +            first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
          };
-+        let first = item.y_position + item.baseline.unwrap_or(item.height);
- 
+-
 -        Some(item.y_position + item.baseline.unwrap_or(item.height))
++        let first = item.y_position + item.baseline.unwrap_or(item.height);
++        // pyro: and in the item's dominant baseline, where it has one (a cell of a vertical table).
++        // (A grid keeps its alphabetic baseline, as in Blink; a table exports its cells'.)
++        let dominant = item.dominant_baseline.filter(|_| table_rows).map(|baseline| item.y_position + baseline);
++
 +        // pyro: the last baseline from the last row (css-grid-1 §10.1): its items in a last-baseline group, else
 +        // its last item in grid order
 +        let last_row = items.iter().map(|item| item.row_indexes.end).max().unwrap();
@@ -5034,16 +5043,16 @@ index f0109c6e..5ef35b16 100644
 +        let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
 +        let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
 +        let last = item.y_position + item.last_baseline.unwrap_or(item.height);
-+        (Some(first), Some(last))
++        (Some(first), Some(last), dominant)
      };
  
      // A scroll container's own padding at the end of the content is part of its scrollable
-@@ -976,13 +1504,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -976,13 +1509,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let mut output = LayoutOutput::from_sizes_and_baselines(
          container_border_box,
          scrollable_overflow_rect,
 -        Baselines::from_first(grid_container_baseline),
-+        Baselines::new(grid_container_baseline, grid_container_last_baseline),
++        Baselines { dominant_first: grid_container_dominant, ..Baselines::new(grid_container_baseline, grid_container_last_baseline) },
      );
      output.oof_candidates = oof_candidates;
      output.oof_positioning_area = oof_positioning_area;
@@ -5126,7 +5135,7 @@ index f0109c6e..5ef35b16 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1899,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1904,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -5137,7 +5146,7 @@ index f0109c6e..5ef35b16 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +1942,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +1947,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -5145,7 +5154,7 @@ index f0109c6e..5ef35b16 100644
          }
      }
  
-@@ -1380,6 +1986,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +1991,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -5162,7 +5171,7 @@ index f0109c6e..5ef35b16 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1454,3 +2070,131 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2075,131 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -7442,7 +7451,7 @@ index 18063621..cbe0442e 100644
  }
  
 diff --git a/src/compute/grid/types/grid_item.rs b/src/compute/grid/types/grid_item.rs
-index 6ad11edc..74ce8c99 100644
+index 6ad11edc..dac2347e 100644
 --- a/src/compute/grid/types/grid_item.rs
 +++ b/src/compute/grid/types/grid_item.rs
 @@ -21,7 +21,7 @@ pub(in super::super) struct KnownDimensionsCacheEntry {
@@ -7464,12 +7473,15 @@ index 6ad11edc..74ce8c99 100644
      /// The item's max_size style
      pub max_size: Size<LengthPercentageAuto>,
      /// The item's aspect_ratio style
-@@ -66,9 +69,29 @@ pub(in super::super) struct GridItem {
+@@ -66,9 +69,32 @@ pub(in super::super) struct GridItem {
      /// The item's first baseline (horizontal), measured from the top of its border box. Set from the item's
      /// intrinsic layout when resolving baseline alignment during track sizing, then from its final layout.
      pub baseline: Option<f32>,
 +    /// pyro: the item's last baseline, from its final layout
 +    pub last_baseline: Option<f32>,
++    /// pyro: the item's first baseline in its dominant baseline (`Baselines::dominant_first`; a
++    /// central one in a vertical writing mode), from its final layout
++    pub dominant_baseline: Option<f32>,
 +    /// pyro: for an item baseline-aligned in the axis last resolved, the distance from its track's edge (its
 +    /// group's side) to its group's baseline, without `extra_margin` (`subgrid::record_subgrid_baselines`)
 +    pub baseline_distance: Option<f32>,
@@ -7495,7 +7507,7 @@ index 6ad11edc..74ce8c99 100644
  
      /// The item's definite row-start and row-end (same as `row` field, except in a different coordinate system)
      /// (as indexes into the Vec<GridTrack> stored in a grid's AbstractAxisTracks)
-@@ -98,6 +121,12 @@ pub(in super::super) struct GridItem {
+@@ -98,6 +124,12 @@ pub(in super::super) struct GridItem {
      pub minimum_contribution_cache: Size<Option<f32>>,
      /// Cache for the max-content size
      pub max_content_contribution_cache: Size<Option<f32>>,
@@ -7508,7 +7520,7 @@ index 6ad11edc..74ce8c99 100644
  
      /// Final y position, excluding any relative offset (which does not affect the container's baseline).
      /// Used to compute baseline alignment for the container.
-@@ -108,6 +137,27 @@ pub(in super::super) struct GridItem {
+@@ -108,6 +140,27 @@ pub(in super::super) struct GridItem {
      /// Out-of-flow candidates bubbled out of this item's subtree (anchors relative to the
      /// container's border box)
      pub oof_candidates: OofCandidates,
@@ -7536,7 +7548,7 @@ index 6ad11edc..74ce8c99 100644
  }
  
  impl GridItem {
-@@ -131,6 +181,7 @@ impl GridItem {
+@@ -131,6 +184,7 @@ impl GridItem {
              box_sizing: style.box_sizing(),
              size: style.size(),
              min_size: style.min_size(),
@@ -7544,11 +7556,12 @@ index 6ad11edc..74ce8c99 100644
              max_size: style.max_size(),
              aspect_ratio: style.aspect_ratio(),
              padding: style.padding(),
-@@ -139,7 +190,19 @@ impl GridItem {
+@@ -139,7 +193,20 @@ impl GridItem {
              align_self: style.align_self().unwrap_or(parent_align_items),
              justify_self: style.justify_self().unwrap_or(parent_justify_items),
              baseline: None,
 +            last_baseline: None,
++            dominant_baseline: None,
 +            baseline_distance: None,
              baseline_shim: 0.0,
 +            baseline_shim_block_end: 0.0,
@@ -7564,7 +7577,7 @@ index 6ad11edc..74ce8c99 100644
              row_indexes: Line { start: 0, end: 0 }, // Properly initialised later
              column_indexes: Line { start: 0, end: 0 }, // Properly initialised later
              crosses_flexible_row: false,            // Properly initialised later
-@@ -151,9 +214,17 @@ impl GridItem {
+@@ -151,9 +218,17 @@ impl GridItem {
              max_content_contribution_cache: Size::NONE,
              known_dimensions_cache: None,
              minimum_contribution_cache: Size::NONE,
@@ -7582,7 +7595,7 @@ index 6ad11edc..74ce8c99 100644
          }
      }
  
-@@ -177,11 +248,43 @@ impl GridItem {
+@@ -177,11 +252,43 @@ impl GridItem {
      /// See <https://www.w3.org/TR/css-align-3/#baseline-align-self>
      #[inline(always)]
      pub fn participates_in_baseline_alignment(&self) -> bool {
@@ -7627,7 +7640,7 @@ index 6ad11edc..74ce8c99 100644
      /// This item's placement in the specified axis in OriginZero coordinates
      pub fn placement(&self, axis: AbstractAxis) -> Line<OriginZeroLine> {
          match axis {
-@@ -297,7 +400,7 @@ impl GridItem {
+@@ -297,7 +404,7 @@ impl GridItem {
      /// Retrieve the known_dimensions for the given grid area size from the cache or compute them.
      /// The min-content and max-content contributions of an item are both computed from the same known_dimensions.
      #[inline(always)]
@@ -7636,7 +7649,7 @@ index 6ad11edc..74ce8c99 100644
          &mut self,
          tree: &mut impl LayoutPartialTree,
          grid_area_size: Size<Option<f32>>,
-@@ -312,6 +415,17 @@ impl GridItem {
+@@ -312,6 +419,17 @@ impl GridItem {
          known_dimensions
      }
  
@@ -7654,7 +7667,7 @@ index 6ad11edc..74ce8c99 100644
      /// Whether the given self-alignment stretches the item: `stretch`, or `normal` unless the item is replaced
      #[inline(always)]
      fn is_stretch_aligned(&self, alignment: AlignSelf) -> bool {
-@@ -349,7 +463,7 @@ impl GridItem {
+@@ -349,7 +467,7 @@ impl GridItem {
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
              .maybe_apply_aspect_ratio(aspect_ratio)
              .maybe_add(box_sizing_adjustment);
@@ -7663,7 +7676,7 @@ index 6ad11edc..74ce8c99 100644
              .min_size
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
              .maybe_apply_aspect_ratio(aspect_ratio)
-@@ -357,6 +471,13 @@ impl GridItem {
+@@ -357,6 +475,13 @@ impl GridItem {
              // The size of the item is floored by its padding and border
              .or(padding_border_size.map(Some))
              .maybe_max(padding_border_size);
@@ -7677,7 +7690,7 @@ index 6ad11edc..74ce8c99 100644
          let max_size = self
              .max_size
              .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-@@ -479,6 +600,12 @@ impl GridItem {
+@@ -479,6 +604,12 @@ impl GridItem {
                  .sum::<Option<f32>>(),
          );
  
@@ -7690,7 +7703,7 @@ index 6ad11edc..74ce8c99 100644
          size.set(
              axis.other(),
              other_axis_tracks[self.track_range_excluding_lines(axis.other())]
-@@ -526,11 +653,18 @@ impl GridItem {
+@@ -526,11 +657,18 @@ impl GridItem {
          tree: &impl LayoutPartialTree,
      ) -> Size<f32> {
          Rect {
@@ -7713,7 +7726,7 @@ index 6ad11edc..74ce8c99 100644
          }
          .sum_axes()
      }
-@@ -554,7 +688,7 @@ impl GridItem {
+@@ -554,7 +692,7 @@ impl GridItem {
          // Spec:
          // https://www.w3.org/TR/css-grid-1/#grid-item-sizing
          // https://www.w3.org/TR/css-grid-1/#algo-overview
@@ -7722,7 +7735,7 @@ index 6ad11edc..74ce8c99 100644
              self.node,
              known_dimensions,
              grid_area_size,
-@@ -569,7 +703,8 @@ impl GridItem {
+@@ -569,7 +707,8 @@ impl GridItem {
              SizingMode::InherentSize,
              axis.as_abs_naive(),
              Line::FALSE,
@@ -7732,7 +7745,7 @@ index 6ad11edc..74ce8c99 100644
      }
  
      /// Retrieve the item's min content contribution from the cache or compute it using the provided parameters
-@@ -584,6 +719,7 @@ impl GridItem {
+@@ -584,6 +723,7 @@ impl GridItem {
          self.min_content_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.min_content_contribution(axis, tree, grid_area_size, available_space);
              self.min_content_contribution_cache.set(axis, Some(size));
@@ -7740,7 +7753,7 @@ index 6ad11edc..74ce8c99 100644
              size
          })
      }
-@@ -605,7 +741,7 @@ impl GridItem {
+@@ -605,7 +745,7 @@ impl GridItem {
          // See the min-content path above. Max-content measurement uses the same containing-block
          // basis so percentage-dependent item geometry is measured from the grid area rather than
          // from the container.
@@ -7749,7 +7762,7 @@ index 6ad11edc..74ce8c99 100644
              self.node,
              known_dimensions,
              grid_area_size,
-@@ -620,7 +756,26 @@ impl GridItem {
+@@ -620,7 +760,26 @@ impl GridItem {
              SizingMode::InherentSize,
              axis.as_abs_naive(),
              Line::FALSE,
@@ -7777,7 +7790,7 @@ index 6ad11edc..74ce8c99 100644
      }
  
      /// Subtract the item's margins (and baseline shim) from the definite axes of the space available
-@@ -637,12 +792,15 @@ impl GridItem {
+@@ -637,12 +796,15 @@ impl GridItem {
          if available_space.width.is_none() && available_space.height.is_none() {
              return available_space;
          }
@@ -7798,7 +7811,7 @@ index 6ad11edc..74ce8c99 100644
          }
      }
  
-@@ -689,6 +847,7 @@ impl GridItem {
+@@ -689,6 +851,7 @@ impl GridItem {
          self.max_content_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.max_content_contribution(axis, tree, grid_area_size, available_space);
              self.max_content_contribution_cache.set(axis, Some(size));
@@ -7806,7 +7819,7 @@ index 6ad11edc..74ce8c99 100644
              size
          })
      }
-@@ -743,6 +902,12 @@ impl GridItem {
+@@ -743,6 +906,12 @@ impl GridItem {
                  (size.is_sizing_keyword() && !size.is_stretch())
                      .then(|| self.min_content_contribution_cached(axis, tree, grid_area_size, grid_area_size))
              })
@@ -7819,7 +7832,7 @@ index 6ad11edc..74ce8c99 100644
              .or_else(|| {
                  self.min_size
                      .maybe_resolve(grid_area_size.map(|size| size.unwrap_or(0.0)), |val, basis| tree.calc(val, basis))
-@@ -805,6 +970,22 @@ impl GridItem {
+@@ -805,6 +974,22 @@ impl GridItem {
              })
      }
  
@@ -7842,7 +7855,7 @@ index 6ad11edc..74ce8c99 100644
      /// Retrieve the item's minimum contribution from the cache or compute it using the provided parameters
      #[inline(always)]
      pub fn minimum_contribution_cached(
-@@ -818,7 +999,37 @@ impl GridItem {
+@@ -818,7 +1003,37 @@ impl GridItem {
          self.minimum_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.minimum_contribution(tree, axis, axis_tracks, grid_area_size, inner_node_size);
              self.minimum_contribution_cache.set(axis, Some(size));
