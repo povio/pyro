@@ -6007,7 +6007,7 @@ index 0000000..ce15c33
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..651f826 100644
+index 060a32d..6fe814a 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -6298,7 +6298,7 @@ index 060a32d..651f826 100644
 +    let object_levels = analysis.object_levels();
 +    if char_levels.is_empty() {
 +        return alloc::vec![paragraph; inline_boxes.len()];
-+    }
+     }
 +    // The paragraph in logical order: characters, and the boxes before the character at their
 +    // index. `None`: a box whose level is still to find (an edge), or a removed character.
 +    enum Slot {
@@ -6366,7 +6366,7 @@ index 060a32d..651f826 100644
 +            levels[index] = after.or(before[index]);
 +        }
 +        after = level_of(slot, &levels).or(after);
-     }
++    }
 +    levels.into_iter().map(|level| level.unwrap_or(paragraph)).collect()
  }
  
@@ -6466,12 +6466,20 @@ index 060a32d..651f826 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -399,29 +618,42 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -399,29 +618,63 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
  
          let mut selected_font = None;
          let mut best_coverage = Coverage::NONE;
 +        // pyro: the first font covering the cluster whose kind (colour or not) is the presentation's.
 +        let mut presented_font = None;
++        // pyro: a variation sequence in the cluster: the first font that maps it wins (CSS Fonts 4
++        // § 5.4 cluster matching), else its base character is matched as before.
++        let sequence = {
++            let chars = cluster.chars();
++            chars.iter().position(|c| parley_engine::is_variation_selector(c.ch)).and_then(|i| {
++                (i > 0).then(|| (chars[0].ch, chars[i].ch))
++            })
++        };
  
          self.query.matches_with(|font| {
              let Some(charmap) = font.charmap() else {
@@ -6493,10 +6501,23 @@ index 060a32d..651f826 100644
 +                    // default-ignorable handling), so as Blink keeps them in the font: U+2011 drawn
 +                    // as the font's U+2010, and default-ignorable code points hidden (WPT css-text
 +                    // `line-break-anywhere-overrides-uax-behavior-011/013/014`).
-+                    has(ch) || (ch == '\u{2011}' && has('\u{2010}')) || hidden_default_ignorable(ch)
++                    // pyro: and a variation selector, which no nominal cmap maps: the sequence is
++                    // looked up in the font's `cmap` format 14 below, else the base character
++                    // is drawn alone.
++                    has(ch)
++                        || (ch == '\u{2011}' && has('\u{2010}'))
++                        || hidden_default_ignorable(ch)
++                        || parley_engine::is_variation_selector(ch)
                  },
                  self.analysis_data_sources,
              );
++            if let Some((base, selector)) = sequence
++                && coverage.is_complete()
++                && parley_engine::maps_variation_sequence(font.blob.as_ref(), font.index, base, selector)
++            {
++                presented_font = Some(font);
++                return fontique::QueryStatus::Stop;
++            }
 +            if let Some(want_color) = presentation
 +                && coverage.is_complete()
 +            {
@@ -6513,11 +6534,11 @@ index 060a32d..651f826 100644
                  best_coverage = coverage;
  
 -                if coverage.is_complete() {
-+                if coverage.is_complete() && presentation.is_none() {
++                if coverage.is_complete() && presentation.is_none() && sequence.is_none() {
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -434,7 +666,7 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -434,7 +687,7 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              }
          });
  
@@ -6526,7 +6547,7 @@ index 060a32d..651f826 100644
              data: &font.blob,
              index: font.index,
              synthesis: &font.synthesis,
-@@ -442,6 +674,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -442,6 +695,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
      }
  }
  
@@ -6563,7 +6584,7 @@ index 060a32d..651f826 100644
  /// Just query for any generic family's font from the font collection.
  ///
  /// This sets generic families on `query`, so callers need to make sure to set families back again.
-@@ -473,3 +735,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +756,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }

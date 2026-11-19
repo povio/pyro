@@ -620,6 +620,14 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
         let mut best_coverage = Coverage::NONE;
         // pyro: the first font covering the cluster whose kind (colour or not) is the presentation's.
         let mut presented_font = None;
+        // pyro: a variation sequence in the cluster: the first font that maps it wins (CSS Fonts 4
+        // § 5.4 cluster matching), else its base character is matched as before.
+        let sequence = {
+            let chars = cluster.chars();
+            chars.iter().position(|c| parley_engine::is_variation_selector(c.ch)).and_then(|i| {
+                (i > 0).then(|| (chars[0].ch, chars[i].ch))
+            })
+        };
 
         self.query.matches_with(|font| {
             let Some(charmap) = font.charmap() else {
@@ -634,10 +642,23 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                     // default-ignorable handling), so as Blink keeps them in the font: U+2011 drawn
                     // as the font's U+2010, and default-ignorable code points hidden (WPT css-text
                     // `line-break-anywhere-overrides-uax-behavior-011/013/014`).
-                    has(ch) || (ch == '\u{2011}' && has('\u{2010}')) || hidden_default_ignorable(ch)
+                    // pyro: and a variation selector, which no nominal cmap maps: the sequence is
+                    // looked up in the font's `cmap` format 14 below, else the base character
+                    // is drawn alone.
+                    has(ch)
+                        || (ch == '\u{2011}' && has('\u{2010}'))
+                        || hidden_default_ignorable(ch)
+                        || parley_engine::is_variation_selector(ch)
                 },
                 self.analysis_data_sources,
             );
+            if let Some((base, selector)) = sequence
+                && coverage.is_complete()
+                && parley_engine::maps_variation_sequence(font.blob.as_ref(), font.index, base, selector)
+            {
+                presented_font = Some(font);
+                return fontique::QueryStatus::Stop;
+            }
             if let Some(want_color) = presentation
                 && coverage.is_complete()
             {
@@ -653,7 +674,7 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                 selected_font = Some(font);
                 best_coverage = coverage;
 
-                if coverage.is_complete() && presentation.is_none() {
+                if coverage.is_complete() && presentation.is_none() && sequence.is_none() {
                     fontique::QueryStatus::Stop
                 } else {
                     fontique::QueryStatus::Continue

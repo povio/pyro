@@ -151,3 +151,16 @@ pub fn is_emoji_char(ch: char) -> bool {
 pub fn is_emoji_presentation_char(ch: char) -> bool {
     icu_properties::CodePointSetData::new::<icu_properties::props::EmojiPresentation>().contains(ch)
 }
+
+/// pyro: whether the font at `index` in `data` maps the variation sequence `base` + `selector`
+/// (its `cmap` format 14 subtable lists it, with a glyph of its own or the default one).
+pub fn maps_variation_sequence(data: &[u8], index: u32, base: char, selector: char) -> bool {
+    use skrifa::MetadataProvider;
+    let Ok(font_ref) = skrifa::FontRef::from_index(data, index) else { return false };
+    font_ref.charmap().map_variant(base, selector).is_some()
+}
+
+/// pyro: whether `ch` is a variation selector (VS1-VS16, VS17-VS256).
+pub fn is_variation_selector(ch: char) -> bool {
+    matches!(ch as u32, 0xFE00..=0xFE0F | 0xE0100..=0xE01EF)
+}
