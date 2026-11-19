@@ -1261,9 +1261,20 @@ impl Browser {
         page: PageId,
         url: String,
         kind: ResourceKind,
-        options: SubresourceOptions,
+        mut options: SubresourceOptions,
         done: FetchDone,
     ) {
+        // pyro: a style sheet's request without a `referrer-policy()` of its own is sent under the
+        // sheet's `Referrer-Policy` (as Chrome), else the document's.
+        if options.referrer_policy.is_none() {
+            if let Some(referrer) = options.referrer.as_deref() {
+                let key = match options.client.as_deref().and_then(|c| c.split_once('#')) {
+                    Some((frame_id, _)) => self.page(page).and_then(|p| p.frames.key_of(frame_id)),
+                    None => Some(page.into()),
+                };
+                options.referrer_policy = key.and_then(|key| self.sheet_referrer_policy(key, referrer));
+            }
+        }
         // A frame document's request is that frame's (by its id, never by a URL, which several
         // frames can share), the page's otherwise; a client that names no frame of the page
         // sends nothing.
@@ -1322,9 +1333,14 @@ impl Browser {
         loader: &LoaderId,
         url: String,
         kind: ResourceKind,
-        options: SubresourceOptions,
+        mut options: SubresourceOptions,
         done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
     ) {
+        if options.referrer_policy.is_none() {
+            if let Some(referrer) = options.referrer.as_deref() {
+                options.referrer_policy = self.sheet_referrer_policy(frame, referrer);
+            }
+        }
         let (request, origin) = {
             let Some(state) = self.doc(frame) else { return };
             if state.main_frame.loader_id != *loader {
@@ -1363,6 +1379,12 @@ impl Browser {
                 }))
             }),
         );
+    }
+
+    /// pyro: the `Referrer-Policy` the style sheet at `sheet` of `frame`'s document was served
+    /// with, if any.
+    pub(crate) fn sheet_referrer_policy(&self, frame: FrameKey, sheet: &str) -> Option<pyro_net::ReferrerPolicy> {
+        self.doc(frame)?.stylesheets.referrer_policies.get(sheet).copied()
     }
 
     /// The encoding `page`'s document was decoded with, the environment

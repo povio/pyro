@@ -67,6 +67,10 @@ pub(crate) struct Stylesheets {
     /// `load` / `error` events of `<style>` elements queued and not fired
     /// yet: like the imports, they delay the document's load event.
     style_events: usize,
+    /// pyro: the `Referrer-Policy` of the style sheets (linked and imported) whose response named
+    /// one, by their URL after redirects: the policy of the requests they make (as Chrome sends
+    /// them; `Browser::sheet_referrer_policy`).
+    pub(crate) referrer_policies: HashMap<String, pyro_net::ReferrerPolicy>,
 }
 impl Stylesheets {
     pub(crate) fn pending(&self) -> usize {
@@ -293,6 +297,9 @@ impl Browser {
         let environment = link_environment(bindings, node);
         let quirks = bindings.dom.borrow().is_quirks_mode(bindings.document());
         let sheet_url = result.as_ref().map(|r| r.url.clone()).unwrap_or_default();
+        if let Some(policy) = result.as_ref().ok().and_then(|r| r.referrer_policy) {
+            sheets.referrer_policies.insert(sheet_url.clone(), policy);
+        }
         let text = result
             .ok()
             .filter(|r| {
@@ -569,13 +576,19 @@ impl Browser {
         // The parent sheet is the import's referrer, whatever its mode (as Blink sends a style
         // sheet's requests).
         let referrer = referrer.to_owned();
+        let sheet_policy = self.sheet_referrer_policy(page, &referrer);
         let request = FetchRequest {
             post: None,
             url,
             kind: ResourceKind::Stylesheet,
             page: page.page,
             referrer: Some(referrer),
-            referrer_policy: import.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
+            // (Else the parent sheet's `Referrer-Policy`, as Chrome sends a sheet's requests.)
+            referrer_policy: import
+                .referrer_policy
+                .as_deref()
+                .and_then(pyro_net::ReferrerPolicy::parse)
+                .or(sheet_policy),
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: import.cross_origin.clone(),
@@ -635,6 +648,9 @@ impl Browser {
             entry.failed |= if entry.link { !ok || !css } else { (!ok || !css) && depth == 1 };
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
+            if let (Some(policy), Some(mut doc)) = (r.referrer_policy, self.doc_mut(page)) {
+                doc.stylesheets.referrer_policies.insert(r.url.clone(), policy);
+            }
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
             // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
             if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {

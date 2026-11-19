@@ -288,3 +288,35 @@ fn a_srcdoc_document_inherits_its_containers_policy() {
     assert_eq!(loader.referer_of("https://site.test/i.png?inherited"), Some(FULL.map(str::to_owned)));
     assert_eq!(loader.referer_of("https://other.test/i.png?own"), Some(FULL.map(str::to_owned)));
 }
+
+/// A style sheet's requests are sent under the sheet's own `Referrer-Policy` when it was served
+/// with one (as Chrome sends them): its `@import`s, and the renderer's requests for its `url()`s
+/// (which name the sheet as referrer), carry no referrer from a sheet served with `no-referrer`,
+/// though the document's policy would send one (security review cycle 1, MEDIUM 6).
+#[test]
+fn a_sheets_requests_follow_its_referrer_policy() {
+    use std::cell::RefCell;
+    let (mut thread, page, loader) = setup();
+    let sheet = format!("{SAME}/strict.css");
+    loader.insert(&sheet, "text/css", &format!("@import \"{SAME}/imported.css\"; p {{ color: red }}"), Duration::ZERO);
+    loader.set_referrer_policy(&sheet, "no-referrer");
+    loader.insert(&format!("{SAME}/imported.css"), "text/css", "p { margin: 0 }", Duration::ZERO);
+    loader.insert(PAGE, "text/html", &format!("<!doctype html><link rel=stylesheet href=\"{sheet}\">"), Duration::ZERO);
+    loader.set_referrer_policy(PAGE, "unsafe-url");
+    thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
+    settle(&mut thread);
+    assert_eq!(loader.referer_of(&format!("{SAME}/imported.css")), Some(None), "the import");
+    // The renderer's request for one of the sheet's `url()`s names the sheet as referrer.
+    let done: Rc<RefCell<bool>> = Rc::default();
+    let flag = done.clone();
+    thread.browser.fetch_subresource_options(
+        page,
+        format!("{SAME}/i.png"),
+        pyro_browser::ResourceKind::Image,
+        pyro_browser::SubresourceOptions { referrer: Some(sheet.clone()), ..Default::default() },
+        Box::new(move |_, _| *flag.borrow_mut() = true),
+    );
+    settle(&mut thread);
+    assert!(*done.borrow());
+    assert_eq!(loader.referer_of(&format!("{SAME}/i.png")), Some(None), "a url() of the sheet");
+}
