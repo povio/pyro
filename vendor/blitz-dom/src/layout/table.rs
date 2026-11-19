@@ -2182,9 +2182,11 @@ fn apply_collapsed_borders(
     };
     // pyro: a column's width (`<col>`'s, in `min_width_base` when larger than the cell's own) has
     // the halves of the collapsed borders in it, the cell's own `width` does not (CSS 2.1 §17.6.2,
-    // as Chromium).
+    // as Chromium), but for a `border-box` cell, whose `width` is its border box with them.
+    let content_box = cell.style.box_sizing == taffy::BoxSizing::ContentBox;
     let min_width = cell.min_width_base.map(|width| match cell.length_width {
-        Some(own) => width.max(own + left + right),
+        Some(own) if content_box => width.max(own + left + right),
+        Some(own) => width.max(own.max(left + right)),
         None => width,
     });
     let changed = cell.style.border != border || cell.min_height != min_height || cell.min_width != min_width;
