@@ -1484,7 +1484,15 @@ impl ElementCx<'_, '_> {
             if let Some(shape) = self.border_shape() {
                 use crate::kurbo_css::contoured::{boolean, flatten};
                 let offset = outset - width;
+                // pyro: around an oval both edges are ovals (`border-radius: 50%` boxes), filled
+                // even-odd as exact curves, as the outline of such a box is drawn.
+                let oval = shape.oval.is_some();
                 let band = |outer: f64, inner: f64| {
+                    if oval {
+                        let mut path = shape.outer_path_with_offset(outer);
+                        path.extend(shape.outer_path_with_offset(inner).iter());
+                        return path;
+                    }
                     let shapes = [
                         flatten(&shape.outer_path_with_offset(outer)),
                         flatten(&shape.outer_path_with_offset(inner)),
@@ -1499,7 +1507,8 @@ impl ElementCx<'_, '_> {
                 } else {
                     band(offset + width, offset)
                 };
-                scene.fill(Fill::NonZero, self.transform, color, None, &path);
+                let fill = if oval { Fill::EvenOdd } else { Fill::NonZero };
+                scene.fill(fill, self.transform, color, None, &path);
                 return;
             }
         }
