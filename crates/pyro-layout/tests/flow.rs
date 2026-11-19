@@ -2747,9 +2747,9 @@ fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
         } else {
             p.layout.window_scroll_to(&p.dom, None, Some(pre));
         }
-        let before = (p.layout.scroll_y(), p.layout.scroll_top(s) as u32);
+        let before = (p.layout.scroll_y() as u32, p.layout.scroll_top(s) as u32);
         let moved = p.layout.scroll_into_view_if_needed_targets(&p.dom, t);
-        let after = (p.layout.scroll_y(), p.layout.scroll_top(s) as u32);
+        let after = (p.layout.scroll_y() as u32, p.layout.scroll_top(s) as u32);
         assert_eq!([after.0, after.1], [window, scroller], "{name}");
         assert_eq!(moved.is_empty(), before == after, "{name}: targets report exactly the moved scrollers");
     }
@@ -2783,7 +2783,7 @@ fn focus_scroll_is_unchanged_by_a_scroll_margin_that_cannot_matter() {
         let mut p = page(&html);
         let t = p.id("t");
         let moved = p.layout.reveal_for_focus(&p.dom, t);
-        assert_eq!([p.layout.scroll_x(), p.layout.scroll_y()], [0, window_y], "{name}");
+        assert_eq!([p.layout.scroll_x() as u32, p.layout.scroll_y() as u32], [0, window_y], "{name}");
         assert_eq!(moved.is_empty(), window_y == 0, "{name}: targets report exactly the moved scrollers");
     }
     // Inside an overflow container: the 200px scroller's box at 100..150 is visible; at 400 it is centred.
