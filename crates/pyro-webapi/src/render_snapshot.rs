@@ -107,6 +107,18 @@ impl PageDom {
         self.snapshot_as(base_url, mark.map(|m| (m, "")), Form::Tree)
     }
 
+    /// The base URL a render snapshot's document resolves URLs against: `frame_base_url` (the
+    /// frame's), or the one a `<base href>` gives the document (HTML "document base URL"; WPT
+    /// css-style-attr `style-attr-urls-002`: `url()` in a style attribute under `<base>`).
+    pub fn render_base_url(&self, frame_base_url: &str) -> String {
+        let dom = self.dom.borrow();
+        let doc = self.document();
+        match (dom.document_base_url(doc), dom.document_fallback_base_url(doc)) {
+            (Ok(base), Ok(fallback)) if base != fallback => base.to_owned(),
+            _ => frame_base_url.to_owned(),
+        }
+    }
+
     /// The viewport and scroll of a render snapshot, without the document.
     pub fn render_view(&self) -> RenderSnapshot {
         self.snapshot_as("", None, Form::None)

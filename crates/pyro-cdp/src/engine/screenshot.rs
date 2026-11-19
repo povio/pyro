@@ -324,6 +324,7 @@ impl EngineHost {
         let frame = &page.main_frame;
         let dom = frame.page_dom.clone().ok_or_else(|| CdpError::server("page has no document"))?;
         let stamp = dom.render_stamp();
+        let base_url = dom.render_base_url(&frame.base_url);
         let (s, live) = match self.renders.live.get(&pid) {
             // Unchanged: the same `Arc`, which the render thread does not diff.
             Some(l) if l.stamp == stamp => {
@@ -332,7 +333,7 @@ impl EngineHost {
                 (s, l.tree.clone())
             }
             _ => {
-                let mut s = dom.render_snapshot_tree(&frame.base_url, None);
+                let mut s = dom.render_snapshot_tree(&base_url, None);
                 for (url, text) in frame_sheets {
                     s.sheets.entry(url).or_insert(text);
                 }
@@ -344,7 +345,7 @@ impl EngineHost {
         };
         Ok(Snapshot {
             html: String::new(),
-            base_url: frame.base_url.clone(),
+            base_url,
             sheets: s.sheets,
             width: s.width,
             height: s.height,
