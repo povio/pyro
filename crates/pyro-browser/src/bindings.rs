@@ -648,7 +648,7 @@ impl PageHooks for Hooks {
         host.document_value(scope, self.page, key).map(Some)
     }
     fn sibling_realms(&self, scope: &pyro_js::Scope<'_>) -> Vec<pyro_js::Realm> {
-        let Some(host) = self.frames.upgrade().filter(|h| h.has_children() || h.has_retired()) else {
+        let Some(host) = self.frames.upgrade().filter(|h| h.has_children() || h.has_retired() || !h.dom_peers.borrow().is_empty()) else {
             return Vec::new();
         };
         host.sibling_realms(self.page, scope.realm_id())

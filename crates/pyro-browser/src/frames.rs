@@ -185,6 +185,10 @@ pub(crate) struct FrameHost {
     /// For such a popup, the ticket through which the opener's document
     /// reaches it (its `window.open` result is `event.source` there).
     pub(crate) popup: RefCell<Option<Rc<pyro_webapi::PopupTicket>>>,
+    /// The other pages sharing this page's DOM store: the popups it opened, and its opener's group
+    /// (a popup takes its opener's store, see `prebuild_popup`). Their realms are siblings of this
+    /// page's for node wrappers (`sibling_realms`).
+    pub(crate) dom_peers: RefCell<Vec<std::rc::Weak<FrameHost>>>,
     /// Each child frame's WindowProxy: its first main-world realm's global
     /// proxy, which every later document's realm adopts (`make_realm`), so
     /// that `iframe.contentWindow` stays one object that follows the frame.
@@ -254,7 +258,10 @@ impl FrameHost {
             children: RefCell::new(BTreeMap::new()),
             root: RefCell::new(frame.clone()),
             root_nav: nav.clone(),
-            dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
+            // The opener's DOM store, as its frames share it: a node of the opener's documents can be
+            // adopted into the popup's (`w.document.body.appendChild(node)`), which a store of its
+            // own could not hold (HTML: one browsing context group, one event loop).
+            dom: self.dom.clone(),
             settings: RefCell::new(settings),
             page: id,
             context: self.context,
@@ -269,12 +276,16 @@ impl FrameHost {
             // Its `window.opener` from the start (`Browser::adopt_popup` sets it again).
             opener: RefCell::new(Some(Rc::downgrade(self))),
             popup: RefCell::new(None),
+            dom_peers: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
+        // One DOM store: each reaches the other's realms for node wrappers.
+        self.dom_peers.borrow_mut().push(Rc::downgrade(&host));
+        host.dom_peers.borrow_mut().push(Rc::downgrade(self));
         let key: FrameKey = id.into();
         let dom = bindings::create(&host, key, "about:blank", &frame.loader_id)?;
         // Nothing loads into it: it is complete as made (as in browsers).
@@ -336,6 +347,7 @@ impl FrameHost {
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
             popup: RefCell::new(None),
+            dom_peers: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
@@ -1020,7 +1032,32 @@ impl FrameHost {
         for doc in retired.iter() {
             realms.extend(of(&doc.main_frame).filter(|r| r.id() != realm && !r.is_disposed()));
         }
+        drop(retired);
+        // The pages sharing the DOM store (opener and popups): all their frames' realms of the world.
+        for peer in self.dom_group() {
+            realms.extend(of(&peer.root.borrow()));
+            for doc in peer.children.borrow().values() {
+                realms.extend(of(&doc.main_frame));
+            }
+            for doc in peer.retired.borrow().iter() {
+                realms.extend(of(&doc.main_frame).filter(|r| !r.is_disposed()));
+            }
+        }
         realms
+    }
+
+    /// The other live pages sharing this page's DOM store, through openers and popups.
+    pub(crate) fn dom_group(&self) -> Vec<Rc<FrameHost>> {
+        let mut out: Vec<Rc<FrameHost>> = Vec::new();
+        let mut todo: Vec<Rc<FrameHost>> = self.dom_peers.borrow().iter().filter_map(std::rc::Weak::upgrade).collect();
+        while let Some(host) = todo.pop() {
+            if host.page == self.page || out.iter().any(|h| h.page == host.page) || !Rc::ptr_eq(&host.dom, &self.dom) {
+                continue;
+            }
+            todo.extend(host.dom_peers.borrow().iter().filter_map(std::rc::Weak::upgrade));
+            out.push(host);
+        }
+        out
     }
     pub fn document_value<'s>(
         self: &Rc<Self>,
