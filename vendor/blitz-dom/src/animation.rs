@@ -905,7 +905,12 @@ fn resolve<'a>(
                 None => Some(TimingFunction::ease()),
             };
             implicit_easing = default_easing.clone();
-            let Some(animation) = shared.stylist.lookup_keyframes(name, node) else {
+            // pyro: from the tree scope of the declaration that named it (`animation_name_scope`).
+            let animation = match animation_name_scope(doc, node) {
+                Some(scope) => shared.stylist.lookup_keyframes_scoped(name, scope, node),
+                None => shared.stylist.lookup_keyframes(name, node),
+            };
+            let Some(animation) = animation else {
                 return Resolved::default();
             };
             let guard = &shared.guards.author;
@@ -1329,4 +1334,25 @@ fn cascade_pseudo<'a>(
         reused_via_rule_node: false,
     };
     resolver.cascade_style_and_visited_for_pseudo_with_default_parents(inputs, pseudo, &primary).0
+}
+
+/// pyro: the cascade level of the declaration of `animation-name` that `node`'s style uses (the
+/// highest priority one), whose tree scope a `@keyframes` name is looked up in; `None` without one
+/// (inherited or initial) or for a user agent rule.
+fn animation_name_scope(doc: &BaseDocument, node: &Node) -> Option<style::rule_tree::CascadeLevel> {
+    use style::properties::{LonghandId, PropertyDeclarationId};
+    use style::stylesheets::Origin;
+    let style = node.primary_styles()?;
+    let guard = doc.guard.read();
+    for rule in style.rules().self_and_ancestors() {
+        let level = rule.cascade_level();
+        if level.origin().origin() == Origin::UserAgent {
+            continue;
+        }
+        let Some(source) = rule.style_source() else { continue };
+        if source.read(&guard).get(PropertyDeclarationId::Longhand(LonghandId::AnimationName)).is_some() {
+            return Some(level);
+        }
+    }
+    None
 }

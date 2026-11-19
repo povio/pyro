@@ -1981,7 +1981,36 @@ impl Stylist {
         self.lookup_element_dependent_at_rule(element, |data| data.animations.get(name))
     }
 
-    /// Returns the last @view-transition rule
+    /// pyro: the `@keyframes` rule `name` as seen from the tree scope of the declaration that
+    /// named it (`scope`, its cascade level), not from `element`'s: the rules of the declaration's
+    /// own tree first, then those of each host's tree out to the document (CSS Scoping 1
+    /// § 3.5.1, tree-scoped names; a `::part()` rule of the document names the document's
+    /// keyframes).
+    pub fn lookup_keyframes_scoped<'a, E>(
+        &'a self,
+        name: &Atom,
+        scope: CascadeLevel,
+        element: E,
+    ) -> Option<&'a KeyframesAnimation>
+    where
+        E: TElement + 'a,
+    {
+        let mut shadow_root = scope.get_shadow_root_for_scoped(element);
+        while let Some(r) = shadow_root {
+            if let Some(animation) = r.style_data().and_then(|data| data.animations.get(name)) {
+                return Some(animation);
+            }
+            shadow_root = r.host().containing_shadow();
+        }
+        self.cascade_data
+            .author
+            .animations
+            .get(name)
+            .or_else(|| self.cascade_data.user.animations.get(name))
+            .or_else(|| self.cascade_data.user_agent.cascade_data.animations.get(name))
+    }
+
+        /// Returns the last @view-transition rule
     /// <https://drafts.csswg.org/css-view-transitions-2/#resolve-view-transition-rule>
     #[inline]
     pub fn last_view_transition_rule(&self) -> Option<&Arc<ViewTransitionRule>> {
