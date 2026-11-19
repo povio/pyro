@@ -444,7 +444,7 @@ pub struct Frame {
     /// The container's policy for `fullscreen` when the frame's navigation began (HTML takes the
     /// container policy then; a later attribute change applies to the next navigation):
     /// whether it had `allowfullscreen`, and its `allow` attribute. Top-level frames: none.
-    pub(crate) fullscreen_container: (bool, Option<String>),
+    pub(crate) fullscreen_container: frames::FullscreenContainer,
     pub url: String,
     pub loader_id: LoaderId,
     pub realms: Vec<FrameRealm>,

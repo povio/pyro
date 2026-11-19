@@ -812,11 +812,18 @@ fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &s
     let Some(frame) = host.frame(key) else { return false };
     let Some(pd) = host.frame(parent).and_then(|f| f.page_dom.clone()) else { return false };
     // The container policy as it was when this navigation began.
-    let (allowfullscreen, allow) = frame.fullscreen_container.clone();
+    let container = frame.fullscreen_container.clone();
     let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
     let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
     let child_origin = frame_origin(host, key, url, opaque);
-    pyro_webapi::fullscreen::allowed_in_frame(pd.fullscreen_allowed(), allowfullscreen, allow.as_deref(), parent_origin.as_deref(), child_origin.as_deref())
+    pyro_webapi::fullscreen::allowed_in_frame(
+        pd.fullscreen_allowed(),
+        container.allowfullscreen,
+        container.allow.as_deref(),
+        parent_origin.as_deref(),
+        container.declared_origin.as_deref(),
+        child_origin.as_deref(),
+    )
 }
 
 pub(crate) fn create(

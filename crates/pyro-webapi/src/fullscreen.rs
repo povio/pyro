@@ -28,7 +28,8 @@ pub(crate) fn enabled(page: &PageDom) -> bool {
 /// `fullscreen`: a child frame's document may use fullscreen when its parent document may, and
 /// its container's policy allows the child's origin. The container policy is its `allow`
 /// attribute's `fullscreen` directive (an allowlist of `*`, `'self'` (the parent's origin),
-/// `'src'` (the frame's, the default with no tokens), `'none'` and origins), else
+/// `'src'` (the container's declared origin: its `src` URL's, see pyro-browser's
+/// `FullscreenContainer`; the default with no tokens), `'none'` and origins), else
 /// `fullscreen *` when it has `allowfullscreen`. A container with neither denies fullscreen to
 /// every frame, same-origin ones included, as browsers do (HTML's legacy `allowfullscreen`
 /// behavior; WPT fullscreen/api/document-fullscreen-enabled-*, navigate-iframe). Origins are
@@ -38,6 +39,7 @@ pub fn allowed_in_frame(
     allowfullscreen: bool,
     allow: Option<&str>,
     parent_origin: Option<&str>,
+    declared_origin: Option<&str>,
     child_origin: Option<&str>,
 ) -> bool {
     if !parent_allowed {
@@ -51,11 +53,13 @@ pub fn allowed_in_frame(
         })
     });
     match declared {
-        Some(list) if list.is_empty() => same(child_origin),
+        // `'src'`: the frame's document must be at the origin the container delegated to (its
+        // `src` URL's), not wherever a redirect or a later navigation took it.
+        Some(list) if list.is_empty() => same(declared_origin),
         Some(list) => list.iter().any(|t| match t.as_str() {
             "*" => true,
             "'self'" => same(parent_origin),
-            "'src'" => child_origin.is_some(),
+            "'src'" => same(declared_origin),
             "'none'" => false,
             origin => same(Some(origin.trim_end_matches('/'))),
         }),
@@ -208,34 +212,48 @@ mod tests {
     #[test]
     fn no_container_policy_denies() {
         // Neither allowfullscreen nor an `allow` declaration: no frame, same-origin included.
-        assert!(!allowed(true, false, None, A, A));
-        assert!(!allowed(true, false, None, A, B));
-        assert!(!allowed(true, false, Some("camera *"), A, A));
-        assert!(!allowed(true, false, None, A, None));
+        assert!(!allowed(true, false, None, A, A, A));
+        assert!(!allowed(true, false, None, A, B, B));
+        assert!(!allowed(true, false, Some("camera *"), A, A, A));
+        assert!(!allowed(true, false, None, A, None, None));
         // A parent that may not use fullscreen allows no frame, whatever the container says.
-        assert!(!allowed(false, true, Some("fullscreen *"), A, A));
+        assert!(!allowed(false, true, Some("fullscreen *"), A, A, A));
     }
 
     #[test]
     fn allowfullscreen_is_fullscreen_star() {
-        assert!(allowed(true, true, None, A, B));
-        assert!(allowed(true, true, None, A, None));
+        assert!(allowed(true, true, None, A, B, B));
+        assert!(allowed(true, true, None, A, None, None));
         // An `allow` that declares fullscreen wins over allowfullscreen.
-        assert!(!allowed(true, true, Some("fullscreen 'none'"), A, B));
+        assert!(!allowed(true, true, Some("fullscreen 'none'"), A, B, B));
         // One that declares something else does not.
-        assert!(allowed(true, true, Some("camera *"), A, B));
+        assert!(allowed(true, true, Some("camera *"), A, B, B));
+    }
+
+    #[test]
+    fn src_is_the_declared_origin() {
+        // `allow="fullscreen"` delegates to the `src` URL's origin: a frame that redirected or
+        // navigated elsewhere (child B, declared A) does not get it.
+        assert!(allowed(true, false, Some("fullscreen"), A, A, A));
+        assert!(!allowed(true, false, Some("fullscreen"), A, A, B));
+        assert!(!allowed(true, false, Some("fullscreen 'src'"), A, A, B));
+        assert!(allowed(true, false, Some("fullscreen 'src'"), A, B, B));
+        // A sandboxed container's declared origin is opaque: 'src' matches nothing.
+        assert!(!allowed(true, false, Some("fullscreen"), A, None, None));
+        // allowfullscreen is `*`: any destination.
+        assert!(allowed(true, true, None, A, A, B));
     }
 
     #[test]
     fn allow_attribute_allowlists() {
-        assert!(allowed(true, false, Some("fullscreen"), A, B)); // 'src'
-        assert!(allowed(true, false, Some("fullscreen 'src'"), A, B));
-        assert!(!allowed(true, false, Some("fullscreen 'self'"), A, B));
-        assert!(allowed(true, false, Some("fullscreen 'self'"), A, A));
-        assert!(allowed(true, false, Some("geolocation *; fullscreen http://b.test"), A, B));
-        assert!(allowed(true, false, Some("fullscreen http://b.test/"), A, B));
-        assert!(!allowed(true, false, Some("fullscreen http://c.test"), A, B));
-        assert!(allowed(true, false, Some("fullscreen *"), A, None));
-        assert!(!allowed(true, false, Some("fullscreen 'none'"), A, A));
+        assert!(allowed(true, false, Some("fullscreen"), A, B, B)); // 'src'
+        assert!(allowed(true, false, Some("fullscreen 'src'"), A, B, B));
+        assert!(!allowed(true, false, Some("fullscreen 'self'"), A, B, B));
+        assert!(allowed(true, false, Some("fullscreen 'self'"), A, A, A));
+        assert!(allowed(true, false, Some("geolocation *; fullscreen http://b.test"), A, B, B));
+        assert!(allowed(true, false, Some("fullscreen http://b.test/"), A, B, B));
+        assert!(!allowed(true, false, Some("fullscreen http://c.test"), A, B, B));
+        assert!(allowed(true, false, Some("fullscreen *"), A, None, None));
+        assert!(!allowed(true, false, Some("fullscreen 'none'"), A, A, A));
     }
 }

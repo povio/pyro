@@ -835,9 +835,38 @@ impl FrameHost {
     }
 }
 
-/// A frame container's `allowfullscreen` and `allow` attributes (`Frame::fullscreen_container`).
-pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId) -> (bool, Option<String>) {
-    (dom.get_attribute(owner, "allowfullscreen").ok().flatten().is_some(), dom.get_attribute(owner, "allow").ok().flatten().map(str::to_owned))
+/// A frame container's policy inputs for `fullscreen` as a navigation began
+/// (`Frame::fullscreen_container`): `allowfullscreen`, the `allow` attribute, and the container's
+/// declared origin, which the `'src'` allowlist token (the default of `allow`) stands for.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub(crate) struct FullscreenContainer {
+    pub allowfullscreen: bool,
+    pub allow: Option<String>,
+    /// Permissions Policy "declared origin": opaque (`None`) for a `sandbox` without
+    /// `allow-same-origin`; the container document's origin with `srcdoc` or without `src`; else the
+    /// origin of the `src` URL, resolved against the container document.
+    pub declared_origin: Option<String>,
+}
+
+pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId) -> FullscreenContainer {
+    let attr = |name: &str| dom.get_attribute(owner, name).ok().flatten().map(str::to_owned);
+    let tuple = |url: &url::Url| {
+        let origin = url.origin();
+        origin.is_tuple().then(|| origin.ascii_serialization())
+    };
+    let parent_origin = || dom.node_document(owner).ok().and_then(|d| dom.document_url_parsed(d).ok().flatten()).and_then(tuple);
+    let sandboxed = attr("sandbox").is_some_and(|v| !v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("allow-same-origin")));
+    let declared_origin = if sandboxed {
+        None
+    } else if attr("srcdoc").is_some() {
+        parent_origin()
+    } else {
+        match attr("src").filter(|v| !v.trim().is_empty()) {
+            Some(src) => url::Url::parse(&pyro_webapi::html::resolve_url(dom, owner, &src)).ok().as_ref().and_then(tuple),
+            None => parent_origin(),
+        }
+    };
+    FullscreenContainer { allowfullscreen: attr("allowfullscreen").is_some(), allow: attr("allow"), declared_origin }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
