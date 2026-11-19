@@ -26,8 +26,9 @@ export const PAINT_DIRS = [
 // testdriver: html/syntax 272 (the HTML parser and serializer), selection 97 (Selection API), streams 84, user-timing
 // 36, webidl 44, FileAPI 61, fetch/api request/response/headers/abort/body 68 (fetch/api/basic is a default
 // directory; cors, policies and redirect need wptserve), css/css-variables 63 and css/css-conditional 220
-// (testharness pages; their reftests run in LAYOUT_DIRS too).
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1', 'html/syntax', 'selection', 'streams', 'user-timing', 'webidl', 'FileAPI', 'fetch/api/request', 'fetch/api/response', 'fetch/api/headers', 'fetch/api/abort', 'fetch/api/body', 'css/css-variables', 'css/css-conditional'];
+// (testharness pages; their reftests run in LAYOUT_DIRS too). html/semantics/links 14 and document-metadata 88
+// (link stylesheets and their events, <base>, <meta>, <style>, <title>; lane F3a), less TESTHARNESS_SKIP.
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1', 'html/syntax', 'selection', 'streams', 'user-timing', 'webidl', 'FileAPI', 'fetch/api/request', 'fetch/api/response', 'fetch/api/headers', 'fetch/api/abort', 'fetch/api/body', 'css/css-variables', 'css/css-conditional', 'html/semantics/links', 'html/semantics/document-metadata'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,
@@ -187,6 +188,14 @@ const NAVIGATION_API_SKIP = [
 TESTHARNESS_SKIP.push(...NAVIGATION_API_SKIP);
 //   html/semantics/embedded-content/the-iframe-element/: waits for a sandboxed frame's video to fire `play` (autoplay).
 TESTHARNESS_SKIP.push({ path: 'html/semantics/embedded-content/the-iframe-element/sandbox_002.htm', why: 'needs media playback (autoplay play event)' });
+//   html/semantics/links/, html/semantics/document-metadata/ (lane F3a): downloads (each waits out its subtest
+//   timeout), the tentative <style> CSP pages (pyro acts on Trusted Types directives only), and a click in a
+//   navigated-away iframe's document (times out).
+TESTHARNESS_SKIP.push(
+  { prefix: 'html/semantics/links/downloading-resources/', why: 'needs downloads (anchor download attribute)' },
+  { prefix: 'html/semantics/document-metadata/the-style-element/tentative/style-element-csp-', why: 'needs CSP style-src/script-src enforcement (only Trusted Types directives are acted on)' },
+  { path: 'html/semantics/links/following-hyperlinks/active-document.window.js', why: 'times out: a hyperlink in a navigated-away iframe document' },
+);
 // Round 4 sweep (S3): pages of the directories it added that hang or time out with the static server.
 TESTHARNESS_SKIP.push(
   ...['html/syntax/parsing/custom-element-reparenting-shadow-cycle.html', 'html/syntax/parsing/custom-element-reparenting-template-cycle.html']
@@ -230,7 +239,7 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
         if (v.length) variants = v;
         long = /<meta\s+name=["']?timeout["']?\s+content=["']?long/i.test(src);
       } else continue;
-      const skip = TESTHARNESS_SKIP.find((x) => x.path === rel);
+      const skip = TESTHARNESS_SKIP.find((x) => x.path === rel || (x.prefix && rel.startsWith(x.prefix)));
       if (skip) { exclude(skip.why); continue; }
       if (!wptserve && /\.sub\.|\.https\.|\.h2\.|\.www\./.test(base)) { exclude('needs wptserve substitution/https/h2'); continue; }
       if (!testdriver && /testdriver\.js|testdriver-vendor/.test(src)) { exclude('needs testdriver'); continue; }

@@ -19,6 +19,8 @@ css/css-shapes/
 html/semantics/embedded-content/the-object-element/
 html/semantics/embedded-content/the-embed-element/
 html/semantics/embedded-content/the-iframe-element/
+html/semantics/links/
+html/semantics/document-metadata/
 html/semantics/forms/
 html/webappapis/
 html/semantics/scripting-1/
