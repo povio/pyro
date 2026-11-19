@@ -2,7 +2,7 @@
 // native (web_locks.rs), shared by every same-origin document of the browser context:
 //   state() -> 'ok' | 'inactive' | 'opaque'
 //   request(name, exclusive, ifAvailable, steal, grant, stolen) -> id, 0 when ifAvailable and busy
-//   release(id), abort(id) -> whether it was still waiting, query() -> [held, pending] of [name, mode, clientId]
+//   release(id), abort(id) -> whether it was still waiting, watchAbort(signal, id) (on abort: abortRequest(id)), query() -> [held, pending] of [name, mode, clientId]
 // `grant` and `stolen` are called with no arguments in a task when the lock is granted or stolen.
 (function (native) {
   'use strict';
@@ -18,8 +18,9 @@
   const call = Function.prototype.call;
   const signalAborted = O.getOwnPropertyDescriptor(AbortSignalC.prototype, 'aborted').get;
   const signalReason = O.getOwnPropertyDescriptor(AbortSignalC.prototype, 'reason').get;
-  const addEventListener = EventTarget.prototype.addEventListener;
-  const removeEventListener = EventTarget.prototype.removeEventListener;
+  // A request's abort steps, by request id: run by the signal's abort algorithm (native.watchAbort,
+  // DOM "add an abort algorithm"), not an `abort` listener a page could stop or fake.
+  const abortSteps = new Map();
   // Names cross to the native queues as their UTF-16 code units in hex, so that names that are not
   // valid UTF-16 (lone surrogates) stay distinct and come back unchanged.
   const encode = (name) => { let out = ''; for (let i = 0; i < name.length; i++) out += name.charCodeAt(i).toString(16).padStart(4, '0'); return out; };
@@ -94,8 +95,6 @@
         let settle, fail2;
         const promise = new PromiseC((res, rej) => { settle = res; fail2 = rej; });
         let id = 0;
-        let onAbort = null;
-        const dropAbort = () => { if (onAbort) { call.call(removeEventListener, signal, 'abort', onAbort); onAbort = null; } };
         // The callback runs with the lock (or null); the lock is held until its promise settles,
         // which settles the request's promise.
         const run = (lock) => {
@@ -106,7 +105,7 @@
             (e) => { if (lock) native.release(id); fail2(e); },
           );
         };
-        const grant = () => { dropAbort(); run(new Lock(token, name, mode)); };
+        const grant = () => { abortSteps.delete(id); run(new Lock(token, name, mode)); };
         const stolen = () => fail2(dom("Lock broken by another request with the 'steal' option.", 'AbortError'));
         id = native.request(encode(name), mode === 'exclusive', ifAvailable, steal, grant, stolen);
         if (id === 0) {
@@ -115,11 +114,11 @@
           return promise;
         }
         if (signal !== undefined) {
-          onAbort = () => {
-            dropAbort();
+          abortSteps.set(id, () => {
+            abortSteps.delete(id);
             if (native.abort(id)) fail2(call.call(signalReason, signal));
-          };
-          call.call(addEventListener, signal, 'abort', onAbort);
+          });
+          native.watchAbort(signal, id);
         }
         return promise;
       } catch (e) {
@@ -149,5 +148,7 @@
       if (typeof d.value === 'function') { d.enumerable = true; O.defineProperty(C.prototype, k, d); }
     }
   }
-  return { LockManager, Lock, locks: new LockManager(token) };
+  // Called by the signal's abort algorithm (web_locks.rs) with the request it guards.
+  const abortRequest = (id) => { const steps = abortSteps.get(id); if (steps) steps(); };
+  return { LockManager, Lock, locks: new LockManager(token), abortRequest };
 });

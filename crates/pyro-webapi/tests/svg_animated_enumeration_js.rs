@@ -636,6 +636,42 @@ fn web_locks_absent_in_insecure_contexts() {
     );
 }
 
+/// A lock request's signal aborts it through the signal's abort algorithm, not an `abort`
+/// listener: a listener stopping the event cannot keep an aborted request queued, and a synthetic
+/// `abort` event does not cancel a request whose signal did not abort.
+#[test]
+fn web_locks_abort_uses_the_signal_algorithm() {
+    let env = Env::new("https://locks.test/");
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const out = [];
+              let release;
+              navigator.locks.request("x", () => new Promise((r) => { release = r; }));
+              await new Promise((r) => setTimeout(r, 0));
+              // 1. a listener stops the abort event before ours could run
+              const c1 = new AbortController();
+              c1.signal.addEventListener("abort", (e) => e.stopImmediatePropagation());
+              let ran1 = false;
+              const p1 = navigator.locks.request("x", { signal: c1.signal }, () => { ran1 = true; });
+              c1.abort();
+              out.push(await p1.then(() => "resolved", (e) => e.name));
+              // 2. a synthetic abort event on a signal that did not abort
+              const c2 = new AbortController();
+              let ran2 = false;
+              const p2 = navigator.locks.request("x", { signal: c2.signal }, () => { ran2 = true; return "two"; });
+              c2.signal.dispatchEvent(new Event("abort"));
+              release();
+              out.push(await p2, ran1, ran2);
+              globalThis.abortDone = out.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.abortDone !== undefined");
+    assert_eq!(env.eval("abortDone"), "AbortError|two|false|true");
+}
+
 /// navigator.mediaDevices: pyro has no capture device, so none is listed and getUserMedia() finds
 /// none; constraints are still checked.
 #[test]

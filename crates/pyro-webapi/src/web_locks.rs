@@ -318,6 +318,33 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.boolean(removed))
     })?;
     native.set_atom("abort", abort.value())?;
+    // watchAbort(signal, id): DOM "add an abort algorithm" to `signal`: when it aborts (before its
+    // `abort` event, which a listener could stop and a page could fake), the module's
+    // abortRequest(id) runs. The signal holds only the id; the steps stay in JS.
+    let watch = s.function("watchAbort", |s, _, a| {
+        let signal = s
+            .unwrap::<crate::abort::AbortSignal>(a.get(0))
+            .ok_or_else(|| JsError::Type("not an AbortSignal".into()))?;
+        let id = a.get(1).to_number()?;
+        let realm = s.realm().downgrade();
+        let _ = signal.add_abort_hook(Box::new(move |_page| {
+            let Some(realm) = realm.upgrade() else { return };
+            let Ok(s) = realm.scope() else { return };
+            let Ok(page) = crate::target::page_of(&s) else { return };
+            let run = || -> JsResult<()> {
+                let module = MODULE.module(&s, &page)?;
+                if let Some(f) = module.get("abortRequest")?.as_object() {
+                    f.call(None, &[s.number(id)])?;
+                }
+                Ok(())
+            };
+            if let Err(e) = run() {
+                s.report_exception(&e);
+            }
+        }));
+        Ok(s.undefined())
+    })?;
+    native.set_atom("watchAbort", watch.value())?;
     // query() -> [held, pending], each a list of [name, mode, clientId] of the realm's lock
     // manager, in each queue's order.
     let query = s.function("query", |s, _, _| {
