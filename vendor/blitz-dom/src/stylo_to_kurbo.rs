@@ -616,7 +616,7 @@ fn coord_box_transform(
 /// pyro: a rectangle with elliptical corners (top-left, top-right, bottom-right, bottom-left) as a path that starts at the
 /// top edge after the top-left corner and runs clockwise; radii that do not fit are scaled down
 /// together (CSS Backgrounds § 5.5).
-fn rounded_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4]) -> kurbo::BezPath {
+pub(crate) fn rounded_rect_path(rect: kurbo::Rect, radii: [kurbo::Vec2; 4]) -> kurbo::BezPath {
     use kurbo::{Arc, Point, Vec2};
     let (w, h) = (rect.width().max(0.0), rect.height().max(0.0));
     let [tl, tr, br, bl] = radii.map(|r| Vec2::new(r.x.max(0.0), r.y.max(0.0)));

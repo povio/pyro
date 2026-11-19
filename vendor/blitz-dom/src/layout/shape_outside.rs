@@ -40,22 +40,70 @@ fn axis_radius(radius: &GenericShapeRadius<LengthPercentage>, center: f64, start
     }
 }
 
+/// The border radii (top-left, top-right, bottom-right, bottom-left) of a border box `w` by `h`.
+fn corner_radii(b: &style::properties::style_structs::Border, w: f64, h: f64) -> [kurbo::Vec2; 4] {
+    let r = |c: &style::values::computed::BorderCornerRadius| kurbo::Vec2::new(lp(&c.0.width.0, w), lp(&c.0.height.0, h));
+    [
+        r(&b.border_top_left_radius),
+        r(&b.border_top_right_radius),
+        r(&b.border_bottom_right_radius),
+        r(&b.border_bottom_left_radius),
+    ]
+}
+
+/// A border radius grown by a margin `m` at the margin edge (CSS Shapes 1 § 3.1.1, as a box
+/// shadow's spread in CSS Backgrounds 3): by all of `m` where the radius is at least `m`, by
+/// `m (1 + (r / m - 1)³)` where it is smaller.
+fn grow_radius(r: f64, m: f64) -> f64 {
+    if m <= 0.0 || r >= m {
+        return r + m.max(0.0);
+    }
+    r + m * (1.0 + (r / m - 1.0).powi(3))
+}
+
 /// The float area as a path in margin-box coordinates, `None` for the margin box itself.
 fn area(style: &ComputedValues, margin_box: Rect, margin: [f64; 4], border: [f64; 4], padding: [f64; 4]) -> Option<BezPath> {
-    let reference = |b: ShapeBox| {
-        let inset = |r: Rect, e: [f64; 4]| Rect::new(r.x0 + e[3], r.y0 + e[0], r.x1 - e[1], r.y1 - e[2]);
-        let border_box = inset(margin_box, margin);
-        match b {
-            ShapeBox::MarginBox => margin_box,
-            ShapeBox::BorderBox => border_box,
-            ShapeBox::PaddingBox => inset(border_box, border),
-            ShapeBox::ContentBox => inset(inset(border_box, border), padding),
-        }
+    let inset = |r: Rect, e: [f64; 4]| Rect::new(r.x0 + e[3], r.y0 + e[0], r.x1 - e[1], r.y1 - e[2]);
+    let border_box = inset(margin_box, margin);
+    let reference = |b: ShapeBox| match b {
+        ShapeBox::MarginBox => margin_box,
+        ShapeBox::BorderBox => border_box,
+        ShapeBox::PaddingBox => inset(border_box, border),
+        ShapeBox::ContentBox => inset(inset(border_box, border), padding),
     };
     match &style.get_box().shape_outside {
         ShapeOutside::None | ShapeOutside::Image(_) => None,
-        ShapeOutside::Box(ShapeBox::MarginBox) => None,
-        ShapeOutside::Box(b) => Some(reference(*b).to_path(0.1)),
+        ShapeOutside::Box(b) => {
+            // The box with its border radii (CSS Shapes 1 § 3.1.1): grown by the margin at the
+            // margin edge (as a shadow's spread), shrunk by the border and padding inside.
+            let b = *b;
+            let radii = corner_radii(&style.get_border(), border_box.width(), border_box.height());
+            if b == ShapeBox::MarginBox && radii.iter().all(|r| r.x <= 0.0 || r.y <= 0.0) {
+                return None;
+            }
+            // (horizontal, vertical) edge widths at each corner: top-left, top-right,
+            // bottom-right, bottom-left.
+            let corner_edges = |e: [f64; 4]| [(e[3], e[0]), (e[1], e[0]), (e[1], e[2]), (e[3], e[2])];
+            let adjust: Box<dyn Fn(kurbo::Vec2, (f64, f64)) -> kurbo::Vec2> = match b {
+                ShapeBox::MarginBox => Box::new(|r: kurbo::Vec2, (dx, dy): (f64, f64)| {
+                    if r.x <= 0.0 || r.y <= 0.0 {
+                        return kurbo::Vec2::ZERO;
+                    }
+                    kurbo::Vec2::new(grow_radius(r.x, dx), grow_radius(r.y, dy))
+                }),
+                _ => Box::new(|r: kurbo::Vec2, (dx, dy): (f64, f64)| {
+                    kurbo::Vec2::new((r.x - dx).max(0.0), (r.y - dy).max(0.0))
+                }),
+            };
+            let edges = match b {
+                ShapeBox::MarginBox => corner_edges(margin),
+                ShapeBox::BorderBox => [(0.0, 0.0); 4],
+                ShapeBox::PaddingBox => corner_edges(border),
+                ShapeBox::ContentBox => corner_edges(std::array::from_fn(|i| border[i] + padding[i])),
+            };
+            let radii: [kurbo::Vec2; 4] = std::array::from_fn(|i| adjust(radii[i], edges[i]));
+            Some(crate::stylo_to_kurbo::rounded_rect_path(reference(b), radii))
+        }
         ShapeOutside::Shape(shape, b) => {
             let r = reference(*b);
             let (w, h) = (r.width(), r.height());
@@ -93,7 +141,17 @@ fn area(style: &ComputedValues, margin_box: Rect, margin: [f64; 4], border: [f64
                     if !(rect.x1 > rect.x0 && rect.y1 > rect.y0) {
                         return Some(BezPath::new());
                     }
-                    rect.to_path(0.1)
+                    let corner = |c: &style::values::computed::BorderCornerRadius| {
+                        kurbo::Vec2::new(lp(&c.0.width.0, w), lp(&c.0.height.0, h))
+                    };
+                    let round = &inset.round;
+                    let radii = [
+                        corner(&round.top_left),
+                        corner(&round.top_right),
+                        corner(&round.bottom_right),
+                        corner(&round.bottom_left),
+                    ];
+                    crate::stylo_to_kurbo::rounded_rect_path(rect, radii)
                 }
                 GenericBasicShape::Polygon(poly) => {
                     let mut path = BezPath::new();
@@ -180,7 +238,10 @@ pub(crate) fn float_bands(
         let mut extent: Option<(f64, f64)> = None;
         for &(a, b) in &edges {
             let (top, bottom) = if a.y <= b.y { (a, b) } else { (b, a) };
-            if bottom.y < lo || top.y > hi {
+            // An edge only touching the row's top or bottom is not in it (a horizontal edge is
+            // in the row it starts).
+            let horizontal = (bottom.y - top.y).abs() < 1e-9;
+            if if horizontal { top.y < lo || top.y >= hi } else { bottom.y <= lo || top.y >= hi } {
                 continue;
             }
             // The edge's part within the row.
