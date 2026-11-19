@@ -24314,7 +24314,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1160,169 @@
+@@ -471,22 +1160,224 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -24325,15 +24325,8 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            // pyro: a `line-clamp` container clips its floats, the positioned ones too (CSS
 +            // Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-008`).
 +            || (!box_style.line_clamp.webkit_legacy && !box_style.line_clamp.max_lines.is_none())
-     }
- 
--    /// Whether this is a `position: relative` or `sticky` box.
--    fn is_in_flow_positioned(&self) -> bool {
--        self.primary_styles().is_some_and(|style| {
--            matches!(
--                style.clone_position(),
--                Position::Relative | Position::Sticky
--            )
++    }
++
 +    /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
 +    /// block box of the normal flow whose background goes with the other block backgrounds of
 +    /// its stacking context (step 4), under the floats of its subtree (step 5, lifted to the
@@ -24393,6 +24386,68 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        })
 +    }
 +
++    /// pyro: whether this box is a scroll container that, but for its overflow clip, would paint in
++    /// the phases of an ancestor (`paints_in_ancestor_phases`): it is no stacking context, so CSS 2.1
++    /// Appendix E paints its background with the other block backgrounds and its content's inline
++    /// content with the other inline content, each clipped and scrolled (WPT css/CSS2
++    /// `normal-flow/overflow-scroll-paint-order`). The painter phases it only when its paint children
++    /// are all in-flow boxes (`blitz-paint` `draw_flow_children`).
++    pub fn scroller_paints_in_ancestor_phases(&self) -> bool {
++        use style::values::computed::{Contain, Overflow};
++        let Some(style) = self.primary_styles() else {
++            return false;
++        };
++        let box_style = style.get_box();
++        let clips = !matches!(box_style.overflow_x, Overflow::Visible) || !matches!(box_style.overflow_y, Overflow::Visible);
++        if !clips
++            || style.clone_position() != Position::Static
++            || box_style.slow_clone_contain().contains(Contain::PAINT)
++            || self.element_data().is_some_and(|e| {
++                e.raster_image_data().is_some() || e.sub_doc_data().is_some() || e.text_input_data().is_some()
++            })
++            || self.column_fragments().is_some()
++            || self.vertical_column_fragments().is_some()
++            || (!box_style.line_clamp.webkit_legacy && !box_style.line_clamp.max_lines.is_none())
++            || style.clone_float() != Float::None
++        {
++            return false;
++        }
++        use style::values::specified::box_::{DisplayInside, DisplayOutside};
++        let display = style.clone_display();
++        if !(display.outside() == DisplayOutside::Block && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)) {
++            return false;
++        }
++        if style.get_column().is_multicol()
++            || !style.get_effects().backdrop_filter.0.is_empty()
++            || self.is_stacking_context_root(false)
++            || self.plane_3d().is_some()
++            || self.flags.intersects(NodeFlags::HAS_FLOAT_PAINT_CHILDREN | NodeFlags::FLOW_BOXES_OVERLAP)
++        {
++            return false;
++        }
++        if self.element_data().is_some_and(|element| {
++            crate::layout::replaced::is_replaced(element)
++                || matches!(
++                    element.name.local,
++                    local_name!("input") | local_name!("button") | local_name!("select") | local_name!("textarea")
++                )
++        }) {
++            return false;
++        }
++        !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
++            parent.primary_styles().is_some_and(|parent_style| {
++                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
++            })
++        })
+     }
+ 
+-    /// Whether this is a `position: relative` or `sticky` box.
+-    fn is_in_flow_positioned(&self) -> bool {
+-        self.primary_styles().is_some_and(|style| {
+-            matches!(
+-                style.clone_position(),
+-                Position::Relative | Position::Sticky
+-            )
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -24491,7 +24546,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1332,21 @@
+@@ -496,6 +1387,21 @@
      }
  }
  
@@ -24513,7 +24568,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1390,143 @@
+@@ -539,3 +1445,143 @@
          )
      }
  }

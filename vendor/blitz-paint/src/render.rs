@@ -1195,6 +1195,40 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             source_rect
         };
 
+        // pyro: a scroll container painted in its painter's phases (`scroller_in_phases`): its own
+        // box unclipped, its content clipped by its overflow clip and scrolled, its scrollbars
+        // over its inline content.
+        if phase != FlowPhase::All && should_clip && node.scroller_paints_in_ancestor_phases() {
+            let clip = cx.overflow_clip_path(&styles);
+            match phase {
+                FlowPhase::Background if !hidden => {
+                    cx.draw_outset_box_shadow(scene);
+                    if cx.context.backgrounds && self.canvas_background != Some(node_id) {
+                        cx.draw_background(scene);
+                    }
+                    cx.draw_inset_box_shadow(scene);
+                    cx.draw_border(scene);
+                }
+                FlowPhase::Outline => cx.draw_outline(scene),
+                _ => {}
+            }
+            let unscrolled = cx.transform;
+            scene.push_clip_layer(Fill::NonZero, unscrolled, &clip);
+            cx.transform = self.scrolled_transform(node, unscrolled);
+            if phase == FlowPhase::Foreground {
+                cx.draw_marker(scene, content_position);
+                cx.draw_inline_layout(scene, content_position);
+            }
+            cx.draw_flow_children(scene, cx.transform, child_clip_rect, phase);
+            cx.transform = unscrolled;
+            scene.pop_layer();
+            #[cfg(feature = "scrollbars")]
+            if phase == FlowPhase::Foreground && !hidden {
+                cx.draw_scrollbars(scene);
+            }
+            return;
+        }
+
         // pyro: a box of the normal flow painted in one of its painter's phases (`FlowPhase`). It
         // makes no layer of its own: no effect, no clip (`Node::paints_in_ancestor_phases`).
         if phase != FlowPhase::All {
@@ -5315,6 +5349,17 @@ impl ElementCx<'_, '_> {
         table_cx.draw_table_borders(scene);
     }
 
+    /// pyro: whether `child` is a scroll container painted in this box's phases, clipped and
+    /// scrolled (`Node::scroller_paints_in_ancestor_phases`): only one whose paint children are
+    /// all in-flow boxes (a float or positioned box needs its layer).
+    fn scroller_in_phases(&self, child: &Node) -> bool {
+        child.scroller_paints_in_ancestor_phases()
+            && child.paint_children.borrow().as_ref().is_some_and(|children| {
+                let tree = self.context.dom.as_ref().tree();
+                children.iter().all(|&id| self.paint_level(&tree[id]) == 0)
+            })
+    }
+
     fn paint_level(&self, child: &Node) -> u8 {
         let Some(style) = child.primary_styles() else {
             return 0;
@@ -5445,6 +5490,7 @@ impl ElementCx<'_, '_> {
             let child_phase = if child.paints_in_ancestor_phases()
                 || child.paints_in_table_phases()
                 || block_level_frame_in_phases(child)
+                || self.scroller_in_phases(child)
             {
                 phase
             } else if phase == FlowPhase::Outline {
