@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..c23c38c3 100644
+index 3cd3e713..dc3778fc 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -1419,7 +1419,7 @@ index 3cd3e713..c23c38c3 100644
 -            if first_baseline.is_none() {
 +            // pyro: an orthogonal child contributes no baseline set (css-align-3 §9.1).
 +            let orthogonal = tree.block_child_is_orthogonal(item.node_id);
-+            if first_baseline.is_none() && !orthogonal {
++            if first_baseline.is_none() && !orthogonal && !tree.block_child_is_rendered_legend(item.node_id) {
                  let child_baseline =
                      child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                  first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
@@ -9395,7 +9395,7 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..a452be3b 100644
+index 7d4adf22..96557547 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
@@ -9548,7 +9548,7 @@ index 7d4adf22..a452be3b 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +488,118 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +488,125 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
@@ -9619,6 +9619,13 @@ index 7d4adf22..a452be3b 100644
 +    /// alignment is undefined, and browsers lay the content out unaligned (css-align-3 § 5.1.1).
 +    fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
 +        let _ = node_id;
++        false
++    }
++
++    /// pyro: whether the block child is a fieldset's rendered legend, which gives the fieldset no
++    /// first baseline: that is its content's (HTML § 15.3.13; Chromium).
++    fn block_child_is_rendered_legend(&self, child_node_id: NodeId) -> bool {
++        let _ = child_node_id;
 +        false
 +    }
 +

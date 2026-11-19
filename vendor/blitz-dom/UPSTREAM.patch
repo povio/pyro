@@ -18600,7 +18600,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,124 +1553,549 @@
+@@ -488,126 +1553,551 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -18774,11 +18774,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
              }
 -            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
 +            NodeData::Document(_) => ChildLayout::FlowRoot,
- 
--            _ => taffy::LayoutOutput::HIDDEN,
++
 +            _ => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
-         }
-     }
++        }
++    }
 +
 +    /// A table root's layout (see [`Self::dispatch_child_layout`]).
 +    #[inline(never)]
@@ -19100,7 +19099,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        }
 +        widest
 +    }
-+
+ 
+-            _ => taffy::LayoutOutput::HIDDEN,
 +    /// pyro: lays out a table's captions (`TableContext::captions`) above (`caption-side: top`)
 +    /// and below its grid, each a block as wide as the grid less its margins: the table's box is
 +    /// then its wrapper box, the grid (`output`, laid out) moved down by the captions above it, as
@@ -19142,7 +19142,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            };
 +            let caption_output = self.compute_child_layout(taffy_node_id(caption), caption_inputs);
 +            laid_out.push((caption, above, margin, caption_output));
-+        }
+         }
 +        let extent = |above: bool| -> f32 {
 +            laid_out
 +                .iter()
@@ -19216,9 +19216,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        output.baselines.first = output.baselines.first.map(|baseline| baseline + top);
 +        output.baselines.last = output.baselines.last.map(|baseline| baseline + top);
 +        top
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: what [`LayoutPassState::dispatch_child_layout`] runs for a box.
 +enum ChildLayout {
 +    /// A leaf box, laid out.
@@ -19233,9 +19233,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// pyro: a multi-column container, whose content is a block or (`inline_root`) an inline
 +    /// formatting context.
 +    Multicol { inline_root: bool },
- }
- 
++}
++
  impl TraversePartialTree for LayoutPassState<'_> {
+     type ChildIter<'a>
+         = RefCellChildIter<'a>
 @@ -667,7 +2157,11 @@
      }
  
@@ -19457,7 +19459,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2415,172 @@
+@@ -782,16 +2415,186 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -19530,6 +19532,20 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +
 +    fn block_container_fill_height(&self, node_id: NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
 +        self.quirky_fill_height(dom_node_id(node_id), parent_size)
++    }
++
++    fn block_child_is_rendered_legend(&self, child_node_id: NodeId) -> bool {
++        // pyro: the first layout child of a fieldset that is a `legend` (`place_rendered_legend`)
++        let id = dom_node_id(child_node_id);
++        let node = &self.nodes[id];
++        if !node.data.downcast_element().is_some_and(|el| el.name.local == local_name!("legend")) {
++            return false;
++        }
++        node.layout_parent.get().is_some_and(|parent| {
++            let parent = &self.nodes[parent];
++            parent.is_fieldset()
++                && parent.layout_children.borrow().as_ref().and_then(|children| children.first().copied()) == Some(id)
++        })
 +    }
 +
 +    fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
@@ -19634,7 +19650,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2633,30 @@
+@@ -844,6 +2647,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -19665,7 +19681,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2665,19 @@
+@@ -852,7 +2679,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -19686,7 +19702,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2693,30 @@
+@@ -868,6 +2707,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -19717,7 +19733,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2821,192 @@
+@@ -972,3 +2835,192 @@
          })
      }
  }

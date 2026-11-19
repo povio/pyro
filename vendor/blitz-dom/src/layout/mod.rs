@@ -2486,6 +2486,20 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         self.quirky_fill_height(dom_node_id(node_id), parent_size)
     }
 
+    fn block_child_is_rendered_legend(&self, child_node_id: NodeId) -> bool {
+        // pyro: the first layout child of a fieldset that is a `legend` (`place_rendered_legend`)
+        let id = dom_node_id(child_node_id);
+        let node = &self.nodes[id];
+        if !node.data.downcast_element().is_some_and(|el| el.name.local == local_name!("legend")) {
+            return false;
+        }
+        node.layout_parent.get().is_some_and(|parent| {
+            let parent = &self.nodes[parent];
+            parent.is_fieldset()
+                && parent.layout_children.borrow().as_ref().and_then(|children| children.first().copied()) == Some(id)
+        })
+    }
+
     fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
         // pyro: in a multi-column strip, through block containers only: a scroll container, or a
         // flex, grid or table box between the box and the multi-column container (or the box

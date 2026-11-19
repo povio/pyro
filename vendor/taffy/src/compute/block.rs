@@ -2593,7 +2593,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             // that has one. The child's relative offset does not affect it.
             // pyro: an orthogonal child contributes no baseline set (css-align-3 §9.1).
             let orthogonal = tree.block_child_is_orthogonal(item.node_id);
-            if first_baseline.is_none() && !orthogonal {
+            if first_baseline.is_none() && !orthogonal && !tree.block_child_is_rendered_legend(item.node_id) {
                 let child_baseline =
                     child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                 first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);

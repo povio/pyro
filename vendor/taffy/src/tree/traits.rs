@@ -558,6 +558,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
         false
     }
 
+    /// pyro: whether the block child is a fieldset's rendered legend, which gives the fieldset no
+    /// first baseline: that is its content's (HTML § 15.3.13; Chromium).
+    fn block_child_is_rendered_legend(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
+    }
+
     /// pyro: whether a percentage-height scroll container among the container's children whose
     /// percentage cannot resolve is sized as if its height were 0 (then clamped by `min-height`)
     /// rather than `auto`: CSS Tables 3 §row-layout and Blink's restricted block size table cell
