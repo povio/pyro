@@ -557,16 +557,22 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
     let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
+    let (css_l, css_t) = (l, t);
     let (l, t) = (l.map(|v| round_scroll_offset(v * zoom)), t.map(|v| round_scroll_offset(v * zoom)));
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        match (viewport, by) {
+        let moved = match (viewport, by) {
             (true, true) => layout.window_scroll_by(&dom, l, t),
             (true, false) => layout.window_scroll_to(&dom, l, t),
             (false, true) => layout.element_scroll_by(&dom, n.id, l, t),
             (false, false) => layout.element_scroll_to(&dom, n.id, l, t),
+        };
+        // pyro: what script asked for reads back (a zoomed element's fractional offset).
+        if !viewport && !by {
+            layout.note_css_scroll(n.id, css_l, css_t, zoom);
         }
+        moved
     };
     if moved {
         fire_scroll(page, (!viewport).then_some(n.id));
@@ -584,8 +590,8 @@ pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult
         (true, true) => layout.scroll_y() as f64,
         (true, false) => layout.scroll_x() as f64,
         // Negative on an axis that scrolls from its end (right-to-left, reversed flex).
-        (false, true) => layout.scroll_top(n.id) as f64 / element_zoom(n.page(), n.id),
-        (false, false) => layout.scroll_left(n.id) as f64 / element_zoom(n.page(), n.id),
+        (false, true) => layout.css_scroll(n.id, true, element_zoom(n.page(), n.id)),
+        (false, false) => layout.css_scroll(n.id, false, element_zoom(n.page(), n.id)),
     }))
 }
 
@@ -594,16 +600,22 @@ pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) 
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
     let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
+    let css = value;
     let value = round_scroll_offset(value * zoom);
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        match (viewport, top) {
+        let moved = match (viewport, top) {
             (true, true) => layout.window_scroll_to(&dom, None, Some(value)),
             (true, false) => layout.window_scroll_to(&dom, Some(value), None),
             (false, true) => layout.set_scroll_top(&dom, n.id, value),
             (false, false) => layout.set_scroll_left(&dom, n.id, value),
+        };
+        if !viewport {
+            let (x, y) = if top { (None, Some(css)) } else { (Some(css), None) };
+            layout.note_css_scroll(n.id, x, y, zoom);
         }
+        moved
     };
     if moved {
         fire_scroll(page, (!viewport).then_some(n.id));

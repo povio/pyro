@@ -250,6 +250,10 @@ pub struct Layout {
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
+    /// pyro: the scroll offset script last gave an element on each axis in its CSS px (x, y), with
+    /// the whole layout px it was kept as: read back while the offset is still that one, as a
+    /// zoomed element's fractional offset ([`Self::css_scroll`]).
+    css_scroll: FxHashMap<NodeId, [Option<(f64, i32)>; 2]>,
     initial_snap_checked: std::cell::Cell<Option<u64>>,
     /// The engine laying the document out.
     external: Option<Rc<dyn GeometrySource>>,
@@ -534,6 +538,7 @@ impl Layout {
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
             initially_snapped: Default::default(),
+            css_scroll: FxHashMap::default(),
             initial_snap_checked: Default::default(),
             external,
             external_synced: std::cell::Cell::new(None),
@@ -2579,6 +2584,31 @@ impl Layout {
     /// Changes whenever the scroll offsets scroll timelines follow change ([`Self::push_scroll`]).
     pub fn timeline_scroll_generation(&self) -> u64 {
         self.scroll_pushed.get().unwrap_or(0)
+    }
+
+    /// pyro: records the offsets script asked for on `el` (CSS px of the element; `zoom` its
+    /// effective zoom) after a write, on each axis whose kept offset is the asked one rounded (a
+    /// clamped one reads as kept).
+    pub fn note_css_scroll(&mut self, el: NodeId, x: Option<f64>, y: Option<f64>, zoom: f64) {
+        let kept = [self.scroll_left(el), self.scroll_top(el)];
+        let entry = self.css_scroll.entry(el).or_insert([None, None]);
+        for (axis, asked) in [x, y].into_iter().enumerate() {
+            if let Some(v) = asked {
+                let rounded = (v * zoom + 0.5).floor();
+                entry[axis] = (rounded == kept[axis] as f64).then_some((v, kept[axis]));
+            }
+        }
+    }
+
+    /// pyro: `el`'s scroll offset on an axis (`top`: vertical) in its CSS px, for an element of
+    /// effective zoom `zoom`: what script asked for while the kept offset is still the one it
+    /// became ([`Self::note_css_scroll`]), else the kept offset over the zoom.
+    pub fn css_scroll(&self, el: NodeId, top: bool, zoom: f64) -> f64 {
+        let kept = if top { self.scroll_top(el) } else { self.scroll_left(el) };
+        match self.css_scroll.get(&el).and_then(|entry| entry[top as usize]) {
+            Some((value, at)) if at == kept => value,
+            _ => kept as f64 / zoom,
+        }
     }
 
     /// `scrollTop` (Element.zig:1757-1761).
