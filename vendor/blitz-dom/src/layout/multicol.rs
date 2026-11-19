@@ -1447,7 +1447,7 @@ impl BaseDocument {
             if node.is_out_of_flow() {
                 continue;
             }
-            if node.primary_styles().is_some_and(|s| is_spanner_style(&s)) {
+            if node.primary_styles().is_some_and(|s| is_spanner_style(&s)) || (depth == 0 && self.is_rendered_legend(parent, id)) {
                 found.push((id, offset));
             } else if self.column_span_styles && depth < 64 && self.carries_spanners(id) {
                 let location = node.unrounded_layout().location;
@@ -1455,6 +1455,23 @@ impl BaseDocument {
                 self.collect_column_spanners(id, below, depth + 1, found);
             }
         }
+    }
+
+    /// pyro: whether `id` is the rendered legend of fieldset `container` (its first `<legend>`
+    /// child, in flow and not floated): it is not part of the fieldset's columns, which are its
+    /// anonymous content box's, but a row of its own above them, as a spanner is (Chromium; WPT
+    /// css-multicol `multicol-span-all-fieldset-001`).
+    fn is_rendered_legend(&self, container: crate::NodeId, id: crate::NodeId) -> bool {
+        let is = |id: crate::NodeId, name: &str| self.nodes[id].element_data().is_some_and(|e| &*e.name.local == name);
+        if !is(container, "fieldset") || !is(id, "legend") {
+            return false;
+        }
+        let node = &self.nodes[id];
+        if node.is_out_of_flow() || node.primary_styles().is_none_or(|s| s.clone_float() != Float::None) {
+            return false;
+        }
+        let children = self.nodes[container].layout_children.borrow();
+        children.iter().flatten().copied().find(|&c| is(c, "legend")) == Some(id)
     }
 
     /// Whether `container` has column spanners (see [`Self::column_spanners_of`]).
