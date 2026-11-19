@@ -153,6 +153,9 @@ pub struct ElementData {
     /// pyro: the sampled values of the animations on the element's `::marker`
     /// (`ElementEffects::marker`): cascaded onto the marker's style (`layout::list`).
     pub sampled_marker: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    /// pyro: the values of the animations in effect on the element's `::backdrop` (sampled by
+    /// `BaseDocument::sample_animations`), which paint cascades on the backdrop's style.
+    pub sampled_backdrop: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     /// pyro: the sampled values of the effects on the element's `::before` (`[0]`) and `::after`
     /// (`[1]`): at the animations level (`.0`) and the transitions level (`.1`) of the pseudo's
     /// cascade (`animation::cascade_sampled_pseudos`).
@@ -455,6 +458,7 @@ impl Clone for ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_backdrop: None,
             sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
@@ -587,6 +591,7 @@ impl ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_backdrop: None,
             sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,

@@ -294,15 +294,18 @@ pub(crate) enum Pseudo {
     Marker,
     Before,
     After,
+    /// pyro: a top-layer element's `::backdrop`.
+    Backdrop,
 }
 
 impl Pseudo {
-    /// animations.js's code: 0 none, 1 `::marker`, 2 `::before`, 3 `::after`.
+    /// animations.js's code: 0 none, 1 `::marker`, 2 `::before`, 3 `::after`, 4 `::backdrop`.
     pub(crate) fn from_code(code: f64) -> Pseudo {
         match code as i32 {
             1 => Pseudo::Marker,
             2 => Pseudo::Before,
             3 => Pseudo::After,
+            4 => Pseudo::Backdrop,
             _ => Pseudo::None,
         }
     }
@@ -516,6 +519,7 @@ impl Builder {
             Level::Animation => e.animations.push(effect),
             Level::Current => e.current.push(effect),
             Level::Marker => e.marker.push(effect),
+            Level::Backdrop => e.backdrop.push(effect),
             Level::PseudoTransition(i) => e.pseudos[i].transitions.push(effect),
             Level::PseudoAnimation(i) => e.pseudos[i].animations.push(effect),
         }
@@ -531,6 +535,8 @@ enum Level {
     Current,
     /// pyro: in effect on the element's `::marker` (`ElementAnimations::marker`).
     Marker,
+    /// pyro: in effect on the element's `::backdrop` (`ElementAnimations::backdrop`).
+    Backdrop,
     /// In effect on the element's `::before` (0) or `::after` (1), at the transitions or the
     /// animations level (`ElementAnimations::pseudos`).
     PseudoTransition(usize),
@@ -748,6 +754,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         let level = match (s.pseudo, level) {
             (Pseudo::None, level) => level,
             (Pseudo::Marker, Level::Animation) => Level::Marker,
+            (Pseudo::Backdrop, Level::Animation) => Level::Backdrop,
             (pseudo, Level::Animation) if pseudo.generated_index().is_some() => {
                 Level::PseudoAnimation(pseudo.generated_index().unwrap())
             }

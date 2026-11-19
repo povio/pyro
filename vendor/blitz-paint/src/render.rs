@@ -522,11 +522,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     /// The `::backdrop` of top-layer element `id`: a box filling the painted
     /// area below the element (UA style: `position: fixed; inset: 0`).
     fn paint_backdrop(&self, scene: &mut impl PaintScene, id: NodeId) {
-        use style::selector_parser::PseudoElement;
-        let Some(style) = self
-            .dom
-            .pseudo_element_style(id, &PseudoElement::Backdrop, false)
-        else {
+        let Some(style) = self.dom.backdrop_style(id) else {
             return;
         };
         if style.get_box().display.is_none()

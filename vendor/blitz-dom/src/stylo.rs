@@ -356,6 +356,18 @@ impl crate::document::BaseDocument {
     /// With `generated_only`, only a stored eagerly cascaded style (a
     /// generated `::before` / `::after` of a rendered element), and no
     /// work otherwise.
+    /// pyro: the `::backdrop` style with any running animation of it (`Element.animate` with
+    /// `pseudoElement: '::backdrop'`, `ElementData::sampled_backdrop`) cascaded on it.
+    pub fn backdrop_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
+        let base = self.pseudo_element_style(node_id, &style::selector_parser::PseudoElement::Backdrop, false)?;
+        let Some(block) = self.nodes.get(node_id)?.element_data().and_then(|e| e.sampled_backdrop.clone()) else {
+            return Some(base);
+        };
+        let read_guard = self.guard.read();
+        let guards = style::shared_lock::StylesheetGuards::same(&read_guard);
+        Some(self.stylist.compute_for_declarations::<&crate::Node>(&guards, &base, block))
+    }
+
     pub fn pseudo_element_style(
         &self,
         node_id: NodeId,

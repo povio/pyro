@@ -1254,7 +1254,7 @@
     // reported with the element and the pseudo-element (1, 2, 3): the engine samples it into the
     // pseudo-element's style. Other pseudo-elements' effects show nothing.)
     const pseudo = !e || e.pseudo === null ? 0
-      : ({ '::marker': 1, '::before': 2, ':before': 2, '::after': 3, ':after': 3 })[e.pseudo] || -1;
+      : ({ '::marker': 1, '::before': 2, ':before': 2, '::after': 3, ':after': 3, '::backdrop': 4 })[e.pseudo] || -1;
     const target = e && e.keyframe && pseudo >= 0 ? e.target : null;
     const timing = e && computedTimingOf(e);
     const inEffect = timing && timing.activeTime !== null;

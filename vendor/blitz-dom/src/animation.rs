@@ -209,6 +209,9 @@ pub struct ElementEffects {
     /// pyro: animations in effect on the element's `::marker` (a list item's): their values go
     /// into the marker's style (`ElementData::sampled_marker`, `layout::list`), not the element's.
     pub marker: Vec<Effect>,
+    /// pyro: animations in effect on a top-layer element's `::backdrop`: their values go into
+    /// the backdrop's style (`ElementData::sampled_backdrop`, paint).
+    pub backdrop: Vec<Effect>,
     /// pyro: the effects on the element's `::before` (`[0]`) and `::after` (`[1]`): resolved
     /// against the pseudo-element's own style and cascaded into it.
     pub pseudos: [PseudoEffects; 2],
@@ -241,12 +244,13 @@ impl ElementEffects {
             && self.animations.is_empty()
             && self.current.is_empty()
             && self.marker.is_empty()
+            && self.backdrop.is_empty()
             && self.pseudos.iter().all(PseudoEffects::is_empty)
     }
 
     /// pyro: every effect, in effect or only current.
     fn all(&self) -> impl Iterator<Item = &Effect> {
-        self.own().chain(&self.marker)
+        self.own().chain(&self.marker).chain(&self.backdrop)
     }
 
     /// pyro: the effects on the element itself.
@@ -306,6 +310,8 @@ struct Sampled {
     transitions: Option<AnimationValueMap>,
     /// pyro: the values of the effects on the element's `::marker`.
     marker: Option<AnimationValueMap>,
+    /// pyro: the values of the effects on the element's `::backdrop`.
+    backdrop: Option<AnimationValueMap>,
     /// pyro: the values of the effects on `::before` and `::after` (animations, transitions).
     pseudos: [(Option<AnimationValueMap>, Option<AnimationValueMap>); 2],
     /// pyro: an effect animates a property that makes a stacking context
@@ -625,8 +631,18 @@ impl BaseDocument {
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
         let marker = block(sampled.marker);
+        let backdrop = block(sampled.backdrop);
         let [(before_a, before_t), (after_a, after_t)] = sampled.pseudos;
         let pseudos = [(block(before_a), block(before_t)), (block(after_a), block(after_t))];
+        let Some(data) = node.element_data_mut() else {
+            return;
+        };
+        // pyro: the backdrop's values: paint cascades them into its style.
+        if data.sampled_backdrop.is_some() || backdrop.is_some() {
+            data.sampled_backdrop = backdrop;
+            node.insert_damage(crate::layout::damage::ALL_DAMAGE);
+            node.mark_damaged();
+        }
         let Some(data) = node.element_data_mut() else {
             return;
         };
@@ -1118,6 +1134,7 @@ fn sample(
         animations: level(&element.effects.animations, easings),
         transitions: level(&element.effects.transitions, easings),
         marker: level(&element.effects.marker, easings),
+        backdrop: level(&element.effects.backdrop, easings),
         pseudos: [pseudo(0, easings), pseudo(1, easings)],
         stacking_context,
     }
