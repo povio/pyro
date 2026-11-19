@@ -213,11 +213,6 @@ impl Corner {
         self.center() + self.v1() * x + self.v4() * y
     }
 
-    fn half_corner(&self) -> Point {
-        let h = half_corner_for_curvature(self.curvature);
-        self.map_point(h, h)
-    }
-
     /// This corner (of an inset or outset box) moved so that its curve stays parallel to
     /// `origin`'s, the corner it was inset from: `ContouredRect::Corner::AlignedToOrigin`.
     fn aligned_to_origin(&self, origin: &Corner, edge_inset_start: f64, edge_inset_end: f64) -> Corner {
@@ -337,8 +332,20 @@ impl Corner {
 }
 
 /// The x (and y) of a unit superellipse corner at its middle (`HalfCornerForCurvature`).
+/// pyro: a concave corner (an exponent below 1) is the convex one of the inverse exponent
+/// mirrored, as CSS Borders 4 § 3.9.6 defines its half corner (`1 - 0.5^(1/n)` of that convex
+/// corner): a scoop's middle is on its circle, not at Blink's `0.5^(1/n)` (WPT css-borders
+/// `corner-shape-opposite-scale-*`, whose hulls touch there).
 fn half_corner_for_curvature(curvature: f64) -> f64 {
-    0.5f64.powf(1.0 / clamp_curvature(curvature))
+    let curvature = clamp_curvature(curvature);
+    // A notch (the exponent clamped to its least) is `K = -infinity`: its middle at the center.
+    if curvature <= NOTCH {
+        return 0.0;
+    }
+    if curvature < 1.0 {
+        return 1.0 - 0.5f64.powf(curvature);
+    }
+    0.5f64.powf(1.0 / curvature)
 }
 
 /// The cubic Bézier that follows half of a convex superellipse corner of exponent `curvature`,
@@ -657,7 +664,7 @@ fn opposite_corners_constraint(a: &Corner, b: &Corner) -> f64 {
         return 1.0;
     }
     let (mut min, mut max) = (0.0f64, 1.0f64);
-    while max - min > 0.05 {
+    while max - min > 1e-6 {
         let scale = (min + max) / 2.0;
         if quads_intersect(&scale_quad(&hull_a, a.outer(), scale), &scale_quad(&hull_b, b.outer(), scale)) {
             max = scale;
@@ -673,17 +680,14 @@ fn rects_intersect(a: Rect, b: Rect) -> bool {
     a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
 }
 
+/// pyro: the corner's inner hull (CSS Borders 4 § 3.9.5 "normalized inner corner hull", without
+/// the outer corner, which no opposite hull reaches first): its start and end, and where the
+/// tangent at its half corner meets the lines from its center to them, taken in the unit corner
+/// (`x + y = 2h`) and mapped: Blink's tangent, perpendicular to the diagonal in the box's space,
+/// put them elsewhere in an elliptical corner (WPT css-borders `corner-shape-opposite-scale-elliptical`).
 fn hull_quad(corner: &Corner) -> [Point; 4] {
-    let half_corner = corner.half_corner();
-    let d = half_corner - corner.outer();
-    // `LineF::Normal()`: the direction turned a quarter.
-    let normal = Vec2::new(-d.y, d.x);
-    let perpendicular = half_corner + normal;
-    let i1 = line_intersection(half_corner, perpendicular, corner.start(), corner.center())
-        .unwrap_or(corner.center());
-    let i2 = line_intersection(half_corner, perpendicular, corner.end(), corner.center())
-        .unwrap_or(corner.center());
-    [corner.start(), i1, i2, corner.end()]
+    let h = half_corner_for_curvature(corner.curvature);
+    [corner.start(), corner.map_point(0.0, 2.0 * h), corner.map_point(2.0 * h, 0.0), corner.end()]
 }
 
 fn scale_quad(quad: &[Point; 4], origin: Point, scale: f64) -> [Point; 4] {
@@ -1100,7 +1104,8 @@ mod tests {
             ..CornerCurvature::ROUND
         };
         let constrained = constrain_opposite_corners(rect, radii, &scoops);
-        assert!((constrained.top_left.x - 220.0 * 0.71875).abs() < 1e-9, "{constrained:?}");
+        // The hulls touch where the scoops' circles do: radii of 120 * sqrt(2).
+        assert!((constrained.top_left.x - 120.0 * std::f64::consts::SQRT_2).abs() < 1e-3, "{constrained:?}");
         let squircles = CornerCurvature {
             top_left: exponent(2.0),
             bottom_right: exponent(2.0),
