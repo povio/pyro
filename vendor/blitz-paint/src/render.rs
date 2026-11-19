@@ -4842,9 +4842,11 @@ impl ElementCx<'_, '_> {
             parent_style_transform.pre_translate(kurbo::Vec2 { x: sticky.x as f64 * self.scale, y: sticky.y as f64 * self.scale })
         };
         let lifted = child.lifted_paint_offset(self.node.id);
+        // (pyro: not when the root is the fixed box's containing block itself: `root_contains_fixed`.)
         let child_transform = if child.taffy_position() == taffy::Position::Fixed
             && Some(self.node.id) == self.context.root_element_id
             && lifted.is_none()
+            && !self.node.root_contains_fixed()
         {
             let scroll = self.context.dom.as_ref().viewport_scroll();
             parent_style_transform.pre_translate(kurbo::Vec2 {

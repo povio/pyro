@@ -2407,7 +2407,27 @@ impl Node {
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Stacking_context#features_creating_stacking_contexts
-    pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
+    /// pyro: whether this (root) element is itself the containing block of its fixed-position
+    /// descendants (a transform, perspective, `contain: layout` or `paint`, or `will-change` of
+    /// those): they then scroll with the document, not stay with the viewport (WPT css-contain
+    /// `contain-layout-021`). A filter or backdrop filter on the root makes none (Filter Effects 1
+    /// § 5; WPT filter-effects `filtered-html-is-not-container`).
+    pub fn root_contains_fixed(&self) -> bool {
+        use style::values::computed::{Perspective, Rotate, Scale, Translate};
+        use style::values::specified::box_::{Contain, WillChangeBits};
+        self.primary_styles().is_some_and(|style| {
+            let b = style.get_box();
+            !b.transform.0.is_empty()
+                || !matches!(b.translate, Translate::None)
+                || !matches!(b.rotate, Rotate::None)
+                || !matches!(b.scale, Scale::None)
+                || !matches!(b.perspective, Perspective::None)
+                || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+                || b.will_change.bits.intersects(WillChangeBits::TRANSFORM | WillChangeBits::PERSPECTIVE | WillChangeBits::CONTAIN)
+        })
+    }
+
+        pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
         let Some(style) = self.primary_styles() else {
             return false;
         };
@@ -2749,7 +2769,7 @@ impl Node {
                 // against the viewport and do not scroll with it. (A fixed box
                 // whose containing block is a transformed ancestor scrolls with
                 // that ancestor like any other out-of-flow box.)
-                if child_position == taffy::Position::Fixed && self.is_root_element() {
+                if child_position == taffy::Position::Fixed && self.is_root_element() && !self.root_contains_fixed() {
                     child_x -= self.scroll_offset().x as f32;
                     child_y -= self.scroll_offset().y as f32;
                     let viewport_scroll = self.tree().viewport_scroll();

@@ -46,6 +46,7 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
     if child.taffy_position() == taffy::Position::Fixed
         && let Some(cb) = current.and_then(|id| tree.get(id))
         && cb.is_root_element()
+        && !cb.root_contains_fixed()
     {
         let scroll_offset = *cb.scroll_offset();
         let viewport_scroll = tree.viewport_scroll();
@@ -96,7 +97,7 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
             position.y -= location.y - scroll.y as f32;
             let cb = node.containing_block();
             if node.taffy_position() == taffy::Position::Fixed
-                && cb.and_then(|id| tree.get(id)).is_some_and(|n| n.is_root_element())
+                && cb.and_then(|id| tree.get(id)).is_some_and(|n| n.is_root_element() && !n.root_contains_fixed())
             {
                 let root_scroll = tree[cb.unwrap()].scroll_offset();
                 let viewport_scroll = tree.viewport_scroll();

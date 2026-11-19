@@ -21038,16 +21038,17 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  use crate::tree::NodeTree;
  use crate::{BaseDocument, Node};
  use style::properties::generated::longhands::position::computed_value::T as Position;
-@@ -42,7 +45,7 @@
+@@ -42,7 +45,8 @@
      // A fixed box contained by a transformed ancestor scrolls with it.
      if child.taffy_position() == taffy::Position::Fixed
          && let Some(cb) = current.and_then(|id| tree.get(id))
 -        && cb.containing_block().is_none()
 +        && cb.is_root_element()
++        && !cb.root_contains_fixed()
      {
          let scroll_offset = *cb.scroll_offset();
          let viewport_scroll = tree.viewport_scroll();
-@@ -50,19 +53,60 @@
+@@ -50,19 +54,60 @@
          position.y += scroll_offset.y as f32 + viewport_scroll.y as f32;
      }
  
@@ -21094,7 +21095,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            position.y -= location.y - scroll.y as f32;
 +            let cb = node.containing_block();
 +            if node.taffy_position() == taffy::Position::Fixed
-+                && cb.and_then(|id| tree.get(id)).is_some_and(|n| n.is_root_element())
++                && cb.and_then(|id| tree.get(id)).is_some_and(|n| n.is_root_element() && !n.root_contains_fixed())
 +            {
 +                let root_scroll = tree[cb.unwrap()].scroll_offset();
 +                let viewport_scroll = tree.viewport_scroll();
@@ -21108,7 +21109,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      position
  }
  
-@@ -71,6 +115,8 @@
+@@ -71,6 +116,8 @@
  pub struct HoistedPaintChild {
      pub node_id: NodeId,
      pub z_index: i32,
@@ -21117,7 +21118,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// `(geometry generation, offset from the stacking-context root)`, see
      /// [`Self::position`]. Generation `0` is never current.
      position: Cell<(u64, Point<f32>)>,
-@@ -81,10 +127,16 @@
+@@ -81,10 +128,16 @@
          Self {
              node_id,
              z_index,
@@ -21134,7 +21135,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The child's offset from the border box of its stacking-context root
      /// (`sc_root_id`), excluding the child's own `final_layout().location`.
      /// Computed at most once per geometry generation.
-@@ -113,6 +165,10 @@
+@@ -113,6 +166,10 @@
      /// `(geometry generation, bounding box of the hoisted children)`, see
      /// [`Self::hoisted_content_bbox`].
      hoisted_content_bbox: Cell<(u64, Rect<f32>)>,
@@ -21145,7 +21146,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl StackingContext {
-@@ -122,6 +178,7 @@
+@@ -122,6 +179,7 @@
              children,
              negative_z_count: 0,
              hoisted_content_bbox: Cell::new((0, Rect::ZERO)),
@@ -21153,7 +21154,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          };
          sc.sort();
          sc
-@@ -164,7 +221,7 @@
+@@ -164,7 +222,7 @@
  
          // Children dropped by a DOM mutation since the last `resolve` yield
          // `None` and are left out, like hit testing skips them.
@@ -21162,7 +21163,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let mut area = rects.next().unwrap_or(Rect::ZERO);
          for pos in rects {
              area.left = area.left.min(pos.left);
-@@ -203,6 +260,79 @@
+@@ -203,6 +261,79 @@
  }
  
  impl BaseDocument {
@@ -21242,7 +21243,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// Rebuild `paint_children` and `stacking_context` for the tree rooted at
      /// `root_id` from the laid-out box tree.
      ///
-@@ -210,11 +340,87 @@
+@@ -210,11 +341,87 @@
      /// (sorted by paint order) or, when they have a non-zero `z-index` and are
      /// positioned or flex/grid items, in the nearest ancestor stacking context.
      ///
@@ -21332,7 +21333,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      }
  
      /// `stacking_context` is the entry list of the nearest ancestor stacking
-@@ -238,7 +444,23 @@
+@@ -238,7 +445,23 @@
              // node itself, so the role the caller resolved must match the one
              // this node was last built with.
              let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
@@ -21356,7 +21357,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  && !node
                      .damage()
                      .unwrap_or(ALL_DAMAGE)
-@@ -252,6 +474,17 @@
+@@ -252,6 +475,17 @@
              }
          }
  
@@ -21374,7 +21375,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let Some(display) = self.nodes[node_id].display_style() else {
              return;
          };
-@@ -318,33 +551,78 @@
+@@ -318,33 +552,78 @@
  
              let is_layer_root =
                  stacking_context.is_none() || self.nodes[node_id].is_paint_layer_root();
@@ -21459,7 +21460,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                      } else {
                          self.scratch.keyed_children.push((paint_order, child_id));
                      }
-@@ -352,10 +630,16 @@
+@@ -352,10 +631,16 @@
                      // Positioned descendants lifted out of the static boxes of
                      // this child's subtree join this node's positioned paint
                      // level, in tree order after the child.
@@ -21478,7 +21479,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                                  self.scratch
                                      .keyed_children
                                      .push(((2, paint_order.1), entry.node_id));
-@@ -369,15 +653,39 @@
+@@ -369,15 +654,39 @@
                  while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                      && anchor == index
                  {
@@ -21520,7 +21521,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  
              let mut paint_children = self.nodes[node_id]
                  .paint_children
-@@ -392,9 +700,14 @@
+@@ -392,9 +701,14 @@
                      .map(|(_, id)| id),
              );
  
@@ -21535,7 +21536,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          }
  
          let node = &mut self.nodes[node_id];
-@@ -408,6 +721,229 @@
+@@ -408,6 +722,229 @@
          }
      }
  
@@ -21765,7 +21766,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The layout child of `node_id` whose subtree contains `id`, following
      /// `layout_parent`.
      fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
-@@ -426,15 +962,20 @@
+@@ -426,15 +963,20 @@
      /// the enclosing stacking context like any other z-indexed positioned
      /// child, the rest join `paint_children` at the same paint level as other
      /// positioned boxes (the caller's stable sort keeps tree order).
@@ -21787,7 +21788,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  true => None,
                  false => Some(entries),
              },
-@@ -443,11 +984,112 @@
+@@ -443,11 +985,112 @@
          let z_index = self.nodes[child_id].z_index();
          if z_index != 0 {
              entries.push(HoistedPaintChild::new(child_id, z_index));
@@ -21900,7 +21901,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1113,158 @@
+@@ -471,22 +1114,158 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -22066,7 +22067,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1274,21 @@
+@@ -496,6 +1275,21 @@
      }
  }
  
@@ -22088,7 +22089,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1332,143 @@
+@@ -539,3 +1333,143 @@
          )
      }
  }
@@ -34527,7 +34528,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1175,21 +2128,115 @@
+@@ -1175,23 +2128,117 @@
              if el.is_button_input() {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
              }
@@ -34565,9 +34566,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
 +            style.natural_ratio = natural_ratio;
 +            style
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// The half collapsed borders of a cell in a table without uniform ones.
 +    pub(crate) fn collapsed_border(&self) -> Option<[f32; 4]> {
 +        match &self.data {
@@ -34601,7 +34602,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
 +        if self.collapsed_border() == collapsed_border {
 +            return;
-         }
++        }
 +        self.layout_data_mut().collapsed_border = collapsed_border;
 +        self.clear_layout_cache();
 +        let Some(stylo) = self.try_stylo_element_data_mut() else {
@@ -34642,9 +34643,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    #[inline]
 +    pub(crate) fn is_fieldset(&self) -> bool {
 +        self.data.downcast_element().is_some_and(|el| el.name.local == local_name!("fieldset"))
-     }
- 
++    }
++
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
+     /// mode of the box laying this node out). Used for the child-style getters.
+     #[cfg(feature = "writing-mode")]
 @@ -1234,6 +2281,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
@@ -34674,7 +34677,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,6 +2387,25 @@
+@@ -1327,8 +2387,47 @@
              .unwrap_or(0)
      }
  
@@ -34698,9 +34701,32 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    }
 +
      // https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Stacking_context#features_creating_stacking_contexts
-     pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
+-    pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
++    /// pyro: whether this (root) element is itself the containing block of its fixed-position
++    /// descendants (a transform, perspective, `contain: layout` or `paint`, or `will-change` of
++    /// those): they then scroll with the document, not stay with the viewport (WPT css-contain
++    /// `contain-layout-021`). A filter or backdrop filter on the root makes none (Filter Effects 1
++    /// § 5; WPT filter-effects `filtered-html-is-not-container`).
++    pub fn root_contains_fixed(&self) -> bool {
++        use style::values::computed::{Perspective, Rotate, Scale, Translate};
++        use style::values::specified::box_::{Contain, WillChangeBits};
++        self.primary_styles().is_some_and(|style| {
++            let b = style.get_box();
++            !b.transform.0.is_empty()
++                || !matches!(b.translate, Translate::None)
++                || !matches!(b.rotate, Rotate::None)
++                || !matches!(b.scale, Scale::None)
++                || !matches!(b.perspective, Perspective::None)
++                || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
++                || b.will_change.bits.intersects(WillChangeBits::TRANSFORM | WillChangeBits::PERSPECTIVE | WillChangeBits::CONTAIN)
++        })
++    }
++
++        pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
          let Some(style) = self.primary_styles() else {
-@@ -1358,10 +2437,37 @@
+             return false;
+         };
+@@ -1358,10 +2457,37 @@
              return true;
          }
  
@@ -34738,7 +34764,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2475,48 @@
+@@ -1369,7 +2495,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -34788,7 +34814,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2544,14 @@
+@@ -1397,12 +2564,14 @@
              return true;
          }
  
@@ -34809,7 +34835,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1435,6 +2584,16 @@
+@@ -1435,6 +2604,16 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -34826,7 +34852,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2659,15 @@
+@@ -1500,11 +2679,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -34842,7 +34868,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2696,7 @@
+@@ -1533,6 +2716,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -34850,7 +34876,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2723,7 @@
+@@ -1559,7 +2743,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -34859,7 +34885,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2738,18 @@
+@@ -1574,12 +2758,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -34876,11 +34902,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  // whose containing block is a transformed ancestor scrolls with
                  // that ancestor like any other out-of-flow box.)
 -                if child_position == taffy::Position::Fixed && self.containing_block().is_none() {
-+                if child_position == taffy::Position::Fixed && self.is_root_element() {
++                if child_position == taffy::Position::Fixed && self.is_root_element() && !self.root_contains_fixed() {
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2760,7 @@
+@@ -1590,7 +2780,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -34889,7 +34915,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2775,7 @@
+@@ -1605,7 +2795,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -34898,7 +34924,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2886,7 @@
+@@ -1716,7 +2906,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -34907,7 +34933,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2911,13 @@
+@@ -1741,8 +2931,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -34922,7 +34948,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +2993,28 @@
+@@ -1818,8 +3013,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -34953,7 +34979,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3072,36 @@
+@@ -1877,11 +3092,36 @@
                  }
              }
  
