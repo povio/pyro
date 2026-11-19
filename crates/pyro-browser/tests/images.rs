@@ -495,3 +495,32 @@ fn an_opaque_image_at_the_documents_origin_taints_a_canvas() {
     assert!(read.starts_with("/detour.png:SecurityError|"), "{read}");
     assert!(read.contains("/plain.png:clean:255") || read.contains("/plain.png:SecurityError"), "{read}");
 }
+
+/// A loaded SVG `<image>` draws its raster to a canvas (the list of available images has it;
+/// it drew nothing), clean when same-origin, tainting the canvas when its response is opaque
+/// (security review cycle 1, finding 7).
+#[test]
+fn an_svg_image_draws_to_a_canvas() {
+    let (mut thread, page, loader) = setup(
+        "<canvas id=c width=4 height=4></canvas>\
+         <svg><image id=p href=/plain.png width=2 height=2 /><image id=d href=/detour.png width=2 height=2 /></svg><script>\
+           globalThis.read = [];\
+           addEventListener('load', () => { for (const id of ['p', 'd']) {\
+             const x = document.getElementById('c').getContext('2d'); x.clearRect(0, 0, 4, 4);\
+             x.drawImage(document.getElementById(id), 0, 0);\
+             try { read.push(id + ':' + x.getImageData(0, 0, 1, 1).data[3]); } catch (e) { read.push(id + ':' + e.name); }\
+           } });\
+         </script>",
+    );
+    const RED: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182, 13,
+        36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132, 25, 96, 12, 0, 71, 202, 7, 249, 103,
+        89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    loader.insert_bytes("http://site.test/plain.png", "image/png", RED, Duration::ZERO);
+    loader.insert_bytes("http://site.test/detour.png", "image/png", RED, Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Opaquing(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "read.join('|')"), "p:255|d:SecurityError");
+}

@@ -631,7 +631,7 @@ impl Browser {
             }
         };
         drop(state);
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
     }
 
     /// The deferred lazy images of `page` that are rendered now run their steps again (select
@@ -769,7 +769,7 @@ impl Browser {
             }
         };
         drop(state);
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
     }
 
     /// SVG `<image>` (SVG 2 §5.7): a connected one fetches its `href` (or
@@ -808,7 +808,9 @@ impl Browser {
             }
         };
         drop(state);
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true);
+        // pyro: its `crossorigin` (a CORS settings attribute) is its request's mode, as an `<img>`'s.
+        let cors = image_request_state(&bindings.dom.borrow(), node).0;
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true, cors);
     }
 
     /// Fetches `source` for `node`'s `load` / `error` events only (`<object>`,
@@ -826,6 +828,9 @@ impl Browser {
         loaded: bool,
         source: Source,
         image: bool,
+        // pyro: the CORS state of an SVG `<image>`'s request (0: none, 1: anonymous, 2:
+        // use-credentials).
+        cors: u8,
     ) {
         let bindings = bindings.clone();
         let Some(state) = self.doc(page) else { return };
@@ -864,7 +869,7 @@ impl Browser {
                     pending: true,
                     blocks_load: !loaded,
                     cancel: None,
-                    request_state: Default::default(),
+                    request_state: (cors, String::new()),
                     outcome: None,
                 },
             );
@@ -896,7 +901,11 @@ impl Browser {
             referrer_policy: None,
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
-            crossorigin: None,
+            crossorigin: match cors {
+                0 => None,
+                2 => Some("use-credentials".to_owned()),
+                _ => Some("anonymous".to_owned()),
+            },
             initiator: Some(pyro_webapi::resource_timing::Initiator::Other),
             module: None,
             part: None,
@@ -929,7 +938,27 @@ impl Browser {
         entry.pending = false;
         let hold = entry._node.take();
         let url = entry.url.clone();
+        let cors = entry.request_state.0;
         drop(state);
+        // pyro: an SVG `<image>`'s raster goes into the list of available images (a canvas draws
+        // it from there), clean only for a CORS response or a non-opaque one of the document's
+        // origin, as an `<img>`'s.
+        if image {
+            if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
+                if let Some((w, h)) = pyro_dom::image::dimensions(&r.body) {
+                    let clean = cors != 0 || (!r.opaque && self.image_origin_clean(page, &r.url));
+                    bindings.remember_available_image(
+                        &url,
+                        cors,
+                        pyro_webapi::AvailableImage {
+                            natural: Some((w as f64, h as f64)),
+                            reported: None,
+                            bytes: Some((Rc::new(r.body.clone()), clean)),
+                        },
+                    );
+                }
+            }
+        }
         // The page's layout engine lays the element out from the same body
         // (an `<object>` image's size), which it would otherwise fetch on its
         // own and might not have when `load` fires and scripts measure.
