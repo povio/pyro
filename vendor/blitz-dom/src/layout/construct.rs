@@ -87,7 +87,7 @@ impl LayoutChildren {
         fn block_is_only_whitespace(doc: &BaseDocument, node_id: NodeId) -> bool {
             for child_id in doc.nodes[node_id].children.iter().copied() {
                 let child = &doc.nodes[child_id];
-                if !child.is_collapsible_whitespace_node() {
+                if !child.is_collapsible_whitespace_node() || is_empty_generated_text(doc, child_id) {
                     return false;
                 }
             }
@@ -1749,6 +1749,18 @@ fn collect_complex_layout_children_in(
     out.maybe_push_anon_block(doc);
 }
 
+/// pyro: whether `id` is the empty text a pseudo-element's `content` generated (`content: ""`).
+fn is_empty_generated_text(doc: &BaseDocument, id: NodeId) -> bool {
+    let node = &doc.nodes[id];
+    node.text_data().is_some_and(|text| text.content.is_empty())
+        && node.parent.is_some_and(|pseudo| {
+            doc.nodes[pseudo].parent.is_some_and(|host| {
+                let host = &doc.nodes[host];
+                host.before() == Some(pseudo) || host.after() == Some(pseudo)
+            })
+        })
+}
+
 /// pyro: places one child (or a scroll pseudo-element box beside one) of a container whose
 /// children need anonymous blocks (`collect_complex_layout_children_in`).
 #[allow(clippy::too_many_arguments)]
@@ -1785,7 +1797,10 @@ fn place_complex_child(
             child_display.outside()
         };
 
-        let is_whitespace_node = doc.nodes[child_id].is_whitespace_node();
+        // pyro: the empty text of a pseudo-element's `content: ""` is no white space: in a flex or
+        // grid container it makes an (empty) anonymous item, as in Chromium (WPT scroll-animations
+        // `responsive/repaint-after-finished`: a `::after` grid's item stretches over its track).
+        let is_whitespace_node = doc.nodes[child_id].is_whitespace_node() && !is_empty_generated_text(doc, child_id);
 
         // Skip comment nodes. Note that we do *not* skip `Display::None` nodes as they may need to be hidden.
         // Taffy knows how to deal with `Display::None` children.
