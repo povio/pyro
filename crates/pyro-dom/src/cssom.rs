@@ -25,6 +25,24 @@ pub fn parse_rules(text: &str, namespaces: &mut Namespaces) -> Vec<ParsedRule> {
     parse_list(&mut parser, namespaces, true)
 }
 
+/// CSSOM "parse a CSS rule": the one rule `text` holds, `Err` when anything
+/// but whitespace and comments follows it (or it holds none).
+pub fn parse_one_rule(text: &str, namespaces: &mut Namespaces) -> Result<ParsedRule, ()> {
+    let mut p = Parser::new(text);
+    let mut rule = None;
+    loop {
+        let start = p.position();
+        let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { break };
+        match token {
+            Token::WhiteSpace(_) | Token::Comment(_) => continue,
+            _ if rule.is_some() => return Err(()),
+            Token::AtKeyword(name) => rule = Some(parse_at_rule(&mut p, &name, namespaces).ok_or(())?),
+            token => rule = Some(parse_style_rule(&mut p, start, &token, namespaces).ok_or(())?),
+        }
+    }
+    rule.ok_or(())
+}
+
 /// The serialized form of a valid selector list. Valid means what
 /// `querySelector` accepts, plus the given namespace prefixes.
 pub fn normalize_selector(text: &str, namespaces: &Namespaces) -> Option<String> {
@@ -539,4 +557,40 @@ mod media_list_tests {
         assert_eq!(m("screen, bad$"), "screen, not all");
         assert_eq!(m(""), "");
     }
+}
+
+/// The conditions of an `@container` prelude as CSSOM serializes them:
+/// `(name, query)` of each, parsed by the style engine (`None` when it does
+/// not parse). An empty name or query is the empty string.
+pub fn container_conditions(prelude: &str) -> Option<Vec<(String, String)>> {
+    use style::stylesheets::container_rule::ContainerCondition;
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+    use style_traits::ToCss;
+    crate::stylo::enable_features();
+    let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+    let context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url,
+        Some(CssRuleType::Container),
+        style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    let mut parser = Parser::new(prelude);
+    let conditions = parser.parse_entirely(|i| i.parse_comma_separated(|i| ContainerCondition::parse(&context, i))).ok()?;
+    Some(
+        conditions
+            .iter()
+            .map(|c| {
+                // No name serializes as `none`.
+                let name = c.name().to_css_string();
+                let name = if name == "none" { String::new() } else { name };
+                let query = c.query_condition().map(|q| q.to_css_string()).unwrap_or_default();
+                (name, query)
+            })
+            .collect(),
+    )
 }

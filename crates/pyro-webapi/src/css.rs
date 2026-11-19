@@ -794,10 +794,36 @@ fn insert_into(
     constructed: bool,
 ) -> JsResult<()> {
     let mut scoped = namespaces.clone();
-    let mut parsed = parse_rules(rule, &mut scoped);
+    // CSSOM "parse a CSS rule": one rule, and nothing after it but whitespace.
     let invalid = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
-    if parsed.len() != 1 {
-        return Err(invalid());
+    let mut parsed = vec![pyro_dom::cssom::parse_one_rule(rule, &mut scoped).map_err(|_| invalid())?];
+    // CSSOM "insert a CSS rule": past the end is an IndexSizeError; @import and
+    // @namespace only belong at the top of a sheet.
+    if index > list.rules.borrow().len() {
+        return Err(JsError::dom("IndexSizeError", "The index provided is larger than the number of rules."));
+    }
+    if parent.upgrade().is_some() && matches!(parsed[0], ParsedRule::Other { rule_type: IMPORT_RULE | 10, .. }) {
+        return Err(JsError::dom("HierarchyRequestError", format!("'{rule}' may not be inserted inside a grouping rule.")));
+    }
+    // At the top of a sheet, @import (and @namespace) come before every other
+    // rule but @layer statements: CSSOM "insert a CSS rule" step 5.
+    if parent.upgrade().is_none() {
+        let prologue = |kind: &RuleKind| match kind {
+            RuleKind::Other { rule_type: IMPORT_RULE | 10, .. } => true,
+            RuleKind::Other { rule_type: 0, text } => {
+                let t = text.borrow();
+                t.starts_with("@layer") && t.trim_end().ends_with(';')
+            }
+            _ => false,
+        };
+        let new_is_import = matches!(parsed[0], ParsedRule::Other { rule_type: IMPORT_RULE | 10, .. });
+        let new_is_statement = matches!(&parsed[0], ParsedRule::Other { rule_type: 0, text } if text.starts_with("@layer") && text.trim_end().ends_with(';'));
+        let rules = list.rules.borrow();
+        let before_ok = rules[..index].iter().all(|r| prologue(&r.kind));
+        let import_after = rules[index..].iter().any(|r| matches!(r.kind, RuleKind::Other { rule_type: IMPORT_RULE | 10, .. }));
+        if (new_is_import && !before_ok) || (!new_is_import && !new_is_statement && import_after) {
+            return Err(JsError::dom("HierarchyRequestError", format!("'{rule}' may not be inserted at index {index}.")));
+        }
     }
     // Constructed sheets take no `@import` (CSSOM's insert a CSS rule).
     if constructed && matches!(parsed[0], ParsedRule::Other { rule_type: IMPORT_RULE, .. }) {
@@ -1249,7 +1275,43 @@ fn define_rule_media<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
 }
 rule_class!(CssMediaRule, "CSSMediaRule", CssConditionRule, |def| define_rule_media(def));
 rule_class!(CssSupportsRule, "CSSSupportsRule", CssConditionRule);
-rule_class!(CssContainerRule, "CSSContainerRule", CssConditionRule);
+/// The conditions of an `@container` rule (style engine serialization).
+fn container_conditions(r: &RuleData) -> Vec<(String, String)> {
+    pyro_dom::cssom::container_conditions(&rule_prelude(r)).unwrap_or_default()
+}
+
+rule_class!(CssContainerRule, "CSSContainerRule", CssConditionRule, |def| {
+    def.getter("conditionText", |s, r| {
+        let conditions = container_conditions(r);
+        let text: Vec<String> = conditions
+            .iter()
+            .map(|(n, q)| [n.as_str(), q.as_str()].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" "))
+            .collect();
+        Ok(s.string(&if conditions.is_empty() { rule_prelude(r) } else { text.join(", ") }))
+    });
+    // The name and query of a single condition; "" with several.
+    def.getter("containerName", |s, r| {
+        let c = container_conditions(r);
+        Ok(s.string(if c.len() == 1 { &c[0].0 } else { "" }))
+    });
+    def.getter("containerQuery", |s, r| {
+        let c = container_conditions(r);
+        Ok(s.string(if c.len() == 1 { &c[0].1 } else { "" }))
+    });
+    // FrozenArray<CSSContainerCondition>.
+    def.getter("conditions", |s, r| {
+        let mut items = Vec::new();
+        for (name, query) in container_conditions(r) {
+            let o = s.object();
+            o.set_atom("name", s.string(&name))?;
+            o.set_atom("query", s.string(&query))?;
+            items.push(o.value());
+        }
+        let array = s.array(&items)?;
+        let freeze = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("freeze")?;
+        freeze.as_object().expect("Object.freeze").call(None, &[array.value()])
+    });
+});
 rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
     define_rule_media(def);
     def.getter("href", |s, r| Ok(s.string(&import_href(r))));

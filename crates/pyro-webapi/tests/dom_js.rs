@@ -6522,6 +6522,33 @@ fn outer_html_of_an_xml_document_element_is_xml() {
     e.page.dispose();
 }
 
+/// Blob and File take `blobParts` as a Web IDL sequence, `endings` and
+/// clamped slice bounds (FileAPI/blob/Blob-constructor*.html, Blob-slice);
+/// CSSContainerRule exposes its conditions and insertRule parses exactly one
+/// rule where CSSOM allows it (css/css-conditional).
+#[test]
+fn blob_parts_endings_slice_container_rules_and_insert_rule_checks() {
+    let e = env("<body><style id=s>@import url(a.css); @container card (width > 1px) {} @media all {}</style></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const out = [];
+             const it = { *[Symbol.iterator]() { yield 'ab'; yield new Uint16Array([1]); } };
+             out.push(new Blob(it).size, new Blob(['a\\r\\nb\\rc'], { endings: 'native' }).size);
+             for (const bad of [new Date(), 1, { length: 1, 0: 'x' }]) { try { new Blob(bad); out.push('none'); } catch (x) { out.push(x.name); } }
+             try { new Blob([], { endings: 'NATIVE' }); out.push('none'); } catch (x) { out.push(x.name); }
+             const b = new Blob(['abcdef']); out.push(b.slice(1.5, 3.5).size, b.slice(0, 1, 'te\\txt').type);
+             const sh = document.getElementById('s').sheet, c = sh.cssRules[1];
+             out.push(c.containerName, c.containerQuery, c.conditions.length, c.conditionText);
+             for (const [rule, i] of [['b {} junk', 2], ['@import url(b.css);', 2], ['b {}', 0]]) { try { sh.insertRule(rule, i); out.push('ok'); } catch (x) { out.push(x.name); } }
+             try { sh.cssRules[2].insertRule('@import url(c.css);'); out.push('ok'); } catch (x) { out.push(x.name); }
+             out.join('|')"
+        ),
+        "4|5|TypeError|TypeError|TypeError|TypeError|2||card|(width > 1px)|1|card (width > 1px)|SyntaxError|HierarchyRequestError|HierarchyRequestError|HierarchyRequestError"
+    );
+    e.page.dispose();
+}
+
 /// ImageData is structured-cloneable (html/webappapis/structured-clone).
 #[test]
 fn image_data_structured_clones() {

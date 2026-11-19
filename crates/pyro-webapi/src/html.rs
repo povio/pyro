@@ -2366,6 +2366,8 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
         let o = n.page().dom.borrow().select_options(n.id).js()?.get(i).copied();
         node_value(s, n.page(), o)
     });
+    // Indexed properties make it iterable (Web IDL).
+    def.indexed_iterator();
     def.indexed(|s, n, i| {
         let o = n.page().dom.borrow().select_options(n.id).js()?.get(i as usize).copied();
         match o {

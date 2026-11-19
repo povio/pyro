@@ -93,6 +93,8 @@ pub struct PageDom {
     pub(crate) custom_elements: RefCell<crate::custom::Registry>,
     pub(crate) header_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// install.js's `blobParts` conversion, per realm (file.rs).
+    pub(crate) blob_parts: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
     /// node (or an active non-node target): (realm, target) -> wrapper.
     pub(crate) pinned: RefCell<FxHashMap<(RealmId, TargetKey), Persistent>>,
@@ -718,6 +720,7 @@ impl PageDom {
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
             data_view_readers: RefCell::new(FxHashMap::default()),
+            blob_parts: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
             custom_elements: RefCell::new(crate::custom::Registry::default()),
@@ -976,6 +979,7 @@ impl PageDom {
         self.animation_events.clear();
         drop(self.pending_port_reconcile.take());
         drop(self.data_view_readers.take());
+        drop(self.blob_parts.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
         // A drag in flight owns a Persistent to its DataTransfer wrapper.
@@ -1776,6 +1780,9 @@ impl PageDom {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
         self.data_view_readers.borrow_mut().retain(|realm, _| {
+            self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
+        });
+        self.blob_parts.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
         let pending = std::mem::take(&mut *self.pending_release.borrow_mut());

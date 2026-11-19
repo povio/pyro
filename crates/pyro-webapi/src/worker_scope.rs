@@ -1228,6 +1228,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     // that threw, its listeners before their microtasks.
     realm.set_exception_reporter(Some(crate::lifecycle::report_exception));
     let helpers = crate::install_helpers(s)?;
+    crate::file::install(s, helpers.get_atom("blobParts")?)?;
     crate::encoding::install(s, helpers.get_atom("dataView")?)?;
     crate::headers::install(s, helpers.get_atom("headers")?)?;
     crate::url_search_params::install(s, helpers.get_atom("urlSearchParams")?)?;
