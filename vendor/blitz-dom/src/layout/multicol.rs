@@ -313,6 +313,9 @@ struct Breaks {
     /// pyro: the multi-column containers in the strip's flow (no other break context between
     /// them and the container) and their tops.
     nested: Vec<(crate::NodeId, f32)>,
+    /// pyro: the baselines of the strip's lines (its inline formatting contexts', not nested
+    /// containers'), in tree order: the container's first baseline is the highest a column shows.
+    baselines: Vec<f32>,
 }
 
 /// pyro: the rows of a multi-column container with an explicit `column-height` and wrapping
@@ -1571,6 +1574,19 @@ impl LayoutPassState<'_> {
             let shown = |y: Option<f32>| y.map(|y| y + columns.shift_at(y).1);
             baselines.first = shown(baselines.first);
             baselines.last = shown(baselines.last);
+            // pyro: the first baseline is the highest of those the first row's columns show, not
+            // the strip's first (Chromium; WPT css-multicol `baseline-002`).
+            let first_top = columns.fragments[0].top;
+            let row_end = columns
+                .fragments
+                .iter()
+                .take_while(|f| f.top == first_top)
+                .map(|f| f.end)
+                .fold(f32::NEG_INFINITY, f32::max);
+            for &y in breaks.baselines.iter().filter(|&&y| y < row_end) {
+                let y = y + columns.shift_at(y).1;
+                baselines.first = Some(baselines.first.map_or(y, |first| first.min(y)));
+            }
         }
         if inputs.run_mode == RunMode::PerformLayout {
             // (Debited as they were made: `FragmentSink::push`.)
@@ -2340,6 +2356,7 @@ impl BaseDocument {
             trims: found.trims,
             forced: found.forced,
             nested: found.nested,
+            baselines: found.baselines,
         }
     }
 
@@ -2494,6 +2511,7 @@ impl BaseDocument {
                 .filter(|line| !line.text_range().is_empty() || line.items().next().is_some())
                 .map(|line| {
                     let m = line.metrics();
+                    found.baselines.push(origin + m.baseline / scale);
                     (origin + m.block_min_coord / scale, origin + m.block_max_coord / scale)
                 })
                 .collect();
@@ -2796,6 +2814,8 @@ struct Found {
     forced_after: Vec<f32>,
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
+    /// pyro: see [`Breaks::baselines`].
+    baselines: Vec<f32>,
     /// The furthest bottom of a box or line.
     bottom: f32,
     /// The furthest bottom margin edge of the container's children.
@@ -3005,6 +3025,7 @@ mod tests {
             trims: Vec::new(),
             forced: Vec::new(),
             nested: Vec::new(),
+            baselines: Vec::new(),
         }
     }
 
