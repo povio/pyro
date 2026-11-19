@@ -3466,7 +3466,8 @@ impl Layout {
         // ancestors whose scroll containers scroll it (WPT cssom-view
         // `scrollIntoView-should-treat-slot-as-scroll-container`).
         let flat_parent = |node: NodeId| -> Option<NodeId> {
-            if let Ok(Some(slot)) = dom.assigned_slot(node) {
+            // (A closed shadow root's slot too: script's `assignedSlot` hides it.)
+            if let Some(slot) = dom.flat_tree_slot(node) {
                 return Some(slot);
             }
             match dom.parent_element(node).ok().flatten() {

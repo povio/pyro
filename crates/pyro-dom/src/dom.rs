@@ -1677,6 +1677,13 @@ impl Dom {
         Ok(self.find_slot(i, true).map(|s| self.id_of(s)))
     }
 
+    /// The slot `node` is assigned to, in an open or a closed shadow root: its parent in the flat
+    /// tree (DOM "find a slot" with open false), for engine walks that script does not see.
+    pub(crate) fn flat_tree_slot(&self, node: NodeId) -> Option<NodeId> {
+        let i = self.check(node).ok()?;
+        self.find_slot(i, false).map(|s| self.id_of(s))
+    }
+
     pub(crate) fn slot_assigned(&self, slot: u32) -> Vec<u32> {
         let host = match &self.n(self.root_idx(slot)).kind {
             NodeKind::Fragment(f) if f.shadow.is_some() && f.flags & shadow_flags::MANUAL_SLOTS != 0 => {
