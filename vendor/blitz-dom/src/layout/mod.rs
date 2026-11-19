@@ -1250,19 +1250,37 @@ impl LayoutPassState<'_> {
                     } else {
                         2.0
                     };
-                    let mut output = compute_leaf_layout(
-                        inputs,
-                        &style,
-                        resolve_calc_value,
-                        |_known_size, _available_space| taffy::Size {
-                            width: if compressible_min_content {
-                                0.0
-                            } else {
-                                (chars as f32 * 0.5 * font_size + 21.0).ceil()
-                            },
-                            height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
+                    let content = taffy::Size {
+                        width: if compressible_min_content {
+                            0.0
+                        } else {
+                            (chars as f32 * 0.5 * font_size + 21.0).ceil()
                         },
-                    );
+                        height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
+                    };
+                    let mut output =
+                        compute_leaf_layout(inputs, &style, resolve_calc_value, |_known_size, _available_space| content);
+                    // pyro: a width the preferred aspect ratio gives is no narrower than the
+                    // content's while `min-width` is `auto` (the automatic minimum size,
+                    // css-sizing-4 § 5.1; WPT css-sizing `aspect-ratio/select-element-001`).
+                    if inputs.known_dimensions.width.is_none()
+                        && taffy::CoreStyle::aspect_ratio(&style).is_some()
+                        && taffy::CoreStyle::size(&style).width.is_auto()
+                        && taffy::CoreStyle::min_size(&style).width.is_auto()
+                    {
+                        let parent = inputs.parent_size.width;
+                        let inset = style.padding().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum()
+                            + style.border().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum();
+                        let width = content.width + inset;
+                        if width > output.size.width {
+                            let wider = taffy::tree::LayoutInput {
+                                // (Its height stays the one its own `height` or the ratio gave.)
+                                known_dimensions: taffy::Size { width: Some(width), height: Some(output.size.height) },
+                                ..inputs
+                            };
+                            output = compute_leaf_layout(wider, &style, resolve_calc_value, |_known_size, _available_space| content);
+                        }
+                    }
                     if let Some(line) = select_line {
                         let parent = inputs.parent_size.width;
                         let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);

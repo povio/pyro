@@ -149,9 +149,17 @@ where
         .or(node_size)
         .unwrap_or(measured_size + content_box_inset.sum_axes())
         .maybe_clamp(node_min_size, node_max_size);
+    // pyro: a height that is known (or the box's own) is not the ratio's (css-sizing-4 § 5.1: with
+    // both sizes definite the preferred aspect ratio has no effect; WPT css-sizing
+    // `aspect-ratio/select-element-001`, a select made as wide as its label).
+    let height_given = known_dimensions.height.is_some() || node_size.height.is_some();
     let size = Size {
         width: clamped_size.width,
-        height: f32_max(clamped_size.height, aspect_ratio.map(|ratio| clamped_size.width / ratio).unwrap_or(0.0)),
+        height: if height_given {
+            clamped_size.height
+        } else {
+            f32_max(clamped_size.height, aspect_ratio.map(|ratio| clamped_size.width / ratio).unwrap_or(0.0))
+        },
     };
     let size = size.maybe_max(padding_border.sum_axes().map(Some));
 
