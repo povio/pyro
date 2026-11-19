@@ -64,6 +64,7 @@ mod mutator;
 mod query_selector;
 mod resolve;
 pub use resolve::phase_profile;
+pub use resolve::scrolls_leftward;
 /// Computation of resolved CSS property values (`getComputedStyle()`)
 mod resolved_style;
 /// Scrolling of nodes and the viewport, and scroll animations.

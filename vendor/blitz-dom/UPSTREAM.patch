@@ -36160,7 +36160,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  /// The nodes themsleves, and their data.
  pub mod node;
-@@ -46,21 +48,47 @@
+@@ -46,21 +48,48 @@
  mod events;
  mod font_metrics;
  mod form;
@@ -36180,6 +36180,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  mod query_selector;
  mod resolve;
 +pub use resolve::phase_profile;
++pub use resolve::scrolls_leftward;
  /// Computation of resolved CSS property values (`getComputedStyle()`)
  mod resolved_style;
  /// Scrolling of nodes and the viewport, and scroll animations.
@@ -36208,7 +36209,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  mod stylo_device;
  mod stylo_to_cursor_icon;
  mod stylo_to_kurbo;
-@@ -76,7 +104,7 @@
+@@ -76,7 +105,7 @@
      css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
  };
  pub use stylo_taffy::CopyStyleGetters;
@@ -36217,7 +36218,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  pub mod net;
  pub mod util;
-@@ -84,7 +112,7 @@
+@@ -84,7 +113,7 @@
  #[cfg(feature = "accessibility")]
  mod accessibility;
  
@@ -36226,7 +36227,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use crate::layout::replaced::IntrinsicSizes;
  pub use crate::layout::text_transform::{full_size_kana, full_width};
  #[cfg(feature = "custom-widget")]
-@@ -94,9 +122,13 @@
+@@ -94,9 +123,13 @@
  // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
  // `Node::final_layout`)
  pub use config::{DocumentConfig, StyleThreading};
@@ -46199,7 +46200,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            (y + h + pad(padding.bottom, child.margin.bottom)) * scale,
 +        )
 +    }
-+
+ 
+-        let full = if let Some(t) = transform {
+-            Affine::translate((scaled_x, scaled_y)) * t
 +    /// pyro: `margin` (`node_id`'s bottom margin) collapsed with the bottom margin of its last
 +    /// in-flow child when they adjoin (CSS 2.1 § 8.3.1: no bottom border or padding, an `auto`
 +    /// height, no formatting context of its own, horizontal writing mode), recursively.
@@ -46242,9 +46245,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let (pos, neg) = (margin.max(inner).max(0.0), margin.min(inner).min(0.0));
 +        pos + neg
 +    }
- 
--        let full = if let Some(t) = transform {
--            Affine::translate((scaled_x, scaled_y)) * t
++
 +    /// pyro: whether `node_id` is `position: fixed`.
 +    fn is_fixed(&self, node_id: NodeId) -> bool {
 +        self.nodes[node_id]
@@ -46303,7 +46304,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          } else {
 -            Affine::translate((scaled_x, scaled_y))
 +            (0.0, 0.0)
-         };
++        };
 +        // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
 +        let lines = match self.nodes[node_id].vertical_block_axis() {
 +            None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
@@ -46328,8 +46329,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        };
 +        Some((lines, width > 0.0 || height > 0.0))
 +    }
- 
--        full.transform_rect_bbox(overflow)
++
 +    /// pyro: brings every box's hit bound (`LayoutData::hit_overflow`)
 +    /// up to date with the last resolve: the boxes the transform passes since
 +    /// the last call computed again (`LayoutData::hit_stale`) and their tables'
@@ -46552,7 +46552,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        }
 +        let (Some(body), Some(html)) = (node.primary_styles(), root.primary_styles()) else {
 +            return false;
-+        };
+         };
 +        let display = body.clone_display();
 +        if display.is_none() || display.is_contents() {
 +            return false;
@@ -46562,7 +46562,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            && body.clone_contain() == Contain::empty()
 +            && html.clone_contain() == Contain::empty()
 +    }
-+
+ 
+-        full.transform_rect_bbox(overflow)
 +    /// pyro: flags the `<body>` whose `overflow` the viewport takes (`NodeFlags::
 +    /// OVERFLOW_TO_VIEWPORT`), so that layout reads its `overflow` as `visible` (CSS Overflow 3
 +    /// §3.3): `body { overflow: hidden }` made it a scroll container, a block formatting context
@@ -46940,7 +46941,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1582,1062 @@
+@@ -437,32 +1582,1084 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -47195,9 +47196,16 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            .max(layout.location.x as f64 + overflow.x1);
 +        let bottom = ((layout.location.y + layout.size.height + layout.margin.bottom) as f64)
 +            .max(layout.location.y as f64 + overflow.y1);
++        // pyro: where the document's scroll origin is on the right (`direction: rtl`, or blocks
++        // flowing leftward in `vertical-rl`), what lies left of the viewport is scrolled to, and
++        // what lies right of it is not (CSS Overflow 3 § 2.2; WPT css-writing-modes
++        // `wm-propagation-svg-root-scrollbar`).
++        let leftward = self.viewport_scrolls_leftward();
++        let left = ((layout.location.x - layout.margin.left) as f64).min(layout.location.x as f64 + overflow.x0);
 +        let had = self.viewport_scrollbars.shown;
++        let overflows_x = if leftward { left < port.x0 - 0.5 } else { right > port.x1 + 0.5 };
 +        let shown = taffy::Point {
-+            x: right > port.x1 + 0.5 || (!may_remove && had.x),
++            x: overflows_x || (!may_remove && had.x),
 +            y: bottom > port.y1 + 0.5 || (!may_remove && had.y),
 +        };
 +        let root_id = root.id;
@@ -48014,6 +48022,21 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        check(&doc, "detached");
 +        assert!(!is_layout_child(&doc.nodes[y]));
 +    }
++}
++
++impl BaseDocument {
++    /// pyro: whether the viewport's horizontal scroll origin is on the right, by the principal
++    /// writing mode (the root's, or its `<body>`'s: `root_layout_wm`; [`scrolls_leftward`]).
++    pub fn viewport_scrolls_leftward(&self) -> bool {
++        self.try_root_element().is_some_and(|root| scrolls_leftward(self.root_layout_wm(root.id)))
++    }
++}
++
++/// pyro: whether a document in writing mode `wm` has its horizontal scroll origin on the right:
++/// its content overflows the viewport leftward (`direction: rtl` in horizontal writing, blocks
++/// flowing right to left in `vertical-rl`).
++pub fn scrolls_leftward(wm: style::logical_geometry::WritingMode) -> bool {
++    if wm.is_vertical() { !wm.is_vertical_lr() } else { !wm.is_bidi_ltr() }
  }
 diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/resolved_style.rs
 --- a/packages/blitz-dom/src/resolved_style.rs

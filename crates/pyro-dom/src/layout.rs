@@ -2562,7 +2562,16 @@ impl Layout {
     fn viewport_x_reversed(&self, dom: &Dom) -> bool {
         use style::properties::longhands::writing_mode::computed_value::T as WritingMode;
         let Some(root) = dom.document_element(self.document()).ok().flatten() else { return false };
-        self.style.stylo_style(dom, root).is_some_and(|s| match s.slow_clone_writing_mode() {
+        // The principal writing mode: an HTML root's `<body>` child's, else its own (CSS Writing
+        // Modes 3 § 8; WPT css-writing-modes `wm-propagation-body-scroll-offset-*`).
+        let body = dom
+            .children(root)
+            .ok()
+            .and_then(|children| {
+                children.into_iter().find(|&child| dom.element(child).is_ok_and(|e| &*e.name.local == "body"))
+            });
+        let principal = body.filter(|_| dom.element(root).is_ok_and(|e| &*e.name.local == "html")).unwrap_or(root);
+        self.style.stylo_style(dom, principal).is_some_and(|s| match s.slow_clone_writing_mode() {
             WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
             WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
             _ => false,

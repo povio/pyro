@@ -1821,9 +1821,16 @@ impl BaseDocument {
             .max(layout.location.x as f64 + overflow.x1);
         let bottom = ((layout.location.y + layout.size.height + layout.margin.bottom) as f64)
             .max(layout.location.y as f64 + overflow.y1);
+        // pyro: where the document's scroll origin is on the right (`direction: rtl`, or blocks
+        // flowing leftward in `vertical-rl`), what lies left of the viewport is scrolled to, and
+        // what lies right of it is not (CSS Overflow 3 § 2.2; WPT css-writing-modes
+        // `wm-propagation-svg-root-scrollbar`).
+        let leftward = self.viewport_scrolls_leftward();
+        let left = ((layout.location.x - layout.margin.left) as f64).min(layout.location.x as f64 + overflow.x0);
         let had = self.viewport_scrollbars.shown;
+        let overflows_x = if leftward { left < port.x0 - 0.5 } else { right > port.x1 + 0.5 };
         let shown = taffy::Point {
-            x: right > port.x1 + 0.5 || (!may_remove && had.x),
+            x: overflows_x || (!may_remove && had.x),
             y: bottom > port.y1 + 0.5 || (!may_remove && had.y),
         };
         let root_id = root.id;
@@ -2640,4 +2647,19 @@ mod layout_children_owner_reparent_tests {
         check(&doc, "detached");
         assert!(!is_layout_child(&doc.nodes[y]));
     }
+}
+
+impl BaseDocument {
+    /// pyro: whether the viewport's horizontal scroll origin is on the right, by the principal
+    /// writing mode (the root's, or its `<body>`'s: `root_layout_wm`; [`scrolls_leftward`]).
+    pub fn viewport_scrolls_leftward(&self) -> bool {
+        self.try_root_element().is_some_and(|root| scrolls_leftward(self.root_layout_wm(root.id)))
+    }
+}
+
+/// pyro: whether a document in writing mode `wm` has its horizontal scroll origin on the right:
+/// its content overflows the viewport leftward (`direction: rtl` in horizontal writing, blocks
+/// flowing right to left in `vertical-rl`).
+pub fn scrolls_leftward(wm: style::logical_geometry::WritingMode) -> bool {
+    if wm.is_vertical() { !wm.is_vertical_lr() } else { !wm.is_bidi_ltr() }
 }

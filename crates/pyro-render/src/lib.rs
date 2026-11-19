@@ -2161,7 +2161,16 @@ impl Renderer {
         let Some(root) = doc.try_root_element() else { return Some((vw, vh)) };
         let (size, overflow) =
             (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
-        Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
+        // pyro: a document scrolled from the right (`blitz_dom::scrolls_leftward`) reaches what
+        // overflows it leftward, and not what overflows rightward.
+        let leftward = doc.viewport_scrolls_leftward();
+        let width = if leftward {
+            let location = root.final_layout().location.x as f64;
+            ((size.width as f64) + location).max(vw) - (location + overflow.x0).min(0.0)
+        } else {
+            (size.width as f64).max(overflow.x1).max(vw)
+        };
+        Some((width, (size.height as f64).max(overflow.y1).max(vh)))
     }
 
     /// Whether a style rule of `page`'s document depends on `:active`
