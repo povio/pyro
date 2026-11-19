@@ -174,6 +174,39 @@ impl BorderShape {
     /// The outer edge moved out by `offset` (in, when negative), for shadows and outlines
     /// (`BorderShapePainter::OuterPathWithOffset`): an oval grows as an oval, anything else by
     /// its stroke.
+    /// pyro: the visible outer edge's path: the outer shape, or with one shape (the border is
+    /// drawn across it) the outer side of its stroke of the border width, in exact curves (not
+    /// flattened as [`Self::outer_path_with_offset`]'s).
+    pub(super) fn outer_edge(&self) -> BezPath {
+        if self.inner.is_some() || self.width <= 0.0 {
+            return self.outer.clone();
+        }
+        let stroked = kurbo::stroke(
+            self.outer.iter(),
+            &kurbo::Stroke::new(self.width),
+            &kurbo::StrokeOpts::default(),
+            0.01,
+        );
+        // Its contours: the one with the largest bounds is the outer side.
+        let mut best: Option<(f64, BezPath)> = None;
+        let mut current = BezPath::new();
+        let mut take = |path: BezPath, best: &mut Option<(f64, BezPath)>| {
+            use kurbo::Shape as _;
+            let area = path.bounding_box().area();
+            if path.elements().len() > 1 && best.as_ref().is_none_or(|(a, _)| area > *a) {
+                *best = Some((area, path));
+            }
+        };
+        for el in stroked.elements() {
+            if let kurbo::PathEl::MoveTo(_) = el {
+                take(std::mem::take(&mut current), &mut best);
+            }
+            current.push(*el);
+        }
+        take(current, &mut best);
+        best.map_or_else(|| self.outer.clone(), |(_, path)| path)
+    }
+
     pub(super) fn outer_path_with_offset(&self, offset: f64) -> BezPath {
         let total = offset + if self.inner.is_none() { self.width / 2.0 } else { 0.0 };
         if total == 0.0 {

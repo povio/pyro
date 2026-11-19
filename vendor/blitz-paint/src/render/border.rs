@@ -1543,10 +1543,65 @@ impl ElementCx<'_, '_> {
     /// ❌ outset - Defines a 3D outset border. The effect depends on the border-color value
     /// ✅ none - Defines no border
     /// ✅ hidden - Defines a hidden border
+    /// pyro: the box an `auto` outline goes around: the border box, and the boxes of the
+    /// element's descendants that overflow it unless it clips them.
+    fn auto_outline_box(&self) -> Rect {
+        use style::computed_values::overflow_x::T as Overflow;
+        let bb = self.frame.border_box;
+        let box_ = self.style.get_box();
+        if self.text_input.is_none() && box_.overflow_x == Overflow::Visible && box_.overflow_y == Overflow::Visible {
+            bb.union(*self.node.scrollable_overflow())
+        } else {
+            bb
+        }
+    }
+
     pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
         let Some((style, color, width, outset)) = self.outline_line() else {
             return;
         };
+        // pyro: an `auto` ring across the edge itself (no offset) is a stroke of that edge: the
+        // border shape's outer edge, or the rounded border box, the same curves either way (WPT
+        // css-borders `border-shape/border-shape-outline-auto*` match `border-radius` boxes).
+        if matches!(self.style.get_outline().outline_style, OutlineStyle::Auto)
+            && (outset - width / 2.0).abs() < 1e-6
+            && (self.border_shape().is_none() || self.auto_outline_box() == self.frame.border_box)
+        {
+            let path = match self.border_shape() {
+                Some(shape) => shape.outer_edge(),
+                None => {
+                    // (Around the overflowing descendants' boxes too: that box, its corners
+                    // rounded as the border box's.)
+                    let r = self.frame.border_radii;
+                    CssBox::new(self.auto_outline_box(), Insets::ZERO, Insets::ZERO, 0.0, r).border_box_path()
+                }
+            };
+            // (Each contour closed: an open end leaves a seam in the ring.)
+            let mut closed = BezPath::new();
+            let mut open = false;
+            for el in path.elements() {
+                match el {
+                    kurbo::PathEl::MoveTo(_) if open => {
+                        closed.close_path();
+                        closed.push(*el);
+                    }
+                    kurbo::PathEl::MoveTo(_) => {
+                        closed.push(*el);
+                        open = true;
+                    }
+                    kurbo::PathEl::ClosePath => {
+                        closed.close_path();
+                        open = false;
+                    }
+                    _ => closed.push(*el),
+                }
+            }
+            if open {
+                closed.close_path();
+            }
+            scene.stroke(&Stroke::new(width), self.transform, color, None, &closed);
+            return;
+        }
         // pyro: around a `border-shape`, a solid or double outline is the band between the outer
         // edge grown by the offset and by the offset and the width
         // (`BorderShapePainter::PaintOutline`); other styles are drawn around the box.
@@ -1585,20 +1640,9 @@ impl ElementCx<'_, '_> {
         // pyro: an `auto` outline (a focus ring) goes around the boxes of the element's
         // descendants that overflow it too, unless it clips them (Chromium's outline rects with
         // block ink overflow; WPT css-ui `outline-with-padding-001`).
-        let bb = {
-            use style::computed_values::overflow_x::T as Overflow;
-            let bb = self.frame.border_box;
-            let box_ = self.style.get_box();
-            match self.style.get_outline().outline_style {
-                OutlineStyle::Auto
-                    if self.text_input.is_none()
-                        && box_.overflow_x == Overflow::Visible
-                        && box_.overflow_y == Overflow::Visible =>
-                {
-                    bb.union(*self.node.scrollable_overflow())
-                }
-                _ => bb,
-            }
+        let bb = match self.style.get_outline().outline_style {
+            OutlineStyle::Auto => self.auto_outline_box(),
+            _ => self.frame.border_box,
         };
         // A rounded corner grows with the outline, and a square one stays
         // square.

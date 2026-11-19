@@ -15146,6 +15146,9 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -            if let Some(&first) = poly.first() {
 -                poly.push(first);
 -            }
+-        }
+-        _ => {}
+-    });
 +/// The marks of one dotted or dashed straight side, appended to `path`, as
 +/// Blink's `GraphicsContext::DrawLine` places them.
 +///
@@ -15185,9 +15188,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    let mut rect = |from: f64, to: f64| {
 +        if to > from {
 +            path.extend(Rect::from_points(at(from, 0.0), at(to, thickness)).path_elements(0.1));
-         }
--        _ => {}
--    });
++        }
 +    };
  
 -    let mut points = Vec::with_capacity(count);
@@ -15608,12 +15609,10 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
                  // A double border is two solid lines separated by a gap, splitting
                  // the border width into three equal parts (outer line / gap / inner
-@@ -313,6 +734,20 @@
-                     borders.push((color, self.frame.border_edge_shape(edge)));
-                 }
+@@ -315,6 +736,20 @@
              }
-+        }
-+
+         }
+ 
 +        if has_marks {
 +            let side = |color: &style::values::computed::Color, style: BorderStyle, edge: Edge| {
 +                (!style.none_or_hidden() && self.edge_width(edge) > 0.0)
@@ -15626,9 +15625,11 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                side(&border.border_left_color, border.border_left_style, Edge::Left),
 +            ];
 +            self.draw_dotted_dashed_sides(scene, &self.frame, sides);
-         }
- 
++        }
++
          if borders.is_empty() {
+             return;
+         }
 @@ -341,6 +776,175 @@
          }
      }
@@ -15823,8 +15824,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -        if thickness <= 0.0 {
 -            return;
 -        }
--
--        let (dash_ratio, gap_ratio) = dashed_ratios(thickness, self.scale);
 +    /// On a box with square corners each side is a straight line from corner to
 +    /// corner over the whole side, so sides of one style and colour overlap in
 +    /// their corner (and a side is mitred only against a neighbour of another
@@ -15861,6 +15860,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let uniform = sides.iter().all(|side| *side == sides[0])
 +            && SIDES.iter().all(|&edge| thickness(edge) == first_width);
  
+-        let (dash_ratio, gap_ratio) = dashed_ratios(thickness, self.scale);
+-
 -        // Work out the centre line to stroke and the dash/gap lengths along it.
 -        let (centerline, dash, gap) = if self.frame.has_border_radius() {
 -            // Rounded corners: stroke the rounded centre line running through the
@@ -16221,7 +16222,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,10 +1226,317 @@
+@@ -589,44 +1226,532 @@
          }
      }
  
@@ -16542,12 +16543,24 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
      /// ❌ ridge - Defines a 3D ridged border. The effect depends on the border-color value
      /// ❌ inset - Defines a 3D inset border. The effect depends on the border-color value
-@@ -600,33 +1544,170 @@
+     /// ❌ outset - Defines a 3D outset border. The effect depends on the border-color value
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
-     pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
+-    pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
 -        let outline = self.style.get_outline();
--
++    /// pyro: the box an `auto` outline goes around: the border box, and the boxes of the
++    /// element's descendants that overflow it unless it clips them.
++    fn auto_outline_box(&self) -> Rect {
++        use style::computed_values::overflow_x::T as Overflow;
++        let bb = self.frame.border_box;
++        let box_ = self.style.get_box();
++        if self.text_input.is_none() && box_.overflow_x == Overflow::Visible && box_.overflow_y == Overflow::Visible {
++            bb.union(*self.node.scrollable_overflow())
++        } else {
++            bb
++        }
++    }
+ 
 -        let current_color = self.style.clone_color();
 -        let color = outline
 -            .outline_color
@@ -16557,9 +16570,52 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -        let style = match outline.outline_style {
 -            OutlineStyle::Auto => return,
 -            OutlineStyle::BorderStyle(style) => style,
++    pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
 +        let Some((style, color, width, outset)) = self.outline_line() else {
 +            return;
          };
++        // pyro: an `auto` ring across the edge itself (no offset) is a stroke of that edge: the
++        // border shape's outer edge, or the rounded border box, the same curves either way (WPT
++        // css-borders `border-shape/border-shape-outline-auto*` match `border-radius` boxes).
++        if matches!(self.style.get_outline().outline_style, OutlineStyle::Auto)
++            && (outset - width / 2.0).abs() < 1e-6
++            && (self.border_shape().is_none() || self.auto_outline_box() == self.frame.border_box)
++        {
++            let path = match self.border_shape() {
++                Some(shape) => shape.outer_edge(),
++                None => {
++                    // (Around the overflowing descendants' boxes too: that box, its corners
++                    // rounded as the border box's.)
++                    let r = self.frame.border_radii;
++                    CssBox::new(self.auto_outline_box(), Insets::ZERO, Insets::ZERO, 0.0, r).border_box_path()
++                }
++            };
++            // (Each contour closed: an open end leaves a seam in the ring.)
++            let mut closed = BezPath::new();
++            let mut open = false;
++            for el in path.elements() {
++                match el {
++                    kurbo::PathEl::MoveTo(_) if open => {
++                        closed.close_path();
++                        closed.push(*el);
++                    }
++                    kurbo::PathEl::MoveTo(_) => {
++                        closed.push(*el);
++                        open = true;
++                    }
++                    kurbo::PathEl::ClosePath => {
++                        closed.close_path();
++                        open = false;
++                    }
++                    _ => closed.push(*el),
++                }
++            }
++            if open {
++                closed.close_path();
++            }
++            scene.stroke(&Stroke::new(width), self.transform, color, None, &closed);
++            return;
++        }
 +        // pyro: around a `border-shape`, a solid or double outline is the band between the outer
 +        // edge grown by the offset and by the offset and the width
 +        // (`BorderShapePainter::PaintOutline`); other styles are drawn around the box.
@@ -16598,20 +16654,9 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        // pyro: an `auto` outline (a focus ring) goes around the boxes of the element's
 +        // descendants that overflow it too, unless it clips them (Chromium's outline rects with
 +        // block ink overflow; WPT css-ui `outline-with-padding-001`).
-+        let bb = {
-+            use style::computed_values::overflow_x::T as Overflow;
-+            let bb = self.frame.border_box;
-+            let box_ = self.style.get_box();
-+            match self.style.get_outline().outline_style {
-+                OutlineStyle::Auto
-+                    if self.text_input.is_none()
-+                        && box_.overflow_x == Overflow::Visible
-+                        && box_.overflow_y == Overflow::Visible =>
-+                {
-+                    bb.union(*self.node.scrollable_overflow())
-+                }
-+                _ => bb,
-+            }
++        let bb = match self.style.get_outline().outline_style {
++            OutlineStyle::Auto => self.auto_outline_box(),
++            _ => self.frame.border_box,
 +        };
 +        // A rounded corner grows with the outline, and a square one stays
 +        // square.
@@ -17518,7 +17563,7 @@ diff --git a/packages/blitz-paint/src/render/border_shape.rs b/packages/blitz-pa
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/border_shape.rs
-@@ -0,0 +1,431 @@
+@@ -0,0 +1,464 @@
 +//! pyro: `border-shape` (CSS Borders 4 §11), as Blink's `BorderShapePainter` draws it.
 +//!
 +//! With one shape the border is a stroke along it, as wide as the relevant side's border and in
@@ -17695,6 +17740,39 @@ new file mode 100644
 +    /// The outer edge moved out by `offset` (in, when negative), for shadows and outlines
 +    /// (`BorderShapePainter::OuterPathWithOffset`): an oval grows as an oval, anything else by
 +    /// its stroke.
++    /// pyro: the visible outer edge's path: the outer shape, or with one shape (the border is
++    /// drawn across it) the outer side of its stroke of the border width, in exact curves (not
++    /// flattened as [`Self::outer_path_with_offset`]'s).
++    pub(super) fn outer_edge(&self) -> BezPath {
++        if self.inner.is_some() || self.width <= 0.0 {
++            return self.outer.clone();
++        }
++        let stroked = kurbo::stroke(
++            self.outer.iter(),
++            &kurbo::Stroke::new(self.width),
++            &kurbo::StrokeOpts::default(),
++            0.01,
++        );
++        // Its contours: the one with the largest bounds is the outer side.
++        let mut best: Option<(f64, BezPath)> = None;
++        let mut current = BezPath::new();
++        let mut take = |path: BezPath, best: &mut Option<(f64, BezPath)>| {
++            use kurbo::Shape as _;
++            let area = path.bounding_box().area();
++            if path.elements().len() > 1 && best.as_ref().is_none_or(|(a, _)| area > *a) {
++                *best = Some((area, path));
++            }
++        };
++        for el in stroked.elements() {
++            if let kurbo::PathEl::MoveTo(_) = el {
++                take(std::mem::take(&mut current), &mut best);
++            }
++            current.push(*el);
++        }
++        take(current, &mut best);
++        best.map_or_else(|| self.outer.clone(), |(_, path)| path)
++    }
++
 +    pub(super) fn outer_path_with_offset(&self, offset: f64) -> BezPath {
 +        let total = offset + if self.inner.is_none() { self.width / 2.0 } else { 0.0 };
 +        if total == 0.0 {
