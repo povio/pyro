@@ -2804,6 +2804,13 @@ all, and a combining mark the transform removed (Greek uppercase drops the acute
   each such box a column (WPT `column-height-023`; `nested-past-fragmentation-line` too). Other boxes no break goes
   into (nested multi-column containers, scroll containers, replaced elements) are still cut, which is how a nested
   container continues in the next column.
+  `RowSlots` (a container with an explicit `column-height`, wrapping columns and spanners): the rows are a grid of
+  slots `column-height + row-gap` apart, as Chromium lays them out (measured on Chrome 158). Content before a spanner
+  is balanced within what is left of its slot, the spanner follows at once when it fits in the rest of the slot (or
+  starts a slot, and may then reach past its end) and otherwise starts the next slot, and content after it goes on in
+  what is left of the slot it ends in. It was placed right after the rows, and the rows after it at its end (WPT
+  `column-height-017`..`-020`). Not done: a spanner that is no child of the container (`-006`, `-013`), nested
+  containers with rows (`-007`, `-008`, `-025`, `-027`..`-029`).
 - Round 4 lane S4, `layout/multicol.rs` `fragmentable`: a box of size containment is monolithic (CSS Contain 2 § 3.1),
   so balancing does not split it (a `contain: size` float in columns). WPT css-multicol `multicol-fill-balance-*`,
   css-contain `contain-size-multicol-*`.

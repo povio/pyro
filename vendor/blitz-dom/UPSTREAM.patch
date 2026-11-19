@@ -17981,7 +17981,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,1344 @@
+@@ -0,0 +1,1479 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -18190,6 +18190,57 @@ new file mode 100644
 +    trims: Vec<(f32, f32, f32, f32)>,
 +    /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
 +    forced: Vec<f32>,
++}
++
++/// pyro: the rows of a multi-column container with an explicit `column-height` and wrapping
++/// columns (css-multicol-2), as Chromium lays them out (measured on Chrome 158 with WPT
++/// css-multicol `column-height-006`, `-017`..`-020`): row `k` is the slot `origin + k * stride`,
++/// `height` tall, `stride` being the column height plus the row gap. Column content and spanners
++/// share a slot: content before a spanner is balanced within what is left of its slot, a spanner
++/// follows it at once when it fits in the rest of the slot (or starts a slot; it may then reach
++/// past the slot's end, into the gap and the slots after it) and otherwise starts the next slot,
++/// and content after a spanner goes on in what is left of the slot the spanner ends in.
++#[derive(Clone, Copy)]
++struct RowSlots {
++    origin: f32,
++    height: f32,
++    stride: f32,
++}
++
++impl RowSlots {
++    /// The slot `y` is in or after: its top and its end.
++    fn slot(&self, y: f32) -> (f32, f32) {
++        if self.stride <= EPSILON {
++            return (y, y + self.height);
++        }
++        let index = ((y - self.origin) / self.stride + 1e-4).floor().max(0.0);
++        let top = self.origin + index * self.stride;
++        (top, top + self.height)
++    }
++
++    /// The top of the slot after the one that starts at `top`.
++    fn next(&self, top: f32) -> f32 {
++        top + self.stride
++    }
++
++    /// Where column content goes that follows what ended at `y`, and the height its first row
++    /// has: the rest of the slot `y` is in, or the next slot whole.
++    fn content_start(&self, y: f32) -> (f32, f32) {
++        let (top, end) = self.slot(y);
++        if (y - top).abs() <= EPSILON {
++            (top, self.height)
++        } else if y < end - EPSILON {
++            (y, end - y)
++        } else {
++            (self.next(top), self.height)
++        }
++    }
++
++    /// Where a spanner `height` tall goes that follows what ended at `y`.
++    fn spanner_top(&self, y: f32, height: f32) -> f32 {
++        let (top, end) = self.slot(y);
++        if (y - top).abs() <= EPSILON || y + height <= end + EPSILON { y } else { self.next(top) }
++    }
 +}
 +
 +/// How a strip fills columns of one height.
@@ -18603,10 +18654,89 @@ new file mode 100644
 +            let step = i as f32 * (column_width + gap);
 +            snap(if multicol.rtl { pb.left + content_width - column_width - step } else { pb.left + step })
 +        };
++        // pyro: an explicit `column-height` with wrapping columns lays the rows out on a grid
++        // (`RowSlots`), which the spanners take part in.
++        let slotted = multicol.height.filter(|_| multicol.wrap && !spanners.is_empty()).map(|height| {
++            let height = height.max(0.0);
++            RowSlots { origin: content_top, height, stride: height + multicol.row_gap(definite_height) }
++        });
 +        for part in 0..=spanners.len() {
 +            let run_end = spanners.get(part).map_or(breaks.end, |s| s.0);
 +            if run_end > run_start + EPSILON || (part == spanners.len() && fragments.is_empty()) {
 +                let run = Breaks { start: run_start, end: run_end, ..breaks.clone() };
++                // pyro: rows of an explicit `column-height` (`slotted`, below).
++                if let Some(rows) = slotted {
++                    let (top, available) = rows.content_start(row_top);
++                    // The row the run starts in may be partly taken (after a spanner): its
++                    // columns are as tall as what is left of it, the rows after it whole.
++                    let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
++                    let mut rest = Some(run.clone());
++                    let mut row = (top, available);
++                    if available < rows.height - EPSILON {
++                        let first = run.fill(available, count + 1).columns;
++                        rest = first.get(count).map(|&(start, _)| Breaks { start, ..run.clone() });
++                        placed.extend(first.into_iter().take(count).map(|(a, b)| (a, b, top, available)));
++                        row = (rows.next(rows.slot(top).0), rows.height);
++                    }
++                    if let Some(rest) = rest {
++                        for (i, (a, b)) in rest.fill(rows.height, MAX_COLUMNS).columns.into_iter().enumerate() {
++                            placed.push((a, b, row.0 + (i / count.max(1)) as f32 * rows.stride, rows.height));
++                        }
++                    }
++                    // `column-fill: balance` balances the last row within its height.
++                    let mut last_height = placed.last().map_or(0.0, |p| p.3);
++                    if matches!(multicol.fill, ColumnFill::Balance)
++                        && let Some(&(_, _, last_top, limit)) = placed.last()
++                    {
++                        let from = placed.iter().position(|p| p.2 == last_top).unwrap_or(0);
++                        let tail = Breaks { start: placed[from].0, end: run_end, ..breaks.clone() };
++                        let height = tail.balance(count, Some(limit)).min(limit);
++                        let refilled = tail.fill(height, MAX_COLUMNS).columns;
++                        if refilled.len() <= count {
++                            placed.truncate(from);
++                            placed.extend(refilled.into_iter().map(|(a, b)| (a, b, last_top, height)));
++                            last_height = height;
++                        }
++                    }
++                    let mut index = 0;
++                    let mut previous_top = f32::NAN;
++                    let last_top = placed.last().map_or(top, |p| p.2);
++                    for (start, end, row_top_of, height) in placed {
++                        index = if row_top_of == previous_top { index + 1 } else { 0 };
++                        previous_top = row_top_of;
++                        let x = column_x(index);
++                        let top = snap(row_top_of);
++                        let start = snap(start);
++                        fragments.push(ColumnFragment {
++                            start,
++                            end: snap(end),
++                            x,
++                            width: column_width,
++                            top,
++                            height: if row_top_of == last_top { last_height } else { height },
++                            offset: Point { x: x - pb.left, y: snap(top - start) },
++                            spanner: false,
++                        });
++                    }
++                    row_top = last_top + last_height;
++                    if let Some(&(start, end)) = spanners.get(part) {
++                        let (start, end) = (snap(start), snap(end));
++                        let top = rows.spanner_top(row_top, end - start);
++                        fragments.push(ColumnFragment {
++                            start,
++                            end,
++                            x: pb.left,
++                            width: content_width,
++                            top,
++                            height: end - start,
++                            offset: Point { x: 0.0, y: snap(top - start) },
++                            spanner: true,
++                        });
++                        row_top = top + (end - start);
++                        run_start = end;
++                    }
++                    continue;
++                }
 +                // pyro: `column-wrap: wrap` with `column-height: auto` wraps columns as tall as
 +                // the container's definite height.
 +                let fixed_height = multicol.height.or(definite_height.filter(|_| multicol.wrap));
@@ -18666,6 +18796,11 @@ new file mode 100644
 +            }
 +            if let Some(&(start, end)) = spanners.get(part) {
 +                let (start, end) = (snap(start), snap(end));
++                // pyro: in rows of an explicit `column-height` a spanner has its place in the
++                // rows' grid (`RowSlots::spanner_top`).
++                if let Some(rows) = slotted {
++                    row_top = rows.spanner_top(row_top, end - start);
++                }
 +                fragments.push(ColumnFragment {
 +                    start,
 +                    end,

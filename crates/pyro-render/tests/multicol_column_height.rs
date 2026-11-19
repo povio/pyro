@@ -148,3 +148,44 @@ fn a_size_contained_box_is_not_cut_at_the_end_of_a_column_it_is_taller_than() {
         assert_eq!(*item, [x, y, x + 50.0, y + 20.0], "box {i}");
     }
 }
+
+/// Rows of an explicit `column-height` are a grid of slots that spanners take part in (Chromium's
+/// layout, measured on Chrome 158; css-multicol `column-height-017`..`-020`). With 20px columns
+/// and a 10px row gap: 50px of content fills row 0 and is balanced in row 1 (30..35), the 10px
+/// spanner follows at once (35..45), the content after it goes on in what is left of that row
+/// (45..50), then in the rows at 60 and 90. A spanner that does not fit in the rest of its row
+/// starts the next row and may reach into the gap after it.
+#[test]
+fn spanners_share_the_rows_of_an_explicit_column_height() {
+    let green = (0, 128);
+    let red = (255, 0);
+    let body = "<div style='width:100px;height:100px;background:#f00'>\
+                <div style='columns:2;column-height:20px;column-wrap:wrap;gap:10px 0'>\
+                <div style='height:50px;background:green'></div>\
+                <div style='column-span:all;height:10px;background:green'></div>\
+                <div style='height:70px;background:green'></div></div></div>";
+    for (y, want, what) in [
+        (10, green, "row 0"),
+        (25, red, "the gap after row 0"),
+        (32, green, "the balanced rest of the content before the spanner"),
+        (40, green, "the spanner, right after it"),
+        (47, green, "the content after the spanner, in what is left of the row"),
+        (55, red, "the gap after row 1"),
+        (70, green, "row 2"),
+        (85, red, "the gap after row 2"),
+        (95, green, "row 3"),
+    ] {
+        assert_eq!(rg_at(body, 25, y), want, "{what} (y {y}, left column)");
+        assert_eq!(rg_at(body, 75, y), want, "{what} (y {y}, right column)");
+    }
+    // A 25px spanner after 20px of content (balanced: 10px a column) does not fit in the 10px left
+    // of row 0: it starts row 1 (30..55), reaching into the gap, and the content after it row 2.
+    let body = "<div style='width:100px;height:100px;background:#f00'>\
+                <div style='columns:2;column-height:20px;column-wrap:wrap;gap:10px 0'>\
+                <div style='height:20px;background:green'></div>\
+                <div style='column-span:all;height:25px;background:green'></div>\
+                <div style='height:60px;background:green'></div></div></div>";
+    for (y, want, what) in [(5, green, "the balanced content"), (15, red, "the rest of row 0"), (25, red, "the gap"), (40, green, "the spanner"), (53, green, "the spanner in the gap"), (57, red, "the rest of the gap"), (70, green, "row 2")] {
+        assert_eq!(rg_at(body, 25, y), want, "{what} (y {y})");
+    }
+}
