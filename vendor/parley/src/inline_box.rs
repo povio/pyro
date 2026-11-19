@@ -32,6 +32,11 @@ pub struct InlineBox {
     /// [`Self::baseline`] is the box's central baseline (put on the parent's central baseline
     /// by baseline alignment) rather than its alphabetic one.
     pub central: bool,
+    /// pyro: an in-flow box that breaks lines as a letter does rather than as an atomic inline:
+    /// no soft wrap opportunity before it unless the content before it ends in one, and none
+    /// after it (`text-combine-upright` text, treated as one U+FFFC, class CB resolved to AL:
+    /// css-writing-modes-4 §9.1.2).
+    pub glue: bool,
 }
 
 /// An [`InlineBox`] together with the style index of the span that contains it.

@@ -355,6 +355,7 @@ fn open_span(
         vertical_align: Default::default(),
         rtl,
         central: false,
+        glue: false,
     };
     // pyro: a right-to-left span with one edge has the other too, empty (see
     // `build_inline_layout_recursive`).
@@ -1173,6 +1174,7 @@ fn build_inline_layout_with(
                                     .unwrap_or_default(),
                                 rtl: false,
                                 central: false,
+                                glue: false,
                             });
                         } else if annotations.is_ruby_annotation(tag_name) {
                             // pyro: a ruby annotation of the text since its base started, drawn
@@ -1256,6 +1258,7 @@ fn build_inline_layout_with(
                                 vertical_align: Default::default(),
                                 rtl,
                                 central: false,
+                                glue: false,
                             };
                             // pyro: a right-to-left span's edges trade sides on the line (its end
                             // edge goes left of its content): the line needs the span's content
@@ -1361,6 +1364,14 @@ fn build_inline_layout_with(
                                 .unwrap_or_default(),
                             rtl: false,
                             central: false,
+                            // pyro: `text-combine-upright` text (Stylo makes it a horizontal inline-block in
+                            // the vertical line) breaks lines as one letter (`InlineBox::glue`).
+                            glue: box_kind == InlineBoxKind::InFlow
+                                && node.primary_styles().is_some_and(|style| {
+                                    style.get_inherited_text().text_combine_upright
+                                        == style::values::computed::TextCombineUpright::All
+                                        && !style.writing_mode.is_vertical()
+                                }),
                         });
                     }
                 };
@@ -1411,6 +1422,7 @@ fn build_inline_layout_with(
                             vertical_align: Default::default(),
                             rtl: false,
                             central: false,
+                            glue: false,
                         });
                         let tail = &content[split.range.end..];
                         let text = text_transformer.transform(tail, parent_text_transform, builder);
