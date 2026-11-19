@@ -2785,6 +2785,11 @@ impl ElementCx<'_, '_> {
         );
         let scroll = (self.node.scroll_width() as f64, self.node.scroll_height() as f64);
         let offset = *self.node.scroll_offset();
+        // A padding box too small for its gutters shows no scrollbars (Chrome: WPT css-overflow
+        // `overflow-body-propagation-016`, a 0x0 `overflow: scroll` box).
+        if px1 - px0 < (g.left + g.right) as f64 || py1 - py0 < (g.top + g.bottom) as f64 {
+            return;
+        }
         let bottom_bar = if bars.shown.x { g.bottom as f64 } else { 0.0 };
         if bars.shown.y {
             let width = if bars.vertical_on_left { g.left } else { g.right } as f64;

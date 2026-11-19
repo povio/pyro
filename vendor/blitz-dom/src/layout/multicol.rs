@@ -1894,6 +1894,32 @@ impl BaseDocument {
 
     /// `rect` (device px, `node_id`'s coordinates), shown in `node_id`'s columns when it is a
     /// multi-column container: its scrollable overflow and hit bound.
+    /// pyro: `rect` (device px) of a vertical writing mode's multi-column container's strip,
+    /// shown in its columns as paint shows them (`draw_columns`): its scrollable overflow (Chrome:
+    /// WPT css-overflow `no-scrollable-overflow-vertical-rl`). `None`: no such container.
+    pub(crate) fn vertical_columns_rect(&self, node_id: crate::NodeId, rect: kurbo::Rect, scale: f64) -> Option<kurbo::Rect> {
+        let node = self.nodes.get(node_id)?;
+        let (columns, rl) = node.vertical_column_fragments()?;
+        let width = node.final_layout().size.width as f64;
+        let mut out: Option<kurbo::Rect> = None;
+        for f in &columns.fragments {
+            let (start, end) = (f.start as f64, f.end as f64);
+            let (range, offset) = if rl {
+                ((width - end, width - start), kurbo::Vec2::new(-f.offset.y as f64, f.offset.x as f64))
+            } else {
+                ((start, end), kurbo::Vec2::new(f.offset.y as f64, f.offset.x as f64))
+            };
+            let x0 = rect.x0.max(range.0 * scale);
+            let x1 = rect.x1.min(range.1 * scale);
+            if x1 < x0 {
+                continue;
+            }
+            let piece = kurbo::Rect::new(x0, rect.y0, x1, rect.y1) + offset * scale;
+            out = Some(out.map_or(piece, |o| o.union(piece)));
+        }
+        Some(out.unwrap_or(rect))
+    }
+
     pub(crate) fn columns_rect(&self, node_id: crate::NodeId, rect: kurbo::Rect, scale: f64) -> kurbo::Rect {
         match self.column_fragments(node_id) {
             Some(columns) => columns.map_rect(rect, scale),

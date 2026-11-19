@@ -74,7 +74,12 @@ impl Node {
             return None;
         }
         let el = self.element_data()?;
-        if el.name.local == crate::local_name!("input") || el.name.local == crate::local_name!("frameset") {
+        // (A replaced element is no scroll container: Chrome paints no scrollbars on an
+        // `overflow: scroll` image, WPT css-overflow `overflow-img-scroll-replaced`.)
+        if el.name.local == crate::local_name!("input")
+            || el.name.local == crate::local_name!("frameset")
+            || crate::layout::replaced::is_replaced(el)
+        {
             return None;
         }
         let style = self.primary_styles()?;

@@ -402,6 +402,9 @@ pub struct BaseDocument {
     /// pyro: whether `resolve_layout` laid the document out since `resolve` last checked the
     /// classic `overflow: auto` scrollbars.
     pub(crate) layout_ran: bool,
+    /// pyro: classic scrollbars: what viewport units see the viewport smaller by (CSS px; the
+    /// root's `scroll`/`stable` gutters, `stylo` `Device::set_viewport_unit_inset`).
+    pub(crate) viewport_unit_inset: (f32, f32),
     /// See [`BaseDocument::set_layout_size`].
     layout_size: Option<(f32, f32)>,
     /// See [`BaseDocument::set_layout_size`].
@@ -850,6 +853,7 @@ impl BaseDocument {
             last_layout_space: None,
             viewport_scrollbars: ViewportScrollbars::default(),
             layout_ran: false,
+            viewport_unit_inset: (0.0, 0.0),
             layout_size: None,
             layout_available: None,
             flags: DocumentFlags::empty(),
@@ -3765,6 +3769,7 @@ impl BaseDocument {
 
         let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.font_ctx.clone());
         device.set_page_color_scheme(self.page_color_scheme);
+        device.set_viewport_unit_inset(self.viewport_unit_inset);
         self.set_stylist_device(device);
         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
         // pyro: shadow roots' cascade data holds their sheets' media query results.
@@ -3813,7 +3818,8 @@ impl BaseDocument {
         drop(root_styles);
 
         let old_device = self.stylist.device();
-        let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
+        let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size()
+            || old_device.au_viewport_unit_size() != device.au_viewport_unit_size();
         let styles_use_viewport_units = old_device.used_viewport_size();
 
         // Percentage/auto boxes can resize without a computed-style change.

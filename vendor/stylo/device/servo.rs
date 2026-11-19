@@ -70,6 +70,10 @@ pub(super) struct ExtraDeviceData {
     /// element whose `color-scheme` is `normal` uses.
     #[ignore_malloc_size_of = "Plain flags"]
     page_color_scheme: ColorSchemeFlags,
+    /// pyro: what the viewport is smaller by for viewport units (CSS px): the root's classic
+    /// scrollbar gutters that `overflow: scroll` or `scrollbar-gutter: stable` reserve (Chrome).
+    #[ignore_malloc_size_of = "Plain data"]
+    viewport_unit_inset: (f32, f32),
 }
 
 #[derive(Debug, MallocSizeOf, Clone, PartialEq)]
@@ -128,6 +132,7 @@ impl Device {
                 media_data,
                 font_metrics_provider,
                 page_color_scheme: ColorSchemeFlags::empty(),
+                viewport_unit_inset: (0.0, 0.0),
             },
         }
     }
@@ -238,7 +243,23 @@ impl Device {
         self.used_viewport_size.store(true, Ordering::Relaxed);
         // Servo doesn't have dynamic UA interfaces that affect the viewport,
         // so we can just ignore the ViewportVariant.
-        self.au_viewport_size()
+        self.au_viewport_unit_size()
+    }
+
+    /// pyro: the viewport size viewport units resolve against (the viewport less
+    /// [`Self::set_viewport_unit_inset`]), without noting that a style used it.
+    pub fn au_viewport_unit_size(&self) -> UntypedSize2D<Au> {
+        let size = self.au_viewport_size();
+        let (w, h) = self.extra.viewport_unit_inset;
+        Size2D::new(
+            (size.width - Au::from_f32_px(w)).max(Au(0)),
+            (size.height - Au::from_f32_px(h)).max(Au(0)),
+        )
+    }
+
+    /// pyro: sets what the viewport is smaller by for viewport units (CSS px).
+    pub fn set_viewport_unit_inset(&mut self, inset: (f32, f32)) {
+        self.extra.viewport_unit_inset = inset;
     }
 
     /// Returns the number of app units per device pixel we're using currently.

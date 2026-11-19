@@ -287,7 +287,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     fn scrollbar_gutter(&self) -> taffy::Rect<f32> {
         let zero = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
         if crate::scrollbars::scrollbar_mode() == crate::scrollbars::ScrollbarMode::Overlay
-            || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT | StyleFlags::NO_SCROLLBARS)
+            || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT | StyleFlags::NO_SCROLLBARS | StyleFlags::IS_REPLACED)
         {
             return zero;
         }

@@ -3899,8 +3899,12 @@ impl Layout {
             return moved;
         }
         let target = self.scroll_margin_rect(dom, el);
-        let left = offset_x(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0 as i64);
-        let top = offset_y(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1 as i64);
+        // pyro: into the viewport's scrollport: less its classic scrollbar gutters (Chrome: WPT
+        // css-overflow `scrollbar-gutter-scroll-into-view`).
+        let [gl, gt, gr, gb] =
+            self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()).unwrap_or([0.0; 4]);
+        let left = offset_x(target.left() - gl, target.width, self.inner_width() as f64 - gl - gr, self.window_scroll.0 as i64);
+        let top = offset_y(target.top() - gt, target.height, self.inner_height() as f64 - gt - gb, self.window_scroll.1 as i64);
         if self.window_scroll_to(dom, left, top) {
             moved.push(ScrollTarget::Viewport);
         }

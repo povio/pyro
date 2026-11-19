@@ -150,6 +150,13 @@ impl BaseDocument {
         for pass in 0..32 {
             // we need to resolve stylist first since it will need to drive our layout bits
             self.resolve_stylist(current_time_for_animations);
+            // pyro: classic scrollbars: viewport units see the viewport less the root's
+            // `scroll`/`stable` gutters (Chrome), known once the root is styled: a change styles
+            // the document again.
+            if self.update_viewport_unit_inset() {
+                self.flush_pending_device_changes();
+                self.resolve_stylist(current_time_for_animations);
+            }
             // pyro: sampled animations of elements styled anew resolve against that style.
             if self.resolve_sampled_animations() {
                 self.resolve_stylist(current_time_for_animations);
@@ -576,6 +583,9 @@ impl BaseDocument {
         // the columns (`layout::multicol`), added to the padding box below.
         let columns_base =
             self.nodes[node_id].column_fragments().is_some().then(|| std::mem::replace(&mut overflow, Rect::ZERO));
+        // pyro: so does a vertical writing mode's (its columns shown by paint only).
+        let vertical_columns_base = (columns_base.is_none() && self.nodes[node_id].vertical_column_fragments().is_some())
+            .then(|| std::mem::replace(&mut overflow, Rect::ZERO));
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
         // pyro: a scroll container's padding surrounds its in-flow content (CSS Overflow 3 §2.2;
@@ -682,6 +692,12 @@ impl BaseDocument {
         if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
             overflow = overflow.union(lines);
         }
+        // pyro: a vertical writing mode's columns (shown by paint only) are its overflow too.
+        if let Some(base) = vertical_columns_base
+            && let Some(mapped) = self.vertical_columns_rect(node_id, overflow, scale)
+        {
+            overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(mapped) } else { base };
+        }
         if let Some(base) = columns_base {
             overflow = base.union(self.columns_rect(node_id, overflow, scale));
             // pyro: a scroll container's column boxes are its scrollable overflow whole, the last
@@ -731,6 +747,11 @@ impl BaseDocument {
     /// transform is left out, as Blink and Taffy leave it out of the in-flow bounds.
     fn padded_inflow_box(&self, child_id: NodeId, padding: taffy::Rect<f32>, scale: f64) -> Rect {
         let child = self.transform_pass_layout(child_id);
+        // pyro: the bottom margin as it collapsed with those of the child's last in-flow
+        // descendants it collapses through (Chrome: WPT css-overflow
+        // `overflow-negative-margin-dynamic`, a -20px margin through a 10px one: -10px).
+        let mut child = child;
+        child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
         let pad = |padding: f32, margin: f32| (padding + margin).max(0.0) as f64;
         let (x, y) = (child.location.x as f64, child.location.y as f64);
         let (w, h) = (child.size.width as f64, child.size.height as f64);
@@ -743,6 +764,49 @@ impl BaseDocument {
             (x + w + pad(padding.right, child.margin.right)) * scale,
             (y + h + pad(padding.bottom, child.margin.bottom)) * scale,
         )
+    }
+
+    /// pyro: `margin` (`node_id`'s bottom margin) collapsed with the bottom margin of its last
+    /// in-flow child when they adjoin (CSS 2.1 § 8.3.1: no bottom border or padding, an `auto`
+    /// height, no formatting context of its own, horizontal writing mode), recursively.
+    fn collapsed_end_margin(&self, node_id: NodeId, margin: f32, depth: usize) -> f32 {
+        use style::values::computed::Overflow;
+        let node = &self.nodes[node_id];
+        let Some(style) = node.primary_styles() else { return margin };
+        let layout = node.unrounded_layout();
+        let display = style.clone_display();
+        let adjoins = depth < 32
+            && !style.writing_mode.is_vertical()
+            && layout.border.bottom == 0.0
+            && layout.padding.bottom == 0.0
+            && style.get_position().height.is_auto()
+            && display.inside() == style::values::specified::box_::DisplayInside::Flow
+            && display.outside() == style::values::specified::box_::DisplayOutside::Block
+            && style.clone_overflow_y() == Overflow::Visible
+            && style.clone_overflow_x() == Overflow::Visible
+            && style.clone_float() == style::values::computed::Float::None
+            && !node.is_out_of_flow()
+            && !node.flags.is_inline_root();
+        if !adjoins {
+            return margin;
+        }
+        let last = node.layout_children.borrow().as_ref().and_then(|children| {
+            children.iter().rev().copied().find(|&c| {
+                let child = &self.nodes[c];
+                child.is_element() && !child.is_out_of_flow() && child.primary_styles().is_some_and(|s| {
+                    s.clone_float() == style::values::computed::Float::None
+                })
+            })
+        });
+        let Some(last) = last else { return margin };
+        let inner = self.collapsed_end_margin(last, self.nodes[last].unrounded_layout().margin.bottom, depth + 1);
+        // The last child's margin box must end at the parent's content end for them to adjoin.
+        let l = self.nodes[last].unrounded_layout();
+        if (l.location.y + l.size.height - (layout.size.height - layout.border.bottom - layout.padding.bottom)).abs() > 0.5 {
+            return margin;
+        }
+        let (pos, neg) = (margin.max(inner).max(0.0), margin.min(inner).min(0.0));
+        pos + neg
     }
 
     /// pyro: whether `node_id` is `position: fixed`.
@@ -1536,10 +1600,20 @@ impl BaseDocument {
                 taffy::compute_root_layout_in(&mut state, root_element_id, available_space, initial_containing_block);
                 state.mark_stale_lines_up();
             }
-            if gutters.left != 0.0 || gutters.top != 0.0 {
+            // (In the root's axes: a vertical root's inline axis is physical y, and its block
+            // axis runs from the right edge in `vertical-rl`.)
+            let root_wm = state.layout_wm_of(crate::dom_node_id(root_element_id));
+            let (shift_x, shift_y) = if !root_wm.is_vertical() {
+                (gutters.left, gutters.top)
+            } else if root_wm.is_vertical_lr() {
+                (gutters.top, gutters.left)
+            } else {
+                (gutters.top, gutters.right)
+            };
+            if shift_x != 0.0 || shift_y != 0.0 {
                 state.nodes[crate::dom_node_id(root_element_id)].update_unrounded_layout(|layout| {
-                    layout.location.x += gutters.left;
-                    layout.location.y += gutters.top;
+                    layout.location.x += shift_x;
+                    layout.location.y += shift_y;
                 });
             }
             #[cfg(feature = "writing-mode")]
@@ -1603,6 +1677,23 @@ impl BaseDocument {
             other => other,
         };
         taffy::Point { x: used(overflow.0), y: used(overflow.1) }
+    }
+
+    /// pyro: classic scrollbars: sets `viewport_unit_inset` from the root's style (the gutters that
+    /// show whatever the document's size); whether it changed (queued as a device change).
+    fn update_viewport_unit_inset(&mut self) -> bool {
+        let inset = if stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic {
+            let g = self.viewport_scrollbars_for(taffy::Point { x: false, y: false }).gutters;
+            (g.left + g.right, g.top + g.bottom)
+        } else {
+            (0.0, 0.0)
+        };
+        if inset == self.viewport_unit_inset {
+            return false;
+        }
+        self.viewport_unit_inset = inset;
+        self.queue_device_changes(crate::stylo_device::DeviceChanges::VIEWPORT_SIZE);
+        true
     }
 
     /// pyro: classic scrollbars: the viewport's gutters when the scrollbars `shown` show (the root's
