@@ -123,13 +123,13 @@ fn area(style: &ComputedValues, margin_box: Rect, margin: [f64; 4], border: [f64
                             }
                         }
                     };
-                    kurbo::Circle::new(center, radius.max(0.0)).to_path(0.1)
+                    kurbo::Circle::new(center, radius.max(0.0)).to_path(0.001)
                 }
                 GenericBasicShape::Ellipse(e) => {
                     let center = position(&e.position, r);
                     let rx = axis_radius(&e.semiaxis_x, center.x, r.x0, r.x1, w).max(0.0);
                     let ry = axis_radius(&e.semiaxis_y, center.y, r.y0, r.y1, h).max(0.0);
-                    kurbo::Ellipse::new(center, (rx, ry), 0.0).to_path(0.1)
+                    kurbo::Ellipse::new(center, (rx, ry), 0.0).to_path(0.001)
                 }
                 GenericBasicShape::Rect(inset) => {
                     let rect = Rect::new(
@@ -226,7 +226,7 @@ pub(crate) fn float_bands(
     // The path's edges, flattened.
     let mut edges = Vec::new();
     let (mut start, mut last) = (Point::ZERO, Point::ZERO);
-    kurbo::flatten(&path, 0.25, |el| match el {
+    kurbo::flatten(&path, 0.005, |el| match el {
         PathEl::MoveTo(p) => {
             start = p;
             last = p;
