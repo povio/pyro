@@ -4929,8 +4929,10 @@ impl ElementCx<'_, '_> {
             return;
         }
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
-        // The atomic inlines of the lines, by line, in layout space.
-        let mut atomics: Vec<(usize, NodeId, Rect)> = Vec::new();
+        // The atomic inlines of each line, in layout space. Most lines have none: nothing more
+        // is done for them.
+        let line_count = text_layout.layout.len();
+        let mut atomics: Vec<Vec<(NodeId, Rect)>> = Vec::new();
         for (index, line) in text_layout.layout.lines().enumerate() {
             for item in line.items() {
                 if let parley::PositionedLayoutItem::InlineBox(ibox) = item
@@ -4942,27 +4944,68 @@ impl ElementCx<'_, '_> {
                         (ibox.x + ibox.width) as f64,
                         (ibox.y + ibox.height) as f64,
                     );
-                    atomics.push((index, NodeId::from_u64(ibox.id), rect));
+                    if atomics.is_empty() {
+                        atomics.resize_with(line_count.max(index + 1), Vec::new);
+                    }
+                    atomics[index].push((NodeId::from_u64(ibox.id), rect));
                 }
             }
         }
         if atomics.is_empty() {
             return;
         }
-        let doc = self.context.dom;
-        let precedes = |a: NodeId, b: NodeId| tree_precedes(doc, a, b);
-        let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>| {
+        // Tree order of the root's inline content, numbered once (no child list is searched per
+        // pair): an atomic inline comes before an inline box where its number is the smaller.
+        let order = inline_tree_order(self.context.dom, self.node.id);
+        // `vertical`: the lines run along the device y axis.
+        let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>, vertical: bool| {
+            let along = |rect: Rect| if vertical { (rect.y0, rect.y1) } else { (rect.x0, rect.x1) };
+            // Per line with atomics: their device rects in tree order numbers, sorted by where
+            // they start along the line, with the furthest end so far (to stop a search early).
+            struct LineAtomics {
+                atomics: Vec<(f64, f64, usize, Rect)>,
+                max_end: Vec<f64>,
+            }
+            let mut lines: Vec<Option<LineAtomics>> = Vec::new();
+            lines.resize_with(atomics.len(), || None);
             for fragment in &fragments {
+                let Some(&fragment_order) = order.get(&fragment.node) else { continue };
+                let Some(line_atomics) = atomics.get(fragment.line).filter(|list| !list.is_empty()) else { continue };
+                let line = lines[fragment.line].get_or_insert_with(|| {
+                    let transform = line_transform(fragment.line);
+                    let mut list: Vec<(f64, f64, usize, Rect)> = line_atomics
+                        .iter()
+                        .filter_map(|&(atomic, rect)| {
+                            let atomic_order = *order.get(&atomic)?;
+                            let rect = transform.transform_rect_bbox(rect);
+                            let (start, end) = along(rect);
+                            Some((start, end, atomic_order, rect))
+                        })
+                        .collect();
+                    list.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    let mut furthest = f64::NEG_INFINITY;
+                    let max_end = list.iter().map(|a| { furthest = furthest.max(a.1); furthest }).collect();
+                    LineAtomics { atomics: list, max_end }
+                });
                 let fragment_rect = fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size));
-                for &(line, atomic, rect) in &atomics {
-                    if line != fragment.line || !precedes(atomic, fragment.node) {
-                        continue;
-                    }
-                    let atomic_rect = line_transform(line).transform_rect_bbox(rect);
-                    let meet = fragment_rect.intersect(atomic_rect);
-                    if meet.width() <= 0.0 || meet.height() <= 0.0 {
-                        continue;
-                    }
+                let (start, end) = along(fragment_rect);
+                // The atomics starting before the fragment ends, back to the last that may still
+                // reach into it; in tree order, as the line paints them.
+                let upto = line.atomics.partition_point(|a| a.0 < end);
+                let mut from = upto;
+                while from > 0 && line.max_end[from - 1] > start {
+                    from -= 1;
+                }
+                let mut hits: Vec<(usize, Rect)> = line.atomics[from..upto]
+                    .iter()
+                    .filter(|a| a.1 > start && a.2 < fragment_order)
+                    .filter_map(|a| {
+                        let meet = fragment_rect.intersect(a.3);
+                        (meet.width() > 0.0 && meet.height() > 0.0).then_some((a.2, meet))
+                    })
+                    .collect();
+                hits.sort_by_key(|hit| hit.0);
+                for (_, meet) in hits {
                     PaintScene::push_clip_layer(scene, Fill::NonZero, Affine::IDENTITY, &meet);
                     match horizontal {
                         Some((transform, tops)) => self.paint_inline_box_fragment(scene, fragment, transform, tops),
@@ -4978,7 +5021,7 @@ impl ElementCx<'_, '_> {
             }
             let line_transform = self.vertical_line_transform(text_layout, pos, block_lr);
             let fragments = self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform));
-            paint(scene, fragments, &line_transform, None);
+            paint(scene, fragments, &line_transform, None, true);
         } else {
             let subpixel_offset = text_layout.content_box_subpixel_offset;
             let pos = Point {
@@ -4988,7 +5031,7 @@ impl ElementCx<'_, '_> {
             let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
             let (_, tops) = self.text_placement(text_layout.block_offset as f64);
             let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
-            paint(scene, fragments, &|_| transform, Some((transform, tops)));
+            paint(scene, fragments, &|_| transform, Some((transform, tops)), false);
         }
     }
 
@@ -6676,23 +6719,25 @@ fn blend_with_white(color: Color) -> Color {
 
 /// pyro: whether `a` comes before `b` in tree order and is not inside it (an inline box paints
 /// before its own content).
-fn tree_precedes(doc: &BaseDocument, a: NodeId, b: NodeId) -> bool {
-    let chain = |mut id: NodeId| {
-        let mut chain = vec![id];
-        while let Some(parent) = doc.get_node(id).and_then(|node| node.parent) {
-            chain.push(parent);
-            id = parent;
+/// pyro: the tree order (pre-order numbers) of the nodes of the inline root `root`'s inline
+/// content: its DOM descendants through inline boxes (and `display: contents`), not descending
+/// into atomic inlines or anything else laid out apart, which are numbered themselves. Nodes not in its child lists (pseudo-elements) are not numbered.
+fn inline_tree_order(doc: &BaseDocument, root: NodeId) -> HashMap<NodeId, usize> {
+    let mut order = HashMap::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        order.insert(id, order.len());
+        let Some(node) = doc.get_node(id) else { continue };
+        if id != root {
+            let Some(style) = node.primary_styles() else { continue };
+            let display = style.get_box().display;
+            let inline_box = display.outside() == style::values::specified::box_::DisplayOutside::Inline
+                && display.inside() == style::values::specified::box_::DisplayInside::Flow;
+            if !(inline_box || display.is_contents()) {
+                continue;
+            }
         }
-        chain.reverse();
-        chain
-    };
-    let (ca, cb) = (chain(a), chain(b));
-    let common = ca.iter().zip(&cb).take_while(|(x, y)| x == y).count();
-    if common == 0 || common == ca.len() || common == cb.len() {
-        // Unrelated, or one inside the other.
-        return false;
+        stack.extend(node.children.iter().rev().copied());
     }
-    let Some(parent) = doc.get_node(ca[common - 1]) else { return false };
-    let index = |id: NodeId| parent.children.iter().position(|&child| child == id);
-    matches!((index(ca[common]), index(cb[common])), (Some(x), Some(y)) if x < y)
+    order
 }
