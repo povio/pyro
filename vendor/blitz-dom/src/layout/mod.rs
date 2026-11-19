@@ -841,7 +841,12 @@ impl LayoutPassState<'_> {
         layout: impl Fn(&mut Self, taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput,
     ) -> taffy::tree::LayoutOutput {
         let fill = if inputs.sizing_mode == taffy::SizingMode::InherentSize && inputs.known_dimensions.height.is_none() {
-            self.quirky_fill_height(dom_node_id(node_id), inputs.parent_size)
+            let quirky = self.quirky_fill_height(dom_node_id(node_id), inputs.parent_size);
+            let line = self.editable_empty_line_height(dom_node_id(node_id), inputs.parent_size.width);
+            match (quirky, line) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            }
         } else {
             None
         };
@@ -856,6 +861,47 @@ impl LayoutPassState<'_> {
             ),
             _ => output,
         }
+    }
+
+    /// pyro: an editable flex or grid container without in-flow children "has a line if empty"
+    /// (as Blink): its border box is at least one line (its `line-height`) tall in its block axis,
+    /// which is the height of its own algorithm (WPT css-flexbox
+    /// `flex-container-line-if-empty-vertical-writing-mode`).
+    fn editable_empty_line_height(&self, dom_id: crate::NodeId, parent_width: Option<f32>) -> Option<f32> {
+        use style::values::computed::font::LineHeight;
+        let node = &self.nodes[dom_id];
+        let editable = node
+            .element_data()?
+            .attr(local_name!("contenteditable"))
+            .is_some_and(|value| !value.eq_ignore_ascii_case("false"));
+        if !editable {
+            return None;
+        }
+        let in_flow = |id: &crate::NodeId| {
+            let child = &self.nodes[*id];
+            if child.is_text_node() {
+                return !child.is_whitespace_node();
+            }
+            child.primary_styles().is_some_and(|style| {
+                style.clone_display() != style::values::specified::box_::Display::None
+                    && !style.get_box().position.is_absolutely_positioned()
+            })
+        };
+        if node.children.iter().any(in_flow) {
+            return None;
+        }
+        let style = node.primary_styles()?;
+        let font_size = style.slow_clone_font_size().used_size().px();
+        let line = match style.clone_line_height() {
+            LineHeight::Normal => font_size * 1.2,
+            LineHeight::Number(num) => font_size * num.0,
+            LineHeight::Length(value) => value.0.px(),
+        };
+        drop(style);
+        let layout_style = node.layout_style();
+        let edges = layout_style.padding().resolve_or_zero(parent_width, resolve_calc_value).vertical_axis_sum()
+            + layout_style.border().resolve_or_zero(parent_width, resolve_calc_value).vertical_axis_sum();
+        Some(line + edges)
     }
 
     /// The layout of a leaf box (text, form controls, replaced elements, hidden boxes), or the
