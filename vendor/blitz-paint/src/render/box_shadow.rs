@@ -208,6 +208,15 @@ impl ElementCx<'_, '_> {
         if let Some(shape) = self.border_shape() {
             return shape.inner_path();
         }
+        // pyro: a table with captions clips its wrapper box, captions too (its frame is its grid
+        // alone; Chromium's table fragment holds its captions; WPT css-contain
+        // `contain-paint-table-002`).
+        if let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data
+            && table.grid_box.borrow().is_some()
+        {
+            let wrapper = super::create_css_rect(style, self.node.final_layout(), self.scale);
+            return overflow_clip_path(&wrapper, style, self.scale);
+        }
         overflow_clip_path(&self.frame, style, self.scale)
     }
 
