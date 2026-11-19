@@ -459,9 +459,10 @@ impl LayoutPassState<'_> {
             if dropdown {
                 return None;
             }
+            // pyro: a table caption is a block container (WPT css-contain `contain-paint-size-001`).
             let contained = match display.outside() {
                 DisplayOutside::Inline => display.inside() != DisplayInside::Flow || replaced,
-                DisplayOutside::Block => true,
+                DisplayOutside::Block | DisplayOutside::TableCaption => true,
                 _ => false,
             } && display.inside() != DisplayInside::Table;
             if !contained {
