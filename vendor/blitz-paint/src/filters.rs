@@ -276,6 +276,46 @@ pub(crate) fn svg_filter_notes(
             None => repeats.push(filter),
         }
     }
+    // pyro: the filters usvg made of CSS `drop-shadow()` functions (ids `filterN`, one
+    // `feDropShadow` each, in the order usvg met them: the SVG's elements in tree order, each
+    // list's functions in order) are the drop shadows of the SVG elements' computed `filter`s, in
+    // that order: one coloured from `currentcolor` is tainted, as an HTML element's is
+    // (`filter_steps`; WPT filter-effects `tainting-css-dropshadow-001`). Only when they pair up.
+    let generated: Vec<&TreeFilter> = tree
+        .filters()
+        .iter()
+        .filter(|filter| {
+            filter.id().strip_prefix("filter").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                && matches!(filter.primitives(), [p] if matches!(p.kind(), anyrender_svg::usvg::filter::Kind::DropShadow(_)))
+        })
+        .map(|filter| &**filter)
+        .collect();
+    if !generated.is_empty() {
+        let mut shadows: Vec<bool> = Vec::new();
+        let mut stack: Vec<blitz_dom::NodeId> = node.children.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let child = &dom.tree()[id];
+            if let Some(style) = child.primary_styles().filter(|_| child.element_data().is_some()) {
+                for function in style.get_effects().filter.0.iter() {
+                    if let StyloFilter::DropShadow(shadow) = function {
+                        shadows.push(uses_current_color(&shadow.color));
+                    }
+                }
+            }
+            stack.extend(child.children.iter().rev().copied());
+        }
+        if shadows.len() == generated.len() {
+            for (filter, tainted) in generated.iter().zip(shadows) {
+                if tainted {
+                    notes.insert(
+                        filter.id().to_owned(),
+                        vec![anyrender_svg::PrimitiveNotes { tainted: true, ..Default::default() }],
+                    );
+                }
+            }
+            repeats.retain(|filter| !generated.iter().any(|g| std::ptr::eq(*g, *filter)));
+        }
+    }
     for filter in repeats {
         let signature = tree_signature(filter);
         let mut merged: Option<Vec<anyrender_svg::PrimitiveNotes>> = None;
