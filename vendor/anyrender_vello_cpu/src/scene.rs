@@ -306,6 +306,10 @@ impl PaintScene for VelloCpuScenePainter {
     }
 }
 
+/// pyro: the alpha of the empty layer blitz-paint pushes before a clip layer to have it clip as a
+/// clip path, each draw on its own, as Skia clips (blitz-paint `highlight::push_clip_path`).
+const CLIP_PATH_HINT_ALPHA: f32 = 1.0 - 2.0 * f32::EPSILON;
+
 impl VelloCpuScenePainter {
     /// pyro: replays `commands`; a layer with a filter is drawn by [`Self::draw_filtered_layer`],
     /// unless its filter only fades it (`opacity()`: a layer of that opacity) or only maps colours
@@ -344,6 +348,26 @@ impl VelloCpuScenePainter {
                     crate::backdrop::Marker::Draw => self.draw_backdrop(layer, transform, false),
                 }
                 i += 2;
+                continue;
+            }
+            // pyro: a clip path hint (an empty layer of `CLIP_PATH_HINT_ALPHA`): the clip layer
+            // pushed after it is a clip path (blitz-paint's highlighted text).
+            if let RenderCommand::PushLayer(layer) = &commands[i]
+                && layer.alpha == CLIP_PATH_HINT_ALPHA
+                && layer.filter.is_none()
+                && layer.backdrop_filter.is_none()
+                && matches!(commands.get(i + 1), Some(RenderCommand::PopLayer))
+            {
+                if let Some(RenderCommand::PushClipLayer(clip)) = commands.get(i + 2) {
+                    self.render_ctx.set_transform(transform * clip.transform);
+                    self.render_ctx.set_fill_rule(clip.fill);
+                    self.render_ctx.push_clip_path(&clip.clip);
+                    self.clip_paths.push(Pushed::ClipPath);
+                    open.push((i + 2, false));
+                    i += 3;
+                } else {
+                    i += 2;
+                }
                 continue;
             }
             if let RenderCommand::PushClipLayer(clip) = &commands[i]

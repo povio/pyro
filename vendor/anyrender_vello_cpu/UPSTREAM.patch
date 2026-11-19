@@ -4662,7 +4662,7 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..367f5b6 100644
+index 1b09a33..1c96086 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,11 +1,14 @@
@@ -4865,7 +4865,7 @@ index 1b09a33..367f5b6 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +291,775 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +291,799 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -4883,6 +4883,10 @@ index 1b09a33..367f5b6 100644
 +        self.backdrops.clear();
 +    }
 +}
++
++/// pyro: the alpha of the empty layer blitz-paint pushes before a clip layer to have it clip as a
++/// clip path, each draw on its own, as Skia clips (blitz-paint `highlight::push_clip_path`).
++const CLIP_PATH_HINT_ALPHA: f32 = 1.0 - 2.0 * f32::EPSILON;
 +
 +impl VelloCpuScenePainter {
 +    /// pyro: replays `commands`; a layer with a filter is drawn by [`Self::draw_filtered_layer`],
@@ -4922,6 +4926,26 @@ index 1b09a33..367f5b6 100644
 +                    crate::backdrop::Marker::Draw => self.draw_backdrop(layer, transform, false),
 +                }
 +                i += 2;
++                continue;
++            }
++            // pyro: a clip path hint (an empty layer of `CLIP_PATH_HINT_ALPHA`): the clip layer
++            // pushed after it is a clip path (blitz-paint's highlighted text).
++            if let RenderCommand::PushLayer(layer) = &commands[i]
++                && layer.alpha == CLIP_PATH_HINT_ALPHA
++                && layer.filter.is_none()
++                && layer.backdrop_filter.is_none()
++                && matches!(commands.get(i + 1), Some(RenderCommand::PopLayer))
++            {
++                if let Some(RenderCommand::PushClipLayer(clip)) = commands.get(i + 2) {
++                    self.render_ctx.set_transform(transform * clip.transform);
++                    self.render_ctx.set_fill_rule(clip.fill);
++                    self.render_ctx.push_clip_path(&clip.clip);
++                    self.clip_paths.push(Pushed::ClipPath);
++                    open.push((i + 2, false));
++                    i += 3;
++                } else {
++                    i += 2;
++                }
 +                continue;
 +            }
 +            if let RenderCommand::PushClipLayer(clip) = &commands[i]
@@ -5641,7 +5665,7 @@ index 1b09a33..367f5b6 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1136,197 @@ mod clip_rule_tests {
+@@ -292,4 +1160,197 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }
