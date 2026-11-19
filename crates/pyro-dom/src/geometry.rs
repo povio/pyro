@@ -55,6 +55,9 @@ pub struct ExternalBox {
     pub position: BoxPosition,
     /// Discarded by a line clamp: laid out, not painted, not hit.
     pub hidden: bool,
+    /// The border box's origin with no CSS transform applied, when a transform moves it
+    /// (`offsetLeft`/`offsetTop` ignore transforms).
+    pub layout_origin: Option<[f64; 2]>,
 }
 
 /// One word of a text node on a line (document CSS px).
@@ -482,6 +485,8 @@ pub struct LayoutBox {
     pub in_positioned: bool,
     /// See [`ExternalBox::hidden`].
     pub hidden: bool,
+    /// See [`ExternalBox::layout_origin`].
+    pub layout_origin: Option<[f64; 2]>,
 }
 
 impl LayoutBox {
@@ -500,6 +505,7 @@ impl LayoutBox {
             order,
             in_positioned: b.position != BoxPosition::Static,
             hidden: b.hidden,
+            layout_origin: b.layout_origin,
         }
     }
 

@@ -49,6 +49,10 @@ pub struct LayoutBox {
     /// pyro: discarded by a line clamp (it or an ancestor in the clamping box): laid out, not
     /// painted, and not hit (blitz-dom `NodeFlags::HIDDEN_BY_CLAMP`).
     pub hidden: bool,
+    /// pyro: the border box's origin with no CSS transform applied (document coordinates, as
+    /// `x`/`y`), when a transform on its containing-block chain moves it: `offsetLeft` and
+    /// `offsetTop` ignore transforms (CSSOM View; Chromium).
+    pub layout_origin: Option<[f64; 2]>,
 }
 
 /// An element's `position`.
@@ -217,6 +221,43 @@ impl Geometry {
     /// composed down its containing-block chain, root first.
     pub(crate) fn transform(&self, doc: &BaseDocument, id: NodeId) -> Option<(Affine, bool)> {
         self.transform_and_planes(doc, id).map(|(t, fixed, _)| (t, fixed))
+    }
+
+    /// pyro: the origin of `id`'s border box as its containing-block chain places it without
+    /// the CSS transforms on it (scroll offsets and column shifts kept), when one has a
+    /// transform. `None` when none has.
+    fn untransformed_origin(&self, doc: &BaseDocument, id: NodeId) -> Option<[f64; 2]> {
+        let mut chain = Vec::new();
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let node = doc.get_node(i)?;
+            chain.push(node);
+            cur = node.containing_block();
+        }
+        if !chain.iter().any(|node| node.transform().is_some()) {
+            return None;
+        }
+        let scale = doc.viewport().scale_f64();
+        let multicol = doc.has_multicol();
+        let mut t = Affine::IDENTITY;
+        let mut parent: Option<&blitz_dom::Node> = None;
+        for (index, &node) in chain.iter().enumerate().rev() {
+            let mut base = match parent {
+                Some(p) => {
+                    let scroll = p.scroll_offset();
+                    t * Affine::translate((-scroll.x, -scroll.y))
+                }
+                None => Affine::IDENTITY,
+            };
+            if let Some(columns) = parent.filter(|_| multicol).and_then(|p| p.column_fragments()) {
+                base *= column_shift(doc, columns, &chain[..=index], scale);
+            }
+            let location = doc.physical_unrounded_layout(node.id).location;
+            t = base * Affine::translate((location.x as f64, location.y as f64));
+            parent = Some(node);
+        }
+        let origin = t * kurbo::Point::ZERO;
+        Some([origin.x, origin.y])
     }
 
     /// [`Self::transform`], and whether a plane on the chain is placed by its homography (drawn
@@ -445,6 +486,7 @@ impl Geometry {
             padding: [l.padding.top, l.padding.right, l.padding.bottom, l.padding.left].map(f64::from),
             position: BoxPosition::Static,
             hidden: hidden_by_clamp(doc, id),
+            layout_origin: None,
         })
     }
 
@@ -495,6 +537,7 @@ impl Geometry {
             padding: b.padding.map(unit),
             position: box_position(doc.get_node(id)?),
             hidden: b.hidden,
+            layout_origin: self.untransformed_origin(doc, id).map(|origin| origin.map(unit)),
         })
     }
 

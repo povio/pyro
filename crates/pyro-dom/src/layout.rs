@@ -1150,12 +1150,16 @@ impl Layout {
         // A sticky box is where scrolling holds it (and its descendants with it).
         let sticky = self.sticky_map(dom);
         let (kx, ky) = self.sticky_shift_in(dom, &sticky, el);
+        // Transforms move neither box (CSSOM View: offsets are in layout coordinates).
+        let origin = |b: &LayoutBox| b.layout_origin.map_or((b.rect.x, b.rect.y), |[x, y]| (x, y));
+        let (bx, by) = origin(&b);
         match parent.and_then(|p| Some((p, self.layout_box(dom, p)?))) {
             Some((parent, p)) => {
                 let (px, py) = self.sticky_shift_in(dom, &sticky, parent);
-                (b.rect.x + kx - p.rect.x - px, b.rect.y + ky - p.rect.y - py)
+                let (ox, oy) = origin(&p);
+                (bx + kx - ox - px, by + ky - oy - py)
             }
-            None => (b.rect.x + kx, b.rect.y + ky),
+            None => (bx + kx, by + ky),
         }
     }
 

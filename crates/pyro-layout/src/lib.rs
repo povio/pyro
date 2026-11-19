@@ -348,6 +348,7 @@ fn external(b: pyro_render::LayoutBox) -> ExternalBox {
             pyro_render::BoxPosition::Sticky => BoxPosition::Sticky,
         },
         hidden: b.hidden,
+        layout_origin: b.layout_origin,
     }
 }
 
