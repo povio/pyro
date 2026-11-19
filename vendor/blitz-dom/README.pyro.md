@@ -2805,3 +2805,7 @@ text); a fetched `<link>` sheet takes it in place. Setting or removing a `<style
 - Lane F2, `mask-border`: `mask-border-source` loads as the element's second `border_images` entry
   (`layout/damage.rs` `border_image_sources`, also the stylo.rs out-of-sync check); a `mask-border` makes a stacking
   context (`node.rs`), as `mask-image` does.
+(WPT css/cssom `medialist-dynamic-001`); a `<link>`'s, at flush (`link_media_nodes`, `refresh_link_media`): its loaded
+sheet takes the new media list and is inserted again, without a new fetch (WPT html/semantics
+`the-link-element/stylesheet-media-change-no-fetch`). Covered by `a_style_element_media_attribute_limits_its_sheet` in
+`crates/pyro-render/tests/render.rs` and `crates/pyro-render/tests/link_media.rs`.

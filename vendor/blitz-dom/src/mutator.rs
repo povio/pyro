@@ -72,6 +72,8 @@ pub struct DocumentMutator<'doc> {
     // Tracked nodes for deferred processing when mutations have completed
     title_node: Option<NodeId>,
     style_nodes: HashSet<NodeId>,
+    /// pyro: `<link>` elements whose `media` changed (`BaseDocument::refresh_link_media` at flush).
+    link_media_nodes: HashSet<NodeId>,
     form_nodes: HashSet<NodeId>,
 
     /// Whether an element/attribute that affect animation status has been seen
@@ -106,6 +108,7 @@ impl DocumentMutator<'_> {
             eager_op_queue: Vec::new(),
             title_node: None,
             style_nodes: HashSet::new(),
+            link_media_nodes: HashSet::new(),
             form_nodes: HashSet::new(),
             recompute_is_animating: false,
             mutations_occurred: false,
@@ -415,6 +418,13 @@ impl DocumentMutator<'_> {
         {
             self.style_nodes.insert(node_id);
         }
+        // pyro: a `<link>`'s `media` is its sheet's media list too (`refresh_link_media`).
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("link"))
+        {
+            self.link_media_nodes.insert(node_id);
+        }
 
         if name.local == local_name!("id") && node_is_in_document {
             if let Some(old_id) = self.doc.nodes[node_id]
@@ -612,6 +622,13 @@ impl DocumentMutator<'_> {
             && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("style"))
         {
             self.style_nodes.insert(node_id);
+        }
+        // pyro: a `<link>`'s `media` is its sheet's media list too (`refresh_link_media`).
+        if name.local == local_name!("media")
+            && node_is_in_document
+            && self.doc.nodes[node_id].element_data().is_some_and(|e| e.name.local == local_name!("link"))
+        {
+            self.link_media_nodes.insert(node_id);
         }
 
         if name.local == local_name!("id") && node_is_in_document {
@@ -1532,6 +1549,9 @@ impl<'doc> DocumentMutator<'doc> {
         // Add/Update inline stylesheets (<style> elements)
         for id in self.style_nodes.drain() {
             self.doc.process_style_element(id);
+        }
+        for id in self.link_media_nodes.drain() {
+            self.doc.refresh_link_media(id);
         }
 
         for id in self.form_nodes.drain() {

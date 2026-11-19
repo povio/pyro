@@ -1804,6 +1804,17 @@ impl BaseDocument {
         self.add_stylesheet_for_node(sheet, target_id);
     }
 
+    /// pyro: a `<link>`'s `media` changed: its sheet (each fetch parses its own) takes the new
+    /// media list and is inserted again, so the cascade sees it.
+    pub(crate) fn refresh_link_media(&mut self, node_id: NodeId) {
+        let Some(sheet) = self.nodes_to_stylesheet.get(&node_id).cloned() else {
+            return;
+        };
+        let media = self.node_media_list(node_id).unwrap_or_else(MediaList::empty);
+        *sheet.0.media.write_with(&mut self.guard.write()) = media;
+        self.add_stylesheet_for_node(sheet, node_id);
+    }
+
     /// pyro: the media list of the `media` attribute of the `<style>` or `<link>` element
     /// `node_id`; `None` without one (or an empty one: all media).
     pub(crate) fn node_media_list(&self, node_id: NodeId) -> Option<MediaList> {
