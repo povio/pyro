@@ -786,10 +786,20 @@ pub struct ImageHandler {
     ///
     /// [`FetchOptions::cache_key`]: blitz_traits::net::FetchOptions::cache_key
     options: blitz_traits::net::FetchOptions,
+    /// pyro: the URL of the document the image is for: a response from another origin fetched
+    /// without CORS is opaque, and shown as its EXIF orientation says whatever
+    /// `image-orientation` says (CSS Images 3 § 5.1).
+    document: Option<Url>,
 }
 impl ImageHandler {
     pub fn new(kind: ImageType) -> Self {
-        Self { kind, options: Default::default() }
+        Self { kind, options: Default::default(), document: None }
+    }
+
+    /// pyro: the image is for the document at `url` ([`Self::document`]).
+    pub fn document(mut self, url: &Url) -> Self {
+        self.document = Some(url.clone());
+        self
     }
 
     /// pyro: fetched in CORS mode ([`mark_cors`]) when `cors` is.
@@ -807,7 +817,18 @@ impl ImageHandler {
 
 impl NetHandler for ResourceHandler<ImageHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        let result = self.data.parse(&resolved_url, bytes);
+        let mut result = self.data.parse(&resolved_url, bytes);
+        // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
+        // orientation 1, which `image-orientation: none` has nothing to undo of.
+        let opaque = self.data.options.cors.is_none()
+            && self.data.document.as_ref().is_some_and(|document| {
+                Url::parse(&resolved_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
+            });
+        if opaque {
+            if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
+                *orientation = 1;
+            }
+        }
         // pyro: an image fetched with CORS (or other options) answers under its key.
         let key = self.data.options.cache_key(&resolved_url);
         self.respond(key, result)

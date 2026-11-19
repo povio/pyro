@@ -1094,7 +1094,7 @@ impl BaseDocument {
                         doc_id,
                         None,
                         self.shell_provider.clone(),
-                        ImageHandler::new(kind).options(options),
+                        ImageHandler::new(kind).options(options).document(&self.url),
                     ),
                 );
                 new.push(Some(ImageResourceData::new(url.clone())));
@@ -1126,6 +1126,7 @@ impl BaseDocument {
             cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
             ..Default::default()
         });
+        let document_url: url::Url = (*self.url).clone();
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
         // borrow of `node` (held by the stylo element data guard) is released
@@ -1238,7 +1239,7 @@ impl BaseDocument {
                                 doc_id,
                                 None, // Don't pass node_id, we'll handle via pending_images
                                 self.shell_provider.clone(),
-                                ImageHandler::new(kind.image_type(idx)).options(options),
+                                ImageHandler::new(kind.image_type(idx)).options(options).document(&document_url),
                             ),
                         );
 

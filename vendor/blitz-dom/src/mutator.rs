@@ -1968,7 +1968,25 @@ impl<'doc> DocumentMutator<'doc> {
                 let Some(src) = self.doc.resolve_url(raw_src) else {
                     return;
                 };
-                let src_string = src.as_str();
+                // pyro: an `<img crossorigin>` is fetched in CORS mode (HTML "CORS settings
+                // attribute": a missing value is no CORS, an invalid one `anonymous`), its
+                // response kept apart from the same URL fetched otherwise.
+                let mut options = blitz_traits::net::FetchOptions::default();
+                if is_img {
+                    if let Some(value) = node.attr(local_name!("crossorigin")) {
+                        options.cors = Some(if value.eq_ignore_ascii_case("use-credentials") {
+                            blitz_traits::net::CorsCredentials::Include
+                        } else {
+                            blitz_traits::net::CorsCredentials::SameOrigin
+                        });
+                    }
+                }
+                if !crate::net::cors_checked(&src, &self.doc.url) {
+                    options = Default::default();
+                }
+                let options = self.doc.request_options(options);
+                let key = options.cache_key(src.as_str());
+                let src_string = key.as_str();
 
                 // Check cache first
                 if let Some(cached_image) = self.doc.image_cache.get(src_string) {
@@ -2001,15 +2019,18 @@ impl<'doc> DocumentMutator<'doc> {
                     .pending_images
                     .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
 
+                let mut request = self.doc.build_request(src);
+                request.options = options.clone();
+                let handler = ImageHandler::new(ImageType::Image).options(options).document(&self.doc.url);
                 self.doc.net_provider.fetch(
                     self.doc.id(),
-                    self.doc.build_request(src),
+                    request,
                     ResourceHandler::boxed(
                         self.doc.tx.clone(),
                         self.doc.id(),
                         None, // Don't pass node_id, we'll handle it via pending_images
                         self.doc.shell_provider.clone(),
-                        ImageHandler::new(ImageType::Image),
+                        handler,
                     ),
                 );
             }

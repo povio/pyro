@@ -456,7 +456,7 @@ impl BaseDocument {
                 doc_id,
                 None,
                 self.shell_provider.clone(),
-                ImageHandler::new(ImageType::Image),
+                ImageHandler::new(ImageType::Image).document(&self.url),
             ),
         );
     }

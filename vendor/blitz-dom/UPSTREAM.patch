@@ -8371,7 +8371,7 @@ new file mode 100644
 +                doc_id,
 +                None,
 +                self.shell_provider.clone(),
-+                ImageHandler::new(ImageType::Image),
++                ImageHandler::new(ImageType::Image).document(&self.url),
 +            ),
 +        );
 +    }
@@ -9856,7 +9856,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      /// Flush the image layers of nodes whose style changed during the last
      /// style traversal (or whose pseudo-element boxes were (re)constructed).
      pub(crate) fn flush_pending_style_images(&mut self) {
-@@ -552,13 +1004,128 @@
+@@ -552,13 +1004,129 @@
              }
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
@@ -9950,7 +9950,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                        doc_id,
 +                        None,
 +                        self.shell_provider.clone(),
-+                        ImageHandler::new(kind).options(options),
++                        ImageHandler::new(kind).options(options).document(&self.url),
 +                    ),
 +                );
 +                new.push(Some(ImageResourceData::new(url.clone())));
@@ -9983,10 +9983,11 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +            cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
 +            ..Default::default()
 +        });
++        let document_url: url::Url = (*self.url).clone();
          let node = self.nodes.get_mut(node_id).unwrap();
          // Clone the primary style `Arc` into an owned value so the immutable
          // borrow of `node` (held by the stylo element data guard) is released
-@@ -577,29 +1144,68 @@
+@@ -577,29 +1145,68 @@
              return;
          };
  
@@ -10060,7 +10061,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                      if let Some(cached_image) = self.image_cache.get(url_str) {
                          #[cfg(feature = "tracing")]
                          tracing::info!("Loading image {url_str} from cache");
-@@ -621,18 +1227,18 @@
+@@ -621,18 +1228,18 @@
                          self.pending_images
                              .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
  
@@ -10080,11 +10081,11 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                                  None, // Don't pass node_id, we'll handle via pending_images
                                  self.shell_provider.clone(),
 -                                ImageHandler::new(kind.image_type(idx)),
-+                                ImageHandler::new(kind.image_type(idx)).options(options),
++                                ImageHandler::new(kind.image_type(idx)).options(options).document(&document_url),
                              ),
                          );
  
-@@ -647,3 +1253,153 @@
+@@ -647,3 +1254,153 @@
          }
      }
  }
@@ -34181,7 +34182,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +1886,98 @@
+@@ -1420,21 +1886,116 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -34195,6 +34196,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 -            if !raw_src.is_empty()
 -                && let Some(src) = self.doc.resolve_url(raw_src)
 -            {
+-                let src_string = src.as_str();
 +        // pyro: a `<video>`'s image is its poster; without one it
 +        // paints nothing.
 +        let is_video = node
@@ -34271,7 +34273,25 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +                let Some(src) = self.doc.resolve_url(raw_src) else {
 +                    return;
 +                };
-                 let src_string = src.as_str();
++                // pyro: an `<img crossorigin>` is fetched in CORS mode (HTML "CORS settings
++                // attribute": a missing value is no CORS, an invalid one `anonymous`), its
++                // response kept apart from the same URL fetched otherwise.
++                let mut options = blitz_traits::net::FetchOptions::default();
++                if is_img {
++                    if let Some(value) = node.attr(local_name!("crossorigin")) {
++                        options.cors = Some(if value.eq_ignore_ascii_case("use-credentials") {
++                            blitz_traits::net::CorsCredentials::Include
++                        } else {
++                            blitz_traits::net::CorsCredentials::SameOrigin
++                        });
++                    }
++                }
++                if !crate::net::cors_checked(&src, &self.doc.url) {
++                    options = Default::default();
++                }
++                let options = self.doc.request_options(options);
++                let key = options.cache_key(src.as_str());
++                let src_string = key.as_str();
  
                  // Check cache first
                  if let Some(cached_image) = self.doc.image_cache.get(src_string) {
@@ -34284,7 +34304,28 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1544,6 +2087,18 @@
+@@ -1458,15 +2019,18 @@
+                     .pending_images
+                     .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
+ 
++                let mut request = self.doc.build_request(src);
++                request.options = options.clone();
++                let handler = ImageHandler::new(ImageType::Image).options(options).document(&self.doc.url);
+                 self.doc.net_provider.fetch(
+                     self.doc.id(),
+-                    self.doc.build_request(src),
++                    request,
+                     ResourceHandler::boxed(
+                         self.doc.tx.clone(),
+                         self.doc.id(),
+                         None, // Don't pass node_id, we'll handle it via pending_images
+                         self.doc.shell_provider.clone(),
+-                        ImageHandler::new(ImageType::Image),
++                        handler,
+                     ),
+                 );
+             }
+@@ -1544,6 +2108,18 @@
              return;
          }
  
@@ -34303,7 +34344,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          // Add content of "value" attribute as a text node child if:
          //   - Tag name is
          if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
-@@ -1579,6 +2134,20 @@
+@@ -1579,6 +2155,20 @@
      }
  }
  
@@ -34324,7 +34365,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2946,50 @@
+@@ -2377,6 +2967,50 @@
          }
      }
  
@@ -34375,7 +34416,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3701,254 @@
+@@ -3088,3 +3722,254 @@
          );
      }
  }
@@ -34959,7 +35000,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +781,115 @@
+@@ -585,37 +781,136 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -34968,11 +35009,21 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +    ///
 +    /// [`FetchOptions::cache_key`]: blitz_traits::net::FetchOptions::cache_key
 +    options: blitz_traits::net::FetchOptions,
++    /// pyro: the URL of the document the image is for: a response from another origin fetched
++    /// without CORS is opaque, and shown as its EXIF orientation says whatever
++    /// `image-orientation` says (CSS Images 3 § 5.1).
++    document: Option<Url>,
  }
  impl ImageHandler {
      pub fn new(kind: ImageType) -> Self {
 -        Self { kind }
-+        Self { kind, options: Default::default() }
++        Self { kind, options: Default::default(), document: None }
++    }
++
++    /// pyro: the image is for the document at `url` ([`Self::document`]).
++    pub fn document(mut self, url: &Url) -> Self {
++        self.document = Some(url.clone());
++        self
 +    }
 +
 +    /// pyro: fetched in CORS mode ([`mark_cors`]) when `cors` is.
@@ -34992,7 +35043,18 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
 -        let result = self.data.parse(bytes);
 -        self.respond(resolved_url, result)
-+        let result = self.data.parse(&resolved_url, bytes);
++        let mut result = self.data.parse(&resolved_url, bytes);
++        // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
++        // orientation 1, which `image-orientation: none` has nothing to undo of.
++        let opaque = self.data.options.cors.is_none()
++            && self.data.document.as_ref().is_some_and(|document| {
++                Url::parse(&resolved_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
++            });
++        if opaque {
++            if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
++                *orientation = 1;
++            }
++        }
 +        // pyro: an image fetched with CORS (or other options) answers under its key.
 +        let key = self.data.options.cache_key(&resolved_url);
 +        self.respond(key, result)
@@ -35090,7 +35152,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +898,46 @@
+@@ -624,12 +919,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -35140,7 +35202,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +957,62 @@
+@@ -649,6 +978,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -35203,7 +35265,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1164,11 @@
+@@ -800,3 +1185,11 @@
          );
      }
  }
