@@ -258,6 +258,12 @@ impl StackingContext {
     ) -> impl ExactSizeIterator<Item = &HoistedPaintChild> + DoubleEndedIterator {
         self.children[self.pos_z_range()].iter()
     }
+
+    /// pyro: the out-of-flow boxes without a `z-index` painted at this context's positioned level
+    /// (see the field), in tree order.
+    pub fn positioned_level(&self) -> impl ExactSizeIterator<Item = &HoistedPaintChild> + DoubleEndedIterator {
+        self.positioned_level.iter()
+    }
 }
 
 impl BaseDocument {
@@ -424,8 +430,43 @@ impl BaseDocument {
             false
         };
         self.oof_hoisted.retain(|id| self.nodes.get(*id).is_some_and(|n| n.oof_containing_block.get().is_some()));
+        // pyro: the inline element (not atomic) around `id` that forms a stacking context, with no
+        // box between them: its out-of-flow descendants paint in it (an inline stacking context
+        // keeps them, its effects and clip over them, as Chromium paints it; WPT css-will-change
+        // `will-change-stacking-context-opacity-2`, filter-effects
+        // `backdrop-filter-backdrop-root-clip-path-2`), with its fragments (blitz-paint
+        // `draw_inline_effects`).
+        let inline_owner_of = |doc: &Self, id: NodeId| {
+            let mut current = doc.nodes[id].parent;
+            while let Some(parent) = current {
+                let node = &doc.nodes[parent];
+                let style = node.primary_styles()?;
+                if !style.clone_display().is_inline_flow() || node.flags.is_inline_root() {
+                    return None;
+                }
+                if node.is_stacking_context_root(false) {
+                    return Some(parent);
+                }
+                current = node.parent;
+            }
+            None
+        };
+        let inline_owners: Vec<(NodeId, NodeId)> = self
+            .oof_hoisted
+            .iter()
+            .filter(|&&id| self.nodes.get(id).is_some_and(|n| n.flags.is_in_document()))
+            .filter_map(|&id| Some((id, inline_owner_of(self, id)?)))
+            .collect();
+        for &(_, owner) in &inline_owners {
+            if self.nodes[owner].stacking_context.is_none() {
+                self.nodes[owner].stacking_context = Some(Box::new(StackingContext::from_children(ThinVec::new())));
+            }
+        }
         let mut clip_owners: Vec<NodeId> = Vec::new();
         let mut moves: Vec<_> = self.oof_hoisted.iter().filter_map(|&id| {
+            if let Some(&(_, owner)) = inline_owners.iter().find(|(moved, _)| *moved == id) {
+                return Some((id, owner));
+            }
             let node = &self.nodes[id];
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;

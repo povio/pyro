@@ -215,3 +215,15 @@ fn boxes_escape_a_clip_inside_an_opacity_group_they_belong_to() {
     let [r, g, b] = pixel(&img, 225, 150);
     assert!(r > 250 && g > 250 && b > 250, "no yellow past the inner clip: {:?}", [r, g, b]);
 }
+
+/// An inline element that forms a stacking context (`will-change: opacity`) keeps its positioned
+/// child: the child's `z-index: 3` orders it inside that context, under a `z-index: 1` box beside
+/// it. It was hoisted to the root's context and painted over that box.
+#[test]
+fn an_inline_stacking_context_keeps_its_positioned_child() {
+    let img = render(
+        "<div style='position:absolute;width:100px;height:100px;background:green;z-index:1'></div>\
+         <span style='will-change:opacity'><div style='position:absolute;width:100px;height:100px;background:red;z-index:3'></div></span>",
+    );
+    assert_eq!(pixel(&img, 50, 50), [0, 128, 0], "the z-index 1 box over the inline's child");
+}

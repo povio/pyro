@@ -2124,7 +2124,28 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     fn draw_inline_pass_entry_in(&self, scene: &mut impl PaintScene, span_id: NodeId, root_id: NodeId, transform: Affine, pos: Point) {
         let Some(root) = self.dom.get_node(root_id) else { return };
         let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
+        // pyro: an inline stacking context keeping out-of-flow boxes (blitz-dom
+        // `restore_out_of_flow_stacking_owners`) paints them after its fragments, in a group that is
+        // their backdrop root (WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
+        let owned = clip_path::owned_hoisted(self.dom.as_ref(), span_id);
+        if !owned.is_empty() {
+            let viewport = Rect::new(0.0, 0.0, self.width as f64, self.height as f64);
+            scene.push_layer(
+                Fill::NonZero,
+                BlendMode::default(),
+                1.0,
+                Affine::IDENTITY,
+                &viewport,
+                Some(crate::layers::backdrop_root_marker()),
+                None,
+            );
+        }
         cx.draw_inline_pass(scene, pos, span_id);
+        if !owned.is_empty() {
+            let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
+            cx.draw_hoisted_children(scene, owned.iter(), transform, everything);
+            scene.pop_layer();
+        }
         // Then the atomic inline boxes in it (badges), which its root skipped (`draw_paint_child`), moved
         // by the sticky offsets of the inline boxes around them (layout placed them with the relative ones).
         let children: Vec<NodeId> = root.paint_children.borrow().iter().flatten().copied().collect();

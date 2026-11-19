@@ -997,7 +997,10 @@ impl ElementCx<'_, '_> {
                 // pyro: a `display: contents` element has no box to clip, mask or fade.
                 .filter(|style| !style.clone_display().is_contents())
                 .is_some_and(|style| {
-                    !matches!(style.get_clip_path(), StyloClipPath::None)
+                    // pyro: an inline stacking context that keeps out-of-flow descendants
+                    // (blitz-dom `restore_out_of_flow_stacking_owners`) paints them with its areas.
+                    owns_hoisted(dom, id)
+                    || !matches!(style.get_clip_path(), StyloClipPath::None)
                         || style
                             .get_svg()
                             .mask_image
@@ -1430,8 +1433,29 @@ impl ElementCx<'_, '_> {
                 }
             }
             let faded = (opacity < 1.0 || filter.is_some()) && alone;
+            // pyro: the out-of-flow boxes this inline stacking context keeps: they paint in its
+            // group, after its areas, under its clip path, and it is their backdrop root.
+            // (A positioned inline box listed in the paint tree paints them with its entry, where
+            // its fragments paint: `draw_inline_pass_entry`.)
+            let owned = if node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
+                Vec::new()
+            } else {
+                owned_hoisted(dom, effect)
+            };
+            let group_area = if owned.is_empty() { areas.clone() } else { visible.to_path(0.1) };
             if faded {
-                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
+                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &group_area, filter, None);
+            }
+            if !owned.is_empty() {
+                scene.push_layer(
+                    Fill::NonZero,
+                    peniko::BlendMode::default(),
+                    1.0,
+                    transform,
+                    &visible.to_path(0.1),
+                    Some(crate::layers::backdrop_root_marker()),
+                    None,
+                );
             }
 
             // The clip path, against the first fragment's border box.
@@ -1485,6 +1509,13 @@ impl ElementCx<'_, '_> {
                     set_filter(None);
                 }
             });
+            if !owned.is_empty() {
+                with_element_clip(scene, clip.as_ref(), first_transform, self.scale, first_visible, |scene| {
+                    let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
+                    self.draw_hoisted_children(scene, owned.iter(), self.transform, everything);
+                });
+                scene.pop_layer();
+            }
             if faded {
                 scene.pop_layer();
             }
@@ -1492,6 +1523,25 @@ impl ElementCx<'_, '_> {
         INLINE_EFFECTS.set(false);
         true
     }
+}
+
+/// pyro: whether the inline element `id` keeps out-of-flow boxes in its stacking context
+/// (blitz-dom `restore_out_of_flow_stacking_owners`).
+pub(crate) fn owns_hoisted(dom: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
+    dom.get_node(id).and_then(|node| node.stacking_context.as_ref()).is_some_and(|sc| {
+        !sc.children.is_empty() || sc.positioned_level().next().is_some()
+    })
+}
+
+/// pyro: the out-of-flow boxes the inline element `id` keeps, in paint order: negative `z-index`,
+/// none, then positive.
+pub(crate) fn owned_hoisted(dom: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> Vec<blitz_dom::HoistedPaintChild> {
+    let Some(sc) = dom.get_node(id).and_then(|node| node.stacking_context.as_ref()) else { return Vec::new() };
+    sc.neg_z_hoisted_children()
+        .chain(sc.positioned_level())
+        .chain(sc.pos_z_hoisted_children())
+        .cloned()
+        .collect()
 }
 
 /// pyro: the filter an inline element (not atomic) with style `style` paints its fragments through:

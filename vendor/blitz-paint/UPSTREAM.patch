@@ -7426,7 +7426,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -738,6 +2095,84 @@
+@@ -738,6 +2095,105 @@
          }
      }
  
@@ -7459,7 +7459,28 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    fn draw_inline_pass_entry_in(&self, scene: &mut impl PaintScene, span_id: NodeId, root_id: NodeId, transform: Affine, pos: Point) {
 +        let Some(root) = self.dom.get_node(root_id) else { return };
 +        let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
++        // pyro: an inline stacking context keeping out-of-flow boxes (blitz-dom
++        // `restore_out_of_flow_stacking_owners`) paints them after its fragments, in a group that is
++        // their backdrop root (WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
++        let owned = clip_path::owned_hoisted(self.dom.as_ref(), span_id);
++        if !owned.is_empty() {
++            let viewport = Rect::new(0.0, 0.0, self.width as f64, self.height as f64);
++            scene.push_layer(
++                Fill::NonZero,
++                BlendMode::default(),
++                1.0,
++                Affine::IDENTITY,
++                &viewport,
++                Some(crate::layers::backdrop_root_marker()),
++                None,
++            );
++        }
 +        cx.draw_inline_pass(scene, pos, span_id);
++        if !owned.is_empty() {
++            let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
++            cx.draw_hoisted_children(scene, owned.iter(), transform, everything);
++            scene.pop_layer();
++        }
 +        // Then the atomic inline boxes in it (badges), which its root skipped (`draw_paint_child`), moved
 +        // by the sticky offsets of the inline boxes around them (layout placed them with the relative ones).
 +        let children: Vec<NodeId> = root.paint_children.borrow().iter().flatten().copied().collect();
@@ -7511,7 +7532,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn element_cx(
          &'dom self,
          node: &'dom Node,
-@@ -759,10 +2194,42 @@
+@@ -759,10 +2215,42 @@
          // todo: maybe cache this so we don't need to constantly be figuring it out
          // It is quite a bit of math to calculate during render/traverse
          // Also! we can cache the bezpaths themselves, saving us a bunch of work
@@ -7556,7 +7577,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          ElementCx {
              context: self,
              frame,
-@@ -784,6 +2251,69 @@
+@@ -784,6 +2272,69 @@
      }
  }
  
@@ -7626,7 +7647,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn to_image_quality(image_rendering: ImageRendering) -> peniko::ImageQuality {
      match image_rendering {
          ImageRendering::Auto => peniko::ImageQuality::Medium,
-@@ -818,6 +2348,85 @@
+@@ -818,6 +2369,85 @@
      }
  }
  
@@ -7712,7 +7733,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  /// A context of loaded and hot data to draw the element from
  struct ElementCx<'dom, 'a> {
      context: &'dom BlitzDomPainter<'dom, 'a>,
-@@ -836,390 +2445,4145 @@
+@@ -836,390 +2466,4145 @@
      custom_widget_scene: Option<&'a Scene>,
  }
  
@@ -12227,7 +12248,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6593,60 @@
+@@ -1229,9 +6614,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12290,7 +12311,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6668,20 @@
+@@ -1253,9 +6689,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12314,7 +12335,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6692,209 @@
+@@ -1266,26 +6713,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12526,7 +12547,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +6902,38 @@
+@@ -1293,15 +6923,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12566,7 +12587,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +6944,108 @@
+@@ -1312,7 +6965,108 @@
          );
      }
  
@@ -12675,7 +12696,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7062,22 @@
+@@ -1329,9 +7083,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12701,7 +12722,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7093,28 @@
+@@ -1347,10 +7114,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12730,7 +12751,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7122,23 @@
+@@ -1358,8 +7143,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12755,7 +12776,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7162,27 @@
+@@ -1383,22 +7183,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12792,7 +12813,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7211,32 @@
+@@ -1427,6 +7232,32 @@
      }
  }
  
@@ -12825,7 +12846,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7248,13 @@
+@@ -1438,6 +7269,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12839,7 +12860,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7274,354 @@
+@@ -1457,12 +7295,354 @@
          }
      };
      let s_border = style.get_border();
@@ -19073,7 +19094,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
      /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
      /// elements; `auto` components resolve to the corresponding border box edge.
-@@ -41,435 +149,1490 @@
+@@ -41,435 +149,1540 @@
          Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
      }
  
@@ -19228,7 +19249,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            margin.bottom as f64,
 +        )
 +    }
- 
++
 +    /// The edges of a `<geometry-box>` with its rounded corners (CSS Shapes' box shapes), in CSS
 +    /// px: the border radii for the border box, the inner radii for the padding and content boxes,
 +    /// and for the margin box the radii grown by the margins as `box-shadow`'s spread grows them
@@ -19299,7 +19320,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        };
 +        rounded_rect(rect, radii)
 +    }
-+
+ 
 +    /// pyro: `path` (CSS px) with its curves flattened to within 0.02 device px, as Skia draws
 +    /// them and as shaped corners are drawn (`corner-shape`): vello_cpu's own flattening (to
 +    /// 0.25px) moved their antialiased pixels by up to a quarter of their range. Used for
@@ -19957,7 +19978,75 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                bez.quad_to(c1, p);
 -                last_control = Some(c1);
 -                cur = p;
--            }
++        }
++        None
++    }
++
++    /// A clip path that is one shape (with no clip path of its own, through groups that only
++    /// transform): that shape in the user space of the element that references it, with its
++    /// clip rule. An empty path when it has no visible shape. `None` for any other clip path.
++    pub(in crate::render) fn single_shape(clip: &usvg::ClipPath) -> Option<(BezPath, Fill)> {
++        fn walk<'a>(group: &'a usvg::Group, found: &mut Option<&'a usvg::Path>) -> bool {
++            for node in group.children() {
++                match node {
++                    usvg::Node::Path(path) => {
++                        if !path.is_visible() {
++                            continue;
++                        }
++                        if found.is_some() {
++                            return false;
++                        }
++                        *found = Some(path);
++                    }
++                    usvg::Node::Group(child) => {
++                        if child.clip_path().is_some()
++                            || child.mask().is_some()
++                            || !child.filters().is_empty()
++                            || !walk(child, found)
++                        {
++                            return false;
++                        }
++                    }
++                    _ => return false,
++                }
++            }
++            true
++        }
++        if clip.clip_path().is_some() {
++            return None;
++        }
++        let mut found = None;
++        if !walk(clip.root(), &mut found) {
++            return None;
++        }
++        let Some(path) = found else {
++            return Some((BezPath::new(), Fill::NonZero));
++        };
++        let mut shape = to_bez_path(path.data());
++        shape.apply_affine(to_affine(clip.transform()) * to_affine(path.abs_transform()));
++        let fill = match path.fill().map(|fill| fill.rule()) {
++            Some(usvg::FillRule::EvenOdd) => Fill::EvenOdd,
++            _ => Fill::NonZero,
++        };
++        Some((shape, fill))
++    }
++
++    pub(in crate::render) fn to_affine(ts: usvg::Transform) -> Affine {
++        Affine::new([ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty].map(f64::from))
++    }
++
++    fn to_bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
++        use usvg::tiny_skia_path::PathSegment;
++        let point = |p: usvg::tiny_skia_path::Point| kurbo::Point::new(p.x as f64, p.y as f64);
++        let mut out = BezPath::new();
++        for segment in path.segments() {
++            match segment {
++                PathSegment::MoveTo(p) => out.move_to(point(p)),
++                PathSegment::LineTo(p) => out.line_to(point(p)),
++                PathSegment::QuadTo(p1, p2) => out.quad_to(point(p1), point(p2)),
++                PathSegment::CubicTo(p1, p2, p3) => out.curve_to(point(p1), point(p2), point(p3)),
++                PathSegment::Close => out.close_path(),
+             }
 -            GenericShapeCommand::Arc {
 -                point,
 -                radii,
@@ -19989,93 +20078,10 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                for el in arc.append_iter(0.1) {
 -                    bez.push(el);
 +        }
-+        None
-+    }
-+
-+    /// A clip path that is one shape (with no clip path of its own, through groups that only
-+    /// transform): that shape in the user space of the element that references it, with its
-+    /// clip rule. An empty path when it has no visible shape. `None` for any other clip path.
-+    pub(in crate::render) fn single_shape(clip: &usvg::ClipPath) -> Option<(BezPath, Fill)> {
-+        fn walk<'a>(group: &'a usvg::Group, found: &mut Option<&'a usvg::Path>) -> bool {
-+            for node in group.children() {
-+                match node {
-+                    usvg::Node::Path(path) => {
-+                        if !path.is_visible() {
-+                            continue;
-+                        }
-+                        if found.is_some() {
-+                            return false;
-+                        }
-+                        *found = Some(path);
-+                    }
-+                    usvg::Node::Group(child) => {
-+                        if child.clip_path().is_some()
-+                            || child.mask().is_some()
-+                            || !child.filters().is_empty()
-+                            || !walk(child, found)
-+                        {
-+                            return false;
-+                        }
-+                    }
-+                    _ => return false,
-                 }
--                last_control = None;
--                cur = p;
-             }
-+            true
-         }
-+        if clip.clip_path().is_some() {
-+            return None;
-+        }
-+        let mut found = None;
-+        if !walk(clip.root(), &mut found) {
-+            return None;
-+        }
-+        let Some(path) = found else {
-+            return Some((BezPath::new(), Fill::NonZero));
-+        };
-+        let mut shape = to_bez_path(path.data());
-+        shape.apply_affine(to_affine(clip.transform()) * to_affine(path.abs_transform()));
-+        let fill = match path.fill().map(|fill| fill.rule()) {
-+            Some(usvg::FillRule::EvenOdd) => Fill::EvenOdd,
-+            _ => Fill::NonZero,
-+        };
-+        Some((shape, fill))
-     }
- 
--    Some(bez)
-+    pub(in crate::render) fn to_affine(ts: usvg::Transform) -> Affine {
-+        Affine::new([ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty].map(f64::from))
-+    }
-+
-+    fn to_bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
-+        use usvg::tiny_skia_path::PathSegment;
-+        let point = |p: usvg::tiny_skia_path::Point| kurbo::Point::new(p.x as f64, p.y as f64);
-+        let mut out = BezPath::new();
-+        for segment in path.segments() {
-+            match segment {
-+                PathSegment::MoveTo(p) => out.move_to(point(p)),
-+                PathSegment::LineTo(p) => out.line_to(point(p)),
-+                PathSegment::QuadTo(p1, p2) => out.quad_to(point(p1), point(p2)),
-+                PathSegment::CubicTo(p1, p2, p3) => out.curve_to(point(p1), point(p2), point(p3)),
-+                PathSegment::Close => out.close_path(),
-+            }
-+        }
 +        out
 +    }
- }
- 
--/// Resolve a CommandEndPoint to an absolute Point.
--/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur`.
--fn resolve_endpoint<N>(
--    endpoint: &CommandEndPoint<GenericPosition<N, N>, N>,
--    cur: Point,
--    resolve_x: impl Fn(&N) -> f64,
--    resolve_y: impl Fn(&N) -> f64,
--) -> Point {
--    match endpoint {
--        CommandEndPoint::ToPosition(pos) => {
--            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
++}
++
 +#[cfg(feature = "svg")]
 +impl ElementCx<'_, '_> {
 +    /// pyro: `clip-path: url(#id)` naming a `<clipPath>` of this document, as Chromium applies one
@@ -20095,13 +20101,15 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                let node = dom.get_node(target)?;
 +                if !is_svg_element(node, "clipPath") {
 +                    return None;
-+                }
+                 }
+-                last_control = None;
+-                cur = p;
 +                if reference_cycle(dom, target) {
 +                    return Some(ElementClip::Nothing);
 +                }
 +                let units = node.attr(blitz_dom::local_name!("clipPathUnits")) == Some("objectBoundingBox");
 +                (Some(target), node.attr(blitz_dom::local_name!("id"))?.to_string(), units)
-+            }
+             }
 +            None => {
 +                let (source, id) = external_reference(&self.element.reference_images, url)?;
 +                let (name, units) = blitz_dom::node::svg_source_element(&source, &id, "clipPathUnits")?;
@@ -20149,34 +20157,27 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                transform: user,
 +            }),
          }
--        CommandEndPoint::ByCoordinate(coord) => {
--            Point::new(cur.x + resolve_x(&coord.x), cur.y + resolve_y(&coord.y))
--        }
      }
- }
++}
  
--/// Resolve a ControlPoint to an absolute Point.
--/// - `Absolute`: uses the position directly.
--/// - `Relative`: the coordinate pair is offset from a base point determined by `ControlReference`:
--///   - `Start` (default): relative to the command's starting point (`cur`).
--///   - `End`: relative to the command's end point (`end`).
--///   - `Origin`: relative to the reference box origin (0,0 in path coordinates).
--fn resolve_control_point<N>(
--    control_point: &ControlPoint<GenericPosition<N, N>, N>,
--    cur: Point,
--    end: Point,
--    resolve_x: impl Fn(&N) -> f64,
--    resolve_y: impl Fn(&N) -> f64,
--) -> Point {
--    match control_point {
--        ControlPoint::Absolute(pos) => {
--            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
+-    Some(bez)
 +thread_local! {
 +    /// pyro: set while an inline layout is painted for its inline elements' clip paths and masks
 +    /// ([`ElementCx::draw_inline_effects`]), whose passes paint it plainly.
 +    static INLINE_EFFECTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-+}
-+
+ }
+ 
+-/// Resolve a CommandEndPoint to an absolute Point.
+-/// `ToPosition` is absolute; `ByCoordinate` is relative to `cur`.
+-fn resolve_endpoint<N>(
+-    endpoint: &CommandEndPoint<GenericPosition<N, N>, N>,
+-    cur: Point,
+-    resolve_x: impl Fn(&N) -> f64,
+-    resolve_y: impl Fn(&N) -> f64,
+-) -> Point {
+-    match endpoint {
+-        CommandEndPoint::ToPosition(pos) => {
+-            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
 +/// pyro: an inline element's piece on one line, in an inline layout's space (device px, with the
 +/// text's placement shifts).
 +#[derive(Clone, Copy)]
@@ -20204,11 +20205,8 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        if INLINE_EFFECTS.get() {
 +            return false;
          }
--        ControlPoint::Relative(rel) => {
--            let base = match rel.reference {
--                ControlReference::Start => cur,
--                ControlReference::End => end,
--                ControlReference::Origin => Point::ZERO,
+-        CommandEndPoint::ByCoordinate(coord) => {
+-            Point::new(cur.x + resolve_x(&coord.x), cur.y + resolve_y(&coord.y))
 +        // pyro: a vertical layout's lines each have their transform (`vertical_line_transform`):
 +        // the fragments are placed in this element's space through them.
 +        let vertical = self.node.vertical_block_axis();
@@ -20219,7 +20217,9 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        let styles = layout.styles();
 +        if styles.len() < 2 {
 +            return false;
-+        }
+         }
+-    }
+-}
 +        let dom = self.context.dom;
 +        let root = self.node.id;
 +        // pyro: a recording paint (the PDF's text) leaves out inline opacity and backdrop
@@ -20235,7 +20235,10 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                // pyro: a `display: contents` element has no box to clip, mask or fade.
 +                .filter(|style| !style.clone_display().is_contents())
 +                .is_some_and(|style| {
-+                    !matches!(style.get_clip_path(), StyloClipPath::None)
++                    // pyro: an inline stacking context that keeps out-of-flow descendants
++                    // (blitz-dom `restore_out_of_flow_stacking_owners`) paints them with its areas.
++                    owns_hoisted(dom, id)
++                    || !matches!(style.get_clip_path(), StyloClipPath::None)
 +                        || style
 +                            .get_svg()
 +                            .mask_image
@@ -20283,7 +20286,23 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            }
 +            true
 +        });
-+
+ 
+-/// Resolve a ControlPoint to an absolute Point.
+-/// - `Absolute`: uses the position directly.
+-/// - `Relative`: the coordinate pair is offset from a base point determined by `ControlReference`:
+-///   - `Start` (default): relative to the command's starting point (`cur`).
+-///   - `End`: relative to the command's end point (`end`).
+-///   - `Origin`: relative to the reference box origin (0,0 in path coordinates).
+-fn resolve_control_point<N>(
+-    control_point: &ControlPoint<GenericPosition<N, N>, N>,
+-    cur: Point,
+-    end: Point,
+-    resolve_x: impl Fn(&N) -> f64,
+-    resolve_y: impl Fn(&N) -> f64,
+-) -> Point {
+-    match control_point {
+-        ControlPoint::Absolute(pos) => {
+-            Point::new(resolve_x(&pos.horizontal), resolve_y(&pos.vertical))
 +        // The layout's space, as `draw_inline_layout` paints it.
 +        let subpixel = text_layout.content_box_subpixel_offset;
 +        let origin = Vec2::new(
@@ -20455,7 +20474,12 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                };
 +                fragments[slot].push(InlineFragment { border_box, area });
 +            }
-+        }
+         }
+-        ControlPoint::Relative(rel) => {
+-            let base = match rel.reference {
+-                ControlReference::Start => cur,
+-                ControlReference::End => end,
+-                ControlReference::Origin => Point::ZERO,
 +
 +        // pyro: each element's areas without those of the elements before it: where neighbours'
 +        // areas met in a pixel column (each snapped out to whole device pixels), both elements'
@@ -20672,8 +20696,29 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                }
 +            }
 +            let faded = (opacity < 1.0 || filter.is_some()) && alone;
++            // pyro: the out-of-flow boxes this inline stacking context keeps: they paint in its
++            // group, after its areas, under its clip path, and it is their backdrop root.
++            // (A positioned inline box listed in the paint tree paints them with its entry, where
++            // its fragments paint: `draw_inline_pass_entry`.)
++            let owned = if node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
++                Vec::new()
++            } else {
++                owned_hoisted(dom, effect)
++            };
++            let group_area = if owned.is_empty() { areas.clone() } else { visible.to_path(0.1) };
 +            if faded {
-+                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
++                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &group_area, filter, None);
++            }
++            if !owned.is_empty() {
++                scene.push_layer(
++                    Fill::NonZero,
++                    peniko::BlendMode::default(),
++                    1.0,
++                    transform,
++                    &visible.to_path(0.1),
++                    Some(crate::layers::backdrop_root_marker()),
++                    None,
++                );
 +            }
 +
 +            // The clip path, against the first fragment's border box.
@@ -20727,6 +20772,13 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    set_filter(None);
 +                }
 +            });
++            if !owned.is_empty() {
++                with_element_clip(scene, clip.as_ref(), first_transform, self.scale, first_visible, |scene| {
++                    let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
++                    self.draw_hoisted_children(scene, owned.iter(), self.transform, everything);
++                });
++                scene.pop_layer();
++            }
 +            if faded {
 +                scene.pop_layer();
 +            }
@@ -20743,6 +20795,25 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -    match last_control {
 -        Some(ctrl) => Point::new(2.0 * cur.x - ctrl.x, 2.0 * cur.y - ctrl.y),
 -        None => cur,
++/// pyro: whether the inline element `id` keeps out-of-flow boxes in its stacking context
++/// (blitz-dom `restore_out_of_flow_stacking_owners`).
++pub(crate) fn owns_hoisted(dom: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
++    dom.get_node(id).and_then(|node| node.stacking_context.as_ref()).is_some_and(|sc| {
++        !sc.children.is_empty() || sc.positioned_level().next().is_some()
++    })
++}
++
++/// pyro: the out-of-flow boxes the inline element `id` keeps, in paint order: negative `z-index`,
++/// none, then positive.
++pub(crate) fn owned_hoisted(dom: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> Vec<blitz_dom::HoistedPaintChild> {
++    let Some(sc) = dom.get_node(id).and_then(|node| node.stacking_context.as_ref()) else { return Vec::new() };
++    sc.neg_z_hoisted_children()
++        .chain(sc.positioned_level())
++        .chain(sc.pos_z_hoisted_children())
++        .cloned()
++        .collect()
++}
++
 +/// pyro: the filter an inline element (not atomic) with style `style` paints its fragments through:
 +/// one that moves nothing out of them (colour functions and colour-matrix SVG filters), else
 +/// `None` (left unpainted, as before).
