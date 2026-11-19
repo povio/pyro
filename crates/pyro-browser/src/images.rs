@@ -64,6 +64,14 @@ struct Image {
     outcome: Option<bool>,
 }
 
+impl Browser {
+    /// pyro: the URLs the elements of `page`'s document requested as images themselves
+    /// (`<img>`, SVG `<image>`, `<object>`), loaded or failed or in flight.
+    pub fn element_image_urls(&self, page: crate::PageId) -> Vec<String> {
+        self.doc(page.into()).map(|d| d.images.entries.values().map(|i| i.url.clone()).collect()).unwrap_or_default()
+    }
+}
+
 /// An `<img>`'s CORS settings attribute state (0 no CORS, 1 anonymous, 2 use-credentials) and
 /// referrer policy attribute state (a known keyword, else ""): a change of either is a relevant
 /// mutation.

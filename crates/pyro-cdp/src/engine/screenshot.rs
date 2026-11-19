@@ -188,6 +188,8 @@ struct PageFetcher {
     bodies: Option<Arc<pyro_dom::layout::SubresourceBodies>>,
     /// pyro: the URLs of the document's list of available images.
     available: std::collections::HashSet<String>,
+    /// pyro: the URLs the document's elements requested as images (`Browser::element_image_urls`).
+    requested: std::collections::HashSet<String>,
     /// pyro: each document's `pyro_browser::layout_document`, by its client.
     documents: Arc<std::collections::HashMap<String, String>>,
 }
@@ -228,10 +230,14 @@ impl Fetcher for PageFetcher {
 
     /// pyro: an image the document never fetched itself, asked for after its `load` (a style
     /// change since): Chrome paints it once it arrives, and a capture does not wait for it. One
-    /// its layout fetched (or is fetching), or one in its list of available images, is waited for.
+    /// its layout fetched (or is fetching), or one in its list of available images, is waited for,
+    /// as is one an element of the document requested itself (an `<img>` whose load failed shows
+    /// its alt text) and one no network answers (`about:`, `data:`, `blob:`, `file:`).
     fn defers(&self, url: &str, options: &pyro_render::FetchOptions) -> bool {
         let (key, image) = layout_key(url, options, &self.client, &self.documents);
         image
+            && (url.starts_with("http://") || url.starts_with("https://"))
+            && !self.requested.contains(url)
             && self.loaded
             && !self.available.contains(url)
             && self.bodies.as_ref().is_some_and(|bodies| !bodies.lock().contains_key(&key))
@@ -584,7 +590,17 @@ impl EngineHost {
             .unwrap_or_default();
         let bodies = browser.layout_bodies(pid);
         let documents = Arc::new(browser.layout_documents(pid));
-        Arc::new(PageFetcher { handle: self.thread.handle(), page: pid, client, loaded, bodies, available, documents })
+        let requested = browser.element_image_urls(pid).into_iter().collect();
+        Arc::new(PageFetcher {
+            handle: self.thread.handle(),
+            page: pid,
+            client,
+            loaded,
+            bodies,
+            available,
+            requested,
+            documents,
+        })
     }
 
     /// `Page.captureScreenshot`: replied to from `flush_renders`.
