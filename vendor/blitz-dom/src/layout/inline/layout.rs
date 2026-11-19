@@ -379,9 +379,23 @@ impl LayoutPassState<'_> {
         // pyro: relatively positioned inline boxes around the float move it as they move the rest
         // of their content (CSS 2.1 § 9.4.3), not where it is placed (WPT
         // `block-in-inline-float-between-001`).
+        // pyro: and its own `position: relative` offset moves it from where it is placed (CSS 2.1
+        // § 9.4.3; WPT css-overflow `line-clamp-with-floats-008`). A percentage `top` is against
+        // a block size not known yet: `auto`.
+        let own = self.nodes[node_id]
+            .primary_styles()
+            .filter(|style| style.clone_position() == style::computed_values::position::T::Relative)
+            .map_or(taffy::Point::ZERO, |style| {
+                let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+                crate::layout::inline::relative::relative_offset(
+                    &style,
+                    taffy::Size { width: containing_block_width, height: 0.0 },
+                    rtl,
+                )
+            });
         let location = taffy::Point {
-            x: pos.x + margin.left + container_pb.left + span_offset.x,
-            y: pos.y + margin.top + container_pb.top + span_offset.y,
+            x: pos.x + margin.left + container_pb.left + span_offset.x + own.x,
+            y: pos.y + margin.top + container_pb.top + span_offset.y + own.y,
         };
         let size = output.size;
         self.nodes[node_id].update_unrounded_layout(|layout| {
