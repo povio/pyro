@@ -1450,6 +1450,9 @@ impl Engine {
         // Handles and realms a wrapper's payload holds go with the payload,
         // in the collection below: they are counted after it.
         let clean = clean.ok_or("no clean heap to compare with")?;
+        // The agent's shared values ([`crate::Scope::agent_value`]) are the
+        // last owner's: the next one makes its own on first use.
+        inner.agent_values.borrow_mut().clear();
         if inner.time_zone_set.get() && !self.set_time_zone(None).unwrap_or(false) {
             return Err("the time zone override stays");
         }
