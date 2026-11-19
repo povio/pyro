@@ -462,6 +462,12 @@ fn trustworthy_url(url: &str) -> bool {
 /// document are potentially trustworthy (also the page's `[SecureContext]` members,
 /// `PageHooks::is_secure_context`).
 pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate::frames::FrameKey, url: &str) -> bool {
+    // A popup's about:blank / about:srcdoc document: its creator's state (`FrameHost::creator_secure`).
+    if key.child.is_none() && matches!(url, "about:blank" | "about:srcdoc") {
+        if let Some(secure) = host.creator_secure.get() {
+            return secure;
+        }
+    }
     if !document_trustworthy(host, key, url) {
         return false;
     }

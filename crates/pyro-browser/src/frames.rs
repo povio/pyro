@@ -185,6 +185,11 @@ pub(crate) struct FrameHost {
     /// For such a popup, the ticket through which the opener's document
     /// reaches it (its `window.open` result is `event.source` there).
     pub(crate) popup: RefCell<Option<Rc<pyro_webapi::PopupTicket>>>,
+    /// For a popup made by `window.open` (`prebuild_popup`): its creator document's secure-context
+    /// state when it was made, which its about:blank documents (the initial one, and later ones that
+    /// inherit the creator's origin) take as theirs (HTML: a new top-level browsing context's
+    /// initial document's environment comes from its creator's), not one computed as top-level.
+    pub(crate) creator_secure: Cell<Option<bool>>,
     /// The other pages sharing this page's DOM store: the popups it opened, and its opener's group
     /// (a popup takes its opener's store, see `prebuild_popup`). Their realms are siblings of this
     /// page's for node wrappers (`sibling_realms`).
@@ -229,6 +234,7 @@ impl FrameHost {
         name: String,
     ) -> Result<PrebuiltPopup, JsError> {
         let from = self.frame(opener).ok_or(JsError::ContextDestroyed)?;
+        let creator_secure = crate::window::frame_chain_secure(self, opener, &from.url);
         let id = PageId(self.next() as u32);
         let frame = Frame {
             id: FrameId(format!("{:032X}", self.next())),
@@ -279,6 +285,7 @@ impl FrameHost {
             // Its `window.opener` from the start (`Browser::adopt_popup` sets it again).
             opener: RefCell::new(Some(Rc::downgrade(self))),
             popup: RefCell::new(None),
+            creator_secure: Cell::new(None),
             dom_peers: RefCell::new(Vec::new()),
             quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
@@ -287,6 +294,7 @@ impl FrameHost {
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
+        host.creator_secure.set(Some(creator_secure));
         // One DOM store: each reaches the other's realms for node wrappers.
         self.dom_peers.borrow_mut().push(Rc::downgrade(&host));
         host.dom_peers.borrow_mut().push(Rc::downgrade(self));
@@ -351,6 +359,7 @@ impl FrameHost {
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
             popup: RefCell::new(None),
+            creator_secure: Cell::new(None),
             dom_peers: RefCell::new(Vec::new()),
             quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
