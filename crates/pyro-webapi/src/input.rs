@@ -1265,12 +1265,15 @@ fn editing_host_of(page: &PageDom, target: NodeId) -> Option<NodeId> {
         dom.node_document(target).ok().filter(|&doc| dom.design_mode(doc))
     };
     if let Some(doc) = design {
-        if let Some((start, _)) = crate::editing::selection_range(page) {
-            let dom = page.dom.borrow();
-            if dom.node_document(start.0).ok() == Some(doc) {
-                if let Some(host) = crate::editing::editing_host(&dom, start.0) {
-                    return Some(host);
-                }
+        let Some((start, _)) = crate::editing::selection_range(page) else {
+            // pyro: no selection yet (none is made by turning designMode on, as in Blink): typing
+            // inserts nothing, until a click or a script places one.
+            return None;
+        };
+        let dom = page.dom.borrow();
+        if dom.node_document(start.0).ok() == Some(doc) {
+            if let Some(host) = crate::editing::editing_host(&dom, start.0) {
+                return Some(host);
             }
         }
     }
