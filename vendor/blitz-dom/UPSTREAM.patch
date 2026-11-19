@@ -16906,7 +16906,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,526 @@
+@@ -0,0 +1,535 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -17078,26 +17078,23 @@ new file mode 100644
 +        // The last clamp point before the one at hand: after the last line of a block whose lines
 +        // all stay, or after a box of its own (WPT css-overflow `line-clamp-auto-034`, `-039`).
 +        let mut last_lines: Option<ClampPoint> = None;
-+        // Blocks to visit (last first) with their top from the root's border box, and what the
-+        // blocks around them (in the root) add below their margin box: a margin their bottom
-+        // margin collapses with and, past it, bottom padding, borders and margins that do not
-+        // (`BelowBlock`). With the block's own, that must fit under a clamp line of
-+        // `line-clamp: auto` too (WPT css-overflow `line-clamp-auto-029`).
-+        // (`floor`: a clamp point in a box with a definite height ends that box at its bottom
-+        // (the innermost such box's), wherever the point is in it: WPT css-overflow
-+        // `line-clamp-auto-035`, `-040`. `whole`: a block-level box
-+        // whose lines are not the root's, a clamp point after it.)
-+        let mut stack: Vec<(NodeId, f32, BelowBlock, f32, bool)> =
-+            vec![(root, 0.0, BelowBlock::default(), f32::NEG_INFINITY, false)];
-+        while let Some((id, top, around, floor, whole)) = stack.pop() {
-+            let below = if id == root { 0.0 } else { around.under(self.nodes[id].unrounded_layout()) };
++        // Blocks to visit (last first) with their top from the root's border box. (`whole`: a
++        // block-level box whose lines are not the root's, a clamp point after it.) What must fit
++        // under the limit for a clamp point is where the root's content would end with it: the
++        // blocks around the point closed after it (`clamp_point_end`: their bottom padding,
++        // border and collapsing margins, their own `height`, `min-height`, `max-height`; WPT
++        // css-overflow `line-clamp-auto-029`, `-035`, `-040`, `-042`..`-044`).
++        let mut stack: Vec<(NodeId, f32, bool)> = vec![(root, 0.0, false)];
++        while let Some((id, top, whole)) = stack.pop() {
 +            if whole {
-+                let layout = self.nodes[id].unrounded_layout();
++                let layout = *self.nodes[id].unrounded_layout();
 +                let bottom = top + layout.size.height;
-+                let end = bottom + collapse_margins(layout.margin.bottom, around.margin) + around.solid;
 +                let point = ClampPoint::Box(id, bottom);
 +                if clamp_line.is_none() {
-+                    let end = if floor.is_finite() { floor } else { end };
++                    let end = match self.nodes[id].layout_parent.get() {
++                        Some(parent) if parent != root => self.clamp_point_end(root, parent, bottom, layout.margin.bottom),
++                        _ => bottom + layout.margin.bottom,
++                    };
 +                    if limit.is_some_and(|limit| end > limit + 0.01) {
 +                        clamp_line = Some(last_lines.unwrap_or(ClampPoint::Lines(id, 0, content_top)));
 +                        clamped = true;
@@ -17109,12 +17106,6 @@ new file mode 100644
 +                }
 +                continue;
 +            }
-+            let floor = if id != root && !height_is_auto(&self.nodes[id]) {
-+                let layout = self.nodes[id].unrounded_layout();
-+                top + layout.size.height + collapse_margins(layout.margin.bottom, around.margin) + around.solid
-+            } else {
-+                floor
-+            };
 +            if self.nodes[id].flags.is_inline_root() {
 +                // (What an earlier clamp hid in it shows again unless this one hides it.)
 +                let all: Vec<NodeId> = self.nodes[id].layout_children.borrow().iter().flatten().copied().collect();
@@ -17140,13 +17131,20 @@ new file mode 100644
 +                            (line.metrics().block_max_coord - trim) / scale
 +                        })
 +                };
++                let bottoms: Vec<f32> = (0..lines).map(|index| line_bottom(index)).collect();
++                drop(line_bottom);
++                drop(root_style);
 +                if clamp_line.is_none() && lines > 0 {
 +                    // The lines of this block that stay: no more than the count leaves, and none
 +                    // that ends past the limit.
 +                    let mut kept = (max_lines - count).min(lines);
 +                    if let Some(limit) = limit {
 +                        kept = (0..kept)
-+                            .find(|&index| (if floor.is_finite() { floor } else { line_bottom(index) + below }) > limit + 0.01)
++                            .find(|&index| {
++                                let bottom = bottoms[index as usize];
++                                let end = if id == root { bottom } else { self.clamp_point_end(root, id, bottom, 0.0) };
++                                end > limit + 0.01
++                            })
 +                            .unwrap_or(kept);
 +                    }
 +                    if kept == 0 {
@@ -17158,10 +17156,10 @@ new file mode 100644
 +                            discarded.push(id);
 +                        }
 +                    } else if kept < lines || count + lines >= max_lines {
-+                        clamp_line = Some(ClampPoint::Lines(id, kept, line_bottom(kept - 1)));
++                        clamp_line = Some(ClampPoint::Lines(id, kept, bottoms[kept as usize - 1]));
 +                        clamped = lines > kept;
 +                    } else {
-+                        last_lines = Some(ClampPoint::Lines(id, lines, line_bottom(lines - 1)));
++                        last_lines = Some(ClampPoint::Lines(id, lines, bottoms[lines as usize - 1]));
 +                    }
 +                } else if clamp_line.is_some() && lines > 0 {
 +                    clamped = true;
@@ -17218,10 +17216,7 @@ new file mode 100644
 +                    });
 +                if descends || whole {
 +                    let layout = child.unrounded_layout();
-+                    // (The root is a formatting context of its own: its children's margins stay
-+                    // in it.)
-+                    let around = if id == root { BelowBlock::default() } else { around.inside(&self.nodes[id]) };
-+                    stack.push((child_id, top + layout.location.y, around, floor, whole));
++                    stack.push((child_id, top + layout.location.y, whole));
 +                }
 +            }
 +            stack[first..].reverse();
@@ -17296,25 +17291,66 @@ new file mode 100644
 +        let mut margin = 0.0f32;
 +        for (index, &id) in chain.iter().enumerate() {
 +            let layout = *self.nodes[id].unrounded_layout();
-+            let end = if block_end_collapses_through(&self.nodes[id]) {
-+                inner.max(layout.padding.top + layout.border.top).min(layout.size.height)
-+            } else if height_is_auto(&self.nodes[id]) {
-+                let top_inset = layout.padding.top + layout.border.top;
-+                margin = (inner + margin).max(top_inset) - inner;
-+                let end = (inner + margin + layout.padding.bottom + layout.border.bottom).min(layout.size.height);
-+                margin = 0.0;
-+                end
-+            } else {
-+                margin = 0.0;
-+                layout.size.height
-+            };
-+            margin = collapse_margins(margin, layout.margin.bottom);
++            let end;
++            (end, margin) = self.close_block(id, inner, margin);
 +            if end < layout.size.height {
 +                self.nodes[id].update_unrounded_layout(|unrounded| unrounded.size.height = end);
 +            }
 +            let parent = chain.get(index + 1).copied().unwrap_or(root);
 +            self.hide_boxes_after(parent, id);
 +            inner = layout.location.y + end;
++        }
++        inner + margin
++    }
++
++    /// pyro: block `id` closed after content ending at `inner` (its border box's coordinates)
++    /// with `margin` below it collapsing through its bottom: its block size then (no more than
++    /// laid out, at least its `min-height`; its `height` when not `auto`) and the margin below
++    /// its bottom edge.
++    fn close_block(&self, id: NodeId, inner: f32, margin: f32) -> (f32, f32) {
++        let node = &self.nodes[id];
++        let layout = node.unrounded_layout();
++        let min = {
++            use taffy::CoreStyle as _;
++            let style = node.layout_style();
++            let inset = layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
++            let inset = if style.box_sizing() == taffy::BoxSizing::ContentBox { inset } else { 0.0 };
++            style.min_size().height.maybe_resolve(None, resolve_calc_value).map_or(0.0, |min| min + inset)
++        };
++        let (end, margin) = if block_end_collapses_through(node) {
++            (inner.max(layout.padding.top + layout.border.top), margin)
++        } else if height_is_auto(node) {
++            let top_inset = layout.padding.top + layout.border.top;
++            ((inner + margin).max(top_inset) + layout.padding.bottom + layout.border.bottom, 0.0)
++        } else {
++            return (layout.size.height, collapse_margins(0.0, layout.margin.bottom));
++        };
++        // (A box that keeps a `min-height` past the point does not let a margin through.)
++        let floored = end.max(min);
++        let margin = if floored > end { 0.0 } else { margin };
++        (floored.min(layout.size.height), collapse_margins(margin, layout.margin.bottom))
++    }
++
++    /// pyro: where the content of the clamp root `root` ends (from its border box's top) for a
++    /// clamp point at `bottom` (from the same top) in its descendant block `block`, `margin`
++    /// below it: the blocks from `block` up closed after it ([`Self::close_block`]).
++    fn clamp_point_end(&self, root: NodeId, block: NodeId, bottom: f32, margin: f32) -> f32 {
++        let mut chain = Vec::new();
++        let mut id = block;
++        while id != root {
++            chain.push(id);
++            match self.nodes[id].layout_parent.get() {
++                Some(parent) => id = parent,
++                None => return bottom + margin,
++            }
++        }
++        let top: f32 = chain.iter().map(|&id| self.nodes[id].unrounded_layout().location.y).sum();
++        let (mut inner, mut margin) = (bottom - top, margin);
++        for &id in &chain {
++            let location = self.nodes[id].unrounded_layout().location.y;
++            let end;
++            (end, margin) = self.close_block(id, inner, margin);
++            inner = location + end;
 +        }
 +        inner + margin
 +    }
@@ -17397,33 +17433,6 @@ new file mode 100644
 +/// Two adjoining margins collapsed: the largest positive one less the most negative one.
 +fn collapse_margins(a: f32, b: f32) -> f32 {
 +    a.max(b).max(0.0) + a.min(b).min(0.0)
-+}
-+
-+/// pyro: what lies below a block's margin box in a line clamp's formatting context, to its
-+/// content edge: a margin the block's bottom margin collapses with, and past it the bottom
-+/// padding, borders and margins that do not collapse with it.
-+#[derive(Clone, Copy, Default)]
-+struct BelowBlock {
-+    margin: f32,
-+    solid: f32,
-+}
-+
-+impl BelowBlock {
-+    /// Below the content of a block with `layout` that this lies below.
-+    fn under(self, layout: &taffy::Layout) -> f32 {
-+        layout.padding.bottom + layout.border.bottom + collapse_margins(layout.margin.bottom, self.margin) + self.solid
-+    }
-+
-+    /// Below a child of `node` (that this lies below).
-+    fn inside(self, node: &crate::node::Node) -> BelowBlock {
-+        let layout = node.unrounded_layout();
-+        let margin = collapse_margins(layout.margin.bottom, self.margin);
-+        if block_end_collapses_through(node) {
-+            BelowBlock { margin, solid: self.solid }
-+        } else {
-+            BelowBlock { margin: 0.0, solid: layout.padding.bottom + layout.border.bottom + margin + self.solid }
-+        }
-+    }
 +}
 +
 +/// pyro: where a line clamp's content ends: after `kept` lines of an inline root, or after a
