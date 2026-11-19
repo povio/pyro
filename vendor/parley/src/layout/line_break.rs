@@ -2616,6 +2616,9 @@ fn commit_line<B: Brush>(
                     shaped_cluster_range: 0..0,
                     text_range: 0..0,
                 });
+                // pyro: a line of atomic inlines alone at a right-to-left level is reordered too
+                // (the second line of right-to-left images kept their logical order).
+                needs_reorder |= item.bidi_level != BidiLevel::new(0);
 
                 last_item_kind = item.kind;
             }

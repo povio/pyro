@@ -1666,7 +1666,7 @@ index 1569071..541a31a 100644
                  }
                  LineItem::Run(run) => {
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..5dd7467 100644
+index 3c3798c..7640d33 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -10,7 +10,8 @@ use alloc::vec::Vec;
@@ -3145,7 +3145,17 @@ index 3c3798c..5dd7467 100644
          }
  
          // If laying out with infinite width constraint, then set all lines' "max_width"
-@@ -1773,6 +2674,12 @@ fn commit_line<B: Brush>(
+@@ -1715,6 +2616,9 @@ fn commit_line<B: Brush>(
+                     shaped_cluster_range: 0..0,
+                     text_range: 0..0,
+                 });
++                // pyro: a line of atomic inlines alone at a right-to-left level is reordered too
++                // (the second line of right-to-left images kept their logical order).
++                needs_reorder |= item.bidi_level != BidiLevel::new(0);
+ 
+                 last_item_kind = item.kind;
+             }
+@@ -1773,6 +2677,12 @@ fn commit_line<B: Brush>(
              }
          }
      }
@@ -3158,7 +3168,7 @@ index 3c3798c..5dd7467 100644
      // let end_run_idx = lines.line_items.last().map(|item| item.index).unwrap_or(0);
      let end_item_idx = lines.line_items.len();
  
-@@ -1789,19 +2696,53 @@ fn commit_line<B: Brush>(
+@@ -1789,19 +2699,53 @@ fn commit_line<B: Brush>(
          BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
          BreakReason::Explicit | BreakReason::None => state.x - max_advance,
      };
@@ -3214,7 +3224,7 @@ index 3c3798c..5dd7467 100644
      }
  
      lines.lines.push(LineData {
-@@ -1812,15 +2753,19 @@ fn commit_line<B: Brush>(
+@@ -1812,15 +2756,19 @@ fn commit_line<B: Brush>(
          num_justification_opportunities,
          justification: Justification {
              justification_end_cluster,
@@ -3234,7 +3244,7 @@ index 3c3798c..5dd7467 100644
      });
  
      // Reset state for the new line
-@@ -1866,8 +2811,11 @@ fn hanging_whitespace<B: Brush>(
+@@ -1866,8 +2814,11 @@ fn hanging_whitespace<B: Brush>(
      layout: &Layout<B>,
      line_items: &[LineItemData],
      overflow: f32,
@@ -3247,7 +3257,7 @@ index 3c3798c..5dd7467 100644
      // Atoms with shaped clusters before this index may be stretched by justification.
      let mut justification_end_cluster = u32::MAX;
      let mut hanging_opportunities = 0;
-@@ -1888,8 +2836,8 @@ fn hanging_whitespace<B: Brush>(
+@@ -1888,8 +2839,8 @@ fn hanging_whitespace<B: Brush>(
              LayoutItemKind::InlineBox => {
                  let item = &layout.data.inline_boxes[line_item.index].inline_box;
  
@@ -3258,7 +3268,7 @@ index 3c3798c..5dd7467 100644
                      break;
                  }
              }
-@@ -1898,7 +2846,7 @@ fn hanging_whitespace<B: Brush>(
+@@ -1898,7 +2849,7 @@ fn hanging_whitespace<B: Brush>(
                  // reordering. We don't currently apply UAX #9 L1 (resetting trailing whitespace to
                  // paragraph level), so only logically-last items that match the paragraph level are
                  // guaranteed to be at that edge.
@@ -3267,7 +3277,7 @@ index 3c3798c..5dd7467 100644
                      break;
                  }
  
-@@ -1943,12 +2891,32 @@ fn hanging_whitespace<B: Brush>(
+@@ -1943,12 +2894,32 @@ fn hanging_whitespace<B: Brush>(
                          }
                      }
                      hanging_whitespace_advance += hanging;
@@ -3301,7 +3311,7 @@ index 3c3798c..5dd7467 100644
                      if !all_hang {
                          break 'items;
                      }
-@@ -1965,9 +2933,260 @@ fn hanging_whitespace<B: Brush>(
+@@ -1965,9 +2936,260 @@ fn hanging_whitespace<B: Brush>(
          hanging_whitespace_advance,
          justification_end_cluster,
          hanging_opportunities,
@@ -3562,7 +3572,7 @@ index 3c3798c..5dd7467 100644
  /// Reorder items within line according to the bidi levels of the items
  fn reorder_line_items(runs: &mut [LineItemData]) {
      let run_count = runs.len();
-@@ -2015,12 +3234,7 @@ mod tests {
+@@ -2015,12 +3237,7 @@ mod tests {
  
      #[test]
      fn subtree_extents_restored_at_break_opportunities() {
