@@ -1518,7 +1518,7 @@ impl BaseDocument {
             let scale = text.layout.scale();
             // Lines with text or an atomic inline (a line of boxes alone has an empty text
             // range); parley's empty line after a trailing `<br>` has neither.
-            let lines: Vec<(f32, f32)> = text
+            let mut lines: Vec<(f32, f32)> = text
                 .layout
                 .lines()
                 .filter(|line| !line.text_range().is_empty() || line.items().next().is_some())
@@ -1527,6 +1527,27 @@ impl BaseDocument {
                     (origin + m.block_min_coord / scale, origin + m.block_max_coord / scale)
                 })
                 .collect();
+            // pyro: a line box is whole layout units tall where the block's height adds up the
+            // unrounded ones (`line-height: 1.6` at 16px: lines 26px tall in a 25.59px box):
+            // a line ends where the next starts, and the last no lower than the content box
+            // where it passes it by less than a pixel (that rounding, not content overflowing a
+            // box of a set height or a multicol container's), so that the lines of consecutive
+            // blocks do not overlap into one that cannot break.
+            {
+                let layout = node.unrounded_layout();
+                let content_bottom = top + layout.size.height - layout.padding.bottom - layout.border.bottom;
+                let n = lines.len();
+                for index in 0..n {
+                    let end = match index + 1 < n {
+                        true => lines[index + 1].0,
+                        false if lines[index].1 - content_bottom < 1.0 => content_bottom,
+                        false => continue,
+                    };
+                    if end > lines[index].0 + EPSILON {
+                        lines[index].1 = lines[index].1.min(end);
+                    }
+                }
+            }
             let Some(&(_, last_bottom)) = lines.last() else {
                 return;
             };
