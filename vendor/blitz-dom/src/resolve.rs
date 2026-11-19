@@ -567,6 +567,15 @@ impl BaseDocument {
                 overflow = overflow.union(cells_overflow);
             }
         } else if let Some(ref children) = layout_children {
+            // pyro: a `line-clamp` container clips its floats at its block-end content edge: they
+            // overflow no further (CSS Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-010`).
+            let float_clip_bottom = self.nodes[node_id]
+                .primary_styles()
+                .is_some_and(|style| {
+                    let clamp = &style.get_box().line_clamp;
+                    !clamp.webkit_legacy && !clamp.max_lines.is_none()
+                })
+                .then(|| (layout.size.height - layout.border.bottom - layout.padding.bottom) as f64 * scale);
             for &child_id in children {
                 // Out-of-flow children are laid out relative to their containing
                 // block, not their DOM parent: they are visited (and their overflow
@@ -581,6 +590,21 @@ impl BaseDocument {
                 if self.nodes[child_id].flags.contains(NodeFlags::HIDDEN_BY_CLAMP) {
                     continue;
                 }
+                let child_rect_in_self = match float_clip_bottom {
+                    Some(bottom)
+                        if self.nodes[child_id]
+                            .primary_styles()
+                            .is_some_and(|style| style.clone_float() != style::computed_values::float::T::None) =>
+                    {
+                        let mut rect = child_rect_in_self;
+                        rect.y1 = rect.y1.min(bottom);
+                        if rect.y1 <= rect.y0 {
+                            continue;
+                        }
+                        rect
+                    }
+                    _ => child_rect_in_self,
+                };
                 overflow = unite_overflow(overflow, child_rect_in_self);
                 if let Some(padding) = scroll_padding {
                     overflow = unite_overflow(overflow, self.padded_inflow_box(child_id, padding, scale));
