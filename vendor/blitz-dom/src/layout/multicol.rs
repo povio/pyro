@@ -296,6 +296,9 @@ struct Breaks {
     /// pyro: the container has `column-height: 0`: its columns hold what cannot break whole
     /// (`fill`).
     whole_in_empty_columns: bool,
+    /// pyro: the container has no block size (a size-contained one) and no `column-height`: its
+    /// strip goes in one column, not in a run of 1px ones (classic scrollbars only).
+    one_column_when_empty: bool,
     /// pyro: line boxes and monolithic boxes a column holds whole even when they are taller than
     /// it, overflowing it (`held_whole`). Merged.
     whole: Vec<(f32, f32)>,
@@ -463,6 +466,9 @@ impl Breaks {
     /// part or row).
     fn fill_range(&self, from: f32, to: f32, height: f32, max_columns: usize) -> FillRun {
         let no_height = self.whole_in_empty_columns && height <= EPSILON;
+        if self.one_column_when_empty && height <= EPSILON {
+            return FillRun { columns: vec![(from, to)], shortage: None, violations: 0 };
+        }
         let height = height.max(1.0);
         let mut run = FillRun { columns: Vec::new(), shortage: None, violations: 0 };
         let mut start = from;
@@ -932,7 +938,13 @@ impl LayoutPassState<'_> {
             use taffy::CacheTree as _;
             self.cache_clear(node_id);
         }
+        // pyro: so does a container of no definite height (a size-contained one): Chrome lays out no
+        // run of 1px overflow columns (scrollWidth 752, not 8242: WPT css-contain
+        // `contain-size-multicol-002`, where classic scrollbars show the overflow). Classic
+        // scrollbars only, so that overlay mode keeps its results.
         breaks.whole_in_empty_columns = multicol.height.is_some_and(|height| height <= EPSILON);
+        breaks.one_column_when_empty =
+            self.doc.nodes.classic_scrollbars && multicol.height.is_none() && definite_height.is_some_and(|h| h <= EPSILON);
         // The strip's parts: runs of columns, and the spanners between them (strip ranges).
         let spanners = match spanning {
             Some(_) => self.doc.column_spanner_ranges(dom_id),
@@ -2229,6 +2241,7 @@ impl BaseDocument {
             strict: merge(found.strict),
             loose: merge(found.loose),
             whole_in_empty_columns: false,
+            one_column_when_empty: false,
             whole: merge(found.whole),
             gaps: found.gaps,
             trims: found.trims,
@@ -2874,6 +2887,7 @@ mod tests {
             strict: merge(strict),
             loose: merge(loose),
             whole_in_empty_columns: false,
+            one_column_when_empty: false,
             whole: Vec::new(),
             gaps: Vec::new(),
             trims: Vec::new(),

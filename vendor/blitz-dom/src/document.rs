@@ -411,6 +411,9 @@ pub struct BaseDocument {
     /// pyro: whether `resolve_layout` laid the document out since `resolve` last checked the
     /// classic `overflow: auto` scrollbars.
     pub(crate) layout_ran: bool,
+    /// pyro: this is the document of an `<iframe scrolling=no>`: its viewport shows no scrollbars
+    /// (`viewport_overflow` is `hidden`).
+    pub(crate) frame_no_scrollbars: bool,
     /// pyro: classic scrollbars: what viewport units see the viewport smaller by (CSS px; the
     /// root's `scroll`/`stable` gutters, `stylo` `Device::set_viewport_unit_inset`).
     pub(crate) viewport_unit_inset: (f32, f32),
@@ -864,6 +867,7 @@ impl BaseDocument {
             last_layout_space: None,
             viewport_scrollbars: ViewportScrollbars::default(),
             layout_ran: false,
+            frame_no_scrollbars: false,
             viewport_unit_inset: (0.0, 0.0),
             layout_size: None,
             layout_available: None,

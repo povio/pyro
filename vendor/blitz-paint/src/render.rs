@@ -1356,6 +1356,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             if phase == FlowPhase::Foreground && !hidden {
                 cx.draw_scrollbars(scene);
             }
+            // pyro: and its classic scrollbars, over its inline content.
+            if phase == FlowPhase::Foreground && !hidden {
+                cx.draw_classic_scrollbars(scene);
+            }
             return;
         }
 
@@ -7588,7 +7592,9 @@ pub(crate) fn paint_classic_scrollbar(
     let thumb_len = (room * client / scroll).clamp(min_thumb, room);
     let range = scroll - client;
     let progress = (offset / range).clamp(0.0, 1.0);
-    let start = button + progress * (room - thumb_len);
+    // Whole device pixels, as Chrome paints its scrollbar parts.
+    let thumb_len = thumb_len.round();
+    let start = (button + progress * (room - thumb_len)).round();
     let inset = (2.0 * scale).min(thickness / 4.0);
     let thumb = if vertical {
         Rect::new(track.x0 + inset, track.y0 + start, track.x1 - inset, track.y0 + start + thumb_len)

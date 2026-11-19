@@ -462,7 +462,13 @@ fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Opti
             let viewport = doc.viewport();
             let scale = viewport.zoom() as f64;
             let (w, h) = viewport.window_size;
-            let port = if vertical { h as f64 / scale } else { w as f64 / scale };
+            // (Less the viewport's classic scrollbar gutters: its scrollport.)
+            let g = doc.viewport_scrollbars.gutters;
+            let port = if vertical {
+                (h as f64 / scale - (g.top + g.bottom) as f64).max(0.0)
+            } else {
+                (w as f64 / scale - (g.left + g.right) as f64).max(0.0)
+            };
             let page = match &doc.timeline_scroll {
                 Some((_, viewport)) => *viewport,
                 None => (doc.viewport_scroll().x, doc.viewport_scroll().y),

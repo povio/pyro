@@ -322,6 +322,10 @@ impl BaseDocument {
                 height: (layout.size.height - layout.border.top - layout.border.bottom - layout.padding.top - layout.padding.bottom)
                     .max(0.0),
             };
+            // pyro: `<iframe scrolling=no>` (HTML § 15.5.14): its viewport shows no scrollbars.
+            let no_scrollbars = node
+                .attr(markup5ever::LocalName::from("scrolling"))
+                .is_some_and(|value| value.eq_ignore_ascii_case("no") || value.eq_ignore_ascii_case("noscroll"));
             let frame_scroll = node
                 .attr(markup5ever::LocalName::from("data-pyro-frame-scroll"))
                 .and_then(|value| {
@@ -329,6 +333,11 @@ impl BaseDocument {
                     Some((parts.next()??, parts.next()??))
                 });
             if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
+                if sub_doc.frame_no_scrollbars != no_scrollbars {
+                    sub_doc.frame_no_scrollbars = no_scrollbars;
+                    sub_doc.last_layout_space = None;
+                    sub_doc.layout_ran = true;
+                }
                 // Set viewport
                 // viewport_mut handles change detection. So we just unconditionally set the values;
                 let mut sub_viewport = sub_doc.viewport_mut();
@@ -1683,6 +1692,10 @@ impl BaseDocument {
     pub fn viewport_overflow(&self) -> taffy::Point<style::values::computed::Overflow> {
         use style::values::computed::Overflow;
         let auto = taffy::Point { x: Overflow::Auto, y: Overflow::Auto };
+        // pyro: the viewport of an `<iframe scrolling=no>` scrolls only programmatically.
+        if self.frame_no_scrollbars {
+            return taffy::Point { x: Overflow::Hidden, y: Overflow::Hidden };
+        }
         let Some(root) = self.try_root_element() else { return auto };
         let Some(html) = root.primary_styles() else { return auto };
         let mut overflow = (html.clone_overflow_x(), html.clone_overflow_y());

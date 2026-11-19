@@ -124,6 +124,20 @@ fn ease_in_out_cubic(t: f64) -> f64 {
 }
 
 impl BaseDocument {
+    /// pyro: the viewport's scrollport (CSS px): the window less the viewport's classic scrollbar
+    /// gutters (`viewport_scrollbars`; the whole window with overlay scrollbars). What the
+    /// viewport scrolls over: its scroll range ends there (Chrome).
+    pub fn viewport_scrollport_size(&self) -> (f64, f64) {
+        let scale = self.viewport.scale() as f64;
+        let g = self.viewport_scrollbars.gutters;
+        (
+            (self.viewport.window_size.0 as f64 / scale - (g.left + g.right) as f64).max(0.0),
+            (self.viewport.window_size.1 as f64 / scale - (g.top + g.bottom) as f64).max(0.0),
+        )
+    }
+}
+
+impl BaseDocument {
     /// Apply a scroll to the document, returning whether anything moved.
     ///
     /// This is the single scrolling primitive: user-initiated scrolls
@@ -302,14 +316,13 @@ impl BaseDocument {
                 if let Some(root) = self.try_root_element() {
                     let root_id = root.id;
                     let layout = *root.final_layout();
-                    let scale = self.viewport.scale() as f64;
                     let event = BlitzScrollEvent {
                         scroll_top: offset.y,
                         scroll_left: offset.x,
                         scroll_width: layout.size.width.max(root.scroll_width()) as i32,
                         scroll_height: layout.size.height.max(root.scroll_height()) as i32,
-                        client_width: (self.viewport.window_size.0 as f64 / scale) as i32,
-                        client_height: (self.viewport.window_size.1 as f64 / scale) as i32,
+                        client_width: self.viewport_scrollport_size().0 as i32,
+                        client_height: self.viewport_scrollport_size().1 as i32,
                     };
                     dispatch_event(DomEvent::new(root_id, DomEventData::Scroll(event)));
                 }
@@ -458,9 +471,7 @@ impl BaseDocument {
                     }
                     None => (0.0, 0.0),
                 };
-                let scale = self.viewport.scale() as f64;
-                let window_width = self.viewport.window_size.0 as f64 / scale;
-                let window_height = self.viewport.window_size.1 as f64 / scale;
+                let (window_width, window_height) = self.viewport_scrollport_size();
                 let max = Point {
                     x: (content_width - window_width).max(0.0),
                     y: (content_height - window_height).max(0.0),
@@ -634,9 +645,7 @@ impl BaseDocument {
         let Some(root_id) = self.try_root_element().map(|root| root.id) else {
             return;
         };
-        let scale = self.viewport.scale() as f64;
-        let viewport_width = self.viewport.window_size.0 as f64 / scale;
-        let viewport_height = self.viewport.window_size.1 as f64 / scale;
+        let (viewport_width, viewport_height) = self.viewport_scrollport_size();
         let x = Self::aligned_scroll_offset(
             self.viewport_scroll().x,
             viewport_width,
