@@ -66,6 +66,12 @@ Upstream's generated tests expect exact fractions and are not run against this c
 `grid_parity_tailwind_columns` and `grid_parity_calendar_fr_rows_with_min_height` in
 `crates/pyro-layout/tests/flow.rs` cover it.
 
+`compute/grid/track_sizing.rs`, `resolve_intrinsic_track_sizes`: when measuring min-content inline size,
+an item occupying a single track with an automatic minimum uses its minimum contribution if the item has
+an explicit zero minimum. This prevents a long word from widening a nested grid that can wrap it.
+Explicit min-content tracks, automatic item minimums, and max-content measurement are unchanged.
+Covered by the `nested_grid` tests in `crates/pyro-layout/tests/flow.rs`.
+
 `style/block.rs` and `compute/block.rs`: `BlockContainerStyle::margin_trim` (default: neither edge) is
 `margin-trim` in the block axis (css-box-4 §3.3; stylo_taffy answers from the computed value). With `start`,
 the top margins of the in-flow children at the container's top edge are truncated to zero together with every

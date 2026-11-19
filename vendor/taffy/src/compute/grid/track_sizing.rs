@@ -3,7 +3,7 @@
 use super::types::{GridItem, GridTrack, GridTrackKind, TrackCounts};
 use crate::compute::common::alignment::child_first_baseline;
 use crate::geometry::{AbstractAxis, Line, Size};
-use crate::style::{AlignContent, AlignContentKeyword, AvailableSpace};
+use crate::style::{AlignContent, AlignContentKeyword, AvailableSpace, LengthPercentageAuto};
 use crate::style_helpers::TaffyMinContent;
 use crate::tree::{LayoutPartialTree, LayoutPartialTreeExt, SizingMode};
 use crate::util::sys::{f32_max, f32_min, GridTrackVec, Vec};
@@ -634,7 +634,10 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
                             // (note that overflow:hidden counts as a scroll container), giving the automatic minimum size of scroll
                             // containers (zero) precedence over the min-content contributions.
                             AvailableSpace::MinContent | AvailableSpace::MaxContent
-                                if !item.overflow.get(axis).is_scroll_container() =>
+                                if !item.overflow.get(axis).is_scroll_container()
+                                    && !(axis == AbstractAxis::Inline
+                                        && axis_available_grid_space == AvailableSpace::MinContent
+                                        && item.min_size.get(axis) == LengthPercentageAuto::length(0.0)) =>
                             {
                                 let axis_minimum_size = item_sizer.minimum_contribution(item, axis_tracks);
                                 let axis_min_content_size = item_sizer.min_content_contribution(item, axis_tracks);
@@ -730,7 +733,11 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
             // a scroll container), giving the automatic minimum size of scroll containers (zero) precedence over the min-content contributions.
             let space = match axis_available_grid_space {
                 AvailableSpace::MinContent | AvailableSpace::MaxContent
-                    if !item.overflow.get(axis).is_scroll_container() =>
+                    if !item.overflow.get(axis).is_scroll_container()
+                        && !(axis == AbstractAxis::Inline
+                            && axis_available_grid_space == AvailableSpace::MinContent
+                            && item.span(axis) == 1
+                            && item.min_size.get(axis) == LengthPercentageAuto::length(0.0)) =>
                 {
                     let axis_minimum_size = item_sizer.minimum_contribution(item, axis_tracks);
                     let axis_min_content_size = item_sizer.min_content_contribution(item, axis_tracks);
