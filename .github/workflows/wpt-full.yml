@@ -8,8 +8,8 @@ name: WPT full
 # through wptserve on lp-m1, which also checks the runner's Python.
 #
 # Sizes at a421f2fe (coverage.json, local samples): ~31,700 testharness pages at ~1.06 s, ~28,200 reftests at ~0.7 s,
-# ~2,100 crashtests; about 15 h of page time, 2 h on lp-m1's two machines at 4 jobs each, hence nightly rather
-# than every push.
+# ~2,100 crashtests; about 15 h of page time, 2 h on lp-m1's two machines at 4 jobs each, hence nightly and once after each push to
+# main (after its WPT run), not on pull requests.
 #
 # It must not starve the pull request runs (wpt.yml), which share lp-m1's two machines:
 # - Its shards run one at a time (max-parallel: 1), so one lp-m1 machine always stays free for other jobs.
@@ -24,6 +24,13 @@ name: WPT full
 on:
   schedule:
     - cron: '7 3 * * *'
+  # After each push to main: its WPT run (wpt.yml) builds the browser this workflow tests, so the whole suite follows
+  # that run rather than the push. The status site publishes from this run (docs.yml), so it never shows a new
+  # commit with an older commit's whole-suite numbers.
+  workflow_run:
+    workflows: [WPT]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       runner:
@@ -65,6 +72,8 @@ concurrency:
 jobs:
   # The newest main build's browser (wpt.yml uploads it as `wpt-browser` when its build job runs).
   prepare:
+    # Of main's WPT runs, only a push's (not a manual rerun's).
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -177,7 +186,7 @@ jobs:
         env:
           RUNNER_ARGS: ${{ inputs.runner-args }}
           # Scheduled runs rerun the pages whose result differs from the committed whole-suite baseline (bench/wpt/full/).
-          RERUNS: ${{ github.event_name == 'schedule' || inputs.reruns }}
+          RERUNS: ${{ github.event_name != 'workflow_dispatch' || inputs.reruns }}
           OUT: wpt-full-${{ matrix.kind }}-${{ matrix.shard }}.json
         run: |
           echo "$(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs, $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
@@ -274,7 +283,7 @@ jobs:
       # WPT directory (lib.mjs readBaselineAt), as bench/wpt/full/ holds them. CI does not commit them: they go to
       # the status site (next job) and are committed from the artifact when the protected set should move.
       - name: Baselines
-        if: ${{ github.event_name == 'schedule' || inputs.reruns }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.reruns }}
         run: |
           for k in testharness reftest crashtest; do
             ls shards/wpt-full-$k-*.json >/dev/null 2>&1 || continue
@@ -286,7 +295,7 @@ jobs:
           done
           du -sh full-baselines/* || true
       - uses: actions/upload-artifact@v4
-        if: ${{ github.event_name == 'schedule' || inputs.reruns }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.reruns }}
         with:
           name: wpt-full-baselines
           path: full-baselines
@@ -298,7 +307,7 @@ jobs:
   # whole-suite baselines committed in bench/wpt/full/.
   status:
     needs: results
-    if: ${{ !cancelled() && needs.results.result == 'success' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || inputs.reruns) }}
+    if: ${{ !cancelled() && needs.results.result == 'success' && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.reruns) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -308,6 +317,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.3'
@@ -317,7 +328,7 @@ jobs:
           path: full-baselines
       - name: Export the whole suite to the wpt-results branch
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
