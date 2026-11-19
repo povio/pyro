@@ -606,8 +606,12 @@ impl BaseDocument {
             let g = bars.gutters;
             overflow.x0 += g.left as f64 * scale;
             overflow.y0 += g.top as f64 * scale;
-            overflow.x1 = (overflow.x1 - g.right as f64 * scale).max(overflow.x0);
-            overflow.y1 = (overflow.y1 - g.bottom as f64 * scale).max(overflow.y0);
+            // (Its padding stays in it when the gutters leave no room: Chrome's scrollHeight of a
+            // 4px `overflow: scroll` box with 2px padding is 4, WPT cssom-view
+            // `scrollWidthHeight-contain-layout`.)
+            let p = layout.padding;
+            overflow.x1 = (overflow.x1 - g.right as f64 * scale).max(overflow.x0 + (p.left + p.right) as f64 * scale);
+            overflow.y1 = (overflow.y1 - g.bottom as f64 * scale).max(overflow.y0 + (p.top + p.bottom) as f64 * scale);
         }
         // pyro: a multi-column container's content lies in its strip: what it reaches is shown in
         // the columns (`layout::multicol`), added to the padding box below.
@@ -755,7 +759,9 @@ impl BaseDocument {
         // WPT css-grid `grid-overflow-001`).
         if scroll_padding.is_some() && self.nodes[node_id].taffy_display() == taffy::Display::Grid {
             let grid = layout.scrollable_overflow_rect.rect();
-            let (bl, bt) = (layout.border.left as f64, layout.border.top as f64);
+            // (Taffy's frame is the scrollport: the padding box less the start-edge classic gutters.)
+            let g = self.nodes[node_id].gutter_insets();
+            let (bl, bt) = ((layout.border.left + g.left) as f64, (layout.border.top + g.top) as f64);
             overflow = overflow.union(Rect::new(
                 (grid.left as f64 + bl) * scale,
                 (grid.top as f64 + bt) * scale,
@@ -888,9 +894,9 @@ impl BaseDocument {
             .filter(|line| !line.text_range().is_empty())
             .map(|line| line.metrics().block_max_coord as f64)
             .fold(0.0, f64::max);
-        let g = self.nodes[node_id].start_gutters();
-        let x0 = (l.border.left + l.padding.left + g.x) as f64 * scale;
-        let y0 = (l.border.top + l.padding.top + g.y + block_offset) as f64 * scale;
+        let g = self.nodes[node_id].gutter_insets();
+        let x0 = (l.border.left + l.padding.left + g.left) as f64 * scale;
+        let y0 = (l.border.top + l.padding.top + g.top + block_offset) as f64 * scale;
         let style = self.nodes[node_id].primary_styles();
         // Text controls scroll their value whatever their `overflow`.
         let scrolls = editor_layout.is_some()
@@ -912,13 +918,13 @@ impl BaseDocument {
                 let (b0, b1) = if block_lr {
                     (x0 + offset, x0 + offset + height + end_x)
                 } else {
-                    let start = (l.size.width - l.border.right - l.padding.right) as f64 * scale - offset;
+                    let start = (l.size.width - l.border.right - l.padding.right - g.right) as f64 * scale - offset;
                     (start - height - end_x, start)
                 };
                 // pyro: `sideways-lr` lines run up from the content box's bottom, their end padding
                 // (a scroll container's) the top one.
                 if stylo_taffy::WritingModeExt::line_left_is_bottom(self.nodes[node_id].layout_data().writing_mode) {
-                    let bottom = (l.size.height - l.border.bottom - l.padding.bottom) as f64 * scale;
+                    let bottom = (l.size.height - l.border.bottom - l.padding.bottom - g.bottom) as f64 * scale;
                     let end_top = if scrolls { l.padding.top as f64 * scale } else { 0.0 };
                     return Some((Rect::new(b0, bottom - width - end_top, b1, bottom), width > 0.0 || height > 0.0));
                 }

@@ -1142,7 +1142,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             size.height as f64 * self.scale,
         );
         let border_box = Rect::from_origin_size(Point::ORIGIN, box_size);
-        let scaled_pb = (padding + border).map(f64::from);
+        // pyro: and the classic scrollbar gutters (`Node::gutter_insets`): the content box.
+        let scaled_pb = (padding + border + node.gutter_insets()).map(f64::from);
         let content_position = kurbo::Point {
             x: scaled_pb.left,
             y: scaled_pb.top,
@@ -4204,11 +4205,14 @@ impl ElementCx<'_, '_> {
     ) -> impl Fn(usize) -> Affine + 't {
         let block_offset = text_layout.block_offset as f64;
         let layout = self.node.final_layout();
+        let g = self.node.gutter_insets();
         let content_width = (layout.size.width
             - layout.border.left
             - layout.border.right
             - layout.padding.left
-            - layout.padding.right) as f64;
+            - layout.padding.right
+            - g.left
+            - g.right) as f64;
         let origin = if block_lr { pos.x + block_offset } else { pos.x + content_width - block_offset };
         // Boxes are painted at whole pixels. Chromium rounds text only in the block axis, so a
         // line starts where it was laid out in the inline axis.
@@ -4218,7 +4222,7 @@ impl ElementCx<'_, '_> {
         // pyro: `sideways-lr` turns its lines the other way, a quarter counterclockwise: they
         // run bottom to top, from the content box's bottom, with their line-over side on the left.
         let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
-        let inset = unrounded.border + unrounded.padding;
+        let inset = unrounded.border + unrounded.padding + g;
         let bottom = top + (unrounded.size.height - inset.top - inset.bottom) as f64;
         move |index: usize| {
             if sideways_lr {

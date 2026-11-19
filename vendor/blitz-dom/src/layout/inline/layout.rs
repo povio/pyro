@@ -846,13 +846,10 @@ impl LayoutPassState<'_> {
         let scrollbar_gutter =
             taffy::Point { x: gutter_edges.left + gutter_edges.right, y: gutter_edges.top + gutter_edges.bottom };
         let content_box_inset = container_pb + gutter_edges;
-        // The lines start after the start-edge gutters (`Node::content_box_origin`, which paint
-        // and hit testing read), in a horizontal writing mode.
-        let container_pb = if self.nodes[node_id].primary_styles().is_some_and(|s| !s.writing_mode.is_vertical()) {
-            taffy::Rect { left: container_pb.left + gutter_edges.left, top: container_pb.top + gutter_edges.top, ..container_pb }
-        } else {
-            container_pb
-        };
+        // The lines start after the start-edge gutters (logical; `Node::content_box_origin` and
+        // `Node::gutter_insets`, which paint and hit testing read, physical).
+        let container_pb =
+            taffy::Rect { left: container_pb.left + gutter_edges.left, top: container_pb.top + gutter_edges.top, ..container_pb };
 
         let has_styles_preventing_being_collapsed_through = !style.is_block()
             || style.overflow().x.is_scroll_container()

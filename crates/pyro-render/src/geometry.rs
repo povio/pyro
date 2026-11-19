@@ -494,7 +494,9 @@ impl Geometry {
             scroll_height,
             scroll_reversed: [reversed.x, reversed.y],
             fixed,
-            border: [l.border.top, l.border.right, l.border.bottom, l.border.left].map(f64::from),
+            // pyro: with the classic scrollbar gutters at each edge (CSSOM `clientLeft`/`clientTop`
+            // include a left/top one: Chrome's 3px-border rtl scroller's clientLeft is 18).
+            border: [l.border.top + g.2, l.border.right + g.1, l.border.bottom + g.3, l.border.left + g.0].map(f64::from),
             padding: [l.padding.top, l.padding.right, l.padding.bottom, l.padding.left].map(f64::from),
             position: BoxPosition::Static,
             hidden: hidden_by_clamp(doc, id),
@@ -1181,22 +1183,23 @@ fn used_border(width: &style::values::computed::BorderSideWidth, style: style::v
 pub(crate) fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
     let l = doc.physical_unrounded_layout(id);
     // pyro: after the start-edge classic scrollbar gutters (`Node::content_box_origin`).
-    let (gx, gy) = doc.get_node(id).map_or((0.0, 0.0), |n| {
-        let g = n.start_gutters();
-        (g.x, g.y)
+    // pyro: inside the classic scrollbar gutters (`Node::gutter_insets`).
+    let (gl, gt, gr, gb) = doc.get_node(id).map_or((0.0, 0.0, 0.0, 0.0), |n| {
+        let g = n.gutter_insets();
+        (g.left, g.top, g.right, g.bottom)
     });
-    let (left, top) = ((l.border.left + l.padding.left + gx) as f64, (l.border.top + l.padding.top + gy) as f64);
+    let (left, top) = ((l.border.left + l.padding.left + gl) as f64, (l.border.top + l.padding.top + gt) as f64);
     let block_offset = text.block_offset as f64;
     match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
         None => Affine::translate((left, top + block_offset)),
         // `sideways-lr`: a quarter counterclockwise, up from the content box's bottom.
         Some(true) if sideways_lr(doc, id) => {
-            let bottom = (l.size.height - l.border.bottom - l.padding.bottom) as f64;
+            let bottom = (l.size.height - l.border.bottom - l.padding.bottom - gb) as f64;
             Affine::new([0.0, -1.0, 1.0, 0.0, left + block_offset, bottom])
         }
         Some(true) => Affine::new([0.0, 1.0, -1.0, 0.0, left + block_offset, top]),
         Some(false) => {
-            let right = (l.size.width - l.border.right - l.padding.right) as f64;
+            let right = (l.size.width - l.border.right - l.padding.right - gr) as f64;
             Affine::new([0.0, 1.0, -1.0, 0.0, right - block_offset, top])
         }
     }
