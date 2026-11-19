@@ -1860,7 +1860,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let style = glyph_run.style();
             // pyro: a face's `size-adjust` scales the run's size; decoration thickness and offset
             // percentages are of the element's font size.
+            // pyro: to a 1/4096 px, which drops the float error of a size CSS `text-fit` scaled
+            // (40.00004 for twice 20px), so that decorations whose thickness or offset is rounded
+            // up are those of the size the text has (WPT css-text `text-fit/text-decoration-skip-ink`).
             let css_font_size = font_size as f64 / scale / f64::from(run.synthesis().size_adjust());
+            let css_font_size = (css_font_size * 4096.0).round() / 4096.0;
             // pyro: under `font-size-adjust` the run's size is the used one; decoration
             // thickness and offset percentages are of the computed font size.
             let css_font_size = doc

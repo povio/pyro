@@ -21120,7 +21120,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1785,849 @@
+@@ -608,152 +1785,853 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -21229,7 +21229,11 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            let style = glyph_run.style();
 +            // pyro: a face's `size-adjust` scales the run's size; decoration thickness and offset
 +            // percentages are of the element's font size.
++            // pyro: to a 1/4096 px, which drops the float error of a size CSS `text-fit` scaled
++            // (40.00004 for twice 20px), so that decorations whose thickness or offset is rounded
++            // up are those of the size the text has (WPT css-text `text-fit/text-decoration-skip-ink`).
 +            let css_font_size = font_size as f64 / scale / f64::from(run.synthesis().size_adjust());
++            let css_font_size = (css_font_size * 4096.0).round() / 4096.0;
 +            // pyro: under `font-size-adjust` the run's size is the used one; decoration
 +            // thickness and offset percentages are of the computed font size.
 +            let css_font_size = doc
@@ -22086,7 +22090,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2635,54 @@
+@@ -761,12 +2639,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -22143,11 +22147,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -803,4 +2719,240 @@
-         prev = *point;
+@@ -804,3 +2724,239 @@
      }
      prev.1
-+}
+ }
 +
 +/// pyro: where `text-decoration-skip-ink` leaves gaps in a decoration line spanning `extent`
 +/// (layout x), as Blink's `TextPainter::ClipDecorationLine` cuts them: around the ink of every
@@ -22234,7 +22237,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +    }
 +    merged
- }
++}
 +
 +/// pyro: whether a character is CJK (Han, kana, Hangul, their punctuation and compatibility
 +/// forms), whose glyphs `text-decoration-skip-ink: auto` does not skip (Blink's
