@@ -2565,6 +2565,12 @@ impl PageDom {
     /// pyro: with `from_image`, or for an opaque (not clean) image, the pixels turned as its EXIF
     /// orientation says (CSS Images 3 § 5.1: `image-orientation: none` is ignored for an opaque
     /// image).
+    /// pyro: whether the loaded `<img>` `el` shows an SVG image (its canvas bitmap may be smaller
+    /// than its natural size: `pyro_canvas::codec::is_svg`).
+    pub(crate) fn image_is_svg(&self, el: NodeId) -> bool {
+        self.image_bytes.borrow().get(&el).is_some_and(|entry| pyro_canvas::codec::is_svg(&entry.bytes))
+    }
+
     pub(crate) fn image_pixmap(&self, el: NodeId, from_image: bool) -> Option<(pyro_canvas::Bitmap, bool)> {
         let mut map = self.image_bytes.borrow_mut();
         let entry = map.get_mut(&el)?;

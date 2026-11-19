@@ -151,3 +151,20 @@ fn an_untainted_map_moves_the_flood() {
     assert_eq!(displaced_or_not(&svg), [255, 0, 0]);
 }
 
+
+/// An SVG image of a huge natural size (16000 by 16000) decoded for a canvas is rasterized at no
+/// more than 16 Mi pixels, its aspect ratio kept: the limit is checked before allocating (it was
+/// rasterized at its natural size, about 1 GB, before the canvas rejected it). Review cycle 2.
+#[test]
+fn a_huge_svg_image_is_rasterized_for_a_canvas_within_the_limit() {
+    pyro_render::register_hooks();
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="16000" height="16000"><rect width="16000" height="16000" fill="green"/></svg>"#;
+    let pixmap = pyro_canvas::codec::decode(svg).expect("an SVG image decodes");
+    let (w, h) = (u64::from(pixmap.width()), u64::from(pixmap.height()));
+    assert!(w * h <= 1 << 24, "{w} x {h} pixels");
+    assert_eq!(w, h, "the aspect ratio is kept");
+    // Drawn all over: the middle pixel is the rectangle's green.
+    let i = ((h / 2) * w + w / 2) as usize * 4;
+    let px = &pixmap.data_as_u8_slice()[i..i + 4];
+    assert_eq!(px, &[0, 128, 0, 255], "the image fills its pixels");
+}

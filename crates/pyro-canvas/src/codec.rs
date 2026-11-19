@@ -26,7 +26,13 @@ pub fn set_svg_decoder(decoder: SvgDecoder) {
     let _ = SVG_DECODER.set(decoder);
 }
 
-/// Whether `bytes` look like an SVG document (XML whose root is `<svg>`, or SVGZ).
+/// Whether `bytes` look like an SVG document (XML whose root is `<svg>`, or SVGZ): an image
+/// [`decode`] rasterizes (at no more than a fixed number of pixels, so smaller than its natural
+/// size when that is huge).
+pub fn is_svg(bytes: &[u8]) -> bool {
+    looks_like_svg(bytes)
+}
+
 fn looks_like_svg(bytes: &[u8]) -> bool {
     if bytes.starts_with(&[0x1f, 0x8b]) {
         return true;

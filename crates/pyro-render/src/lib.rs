@@ -863,7 +863,14 @@ impl Default for Renderer {
 /// opacity included.
 fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32) -> Option<Vec<u8>> {
     let size = tree.size();
-    if width == 0 || height == 0 || width > u16::MAX as u32 || height > u16::MAX as u32 || !(size.width() > 0.0 && size.height() > 0.0) {
+    // pyro: and no more pixels than an SVG canvas image (a float laid out huge keeps its box).
+    if width == 0
+        || height == 0
+        || width > u16::MAX as u32
+        || height > u16::MAX as u32
+        || f64::from(width) * f64::from(height) > SVG_CANVAS_MAX_PIXELS
+        || !(size.width() > 0.0 && size.height() > 0.0)
+    {
         return None;
     }
     let scale = kurbo::Affine::scale_non_uniform(width as f64 / size.width() as f64, height as f64 / size.height() as f64);
@@ -887,8 +894,21 @@ fn svg_canvas_image(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
         (None, None, Some(r)) => (300.0, 300.0 / r),
         (None, None, None) => (300.0, 150.0),
     };
-    let (w, h) = (width.round().max(1.0) as u32, height.round().max(1.0) as u32);
-    if w > u16::MAX as u32 || h > u16::MAX as u32 {
+    if !(width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0) {
+        return None;
+    }
+    // pyro: never more pixels than [`SVG_CANVAS_MAX_PIXELS`] (nor sides past the canvas's): an
+    // image of a huge natural size is drawn smaller, and the canvas maps its source rectangle
+    // onto the pixels (`drawImage`). The limit is checked before anything is allocated.
+    let fit = (SVG_CANVAS_MAX_PIXELS / (f64::from(width) * f64::from(height))).sqrt().min(1.0);
+    let fit = fit
+        .min(f64::from(pyro_canvas::MAX_SIDE) / f64::from(width))
+        .min(f64::from(pyro_canvas::MAX_SIDE) / f64::from(height));
+    let (w, h) = (
+        (f64::from(width) * fit).round().max(1.0) as u32,
+        (f64::from(height) * fit).round().max(1.0) as u32,
+    );
+    if !pyro_canvas::valid_size(w, h) || f64::from(w) * f64::from(h) > SVG_CANVAS_MAX_PIXELS * 1.01 {
         return None;
     }
     let sized = svg.sized(width, height);
@@ -905,9 +925,13 @@ fn svg_canvas_image(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     anyrender_svg::render_svg_tree(&mut scene, &svg.tree, viewport);
     let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(w, h);
     let mut rgba = Vec::new();
-    anyrender::ImageRenderer::render_to_vec(&mut renderer, |p| p.append_scene(scene, kurbo::Affine::IDENTITY), &mut rgba);
+    let fit = kurbo::Affine::scale_non_uniform(f64::from(w) / f64::from(width), f64::from(h) / f64::from(height));
+    anyrender::ImageRenderer::render_to_vec(&mut renderer, |p| p.append_scene(scene, fit), &mut rgba);
     Some((rgba, w, h))
 }
+
+/// pyro: the most pixels an SVG image is rasterized at for a canvas (16 Mi: 64 MiB of RGBA).
+const SVG_CANVAS_MAX_PIXELS: f64 = (1u64 << 24) as f64;
 
 /// pyro-canvas's `filter`: the draw's output as the image of an SVG document holding the
 /// referenced `<filter>`s, filtered by the value, as the canvas's pixels (user units are its

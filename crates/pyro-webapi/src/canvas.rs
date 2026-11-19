@@ -664,9 +664,16 @@ fn image_source(
                     let dom = source_page.dom.borrow();
                     source_page.layout.borrow().computed_style_value(&dom, n.id, "image-orientation") != "none"
                 };
+                // pyro: an SVG image's size is its natural size, whatever its bitmap's (rasterized
+                // no larger than a fixed number of pixels): the source rectangle maps onto it.
+                let natural = source_page
+                    .image_is_svg(n.id)
+                    .then(|| source_page.dom.borrow().natural_size(n.id))
+                    .flatten()
+                    .filter(|(w, h)| *w >= 1.0 && *h >= 1.0);
                 Ok(source_page.image_pixmap(n.id, from_image).map(|(pixmap, clean)| ImageHandle {
-                    width: u32::from(pixmap.width()),
-                    height: u32::from(pixmap.height()),
+                    width: natural.map_or(u32::from(pixmap.width()), |(w, _)| w.round() as u32),
+                    height: natural.map_or(u32::from(pixmap.height()), |(_, h)| h.round() as u32),
                     pixmap: Some(pixmap),
                     clean,
                 }))
