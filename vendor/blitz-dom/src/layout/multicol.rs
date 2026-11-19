@@ -1132,6 +1132,9 @@ impl LayoutPassState<'_> {
         // that position is shown: in its column (Chromium places it in the fragment its static
         // position falls in).
         let mut oof_candidates = strip.oof_candidates;
+        // pyro: the baselines are where their lines are shown, in their columns (Chromium takes
+        // the first baseline from the first column with a line; WPT css-multicol `baseline-001`).
+        let mut baselines = strip.baselines;
         let columns = ColumnFragments { fragments, nested: nested_ctx, pushed };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
@@ -1147,6 +1150,11 @@ impl LayoutPassState<'_> {
             }
         }
 
+        if columns.fragments.len() > 1 && !vertical {
+            let shown = |y: Option<f32>| y.map(|y| y + columns.shift_at(y).1);
+            baselines.first = shown(baselines.first);
+            baselines.last = shown(baselines.last);
+        }
         if inputs.run_mode == RunMode::PerformLayout {
             self.doc.has_multicol = true;
             self.nodes[dom_id].layout_data_mut().columns = Some(Box::new(columns));
@@ -1156,7 +1164,7 @@ impl LayoutPassState<'_> {
         LayoutOutput {
             size,
             scrollable_overflow_rect: overflow,
-            baselines: strip.baselines,
+            baselines,
             top_margin: CollapsibleMarginSet::from_margin(margin.top),
             bottom_margin: CollapsibleMarginSet::from_margin(margin.bottom),
             margins_can_collapse_through: false,
