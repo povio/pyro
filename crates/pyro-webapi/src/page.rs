@@ -349,6 +349,8 @@ pub struct PageDom {
     fullscreen_allowed: Cell<bool>,
     /// The paint worklet global (`crate::paint_worklet`), made on the first `addModule()`.
     pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
+    /// A range slider being dragged (`crate::input`): the element and its value at the press.
+    pub(crate) range_drag: RefCell<Option<(NodeId, String)>>,
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
@@ -884,6 +886,7 @@ impl PageDom {
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
+            range_drag: RefCell::new(None),
             planned_navigations: RefCell::new(Vec::new()),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),

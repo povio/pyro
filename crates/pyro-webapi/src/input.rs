@@ -1462,6 +1462,68 @@ fn step_by_key(page: &Rc<PageDom>, el: NodeId, f: impl FnOnce(&mut Dom) -> pyro_
     dom.value(el).ok() != before
 }
 
+/// An enabled `<input type=range>`: `el` itself (pyro's slider has no inner parts to hit).
+fn enabled_range(dom: &Dom, el: NodeId) -> bool {
+    local(dom, el).as_deref() == Some("input")
+        && dom.input_type(el).ok() == Some(InputType::Range)
+        && !dom.is_disabled(el).unwrap_or(true)
+}
+
+/// Moves a range slider's value to the pointer's x (Chromium's slider: the fraction of the
+/// element's width, from its inline start, snapped to its step). True when the value changed.
+fn range_value_at(page: &Rc<PageDom>, el: NodeId, x: f64) -> bool {
+    let rect = {
+        let dom = page.dom.borrow();
+        page.layout().bounding_client_rect(&dom, el)
+    };
+    if !(rect.width > 0.0) {
+        return false;
+    }
+    let mut dom = page.dom.borrow_mut();
+    let attr = |dom: &Dom, name: &str| dom.get_attribute(el, name).ok().flatten().and_then(pyro_dom::forms::parse_float);
+    let min = attr(&dom, "min").unwrap_or(0.0);
+    let max = attr(&dom, "max").unwrap_or(100.0).max(min);
+    let mut fraction = ((x - rect.x) / rect.width).clamp(0.0, 1.0);
+    if dom.directionality(el).is_ok_and(|d| d == pyro_dom::direction::Direction::Rtl) {
+        fraction = 1.0 - fraction;
+    }
+    let before = dom.value(el).ok();
+    let _ = dom.set_value_as_number(el, min + fraction * (max - min));
+    dom.value(el).ok() != before
+}
+
+/// A left press on an enabled range slider whose mousedown was not canceled: the thumb jumps to
+/// the pointer (`input`) and follows it while the button is held (`range_drag_move`); the release
+/// commits (`change` when the value moved since the press), as in Chromium.
+fn range_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    if !enabled_range(&page.dom.borrow(), target) {
+        return;
+    }
+    let start = page.dom.borrow().value(target).unwrap_or_default();
+    *page.range_drag.borrow_mut() = Some((target, start));
+    if range_value_at(page, target, m.x) {
+        fire_simple(page, target, "input", true, false);
+    }
+}
+
+fn range_drag_move(page: &Rc<PageDom>, m: &MouseInput) {
+    let Some(el) = page.range_drag.borrow().as_ref().map(|(el, _)| *el) else { return };
+    if !enabled_range(&page.dom.borrow(), el) {
+        return;
+    }
+    if range_value_at(page, el, m.x) {
+        fire_simple(page, el, "input", true, false);
+    }
+}
+
+fn range_release(page: &Rc<PageDom>) {
+    let Some((el, start)) = page.range_drag.borrow_mut().take() else { return };
+    let now = page.dom.borrow().value(el).unwrap_or_default();
+    if now != start && page.dom.borrow().is_connected(el).unwrap_or(false) {
+        fire_simple(page, el, "change", true, false);
+    }
+}
+
 /// A range slider key: one step for an arrow, a tenth of the range (at
 /// least a step) for PageUp/PageDown, the ends for Home/End.
 fn range_key(dom: &mut Dom, el: NodeId, key: &str) -> pyro_dom::DomResult<()> {
@@ -2343,6 +2405,7 @@ fn dispatch_mouse_inner(
             }
             if m.buttons & 1 != 0 {
                 text_select_move(page, target, m);
+                range_drag_move(page, m);
             }
             if intercept_drags {
                 return Ok(start_drag(page, target, m));
@@ -2412,6 +2475,7 @@ fn dispatch_mouse_inner(
             }
             if place_caret {
                 crate::editing::caret_on_press(page, target);
+                range_press(page, target, m);
             }
             page.text_drag.set(None);
             if place_caret && source.is_none() {
@@ -2424,6 +2488,9 @@ fn dispatch_mouse_inner(
         }
         MouseKind::Released => {
             note_buttons(page, m);
+            if m.button == MouseButton::Left {
+                range_release(page);
+            }
             page.drag_candidate.set(None);
             page.text_drag.set(None);
             if m.button == MouseButton::Left {
