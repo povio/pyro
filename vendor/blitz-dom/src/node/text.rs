@@ -502,10 +502,10 @@ impl TextInputData {
             offset = caret_start;
         }
 
-        // Never scroll past the content, and never scroll into negative space. The content
-        // extent includes the caret so that a caret at the very end remains fully visible
-        // (its rendered width extends slightly past the text).
-        let max_offset = (content.max(caret_end) - viewport).max(0.0);
+        // Never scroll past the content, and never scroll into negative space. pyro: the
+        // content's own extent, not the caret's: text that fits is not scrolled by the caret's
+        // width at its end, as in Chromium (WPT css-pseudo `selection-input-011`).
+        let max_offset = (content - viewport).max(0.0);
         self.scroll_offset = offset.clamp(0.0, max_offset);
     }
 

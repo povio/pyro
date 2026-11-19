@@ -4134,14 +4134,15 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2647,8 +4091,13 @@
+@@ -2647,8 +4091,14 @@
              return;
          };
  
 -        let content_box_width = node.final_layout().content_box_width();
 -        let content_box_height = node.final_layout().content_box_height();
-+        let mut content_box_width = node.final_layout().content_box_width();
-+        let mut content_box_height = node.final_layout().content_box_height();
++        // (The unrounded box: text that fits it exactly is not scrolled by a rounding remainder.)
++        let mut content_box_width = node.unrounded_layout().content_box_width();
++        let mut content_box_height = node.unrounded_layout().content_box_height();
 +        // pyro: the editor's layout is logical: in a vertical writing mode its inline size (the
 +        // single line's scroll axis) is the content box's height.
 +        if node.vertical_block_axis().is_some() {
@@ -4150,7 +4151,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4126,7 @@
+@@ -2677,7 +4127,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4159,7 +4160,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4284,10 @@
+@@ -2835,6 +4285,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4170,7 +4171,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5235,7 @@
+@@ -3782,6 +5236,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4178,7 +4179,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5258,52 @@
+@@ -3804,6 +5259,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4231,7 +4232,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5346,84 @@
+@@ -3846,3 +5347,84 @@
          assert!(doc.has_changes());
      }
  }
@@ -35353,6 +35354,19 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //Value depends on list-style-position, determining whether a seperate layout is created for it
+@@ -1054,9 +1303,10 @@
+                 data.scroll_offset > 0.0,
+                 "expected horizontal scroll for overflowing single-line input"
+             );
+-            // The caret must be within the visible region after scrolling.
++            // The caret must be within the visible region after scrolling (pyro: its start edge:
++            // its width may hang past text that ends at the edge, which is not scrolled for it).
+             let caret = data.editor.cursor_geometry(1.5).unwrap();
+-            assert!(caret.x1 as f32 <= data.scroll_offset + content_box_width + 0.5);
++            assert!(caret.x0 as f32 <= data.scroll_offset + content_box_width + 0.5);
+             assert!(caret.x0 as f32 >= data.scroll_offset - 0.5);
+         }
+ 
 diff --git a/packages/blitz-dom/src/node/mod.rs b/packages/blitz-dom/src/node/mod.rs
 --- a/packages/blitz-dom/src/node/mod.rs
 +++ b/packages/blitz-dom/src/node/mod.rs
@@ -41308,6 +41322,21 @@ diff --git a/packages/blitz-dom/src/node/text.rs b/packages/blitz-dom/src/node/t
      pub fn set_text(
          &mut self,
          font_ctx: &mut FontContext,
+@@ -157,10 +502,10 @@
+             offset = caret_start;
+         }
+ 
+-        // Never scroll past the content, and never scroll into negative space. The content
+-        // extent includes the caret so that a caret at the very end remains fully visible
+-        // (its rendered width extends slightly past the text).
+-        let max_offset = (content.max(caret_end) - viewport).max(0.0);
++        // Never scroll past the content, and never scroll into negative space. pyro: the
++        // content's own extent, not the caret's: text that fits is not scrolled by the caret's
++        // width at its end, as in Chromium (WPT css-pseudo `selection-input-011`).
++        let max_offset = (content - viewport).max(0.0);
+         self.scroll_offset = offset.clamp(0.0, max_offset);
+     }
+ 
 diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.rs
 --- a/packages/blitz-dom/src/resolve.rs
 +++ b/packages/blitz-dom/src/resolve.rs

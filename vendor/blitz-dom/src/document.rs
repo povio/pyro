@@ -4091,8 +4091,9 @@ impl BaseDocument {
             return;
         };
 
-        let mut content_box_width = node.final_layout().content_box_width();
-        let mut content_box_height = node.final_layout().content_box_height();
+        // (The unrounded box: text that fits it exactly is not scrolled by a rounding remainder.)
+        let mut content_box_width = node.unrounded_layout().content_box_width();
+        let mut content_box_height = node.unrounded_layout().content_box_height();
         // pyro: the editor's layout is logical: in a vertical writing mode its inline size (the
         // single line's scroll axis) is the content box's height.
         if node.vertical_block_axis().is_some() {

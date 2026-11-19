@@ -1303,9 +1303,10 @@ mod tests {
                 data.scroll_offset > 0.0,
                 "expected horizontal scroll for overflowing single-line input"
             );
-            // The caret must be within the visible region after scrolling.
+            // The caret must be within the visible region after scrolling (pyro: its start edge:
+            // its width may hang past text that ends at the edge, which is not scrolled for it).
             let caret = data.editor.cursor_geometry(1.5).unwrap();
-            assert!(caret.x1 as f32 <= data.scroll_offset + content_box_width + 0.5);
+            assert!(caret.x0 as f32 <= data.scroll_offset + content_box_width + 0.5);
             assert!(caret.x0 as f32 >= data.scroll_offset - 0.5);
         }
 
