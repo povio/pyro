@@ -53,6 +53,9 @@ pub const STATICS: &[&str] = &[
     "structured_clone::WIRE_BLOBS",
     "structured_clone::WIRE_CANVASES",
     "target::WATCHED",
+    "web_locks::CANCELLED",
+    "web_locks::MANAGERS",
+    "web_locks::NEXT_ID",
     "webaudio::NEXT",
     "webaudio::PENDING",
     "websocket::NEXT",
@@ -70,7 +73,7 @@ pub const STATICS: &[&str] = &[
 /// first static that still holds something of them; the thread must then not
 /// serve another client.
 pub fn reset_thread() -> Result<(), &'static str> {
-    let checks: [fn() -> Option<&'static str>; 21] = [
+    let checks: [fn() -> Option<&'static str>; 22] = [
         crate::dom_pages_leftover,
         crate::abort::thread_leftover,
         crate::canvas::thread_leftover,
@@ -80,6 +83,7 @@ pub fn reset_thread() -> Result<(), &'static str> {
         crate::formdata::thread_leftover,
         crate::indexeddb::thread_leftover,
         crate::message_channel::thread_leftover,
+        crate::web_locks::thread_leftover,
         crate::node::thread_leftover,
         crate::port_link::thread_leftover,
         crate::resource_timing::thread_leftover,

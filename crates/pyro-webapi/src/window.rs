@@ -183,6 +183,7 @@ where
     crate::indexeddb::define_globals(def);
     crate::editing_globals::define_globals(def);
     crate::font_loading::define_globals(def);
+    crate::web_locks::define_globals(def);
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
@@ -408,6 +409,7 @@ impl JsClass for Navigator {
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
+        def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));

@@ -507,6 +507,12 @@ fn opaque_origin(page: &PageDom) -> bool {
     page.has_opaque_origin() || page.main_world_realm().and_then(|r| r.origin()).is_some_and(|o| o == "null")
 }
 
+/// The document's service worker client id (Web Locks' `clientId`), or `None` when it is never a
+/// client (an opaque origin).
+pub(crate) fn client_id(page: &Rc<PageDom>) -> Option<String> {
+    client_of(page).map(|c| c.id.clone())
+}
+
 /// The page's client, made on first need.
 fn client_of(page: &Rc<PageDom>) -> Option<Rc<ClientInner>> {
     client_with_id(page, None)

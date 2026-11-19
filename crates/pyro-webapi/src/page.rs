@@ -1046,6 +1046,7 @@ impl PageDom {
         crate::resize_observer::dispose(self);
         crate::worker::dispose(self);
         crate::message_channel::dispose(self);
+        crate::web_locks::dispose(self);
         crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         crate::media::dispose(self);
