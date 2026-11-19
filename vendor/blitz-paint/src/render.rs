@@ -200,10 +200,6 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: while a multi-column container paints one of its columns (not a spanner's row): the
     /// container, whose spanners that pass leaves out (they are painted in their own rows).
     pub(crate) column_pass_container: std::cell::Cell<Option<NodeId>>,
-    /// pyro: while a multi-column container paints a column without a block-axis clip: the
-    /// container, the column's strip range (CSS px), its transform and its clip rectangle (the
-    /// container's space, device px) for the boxes a break goes through (`draw_paint_child`).
-    pub(crate) column_range: std::cell::Cell<Option<(NodeId, f32, f32, Affine, Rect)>>,
     /// pyro: while a multi-column container paints a spanner's row: the container, whose boxes
     /// that carry the spanner do not paint their own box there (the row is no part of them).
     pub(crate) spanner_row_container: std::cell::Cell<Option<NodeId>>,
@@ -323,7 +319,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
             column_pass_container: std::cell::Cell::new(None),
-            column_range: std::cell::Cell::new(None),
             spanner_row_container: std::cell::Cell::new(None),
             paint_clip: std::cell::Cell::new(Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)),
             backgrounds: true,
@@ -2025,16 +2020,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             custom_widget_scene,
         }
     }
-}
-
-/// pyro: how a column shares a box of its multi-column container (`ElementCx::column_share`).
-enum ColumnShare {
-    /// The column holds it whole: it is painted there unclipped.
-    Inside,
-    /// Another column holds it.
-    Outside,
-    /// A break goes through it: each column shows its slice.
-    Cut,
 }
 
 /// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
@@ -5136,40 +5121,6 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    /// pyro: how a column with strip range `start..end` of multi-column container `container`
-    /// shares the border box of its paint child `child_id` (see `PaintContext::column_range`).
-    fn column_share(&self, container: NodeId, child_id: NodeId, start: f32, end: f32) -> ColumnShare {
-        let tree = self.context.dom.as_ref().tree();
-        let child = &tree[child_id];
-        let size = child.final_layout().size;
-        let mut top = child.final_layout().location.y;
-        let mut at = child.layout_parent.get();
-        let mut steps = 0;
-        while let Some(parent) = at.filter(|&p| p != container) {
-            steps += 1;
-            if steps > 64 {
-                return ColumnShare::Cut;
-            }
-            top += tree[parent].final_layout().location.y;
-            at = tree[parent].layout_parent.get();
-        }
-        if at.is_none() {
-            return ColumnShare::Cut;
-        }
-        let bottom = top + size.height;
-        const EPS: f32 = 0.01;
-        if top >= start - EPS && (top < end - EPS || (size.height <= EPS && top <= end + EPS && end.is_infinite())) && bottom <= end + EPS {
-            ColumnShare::Inside
-        } else if bottom <= start + EPS && size.height > EPS || top >= end - EPS {
-            ColumnShare::Outside
-        } else if size.height <= EPS {
-            // (An empty box at a break is the column's after it.)
-            if top >= start - EPS && top < end - EPS { ColumnShare::Inside } else { ColumnShare::Outside }
-        } else {
-            ColumnShare::Cut
-        }
-    }
-
     /// pyro: whether `child_id` is left out of this pass of a multi-column container's children
     /// (`PaintContext::multicol_pass`).
     fn multicol_skips(&self, child_id: NodeId) -> bool {
@@ -5219,35 +5170,6 @@ impl ElementCx<'_, '_> {
         // layer root (a `backdrop-filter` box): it is placed by its offset.
         if self.multicol_skips(child_id) || self.skips_positioned(child_id) {
             return;
-        }
-        // pyro: in a column painted without a block-axis clip (`PaintContext::column_range`), a
-        // child of the container the column holds whole is painted unclipped, one a break goes
-        // through under the column's clip, and one another column holds not at all.
-        if let Some((container, start, end, transform, range)) = self.context.column_range.get()
-            && container == self.node.id
-        {
-            match self.column_share(container, child_id, start, end) {
-                ColumnShare::Outside => return,
-                ColumnShare::Inside => {}
-                ColumnShare::Cut => {
-                    let pushed = self.context.layer_manager.maybe_push_layer(
-                        scene,
-                        true,
-                        peniko::BlendMode::default(),
-                        1.0,
-                        transform,
-                        &range,
-                        None,
-                        None,
-                    );
-                    // (Its own descendants are not sorted again.)
-                    self.context.column_range.set(None);
-                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
-                    self.context.column_range.set(Some((container, start, end, transform, range)));
-                    self.context.layer_manager.maybe_pop_layer(scene, pushed);
-                    return;
-                }
-            }
         }
         // pyro: a column spanner is painted in its own row, not in a column that reaches it (its
         // outline over the row's edge would show in the column before it).

@@ -109,24 +109,8 @@ impl ElementCx<'_, '_> {
             self.transform = transform;
             self.draw_inline_layout(scene, pos);
             self.draw_marker(scene, pos);
-            // pyro: the container's boxes are not clipped to the column in the block axis, as in
-            // Chromium: a box the column holds whole is painted with what overflows it, above or
-            // below; a box a break goes through is sliced; a box another column holds is left to
-            // it (`PaintContext::column_range`, `draw_paint_child`). (Vertical writing modes keep
-            // the clip.)
-            let unclipped = !single && vertical.is_none();
-            if unclipped {
-                self.context.layer_manager.maybe_pop_layer(scene, pushed);
-            }
-            let outer_range = self
-                .context
-                .column_range
-                .replace(unclipped.then_some((self.node.id, fragment.start, fragment.end, transform, range)));
-            self.draw_children(scene, transform, if single || unclipped { clip_rect } else { column_clip });
-            self.context.column_range.set(outer_range);
-            if !unclipped {
-                self.context.layer_manager.maybe_pop_layer(scene, pushed);
-            }
+            self.draw_children(scene, transform, if single { clip_rect } else { column_clip });
+            self.context.layer_manager.maybe_pop_layer(scene, pushed);
             self.context.column_pass_container.set(outer_column_pass);
             self.context.spanner_row_container.set(outer_spanner_row);
             // pyro: a box broken at the column's end fills the rest of the column (its fragment
