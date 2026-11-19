@@ -641,6 +641,63 @@ impl ElementCx<'_, '_> {
                 let weights: Vec<f32> = given.iter().map(|weight| weight.unwrap_or(share)).collect();
                 let total: f32 = weights.iter().sum();
                 let scale = if total > 1.0 { 1.0 / total } else { 1.0 };
+                // A `url()` image: its slot among the element's stored images
+                // (`blitz_dom::util::image_slots`), found by its URL.
+                let data_of = |image| match blitz_dom::util::unfiltered_image(image) {
+                    // pyro: and its request (a slot of the same URL fetched with other
+                    // modifiers is not its image).
+                    GenericImage::Url(style::values::computed::url::ComputedUrl::Valid(url, modifiers)) => self
+                        .element
+                        .background_images
+                        .iter()
+                        .chain(&self.element.mask_images)
+                        .flatten()
+                        .find(|data| {
+                            *data.url == **url && blitz_dom::net::asks_same_request(&data.options, modifiers.as_deref())
+                        }),
+                    _ => layer.image_data,
+                };
+                // pyro: the natural size of the cross-fade: the weighted average of those of its
+                // images that have one (CSS Images 4 § 2.6), and each image drawn at the size
+                // the cross-fade gets, so a smaller image is stretched to it (it was drawn at
+                // its own size).
+                let mut natural = (0.0f32, 0.0f32, 0.0f32);
+                for (element, weight) in elements.iter().zip(&weights) {
+                    let GenericCrossFadeImage::Image(image) = &element.image else { continue };
+                    let size = data_of(image).and_then(|data| match &data.image {
+                        ImageData::Raster(raster) => {
+                            let unoriented = blitz_dom::util::image_unoriented(&self.style) && raster.orientation != 1;
+                            let (w, h) = raster.shown_size(unoriented);
+                            Some((w as f32 / layer.resolution, h as f32 / layer.resolution))
+                        }
+                        #[cfg(feature = "svg")]
+                        ImageData::Svg(svg) => svg.intrinsic_width().zip(svg.intrinsic_height()),
+                        #[allow(unreachable_patterns)]
+                        _ => None,
+                    });
+                    if let Some((w, h)) = size.filter(|(w, h)| *w > 0.0 && *h > 0.0) {
+                        natural = (natural.0 + w * weight, natural.1 + h * weight, natural.2 + weight);
+                    }
+                }
+                let sized = (natural.2 > 0.0).then(|| {
+                    let (w, h) = (natural.0 / natural.2, natural.1 / natural.2);
+                    let (origin_rect, _, _) = self.positioning_area(layer, area);
+                    let size = compute_layer_size(
+                        layer,
+                        (origin_rect.width() / self.scale) as f32,
+                        (origin_rect.height() / self.scale) as f32,
+                        BackgroundSizeComputeMode::Intrinsic { width: Some(w), height: Some(h), ratio: Some(w / h) },
+                    );
+                    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
+                    use style::values::generics::NonNegative;
+                    let px = |v: f64| {
+                        Lpa::LengthPercentage(NonNegative(style::values::computed::LengthPercentage::new_length(
+                            style::values::computed::Length::new(v as f32),
+                        )))
+                    };
+                    BackgroundSize::ExplicitSize { width: px(size.width), height: px(size.height) }
+                });
+                let size = sized.as_ref().unwrap_or(layer.size);
                 let clip = area.to_path(0.1);
                 scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, self.transform, &clip, None, None);
                 for (element, weight) in elements.iter().zip(weights) {
@@ -659,25 +716,21 @@ impl ElementCx<'_, '_> {
                     );
                     match &element.image {
                         GenericCrossFadeImage::Image(image) => {
-                            // A `url()` image: its slot among the element's stored images
-                            // (`blitz_dom::util::image_slots`), found by its URL.
-                            let image_data = match blitz_dom::util::unfiltered_image(image) {
-                                // pyro: and its request (a slot of the same URL fetched with other
-                                // modifiers is not its image).
-                                GenericImage::Url(style::values::computed::url::ComputedUrl::Valid(url, modifiers)) => self
-                                    .element
-                                    .background_images
-                                    .iter()
-                                    .chain(&self.element.mask_images)
-                                    .flatten()
-                                    .find(|data| {
-                                        *data.url == **url
-                                            && blitz_dom::net::asks_same_request(&data.options, modifiers.as_deref())
-                                    }),
-                                _ => layer.image_data,
-                            };
-                            let inner = ImageLayerStyles { stylo_image: image, image_data, ..*layer };
+                            let inner = ImageLayerStyles { stylo_image: image, image_data: data_of(image), size, ..*layer };
                             self.draw_image_layer_in(scene, &inner, area, current_color);
+                        }
+                        // A colour is an image of that colour without a natural size: in the
+                        // cross-fade's tiles when it has a size.
+                        GenericCrossFadeImage::Color(color) if sized.is_some() => {
+                            let color = color.resolve_to_absolute(current_color).as_dynamic_color();
+                            let inner = ImageLayerStyles { size, ..*layer };
+                            self.draw_generated_layer(scene, &inner, area, |_, _| {
+                                let mut solid = peniko::Gradient::new_linear((0.0, 0.0), (1.0, 0.0));
+                                for offset in [0.0, 1.0] {
+                                    solid.stops.push(peniko::ColorStop { color, offset });
+                                }
+                                (solid, None)
+                            })
                         }
                         GenericCrossFadeImage::Color(color) => {
                             let color = color.resolve_to_absolute(current_color).as_srgb_color();
