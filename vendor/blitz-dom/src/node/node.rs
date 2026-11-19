@@ -2800,9 +2800,7 @@ impl Node {
                     let Some(child) = self.tree().get(hoisted_child.node_id) else {
                         continue;
                     };
-                    let pos = hoisted_child.position(self.tree(), self.id);
-                    let x = x - pos.x;
-                    let y = y - pos.y;
+                    let (x, y) = self.hoisted_hit_point(hoisted_child, x, y);
                     if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
                         return Some(hit);
                     }
@@ -2887,9 +2885,7 @@ impl Node {
                     let Some(child) = self.tree().get(hoisted_child.node_id) else {
                         continue;
                     };
-                    let pos = hoisted_child.position(self.tree(), self.id);
-                    let x = x - pos.x;
-                    let y = y - pos.y;
+                    let (x, y) = self.hoisted_hit_point(hoisted_child, x, y);
                     if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
                         return Some(hit);
                     }

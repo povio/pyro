@@ -1829,6 +1829,99 @@ pub(crate) fn is_multicol_node(node: &Node) -> bool {
 }
 
 impl Node {
+    /// pyro: the multi-column container (horizontal, no transform between) below this box that
+    /// `child_id`, a box this one paints (a stacking context hoisted here, past the container's
+    /// columns), is in: the container, its border box's offset from this box's (CSS px), and the
+    /// child's border box range in its strip (its overflow below included). Paint shows such a
+    /// child in each column it is in (blitz-paint `draw_hoisted_children`), at its strip position
+    /// (`hoisted_child_strip_position`), and hit testing finds it there (`Node::hit_inner`).
+    pub fn multicol_between(&self, child_id: crate::NodeId) -> Option<(crate::NodeId, Point<f32>, f32, f32)> {
+        let tree = self.tree();
+        let child = tree.get(child_id)?;
+        let layout = child.final_layout();
+        let mut top = layout.location.y;
+        let bottom_extent = layout.size.height.max(layout.scrollable_overflow_rect.bottom().abs());
+        let transformed = |n: &Node| n.primary_styles().is_some_and(|s| !s.get_box().transform.0.is_empty());
+        let mut at = child.layout_parent.get();
+        let mut container = None;
+        let mut steps = 0;
+        while let Some(node) = at {
+            steps += 1;
+            if steps > 64 || node == self.id {
+                break;
+            }
+            let n = tree.get(node)?;
+            if transformed(n) {
+                return None;
+            }
+            if n.column_fragments().is_some() {
+                container = Some(node);
+                break;
+            }
+            top += n.final_layout().location.y;
+            at = n.layout_parent.get();
+        }
+        let container = container?;
+        // (An out-of-flow box placed against a box outside the container, or the container, is
+        // placed in its column already or not fragmented: only one placed inside it is.)
+        if child.is_out_of_flow() {
+            let cb = child.containing_block()?;
+            if cb == container {
+                return None;
+            }
+            let mut up = Some(cb);
+            let mut inside = false;
+            while let Some(node) = up {
+                if node == container {
+                    inside = true;
+                    break;
+                }
+                up = tree.get(node)?.layout_parent.get();
+            }
+            if !inside {
+                return None;
+            }
+        }
+        // Its offset from this box, through boxes with no transform.
+        let mut origin = Point { x: 0.0f32, y: 0.0 };
+        let mut at = Some(container);
+        while let Some(node) = at.filter(|&n| n != self.id) {
+            let n = tree.get(node)?;
+            if transformed(n) {
+                return None;
+            }
+            let location = n.final_layout().location;
+            origin.x += location.x;
+            origin.y += location.y;
+            at = n.layout_parent.get();
+        }
+        at?;
+        Some((container, origin, top, top + bottom_extent))
+    }
+
+    /// pyro: the point (`x`, `y`: CSS px, this box's) in the space `hoisted_child`, a stacking
+    /// context hoisted to this box, is hit in. One shown in each column of a multi-column container
+    /// below that it is in (`multicol_between`, as paint shows it) is hit through the column under
+    /// the point, at its place in the strip.
+    pub(crate) fn hoisted_hit_point(&self, hoisted_child: &crate::HoistedPaintChild, x: f32, y: f32) -> (f32, f32) {
+        let tree = self.tree();
+        let in_columns = self.multicol_between(hoisted_child.node_id).and_then(|(container, origin, _, _)| {
+            let columns = tree.get(container)?.column_fragments()?;
+            (columns.fragments.len() > 1).then_some((container, origin, columns))
+        });
+        match in_columns {
+            Some((container, origin, columns)) => {
+                let at = columns.columns_to_strip(Point { x: x - origin.x, y: y - origin.y });
+                let pos = super::paint_tree::hoisted_child_strip_position(tree, self.id, hoisted_child.node_id, container);
+                (at.x + origin.x - pos.x, at.y + origin.y - pos.y)
+            }
+            None => {
+                let pos = hoisted_child.position(tree, self.id);
+                (x - pos.x, y - pos.y)
+            }
+        }
+    }
+
     /// The columns of this multi-column container (`None` for any other box, or a box whose
     /// style no longer makes it one).
     #[inline]
@@ -2816,6 +2909,25 @@ mod tests {
 
     fn spanners(n: usize) -> Vec<Div> {
         (0..n).map(|_| div("column-span:all;height:1px", vec![])).collect()
+    }
+
+    /// pyro: a stacking context hoisted out of a multi-column container that is none (a `z-index`
+    /// box a break goes through) is hit in each column that shows a piece of it, as it is painted
+    /// there, and nowhere else.
+    #[test]
+    fn a_hoisted_box_in_columns_is_hit_where_it_is_painted() {
+        // Columns 75px tall: the box is 50..150 in the strip, 50..75 of the first column (the
+        // bottom of it) and the whole of the second.
+        let mut doc = laid_out(vec![div(
+            "columns:2;column-gap:0;width:200px",
+            vec![div("height:50px", vec![]), div("position:relative;z-index:1;height:100px", vec![])],
+        )]);
+        let ids: Vec<crate::NodeId> = doc.nodes.iter().map(|(id, _)| id).collect();
+        let z = *ids.last().unwrap();
+        let hit = |doc: &mut BaseDocument, x: f32, y: f32| doc.hit(x, y).map(|h| h.node_id);
+        assert_eq!(hit(&mut doc, 50.0, 60.0), Some(z), "its piece in the first column");
+        assert_eq!(hit(&mut doc, 150.0, 30.0), Some(z), "its piece in the second column");
+        assert_ne!(hit(&mut doc, 50.0, 120.0), Some(z), "not below the container, where the strip has it");
     }
 
     /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.

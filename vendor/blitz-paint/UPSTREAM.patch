@@ -8405,7 +8405,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let drag_target = self.context.scrollbar_drag_target;
          let hovered_thumb = self.context.hovered_scrollbar;
  
-@@ -967,259 +3175,3480 @@
+@@ -967,259 +3175,3440 @@
          }
      }
  
@@ -11142,65 +11142,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// from this element's (CSS px), and the child's border box range in its strip (its overflow
 +    /// below included).
 +    fn multicol_between(&self, child_id: NodeId) -> Option<(NodeId, Vec2, f32, f32)> {
-+        let tree = self.context.dom.as_ref().tree();
-+        let child = &tree[child_id];
-+        let layout = child.final_layout();
-+        let mut top = layout.location.y;
-+        let bottom_extent = layout.size.height.max(layout.scrollable_overflow_rect.bottom().abs());
-+        let mut at = child.layout_parent.get();
-+        let mut container = None;
-+        let mut steps = 0;
-+        while let Some(node) = at {
-+            steps += 1;
-+            if steps > 64 || node == self.node.id {
-+                break;
-+            }
-+            let n = &tree[node];
-+            if n.primary_styles().is_some_and(|s| !s.get_box().transform.0.is_empty()) {
-+                return None;
-+            }
-+            if n.column_fragments().is_some() {
-+                container = Some(node);
-+                break;
-+            }
-+            top += n.final_layout().location.y;
-+            at = n.layout_parent.get();
-+        }
-+        let container = container?;
-+        // (An out-of-flow box placed against a box outside the container, or the container, is
-+        // placed in its column already or not fragmented: only one placed inside it is.)
-+        if child.is_out_of_flow() {
-+            let cb = child.containing_block()?;
-+            if cb == container {
-+                return None;
-+            }
-+            let mut up = Some(cb);
-+            let mut inside = false;
-+            while let Some(node) = up {
-+                if node == container {
-+                    inside = true;
-+                    break;
-+                }
-+                up = tree[node].layout_parent.get();
-+            }
-+            if !inside {
-+                return None;
-+            }
-+        }
-+        // Its offset from this element, through boxes with no transform.
-+        let mut origin = Vec2::ZERO;
-+        let mut at = Some(container);
-+        while let Some(node) = at.filter(|&n| n != self.node.id) {
-+            let n = &tree[node];
-+            if n.primary_styles().is_some_and(|s| !s.get_box().transform.0.is_empty()) {
-+                return None;
-+            }
-+            let location = n.final_layout().location;
-+            origin += Vec2::new(location.x as f64, location.y as f64);
-+            at = n.layout_parent.get();
-+        }
-+        at?;
-+        Some((container, origin, top, top + bottom_extent))
++        let (container, origin, top, bottom) = self.node.multicol_between(child_id)?;
++        Some((container, Vec2::new(origin.x as f64, origin.y as f64), top, bottom))
 +    }
 +
 +    /// pyro: how a column with strip range `start..end` of multi-column container `container`
@@ -11333,7 +11276,9 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        {
 +            let scale = self.scale;
 +            self.context.hoisted_in_column.set(true);
-+            for fragment in &columns.fragments {
++            // (The columns its range reaches only: they are in strip order.)
++            let first = columns.fragments.partition_point(|f| f.end <= child_top);
++            for fragment in columns.fragments[first..].iter().take_while(|f| f.start < child_bottom) {
 +                if !(child_top < fragment.end && child_bottom > fragment.start) || fragment.spanner {
 +                    continue;
 +                }
@@ -11822,7 +11767,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                }
 +                open.clear();
 +                let scale = self.scale;
-+                for fragment in &columns.fragments {
++                // (At its place in the strip, which each column moves: not in the column it starts in.)
++                let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id, container);
++                let child_node = &self.node.tree()[hoisted_child.node_id];
++                let pos = kurbo::Vec2 { x: (strip.x + sticky.x) as f64 * self.scale, y: (strip.y + sticky.y) as f64 * self.scale };
++                // (The columns its range reaches only: they are in strip order.)
++                let first = columns.fragments.partition_point(|f| f.end <= child_top);
++                for fragment in columns.fragments[first..].iter().take_while(|f| f.start < child_bottom) {
 +                    if fragment.spanner || !(child_top < fragment.end && child_bottom > fragment.start) {
 +                        continue;
 +                    }
@@ -11832,7 +11783,16 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                        1e7,
 +                        ((origin.y + fragment.end as f64) * scale).min(1e7),
 +                    );
-+                    let offset = Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale);
++                    // (Its border box where Chromium snaps it: the column's exact edge plus its own
++                    // unrounded place, rounded; not the rounded column edge plus its rounded place,
++                    // which takes a box flush with the last column's end past the container's:
++                    // WPT css-multicol `multicol-gap-fraction-002`.)
++                    let exact = if fragment.exact_x.is_finite() { fragment.exact_x - fragment.x } else { 0.0 };
++                    let unrounded = child_node.unrounded_layout().location.x as f64;
++                    let rounded = child_node.final_layout().location.x as f64;
++                    let along = strip.x as f64 + sticky.x as f64;
++                    let x = (((fragment.offset.x + exact) as f64 + along + unrounded) * scale).round() - (along + rounded) * scale;
++                    let offset = Vec2::new(x, fragment.offset.y as f64 * scale);
 +                    let moved = parent_style_transform.pre_translate(offset);
 +                    let pushed =
 +                        self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, moved, &range, None, None);
@@ -12115,7 +12075,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6658,60 @@
+@@ -1229,9 +6618,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12178,7 +12138,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6733,20 @@
+@@ -1253,9 +6693,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12202,7 +12162,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6757,209 @@
+@@ -1266,26 +6717,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12414,7 +12374,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +6967,38 @@
+@@ -1293,15 +6927,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12454,7 +12414,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7009,108 @@
+@@ -1312,7 +6969,108 @@
          );
      }
  
@@ -12563,7 +12523,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7127,22 @@
+@@ -1329,9 +7087,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12589,7 +12549,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7158,28 @@
+@@ -1347,10 +7118,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12618,7 +12578,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7187,23 @@
+@@ -1358,8 +7147,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12643,7 +12603,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7227,27 @@
+@@ -1383,22 +7187,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12680,7 +12640,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7276,32 @@
+@@ -1427,6 +7236,32 @@
      }
  }
  
@@ -12713,7 +12673,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7313,13 @@
+@@ -1438,6 +7273,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12727,7 +12687,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7339,364 @@
+@@ -1457,12 +7299,364 @@
          }
      };
      let s_border = style.get_border();

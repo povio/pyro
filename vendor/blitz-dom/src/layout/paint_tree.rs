@@ -35,6 +35,17 @@ use taffy::{Point, Rect};
 /// hoisted by Taffy, otherwise `layout_parent`, which is set for every layout
 /// child by `resolve_layout_children`, anonymous blocks included).
 pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId) -> Point<f32> {
+    hoisted_child_offset(tree, sc_root_id, child_id, None)
+}
+
+/// pyro: [`hoisted_child_position`] in the strip of the multi-column container `container` the
+/// child is in (`Node::multicol_between`), not moved into the column its place is in: paint shows
+/// it in each column it is in, moved as the column's content, and hit testing finds it there.
+pub fn hoisted_child_strip_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, container: NodeId) -> Point<f32> {
+    hoisted_child_offset(tree, sc_root_id, child_id, Some(container))
+}
+
+fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, in_strip_of: Option<NodeId>) -> Point<f32> {
     let child = &tree[child_id];
     let mut position = Point::ZERO;
     let mut current = child.containing_block();
@@ -64,7 +75,7 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
             break;
         };
         // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
-        if let Some(columns) = node.column_fragments() {
+        if let Some(columns) = node.column_fragments().filter(|_| in_strip_of != Some(id)) {
             // A relatively positioned box is in the column of its place in the flow, moved from
             // there (Blink): a box moved up over a column break stays in the column after it.
             let own = child.final_layout().location;
@@ -212,12 +223,24 @@ impl StackingContext {
             }
             let left = position.x + location.x;
             let top = position.y + location.y;
-            Some(Rect {
+            let mut rect = Rect {
                 left: left + (overflow.x0 / scale) as f32,
                 top: top + (overflow.y0 / scale) as f32,
                 right: left + (overflow.x1 / scale) as f32,
                 bottom: top + (overflow.y1 / scale) as f32,
-            })
+            };
+            // pyro: one shown in each column of a multi-column container below (`multicol_between`)
+            // lies anywhere in its columns.
+            if let Some((container, origin, _, _)) = tree.get(sc_root_id).and_then(|root| root.multicol_between(child.node_id))
+                && let Some(columns) = tree.get(container)
+            {
+                let o = *columns.scrollable_overflow();
+                rect.left = rect.left.min(origin.x + (o.x0 / scale) as f32);
+                rect.top = rect.top.min(origin.y + (o.y0 / scale) as f32);
+                rect.right = rect.right.max(origin.x + (o.x1 / scale) as f32);
+                rect.bottom = rect.bottom.max(origin.y + (o.y1 / scale) as f32);
+            }
+            Some(rect)
         };
 
         // Children dropped by a DOM mutation since the last `resolve` yield

@@ -355,3 +355,26 @@ fn a_culled_column_leaves_later_boxes_painted() {
         );
     }
 }
+
+/// pyro: a stacking context hoisted out of a multi-column container that is none (a `z-index`
+/// box) is painted in each column it is in, from its place in the strip: one that starts in the
+/// second column is painted there (it was moved into that column twice and clipped away), one a
+/// break goes through in both.
+#[test]
+fn a_hoisted_box_is_painted_in_its_columns() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:200px'><div style='height:100px'></div>\
+             <div style='position:relative;z-index:1;height:50px;background:green'></div></div>\
+             <div style='columns:2;column-gap:0;width:200px;margin-top:100px'><div style='height:50px'></div>\
+             <div style='position:relative;z-index:1;height:100px;background:blue'></div></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[(150.0, 50.0, GREEN), (50.0, 50.0, WHITE), (150.0, 15.0, WHITE), (50.0, 240.0, BLUE), (150.0, 190.0, BLUE), (50.0, 190.0, WHITE)],
+            "the boxes in their columns",
+        );
+    }
+}

@@ -5735,65 +5735,8 @@ impl ElementCx<'_, '_> {
     /// from this element's (CSS px), and the child's border box range in its strip (its overflow
     /// below included).
     fn multicol_between(&self, child_id: NodeId) -> Option<(NodeId, Vec2, f32, f32)> {
-        let tree = self.context.dom.as_ref().tree();
-        let child = &tree[child_id];
-        let layout = child.final_layout();
-        let mut top = layout.location.y;
-        let bottom_extent = layout.size.height.max(layout.scrollable_overflow_rect.bottom().abs());
-        let mut at = child.layout_parent.get();
-        let mut container = None;
-        let mut steps = 0;
-        while let Some(node) = at {
-            steps += 1;
-            if steps > 64 || node == self.node.id {
-                break;
-            }
-            let n = &tree[node];
-            if n.primary_styles().is_some_and(|s| !s.get_box().transform.0.is_empty()) {
-                return None;
-            }
-            if n.column_fragments().is_some() {
-                container = Some(node);
-                break;
-            }
-            top += n.final_layout().location.y;
-            at = n.layout_parent.get();
-        }
-        let container = container?;
-        // (An out-of-flow box placed against a box outside the container, or the container, is
-        // placed in its column already or not fragmented: only one placed inside it is.)
-        if child.is_out_of_flow() {
-            let cb = child.containing_block()?;
-            if cb == container {
-                return None;
-            }
-            let mut up = Some(cb);
-            let mut inside = false;
-            while let Some(node) = up {
-                if node == container {
-                    inside = true;
-                    break;
-                }
-                up = tree[node].layout_parent.get();
-            }
-            if !inside {
-                return None;
-            }
-        }
-        // Its offset from this element, through boxes with no transform.
-        let mut origin = Vec2::ZERO;
-        let mut at = Some(container);
-        while let Some(node) = at.filter(|&n| n != self.node.id) {
-            let n = &tree[node];
-            if n.primary_styles().is_some_and(|s| !s.get_box().transform.0.is_empty()) {
-                return None;
-            }
-            let location = n.final_layout().location;
-            origin += Vec2::new(location.x as f64, location.y as f64);
-            at = n.layout_parent.get();
-        }
-        at?;
-        Some((container, origin, top, top + bottom_extent))
+        let (container, origin, top, bottom) = self.node.multicol_between(child_id)?;
+        Some((container, Vec2::new(origin.x as f64, origin.y as f64), top, bottom))
     }
 
     /// pyro: how a column with strip range `start..end` of multi-column container `container`
@@ -5926,7 +5869,9 @@ impl ElementCx<'_, '_> {
         {
             let scale = self.scale;
             self.context.hoisted_in_column.set(true);
-            for fragment in &columns.fragments {
+            // (The columns its range reaches only: they are in strip order.)
+            let first = columns.fragments.partition_point(|f| f.end <= child_top);
+            for fragment in columns.fragments[first..].iter().take_while(|f| f.start < child_bottom) {
                 if !(child_top < fragment.end && child_bottom > fragment.start) || fragment.spanner {
                     continue;
                 }
@@ -6415,7 +6360,13 @@ impl ElementCx<'_, '_> {
                 }
                 open.clear();
                 let scale = self.scale;
-                for fragment in &columns.fragments {
+                // (At its place in the strip, which each column moves: not in the column it starts in.)
+                let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id, container);
+                let child_node = &self.node.tree()[hoisted_child.node_id];
+                let pos = kurbo::Vec2 { x: (strip.x + sticky.x) as f64 * self.scale, y: (strip.y + sticky.y) as f64 * self.scale };
+                // (The columns its range reaches only: they are in strip order.)
+                let first = columns.fragments.partition_point(|f| f.end <= child_top);
+                for fragment in columns.fragments[first..].iter().take_while(|f| f.start < child_bottom) {
                     if fragment.spanner || !(child_top < fragment.end && child_bottom > fragment.start) {
                         continue;
                     }
@@ -6425,7 +6376,16 @@ impl ElementCx<'_, '_> {
                         1e7,
                         ((origin.y + fragment.end as f64) * scale).min(1e7),
                     );
-                    let offset = Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale);
+                    // (Its border box where Chromium snaps it: the column's exact edge plus its own
+                    // unrounded place, rounded; not the rounded column edge plus its rounded place,
+                    // which takes a box flush with the last column's end past the container's:
+                    // WPT css-multicol `multicol-gap-fraction-002`.)
+                    let exact = if fragment.exact_x.is_finite() { fragment.exact_x - fragment.x } else { 0.0 };
+                    let unrounded = child_node.unrounded_layout().location.x as f64;
+                    let rounded = child_node.final_layout().location.x as f64;
+                    let along = strip.x as f64 + sticky.x as f64;
+                    let x = (((fragment.offset.x + exact) as f64 + along + unrounded) * scale).round() - (along + rounded) * scale;
+                    let offset = Vec2::new(x, fragment.offset.y as f64 * scale);
                     let moved = parent_style_transform.pre_translate(offset);
                     let pushed =
                         self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, moved, &range, None, None);
