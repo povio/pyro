@@ -1172,6 +1172,14 @@ impl Node {
         if style.clone_float() != Float::None || self.is_paint_layer_root() {
             return false;
         }
+        // pyro: a `line-clamp` container paints its floats itself, clipped at its block-end
+        // content edge (CSS Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-005`).
+        {
+            let clamp = &style.get_box().line_clamp;
+            if !clamp.webkit_legacy && !clamp.max_lines.is_none() {
+                return false;
+            }
+        }
         let display = style.clone_display();
         // (An anonymous block's style, `::-servo-anonymous-box`, keeps the initial `display:
         // inline`; anonymous table parts have their table displays.)

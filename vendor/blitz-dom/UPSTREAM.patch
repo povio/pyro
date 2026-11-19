@@ -23580,7 +23580,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1148,158 @@
+@@ -471,22 +1148,166 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -23615,6 +23615,14 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        if style.clone_float() != Float::None || self.is_paint_layer_root() {
 +            return false;
 +        }
++        // pyro: a `line-clamp` container paints its floats itself, clipped at its block-end
++        // content edge (CSS Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-005`).
++        {
++            let clamp = &style.get_box().line_clamp;
++            if !clamp.webkit_legacy && !clamp.max_lines.is_none() {
++                return false;
++            }
++        }
 +        let display = style.clone_display();
 +        // (An anonymous block's style, `::-servo-anonymous-box`, keeps the initial `display:
 +        // inline`; anonymous table parts have their table displays.)
@@ -23645,9 +23653,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            parent.primary_styles().is_some_and(|parent_style| {
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
-         })
-     }
- 
++        })
++    }
++
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -23688,9 +23696,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                    })
 +                })
 +            })
-+        })
-+    }
-+
+         })
+     }
+ 
 +    /// pyro: whether this box is laid out at the inline level (an atomic inline: an inline
 +    /// block, an image): in its parent's paint phases it paints with the inline content.
 +    pub fn is_inline_level(&self) -> bool {
@@ -23746,7 +23754,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1309,21 @@
+@@ -496,6 +1317,21 @@
      }
  }
  
@@ -23768,7 +23776,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1367,143 @@
+@@ -539,3 +1375,143 @@
          )
      }
  }

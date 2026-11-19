@@ -5266,6 +5266,18 @@ impl ElementCx<'_, '_> {
         {
             self.draw_table_borders(scene);
         }
+        // pyro: a `line-clamp` container's floats are clipped at its block-end content edge, not
+        // at its other edges (CSS Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-*`).
+        let clamp_clip = {
+            let clamp = &self.style.get_box().line_clamp;
+            (!clamp.webkit_legacy && !clamp.max_lines.is_none()).then(|| {
+                const FAR: f64 = 1e7;
+                Rect::new(-FAR, -FAR, FAR, self.frame.content_box.y1)
+            })
+        };
+        if let Some(rect) = &clamp_clip {
+            scene.push_clip_layer(Fill::NonZero, self.transform, rect);
+        }
         if let Some(children) = &*self.node.paint_children.borrow() {
             let tree = self.context.dom.as_ref().tree();
             for &child_id in children {
@@ -5273,6 +5285,9 @@ impl ElementCx<'_, '_> {
                     self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
                 }
             }
+        }
+        if clamp_clip.is_some() {
+            scene.pop_layer();
         }
         self.draw_marker(scene, content_position);
         self.draw_inline_layout(scene, content_position);
