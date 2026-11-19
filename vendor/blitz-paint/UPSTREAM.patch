@@ -17953,7 +17953,7 @@ new file mode 100644
 diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-paint/src/render/box_shadow.rs
 --- a/packages/blitz-paint/src/render/box_shadow.rs
 +++ b/packages/blitz-paint/src/render/box_shadow.rs
-@@ -1,17 +1,387 @@
+@@ -1,17 +1,391 @@
  use super::ElementCx;
  use crate::color::{Color, ToColorColor as _};
 +use crate::kurbo_css::{CssBox, NonUniformRoundedRectRadii};
@@ -18168,8 +18168,12 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +        // pyro: a table with captions clips its wrapper box, captions too (its frame is its grid
 +        // alone; Chromium's table fragment holds its captions; WPT css-contain
 +        // `contain-paint-table-002`).
++        // (Only with captions: a grid as tall as the wrapper keeps its own frame, the collapsed
++        // borders it was laid out with.)
 +        if let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data
-+            && table.grid_box.borrow().is_some()
++            && table.grid_box.borrow().is_some_and(|(top, height)| {
++                top != 0.0 || (height - self.node.final_layout().size.height).abs() > 0.01
++            })
 +        {
 +            let wrapper = super::create_css_rect(style, self.node.final_layout(), self.scale);
 +            return overflow_clip_path(&wrapper, style, self.scale);
@@ -18342,7 +18346,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          let current_color = self.style.clone_color();
          let opacity = self.style.get_effects().opacity;
-@@ -21,7 +391,11 @@
+@@ -21,7 +395,11 @@
              .background_color
              .resolve_to_absolute(&current_color)
              .as_srgb_color();
@@ -18355,7 +18359,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
          let needs_clip = opacity < 1.0 || !bg_is_opaque;
  
          let max_shadow_rect = box_shadow.iter().fold(Rect::ZERO, |prev, shadow| {
-@@ -76,12 +450,51 @@
+@@ -76,12 +454,51 @@
                              continue;
                          }
  
@@ -18411,7 +18415,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
                      }
                  }
              },
-@@ -95,8 +508,13 @@
+@@ -95,8 +512,13 @@
          if !has_inset_shadow {
              return;
          }
@@ -18425,7 +18429,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          for shadow in box_shadow.iter().filter(|s| s.inset) {
              let shadow_color = shadow
-@@ -104,17 +522,40 @@
+@@ -104,17 +526,40 @@
                  .color
                  .resolve_to_absolute(&current_color)
                  .as_srgb_color();
@@ -18473,7 +18477,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
              scene.push_layer(
                  Fill::NonZero,
                  Mix::Normal,
-@@ -141,19 +582,35 @@
+@@ -141,19 +586,35 @@
                  None,
                  None,
              );
