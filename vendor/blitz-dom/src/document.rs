@@ -102,6 +102,8 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.dominant-baseline.enabled", true);
         // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
         style_config::set_pref!("layout.css.light-dark.images.enabled", true);
+        // pyro: `cross-fade()` (blitz-paint draws it).
+        style_config::set_pref!("layout.css.cross-fade.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
         // pyro: `background-clip: border-area` (blitz-paint clips it to the border's area).
         style_config::set_pref!("layout.css.background-clip.border-area.enabled", true);

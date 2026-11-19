@@ -11926,9 +11926,63 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -253,14 +624,61 @@
+@@ -249,18 +620,112 @@
                  #[cfg(feature = "tracing")]
-                 warn!("Implement image layer drawing for Image::CrossFade")
+                 warn!("Implement image layer drawing for Image::PaintWorklet")
+             }
+-            GenericImage::CrossFade(_) => {
+-                #[cfg(feature = "tracing")]
+-                warn!("Implement image layer drawing for Image::CrossFade")
++            // pyro: `cross-fade()` (CSS Images 4 § 2.6): its images (and colours, as images of
++            // that colour) each drawn as the layer would draw it, weighted by its percentage
++            // (those left out share what the others leave of 100%, a sum past 100% is scaled
++            // down to it) and added up premultiplied (`plus-lighter`) in a group.
++            GenericImage::CrossFade(cross_fade) => {
++                use style::values::generics::image::GenericCrossFadeImage;
++                use style::values::generics::Optional;
++                let elements = &cross_fade.elements;
++                let given: Vec<Option<f32>> = elements
++                    .iter()
++                    .map(|element| match &element.percent {
++                        Optional::Some(percent) => Some(percent.0.clamp(0.0, 1.0)),
++                        Optional::None => None,
++                    })
++                    .collect();
++                let sum: f32 = given.iter().flatten().sum();
++                let left_out = given.iter().filter(|weight| weight.is_none()).count();
++                let share = if left_out > 0 { (1.0 - sum).max(0.0) / left_out as f32 } else { 0.0 };
++                let weights: Vec<f32> = given.iter().map(|weight| weight.unwrap_or(share)).collect();
++                let total: f32 = weights.iter().sum();
++                let scale = if total > 1.0 { 1.0 / total } else { 1.0 };
++                let clip = area.to_path(0.1);
++                scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, self.transform, &clip, None, None);
++                for (element, weight) in elements.iter().zip(weights) {
++                    let weight = weight * scale;
++                    if weight <= 0.0 {
++                        continue;
++                    }
++                    scene.push_layer(
++                        Fill::NonZero,
++                        BlendMode::new(Mix::Normal, Compose::PlusLighter),
++                        weight,
++                        self.transform,
++                        &clip,
++                        None,
++                        None,
++                    );
++                    match &element.image {
++                        GenericCrossFadeImage::Image(image) => {
++                            let inner = ImageLayerStyles { stylo_image: image, ..*layer };
++                            self.draw_image_layer_in(scene, &inner, area, current_color);
++                        }
++                        GenericCrossFadeImage::Color(color) => {
++                            let color = color.resolve_to_absolute(current_color).as_srgb_color();
++                            scene.fill(Fill::NonZero, self.transform, color, None, &clip);
++                        }
++                    }
++                    scene.pop_layer();
++                }
++                scene.pop_layer();
              }
 -            GenericImage::Image(_) => {
 -                #[cfg(feature = "tracing")]
@@ -11994,7 +12048,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -275,7 +693,18 @@
+@@ -275,7 +740,18 @@
              return;
          };
  
@@ -12013,7 +12067,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              let node = self.context.dom.get_node(node_id)?;
              let style = node.primary_styles()?;
              let current_color = style.clone_color();
-@@ -308,11 +737,51 @@
+@@ -308,11 +784,51 @@
                  ]
              })
              .collect();
@@ -12066,7 +12120,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let cell_rect = |cell_id: NodeId| -> Option<Rect> {
              let layout = self.context.dom.get_node(cell_id)?.final_layout();
-@@ -344,13 +813,29 @@
+@@ -344,13 +860,29 @@
          let after = gutter - before;
  
          for cell in &table.cells {
@@ -12097,7 +12151,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,25 +852,224 @@
+@@ -367,25 +899,224 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -12243,12 +12297,12 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                    None => parts.push((group, vec![at])),
 +                }
 +            }
-+        }
+         }
 +        for (at, row) in table.rows.iter().enumerate() {
 +            if !row.collapsed && has_outline(row.node_id) {
 +                parts.push((row.node_id, vec![at]));
 +            }
-         }
++        }
 +        if parts.is_empty() {
 +            return;
 +        }
@@ -12333,7 +12387,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,23 +1094,43 @@
+@@ -410,23 +1141,43 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -12382,7 +12436,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -439,14 +1143,10 @@
+@@ -439,14 +1190,10 @@
              return;
          }
  
@@ -12400,7 +12454,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +1161,7 @@
+@@ -461,7 +1208,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -12409,7 +12463,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +1176,83 @@
+@@ -476,29 +1223,83 @@
              return;
          }
  
@@ -12507,7 +12561,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1263,163 @@
+@@ -509,72 +1310,132 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -12659,9 +12713,9 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                    &rect,
                  );
              }
-         }
-     }
- 
++        }
++    }
++
 +    /// The background positioning area of `layer` and the transform from its space to the scene,
 +    /// with `area` (this element's space) taken to that space: the viewport for a fixed layer,
 +    /// else the origin box in this element's space.
@@ -12672,11 +12726,10 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            (viewport_rect, transform, area)
 +        } else {
 +            (self.box_rect(layer.origin), self.transform, area)
-+        }
-+    }
-+
-     fn draw_gradient_layer(
-         &self,
+         }
+     }
+ 
+@@ -583,21 +1444,29 @@
          scene: &mut impl PaintScene,
          gradient: &StyloGradient,
          layer: &ImageLayerStyles,
@@ -12719,7 +12772,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
              origin_rect.width() / self.scale,
-@@ -629,24 +1451,50 @@
+@@ -629,24 +1498,50 @@
              bg_size.height,
          );
  
@@ -12783,7 +12836,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
              y: y.translate,
-@@ -681,35 +1529,84 @@
+@@ -681,35 +1576,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -12888,7 +12941,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +1772,64 @@
+@@ -875,48 +1819,64 @@
      stride: f64,
  }
  
@@ -12982,7 +13035,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +1871,24 @@
+@@ -958,11 +1918,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -13012,7 +13065,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +1912,16 @@
+@@ -986,6 +1959,16 @@
      (count, stride)
  }
  
@@ -13029,7 +13082,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +1945,57 @@
+@@ -1009,3 +1992,57 @@
          -extend_length
      }
  }

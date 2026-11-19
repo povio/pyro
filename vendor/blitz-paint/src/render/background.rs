@@ -620,9 +620,56 @@ impl ElementCx<'_, '_> {
                 #[cfg(feature = "tracing")]
                 warn!("Implement image layer drawing for Image::PaintWorklet")
             }
-            GenericImage::CrossFade(_) => {
-                #[cfg(feature = "tracing")]
-                warn!("Implement image layer drawing for Image::CrossFade")
+            // pyro: `cross-fade()` (CSS Images 4 § 2.6): its images (and colours, as images of
+            // that colour) each drawn as the layer would draw it, weighted by its percentage
+            // (those left out share what the others leave of 100%, a sum past 100% is scaled
+            // down to it) and added up premultiplied (`plus-lighter`) in a group.
+            GenericImage::CrossFade(cross_fade) => {
+                use style::values::generics::image::GenericCrossFadeImage;
+                use style::values::generics::Optional;
+                let elements = &cross_fade.elements;
+                let given: Vec<Option<f32>> = elements
+                    .iter()
+                    .map(|element| match &element.percent {
+                        Optional::Some(percent) => Some(percent.0.clamp(0.0, 1.0)),
+                        Optional::None => None,
+                    })
+                    .collect();
+                let sum: f32 = given.iter().flatten().sum();
+                let left_out = given.iter().filter(|weight| weight.is_none()).count();
+                let share = if left_out > 0 { (1.0 - sum).max(0.0) / left_out as f32 } else { 0.0 };
+                let weights: Vec<f32> = given.iter().map(|weight| weight.unwrap_or(share)).collect();
+                let total: f32 = weights.iter().sum();
+                let scale = if total > 1.0 { 1.0 / total } else { 1.0 };
+                let clip = area.to_path(0.1);
+                scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, self.transform, &clip, None, None);
+                for (element, weight) in elements.iter().zip(weights) {
+                    let weight = weight * scale;
+                    if weight <= 0.0 {
+                        continue;
+                    }
+                    scene.push_layer(
+                        Fill::NonZero,
+                        BlendMode::new(Mix::Normal, Compose::PlusLighter),
+                        weight,
+                        self.transform,
+                        &clip,
+                        None,
+                        None,
+                    );
+                    match &element.image {
+                        GenericCrossFadeImage::Image(image) => {
+                            let inner = ImageLayerStyles { stylo_image: image, ..*layer };
+                            self.draw_image_layer_in(scene, &inner, area, current_color);
+                        }
+                        GenericCrossFadeImage::Color(color) => {
+                            let color = color.resolve_to_absolute(current_color).as_srgb_color();
+                            scene.fill(Fill::NonZero, self.transform, color, None, &clip);
+                        }
+                    }
+                    scene.pop_layer();
+                }
+                scene.pop_layer();
             }
             // pyro: `image(<color>)`: an image of that colour without a natural size, sized,
             // positioned and tiled as a gradient is.
