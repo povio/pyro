@@ -217,6 +217,11 @@ impl BorderShape {
     /// The area the border covers (`background-clip: border-area` paints there): between the
     /// shapes, or the stroke along the shape (`BorderShapePainter::PaintBorderArea`).
     pub(super) fn border_area_path(&self) -> BezPath {
+        // pyro: between concentric ovals, the stroke the border is drawn as (`paint`), so the
+        // area and the border are one shape (WPT css-backgrounds `clip-border-area-border-shape`).
+        if let Some((ellipse, width)) = self.concentric_ovals {
+            return kurbo::stroke(ellipse.path_elements(TOLERANCE), &Stroke::new(width), &StrokeOpts::default(), TOLERANCE);
+        }
         if let Some(inner) = &self.inner {
             let shapes = [flatten(&self.outer), flatten(inner)];
             return boolean(&shapes, |inside| inside[0] && !inside[1]);

@@ -16648,7 +16648,7 @@ diff --git a/packages/blitz-paint/src/render/border_shape.rs b/packages/blitz-pa
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/border_shape.rs
-@@ -0,0 +1,403 @@
+@@ -0,0 +1,408 @@
 +//! pyro: `border-shape` (CSS Borders 4 §11), as Blink's `BorderShapePainter` draws it.
 +//!
 +//! With one shape the border is a stroke along it, as wide as the relevant side's border and in
@@ -16868,6 +16868,11 @@ new file mode 100644
 +    /// The area the border covers (`background-clip: border-area` paints there): between the
 +    /// shapes, or the stroke along the shape (`BorderShapePainter::PaintBorderArea`).
 +    pub(super) fn border_area_path(&self) -> BezPath {
++        // pyro: between concentric ovals, the stroke the border is drawn as (`paint`), so the
++        // area and the border are one shape (WPT css-backgrounds `clip-border-area-border-shape`).
++        if let Some((ellipse, width)) = self.concentric_ovals {
++            return kurbo::stroke(ellipse.path_elements(TOLERANCE), &Stroke::new(width), &StrokeOpts::default(), TOLERANCE);
++        }
 +        if let Some(inner) = &self.inner {
 +            let shapes = [flatten(&self.outer), flatten(inner)];
 +            return boolean(&shapes, |inside| inside[0] && !inside[1]);
