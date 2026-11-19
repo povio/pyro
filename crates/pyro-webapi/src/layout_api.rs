@@ -473,19 +473,32 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
     Ok(s.boolean(v))
 }
 
-fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
+fn scroll_args(a: &Args<'_>) -> JsResult<(Option<f64>, Option<f64>)> {
     if let Some(o) = a.get(0).as_object() {
         let l = o.get_atom("left")?;
         let t = o.get_atom("top")?;
         Ok((
-            (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
-            (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
+            (!l.is_undefined()).then(|| to_scroll_number(l)).transpose()?,
+            (!t.is_undefined()).then(|| to_scroll_number(t)).transpose()?,
         ))
     } else if a.len() >= 2 {
-        Ok((Some(to_scroll_offset(a.get(0))?), Some(to_scroll_offset(a.get(1))?)))
+        Ok((Some(to_scroll_number(a.get(0))?), Some(to_scroll_number(a.get(1))?)))
     } else {
         Ok((None, None))
     }
+}
+
+/// pyro: the effective `zoom` of the element `el` (1 without a style): its scroll offsets are
+/// laid out in its zoomed px, and script reads and writes them in its own CSS px, as Chromium
+/// does (WPT cssom-view `scrollTo-zoom`).
+fn element_zoom(page: &PageDom, el: NodeId) -> f64 {
+    let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return 1.0 };
+    layout
+        .style()
+        .stylo_style(&dom, el)
+        .map(|style| style.effective_zoom.value() as f64)
+        .filter(|zoom| zoom.is_finite() && *zoom > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// CSSOM View: whether `el`'s scroll offsets are the viewport's, so that its
@@ -507,6 +520,8 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
     let (l, t) = scroll_args(&a)?;
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
+    let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
+    let (l, t) = (l.map(|v| round_scroll_offset(v * zoom)), t.map(|v| round_scroll_offset(v * zoom)));
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
@@ -533,15 +548,17 @@ pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult
         (true, true) => layout.scroll_y() as f64,
         (true, false) => layout.scroll_x() as f64,
         // Negative on an axis that scrolls from its end (right-to-left, reversed flex).
-        (false, true) => layout.scroll_top(n.id) as f64,
-        (false, false) => layout.scroll_left(n.id) as f64,
+        (false, true) => layout.scroll_top(n.id) as f64 / element_zoom(n.page(), n.id),
+        (false, false) => layout.scroll_left(n.id) as f64 / element_zoom(n.page(), n.id),
     }))
 }
 
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {
-    let value = to_scroll_offset(v)?;
+    let value = to_scroll_number(v)?;
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
+    let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
+    let value = round_scroll_offset(value * zoom);
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();

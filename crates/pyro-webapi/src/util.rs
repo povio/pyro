@@ -268,11 +268,19 @@ pub fn to_i32(v: Value<'_>) -> JsResult<i32> {
 /// double; Chromium (device scale 1) rounds to the nearest pixel, half up,
 /// treats non-finite values as 0 and clamps huge ones (no WebIDL wrapping).
 pub fn to_scroll_offset(v: Value<'_>) -> JsResult<i32> {
+    Ok(round_scroll_offset(to_scroll_number(v)?))
+}
+
+/// pyro: a scroll offset argument as a number (non-finite: 0), before it is scaled (an element's
+/// `zoom`) and rounded ([`round_scroll_offset`]).
+pub fn to_scroll_number(v: Value<'_>) -> JsResult<f64> {
     let n = v.to_number()?;
-    if !n.is_finite() {
-        return Ok(0);
-    }
-    Ok((n + 0.5).floor().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
+    Ok(if n.is_finite() { n } else { 0.0 })
+}
+
+/// pyro: a scroll offset in whole layout px.
+pub fn round_scroll_offset(n: f64) -> i32 {
+    (n + 0.5).floor().clamp(i32::MIN as f64, i32::MAX as f64) as i32
 }
 
 /// A delay of `ms` milliseconds a page asked for, as a timer takes it: zero for NaN and for

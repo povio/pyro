@@ -7470,3 +7470,17 @@ fn a_run_in_lets_go_of_its_block_when_it_stops_running_in() {
     assert_eq!(result, "true,true,true,true,true,true,true");
     e.page.dispose();
 }
+
+#[test]
+fn script_scroll_offsets_of_a_zoomed_element_are_in_its_own_css_px() {
+    // `zoom: 2`: each 100px child is 200px laid out; scrolling to 100 shows the second child at
+    // the top (WPT cssom-view `scrollTo-zoom`).
+    let e = env(
+        "<body style='margin:0'><div id=s style='zoom:2;width:100px;height:100px;overflow:hidden'>\
+         <div id=a style='height:100px'></div><div id=b style='height:100px'></div><div style='height:100px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "s.scrollTo(0,100);String(document.elementFromPoint(10,10).id)"), "b");
+    assert_eq!(eval(&e.main, "String(s.scrollTop)"), "100");
+    assert_eq!(eval(&e.main, "s.scrollTop=0;s.scrollTop=100;String(document.elementFromPoint(10,10).id)"), "b");
+    e.page.dispose();
+}
