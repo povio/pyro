@@ -285,7 +285,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     // pyro: CSS `text-autospace`.
     autospace::apply(layout, text, styles, inline_boxes);
     // pyro: CSS `text-justify`.
-    justify::apply(layout, text, styles);
+    justify::apply(layout, text, styles, inline_boxes);
 }
 
 /// pyro: how the shaper trims a style's fullwidth punctuation (CSS `text-spacing-trim`): the

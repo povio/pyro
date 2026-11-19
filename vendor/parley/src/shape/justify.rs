@@ -20,12 +20,26 @@ fn is_cjk(ch: char) -> bool {
         | 0xFF00..=0xFFEF | 0x20000..=0x3FFFF)
 }
 
-pub(crate) fn apply<B: Brush>(layout: &mut Layout<B>, text: &str, styles: &[ResolvedStyle<B>]) {
+pub(crate) fn apply<B: Brush>(
+    layout: &mut Layout<B>,
+    text: &str,
+    styles: &[ResolvedStyle<B>],
+    inline_boxes: &[crate::inline_box::LayoutInlineBox],
+) {
     if styles.iter().all(|style| style.text_justify == TextJustify::InterWord)
         || styles.iter().all(|style| style.text_justify == TextJustify::Auto) && !text.chars().any(is_cjk)
     {
         return;
     }
+    // The text positions of the atomic inlines: one between two characters is not text, so the
+    // character after it gets the opportunity before it (as after the start of the line).
+    let mut atomic: alloc::vec::Vec<u32> = inline_boxes
+        .iter()
+        .filter(|layout_box| layout_box.inline_box.kind == crate::InlineBoxKind::InFlow)
+        .map(|layout_box| layout_box.inline_box.index as u32)
+        .collect();
+    atomic.sort_unstable();
+    let mut atomic = atomic.into_iter().peekable();
     let shaped_text = &mut layout.data.shaped_text;
     let count = shaped_text.characters().len();
     // Whether an opportunity follows the previous character (Blink's `is_after_expansion`).
@@ -33,6 +47,9 @@ pub(crate) fn apply<B: Brush>(layout: &mut Layout<B>, text: &str, styles: &[Reso
     for index in 0..count {
         let character = shaped_text.characters()[index];
         let style = &styles[character.style_index as usize];
+        while atomic.next_if(|&position| position <= character.text_byte_start as u32).is_some() {
+            after_expansion = false;
+        }
         let Some(ch) = text.get(character.text_byte_start as usize..).and_then(|rest| rest.chars().next()) else {
             continue;
         };
