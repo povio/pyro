@@ -832,6 +832,8 @@ struct PendingScript {
     url: String,
     /// `None` until fetched (inline scripts start as `Some`).
     source: Option<Result<String, String>>,
+    /// From an external file (a `src`): only such a script gets `load`.
+    external: bool,
 }
 
 enum ParsePhase {
@@ -1740,9 +1742,9 @@ impl Browser {
                     format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), l.inline_module_seq)
                 };
                 if info.async_ {
-                    self.execute_module(page, &info.inline_text, &url, false, Some(element));
+                    self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
                 } else {
-                    let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)) };
+                    let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)), external: false };
                     self.load_mut(page).expect("load").deferred.push_back(Rc::new(RefCell::new(ps)));
                 }
             }
@@ -1839,7 +1841,7 @@ impl Browser {
         element: Rc<ResourceNode>,
         opts: ScriptFetch,
     ) {
-        let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None }));
+        let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None, external: true }));
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let loader_id = self.current_loader(page);
@@ -1888,7 +1890,7 @@ impl Browser {
                     b.script_loaded(page, &element, true);
                 }
                 Ok(text) => {
-                    b.execute_module(page, &text, &u, false, Some(element));
+                    b.execute_module(page, &text, &u, false, Some(element), true);
                 }
                 Err(e) => {
                     b.report_load_error(page, &e);
@@ -2037,7 +2039,7 @@ impl Browser {
             }
             (ScriptType::Module, None) => {
                 let url = dynamic_inline_module_url(&base);
-                self.execute_module(page, &info.inline_text, &url, false, Some(element));
+                self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
                 self.drain_dom_resources(page);
             }
         }
@@ -2061,9 +2063,9 @@ impl Browser {
             let Some(source) = source else { return }; // still fetching
             load.deferred.pop_front();
             drop(load);
-            let (ty, url, element) = {
+            let (ty, url, element, external) = {
                 let n = next.borrow();
-                (n.ty, n.url.clone(), n.element.clone())
+                (n.ty, n.url.clone(), n.element.clone(), n.external)
             };
             match source {
                 Ok(text) if ty == ScriptType::Classic => {
@@ -2071,7 +2073,7 @@ impl Browser {
                     self.script_loaded(page, &element, true);
                 }
                 Ok(text) => {
-                    if self.execute_module(page, &text, &url, true, Some(element)) {
+                    if self.execute_module(page, &text, &url, true, Some(element), external) {
                         return; // resumes when the module's promise settles
                     }
                 }
@@ -2410,7 +2412,7 @@ impl Browser {
                 let url = dynamic_inline_module_url(&base);
                 let element =
                     dom.borrow_mut().add_ref(node).ok().map(|_| Rc::new(ResourceNode { dom: dom.clone(), node }));
-                self.execute_module(page, &info.inline_text, &url, false, element);
+                self.execute_module(page, &info.inline_text, &url, false, element, false);
             }
             return;
         };
@@ -2436,7 +2438,7 @@ impl Browser {
             }
             match res {
                 Ok(text) if module => {
-                    b.execute_module(page, &text, &u, false, Some(element));
+                    b.execute_module(page, &text, &u, false, Some(element), true);
                 }
                 Ok(text) => {
                     b.execute_external(page, &text, &u, &element);
@@ -2450,10 +2452,19 @@ impl Browser {
         });
     }
 
-    /// Starts a module; with `deferred`, parsing-completion work waits for its
-    /// evaluation promise, otherwise the `load` event does. Returns whether
-    /// such a wait was set up. `element` gets `load` when the promise
-    /// fulfills and `error` when evaluation cannot start or rejects.
+    /// Starts a module script; with `deferred`, parsing-completion work waits
+    /// for it to run, otherwise the `load` event does. Returns whether such a
+    /// wait was set up.
+    ///
+    /// HTML fetches the script's module graph, then runs it without awaiting
+    /// its evaluation: a top-level await holds up neither the scripts after
+    /// it nor DOMContentLoaded and load. With the engine's two steps
+    /// ([`pyro_js::Scope::has_module_phases`]) the graph is fetched
+    /// ([`pyro_js::Scope::load_module_graph`]), then linked and evaluated in a
+    /// task, after which the script has run. A fetch failure of the graph
+    /// (the script's result is null) fires `error` at the element; anything
+    /// else (a parse, link or evaluation error is reported) fires `load` at
+    /// an `external` one and no event at an inline one.
     fn execute_module(
         &mut self,
         page: FrameKey,
@@ -2461,6 +2472,148 @@ impl Browser {
         url: &str,
         deferred: bool,
         element: Option<Rc<ResourceNode>>,
+        external: bool,
+    ) -> bool {
+        let Some(realm) = self.main_realm(page) else { return false };
+        let Ok(scope) = realm.scope() else { return false };
+        let loader_id = self.frame_loader(page);
+        let sched = self.scheduler();
+        let counted = self.load_mut(page).is_some();
+        // Ends the script in a task: runs its graph first (`ModuleRun`), then
+        // the element's event (`Some(true)` load, `Some(false)` error), then
+        // what waits for it.
+        let finish = {
+            let element = element.clone();
+            Rc::new(move |run: ModuleRun, event: Option<bool>| {
+                let loader_id = loader_id.clone();
+                let element = element.clone();
+                sched.post(TaskSource::Networking, move |b| {
+                    if b.frame_loader(page) != loader_id {
+                        return;
+                    }
+                    match run {
+                        ModuleRun::Graph(url) => b.run_module_graph(page, &url),
+                        ModuleRun::Report(error) => {
+                            if let Some(realm) = b.main_realm(page) {
+                                if let Ok(scope) = realm.scope() {
+                                    scope.report_exception(&JsError::thrown(error));
+                                }
+                            }
+                        }
+                        ModuleRun::Nothing => {}
+                    }
+                    if b.frame_loader(page) != loader_id {
+                        return;
+                    }
+                    if let Some(element) = &element {
+                        b.script_ran(page, element, event);
+                    }
+                    // The handler may have replaced the document.
+                    if b.frame_loader(page) != loader_id {
+                        return;
+                    }
+                    if counted {
+                        if let Some(mut l) = b.load_mut(page) {
+                            if deferred {
+                                l.awaiting_module = false;
+                            } else {
+                                l.async_pending -= 1;
+                            }
+                        }
+                    }
+                    if deferred {
+                        b.run_deferred(page);
+                    } else {
+                        b.maybe_fire_load(page);
+                    }
+                });
+            })
+        };
+        let ran = external.then_some(true);
+        let started = match scope.load_module_graph(text, url) {
+            Ok(Some(loaded)) => {
+                let (fetched, failed) = (finish.clone(), finish.clone());
+                let url = url.to_owned();
+                scope.then(
+                    loaded,
+                    move |_s, _v| fetched(ModuleRun::Graph(url.clone()), ran),
+                    move |s, e| {
+                        // A graph that does not parse still runs: running it
+                        // reports the error (in the task, in script order);
+                        // one a fetch failed has no result.
+                        let parse_error = e
+                            .as_object()
+                            .and_then(|o| o.get_atom("name").ok())
+                            .and_then(|n| n.as_string())
+                            .is_some_and(|n| n == "SyntaxError");
+                        if parse_error {
+                            failed(ModuleRun::Report(Persistent::new(s, e)), ran);
+                        } else {
+                            failed(ModuleRun::Nothing, Some(false));
+                        }
+                    },
+                )
+            }
+            Ok(None) => return self.execute_module_whole(page, text, url, deferred, element, ran, finish),
+            Err(e) => Err(e),
+        };
+        if let Err(e) = started {
+            scope.report_exception(&e);
+            if let Some(element) = &element {
+                self.script_ran(page, element, Some(false));
+            }
+            return false;
+        }
+        if let Some(mut l) = self.load_mut(page) {
+            if deferred {
+                l.awaiting_module = true;
+            } else {
+                l.async_pending += 1;
+            }
+        }
+        true
+    }
+
+    /// HTML "run a module script" for the graph `execute_module` fetched:
+    /// links and evaluates it; a link error and an evaluation error (now or
+    /// when the evaluation promise rejects) are reported.
+    fn run_module_graph(&mut self, page: FrameKey, url: &str) {
+        let Some(realm) = self.main_realm(page) else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        let evaluated = match &bindings {
+            Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
+            None => scope.link_and_evaluate_module(url),
+        };
+        let reported = evaluated.and_then(|promise| {
+            scope.then(
+                promise,
+                |_s, _v| {},
+                |s, e| s.report_exception(&JsError::thrown(Persistent::new(s, e))),
+            )
+        });
+        if let Err(e) = reported {
+            scope.report_exception(&e);
+        }
+    }
+
+    /// `execute_module` without the engine's two steps (an older patched
+    /// JavaScriptCore, the system framework): the graph's fetch and the
+    /// evaluation are one promise. The script counts as run once the
+    /// promise settles or, still pending, when no module fetch of the realm
+    /// is in flight after a task (the engine requests imports from promise
+    /// jobs, so then every import was loaded and the module evaluated up to
+    /// its top-level await; an unrelated `import()` in flight delays it).
+    /// The element gets `ran` on fulfillment and `error` on rejection.
+    fn execute_module_whole(
+        &mut self,
+        page: FrameKey,
+        text: &str,
+        url: &str,
+        deferred: bool,
+        element: Option<Rc<ResourceNode>>,
+        ran: Option<bool>,
+        finish: Rc<dyn Fn(ModuleRun, Option<bool>)>,
     ) -> bool {
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
@@ -2474,59 +2627,17 @@ impl Browser {
             Err(e) => {
                 scope.report_exception(&e);
                 if let Some(element) = &element {
-                    self.script_loaded(page, element, false);
+                    self.script_ran(page, element, Some(false));
                 }
                 return false;
             }
         };
-        let loader_id = self.frame_loader(page);
-        let sched = self.scheduler();
-        let counted = self.load_mut(page).is_some();
-        let resume = move |ok: bool| {
-            let loader_id = loader_id.clone();
-            let element = element.clone();
-            sched.post(TaskSource::Networking, move |b| {
-                if b.frame_loader(page) != loader_id {
-                    return;
-                }
-                if let Some(element) = &element {
-                    b.script_loaded(page, element, ok);
-                }
-                // The handler may have replaced the document.
-                if b.frame_loader(page) != loader_id {
-                    return;
-                }
-                if counted {
-                    if let Some(mut l) = b.load_mut(page) {
-                        if deferred {
-                            l.awaiting_module = false;
-                        } else {
-                            l.async_pending -= 1;
-                        }
-                    }
-                }
-                if deferred {
-                    b.run_deferred(page);
-                } else {
-                    b.maybe_fire_load(page);
-                }
-            });
-        };
-        // HTML runs a module script without awaiting its evaluation promise:
-        // a top-level await holds up neither the scripts after it nor
-        // DOMContentLoaded and load. The promise also covers the fetch of
-        // the module graph, which must finish first, so the script counts
-        // as run once its promise settles or, still pending, when no module
-        // fetch of the realm is in flight after a task (the engine requests
-        // a module's imports from promise jobs, so between tasks no fetch in
-        // flight means every import was requested and loaded, and the
-        // module evaluated up to its top-level await).
         let done = Rc::new(std::cell::Cell::new(false));
         let resume = {
             let done = done.clone();
             Rc::new(move |ok: bool| {
                 if !done.replace(true) {
-                    resume(ok);
+                    finish(ModuleRun::Nothing, if ok { ran } else { Some(false) });
                 }
             })
         };
@@ -2556,6 +2667,17 @@ impl Browser {
         true
     }
 
+    /// A script element has run (or failed): rendering is unblocked on it
+    /// and it gets `event` (`Some(true)` load, `Some(false)` error).
+    fn script_ran(&self, page: FrameKey, element: &ResourceNode, event: Option<bool>) {
+        if let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            bindings.unblock_rendering(element.node);
+            if let Some(ok) = event {
+                pyro_webapi::lifecycle::resource_loaded(&bindings, element.node, ok);
+            }
+        }
+    }
+
     fn report_load_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
@@ -2571,6 +2693,15 @@ impl Browser {
         let Ok(scope) = realm.scope() else { return };
         pyro_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(error.to_owned()));
     }
+}
+
+/// What ending a module script does first (`Browser::execute_module`).
+enum ModuleRun {
+    /// Links and evaluates the fetched graph at this URL.
+    Graph(String),
+    /// Reports the graph's parse error.
+    Report(Persistent),
+    Nothing,
 }
 
 /// Calls `then` in a later task in which `fetcher` has no fetch in flight,

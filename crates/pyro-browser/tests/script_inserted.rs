@@ -219,7 +219,6 @@ fn script_elements_fire_load_and_error_events() {
         "empty-error",
         "once",
         "inline-module-ran",
-        "inline-module-load",
         "ext-module-ran",
         "ext-module-load",
         "forced-async-ran",
@@ -241,6 +240,8 @@ fn script_elements_fire_load_and_error_events() {
         "text-only-not-run",
         "blocking-error",
         "parser-missing-load",
+        // HTML fires `load` only at a script from an external file.
+        "inline-module-load",
     ] {
         assert!(!log.iter().any(|l| l == absent), "unexpected {absent:?} in {log:?}");
     }
@@ -248,7 +249,6 @@ fn script_elements_fire_load_and_error_events() {
     assert_before(
         &log,
         &[
-            ("inline-module-ran", "inline-module-load"),
             ("ext-module-ran", "ext-module-load"),
             ("forced-async-ran", "forced-async-load"),
             ("blocking", "blocking-load"),
@@ -312,10 +312,14 @@ document.addEventListener('DOMContentLoaded', () => addModule('m3'));
 #[test]
 fn inline_modules_inserted_by_script_each_run() {
     let log = load(MODULES_PAGE, &[]);
-    for name in ["parser-module", "m1-ran", "m2-ran", "m3-ran", "m1-load", "m2-load", "m3-load"] {
+    for name in ["parser-module", "m1-ran", "m2-ran", "m3-ran"] {
         assert_eq!(log.iter().filter(|l| *l == name).count(), 1, "{name:?} in {log:?}");
     }
-    assert_before(&log, &[("m1-ran", "m1-load"), ("m3-ran", "event:load")]);
+    // Inline scripts get no `load` event.
+    for name in ["m1-load", "m2-load", "m3-load"] {
+        assert!(!log.iter().any(|l| l == name), "{name:?} in {log:?}");
+    }
+    assert_before(&log, &[("m3-ran", "event:load")]);
     assert!(!log.iter().any(|l| l.starts_with("exception") || l.starts_with("rejection")), "{log:?}");
 }
 
@@ -348,6 +352,94 @@ fn top_level_await_holds_up_neither_later_modules_nor_load() {
         ],
     );
     assert!(!log.iter().any(|l| l.starts_with("exception") || l.starts_with("rejection")), "{log:?}");
+}
+
+const STALLED_IMPORT_PAGE: &str = r#"<!doctype html><html><head>
+<script>document.addEventListener('DOMContentLoaded', () => console.log('dcl'));</script>
+<script type="module">import('/stalled.js'); console.log('first-ran'); await new Promise(() => {});</script>
+<script defer src="/later.js"></script>
+</head><body></body></html>"#;
+
+/// A module's own graph decides when it has run, not every module fetch of
+/// the window: an `import()` it started and does not await, whose response
+/// stalls, holds up neither the deferred script after it nor
+/// DOMContentLoaded and load.
+#[test]
+fn an_unawaited_stalled_import_holds_up_nothing() {
+    if !pyro_js::Scope::has_module_phases() {
+        return;
+    }
+    let log = load(
+        STALLED_IMPORT_PAGE,
+        &[("/stalled.js", "console.log('stalled-ran')", 60_000), ("/later.js", "console.log('later-ran')", 0)],
+    );
+    assert_before(&log, &[("first-ran", "later-ran"), ("later-ran", "dcl"), ("dcl", "event:load")]);
+    assert!(!log.iter().any(|l| l == "stalled-ran"), "{log:?}");
+}
+
+const MODULE_EVENTS_PAGE: &str = r#"<!doctype html><html><head>
+<script>
+addEventListener('error', (e) => console.log('window-error ' + e.message));
+function on(name) { return { onload: () => console.log(name + '-load'), onerror: () => console.log(name + '-error') }; }
+function add(name, attrs) {
+  const s = document.createElement('script');
+  s.type = 'module';
+  Object.assign(s, attrs, on(name));
+  document.head.appendChild(s);
+}
+add('throws-now', { src: '/throws-now.js' });
+add('throws-later', { src: '/throws-later.js' });
+add('syntax', { src: '/syntax.js' });
+add('missing-import', { src: '/missing-import.js' });
+add('inline-missing-import', { textContent: "import '/missing.js';" });
+add('inline-pending', { textContent: "await new Promise(() => {});" });
+add('inline-plain', { textContent: "console.log('inline-plain-ran')" });
+</script>
+</head><body></body></html>"#;
+
+/// Element events of module scripts do not depend on how fast evaluation
+/// rejects: an external module whose graph was fetched gets `load` once run
+/// (an evaluation or parse error is reported to the window, at once or
+/// later); `error` is for a graph a fetch failed, inline or external; an
+/// inline module gets no `load`.
+#[test]
+fn module_script_events_follow_the_graph_not_the_evaluation() {
+    if !pyro_js::Scope::has_module_phases() {
+        return;
+    }
+    let log = load(
+        MODULE_EVENTS_PAGE,
+        &[
+            ("/throws-now.js", "throw new Error('now')", 0),
+            ("/throws-later.js", "await new Promise(r => setTimeout(r, 50)); throw new Error('later')", 0),
+            ("/syntax.js", "export let = ;", 0),
+            ("/missing-import.js", "import '/missing.js';", 0),
+        ],
+    );
+    for line in [
+        "throws-now-load",
+        "throws-later-load",
+        "syntax-load",
+        "missing-import-error",
+        "inline-missing-import-error",
+        "inline-plain-ran",
+    ] {
+        assert_eq!(log.iter().filter(|l| *l == line).count(), 1, "{line:?} in {log:?}");
+    }
+    for line in [
+        "throws-now-error",
+        "throws-later-error",
+        "syntax-error",
+        "missing-import-load",
+        "inline-missing-import-load",
+        "inline-pending-load",
+        "inline-pending-error",
+        "inline-plain-load",
+    ] {
+        assert!(!log.iter().any(|l| l == line), "{line:?} in {log:?}");
+    }
+    assert!(log.iter().any(|l| l.starts_with("window-error") && l.contains("now")), "{log:?}");
+    assert!(log.iter().any(|l| l.starts_with("window-error") && l.contains("later")), "{log:?}");
 }
 
 /// `Range.createContextualFragment` scripts run once the fragment is

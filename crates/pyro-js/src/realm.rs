@@ -1575,6 +1575,60 @@ impl<'s> Scope<'s> {
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
 
+    /// Whether this JavaScriptCore runs a module script in HTML's two steps
+    /// ([`Scope::load_module_graph`], [`Scope::link_and_evaluate_module`];
+    /// patch 0037).
+    pub fn has_module_phases() -> bool {
+        // SAFETY: plain capability probe without arguments.
+        unsafe { sys::modules::pyro_jsc_module_phases_available() == 1 }
+    }
+
+    /// HTML "fetch a module script graph" for the module script `source`
+    /// at `url` (registered as [`Scope::eval_module`] registers it): its
+    /// static imports are fetched through the realm's [`ModuleFetcher`] and
+    /// the graph parsed; nothing runs. Returns a promise that fulfills when
+    /// the graph is ready for [`Scope::link_and_evaluate_module`] and
+    /// rejects with the failure (a fetch's TypeError, a SyntaxError). `None`
+    /// without [`Scope::has_module_phases`].
+    pub fn load_module_graph(&self, source: &str, url: &str) -> JsResult<Option<Value<'s>>> {
+        if !self.realm.engine.caps.modules || !Self::has_module_phases() {
+            return Ok(None);
+        }
+        self.realm.inline_modules.borrow_mut().insert(url.to_string(), source.to_string());
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
+        let mut err: sys::JSStringRef = ptr::null();
+        let v = unsafe {
+            sys::modules::pyro_jsc_module_load(self.realm.global_ctx()?, url.as_ptr().cast(), url.len(), &mut err)
+        };
+        if v.is_null() {
+            let msg = if err.is_null() {
+                "module loading failed".to_string()
+            } else {
+                unsafe { JsString::from_raw_owned(err) }.to_string()
+            };
+            return Err(JsError::Type(msg.into()));
+        }
+        Ok(Some(unsafe { Value::from_raw(self.ctx, v) }))
+    }
+
+    /// HTML "run a module script" for the graph [`Scope::load_module_graph`]
+    /// fetched for `url`: links and evaluates it with this realm as the
+    /// entry realm and returns the evaluation promise (pending on a
+    /// top-level await, rejected by an evaluation error), or the link error
+    /// (or a parse error of the graph) as `Err`.
+    pub fn link_and_evaluate_module(&self, url: &str) -> JsResult<Value<'s>> {
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
+        let mut exc: sys::JSValueRef = ptr::null();
+        let v = unsafe {
+            sys::modules::pyro_jsc_module_link_evaluate(self.realm.global_ctx()?, url.as_ptr().cast(), url.len(), &mut exc)
+        };
+        if v.is_null() {
+            check(self.ctx, exc)?;
+            return Err(JsError::Type("module evaluation failed".into()));
+        }
+        Ok(unsafe { Value::from_raw(self.ctx, v) })
+    }
+
     /// Calls `function_source` (a function expression) with `this` and `args`;
     /// the shape of CDP `Runtime.callFunctionOn`.
     pub fn call_function(

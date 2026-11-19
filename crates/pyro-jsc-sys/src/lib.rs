@@ -1350,6 +1350,27 @@ pub mod modules {
             url_len: usize,
             error: *mut JSStringRef,
         ) -> JSValueRef;
+        /// 1 when `pyro_jsc_module_load` and `pyro_jsc_module_link_evaluate`
+        /// work (source-built JavaScriptCore with patch 0037).
+        pub fn pyro_jsc_module_phases_available() -> c_int;
+        /// Fetches the graph of the top-level module `url` (its source
+        /// registered as for `pyro_jsc_module_evaluate`): a promise that
+        /// fulfills once the graph is fetched and parsed and rejects with the
+        /// failure, or null with an owned `*error`.
+        pub fn pyro_jsc_module_load(
+            ctx: JSGlobalContextRef,
+            url: *const c_char,
+            url_len: usize,
+            error: *mut JSStringRef,
+        ) -> JSValueRef;
+        /// Links and evaluates the graph `pyro_jsc_module_load` fetched: the
+        /// evaluation promise, or null with `*exception` the link error.
+        pub fn pyro_jsc_module_link_evaluate(
+            ctx: JSGlobalContextRef,
+            url: *const c_char,
+            url_len: usize,
+            exception: *mut JSValueRef,
+        ) -> JSValueRef;
         /// 1 when `pyro_jsc_module_precompile` works (source-built JavaScriptCore).
         pub fn pyro_jsc_module_precompile_available() -> c_int;
         /// Parses and compiles, ahead of its first load, the JavaScript module

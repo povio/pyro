@@ -27,6 +27,11 @@ bool JSGlobalContextSetTypedModuleLoader(JSGlobalContextRef ctx, JSModuleLoaderT
 JSValueRef JSModuleSourceCreateWithType(JSContextRef ctx, JSStringRef source, JSStringRef url, int type,
                                         JSValueRef *exception);
 JSObjectRef JSLoadAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
+#ifdef PYRO_JSC_MODULE_PHASES
+// Patch 0037-module-graph-phases (build.rs defines this when the archive has it).
+JSObjectRef JSLoadModuleGraph(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
+JSObjectRef JSLinkAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
+#endif
 bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef *messages);
 typedef JSStringRef (*pyro_module_base_url_cb)(JSGlobalContextRef ctx);
 bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, pyro_module_base_url_cb callback);
@@ -156,4 +161,52 @@ JSValueRef pyro_jsc_module_evaluate(JSGlobalContextRef ctx, const char *src, siz
     JSStringRelease(sourceURL);
     if (!promise) *error = pyro_error(ctx, exception, "module evaluation failed");
     return promise;
+}
+
+// A module script's two steps apart (patch 0037): 1 when this JavaScriptCore has them.
+int pyro_jsc_module_phases_available(void) {
+#ifdef PYRO_JSC_MODULE_PHASES
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+// Fetches the graph of the top-level module `url` (registered like
+// pyro_jsc_module_evaluate's) and returns a promise that fulfills once it is
+// fetched and parsed, or rejects with the failure. NULL (and an owned error
+// string) without patch 0037 or when the context cannot load modules.
+JSValueRef pyro_jsc_module_load(JSGlobalContextRef ctx, const char *url, size_t url_len, JSStringRef *error) {
+#ifdef PYRO_JSC_MODULE_PHASES
+    JSStringRef sourceURL = pyro_string(url, url_len);
+    JSValueRef exception = NULL;
+    JSObjectRef promise = JSLoadModuleGraph(ctx, sourceURL, &exception);
+    JSStringRelease(sourceURL);
+    if (!promise) *error = pyro_error(ctx, exception, "module loading failed");
+    return promise;
+#else
+    (void)ctx;
+    (void)url;
+    (void)url_len;
+    *error = JSStringCreateWithUTF8CString("module graph phases need patch 0037");
+    return NULL;
+#endif
+}
+
+// Links and evaluates the graph pyro_jsc_module_load fetched for `url`: the
+// evaluation promise, or NULL with *exception set to the link error (or
+// another failure).
+JSValueRef pyro_jsc_module_link_evaluate(JSGlobalContextRef ctx, const char *url, size_t url_len, JSValueRef *exception) {
+#ifdef PYRO_JSC_MODULE_PHASES
+    JSStringRef sourceURL = pyro_string(url, url_len);
+    JSObjectRef promise = JSLinkAndEvaluateModule(ctx, sourceURL, exception);
+    JSStringRelease(sourceURL);
+    return promise;
+#else
+    (void)ctx;
+    (void)url;
+    (void)url_len;
+    *exception = NULL;
+    return NULL;
+#endif
 }
