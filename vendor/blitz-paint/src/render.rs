@@ -2512,7 +2512,16 @@ fn line_truncation<'a>(
     // The lines were broken in the unrounded box: a line as wide as the box (a
     // box sized to its text) must not count as overflowing it by a rounding.
     let width = node.unrounded_layout().content_box_width() * scale;
-    line_truncation_at(text_layout, line, index, scale, width)
+    line_truncation_at(text_layout, line, index, scale, width, wraps(node))
+}
+
+/// pyro: whether the lines of the inline root `node` have soft wrap opportunities: none where
+/// its `text-wrap-mode` is `nowrap` (`white-space: pre`: WPT css-overflow
+/// `line-clamp/block-ellipsis-013`) but at a `<wbr>`.
+fn wraps(node: &Node) -> bool {
+    node.primary_styles().is_none_or(|style| {
+        style.get_inherited_text().text_wrap_mode != style::computed_values::text_wrap_mode::T::Nowrap
+    })
 }
 
 /// pyro: whether `node` is in an editing host (`contenteditable` other than `false`, the
@@ -2538,6 +2547,7 @@ fn line_truncation_at<'a>(
     index: usize,
     scale: f32,
     width: f32,
+    wraps: bool,
 ) -> Option<LineTruncation<'a>> {
     // pyro: the line's paragraph's direction (`unicode-bidi: plaintext`: WPT css-overflow
     // `line-clamp-with-text-overflow-string-009`).
@@ -2550,7 +2560,7 @@ fn line_truncation_at<'a>(
     // pyro: a standard line clamp's ellipsis after the last soft wrap opportunity that leaves
     // room for it (CSS Overflow 4 `block-ellipsis`; WPT css-overflow `block-ellipsis-001`).
     if clamp.is_some_and(|clamp| clamp.at_soft_wraps)
-        && let Some((cut, x)) = truncate_line_at_soft_wrap(line, ellipsis, width, scale, rtl)
+        && let Some((cut, x)) = truncate_line_at_soft_wrap(line, ellipsis, width, scale, rtl, wraps, &text_layout.text)
     {
         return Some(LineTruncation { cut, x, ellipsis, text });
     }
@@ -2571,6 +2581,8 @@ fn truncate_line_at_soft_wrap(
     width: f32,
     scale: f32,
     rtl: bool,
+    wraps: bool,
+    text: &str,
 ) -> Option<(crate::text::TextCut, f32)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
@@ -2588,7 +2600,11 @@ fn truncate_line_at_soft_wrap(
                 for cluster in run.run().visual_clusters() {
                     let advance = cluster.advance();
                     let space = cluster.is_space_or_nbsp() || cluster.is_hard_line_break() || advance <= 0.0;
-                    let opportunity = cluster.is_soft_wrap_opportunity().then(|| cluster.text_range().start);
+                    // (Without soft wrapping, a `<wbr>` (U+200B) still is one, as Chromium has it.)
+                    let start = cluster.text_range().start;
+                    let opportunity = (cluster.is_soft_wrap_opportunity()
+                        && (wraps || text.get(..start).is_some_and(|before| before.ends_with('\u{200B}'))))
+                    .then_some(start);
                     atoms.push((cluster.text_range().start as f64, x, x + advance, space, opportunity));
                     x += advance;
                 }
@@ -4181,7 +4197,7 @@ impl ElementCx<'_, '_> {
             }
             let vertical = vertical(&line);
             let truncation = inline_size.and_then(|width| {
-                line_truncation_at(text_layout, &line, index, self.scale as f32, width)
+                line_truncation_at(text_layout, &line, index, self.scale as f32, width, wraps(self.node))
             });
             draw_text_context.cut = truncation.as_ref().map(|truncation| truncation.cut);
             if highlight.is_none() { crate::text::stroke_text(
