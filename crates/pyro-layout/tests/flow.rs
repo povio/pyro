@@ -72,6 +72,39 @@ impl Page {
     }
 }
 
+fn nested_grid_with_long_value(track: &str, minimum: &str) -> Page {
+    let mut document = page(&format!(
+        "<!doctype html><html id=root><style>\
+         main,article {{ display:grid; gap:12px }}\
+         main {{ grid-template-columns:minmax(0,1fr) }}\
+         article {{ grid-template-columns:1fr; border:1px solid; padding:12px }}\
+         dl {{ display:grid; grid-auto-columns:{track}; gap:8px; margin:0 }}\
+         dl div {{ display:contents }}\
+         dd {{ min-width:{minimum}; margin:0; overflow-wrap:break-word }}\
+         @media (min-width:761px) {{ dl {{ grid-template-columns:minmax(10rem,auto) 1fr }} }}\
+         </style><main><article><dl><div><dt>Value</dt><dd id=value>{}</dd></div></dl></article></main>",
+        "SyntheticLongValue".repeat(6),
+    ));
+    document.layout.set_viewport(Viewport::new(390, 800));
+    document
+}
+
+#[test]
+fn nested_grid_with_display_contents_wraps_long_value_at_mobile_width() {
+    let document = nested_grid_with_long_value("auto", "0");
+    assert_eq!(document.metrics("root")[6], 390.0);
+    let value = document.metrics("value");
+    assert!(value[6] <= value[4]);
+}
+
+#[test]
+fn nested_grid_preserves_min_content_track_and_automatic_item_minimum() {
+    for (track, minimum) in [("min-content", "0"), ("auto", "auto")] {
+        let document = nested_grid_with_long_value(track, minimum);
+        assert!(document.metrics("root")[6] > 390.0, "{track} track, {minimum} item minimum");
+    }
+}
+
 fn check(name: &str, html: &str, scroll_y: i32, expected: &[(&str, [f64; 8])], doc: [f64; 2]) {
     let mut p = page(html);
     if scroll_y != 0 {
