@@ -417,13 +417,19 @@ impl Breaks {
                 run.columns.push((start, to.max(start)));
                 return run;
             }
+            // pyro: a break that would leave the column nothing but the margins before it is none
+            // (a monolithic box after a margin at the column's start is cut where the column ends,
+            // not moved to the next column; WPT css-grid `alignment/grid-item-mixed-baseline-004`).
+            let holds_content = |end: &f32| self.break_at(*end).0 > start + EPSILON;
             let (strict, strict_short) = Self::break_before(&self.strict, start, limit);
+            let strict = strict.filter(holds_content);
             note(&mut run, strict_short);
             let end = match strict {
                 Some(end) => end,
                 None => {
                     run.violations += 1;
                     let (loose, loose_short) = Self::break_before(&self.loose, start, limit);
+                    let loose = loose.filter(holds_content);
                     note(&mut run, loose_short);
                     // Taller than a column: cut where the column ends.
                     // pyro: but in columns of `column-height: 0` nothing fits a slice: what
@@ -1992,6 +1998,29 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: the block ranges of grid `id`'s rows (its border box at strip position `top`), with its
+    /// in-flow items' boxes that reach past them (an item spanning rows) merged in. `None` for any
+    /// other box.
+    fn grid_row_bands(&self, id: crate::NodeId, top: f32) -> Option<Vec<(f32, f32)>> {
+        let node = &self.nodes[id];
+        let taffy::DetailedLayoutInfo::Grid(info) = &node.element_data()?.detailed_layout_info else {
+            return None;
+        };
+        let mut ranges: Vec<(f32, f32)> =
+            info.rows.positions.iter().map(|row| (top + row.start, top + row.end)).filter(|r| r.1 > r.0).collect();
+        let children = node.layout_children.borrow();
+        for &child_id in children.as_deref().unwrap_or(&[]) {
+            let child = &self.nodes[child_id];
+            if child.is_out_of_flow() || child.primary_styles().is_none() {
+                continue;
+            }
+            let layout = child.unrounded_layout();
+            let child_top = top + layout.location.y;
+            ranges.push((child_top, child_top + layout.size.height));
+        }
+        Some(merge(ranges))
+    }
+
     /// pyro: the block ranges of table `id`'s rows (its border box at strip position `top`): its
     /// cells' ranges, those that overlap (row spans) merged.
     fn table_row_bands(&self, id: crate::NodeId, top: f32) -> Vec<(f32, f32)> {
@@ -2213,6 +2242,10 @@ impl BaseDocument {
                     // The collapsed margin, no more (clearance is no margin).
                     let margin = margin.max(layout.margin.top).max(0.0);
                     found.gaps.push(((child_top - margin).max(bottom), child_top));
+                } else if previous.is_none() && layout.margin.top > 0.0 {
+                    // pyro: the first child's own top margin, which a break before it truncates too
+                    // (a column with nothing but it before the break holds no content: `fill_range`).
+                    found.gaps.push(((child_top - layout.margin.top).max(top), child_top));
                 }
                 previous = Some(match previous {
                     Some((bottom, _)) if bottom > child_bottom => (bottom, 0.0),
@@ -2260,6 +2293,19 @@ impl BaseDocument {
                     found.whole.push(head);
                 }
                 crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
+            } else if let Some(bands) = (!held_whole(child, &style))
+                .then(|| self.grid_row_bands(child_id, child_top))
+                .flatten()
+                .filter(|b| b.len() > 1)
+            {
+                // pyro: a grid breaks between its rows as a table does (Chromium fragments grids; WPT
+                // css-grid `alignment/grid-item-mixed-baseline-004`).
+                for &band in &bands {
+                    found.strict.push(band);
+                    found.loose.push(band);
+                }
+                found.strict.push((child_top, bands[0].1));
+                found.strict.push((bands[bands.len() - 1].0, child_bottom));
             } else if let Some(bands) = child.flags.is_table_root().then(|| self.table_row_bands(child_id, child_top)).filter(|b| b.len() > 1) {
                 // pyro: a table breaks between its rows (Chromium fragments tables): each row,
                 // and its first and last rows with the table's edges, kept together.
