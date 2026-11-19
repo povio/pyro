@@ -118,17 +118,19 @@ pub struct SvgImageData {
     pub viewport_dependent: bool,
 }
 
-/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background` or
-/// `background-color` declaration of its `style` attribute) drawn as a full-size `<rect>` under its
-/// content: an image's root element paints its background over the whole canvas, which usvg does
-/// not (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is none.
+/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background`
+/// declaration of its `style` attribute) drawn as a full-size `<rect>` under its content: an
+/// image's root element paints its background over the whole canvas, which usvg does only for
+/// `background-color` (a presentation attribute to it, also in `style`: drawing that one here too
+/// painted it twice) (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is
+/// none.
 fn root_background_painted(text: &str, doc: &roxmltree::Document) -> Option<String> {
     let root = doc.root_element();
     let style = root.attribute("style")?;
     let color = style.split(';').find_map(|declaration| {
         let (name, value) = declaration.split_once(':')?;
         let name = name.trim();
-        (name.eq_ignore_ascii_case("background") || name.eq_ignore_ascii_case("background-color"))
+        name.eq_ignore_ascii_case("background")
             .then(|| value.trim())
             .filter(|value| value.parse::<svgtypes::Color>().is_ok())
     })?;

@@ -33379,7 +33379,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
              width: parse_length("width"),
              height: parse_length("height"),
              view_box,
-@@ -80,6 +103,48 @@
+@@ -80,6 +103,50 @@
      pub tree: Arc<usvg::Tree>,
      /// The dimensions declared on the root `<svg>` element.
      pub intrinsic_dimensions: SvgIntrinsicDimensions,
@@ -33398,17 +33398,19 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +    pub viewport_dependent: bool,
 +}
 +
-+/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background` or
-+/// `background-color` declaration of its `style` attribute) drawn as a full-size `<rect>` under its
-+/// content: an image's root element paints its background over the whole canvas, which usvg does
-+/// not (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is none.
++/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background`
++/// declaration of its `style` attribute) drawn as a full-size `<rect>` under its content: an
++/// image's root element paints its background over the whole canvas, which usvg does only for
++/// `background-color` (a presentation attribute to it, also in `style`: drawing that one here too
++/// painted it twice) (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is
++/// none.
 +fn root_background_painted(text: &str, doc: &roxmltree::Document) -> Option<String> {
 +    let root = doc.root_element();
 +    let style = root.attribute("style")?;
 +    let color = style.split(';').find_map(|declaration| {
 +        let (name, value) = declaration.split_once(':')?;
 +        let name = name.trim();
-+        (name.eq_ignore_ascii_case("background") || name.eq_ignore_ascii_case("background-color"))
++        name.eq_ignore_ascii_case("background")
 +            .then(|| value.trim())
 +            .filter(|value| value.parse::<svgtypes::Color>().is_ok())
 +    })?;
@@ -33428,7 +33430,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  }
  
  impl SvgImageData {
-@@ -106,32 +171,127 @@
+@@ -106,32 +173,127 @@
          };
          let doc = roxmltree::Document::parse_with_options(text, xml_options)
              .map_err(usvg::Error::ParsingFailed)?;
@@ -33561,7 +33563,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
          declared.then(|| self.tree.size().height())
      }
  
-@@ -230,6 +390,49 @@
+@@ -230,6 +392,49 @@
      }
  }
  
@@ -33611,7 +33613,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +466,288 @@
+@@ -263,3 +468,288 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }
