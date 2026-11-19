@@ -46382,7 +46382,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
 +        placement((scaled_x, scaled_y), transform.as_ref())(contribution)
 +    }
-+
+ 
+-        let full = if let Some(t) = transform {
+-            Affine::translate((scaled_x, scaled_y)) * t
 +    /// pyro: an in-flow child's border box in its scroll container (device px), grown on each
 +    /// side by the container's `padding` and the child's margin there (not below zero), the
 +    /// child's part of the container's scrollable overflow with the end padding after it. Its
@@ -46410,9 +46412,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            (y + h + pad(padding.bottom, child.margin.bottom)) * scale,
 +        )
 +    }
- 
--        let full = if let Some(t) = transform {
--            Affine::translate((scaled_x, scaled_y)) * t
++
 +    /// pyro: `margin` (`node_id`'s bottom margin) collapsed with the bottom margin of its last
 +    /// in-flow child when they adjoin (CSS 2.1 § 8.3.1: no bottom border or padding, an `auto`
 +    /// height, no formatting context of its own, horizontal writing mode), recursively.
@@ -46514,7 +46514,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          } else {
 -            Affine::translate((scaled_x, scaled_y))
 +            (0.0, 0.0)
-+        };
+         };
 +        // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
 +        let lines = match self.nodes[node_id].vertical_block_axis() {
 +            None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
@@ -46628,7 +46628,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            let child_hit = crate::util::ensure_stack(|| self.resolve_hit_overflow(pseudo));
 +            hit = unite_hit(hit, child_hit);
 +        }
-+
+ 
+-        full.transform_rect_bbox(overflow)
 +        // pyro: a glyph run's content area (whole-pixel ascent and
 +        // descent around its baseline, its advance rounded up to a layout
 +        // unit) can reach outside the line boxes: a tight `line-height`,
@@ -46762,7 +46763,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        }
 +        let (Some(body), Some(html)) = (node.primary_styles(), root.primary_styles()) else {
 +            return false;
-         };
++        };
 +        let display = body.clone_display();
 +        if display.is_none() || display.is_contents() {
 +            return false;
@@ -46772,8 +46773,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            && body.clone_contain() == Contain::empty()
 +            && html.clone_contain() == Contain::empty()
 +    }
- 
--        full.transform_rect_bbox(overflow)
++
 +    /// pyro: flags the `<body>` whose `overflow` the viewport takes (`NodeFlags::
 +    /// OVERFLOW_TO_VIEWPORT`), so that layout reads its `overflow` as `visible` (CSS Overflow 3
 +    /// §3.3): `body { overflow: hidden }` made it a scroll container, a block formatting context
@@ -47151,7 +47151,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1584,1084 @@
+@@ -437,32 +1584,1104 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -48240,6 +48240,26 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    pub fn viewport_scrolls_leftward(&self) -> bool {
 +        self.try_root_element().is_some_and(|root| scrolls_leftward(self.root_layout_wm(root.id)))
 +    }
++
++    /// pyro: the document's scroll size (CSS px), at least `viewport` (the scrollport: the
++    /// viewport less its shown classic scrollbars): a document scrolled from the right
++    /// ([`Self::viewport_scrolls_leftward`]) reaches what overflows it leftward, and not what
++    /// overflows rightward. (The embedder's `scrollWidth`/`scrollHeight` of the root and the
++    /// viewport's scroll timelines.)
++    pub fn document_scroll_size(&self, viewport: (f64, f64)) -> (f64, f64) {
++        let (vw, vh) = viewport;
++        // Without a document element the document is as large as the viewport.
++        let Some(root) = self.try_root_element() else { return (vw, vh) };
++        let (size, overflow) =
++            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / self.viewport().scale_f64()));
++        let width = if self.viewport_scrolls_leftward() {
++            let location = root.final_layout().location.x as f64;
++            ((size.width as f64) + location).max(vw) - (location + overflow.x0).min(0.0)
++        } else {
++            (size.width as f64).max(overflow.x1).max(vw)
++        };
++        (width, (size.height as f64).max(overflow.y1).max(vh))
++    }
 +}
 +
 +/// pyro: whether a document in writing mode `wm` has its horizontal scroll origin on the right:
@@ -48285,7 +48305,7 @@ diff --git a/packages/blitz-dom/src/scroll_timeline.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/scroll_timeline.rs
-@@ -0,0 +1,510 @@
+@@ -0,0 +1,508 @@
 +//! pyro: scroll-driven animations (CSS Scroll-driven Animations 1). An animation whose
 +//! `animation-timeline` is `scroll()`, `view()` or a timeline name takes its progress from a scroll
 +//! position, not from time: this module resolves the timeline (its scroll container, axis and, for a
@@ -48724,6 +48744,8 @@ new file mode 100644
 +
 +/// The scroll state of `source` (`None`: the viewport) along the axis.
 +fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Option<Scroll> {
++    // pyro: the root element (the scrolling element) scrolls as the viewport does.
++    let source = source.filter(|&id| doc.try_root_element().is_none_or(|root| root.id != id));
 +    match source {
 +        Some(id) => {
 +            let n = doc.get_node(id)?;
@@ -48765,17 +48787,13 @@ new file mode 100644
 +            // pyro: a root whose horizontal scroll origin is at its right edge (`vertical-rl`, or
 +            // horizontal with `direction: rtl`) scrolls to negative offsets: progress counts from
 +            // that origin (WPT scroll-animations `css/scroll-timeline-default-writing-mode-rl`).
-+            let reversed = !vertical
-+                && root.primary_styles().is_some_and(|s| {
-+                    use style::properties::longhands::writing_mode::computed_value::T as WritingMode;
-+                    match s.slow_clone_writing_mode() {
-+                        WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
-+                        WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
-+                        _ => false,
-+                    }
-+                });
++            // (By the principal writing mode, as the viewport scrolls: `viewport_scrolls_leftward`.)
++            let reversed = !vertical && doc.viewport_scrolls_leftward();
 +            let offset = if reversed { -offset } else { offset };
-+            let size = if vertical { root.scroll_height() as f64 } else { root.scroll_width() as f64 };
++            // (The document's scroll size, leftward overflow counted where it scrolls from the
++            // right: as `scrollWidth`.)
++            let (dw, dh) = doc.document_scroll_size((w as f64 / scale, h as f64 / scale));
++            let size = if vertical { dh } else { dw }.max(if vertical { root.scroll_height() } else { root.scroll_width() } as f64);
 +            Some(Scroll { offset, max: (size - port).max(0.0), port })
 +        }
 +    }

@@ -571,6 +571,11 @@ pub trait GeometrySource {
     /// A script scroll or view progress timeline's state as of the last sync
     /// (`pyro_render::Renderer::timeline_state`): scroll offset, start, end, scroll container key.
     /// `pseudo`: the subject's pseudo-element (2 `::before`, 3 `::after`; 0 the element).
+    /// pyro: whether the viewport's horizontal scroll origin is on its right (the principal
+    /// writing mode's), as the layout engine's document scrolls; `None`: not known.
+    fn viewport_scrolls_leftward(&self) -> Option<bool> {
+        None
+    }
     fn timeline_state(
         &self,
         _source: Option<u64>,

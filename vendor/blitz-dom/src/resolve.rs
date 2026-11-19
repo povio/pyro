@@ -2657,6 +2657,26 @@ impl BaseDocument {
     pub fn viewport_scrolls_leftward(&self) -> bool {
         self.try_root_element().is_some_and(|root| scrolls_leftward(self.root_layout_wm(root.id)))
     }
+
+    /// pyro: the document's scroll size (CSS px), at least `viewport` (the scrollport: the
+    /// viewport less its shown classic scrollbars): a document scrolled from the right
+    /// ([`Self::viewport_scrolls_leftward`]) reaches what overflows it leftward, and not what
+    /// overflows rightward. (The embedder's `scrollWidth`/`scrollHeight` of the root and the
+    /// viewport's scroll timelines.)
+    pub fn document_scroll_size(&self, viewport: (f64, f64)) -> (f64, f64) {
+        let (vw, vh) = viewport;
+        // Without a document element the document is as large as the viewport.
+        let Some(root) = self.try_root_element() else { return (vw, vh) };
+        let (size, overflow) =
+            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / self.viewport().scale_f64()));
+        let width = if self.viewport_scrolls_leftward() {
+            let location = root.final_layout().location.x as f64;
+            ((size.width as f64) + location).max(vw) - (location + overflow.x0).min(0.0)
+        } else {
+            (size.width as f64).max(overflow.x1).max(vw)
+        };
+        (width, (size.height as f64).max(overflow.y1).max(vh))
+    }
 }
 
 /// pyro: whether a document in writing mode `wm` has its horizontal scroll origin on the right:

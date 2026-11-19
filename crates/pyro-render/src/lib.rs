@@ -1920,6 +1920,11 @@ impl Renderer {
         Some((r.offset, r.start, r.end, src, r.contain, r.subject_size))
     }
 
+    /// pyro: whether `page`'s viewport scrolls from its right edge (`BaseDocument::viewport_scrolls_leftward`).
+    pub fn viewport_scrolls_leftward(&self, page: u64) -> Option<bool> {
+        Some(self.mirrors.get(&page)?.doc.viewport_scrolls_leftward())
+    }
+
     pub fn element_pseudo_style(
         &self,
         page: u64,
@@ -2157,20 +2162,8 @@ impl Renderer {
         let bars = doc.viewport_scrollbars;
         let bar = |shown: bool| if shown { bars.thickness as f64 } else { 0.0 };
         let (vw, vh) = (m.viewport.0 as f64 - bar(bars.shown.y), m.viewport.1 as f64 - bar(bars.shown.x));
-        // Without a document element the document is as large as the viewport.
-        let Some(root) = doc.try_root_element() else { return Some((vw, vh)) };
-        let (size, overflow) =
-            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
-        // pyro: a document scrolled from the right (`blitz_dom::scrolls_leftward`) reaches what
-        // overflows it leftward, and not what overflows rightward.
-        let leftward = doc.viewport_scrolls_leftward();
-        let width = if leftward {
-            let location = root.final_layout().location.x as f64;
-            ((size.width as f64) + location).max(vw) - (location + overflow.x0).min(0.0)
-        } else {
-            (size.width as f64).max(overflow.x1).max(vw)
-        };
-        Some((width, (size.height as f64).max(overflow.y1).max(vh)))
+        // (`BaseDocument::document_scroll_size`, which its viewport's scroll timelines use too.)
+        Some(doc.document_scroll_size((vw, vh)))
     }
 
     /// Whether a style rule of `page`'s document depends on `:active`

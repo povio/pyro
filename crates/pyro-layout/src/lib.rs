@@ -855,6 +855,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, style))
     }
 
+    fn viewport_scrolls_leftward(&self) -> Option<bool> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_scrolls_leftward(self.page))
+    }
+
     fn element_box(&self, key: u64) -> Option<ExternalBox> {
         let t = profile::on().then(Instant::now);
         let b = self.element_box_inner(key);

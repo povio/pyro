@@ -436,6 +436,8 @@ fn is_viewport_propagated_body(doc: &BaseDocument, node: &Node) -> bool {
 
 /// The scroll state of `source` (`None`: the viewport) along the axis.
 fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Option<Scroll> {
+    // pyro: the root element (the scrolling element) scrolls as the viewport does.
+    let source = source.filter(|&id| doc.try_root_element().is_none_or(|root| root.id != id));
     match source {
         Some(id) => {
             let n = doc.get_node(id)?;
@@ -477,17 +479,13 @@ fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Opti
             // pyro: a root whose horizontal scroll origin is at its right edge (`vertical-rl`, or
             // horizontal with `direction: rtl`) scrolls to negative offsets: progress counts from
             // that origin (WPT scroll-animations `css/scroll-timeline-default-writing-mode-rl`).
-            let reversed = !vertical
-                && root.primary_styles().is_some_and(|s| {
-                    use style::properties::longhands::writing_mode::computed_value::T as WritingMode;
-                    match s.slow_clone_writing_mode() {
-                        WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
-                        WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
-                        _ => false,
-                    }
-                });
+            // (By the principal writing mode, as the viewport scrolls: `viewport_scrolls_leftward`.)
+            let reversed = !vertical && doc.viewport_scrolls_leftward();
             let offset = if reversed { -offset } else { offset };
-            let size = if vertical { root.scroll_height() as f64 } else { root.scroll_width() as f64 };
+            // (The document's scroll size, leftward overflow counted where it scrolls from the
+            // right: as `scrollWidth`.)
+            let (dw, dh) = doc.document_scroll_size((w as f64 / scale, h as f64 / scale));
+            let size = if vertical { dh } else { dw }.max(if vertical { root.scroll_height() } else { root.scroll_width() } as f64);
             Some(Scroll { offset, max: (size - port).max(0.0), port })
         }
     }

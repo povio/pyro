@@ -2561,6 +2561,11 @@ impl Layout {
     /// (its scroll offsets then run from 0 to negative values).
     fn viewport_x_reversed(&self, dom: &Dom) -> bool {
         use style::properties::longhands::writing_mode::computed_value::T as WritingMode;
+        // The layout engine's answer when it has the document (blitz-dom
+        // `viewport_scrolls_leftward`, which its scroll timelines use too); the same rule here.
+        if let Some(leftward) = self.synced_geometry_source(dom).and_then(|s| s.viewport_scrolls_leftward()) {
+            return leftward;
+        }
         let Some(root) = dom.document_element(self.document()).ok().flatten() else { return false };
         // The principal writing mode: an HTML root's `<body>` child's, else its own (CSS Writing
         // Modes 3 § 8; WPT css-writing-modes `wm-propagation-body-scroll-offset-*`).
@@ -2581,7 +2586,9 @@ impl Layout {
     /// pyro: the viewport's scroll range on each axis ([`Self::viewport_x_reversed`]).
     fn viewport_scroll_range(&self, dom: &Dom) -> ((i32, i32), (i32, i32)) {
         let (w, h) = self.document_scroll_size(dom);
-        let (mx, my) = (scroll_limit(w, self.inner_width()) as i32, scroll_limit(h, self.inner_height()) as i32);
+        // (Saturated: an extent past i32::MAX px stays a valid range, min <= max.)
+        let limit = |size: f64, visible: u32| scroll_limit(size, visible).min(i32::MAX as u32) as i32;
+        let (mx, my) = (limit(w, self.inner_width()), limit(h, self.inner_height()));
         let x = if self.viewport_x_reversed(dom) { (-mx, 0) } else { (0, mx) };
         (x, (0, my))
     }
