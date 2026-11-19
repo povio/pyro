@@ -928,6 +928,7 @@ mod tests {
                 vertical_upright: false,
                 isolated_before: false,
                 isolated_after: false,
+                preserved_breaks: false,
             },
         }];
         shaper.shape_text(

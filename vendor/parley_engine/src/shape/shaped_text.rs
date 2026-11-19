@@ -857,7 +857,13 @@ impl ShapedText {
             self.characters.push(Character {
                 text_byte_start: (range.byte_range.start + byte_offset) as u32,
                 style_index: *style_index,
-                whitespace: Whitespace::from_char(ch),
+                // pyro: a line or paragraph separator breaks the line where `white-space`
+                // preserves segment breaks (WPT CSS2 `bidi-breaking-003`); elsewhere it is a space.
+                whitespace: if options.preserved_breaks && matches!(ch, '\u{2028}' | '\u{2029}') {
+                    Whitespace::Newline
+                } else {
+                    Whitespace::from_char(ch)
+                },
                 // pyro: and how its fullwidth punctuation is trimmed (`han_kerning`).
                 flags: match trim.and_then(|trim| trim.flags.get(index)) {
                     Some(&trim) if trim != 0 => flags.with_trim(trim),
@@ -1203,6 +1209,7 @@ mod tests {
                 vertical_upright: false,
                 isolated_before: false,
                 isolated_after: false,
+                preserved_breaks: false,
             },
         }];
         shaper.shape_text(
@@ -1370,6 +1377,7 @@ mod tests {
                     vertical_upright: false,
                     isolated_before: false,
                     isolated_after: false,
+                    preserved_breaks: false,
                 },
             },
             Item {
@@ -1387,6 +1395,7 @@ mod tests {
                     vertical_upright: false,
                     isolated_before: false,
                     isolated_after: false,
+                    preserved_breaks: false,
                 },
             },
         ];

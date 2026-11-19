@@ -62,6 +62,7 @@
 //!             spacing_trim: Default::default(),
 //!             isolated_before: false,
 //!             isolated_after: false,
+//!             preserved_breaks: false,
 //!         },
 //!      }],
 //!      select_font, // Selects fonts covering each cluster.

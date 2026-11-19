@@ -84,6 +84,9 @@ pub struct ShapeOptions<'a> {
     /// advances and offsets along the line are the ones shaping it top to bottom gives
     /// (`vmtx`, with `vhal`/`vchw`/`vpal`/`vkrn` for `halt`/`chws`/`palt`/`kern`).
     pub vertical_upright: bool,
+    /// pyro: the item's `white-space` preserves segment breaks: a line or paragraph separator
+    /// (U+2028, U+2029) breaks the line there, where elsewhere it is shown as a space.
+    pub preserved_breaks: bool,
 }
 
 /// The font instance to shape an item with.
@@ -401,6 +404,7 @@ fn shape_segment(
                 isolated_before: options.isolated_before,
                 isolated_after: options.isolated_after,
                 vertical_upright: options.vertical_upright,
+                preserved_breaks: options.preserved_breaks,
             };
             &adjusted
         } else {

@@ -292,10 +292,14 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -132,6 +238,121 @@
-     }
- }
- 
+@@ -128,10 +234,125 @@
+             strikethrough_size,
+             x_height: metrics.x_height,
+             cap_height: metrics.cap_height,
++        }
++    }
++}
++
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -387,10 +391,10 @@
 +            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
 +                .with_face_metrics(font.synthesis.face_metrics(), font_size),
 +            hyphen,
-+        }
-+    }
-+}
-+
+         }
+     }
+ }
+ 
 +/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
 +#[derive(Clone, Debug, PartialEq)]
 +struct RunMetricsEntry {
@@ -432,13 +436,10 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -215,9 +440,281 @@
+@@ -218,6 +443,278 @@
          }
-         for shaped_cluster in self.shaped_clusters.iter_mut() {
-             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
-+        }
-+    }
-+
+     }
+ 
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
@@ -668,7 +669,7 @@
 +        } else {
 +            self.glyphs.extend(own);
 +            self.glyphs.extend(added);
-         }
++        }
 +        let len = self.glyphs.len() - start;
 +        if len == 0 || len > 255 {
 +            self.glyphs.truncate(start);
@@ -680,8 +681,8 @@
 +        cluster.flags = cluster.flags.with_glyph_len(len as u8).with_inline_glyph(false);
 +        cluster.advance = advance;
 +        Some(saved)
-     }
- 
++    }
++
 +    /// pyro: gives the shaped cluster at `index` back what [`Self::show_hyphen`] returned.
 +    pub fn restore_cluster(&mut self, index: u32, saved: ClusterGlyphs) {
 +        if let Some(cluster) = self.shaped_clusters.get_mut(index as usize) {
@@ -728,7 +729,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,42 +804,65 @@
+@@ -302,42 +804,71 @@
                  index
              });
  
@@ -797,12 +798,19 @@
              self.characters.push(Character {
                  text_byte_start: (range.byte_range.start + byte_offset) as u32,
                  style_index: *style_index,
-                 whitespace: Whitespace::from_char(ch),
+-                whitespace: Whitespace::from_char(ch),
 -                flags: CharacterFlags::new(
 -                    ch,
 -                    info.is_word_boundary(),
 -                    info.is_soft_wrap_opportunity(),
 -                ),
++                // pyro: a line or paragraph separator breaks the line where `white-space`
++                // preserves segment breaks (WPT CSS2 `bidi-breaking-003`); elsewhere it is a space.
++                whitespace: if options.preserved_breaks && matches!(ch, '\u{2028}' | '\u{2029}') {
++                    Whitespace::Newline
++                } else {
++                    Whitespace::from_char(ch)
++                },
 +                // pyro: and how its fullwidth punctuation is trimmed (`han_kerning`).
 +                flags: match trim.and_then(|trim| trim.flags.get(index)) {
 +                    Some(&trim) if trim != 0 => flags.with_trim(trim),
@@ -811,7 +819,7 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +920,11 @@
+@@ -395,7 +926,11 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -823,7 +831,7 @@
      }
  }
  
-@@ -423,6 +952,14 @@
+@@ -423,6 +958,14 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -838,7 +846,7 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +1071,15 @@
+@@ -534,7 +1077,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -855,7 +863,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1192,17 @@
+@@ -647,9 +1198,18 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -870,10 +878,11 @@
 +                vertical_upright: false,
 +                isolated_before: false,
 +                isolated_after: false,
++                preserved_breaks: false,
              },
          }];
          shaper.shape_text(
-@@ -765,7 +1318,8 @@
+@@ -765,7 +1325,8 @@
  
      #[test]
      fn newlines_removed() {
@@ -883,7 +892,7 @@
              let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
  
              let index = shaped
-@@ -805,18 +1359,34 @@
+@@ -805,18 +1366,36 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -898,6 +907,7 @@
 +                    vertical_upright: false,
 +                    isolated_before: false,
 +                    isolated_after: false,
++                    preserved_breaks: false,
                  },
              },
              Item {
@@ -915,6 +925,7 @@
 +                    vertical_upright: false,
 +                    isolated_before: false,
 +                    isolated_after: false,
++                    preserved_breaks: false,
                  },
              },
          ];
@@ -966,7 +977,7 @@
      /// The language to shape the item with.
      pub language: Option<Language>,
      /// The font features to shape the item with.
-@@ -34,6 +62,28 @@
+@@ -34,6 +62,31 @@
      pub features: &'a [FontFeature],
      /// The font variations that are constant over an item.
      pub variations: &'a [FontVariation],
@@ -992,10 +1003,13 @@
 +    /// advances and offsets along the line are the ones shaping it top to bottom gives
 +    /// (`vmtx`, with `vhal`/`vchw`/`vpal`/`vkrn` for `halt`/`chws`/`palt`/`kern`).
 +    pub vertical_upright: bool,
++    /// pyro: the item's `white-space` preserves segment breaks: a line or paragraph separator
++    /// (U+2028, U+2029) breaks the line there, where elsewhere it is shown as a space.
++    pub preserved_breaks: bool,
  }
  
  /// The font instance to shape an item with.
-@@ -85,24 +135,34 @@
+@@ -85,24 +138,34 @@
  
  /// Reusable scratch to shape text using [`Self::shape_text`].
  pub struct Shaper {
@@ -1030,7 +1044,7 @@
          }
      }
  }
-@@ -170,6 +230,7 @@
+@@ -170,6 +233,7 @@
                  "items must not span past the text"
              );
  
@@ -1038,7 +1052,7 @@
              loop {
                  let segment = itemizer
                      .next(
-@@ -178,10 +239,15 @@
+@@ -178,10 +242,15 @@
                      )
                      .expect("A segment must be yielded, given items tile the full text exactly");
  
@@ -1054,7 +1068,7 @@
                      &item.options,
                      &mut select_font,
                      analysis.char_info(),
-@@ -228,6 +294,7 @@
+@@ -228,6 +297,7 @@
      scx: &mut Shaper,
      text: &str,
      segment: &Segment,
@@ -1062,7 +1076,7 @@
      options: &ShapeOptions<'_>,
      select_font: &mut impl FontSelector,
      char_info: &[CharInfo],
-@@ -258,10 +325,21 @@
+@@ -258,10 +328,21 @@
          harfrust::Direction::LeftToRight
      };
      let hb_script = script_to_harfrust(segment.script);
@@ -1088,7 +1102,7 @@
      scx.features.clear();
      scx.features.extend(options.features.iter().map(|feature| {
          harfrust::Feature::new(
-@@ -272,15 +350,86 @@
+@@ -272,15 +353,87 @@
      }));
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
@@ -1144,6 +1158,7 @@
 +                isolated_before: options.isolated_before,
 +                isolated_after: options.isolated_after,
 +                vertical_upright: options.vertical_upright,
++                preserved_breaks: options.preserved_breaks,
 +            };
 +            &adjusted
 +        } else {
@@ -1178,7 +1193,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +440,127 @@
+@@ -291,12 +444,127 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -1307,7 +1322,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -309,7 +573,7 @@
+@@ -309,7 +577,7 @@
                  direction,
                  hb_script,
                  language.clone(),
@@ -1316,7 +1331,7 @@
                  Some(options.variations),
              ),
              || {
-@@ -318,7 +582,7 @@
+@@ -318,7 +586,7 @@
                      direction,
                      Some(hb_script),
                      language.as_ref(),
@@ -1325,7 +1340,7 @@
                  )
              },
          );
-@@ -328,8 +592,6 @@
+@@ -328,8 +596,6 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -1334,7 +1349,7 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,11 +602,37 @@
+@@ -340,11 +606,37 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -1374,7 +1389,7 @@
          buffer.set_direction(direction);
          buffer.set_script(hb_script);
  
-@@ -356,11 +644,11 @@
+@@ -356,11 +648,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1389,7 +1404,7 @@
              text,
              range,
              segment,
-@@ -370,15 +658,25 @@
+@@ -370,15 +662,25 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -1417,7 +1432,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -395,12 +693,23 @@
+@@ -395,12 +697,23 @@
      // The end of the previous grapheme.
      let mut byte_end = text_range.start;
      let mut char_end = char_range.start;
@@ -1442,7 +1457,7 @@
              byte_range: byte_start..byte_end,
              char_range: char_start..char_end,
          };
-@@ -409,26 +718,249 @@
+@@ -409,26 +722,249 @@
              .select_font(segment, options, char_cluster)
              .ok_or(())?;
  
@@ -1764,7 +1779,7 @@
          // See comment in non-test code for more details.
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -52,9 +52,16 @@
+@@ -52,9 +52,17 @@
  //!         char_end: char_count.try_into().unwrap(),
  //!         options: ShapeOptions {
  //!             font_size: 16.0,
@@ -1778,10 +1793,11 @@
 +//!             spacing_trim: Default::default(),
 +//!             isolated_before: false,
 +//!             isolated_after: false,
++//!             preserved_breaks: false,
  //!         },
  //!      }],
  //!      select_font, // Selects fonts covering each cluster.
-@@ -118,9 +125,42 @@
+@@ -118,9 +126,42 @@
  pub use linebender_resource_handle::FontData;
  pub use parlance::{BaseDirection, NormalizedCoord};
  
@@ -1828,7 +1844,7 @@
 +}
 --- a/src/shape/atom.rs
 +++ b/src/shape/atom.rs
-@@ -917,9 +917,17 @@
+@@ -917,9 +917,18 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -1843,6 +1859,7 @@
 +                vertical_upright: false,
 +                isolated_before: false,
 +                isolated_after: false,
++                preserved_breaks: false,
              },
          }];
          shaper.shape_text(

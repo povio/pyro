@@ -202,7 +202,10 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         || shifted_span(styles, style_index) != shifted_span(styles, item_style_index)
                         // pyro: and at the edges of a bidi isolate (CSS Text 3 § 7.3, WPT css-text
                         // `boundary-shaping-008`), where HarfBuzz would ligate across.
-                        || isolating_span(styles, style_index) != isolating_span(styles, item_style_index);
+                        || isolating_span(styles, style_index) != isolating_span(styles, item_style_index)
+                        // pyro: and where `white-space` starts or stops preserving segment breaks
+                        // (`ShapeOptions::preserved_breaks`).
+                        || preserves_breaks(style) != preserves_breaks(item_style);
                 }
 
                 // (Only at a grapheme cluster's start: a cluster takes its base's orientation,
@@ -246,6 +249,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     isolated_before,
                     isolated_after,
                     vertical_upright: item_style.vertical && (item_style.upright || item_upright == Some(true)),
+                    preserved_breaks: preserves_breaks(item_style),
                 },
             })
         })
@@ -827,4 +831,10 @@ fn hidden_default_ignorable(ch: char) -> bool {
             | 0xE0000..=0xE00FF
             | 0xE01F0..=0xE0FFF
     )
+}
+
+/// pyro: whether `style`'s `white-space` preserves segment breaks (`pre`, `pre-wrap`, `pre-line`,
+/// `break-spaces`), where a line or paragraph separator breaks the line.
+fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+    style.white_space_collapse != crate::WhiteSpaceCollapse::Collapse
 }
