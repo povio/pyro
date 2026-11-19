@@ -19,6 +19,12 @@ use crate::Snapshot;
 /// thread, at most once; an error renders the resource as missing.
 pub trait Fetcher: Send + Sync + 'static {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>);
+    /// [`Self::fetch`] in CORS mode, credentials only to the same origin ("anonymous", as
+    /// `shape-outside` images load): a cross-origin response the CORS check does not pass is an
+    /// error. A fetcher that cannot check fails it (the default).
+    fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err(format!("{url}: no CORS fetch")));
+    }
 }
 
 type Cache = Arc<Mutex<HashMap<String, Bytes>>>;
@@ -60,12 +66,17 @@ struct Provider {
 impl NetProvider for Provider {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.to_string();
+        let cors = blitz_dom::net::is_cors_request(&request);
+        // A CORS fetch's body is cached apart: one fetched without CORS never stands in for it.
+        let key = if cors { format!("cors-anonymous {url}") } else { url.clone() };
         self.outstanding.fetch_add(1, Ordering::AcqRel);
         // A data: URL holds its body: neither the sheets nor the cache (keyed
         // by the whole, possibly megabytes long, URL) can hold it for less.
         let inline = url.starts_with("data:");
         let ready = if inline {
             None
+        } else if cors {
+            self.cache.lock().ok().and_then(|c| c.get(&key).cloned())
         } else {
             // A sheet's text is decoded already: as UTF-8 behind a byte order
             // mark, Blitz cannot decode it again by an `@charset` it starts with.
@@ -83,25 +94,27 @@ impl NetProvider for Provider {
         let cache = self.cache.clone();
         let fetcher = self.fetcher.lock().map(|f| f.clone());
         let Ok(fetcher) = fetcher else { return };
-        fetcher.fetch(
-            url.clone(),
-            Box::new(move |result| {
-                let bytes = match result {
-                    Ok(body) => {
-                        let bytes = Bytes::from(body);
-                        if !inline {
-                            if let Ok(mut c) = cache.lock() {
-                                c.insert(url.clone(), bytes.clone());
-                            }
+        let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> = Box::new(move |result| {
+            let bytes = match result {
+                Ok(body) => {
+                    let bytes = Bytes::from(body);
+                    if !inline {
+                        if let Ok(mut c) = cache.lock() {
+                            c.insert(key, bytes.clone());
                         }
-                        bytes
                     }
-                    // Empty bytes: Blitz's handlers treat it as a failed load.
-                    Err(_) => Bytes::new(),
-                };
-                let _ = tx.send((handler, url, bytes));
-            }),
-        );
+                    bytes
+                }
+                // Empty bytes: Blitz's handlers treat it as a failed load.
+                Err(_) => Bytes::new(),
+            };
+            let _ = tx.send((handler, url, bytes));
+        });
+        if cors {
+            fetcher.fetch_cors(request.url.to_string(), done);
+        } else {
+            fetcher.fetch(request.url.to_string(), done);
+        }
     }
 }
 
@@ -222,5 +235,51 @@ impl Bridge {
                 return (waited, passes, clean);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::*;
+
+    /// Answers every fetch with its URL's bytes, recording (URL, CORS).
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<(String, bool)>>);
+    impl Fetcher for Arc<Recorder> {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.0.lock().unwrap().push((url.clone(), false));
+            done(Ok(b"no-cors".to_vec()));
+        }
+        fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.0.lock().unwrap().push((url.clone(), true));
+            done(Err("CORS check failed".into()));
+        }
+    }
+
+    struct Sink(Arc<Mutex<Vec<Bytes>>>);
+    impl NetHandler for Sink {
+        fn bytes(self: Box<Self>, _url: String, bytes: Bytes) {
+            self.0.lock().unwrap().push(bytes);
+        }
+    }
+
+    /// A CORS request goes to `fetch_cors`, and a body fetched without CORS for the same URL never
+    /// answers it from the cache (nor its failure the other).
+    #[test]
+    fn cors_requests_are_fetched_and_cached_apart() {
+        let recorder = Arc::new(Recorder::default());
+        let bridge = Bridge::new(&Snapshot::default(), Arc::new(recorder.clone()), new_cache());
+        let provider = bridge.provider();
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let url = "http://other.test/a.png";
+        provider.fetch(0, Request::get(url.parse().unwrap()), Box::new(Sink(got.clone())));
+        let mut cors = Request::get(url.parse().unwrap());
+        blitz_dom::net::mark_cors(&mut cors);
+        provider.fetch(0, cors, Box::new(Sink(got.clone())));
+        while let Ok((handler, url, bytes)) = bridge.rx.try_recv() {
+            handler.bytes(url, bytes);
+        }
+        assert_eq!(*recorder.0.lock().unwrap(), vec![(url.to_string(), false), (url.to_string(), true)]);
+        assert_eq!(*got.lock().unwrap(), vec![Bytes::from_static(b"no-cors"), Bytes::new()]);
     }
 }

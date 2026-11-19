@@ -76,7 +76,8 @@ struct ContextState {
 /// A request for a sub-resource of `frame`'s document that the engine needs
 /// itself (a renderer's or layout's image, font or imported sheet): the
 /// document's frame and loader, its URL as referrer.
-fn subresource_request(frame: &Frame, page: PageId, url: String, kind: ResourceKind) -> FetchRequest {
+/// With `cors`, in CORS mode with credentials only to the same origin (`crossorigin="anonymous"`).
+fn subresource_request(frame: &Frame, page: PageId, url: String, kind: ResourceKind, cors: bool) -> FetchRequest {
     FetchRequest {
         post: None,
         url,
@@ -86,7 +87,7 @@ fn subresource_request(frame: &Frame, page: PageId, url: String, kind: ResourceK
         referrer_policy: None,
         frame_id: Some(frame.id.0.clone()),
         loader_id: Some(frame.loader_id.0.clone()),
-        crossorigin: None,
+        crossorigin: cors.then(|| "anonymous".to_owned()),
         initiator: None,
         module: None,
         part: None,
@@ -1200,7 +1201,13 @@ impl Browser {
     /// for a renderer that needs bytes the DOM does not keep (screenshots:
     /// images, fonts, imported sheets). `done` runs on this thread.
     pub fn fetch_subresource(&mut self, page: PageId, url: String, kind: ResourceKind, done: FetchDone) {
-        let Some(request) = self.page(page).map(|p| subresource_request(&p.main_frame, page, url, kind)) else {
+        self.fetch_subresource_with(page, url, kind, false, done)
+    }
+
+    /// [`Browser::fetch_subresource`], with `cors` in CORS mode with credentials only to the same
+    /// origin (`crossorigin="anonymous"`, as `shape-outside` images load).
+    pub fn fetch_subresource_with(&mut self, page: PageId, url: String, kind: ResourceKind, cors: bool, done: FetchDone) {
+        let Some(request) = self.page(page).map(|p| subresource_request(&p.main_frame, page, url, kind, cors)) else {
             self.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));
             return;
         };
@@ -1225,6 +1232,7 @@ impl Browser {
         loader: &LoaderId,
         url: String,
         kind: ResourceKind,
+        cors: bool,
         done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
     ) {
         let request = {
@@ -1232,7 +1240,7 @@ impl Browser {
             if state.main_frame.loader_id != *loader {
                 return;
             }
-            subresource_request(&state.main_frame, frame.page, url, kind)
+            subresource_request(&state.main_frame, frame.page, url, kind, cors)
         };
         let Some(resource_loader) = self.loader_for(frame) else {
             done(Err("no resource loader".into()));

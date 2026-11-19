@@ -30,14 +30,17 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
         kind: pyro_dom::layout::SubresourceKind,
         done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
     ) {
+        let cors = kind == pyro_dom::layout::SubresourceKind::CorsImage;
         let kind = match kind {
-            pyro_dom::layout::SubresourceKind::Image => crate::ResourceKind::Image,
+            pyro_dom::layout::SubresourceKind::Image | pyro_dom::layout::SubresourceKind::CorsImage => {
+                crate::ResourceKind::Image
+            }
             pyro_dom::layout::SubresourceKind::Font => crate::ResourceKind::Font,
             pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
         };
         let (frame, loader) = (self.frame, self.loader.clone());
         // A closed loop drops `done`: its document is gone with the browser.
-        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, done));
+        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, cors, done));
     }
 
     fn bodies(&self) -> &Arc<pyro_dom::layout::SubresourceBodies> {

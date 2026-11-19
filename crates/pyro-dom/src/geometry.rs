@@ -147,6 +147,9 @@ pub struct ExternalQuads {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubresourceKind {
     Image,
+    /// An image fetched in CORS mode with credentials only to the same origin ("anonymous", a
+    /// `shape-outside` image): a cross-origin response the CORS check does not pass fails.
+    CorsImage,
     Font,
     /// An `@import`ed sheet.
     Style,

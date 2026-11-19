@@ -90,12 +90,13 @@ impl LocalFiles {
     /// the background (into the cache) and answers `None` now: a layout
     /// never waits for the network (a request held by interception needs
     /// this thread), and the identity's next documents get the body at once.
-    fn network(&self, url: &pyro_net::Url) -> Option<Vec<u8>> {
+    /// With `cors`, fetched in CORS mode ("anonymous") and cached apart.
+    fn network(&self, url: &pyro_net::Url, cors: bool) -> Option<Vec<u8>> {
         // No network of its own: nothing goes out, never through another
         // context's client.
         let loader = self.loader.as_ref()?;
         let bodies = loader.bodies().clone();
-        let key = url.as_str().to_owned();
+        let key = if cors { format!("cors-anonymous {}", url.as_str()) } else { url.as_str().to_owned() };
         if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
             return None;
         }
@@ -118,7 +119,9 @@ impl LocalFiles {
         IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let fetch = InFlight { bodies, failed: self.failed.clone(), key };
         let path = url.path().to_ascii_lowercase();
-        let kind = if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
+        let kind = if cors {
+            SubresourceKind::CorsImage
+        } else if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
             loader.font_asked(url.as_str());
             SubresourceKind::Font
         } else if path.ends_with(".css") || url.host_str() == Some("fonts.googleapis.com") {
@@ -153,6 +156,18 @@ impl LocalFiles {
 
 impl Fetcher for LocalFiles {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.load(url, false, done)
+    }
+
+    /// `data:` and `file:` URLs and `serve --static` roots are this process's own; the network's
+    /// responses pass the CORS check or fail.
+    fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.load(url, true, done)
+    }
+}
+
+impl LocalFiles {
+    fn load(&self, url: String, cors: bool, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let body = (|| {
             // A data: URL (as serialized by the url crate) holds its body.
             if url.starts_with("data:") {
@@ -166,7 +181,7 @@ impl Fetcher for LocalFiles {
                     Some(hit) => Some(hit.file.body.to_vec()),
                     None => match self.statics.resolve(&u, false) {
                         Some(hit) => std::fs::read(hit.path).ok(),
-                        None if matches!(u.scheme(), "http" | "https") => self.network(&u),
+                        None if matches!(u.scheme(), "http" | "https") => self.network(&u, cors),
                         None => None,
                     },
                 },

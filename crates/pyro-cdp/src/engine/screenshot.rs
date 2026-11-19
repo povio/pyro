@@ -181,16 +181,28 @@ struct PageFetcher {
 
 impl Fetcher for PageFetcher {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.load(url, false, done)
+    }
+
+    fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.load(url, true, done)
+    }
+}
+
+impl PageFetcher {
+    /// With `cors`, an image in CORS mode ("anonymous").
+    fn load(&self, url: String, cors: bool, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let page = self.page;
-        let kind = kind_of(&url);
+        let kind = if cors { ResourceKind::Image } else { kind_of(&url) };
         // A closed loop drops `done`: the render stops waiting at its deadline.
         let _ = self.handle.post(move |b| {
             // An imported sheet without a charset of its own decodes as the document.
             let environment = b.document_encoding(page);
-            b.fetch_subresource(
+            b.fetch_subresource_with(
                 page,
                 url,
                 kind,
+                cors,
                 Box::new(move |_, result| {
                     done(result.and_then(|r| {
                         if (200..300).contains(&r.status) {

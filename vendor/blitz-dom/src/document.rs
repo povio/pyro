@@ -2455,10 +2455,16 @@ impl BaseDocument {
                 // pyro: a float's `shape-outside` image is its float area: the boxes around
                 // it are laid out again.
                 ImageType::Shape(idx) => {
-                    if let Some(Some(shape)) = node.element_data_mut().and_then(|el| el.shape_images.get_mut(idx)) {
-                        shape.status = Status::Ok;
-                        shape.image = image.clone();
+                    // Only into the slot of the image the shape still names (`url` is its URL, or
+                    // its CORS key): an image it named before finishing late is not its shape.
+                    let Some(Some(shape)) = node.element_data_mut().and_then(|el| el.shape_images.get_mut(idx)) else {
+                        continue;
+                    };
+                    if shape.url.as_str() != url && crate::net::cors_image_key(shape.url.as_str()) != url {
+                        continue;
                     }
+                    shape.status = Status::Ok;
+                    shape.image = image.clone();
                     node.clear_layout_cache();
                     node.insert_damage(ALL_DAMAGE);
                     let mut ancestor = node.layout_parent.get().or(node.parent);

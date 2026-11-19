@@ -37,6 +37,32 @@ pub(crate) fn stamped_request(url: Url, signal: Option<&AbortSignal>) -> Request
     req
 }
 
+/// pyro: marks `request` to be fetched in CORS mode with credentials only to the same origin
+/// ("anonymous", as `shape-outside` images load), by the `Sec-Fetch-Mode: cors` header the request
+/// goes out with (see [`is_cors_request`]): a cross-origin response the CORS check does not pass
+/// is a network error. A provider that cannot make such a request must fail it.
+pub fn mark_cors(request: &mut Request) {
+    request.headers.insert("sec-fetch-mode", blitz_traits::net::http::HeaderValue::from_static("cors"));
+}
+
+/// pyro: whether `request` is to be fetched in CORS mode ([`mark_cors`]).
+pub fn is_cors_request(request: &Request) -> bool {
+    request.headers.get("sec-fetch-mode").is_some_and(|v| v.as_bytes() == b"cors")
+}
+
+/// pyro: whether a CORS fetch of `url` from the document at `document` is checked (and so may
+/// differ from a fetch without CORS): a cross-origin URL, not `data:` (whose response is the same).
+pub(crate) fn cors_checked(url: &Url, document: &Url) -> bool {
+    url.scheme() != "data" && url.origin() != document.origin()
+}
+
+/// pyro: the key of an image fetched in CORS mode ([`mark_cors`], a `shape-outside` image) in
+/// the document's image cache and pending loads: a response fetched without CORS (an `<img>`'s)
+/// never stands in for it, nor it for one. (A space is never in a serialized URL.)
+pub(crate) fn cors_image_key(url: &str) -> String {
+    format!("cors-anonymous {url}")
+}
+
 /// Carries `@font-face` descriptors from CSS parsing through to font
 /// registration so `parley::Collection::register_fonts` can alias the bytes
 /// under the `font-family` declared in CSS rather than whatever family name
@@ -733,17 +759,27 @@ impl NetHandler for ResourceHandler<DocumentSrcHandler> {
 
 pub struct ImageHandler {
     kind: ImageType,
+    /// pyro: fetched in CORS mode ([`mark_cors`]): answers under its [`cors_image_key`].
+    cors: bool,
 }
 impl ImageHandler {
     pub fn new(kind: ImageType) -> Self {
-        Self { kind }
+        Self { kind, cors: false }
+    }
+
+    /// pyro: fetched in CORS mode ([`mark_cors`]) when `cors` is.
+    pub fn cors(mut self, cors: bool) -> Self {
+        self.cors = cors;
+        self
     }
 }
 
 impl NetHandler for ResourceHandler<ImageHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
         let result = self.data.parse(&resolved_url, bytes);
-        self.respond(resolved_url, result)
+        // pyro: an image fetched with CORS answers under its CORS key.
+        let key = if self.data.cors { cors_image_key(&resolved_url) } else { resolved_url };
+        self.respond(key, result)
     }
 }
 

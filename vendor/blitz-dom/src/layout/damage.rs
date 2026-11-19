@@ -1153,8 +1153,15 @@ impl BaseDocument {
                         continue;
                     }
 
+                    // pyro: a `shape-outside` image is fetched with CORS (anonymous), and a
+                    // cross-origin one kept apart from the same URL fetched without (CSS Shapes 1
+                    // § 4.1): one that fails the CORS check is no shape (`none`), and one loaded
+                    // for an `<img>` never stands in for it. A same-origin (or `data:`) one is
+                    // the same response either way, and shares the cache.
+                    let cors = matches!(kind, ImageLayerKind::Shape) && crate::net::cors_checked(new_url, &self.url);
+                    let key = if cors { crate::net::cors_image_key(new_url.as_str()) } else { new_url.as_str().to_owned() };
                     // Check cache first
-                    let url_str = new_url.as_str();
+                    let url_str = key.as_str();
                     if let Some(cached_image) = self.image_cache.get(url_str) {
                         #[cfg(feature = "tracing")]
                         tracing::info!("Loading image {url_str} from cache");
@@ -1176,18 +1183,20 @@ impl BaseDocument {
                         self.pending_images
                             .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
 
+                        let mut request =
+                            crate::net::stamped_request((**new_url).clone(), self.abort_signal.as_ref());
+                        if cors {
+                            crate::net::mark_cors(&mut request);
+                        }
                         self.net_provider.fetch(
                             doc_id,
-                            crate::net::stamped_request(
-                                (**new_url).clone(),
-                                self.abort_signal.as_ref(),
-                            ),
+                            request,
                             ResourceHandler::boxed(
                                 self.tx.clone(),
                                 doc_id,
                                 None, // Don't pass node_id, we'll handle via pending_images
                                 self.shell_provider.clone(),
-                                ImageHandler::new(kind.image_type(idx)),
+                                ImageHandler::new(kind.image_type(idx)).cors(cors),
                             ),
                         );
 
@@ -1203,8 +1212,12 @@ impl BaseDocument {
     }
 }
 
-/// pyro: the image a float's `shape-outside` names (none or one).
+/// pyro: the image a float's `shape-outside` names (none or one; none for an element that is not
+/// a float, which `shape-outside` does not apply to: nothing is fetched for it).
 pub(crate) fn shape_image(style: &style::properties::ComputedValues) -> &[style::values::computed::Image] {
+    if style.get_box().float == style::computed_values::float::T::None {
+        return &[];
+    }
     match &style.get_box().shape_outside {
         style::values::computed::basic_shape::ShapeOutside::Image(image) => std::slice::from_ref(image),
         _ => &[],
@@ -1222,4 +1235,129 @@ pub(crate) fn border_image_sources(
         sources.push(mask.clone());
     }
     sources
+}
+
+#[cfg(test)]
+mod shape_image_tests {
+    use crate::node::{ImageData, Status};
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
+    use std::sync::{Arc, Mutex};
+
+    /// Records each request (URL, CORS mode) and keeps its handler to answer later.
+    #[derive(Default)]
+    struct Recorder {
+        requests: Mutex<Vec<(String, bool, Option<Box<dyn NetHandler>>)>>,
+    }
+    impl NetProvider for Recorder {
+        fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+            let cors = crate::net::is_cors_request(&request);
+            self.requests.lock().unwrap().push((request.url.to_string(), cors, Some(handler)));
+        }
+    }
+    impl Recorder {
+        fn requests(&self) -> Vec<(String, bool)> {
+            self.requests.lock().unwrap().iter().map(|(u, c, _)| (u.clone(), *c)).collect()
+        }
+        /// Answers the request for `url` with `body` (empty: a failure, as a failed CORS check).
+        fn answer(&self, url: &str, body: &str) {
+            let handler = {
+                let mut requests = self.requests.lock().unwrap();
+                requests.iter_mut().find(|(u, _, h)| u == url && h.is_some()).and_then(|(_, _, h)| h.take())
+            };
+            handler.expect("a pending request").bytes(url.to_string(), Bytes::from(body.to_string()));
+        }
+    }
+
+    const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="5" height="10"/></svg>"#;
+
+    fn doc_with(css: &str) -> (BaseDocument, Arc<Recorder>, crate::NodeId) {
+        doc_cached(css, None)
+    }
+
+    /// With an image already loaded without CORS (an `<img>`'s) at `cached`, the document at
+    /// `http://page.test/`.
+    fn doc_cached(css: &str, cached: Option<&str>) -> (BaseDocument, Arc<Recorder>, crate::NodeId) {
+        let net = Arc::new(Recorder::default());
+        let mut doc = BaseDocument::new(DocumentConfig {
+            net_provider: Some(net.clone()),
+            base_url: Some("http://page.test/".into()),
+            ..Default::default()
+        });
+        if let Some(url) = cached {
+            let svg = crate::node::SvgImageData::from_data(SVG.as_bytes(), &usvg::Options::default()).expect("svg");
+            doc.image_cache.insert(url.into(), ImageData::Svg(svg.into()));
+        }
+        let root = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        let div = mutator.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("style"), value: css.into() }]);
+        mutator.append_children(body, &[div]);
+        mutator.append_children(html, &[body]);
+        mutator.append_children(root, &[html]);
+        drop(mutator);
+        doc.resolve(0.0);
+        (doc, net, div)
+    }
+
+    /// The shape image slot: (URL, loaded OK, has an image).
+    fn shape(doc: &BaseDocument, div: crate::NodeId) -> Option<(String, bool, bool)> {
+        let el = doc.nodes[div].element_data()?;
+        el.shape_images
+            .first()?
+            .as_ref()
+            .map(|s| (s.url.to_string(), matches!(s.status, Status::Ok), !matches!(s.image, ImageData::None)))
+    }
+
+    #[test]
+    fn shape_images_load_with_cors_apart_from_other_images() {
+        // Not a float: shape-outside does not apply, nothing is fetched.
+        let (_, net, _) = doc_with("shape-outside: url(http://other.test/a.svg)");
+        assert!(net.requests().is_empty(), "{:?}", net.requests());
+
+        // An image of that URL already loaded without CORS (an `<img>`'s) does not stand in.
+        let url = Some("http://other.test/a.svg");
+        let (mut doc, net, div) = doc_cached("float: left; shape-outside: url(http://other.test/a.svg)", url);
+        assert_eq!(net.requests(), vec![("http://other.test/a.svg".to_string(), true)]);
+        // A same-origin one is the same response with CORS or without: the loaded one is used.
+        let (doc, net, div) = doc_cached("float: left; shape-outside: url(http://page.test/a.svg)", Some("http://page.test/a.svg"));
+        assert!(net.requests().is_empty(), "{:?}", net.requests());
+        assert!(shape(&doc, div).is_some_and(|(_, ok, loaded)| ok && loaded));
+        let (mut doc, net, div) = doc_cached("float: left; shape-outside: url(http://other.test/a.svg)", url);
+        // The CORS check fails (an empty body): no shape (as `none`).
+        net.answer("http://other.test/a.svg", "");
+        doc.handle_messages();
+        let (_, ok, loaded) = shape(&doc, div).expect("a slot");
+        assert!(!loaded && !ok);
+    }
+
+    #[test]
+    fn a_late_image_the_shape_no_longer_names_is_not_its_shape() {
+        let (mut doc, net, div) = doc_with("float: left; shape-outside: url(http://x.test/a.svg)");
+        let mut mutator = doc.mutate();
+        mutator.set_attribute(div, qual_name!("style"), "float: left; shape-outside: url(http://x.test/b.svg)");
+        drop(mutator);
+        doc.resolve(0.0);
+        assert_eq!(net.requests().len(), 2, "{:?}", net.requests());
+        // B first, then A late: B stays.
+        net.answer("http://x.test/b.svg", SVG);
+        doc.handle_messages();
+        net.answer("http://x.test/a.svg", SVG);
+        doc.handle_messages();
+        let (url, ok, loaded) = shape(&doc, div).expect("a slot");
+        assert_eq!(url, "http://x.test/b.svg");
+        assert!(loaded && ok);
+        // A only: the slot names B, still loading.
+        let (mut doc, net, div) = doc_with("float: left; shape-outside: url(http://x.test/a.svg)");
+        let mut mutator = doc.mutate();
+        mutator.set_attribute(div, qual_name!("style"), "float: left; shape-outside: url(http://x.test/b.svg)");
+        drop(mutator);
+        doc.resolve(0.0);
+        net.answer("http://x.test/a.svg", SVG);
+        doc.handle_messages();
+        let (url, _, loaded) = shape(&doc, div).expect("a slot");
+        assert_eq!(url, "http://x.test/b.svg");
+        assert!(!loaded, "A's image went into B's slot");
+    }
 }
