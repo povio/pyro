@@ -839,6 +839,23 @@ fn collect_layout_children_with_wrap(
                 });
                 return;
             }
+            // pyro: a list box lays out its options, groups and separators only: text and other
+            // children of the select have no box (Chromium's `LayoutListBox`; WPT css-display
+            // `select-4-option-optgroup-display-none`).
+            let children: Vec<NodeId> = doc.nodes[container_node_id].children.to_vec();
+            for child in children {
+                let keep = doc.nodes[child].data.downcast_element().is_some_and(|el| {
+                    matches!(el.name.local, local_name!("option") | local_name!("optgroup") | local_name!("hr"))
+                });
+                if keep {
+                    out.children.push(child);
+                } else {
+                    doc.iter_subtree_mut(child, |id: NodeId, doc: &mut BaseDocument| {
+                        doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+                    });
+                }
+            }
+            return;
 
         }
 
