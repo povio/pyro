@@ -1063,6 +1063,25 @@ impl LayoutPassState<'_> {
         // where the outer columns end (Chromium; WPT css-multicol `spanner-fragmentation-*`).
         if let Some((outer_height, offset)) = nested_span_ctx {
             let boundary = |y: f32| ((offset + y) / outer_height + 1e-4).floor() * outer_height + outer_height - offset;
+            // (Where `y` is not at the top of an outer column, the next one's top.)
+            let next_column = |y: f32| {
+                let end = boundary(y);
+                if (y - (end - outer_height)).abs() <= EPSILON { y } else { end }
+            };
+            // pyro: a spanner's forced breaks are breaks of the outer columns, where it is
+            // (Chromium; WPT css-multicol `spanner-fragmentation-010`, `-012`).
+            let forced: Vec<(bool, bool)> = self
+                .doc
+                .column_spanners_of(dom_id)
+                .into_iter()
+                .map(|(id, _)| {
+                    self.nodes[id].primary_styles().map_or((false, false), |style| {
+                        use style::values::computed::BreakBetween as B;
+                        let forces = |b: B| matches!(b, B::Column | B::Always);
+                        (forces(style.get_box().break_before), forces(style.get_box().break_after))
+                    })
+                })
+                .collect();
             let mut top = content_top;
             let mut run_start = breaks.start;
             'parts: for part in 0..=spanners.len() {
@@ -1103,6 +1122,10 @@ impl LayoutPassState<'_> {
                 }
                 if let Some(&(start, end, indent)) = spanners.get(part) {
                     let (start, end) = (snap(start), snap(end));
+                    let (before, after) = forced.get(part).copied().unwrap_or((false, false));
+                    if before && top > content_top + EPSILON {
+                        top = next_column(top);
+                    }
                     let spanner_top = top - lift(part);
                     fragments.push(ColumnFragment {
                         start,
@@ -1116,6 +1139,9 @@ impl LayoutPassState<'_> {
                         extended: 0.0,
                     });
                     top = spanner_top + (end - start);
+                    if after {
+                        top = next_column(top);
+                    }
                     run_start = spanners[part].1 - spanner_leads.get(part).copied().unwrap_or(0.0);
                 }
             }
