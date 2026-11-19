@@ -425,6 +425,14 @@ impl LayoutPassState<'_> {
             return inputs;
         }
         let content_box = styles.get_position().box_sizing == style::computed_values::box_sizing::T::ContentBox;
+        // pyro: a column flex container breaks its lines against an indefinite main size: its
+        // `calc-size()` height is not resolved then (css-flexbox-1 § 9.2 step 2; WPT css-values
+        // `calc-size/calc-size-flex-008`).
+        let column_flex = styles.clone_display().inside() == style::values::specified::box_::DisplayInside::Flex
+            && matches!(
+                styles.get_position().flex_direction,
+                style::computed_values::flex_direction::T::Column | style::computed_values::flex_direction::T::ColumnReverse
+            );
         drop(styles);
         let style = node.layout_style();
         let parent_width = inputs.parent_size.width;
@@ -493,6 +501,9 @@ impl LayoutPassState<'_> {
             let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
             if inputs.known_dimensions.height.is_none() {
                 self.calc_size_results.push((node_id, 1, height.max(padding_border.height)));
+                if column_flex {
+                    inputs.known_dimensions_are_definite.height = false;
+                }
             }
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
         }
