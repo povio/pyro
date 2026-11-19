@@ -1869,6 +1869,7 @@
     let t;
     try { t = parseTrigger(decl, source); } catch { t = null; }
     a.trigger = { enter: words[0] || 'play', exit: words[1] || 'none', state: 'idle', spec: t, once: false };
+    a.triggerKey = JSON.stringify([actionsText, decl]);
     a.scripted = true;
     override(a, 'playState');
     // Untriggered: just before its start (Chromium shows only its backwards fill).
@@ -1956,6 +1957,9 @@
       if (seen.has(id)) continue;
       cssRuns.delete(id);
       live.delete(object);
+      // (A run the style dropped no longer waits for its trigger.)
+      const gone = animations.get(object);
+      if (gone) triggered.delete(gone);
     }
   }
   // An object script does not control follows its run's play state
@@ -1967,7 +1971,20 @@
     const a = animations.get(object);
     if (a.css !== CSS_ANIMATION) return cssFollowPlayState(a, run);
     const ov = a.overrides || new Set();
-    const [, target, , , , delay, duration, iterations, direction, fill, , held, pseudo, timelineText] = run;
+    const [, target, , , , delay, duration, iterations, direction, fill, , held, pseudo, timelineText, trigger] = run;
+    // A new `animation-trigger` (or timeline trigger) binds the run to it anew; none unbinds it.
+    const triggerKey = trigger ? JSON.stringify([trigger[0], trigger[2]]) : null;
+    if (triggerKey !== (a.triggerKey || null)) {
+      if (trigger && !timelineText) {
+        armTrigger(a, trigger, null);
+      } else if (a.trigger) {
+        triggered.delete(a);
+        a.trigger = null;
+        a.triggerKey = null;
+        if (a.overrides) a.overrides.delete('playState');
+        play(a, false);
+      }
+    }
     const scrollDriven = timelineText !== null && timelineText !== undefined;
     // The timeline (Web Animations 2, "setting the timeline of an animation").
     const key = scrollDriven ? JSON.stringify(timelineText) : null;
