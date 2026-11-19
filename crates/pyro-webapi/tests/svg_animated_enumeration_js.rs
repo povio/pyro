@@ -440,6 +440,46 @@ fn relative_colors_keep_missing_components() {
     );
 }
 
+/// A color function with a `calc()` component keeps its function form as its specified value, the
+/// `calc()`s simplified and the other components as the numbers the function resolves them to
+/// (css-color-4 § 15, as Chromium); legacy `rgb()`, `hsl()` and `hwb()` with numeric `calc()`s
+/// still resolve; computed values resolve, with a NaN lightness, component or hue as 0.
+/// WPT css-color `parsing/color-valid-lab`, `-color-function`, `-rgb`, `-hsl`, `-hwb`, `color-computed-lab`.
+#[test]
+fn color_functions_keep_calc_in_their_specified_value() {
+    let env = Env::new("http://color.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const el = document.createElement("div");
+              document.body.appendChild(el);
+              const out = [];
+              for (const v of [
+                "lab(calc(50 * 3) calc(0.5 - 1) calc(1.5) / calc(-0.5 + 1))",
+                "lab(200 calc(50%) 50%)",
+                "lch(calc(50%) -100 50deg / 50%)",
+                "color(srgb calc(50%) 50% 0.5)",
+                "oklch(none 0.2 calc(0.5))",
+                "rgb(calc(infinity), 0, 0)",
+                "rgb(calc(50% + (sign(1em - 10px) * 10%)), 400%, 0%, 50%)",
+                "hsl(calc(0 / 0) 100% 50%)",
+                "lab(50 20 30)",
+              ]) {
+                el.style.color = "";
+                el.style.color = v;
+                out.push(el.style.color);
+              }
+              for (const v of ["lab(calc(NaN) 0 0)", "lch(50 10 calc(infinity))", "lab(calc(50 * 3) 0 0)"]) {
+                el.style.color = v;
+                out.push(getComputedStyle(el).color);
+              }
+              return out.join("|");
+            })()"#
+        ),
+        "lab(calc(150) calc(-0.5) calc(1.5) / calc(0.5))|lab(100 calc(50%) 62.5)|lch(calc(50%) 0 50 / 0.5)|color(srgb calc(50%) 0.5 0.5)|oklch(none 0.2 calc(0.5))|rgb(255, 0, 0)|rgb(calc(50% + (10% * sign(1em - 10px))) 255 0 / 0.5)|rgb(255, 0, 0)|lab(50 20 30)|lab(0 0 0)|lch(50 10 0)|lab(100 0 0)"
+    );
+}
+
 /// DOM IDL details (WPT dom/idlharness): operations throw a TypeError when called with fewer
 /// arguments than they require; Range and StaticRange inherit their boundary points from
 /// AbstractRange; Element's `slot` is unscopable; the Fullscreen API exists, with nothing ever

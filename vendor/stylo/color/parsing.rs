@@ -199,12 +199,26 @@ pub fn parse_color_with(
         Token::Function(ref name) => {
             let name = name.clone();
             return input.parse_nested_block(|arguments| {
-                let color_function = parse_color_function(context, name, arguments)?;
-                if !color_function.has_origin_color()
-                    && let Ok(ComputedColor::Absolute(resolved)) =
-                        color_function.to_computed_color(None)
-                {
-                    return Ok(SpecifiedColor::from_absolute_color(resolved));
+                let mut color_function = parse_color_function(context, name, arguments)?;
+                if !color_function.has_origin_color() {
+                    // pyro: a function with a `calc()` component keeps its function form as its
+                    // specified value (`normalize_plain_components`); it was resolved here, so
+                    // `lab(calc(50 * 3) 0 0)` serialized as `lab(100 0 0)`.
+                    // (The legacy functions `rgb()`, `hsl()` and `hwb()` still resolve when their
+                    // `calc()`s are numbers: they serialize as `rgb()` either way.)
+                    let keeps_calc = color_function.has_calc_component()
+                        && !matches!(
+                            color_function,
+                            ColorFunction::Rgb(..) | ColorFunction::Hsl(..) | ColorFunction::Hwb(..)
+                        );
+                    if !keeps_calc
+                        && let Ok(ComputedColor::Absolute(resolved)) = color_function.to_computed_color(None)
+                    {
+                        return Ok(SpecifiedColor::from_absolute_color(resolved));
+                    }
+                    if color_function.has_calc_component() {
+                        color_function.normalize_plain_components();
+                    }
                 }
                 // Preserve the color as it was parsed.
                 Ok(SpecifiedColor::ColorFunction(Box::new(color_function)))

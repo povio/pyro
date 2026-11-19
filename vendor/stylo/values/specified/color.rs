@@ -841,6 +841,11 @@ impl Color {
                 ) {
                     $color.components.0 = normalize($color.components.0);
                 }
+                // pyro: nor can a computed hue (`lch(50 10 calc(infinity))` is `lch(50 10 0)`,
+                // as in Chromium; WPT css-color `parsing/color-computed-lab`).
+                if matches!($color.color_space, ColorSpace::Lch | ColorSpace::Oklch) {
+                    $color.components.2 = normalize($color.components.2);
+                }
 
                 // Computed RGB and XYZ components can not be NaN.
                 if !$color.is_legacy_syntax() && $color.color_space.is_rgb_or_xyz_like() {
@@ -859,7 +864,15 @@ impl Color {
                 ComputedColor::Absolute(color)
             },
             Color::ColorFunction(ref color_function) => {
-                color_function.to_computed_color(context)?
+                // pyro: a function that resolves here is adjusted as an absolute color parsed as
+                // one is (a function with a `calc()` component is no longer resolved by the parser).
+                match color_function.to_computed_color(context)? {
+                    ComputedColor::Absolute(mut color) => {
+                        adjust_absolute_color!(color);
+                        ComputedColor::Absolute(color)
+                    },
+                    other => other,
+                }
             },
             Color::LightDark(ref ld) => ld.compute(context.ok_or(())?),
             Color::ColorMix(ref mix) => {
