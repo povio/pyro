@@ -1560,7 +1560,7 @@ impl Homography {
 
 /// pyro: whether a line clamp discarded `id` or a box it is laid out in (blitz-dom
 /// `NodeFlags::HIDDEN_BY_CLAMP`).
-fn hidden_by_clamp(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
+pub(crate) fn hidden_by_clamp(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
     let mut current = doc.get_node(id);
     while let Some(node) = current {
         if node.flags.contains(blitz_dom::node::NodeFlags::HIDDEN_BY_CLAMP) {

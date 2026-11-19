@@ -7425,3 +7425,20 @@ fn content_a_line_clamp_discarded_is_neither_hit_nor_scrollable_overflow() {
     assert_eq!(eval(&e.main, "String(scroller.scrollHeight===scroller.clientHeight)"), "true");
     e.page.dispose();
 }
+
+#[test]
+fn a_float_a_line_clamp_discarded_is_neither_hit_nor_scrollable_overflow() {
+    // The float sits on the second line, after the clamp point: hidden with it.
+    let e = env(
+        "<body style='margin:0;font:20px/20px monospace'>\
+         <div style='line-clamp:1;width:200px'>first line<br><span id=fl style='float:left;width:50px;height:300px;background:red'></span>second line</div>\
+         <div id=clamp style='line-clamp:1;width:200px;overflow:auto;margin-top:400px'>first line<br><span style='float:left;width:50px;height:300px'></span>second line</div></body>",
+    );
+    let hit = eval(
+        &e.main,
+        "const b=fl.getBoundingClientRect();const el=document.elementFromPoint(b.x+5,b.y+b.height-5);String(el&&el.id)",
+    );
+    assert_ne!(hit, "fl", "a discarded float is not hit");
+    assert_eq!(eval(&e.main, "String(clamp.scrollHeight===clamp.clientHeight)"), "true");
+    e.page.dispose();
+}

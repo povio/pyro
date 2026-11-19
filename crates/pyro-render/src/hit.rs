@@ -338,6 +338,9 @@ impl Descent<'_> {
             (candidate, None)
         };
         self.path.push(Path { key, order, needed: false, reported: false });
+        // pyro: a box a line clamp discarded (a float after the clamp point too) is not hit; its
+        // place stays in the order (blitz-dom `NodeFlags::HIDDEN_BY_CLAMP`).
+        let candidate = candidate && !geometry::hidden_by_clamp(self.doc, id);
         if candidate {
             if let (Some(key), Some(b)) = (key, self.g.element_box(self.doc, id)) {
                 if b.width > 0.0 || b.height > 0.0 {
