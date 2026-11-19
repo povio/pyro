@@ -498,6 +498,12 @@ impl Dom {
                     }
                     if html && matches!(local, "iframe" | "frame" | "object" | "embed") {
                         if let Some(frame) = self.frame_documents.get(&n) {
+                            // pyro: before `srcdoc`, which parses the document.
+                            attrs.push(RAttr {
+                                name: plain("data-pyro-frame-client"),
+                                value: Cow::Borrowed(&frame.client),
+                                valueless: false,
+                            });
                             attrs.push(RAttr { name: plain("srcdoc"), value: Cow::Borrowed(&frame.html), valueless: false });
                             attrs.push(RAttr {
                                 name: plain("data-pyro-frame-url"),

@@ -4454,6 +4454,9 @@ pub struct FrameDocument {
     pub html: String,
     pub url: String,
     pub scroll: (f64, f64),
+    /// pyro: the frame's id (CDP frame id): the client the renderer's requests for the document
+    /// name, so they go out as that frame's, with its origin (opaque in a sandboxed frame).
+    pub client: String,
 }
 
 /// The policy token a `<meta name=referrer content>` value names: a

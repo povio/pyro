@@ -229,7 +229,7 @@ pub(super) fn subresource_options(options: &pyro_render::FetchOptions) -> pyro_b
         integrity: options.integrity.clone(),
         referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
         referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
-        client: options.client.as_ref().map(|url| url.as_str().to_owned()),
+        client: options.client.clone(),
     }
 }
 

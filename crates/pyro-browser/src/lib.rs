@@ -96,8 +96,8 @@ pub struct SubresourceOptions {
     pub referrer: Option<String>,
     /// The request's referrer policy; `None`: the document's.
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
-    /// The URL of the frame document the request is made for (`None`: the page's document): the
-    /// request is that frame's, with its origin.
+    /// The id of the frame whose document the request is made for (`None`: the page's
+    /// document): the request is that frame's, with its origin (opaque in a sandboxed frame).
     pub client: Option<String>,
 }
 
@@ -661,8 +661,9 @@ impl Page {
         keys.sort_by(|a, b| b.0.cmp(&a.0));
         let mut documents = Vec::new();
         for (_, key) in keys {
-            let Some((owner, page_dom, base_url, url)) =
-                self.frames.with_frame(key, |f| (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone()))
+            let Some((owner, page_dom, base_url, url, client)) = self
+                .frames
+                .with_frame(key, |f| (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), f.id.0.clone()))
             else {
                 continue;
             };
@@ -672,7 +673,7 @@ impl Page {
             sheets.extend(snapshot.sheets);
             let base = if base_url.is_empty() { url } else { base_url };
             let document =
-                pyro_dom::FrameDocument { html: snapshot.html, url: base, scroll: (snapshot.scroll_x, snapshot.scroll_y) };
+                pyro_dom::FrameDocument { html: snapshot.html, url: base, scroll: (snapshot.scroll_x, snapshot.scroll_y), client };
             if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
                 dom.set_frame_document(owner, Some(document.clone()));
             }
@@ -1256,23 +1257,20 @@ impl Browser {
         options: SubresourceOptions,
         done: FetchDone,
     ) {
-        let built = self.page(page).map(|p| {
-            // A frame document's request is its frame's (whose document has that URL), the page's
-            // otherwise.
-            let child = options.client.as_deref().filter(|client| *client != p.main_frame.url).and_then(|client| {
-                p.frames.keys().into_iter().filter(|key| key.child.is_some()).find_map(|key| {
-                    p.frames
-                        .with_frame(key, |f| {
-                            (f.url == client || f.base_url == client).then(|| {
-                                (subresource_request_with(f, page, url.clone(), kind, &options), f.origin.clone())
-                            })
-                        })
-                        .flatten()
+        // A frame document's request is that frame's (by its id, never by a URL, which several
+        // frames can share), the page's otherwise; a client that names no frame of the page
+        // sends nothing.
+        let built = self.page(page).and_then(|p| match options.client.as_deref() {
+            None => Some((
+                subresource_request_with(&p.main_frame, page, url.clone(), kind, &options),
+                p.main_frame.origin.clone(),
+            )),
+            Some(client) => {
+                let key = p.frames.key_of(client)?;
+                p.frames.with_frame(key, |f| {
+                    (subresource_request_with(f, page, url.clone(), kind, &options), f.origin.clone())
                 })
-            });
-            child.unwrap_or_else(|| {
-                (subresource_request_with(&p.main_frame, page, url.clone(), kind, &options), p.main_frame.origin.clone())
-            })
+            }
         });
         let Some((request, origin)) = built else {
             self.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));

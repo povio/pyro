@@ -222,6 +222,8 @@ pub struct StylesheetHandler {
     pub guard: SharedRwLock,
     pub net_provider: Arc<dyn NetProvider>,
     pub abort_signal: Option<AbortSignal>,
+    /// pyro: the client of the sheet's imports (`StylesheetLoader::client`).
+    pub client: Option<String>,
 }
 
 impl NetHandler for ResourceHandler<StylesheetHandler> {
@@ -248,6 +250,7 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
                 shell_provider: self.shell_provider.clone(),
                 abort_signal: self.data.abort_signal.clone(),
                 import_depth: 0,
+                client: self.data.client.clone(),
             }),
             None, // error_reporter
             QuirksMode::NoQuirks,
@@ -287,6 +290,9 @@ pub(crate) struct StylesheetLoader {
     /// Depth of `@import` nesting for the stylesheet this loader is parsing
     /// (0 for a top-level stylesheet)
     pub(crate) import_depth: usize,
+    /// pyro: the client of the document's requests made with other than the defaults
+    /// (`BaseDocument::request_options`): `Some` in a frame's document (`""`: one without an id).
+    pub(crate) client: Option<String>,
 }
 impl ServoStylesheetLoader for StylesheetLoader {
     fn request_stylesheet(
@@ -320,6 +326,10 @@ impl ServoStylesheetLoader for StylesheetLoader {
         // pyro: fetched as the `url()`'s request URL modifiers say (CSS Values 5 § 4.5.4).
         let mut request = stamped_request(url.as_ref().clone(), self.abort_signal.as_ref());
         request.options = url_fetch_options(import.url.modifiers().map(|m| &**m));
+        // pyro: a frame document's import (nested ones too) is its frame's request.
+        if !request.options.is_default() {
+            request.options.client = self.client.clone();
+        }
         let import = ServoArc::new(lock.wrap(import));
         self.net_provider.fetch(
             self.doc_id,

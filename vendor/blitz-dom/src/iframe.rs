@@ -54,9 +54,15 @@ impl BaseDocument {
         base_url: Option<String>,
         abort_signal: AbortSignal,
     ) -> DocumentConfig {
+        // pyro: the frame a render snapshot's frame document is of (`data-pyro-frame-client`).
+        let frame_client = self
+            .get_node(node_id)
+            .and_then(|node| node.attr(markup5ever::LocalName::from("data-pyro-frame-client")))
+            .map(str::to_owned);
         DocumentConfig {
             viewport: None,
             base_url,
+            frame_client,
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
             net_provider: Some(self.net_provider.clone()),
             navigation_provider: Some(Arc::new(IframeNavigationProvider {

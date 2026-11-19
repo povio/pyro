@@ -10,7 +10,7 @@ use pyro_render::*;
 /// redirected to another origin that grants no CORS permission does; a fetch with integrity
 /// metadata fails (no digest matches). Records each request as (URL, how it was made).
 #[derive(Default)]
-struct Recorder(Mutex<Vec<(String, &'static str)>>);
+struct Recorder(Mutex<Vec<(String, &'static str)>>, Mutex<Vec<(String, Option<String>)>>);
 
 fn green() -> Vec<u8> {
     encode_png(&RgbaImage { width: 20, height: 20, data: [0, 128, 0, 255].repeat(400) })
@@ -30,6 +30,7 @@ impl Fetcher for Shared {
         std::thread::spawn(move || done(Err("CORS check failed after a redirect".into())));
     }
     fn fetch_with(&self, url: String, options: &FetchOptions, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.0 .1.lock().unwrap().push((url.clone(), options.client.clone()));
         let how = match (options.cors.is_some(), options.integrity.is_some()) {
             (_, true) => "integrity",
             (true, false) => "cors",
@@ -168,4 +169,37 @@ fn a_changed_integrity_on_a_loaded_url_is_checked_again() {
     let second = renderer.render(&snapshot(tree()), Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
     assert!(recorder.0.lock().unwrap().iter().any(|(_, how)| *how == "integrity"), "the new request is made");
     assert_eq!(pixel(&second, 10, 10), WHITE, "the old bytes never passed the new integrity check");
+}
+
+/// A frame document's request made with other than the defaults (here a mask image, in CORS
+/// mode) names the frame by its id (the render snapshot's `data-pyro-frame-client`), so the
+/// browser sends it as that frame's, with its origin (opaque in a sandboxed frame). It named the
+/// frame document's URL, which the browser looked up among the frames (a sandboxed frame at the
+/// top document's URL got the top document's origin). A frame document without an id names
+/// `""`, which no frame has, never nothing (the page).
+#[test]
+fn a_frame_documents_request_names_its_frame_by_id() {
+    let mask = "<div style='width:10px;height:10px;background:green;mask-image:url(green.png)'></div>";
+    let srcdoc = |inner: &str| inner.replace('\'', "&#39;").replace('<', "&lt;").replace('>', "&gt;");
+    let recorder = Arc::new(Recorder::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let snapshot = Snapshot {
+        html: format!(
+            "<!doctype html><body style='margin:0'>\
+             <iframe data-pyro-frame-client=F00D data-pyro-frame-url='http://test/' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-frame-url='http://test/' srcdoc='{1}' style='border:0;width:50px;height:20px'></iframe>",
+            srcdoc(&mask.replace("green.png", "a/green.png")),
+            srcdoc(&mask.replace("green.png", "b/green.png")),
+        ),
+        base_url: "http://test/".into(),
+        width: 200,
+        height: 100,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let clients = recorder.1.lock().unwrap().clone();
+    assert!(clients.iter().any(|(url, c)| url.ends_with("a/green.png") && c.as_deref() == Some("F00D")), "{clients:?}");
+    assert!(clients.iter().any(|(url, c)| url.ends_with("b/green.png") && c.as_deref() == Some("")), "{clients:?}");
+    assert!(!clients.iter().any(|(_, c)| c.is_none()), "no frame request goes out as the page's: {clients:?}");
 }

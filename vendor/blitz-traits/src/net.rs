@@ -87,9 +87,10 @@ pub struct FetchOptions {
     pub referrer_policy: Option<String>,
     /// The request's referrer (`None`: the document): the style sheet a `url()` was written in.
     pub referrer: Option<Url>,
-    /// The URL of the frame's document the request is made for (`None`: the page's own): its
-    /// origin is the request's, which a CORS check compares the response with.
-    pub client: Option<Url>,
+    /// The id of the frame whose document the request is made for (`None`: the page's own):
+    /// the request is that frame's, with its origin (opaque in a sandboxed frame), which a CORS
+    /// check compares the response with. Never a URL, which several frames can share.
+    pub client: Option<String>,
 }
 
 impl FetchOptions {
@@ -120,7 +121,7 @@ impl FetchOptions {
             self.integrity,
             self.referrer_policy,
             self.referrer.as_ref().map(Url::as_str),
-            self.client.as_ref().map(Url::as_str),
+            self.client.as_deref(),
         )
     }
 }

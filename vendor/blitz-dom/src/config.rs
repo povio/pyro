@@ -34,6 +34,9 @@ pub struct DocumentConfig {
     pub viewport: Option<Viewport>,
     /// The base url which relative URLs are resolved against
     pub base_url: Option<String>,
+    /// pyro: the id of the frame this is the document of (a frame document of the render
+    /// snapshot): its requests made with other than the defaults name it as their client.
+    pub frame_client: Option<String>,
     /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
     ///
     /// The list is used as given, so replacing it removes the default sheet unless it is
@@ -97,6 +100,7 @@ impl Default for DocumentConfig {
         Self {
             viewport: None,
             base_url: None,
+            frame_client: None,
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
             net_provider: None,
             navigation_provider: None,

@@ -408,6 +408,8 @@ pub struct BaseDocument {
     /// How deeply this document is nested within other documents
     /// (0 for a root document). Used to limit `<iframe>` nesting depth.
     pub(crate) subdocument_depth: usize,
+    /// pyro: the id of the frame this is the document of (`DocumentConfig::frame_client`).
+    pub(crate) frame_client: Option<String>,
 
     // Events
     pub(crate) tx: Sender<DocumentEvent>,
@@ -833,6 +835,7 @@ impl BaseDocument {
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
             subdocument_depth: config.subdocument_depth,
+            frame_client: config.frame_client.clone(),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
@@ -1802,6 +1805,7 @@ impl BaseDocument {
                                     guard: self.guard.clone(),
                                     net_provider: self.net_provider.clone(),
                                     abort_signal: self.abort_signal.clone(),
+                                    client: self.request_client(),
                                 },
                             ),
                         );
@@ -1875,18 +1879,25 @@ impl BaseDocument {
         &self.url
     }
 
-    /// pyro: `options` for a request this document makes, with this document as the request's
-    /// client when it is a frame's (`FetchOptions::client`): a CORS check compares the response
-    /// with the frame document's origin, not the page's. Requests with the defaults stay the
-    /// page's.
+    /// pyro: `options` for a request this document makes, with this document's frame as the
+    /// request's client when it is a frame's (`FetchOptions::client`, the frame's id, never its
+    /// URL): a CORS check compares the response with that frame's origin, not the page's.
+    /// Requests with the defaults stay the page's.
     pub(crate) fn request_options(
         &self,
         mut options: blitz_traits::net::FetchOptions,
     ) -> blitz_traits::net::FetchOptions {
-        if self.subdocument_depth > 0 && !options.is_default() {
-            options.client = Some((*self.url).clone());
+        if !options.is_default() {
+            options.client = self.request_client();
         }
         options
+    }
+
+    /// pyro: the client this document's requests with other than the defaults name: its frame's
+    /// id in a frame's document (one without an id names `""`, which no frame has, so its
+    /// requests fail rather than go out as the page's), `None` in the page's document.
+    pub(crate) fn request_client(&self) -> Option<String> {
+        (self.subdocument_depth > 0).then(|| self.frame_client.clone().unwrap_or_default())
     }
 
     /// pyro: what a link's `href` resolves against, and the document's own URL (without a
@@ -1976,6 +1987,7 @@ impl BaseDocument {
                 shell_provider: self.shell_provider.clone(),
                 abort_signal: self.abort_signal.clone(),
                 import_depth: 0,
+                client: self.request_client(),
             }),
             None,
             QuirksMode::NoQuirks,
