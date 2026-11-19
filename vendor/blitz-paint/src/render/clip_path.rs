@@ -159,7 +159,7 @@ impl ElementCx<'_, '_> {
             #[cfg(not(feature = "svg"))]
             ClipPath::Url(_) => None,
             ClipPath::Shape(basic_shape, geometry_box) => {
-                let reference = self.reference_box(geometry_box);
+                let reference = self.unrounded_size(self.reference_box(geometry_box));
                 if !(reference.width() >= 0.0 && reference.height() >= 0.0) {
                     return Some(ElementClip::Nothing);
                 }
@@ -193,6 +193,19 @@ impl ElementCx<'_, '_> {
             }
         };
         scale_rect(device, 1.0 / self.scale)
+    }
+
+    /// pyro: `reference` (CSS px) grown by what rounding the box to whole pixels took off its size
+    /// (its unrounded size less its painted one): a shape's percentages resolve against the box as
+    /// laid out, as Chromium's do (its layout units; WPT css-masking
+    /// `clip-path-interpolation-shape-arc-direction-agnostic-radius`, a 353.546875 px box).
+    fn unrounded_size(&self, reference: Rect) -> Rect {
+        let (unrounded, painted) = (self.node.unrounded_layout().size, self.node.final_layout().size);
+        let (dw, dh) = (f64::from(unrounded.width - painted.width), f64::from(unrounded.height - painted.height));
+        if !(dw.abs() < 1.0 && dh.abs() < 1.0) || self.node.final_layout().size.width <= 0.0 {
+            return reference;
+        }
+        Rect::new(reference.x0, reference.y0, reference.x1 + dw, reference.y1 + dh)
     }
 
     /// The margin box, in CSS px from the border box's origin.

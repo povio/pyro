@@ -17260,7 +17260,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
      /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
      /// elements; `auto` components resolve to the corresponding border box edge.
-@@ -41,435 +149,1454 @@
+@@ -41,435 +149,1467 @@
          Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
      }
  
@@ -17283,7 +17283,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
              ClipPath::Shape(basic_shape, geometry_box) => {
 -                let reference_box = self.resolve_geometry_box(geometry_box);
 -                self.basic_shape_to_path(basic_shape, reference_box)
-+                let reference = self.reference_box(geometry_box);
++                let reference = self.unrounded_size(self.reference_box(geometry_box));
 +                if !(reference.width() >= 0.0 && reference.height() >= 0.0) {
 +                    return Some(ElementClip::Nothing);
 +                }
@@ -17353,6 +17353,29 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        scale_rect(device, 1.0 / self.scale)
 +    }
 +
++    /// pyro: `reference` (CSS px) grown by what rounding the box to whole pixels took off its size
++    /// (its unrounded size less its painted one): a shape's percentages resolve against the box as
++    /// laid out, as Chromium's do (its layout units; WPT css-masking
++    /// `clip-path-interpolation-shape-arc-direction-agnostic-radius`, a 353.546875 px box).
++    fn unrounded_size(&self, reference: Rect) -> Rect {
++        let (unrounded, painted) = (self.node.unrounded_layout().size, self.node.final_layout().size);
++        let (dw, dh) = (f64::from(unrounded.width - painted.width), f64::from(unrounded.height - painted.height));
++        if !(dw.abs() < 1.0 && dh.abs() < 1.0) || self.node.final_layout().size.width <= 0.0 {
++            return reference;
+         }
++        Rect::new(reference.x0, reference.y0, reference.x1 + dw, reference.y1 + dh)
+     }
+ 
+-    /// Convert a CSS basic-shape to a kurbo BezPath
+-    fn basic_shape_to_path(
+-        &self,
+-        shape: &BasicShape,
+-        reference_box: ReferenceBox,
+-    ) -> Option<BezPath> {
+-        let w = reference_box.width;
+-        let h = reference_box.height;
+-        let ox = reference_box.x;
+-        let oy = reference_box.y;
 +    /// The margin box, in CSS px from the border box's origin.
 +    fn margin_box(&self) -> Rect {
 +        let border_box = scale_rect(self.frame.border_box, 1.0 / self.scale);
@@ -17376,7 +17399,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                resolve(&margin.margin_right),
 +                resolve(&margin.margin_bottom),
 +            );
-         }
++        }
 +        let margin = self.node.final_layout().margin;
 +        Insets::new(
 +            margin.left as f64,
@@ -17384,18 +17407,8 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            margin.right as f64,
 +            margin.bottom as f64,
 +        )
-     }
- 
--    /// Convert a CSS basic-shape to a kurbo BezPath
--    fn basic_shape_to_path(
--        &self,
--        shape: &BasicShape,
--        reference_box: ReferenceBox,
--    ) -> Option<BezPath> {
--        let w = reference_box.width;
--        let h = reference_box.height;
--        let ox = reference_box.x;
--        let oy = reference_box.y;
++    }
++
 +    /// The edges of a `<geometry-box>` with its rounded corners (CSS Shapes' box shapes), in CSS
 +    /// px: the border radii for the border box, the inner radii for the padding and content boxes,
 +    /// and for the margin box the radii grown by the margins as `box-shadow`'s spread grows them
@@ -17805,53 +17818,31 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -            let x = ox + resolve_lp(&pos.horizontal, w);
 -            let y = oy + resolve_lp(&pos.vertical, h);
 -            (x, y)
+-        }
 +        GenericPositionOrAuto::Auto => reference.center(),
 +        GenericPositionOrAuto::Position(pos) => Point::new(
 +            reference.x0 + resolve_lp(&pos.horizontal, reference.width()),
 +            reference.y0 + resolve_lp(&pos.vertical, reference.height()),
 +        ),
-+    }
-+}
-+
-+/// A `circle()`'s radius: a percentage is of the reference box's direction-agnostic size
-+/// (`sqrt(w² + h²) / sqrt(2)`); the side keywords measure to the box's sides in both axes, the
-+/// corner keywords to its corners.
-+fn circle_radius(
-+    radius: &GenericShapeRadius<LengthPercentage>,
-+    center: Point,
-+    reference: Rect,
-+) -> f64 {
-+    let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
-+    let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
-+    match radius {
-+        GenericShapeRadius::Length(lp) => {
-+            let agnostic = reference.width().hypot(reference.height()) / std::f64::consts::SQRT_2;
-+            resolve_lp(&lp.0, agnostic)
-         }
-+        GenericShapeRadius::ClosestSide => dx[0].min(dx[1]).min(dy[0]).min(dy[1]),
-+        GenericShapeRadius::FarthestSide => dx[0].max(dx[1]).max(dy[0]).max(dy[1]),
-+        GenericShapeRadius::ClosestCorner => dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
-+        GenericShapeRadius::FarthestCorner => dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
      }
  }
  
 -/// Resolve a shape radius keyword or length value
 -fn resolve_shape_radius(
-+/// One of an `ellipse()`'s radii, along the axis whose reference box edges are `start` and `end`
-+/// and center coordinate `center`: the side keywords measure to the sides in that axis only.
-+fn ellipse_radius(
++/// A `circle()`'s radius: a percentage is of the reference box's direction-agnostic size
++/// (`sqrt(w² + h²) / sqrt(2)`); the side keywords measure to the box's sides in both axes, the
++/// corner keywords to its corners.
++fn circle_radius(
      radius: &GenericShapeRadius<LengthPercentage>,
 -    primary_size: f64,
 -    secondary_size: f64,
 -    center_offset_primary: f64,
 -    center_offset_secondary: f64,
-+    center: f64,
-+    start: f64,
-+    end: f64,
-+    corners: (f64, f64),
++    center: Point,
++    reference: Rect,
  ) -> f64 {
-+    let near = (center - start).abs().min((end - center).abs());
-+    let far = (center - start).abs().max((end - center).abs());
++    let dx = [(center.x - reference.x0).abs(), (reference.x1 - center.x).abs()];
++    let dy = [(center.y - reference.y0).abs(), (reference.y1 - center.y).abs()];
      match radius {
 -        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, primary_size),
 -        GenericShapeRadius::ClosestSide => center_offset_primary
@@ -17863,40 +17854,14 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -            .max(primary_size - center_offset_primary)
 -            .max(center_offset_secondary)
 -            .max(secondary_size - center_offset_secondary),
-+        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
-+        GenericShapeRadius::ClosestSide => near,
-+        GenericShapeRadius::FarthestSide => far,
-+        // pyro: (`layout.css.ellipse-corners.enabled`) the distance to the closest or farthest
-+        // corner, in both axes (WPT `clip-path-ellipse-closest-farthest-corner`).
-+        GenericShapeRadius::ClosestCorner => corners.0,
-+        GenericShapeRadius::FarthestCorner => corners.1,
-+    }
-+}
- 
+-
 -        GenericShapeRadius::FarthestCorner => {
 -            let dp = center_offset_primary.max(primary_size - center_offset_primary);
 -            let ds = center_offset_secondary.max(secondary_size - center_offset_secondary);
 -            dp.hypot(ds)
-+/// pyro: `url()` references from a box's CSS to SVG elements of the page (`clip-path: url(#c)`
-+/// naming a `<clipPath>`, `mask-image: url(#m)` a `<mask>`).
-+#[cfg(feature = "svg")]
-+pub(super) mod svg_reference {
-+    use anyrender_svg::usvg;
-+    use blitz_dom::{BaseDocument, Node, NodeId, local_name};
-+    use kurbo::{Affine, BezPath};
-+    use peniko::Fill;
-+    use style::values::computed::url::ComputedUrl;
-+
-+    /// The element a `url()` names when it is a reference into this document: `url(#id)`, or
-+    /// the document's own URL with a fragment (a fragment alone is resolved against the base
-+    /// URL, which a `<base>` may have moved). `None` for another document's.
-+    pub(in crate::render) fn local_reference(dom: &BaseDocument, url: &ComputedUrl) -> Option<NodeId> {
-+        let url = url.url()?;
-+        let fragment = url.fragment()?;
-+        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
-+        let target = document(url.as_str());
-+        if target != document(dom.url().as_str()) && target != document(dom.base_url().as_str()) {
-+            return None;
++        GenericShapeRadius::Length(lp) => {
++            let agnostic = reference.width().hypot(reference.height()) / std::f64::consts::SQRT_2;
++            resolve_lp(&lp.0, agnostic)
          }
 -        GenericShapeRadius::ClosestCorner => {
 -            let dp = center_offset_primary
@@ -17907,11 +17872,83 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                .max(0.0);
 -            dp.hypot(ds)
 -        }
-+        dom.get_element_by_id(&percent_decode(fragment))
++        GenericShapeRadius::ClosestSide => dx[0].min(dx[1]).min(dy[0]).min(dy[1]),
++        GenericShapeRadius::FarthestSide => dx[0].max(dx[1]).max(dy[0]).max(dy[1]),
++        GenericShapeRadius::ClosestCorner => dx[0].min(dx[1]).hypot(dy[0].min(dy[1])),
++        GenericShapeRadius::FarthestCorner => dx[0].max(dx[1]).hypot(dy[0].max(dy[1])),
      }
--}
+ }
  
 -type GenericPathCommand<Angle, N> = GenericShapeCommand<Angle, N, GenericPosition<N, N>, N>;
+-
+-/// Convert an SVG path() to a kurbo BezPath.
+-/// The returned path is in the path's own coordinate system (origin at 0,0).
+-/// The caller is responsible for translating it to the reference box origin.
+-fn svg_path_to_bezpath<Angle: Copy, N>(
+-    commands: &[GenericPathCommand<Angle, N>],
+-    resolve_x: impl Fn(&N) -> f64,
+-    resolve_y: impl Fn(&N) -> f64,
+-    resolve_angle: impl Fn(&Angle) -> f64,
+-) -> Option<BezPath> {
+-    if commands.is_empty() {
+-        return None;
++/// One of an `ellipse()`'s radii, along the axis whose reference box edges are `start` and `end`
++/// and center coordinate `center`: the side keywords measure to the sides in that axis only.
++fn ellipse_radius(
++    radius: &GenericShapeRadius<LengthPercentage>,
++    center: f64,
++    start: f64,
++    end: f64,
++    corners: (f64, f64),
++) -> f64 {
++    let near = (center - start).abs().min((end - center).abs());
++    let far = (center - start).abs().max((end - center).abs());
++    match radius {
++        GenericShapeRadius::Length(lp) => resolve_lp(&lp.0, end - start),
++        GenericShapeRadius::ClosestSide => near,
++        GenericShapeRadius::FarthestSide => far,
++        // pyro: (`layout.css.ellipse-corners.enabled`) the distance to the closest or farthest
++        // corner, in both axes (WPT `clip-path-ellipse-closest-farthest-corner`).
++        GenericShapeRadius::ClosestCorner => corners.0,
++        GenericShapeRadius::FarthestCorner => corners.1,
+     }
++}
+ 
+-    let mut bez = BezPath::new();
+-    let mut cur = Point::ZERO;
+-    let mut subpath_start = cur;
+-    // Tracks the last control point for smooth continuation.
+-    let mut last_control: Option<Point> = None;
++/// pyro: `url()` references from a box's CSS to SVG elements of the page (`clip-path: url(#c)`
++/// naming a `<clipPath>`, `mask-image: url(#m)` a `<mask>`).
++#[cfg(feature = "svg")]
++pub(super) mod svg_reference {
++    use anyrender_svg::usvg;
++    use blitz_dom::{BaseDocument, Node, NodeId, local_name};
++    use kurbo::{Affine, BezPath};
++    use peniko::Fill;
++    use style::values::computed::url::ComputedUrl;
+ 
+-    for cmd in commands {
+-        match &cmd {
+-            GenericShapeCommand::Close => {
+-                bez.close_path();
+-                cur = subpath_start;
+-                last_control = None;
++    /// The element a `url()` names when it is a reference into this document: `url(#id)`, or
++    /// the document's own URL with a fragment (a fragment alone is resolved against the base
++    /// URL, which a `<base>` may have moved). `None` for another document's.
++    pub(in crate::render) fn local_reference(dom: &BaseDocument, url: &ComputedUrl) -> Option<NodeId> {
++        let url = url.url()?;
++        let fragment = url.fragment()?;
++        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
++        let target = document(url.as_str());
++        if target != document(dom.url().as_str()) && target != document(dom.base_url().as_str()) {
++            return None;
++        }
++        dom.get_element_by_id(&percent_decode(fragment))
++    }
++
 +    /// pyro: the SVG document a `url()` names an element of, when it is another document that
 +    /// the element has loaded (`images`: its `reference_images`, or its `mask_images`), with the
 +    /// element's id: `clip-path: url(shapes.svg#clip)`, a `data:` URL too.
@@ -17928,18 +17965,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        };
 +        Some((svg.source.clone()?, percent_decode(fragment)))
 +    }
- 
--/// Convert an SVG path() to a kurbo BezPath.
--/// The returned path is in the path's own coordinate system (origin at 0,0).
--/// The caller is responsible for translating it to the reference box origin.
--fn svg_path_to_bezpath<Angle: Copy, N>(
--    commands: &[GenericPathCommand<Angle, N>],
--    resolve_x: impl Fn(&N) -> f64,
--    resolve_y: impl Fn(&N) -> f64,
--    resolve_angle: impl Fn(&Angle) -> f64,
--) -> Option<BezPath> {
--    if commands.is_empty() {
--        return None;
++
 +    fn percent_decode(text: &str) -> String {
 +        let bytes = text.as_bytes();
 +        let mut out = Vec::with_capacity(bytes.len());
@@ -17955,29 +17981,24 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +            } else {
 +                out.push(bytes[i]);
 +                i += 1;
-+            }
+             }
+-            GenericShapeCommand::Move { point } => {
+-                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+-                bez.move_to(p);
+-                cur = p;
+-                subpath_start = p;
+-                last_control = None;
 +        }
 +        String::from_utf8_lossy(&out).into_owned()
-     }
- 
--    let mut bez = BezPath::new();
--    let mut cur = Point::ZERO;
--    let mut subpath_start = cur;
--    // Tracks the last control point for smooth continuation.
--    let mut last_control: Option<Point> = None;
++    }
++
 +    /// Whether `node` is the SVG element `name`.
 +    pub(in crate::render) fn is_svg_element(node: &Node, name: &str) -> bool {
 +        node.element_data().is_some_and(|element| {
 +            element.name.ns == blitz_dom::ns!(svg) && &*element.name.local == name
 +        })
 +    }
- 
--    for cmd in commands {
--        match &cmd {
--            GenericShapeCommand::Close => {
--                bez.close_path();
--                cur = subpath_start;
--                last_control = None;
++
 +    /// Whether the clip paths and masks `start` references, directly or through others (its own
 +    /// `clip-path` and `mask`, and its content's), lead back to one of them: a reference cycle,
 +    /// which makes them all invalid (usvg follows a long one without end).
@@ -18002,11 +18023,10 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    }
 +                }
              }
--            GenericShapeCommand::Move { point } => {
+-            GenericShapeCommand::Line { point } => {
 -                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                bez.move_to(p);
+-                bez.line_to(p);
 -                cur = p;
--                subpath_start = p;
 -                last_control = None;
 +            if let Some(style) = node.primary_styles() {
 +                if let style::values::computed::basic_shape::ClipPath::Url(url) = style.get_clip_path()
@@ -18022,16 +18042,15 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    }
 +                }
              }
--            GenericShapeCommand::Line { point } => {
--                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                bez.line_to(p);
--                cur = p;
+-            GenericShapeCommand::HLine { x } => {
+-                cur.x = resolve_axis_endpoint(x, cur.x, &resolve_x);
+-                bez.line_to(cur);
 -                last_control = None;
 +            for &child in &node.children {
 +                references(dom, child, out);
              }
--            GenericShapeCommand::HLine { x } => {
--                cur.x = resolve_axis_endpoint(x, cur.x, &resolve_x);
+-            GenericShapeCommand::VLine { y } => {
+-                cur.y = resolve_axis_endpoint(y, cur.y, &resolve_y);
 -                bez.line_to(cur);
 -                last_control = None;
 +        }
@@ -18040,13 +18059,6 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +        fn visit(dom: &BaseDocument, element: NodeId, path: &mut Vec<NodeId>, done: &mut Vec<NodeId>) -> bool {
 +            if path.contains(&element) {
 +                return true;
-             }
--            GenericShapeCommand::VLine { y } => {
--                cur.y = resolve_axis_endpoint(y, cur.y, &resolve_y);
--                bez.line_to(cur);
--                last_control = None;
-+            if done.contains(&element) || path.len() > 64 {
-+                return path.len() > 64;
              }
 -            GenericShapeCommand::CubicCurve {
 -                point,
@@ -18059,6 +18071,15 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                bez.curve_to(c1, c2, p);
 -                last_control = Some(c2);
 -                cur = p;
++            if done.contains(&element) || path.len() > 64 {
++                return path.len() > 64;
+             }
+-            GenericShapeCommand::QuadCurve { point, control1 } => {
+-                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+-                let c1 = resolve_control_point(control1, cur, p, &resolve_x, &resolve_y);
+-                bez.quad_to(c1, p);
+-                last_control = Some(c1);
+-                cur = p;
 +            path.push(element);
 +            let mut targets = Vec::new();
 +            references(dom, element, &mut targets);
@@ -18067,11 +18088,12 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    return true;
 +                }
              }
--            GenericShapeCommand::QuadCurve { point, control1 } => {
+-            GenericShapeCommand::SmoothCubic { point, control2 } => {
 -                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                let c1 = resolve_control_point(control1, cur, p, &resolve_x, &resolve_y);
--                bez.quad_to(c1, p);
--                last_control = Some(c1);
+-                let c2 = resolve_control_point(control2, cur, p, &resolve_x, &resolve_y);
+-                let c1 = reflect_point(last_control, cur);
+-                bez.curve_to(c1, c2, p);
+-                last_control = Some(c2);
 -                cur = p;
 +            path.pop();
 +            done.push(element);
@@ -18109,14 +18131,6 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                    return Some(found);
 +                }
              }
--            GenericShapeCommand::SmoothCubic { point, control2 } => {
--                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                let c2 = resolve_control_point(control2, cur, p, &resolve_x, &resolve_y);
--                let c1 = reflect_point(last_control, cur);
--                bez.curve_to(c1, c2, p);
--                last_control = Some(c2);
--                cur = p;
--            }
 -            GenericShapeCommand::SmoothQuad { point } => {
 -                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
 -                let c1 = reflect_point(last_control, cur);
