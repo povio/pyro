@@ -187,8 +187,10 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: the content of positioned inline boxes listed in the paint tree
     /// (`NodeFlags::INLINE_PASS_ENTRY`), left by their inline root for their own entry: the span's id ->
     /// (its inline root, the root's transform, the root's content position), painted in the positioned
-    /// layer in tree order (CSS 2.1 Appendix E step 8; `draw_inline_pass_entry`).
-    pub(crate) inline_pass_entries: RefCell<HashMap<NodeId, (NodeId, Affine, Point)>>,
+    /// layer in tree order (CSS 2.1 Appendix E step 8; `draw_inline_pass_entry`). In a multi-column
+    /// inline root, one per column that shows a line of the box, with the column's strip range
+    /// (CSS px) it is clipped to (`PaintContext::inline_column_range`).
+    pub(crate) inline_pass_entries: RefCell<HashMap<NodeId, Vec<(NodeId, Affine, Point, Option<(f32, f32)>)>>>,
     /// pyro: while a multi-column container paints its children (`ElementCx::draw_columns`): the
     /// container, and whether only its unfragmented children are painted (`true`: the pass after
     /// the columns) or all but them (`false`: each column). Its unfragmented children are the
@@ -2093,7 +2095,29 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     /// its entry in the paint tree (`inline_pass_entries`): its fragments and text, as the root paints
     /// them. Nothing when the root painted it itself (or was not painted).
     fn draw_inline_pass_entry(&self, scene: &mut impl PaintScene, span_id: NodeId) {
-        let Some((root_id, transform, pos)) = self.inline_pass_entries.borrow_mut().remove(&span_id) else { return };
+        let Some(entries) = self.inline_pass_entries.borrow_mut().remove(&span_id) else { return };
+        for (root_id, transform, pos, column) in entries {
+            // (Each column's lines in its column only.)
+            let pushed = column.map(|(start, end)| {
+                const UNBOUNDED: f64 = 1e9;
+                let range = Rect::new(
+                    -UNBOUNDED,
+                    (start as f64 * self.scale).max(-UNBOUNDED),
+                    UNBOUNDED,
+                    (end as f64 * self.scale).min(UNBOUNDED),
+                );
+                self.layer_manager.maybe_push_layer(scene, true, peniko::BlendMode::default(), 1.0, transform, &range, None, None)
+            });
+            self.draw_inline_pass_entry_in(scene, span_id, root_id, transform, pos);
+            if let Some(pushed) = pushed {
+                self.layer_manager.maybe_pop_layer(scene, pushed);
+            }
+        }
+    }
+
+    /// pyro: one entry of `draw_inline_pass_entry`: `span_id`'s content laid out by the inline root
+    /// `root_id` at `transform` and content position `pos`.
+    fn draw_inline_pass_entry_in(&self, scene: &mut impl PaintScene, span_id: NodeId, root_id: NodeId, transform: Affine, pos: Point) {
         let Some(root) = self.dom.get_node(root_id) else { return };
         let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
         cx.draw_inline_pass(scene, pos, span_id);
@@ -3891,17 +3915,30 @@ impl ElementCx<'_, '_> {
                 {
                     // pyro: in a multi-column inline root, the column that shows the box records it
                     // (`PaintContext::inline_column_range`).
+                    // (Each column that shows one of its lines.)
                     let shown_here = self.context.inline_column_range.get().is_none_or(|(start, end)| {
-                        fragments.iter().find(|fragment| fragment.node == span).is_none_or(|fragment| {
-                            // (Its line's top in the root's box: the strip.)
-                            let layout = &text_layout.layout;
-                            let line_top = layout.get(fragment.line).map_or(0.0, |line| line.metrics().block_min_coord / layout.scale());
-                            let y = (pos_before_offset.y / self.scale) as f32 + text_layout.block_offset + line_top;
-                            y >= start - 0.5 && y < end - 0.5
-                        })
+                        let mut own = fragments.iter().filter(|fragment| fragment.node == span).peekable();
+                        own.peek().is_none()
+                            || own.any(|fragment| {
+                                // (Its line's top in the root's box: the strip.)
+                                let layout = &text_layout.layout;
+                                let line_top = layout.get(fragment.line).map_or(0.0, |line| line.metrics().block_min_coord / layout.scale());
+                                let y = (pos_before_offset.y / self.scale) as f32 + text_layout.block_offset + line_top;
+                                y >= start - 0.5 && y < end - 0.5
+                            })
                     });
-                    if shown_here {
-                        self.context.inline_pass_entries.borrow_mut().insert(span, (self.node.id, self.transform, pos_before_offset));
+                    match self.context.inline_column_range.get() {
+                        Some(range) if shown_here => self
+                            .context
+                            .inline_pass_entries
+                            .borrow_mut()
+                            .entry(span)
+                            .or_default()
+                            .push((self.node.id, self.transform, pos_before_offset, Some(range))),
+                        Some(_) => {}
+                        None => {
+                            self.context.inline_pass_entries.borrow_mut().insert(span, vec![(self.node.id, self.transform, pos_before_offset, None)]);
+                        }
                     }
                     continue;
                 }
@@ -4433,7 +4470,7 @@ impl ElementCx<'_, '_> {
                     .get_node(span)
                     .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
             {
-                self.context.inline_pass_entries.borrow_mut().insert(span, (self.node.id, self.transform, entry_pos));
+                self.context.inline_pass_entries.borrow_mut().insert(span, vec![(self.node.id, self.transform, entry_pos, None)]);
                 continue;
             }
             paint_pass(scene, pass);
@@ -5834,6 +5871,20 @@ impl ElementCx<'_, '_> {
         if let Some((container, start, end, transform, outer_range)) = self.context.column_range.get()
             && container == self.node.id
         {
+            // (A positioned inline box listed in the paint tree paints its lines from the entries
+            // its root recorded, each clipped to its column (`inline_pass_entries`): once, not
+            // sorted by its box: WPT css-position `position-absolute-in-inline-007a`.)
+            if self
+                .context
+                .dom
+                .get_node(child_id)
+                .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
+            {
+                self.context.column_range.set(None);
+                self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                self.context.column_range.set(Some((container, start, end, transform, outer_range)));
+                return;
+            }
             let range = outer_range;
             let share = self.column_share(container, child_id, start, end);
             match share {
@@ -5903,7 +5954,7 @@ impl ElementCx<'_, '_> {
         // pyro: an atomic inline box in a positioned inline box this inline root left to its paint-tree
         // entry paints there, with the box's content (`draw_inline_pass_entry`).
         if self.context.inline_entry_owner(child, self.node.id).is_some_and(|span| {
-            self.context.inline_pass_entries.borrow().get(&span).is_some_and(|entry| entry.0 == self.node.id)
+            self.context.inline_pass_entries.borrow().get(&span).is_some_and(|entries| entries.iter().any(|entry| entry.0 == self.node.id))
         }) {
             return;
         }
@@ -6375,7 +6426,7 @@ impl ElementCx<'_, '_> {
                 at = node.parent;
             }
             if root == Some(self.node.id) {
-                self.context.inline_pass_entries.borrow_mut().insert(child.node_id, (self.node.id, self.transform, pos));
+                self.context.inline_pass_entries.borrow_mut().insert(child.node_id, vec![(self.node.id, self.transform, pos, None)]);
             }
         }
     }
