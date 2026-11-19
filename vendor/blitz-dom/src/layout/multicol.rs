@@ -940,7 +940,11 @@ impl LayoutPassState<'_> {
                         && let Some(i) = (1..count.min(run.columns.len())).find(|&i| violates(run.columns[i].0))
                     {
                         placed.extend(run.columns.iter().take(i).map(|&(a, b)| (a, b, top, row_height)));
-                        start = run.columns[i].0;
+                        // (Its columns from there are empty: a box broken there fills them, as
+                        // Chromium shows it; WPT css-multicol `multicol-nested-016`.)
+                        let at = run.columns[i].0;
+                        placed.extend((i..count).map(|_| (at, at, top, row_height)));
+                        start = at;
                         top += row_height;
                         available = outer_height;
                         row_top = top;
