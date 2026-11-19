@@ -1377,6 +1377,52 @@ bitflags! {
     }
 }
 
+/// pyro: the `word-space-transform` property: what word separators zero width spaces and `<wbr>`
+/// become.
+///
+/// https://drafts.csswg.org/css-text-4/#word-space-transform
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToCss,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(
+    single = "none",
+    mixed = "space,ideographic-space,auto-phrase",
+    validate_mixed = "Self::validate_mixed_flags",
+))]
+#[repr(C)]
+pub struct WordSpaceTransform(u8);
+bitflags! {
+    impl WordSpaceTransform: u8 {
+        /// No transformation.
+        const NONE = 0;
+        /// Zero width spaces and `<wbr>` become U+0020 spaces.
+        const SPACE = 1 << 0;
+        /// Zero width spaces and `<wbr>` become U+3000 ideographic spaces.
+        const IDEOGRAPHIC_SPACE = 1 << 1;
+        /// Phrase boundaries become virtual word separators first.
+        const AUTO_PHRASE = 1 << 2;
+    }
+}
+
+impl WordSpaceTransform {
+    fn validate_mixed_flags(&self) -> bool {
+        self.intersects(Self::SPACE | Self::IDEOGRAPHIC_SPACE) && !self.contains(Self::SPACE | Self::IDEOGRAPHIC_SPACE)
+    }
+}
+
 /// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
 ///
 /// https://drafts.csswg.org/css-text-4/#text-spacing-trim-property

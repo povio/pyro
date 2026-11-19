@@ -11781,7 +11781,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  pub(crate) fn build_inline_layout_into(
      nodes: &crate::NodeTree,
      layout_ctx: &mut LayoutContext<TextBrush>,
-@@ -29,6 +413,54 @@
+@@ -29,6 +413,98 @@
      scale: f32,
      inline_context_root_node_id: NodeId,
  ) {
@@ -11806,6 +11806,50 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    {
 +        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[], bidi);
 +    }
++}
++
++/// pyro: the word separator CSS Text 4 `word-space-transform` turns zero width spaces and
++/// `<wbr>` into in `style`, if any.
++fn word_space_char(style: &style::properties::ComputedValues) -> Option<char> {
++    use style::values::computed::WordSpaceTransform as W;
++    let value = style.get_inherited_text().word_space_transform;
++    if value.contains(W::SPACE) {
++        Some(' ')
++    } else if value.contains(W::IDEOGRAPHIC_SPACE) {
++        Some('\u{3000}')
++    } else {
++        None
++    }
++}
++
++/// pyro: pushes `text` with each U+200B ZERO WIDTH SPACE as `word_space` (`word-space-transform`);
++/// a space collapses with the spaces next to it (WPT css-text `word-space-transform-007`). One next
++/// to a forced line break stays (a preserved
++/// newline when `newlines`, a `<br>` after the text when `before_break`, or one before it).
++fn push_word_spaces(builder: &mut TreeBuilder<TextBrush>, text: &str, word_space: Option<char>, newlines: bool, before_break: bool) {
++    let Some(word_space) = word_space else {
++        builder.push_text(text);
++        return;
++    };
++    let mut rest = text;
++    while let Some(at) = rest.find('\u{200B}') {
++        let (head, tail) = rest.split_at(at);
++        builder.push_text(head);
++        let after = &tail['\u{200B}'.len_utf8()..];
++        let previous = builder.text().chars().rev().find(|&c| !is_bidi_control(c));
++        let next = after.chars().next();
++        let at_break = previous.is_some_and(|c| c == '\n' && (newlines || head.is_empty()))
++            || (newlines && next == Some('\n'))
++            || (before_break && after.chars().all(|c| c == '\u{200B}'));
++        if at_break {
++            builder.push_text("\u{200B}");
++        } else {
++            let mut buf = [0u8; 4];
++            builder.push_text(word_space.encode_utf8(&mut buf));
++        }
++        rest = after;
++    }
++    builder.push_text(rest);
 +}
 +
 +/// pyro: whether the inline root is a list item with an outside marker (`layout::list`).
@@ -11836,7 +11880,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Get the inline context's root node's text styles
      let root_node = &nodes[inline_context_root_node_id];
      let root_node_style = root_node.primary_styles().or_else(|| {
-@@ -36,8 +468,12 @@
+@@ -36,8 +512,12 @@
              .parent
              .and_then(|parent_id| nodes[parent_id].primary_styles())
      });
@@ -11850,7 +11894,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          .as_ref()
          .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
          .unwrap_or_else(|| parley::TextStyle {
-@@ -45,12 +481,46 @@
+@@ -45,12 +525,46 @@
              ..Default::default()
          });
  
@@ -11899,7 +11943,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          ));
      }
  
-@@ -59,15 +529,69 @@
+@@ -59,15 +573,69 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -11969,7 +12013,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          match marker {
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -76,54 +600,505 @@
+@@ -76,54 +644,505 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -12176,15 +12220,17 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            annotations,
 +            bidi,
 +            &mut bidi_scan,
-+        );
-+    }
-+
+         );
+     }
+ 
+-    text_layout.text = builder.build_into(&mut text_layout.layout);
+-    return;
 +    for end in piece_ends.into_iter().rev().flatten() {
 +        close_span(&mut builder, end, bidi, &mut bidi_scan);
 +    }
 +    text_layout.split_pieces = std::mem::take(&mut bidi_scan.split_pieces);
 +    text_layout.br_clears = std::mem::take(&mut bidi_scan.br_clears);
-+
+ 
 +    // pyro: the bidi formatting characters change the levels only when some are needed and the
 +    // paragraph has right-to-left content (see `build_inline_layout_with`).
 +    if !bidi
@@ -12259,8 +12305,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            strut_build,
 +            &space,
 +            bidi,
-         );
-     }
++        );
++    }
 +    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
 +    // overflowing line with, in the root's own style (its first available font, as in Chromium).
 +    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
@@ -12381,9 +12427,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        layout.break_all_lines(None);
 +        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
 +    }
- 
--    text_layout.text = builder.build_into(&mut text_layout.layout);
--    return;
++
 +    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
 +    /// a head has its start, a tail its end (`construct::split_inline_part`).
 +    #[allow(clippy::too_many_arguments)]
@@ -12429,19 +12473,19 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
- 
++
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
 +    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
 +    /// `node_id`'s box) placed them already (`scroll_markers::siblings_of`).
 +    #[allow(clippy::too_many_arguments)]
      fn build_inline_layout_recursive(
-         builder: &mut TreeBuilder<TextBrush>,
-         text_transformer: &mut TextTransformer,
-         nodes: &crate::NodeTree,
++        builder: &mut TreeBuilder<TextBrush>,
++        text_transformer: &mut TextTransformer,
++        nodes: &crate::NodeTree,
 +        container: NodeId,
-         node_id: NodeId,
-         parent_text_transform: &CaseTransform,
++        node_id: NodeId,
++        parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -12467,11 +12511,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +
 +    #[allow(clippy::too_many_arguments)]
 +    fn build_inline_layout_node(
-+        builder: &mut TreeBuilder<TextBrush>,
-+        text_transformer: &mut TextTransformer,
-+        nodes: &crate::NodeTree,
-+        node_id: NodeId,
-+        parent_text_transform: &CaseTransform,
+         builder: &mut TreeBuilder<TextBrush>,
+         text_transformer: &mut TextTransformer,
+         nodes: &crate::NodeTree,
+         node_id: NodeId,
+         parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -12481,7 +12525,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1118,49 @@
+@@ -143,6 +1162,51 @@
                      }
                  }
  
@@ -12493,7 +12537,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                        .display_style()
 +                        .is_some_and(|d| matches!(d.inside(), DisplayInside::None))
 +                {
-+                    builder.push_text("\u{200B}");
++                    let wst = node.primary_styles().and_then(|style| word_space_char(&style));
++                    let before_break = node.forward(1).is_some_and(|next| next.is_line_break());
++                    push_word_spaces(builder, "\u{200B}", wst, false, before_break);
 +                    return;
 +                }
 +
@@ -12531,7 +12577,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1179,44 @@
+@@ -161,41 +1225,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -12598,7 +12644,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1231,182 @@
+@@ -210,66 +1277,182 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -12802,7 +12848,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,17 +1421,131 @@
+@@ -284,17 +1467,140 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -12921,6 +12967,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                use style::computed_values::white_space_collapse::T as Collapse;
 +                                !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
 +                            });
++                        // pyro: CSS Text 4 `word-space-transform`.
++                        let wst = parent_style.as_ref().and_then(|style| word_space_char(style));
 +                        if preserves_newlines && text.contains('\n') {
 +                            for piece in text.split_inclusive('\n') {
 +                                builder.push_text(piece);
@@ -12928,6 +12976,13 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                    reopen_bidi_controls(builder, bidi_scan);
 +                                }
 +                            }
++                        } else if wst.is_some() && text.contains('\u{200B}') {
++                            let newlines = parent_style.as_ref().is_some_and(|style| {
++                                use style::computed_values::white_space_collapse::T as Collapse;
++                                !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
++                            });
++                            let before_break = node.forward(1).is_some_and(|next| next.is_line_break());
++                            push_word_spaces(builder, &text, wst, newlines, before_break);
 +                        } else {
 +                            builder.push_text(&text);
 +                        }
@@ -12937,7 +12992,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1554,314 @@
+@@ -303,3 +1609,314 @@
          }
      }
  }

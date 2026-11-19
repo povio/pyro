@@ -436,6 +436,50 @@ pub(crate) fn build_inline_layout_into(
     }
 }
 
+/// pyro: the word separator CSS Text 4 `word-space-transform` turns zero width spaces and
+/// `<wbr>` into in `style`, if any.
+fn word_space_char(style: &style::properties::ComputedValues) -> Option<char> {
+    use style::values::computed::WordSpaceTransform as W;
+    let value = style.get_inherited_text().word_space_transform;
+    if value.contains(W::SPACE) {
+        Some(' ')
+    } else if value.contains(W::IDEOGRAPHIC_SPACE) {
+        Some('\u{3000}')
+    } else {
+        None
+    }
+}
+
+/// pyro: pushes `text` with each U+200B ZERO WIDTH SPACE as `word_space` (`word-space-transform`);
+/// a space collapses with the spaces next to it (WPT css-text `word-space-transform-007`). One next
+/// to a forced line break stays (a preserved
+/// newline when `newlines`, a `<br>` after the text when `before_break`, or one before it).
+fn push_word_spaces(builder: &mut TreeBuilder<TextBrush>, text: &str, word_space: Option<char>, newlines: bool, before_break: bool) {
+    let Some(word_space) = word_space else {
+        builder.push_text(text);
+        return;
+    };
+    let mut rest = text;
+    while let Some(at) = rest.find('\u{200B}') {
+        let (head, tail) = rest.split_at(at);
+        builder.push_text(head);
+        let after = &tail['\u{200B}'.len_utf8()..];
+        let previous = builder.text().chars().rev().find(|&c| !is_bidi_control(c));
+        let next = after.chars().next();
+        let at_break = previous.is_some_and(|c| c == '\n' && (newlines || head.is_empty()))
+            || (newlines && next == Some('\n'))
+            || (before_break && after.chars().all(|c| c == '\u{200B}'));
+        if at_break {
+            builder.push_text("\u{200B}");
+        } else {
+            let mut buf = [0u8; 4];
+            builder.push_text(word_space.encode_utf8(&mut buf));
+        }
+        rest = after;
+    }
+    builder.push_text(rest);
+}
+
 /// pyro: whether the inline root is a list item with an outside marker (`layout::list`).
 fn outside_marker(root: &crate::Node) -> bool {
     root.element_data()
@@ -1126,7 +1170,9 @@ fn build_inline_layout_with(
                         .display_style()
                         .is_some_and(|d| matches!(d.inside(), DisplayInside::None))
                 {
-                    builder.push_text("\u{200B}");
+                    let wst = node.primary_styles().and_then(|style| word_space_char(&style));
+                    let before_break = node.forward(1).is_some_and(|next| next.is_line_break());
+                    push_word_spaces(builder, "\u{200B}", wst, false, before_break);
                     return;
                 }
 
@@ -1533,6 +1579,8 @@ fn build_inline_layout_with(
                                 use style::computed_values::white_space_collapse::T as Collapse;
                                 !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
                             });
+                        // pyro: CSS Text 4 `word-space-transform`.
+                        let wst = parent_style.as_ref().and_then(|style| word_space_char(style));
                         if preserves_newlines && text.contains('\n') {
                             for piece in text.split_inclusive('\n') {
                                 builder.push_text(piece);
@@ -1540,6 +1588,13 @@ fn build_inline_layout_with(
                                     reopen_bidi_controls(builder, bidi_scan);
                                 }
                             }
+                        } else if wst.is_some() && text.contains('\u{200B}') {
+                            let newlines = parent_style.as_ref().is_some_and(|style| {
+                                use style::computed_values::white_space_collapse::T as Collapse;
+                                !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
+                            });
+                            let before_break = node.forward(1).is_some_and(|next| next.is_line_break());
+                            push_word_spaces(builder, &text, wst, newlines, before_break);
                         } else {
                             builder.push_text(&text);
                         }
