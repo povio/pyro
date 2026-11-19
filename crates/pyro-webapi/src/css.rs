@@ -944,7 +944,9 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
 
 fn sheet_key(page: &PageDom, owner: NodeId) -> IdentityKey {
     let base = page.node_identity(owner);
-    IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1)
+    // A `<style>` whose children changed has a new sheet object (HTML "update a style block").
+    let generation = u64::from(page.dom.borrow().style_sheet_generation(owner));
+    IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1.wrapping_add(generation << 40))
 }
 
 pub struct RuleData {
@@ -2234,8 +2236,7 @@ pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'
 
 /// The CSSStyleSheet of the connected `<style>` or `<link>` element `owner`.
 fn sheet_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResult<Value<'s>> {
-    let base = page.node_identity(owner);
-    let key = IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1);
+    let key = sheet_key(page, owner);
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }

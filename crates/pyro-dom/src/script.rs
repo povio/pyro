@@ -109,6 +109,9 @@ pub struct ResourceEvent {
 pub(crate) struct ResourceQueue {
     pub(crate) enabled: bool,
     pub(crate) events: Vec<ResourceEvent>,
+    /// Each `<style>`'s count of children changes (HTML: each one replaces its CSS style sheet
+    /// object, also when its text stays the same).
+    pub(crate) sheet_generations: rustc_hash::FxHashMap<NodeId, u32>,
 }
 
 impl Dom {
@@ -385,6 +388,12 @@ impl Dom {
         }
     }
 
+    /// How many times the `<style>` `node`'s children changed (its CSS style sheet object is
+    /// replaced each time).
+    pub fn style_sheet_generation(&self, node: NodeId) -> u32 {
+        self.resources.sheet_generations.get(&node).copied().unwrap_or(0)
+    }
+
     pub(crate) fn resources_after_text(&mut self, text_node: u32) {
         if !self.resources.enabled {
             return;
@@ -424,6 +433,10 @@ impl Dom {
             return;
         }
         let ev = ResourceEvent { node: self.id_of(idx), kind, reason };
+        if kind == ResourceKind::StyleText && reason == ResourceReason::ChildrenChanged {
+            let generation = self.resources.sheet_generations.entry(ev.node).or_default();
+            *generation = generation.wrapping_add(1);
+        }
         // Coalesce consecutive duplicates (e.g. many text appends to one <style>).
         if self.resources.events.last() != Some(&ev) {
             self.add_ref(ev.node).expect("live resource node");

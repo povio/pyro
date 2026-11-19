@@ -1534,7 +1534,7 @@ impl StyleEngine {
     /// script-font sheet).
     pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             match &sheet.source {
@@ -1559,7 +1559,7 @@ impl StyleEngine {
     /// document or a shadow root).
     pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) {
+            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
@@ -2350,4 +2350,14 @@ pub(crate) fn ua_display(tag: &str) -> &'static str {
         "button" | "input" | "select" | "textarea" | "meter" | "progress" => "inline-block",
         _ => "inline",
     }
+}
+
+/// Whether `owner` is an HTML `<link>` whose `rel` no longer says `stylesheet`: its sheet goes at
+/// once (HTML: the link stops creating an external resource link), before the loader hears of it.
+fn link_not_stylesheet(dom: &Dom, owner: NodeId) -> bool {
+    dom.element(owner).is_ok_and(|e| {
+        e.is_html()
+            && &*e.name.local == "link"
+            && !e.attr("rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+    })
 }
