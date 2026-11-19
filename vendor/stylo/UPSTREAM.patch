@@ -3602,7 +3602,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      fn default_namespace(&self) -> Option<Namespace> {
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-19 12:33:31
++++ b/style_adjuster.rs	2026-11-19 16:24:47
 @@ -186,6 +186,84 @@
              .set_adjusted_display(new_display, false);
      }
@@ -3688,13 +3688,10 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      /// CSS 2.1 section 9.7:
      ///
      ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
-@@ -403,7 +481,49 @@
-             } else {
-                 self.style.mutate_box().set_display(Display::InlineBlock);
-             }
-+        }
-+    }
-+
+@@ -406,6 +484,51 @@
+         }
+     }
+ 
 +    /// pyro: `text-combine-upright: all` on an inline box in a vertical (not sideways) line: its
 +    /// text is combined into one upright 1em square (CSS Writing Modes 4 § 9.1.1). Laid out as an
 +    /// inline-block of `horizontal-tb` writing (`adjust_for_writing_mode` below makes it one), 1em
@@ -3721,8 +3718,11 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            crate::values::computed::TextEmphasisStyle::None
 +        ) {
 +            return;
-         }
++        }
 +        let em = self.style.get_font().slow_clone_font_size().computed_size();
++        // pyro: the box of combined text (blitz-dom: no letter spacing, width variants, one glued
++        // letter in the line).
++        self.style.add_flags(ComputedValueFlags::IS_TEXT_COMBINED);
 +        self.style.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
 +        self.style.writing_mode = crate::logical_geometry::WritingMode::new(self.style.get_inherited_box());
 +        let text = self.style.mutate_inherited_text();
@@ -3735,10 +3735,12 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        self.style
 +            .mutate_font()
 +            .set_line_height(crate::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
-     }
- 
++    }
++
      /// CSS overflow-x and overflow-y require some fixup as well in some cases.
-@@ -419,9 +539,16 @@
+     /// https://drafts.csswg.org/css-overflow-3/#overflow-properties
+     /// "Computed value: as specified, except with `visible`/`clip` computing to
+@@ -419,9 +542,16 @@
          }
  
          if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
@@ -3757,7 +3759,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
      }
  
-@@ -821,6 +948,95 @@
+@@ -821,6 +951,95 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -3853,7 +3855,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1029,7 +1245,32 @@
+@@ -1029,7 +1248,32 @@
              pos.set_align_self(flipped);
          } else {
              pos.set_justify_self(flipped);
@@ -3886,7 +3888,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      }
  
      /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
-@@ -1064,7 +1305,20 @@
+@@ -1064,7 +1308,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -3907,7 +3909,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
          {
-@@ -1084,12 +1338,21 @@
+@@ -1084,12 +1341,21 @@
          }
          self.adjust_for_justify_items();
          self.adjust_for_table_text_align();

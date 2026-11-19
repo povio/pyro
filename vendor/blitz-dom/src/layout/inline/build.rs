@@ -529,8 +529,7 @@ fn build_inline_layout_with(
     // two, three or four characters takes the font's half-, third- or quarter-width forms
     // (`hwid`, `twid`, `qwid`), as Blink does before it compresses it (css-writing-modes-4 §9.1.1).
     if let Some(style) = root_node_style.as_deref()
-        && style.get_inherited_text().text_combine_upright == style::values::computed::TextCombineUpright::All
-        && !style.writing_mode.is_vertical()
+        && style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED)
     {
         let count = root_node.text_content().trim().chars().count();
         let tag: Option<&[u8; 4]> = match count {
@@ -578,7 +577,9 @@ fn build_inline_layout_with(
     if let Some(style) = root_node_style.as_deref() {
         use style::computed_values::direction::T as Direction;
         use style::computed_values::unicode_bidi::T as UnicodeBidi;
-        let rtl = style.clone_direction() == Direction::Rtl;
+        // (The root's anonymous text takes `<body>`'s direction, `principal_direction`.)
+        let direction = principal_direction(nodes, inline_context_root_node_id).unwrap_or_else(|| style.clone_direction());
+        let rtl = direction == Direction::Rtl;
         bidi_scan.rtl = rtl;
         if matches!(
             root_unicode_bidi(nodes, inline_context_root_node_id, style),
@@ -1472,11 +1473,7 @@ fn build_inline_layout_with(
                             // pyro: `text-combine-upright` text (Stylo makes it a horizontal inline-block in
                             // the vertical line) breaks lines as one letter (`InlineBox::glue`).
                             glue: box_kind == InlineBoxKind::InFlow
-                                && node.primary_styles().is_some_and(|style| {
-                                    style.get_inherited_text().text_combine_upright
-                                        == style::values::computed::TextCombineUpright::All
-                                        && !style.writing_mode.is_vertical()
-                                }),
+                                && node.primary_styles().is_some_and(|style| style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED)),
                         });
                     }
                 };

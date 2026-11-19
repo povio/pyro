@@ -89,6 +89,7 @@ fn set_box_style(doc: &mut BaseDocument, box_id: NodeId, parent: &ComputedValues
     let mut builder =
         style::properties::StyleBuilder::for_inheritance(doc.stylist.device(), Some(&doc.stylist), Some(parent), None);
     builder.set_display(Display::InlineBlock);
+    builder.add_flags(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED);
     builder.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
     builder.writing_mode = style::logical_geometry::WritingMode::new(builder.get_inherited_box());
     let em = parent.get_font().slow_clone_font_size().computed_size();

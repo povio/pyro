@@ -512,6 +512,9 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             return;
         }
         let em = self.style.get_font().slow_clone_font_size().computed_size();
+        // pyro: the box of combined text (blitz-dom: no letter spacing, width variants, one glued
+        // letter in the line).
+        self.style.add_flags(ComputedValueFlags::IS_TEXT_COMBINED);
         self.style.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
         self.style.writing_mode = crate::logical_geometry::WritingMode::new(self.style.get_inherited_box());
         let text = self.style.mutate_inherited_text();

@@ -724,8 +724,8 @@ pub(crate) fn style(
 
     // pyro: combined text (`text-combine-upright: all`, the horizontal box Stylo makes of it in a
     // vertical line) is composed without letter spacing (css-writing-modes-4 §9.1.1).
-    let combined = itext_styles.text_combine_upright == style::values::computed::TextCombineUpright::All
-        && !style.writing_mode.is_vertical();
+    // (Stylo flags the box it made of it: the property does nothing to horizontal text.)
+    let combined = style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED);
     let letter_spacing = if combined {
         0.0
     } else {
