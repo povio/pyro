@@ -55,6 +55,14 @@ impl BaseDocument {
     }
 }
 
+/// pyro: see [`LayoutPassState::orthogonal_inline_constraints`].
+#[derive(Default, Clone, Copy)]
+struct InlineConstraints {
+    size: Option<f32>,
+    min: Option<f32>,
+    max: Option<f32>,
+}
+
 impl LayoutPassState<'_> {
     /// The writing mode in which `node_id`'s layout algorithm runs (the root's is resolved once per
     /// pass by [`BaseDocument::root_layout_wm`]).
@@ -195,6 +203,33 @@ impl LayoutPassState<'_> {
                 AvailableSpace::MinContent | AvailableSpace::MaxContent
             );
 
+        // pyro: the box's own sizes in its inline axis, from its computed style (a table cell's
+        // layout style has no height or max-height: in a horizontal table they are its row's).
+        let own_inline = self.orthogonal_inline_constraints(node_id, inputs.parent_size.width);
+        if inputs.run_mode != RunMode::PerformHiddenLayout
+            && inputs.known_dimensions.width.is_none()
+            && is_intrinsic_inline_measurement
+            && !placed_by_block_container
+        {
+            // pyro: the parent measures the box in its own block axis, the box's inline axis (a
+            // table's row heights, a grid's or a flex row's cross sizes): the box contributes the
+            // inline size it is laid out at (§7.3.1), not its max-content size.
+            if let Some(size) = own_inline.size {
+                inputs.known_dimensions.width = Some(size);
+                inputs.known_dimensions_are_definite.width = true;
+            } else if let Some(max) = own_inline.max {
+                let measure_inputs = LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    known_dimensions: Size { width: None, ..inputs.known_dimensions },
+                    ..inputs
+                };
+                let natural = self.compute_child_layout_in_current_wm(node_id, measure_inputs, None).size.width;
+                if natural > max {
+                    inputs.known_dimensions.width = Some(max.max(own_inline.min.unwrap_or(0.0)));
+                    inputs.known_dimensions_are_definite.width = true;
+                }
+            }
+        }
         if inputs.run_mode != RunMode::PerformHiddenLayout
             && inputs.known_dimensions.width.is_none()
             && !is_intrinsic_inline_measurement
@@ -203,7 +238,11 @@ impl LayoutPassState<'_> {
                 taffy::CoreStyle::size(&self.nodes[dom_node_id(node_id)].layout_style())
                     .width
                     .is_auto();
-            if inline_size_is_auto {
+            if let Some(size) = own_inline.size.filter(|_| inline_size_is_auto) {
+                // pyro: a definite inline size the layout style lost (a table cell's `height`).
+                inputs.known_dimensions.width = Some(size);
+                inputs.known_dimensions_are_definite.width = true;
+            } else if inline_size_is_auto {
                 // css-writing-modes-3 §7.3.1: an auto inline size in an orthogonal flow is
                 // fit-content against the available space in that axis: the containing block's
                 // block size if definite, else the initial containing block (nearest fixed-size
@@ -243,7 +282,11 @@ impl LayoutPassState<'_> {
                 };
                 let max_content = measure(self, AvailableSpace::MaxContent);
                 let min_content = measure(self, AvailableSpace::MinContent);
-                inputs.known_dimensions.width = Some(available.min(max_content).max(min_content));
+                // pyro: then clamped by its own `max-` and `min-` inline sizes (§7.3.1).
+                let fit = available.min(max_content).max(min_content);
+                let fit = own_inline.max.map_or(fit, |max| fit.min(max));
+                let fit = own_inline.min.map_or(fit, |min| fit.max(min));
+                inputs.known_dimensions.width = Some(fit);
                 inputs.known_dimensions_are_definite.width = true;
             }
         }
@@ -252,6 +295,44 @@ impl LayoutPassState<'_> {
         self.orthogonal_percent_basis = percent_basis;
         transpose_static_positions(&mut output, self.layout_wm, parent_wm);
         output.transpose()
+    }
+
+    /// pyro: an orthogonal box's `size`, `min-` and `max-` sizes in its inline axis as border-box
+    /// lengths, from its computed style (`basis`: their percentages' basis, if definite).
+    fn orthogonal_inline_constraints(&self, node_id: NodeId, basis: Option<f32>) -> InlineConstraints {
+        use taffy::MaybeResolve as _;
+        let node = &self.nodes[dom_node_id(node_id)];
+        let Some(computed) = node.primary_styles() else { return InlineConstraints::default() };
+        let position = computed.get_position();
+        let (size, min, max) = if computed.writing_mode.is_vertical() {
+            (
+                stylo_taffy::convert::dimension(&position.height),
+                stylo_taffy::convert::dimension(&position.min_height),
+                stylo_taffy::convert::max_size(&position.max_height),
+            )
+        } else {
+            (
+                stylo_taffy::convert::dimension(&position.width),
+                stylo_taffy::convert::dimension(&position.min_width),
+                stylo_taffy::convert::max_size(&position.max_width),
+            )
+        };
+        let style = node.layout_style();
+        let pb = taffy::CoreStyle::padding(&style).resolve_or_zero(basis, resolve_calc_value)
+            + taffy::CoreStyle::border(&style).resolve_or_zero(basis, resolve_calc_value);
+        let extra = pb.left + pb.right;
+        let border_box = |value: Option<f32>| {
+            value.map(|value| match taffy::CoreStyle::box_sizing(&style) {
+                taffy::BoxSizing::ContentBox => value + extra,
+                taffy::BoxSizing::BorderBox => value.max(extra),
+            })
+        };
+        let size = border_box(size.maybe_resolve(basis, resolve_calc_value));
+        let min = border_box(min.maybe_resolve(basis, resolve_calc_value));
+        let max = border_box(max.maybe_resolve(basis, resolve_calc_value));
+        let min = min.filter(|&min| min > extra);
+        let size = size.map(|size| size.max(min.unwrap_or(0.0)).min(max.unwrap_or(f32::INFINITY).max(min.unwrap_or(0.0))));
+        InlineConstraints { size, min, max }
     }
 
     /// Convert every `unrounded_layout` (written in the writing mode of the box that placed it) to
