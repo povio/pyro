@@ -762,6 +762,15 @@ pub fn add_font_file(path: &std::path::Path) -> std::io::Result<()> {
 /// of the pixel, as Skia paints a pixel whose centre the outline covers.
 const TEXT_ALIASING_THRESHOLD: u8 = 128;
 
+/// A page's scroll offsets as last told ([`Renderer::set_timeline_scroll`], a snapshot's).
+struct TimelineScroll {
+    /// The scrolled elements, by key.
+    elements: Vec<(u64, (f64, f64))>,
+    viewport: (f64, f64),
+    /// The page's document has them (false: it takes them at its next sync or render).
+    applied: bool,
+}
+
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
     font_ctx: FontContext,
@@ -779,9 +788,12 @@ pub struct Renderer {
     /// Animated values to sample into a page's persistent document at its
     /// next sync ([`Renderer::set_animations`]).
     animations: HashMap<u64, Arc<AnimationFrame>>,
-    /// The page's scroll offsets (scrolled elements by key, the viewport's), for scroll-driven
-    /// animations: handed to the page's document at its next sync or render.
-    timeline_scroll: HashMap<u64, (Vec<(u64, (f64, f64))>, (f64, f64))>,
+    /// The page's scroll offsets (scrolled elements by key, the viewport's) as last told, for
+    /// scroll-driven animations, and whether the page's document has them. They outlive the
+    /// document: one built again ([`Renderer::forget_document`], a rebuild in `mirror`) takes them
+    /// at its first sync. (The page tells them once per change, so a document that lost them
+    /// would sample its scroll timelines at offset 0 until the next scroll.)
+    timeline_scroll: HashMap<u64, TimelineScroll>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -850,11 +862,21 @@ impl Renderer {
         self.font_ctx.collection.register_fonts(Blob::new(Arc::new(bytes)), None);
     }
 
-    /// Drops the persistent document of `page` (closed, or gone).
+    /// Drops the persistent document of `page` (closed, or gone) and what was told for it.
     pub fn forget(&mut self, page: u64) {
+        self.forget_document(page);
+        self.timeline_scroll.remove(&page);
+    }
+
+    /// Drops the persistent document of a page that lives on: its next sync builds it again (a
+    /// sub-resource arrived, a sync panicked). The page's scroll offsets stay, for that document.
+    pub fn forget_document(&mut self, page: u64) {
         self.mirrors.remove(&page);
         self.geometry.remove(&page);
         self.animations.remove(&page);
+        if let Some(scroll) = self.timeline_scroll.get_mut(&page) {
+            scroll.applied = false;
+        }
     }
 
     /// Samples `frame` into `page`'s persistent document at its next sync or
@@ -876,13 +898,17 @@ impl Renderer {
             let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
             m.doc.set_timeline_scroll(map, viewport);
         }
-        self.timeline_scroll.insert(page, (elements, viewport));
+        // (Applied again at the next sync: an element scrolled before the document has it.)
+        self.timeline_scroll.insert(page, TimelineScroll { elements, viewport, applied: false });
     }
 
     fn apply_animations(&mut self, page: u64) {
-        if let (Some(m), Some((elements, viewport))) = (self.mirrors.get_mut(&page), self.timeline_scroll.remove(&page)) {
-            let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
-            m.doc.set_timeline_scroll(map, viewport);
+        if let (Some(m), Some(scroll)) = (self.mirrors.get_mut(&page), self.timeline_scroll.get_mut(&page)) {
+            if !scroll.applied {
+                let map = scroll.elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
+                m.doc.set_timeline_scroll(map, scroll.viewport);
+                scroll.applied = true;
+            }
         }
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         let Some(frame) = self.animations.remove(&page) else { return };
@@ -984,6 +1010,10 @@ impl Renderer {
             }
         };
         self.mirrors.remove(&live.page);
+        // (The document built now has no scroll offsets yet: `apply_animations` hands them over.)
+        if let Some(scroll) = self.timeline_scroll.get_mut(&live.page) {
+            scroll.applied = false;
+        }
         let bridge = net::Bridge::new(snap, fetcher.clone(), net::new_cache());
         let config = self.config(snap, bridge.provider());
         let mutations = live.tree.nodes.len() as u32;
@@ -1023,7 +1053,10 @@ impl Renderer {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
                 if let Some(offsets) = &snap.element_scroll {
-                    self.timeline_scroll.insert(live.page, (offsets.clone(), (snap.scroll_x, snap.scroll_y)));
+                    self.timeline_scroll.insert(
+                        live.page,
+                        TimelineScroll { elements: offsets.clone(), viewport: (snap.scroll_x, snap.scroll_y), applied: false },
+                    );
                 }
                 if let Some(frame) = &snap.animations {
                     self.animations.insert(live.page, frame.clone());

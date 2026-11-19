@@ -549,6 +549,41 @@ fn viewport_and_scroll_changes_apply_to_the_persistent_document() {
     }
 }
 
+/// The scroll offsets a page told for its scroll timelines outlive its document: the page tells
+/// them once per scroll, and a document built again (a sub-resource of any page arrived, a
+/// setting changed) would otherwise sample every scroll timeline at offset 0 until the next
+/// scroll (WPT scroll-animations/scroll-timelines reftests beside a page that loads an image).
+#[test]
+fn scroll_offsets_told_for_timelines_survive_a_document_rebuild() {
+    let page = Page::new(
+        "<!doctype html><body style=\"margin: 0\"><div id=\"s\" style=\"overflow: hidden; height: 100px\">\
+         <div style=\"height: 1000px\"></div></div></body>",
+    );
+    let key = pyro_dom::snapshot::render_key(page.find("#s"));
+    let mut r = Renderer::new();
+    let s = page.snapshot(1, page.tree());
+    let offset = |r: &Renderer| r.timeline_state(1, Some(key), None, 0, [(0, 0.0); 2]).map(|t| (t.0, t.1, t.2));
+    r.sync_layout(&s, &fetcher()).unwrap();
+    assert_eq!(offset(&r), Some((0.0, 0.0, 900.0)));
+    r.set_timeline_scroll(1, vec![(key, (0.0, 450.0))], (0.0, 0.0));
+    assert_eq!(offset(&r), Some((450.0, 0.0, 900.0)));
+    r.sync_layout(&s, &fetcher()).unwrap();
+    // A rebuild inside a sync (here: a setting of the document changed).
+    r.hyphen_digit_breaks = true;
+    let stats = r.sync_layout(&s, &fetcher()).unwrap();
+    assert_eq!(stats.mirror.and_then(|m| m.rebuilt), Some(Rebuild::Document));
+    assert_eq!(offset(&r), Some((450.0, 0.0, 900.0)), "after a rebuild");
+    // The document dropped for a rebuild (pyro-layout: a sub-resource arrived).
+    r.forget_document(1);
+    assert_eq!(offset(&r), None);
+    assert_eq!(r.sync_layout(&s, &fetcher()).unwrap().mirror.and_then(|m| m.rebuilt), Some(Rebuild::First));
+    assert_eq!(offset(&r), Some((450.0, 0.0, 900.0)), "after the document was dropped");
+    // A page that is gone takes its offsets with it.
+    r.forget(1);
+    r.sync_layout(&s, &fetcher()).unwrap();
+    assert_eq!(offset(&r), Some((0.0, 0.0, 900.0)), "a new page");
+}
+
 #[test]
 fn element_captures_find_their_element_by_key() {
     let page = Page::new(PAGE);
