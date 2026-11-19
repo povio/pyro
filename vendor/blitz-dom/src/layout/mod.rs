@@ -449,6 +449,16 @@ impl LayoutPassState<'_> {
             // An inline replaced element is an atomic inline: it is contained (WPT css-sizing
             // `contain-intrinsic-size-012`, an `<img>`).
             let replaced = node.data.downcast_element().is_some_and(replaced::is_replaced);
+            // pyro: a drop-down select is sized as an empty one, by its own leaf layout (its
+            // line and arrow stay: `leaf_layout_or_algorithm`).
+            let dropdown = node.data.downcast_element().is_some_and(|el| {
+                el.name.local == local_name!("select")
+                    && el.attr(local_name!("multiple")).is_none()
+                    && el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_none_or(|s| s <= 1)
+            });
+            if dropdown {
+                return None;
+            }
             let contained = match display.outside() {
                 DisplayOutside::Inline => display.inside() != DisplayInside::Flow || replaced,
                 DisplayOutside::Block => true,
@@ -686,9 +696,13 @@ impl LayoutPassState<'_> {
                 + st.border().resolve_or_zero(parent_width, resolve_calc_value);
             pb.vertical_axis_sum()
         };
-        // The first option that is displayed, in an optgroup too.
+        // The first option that is displayed, in an optgroup too (pyro: none in a size-contained
+        // select, sized as if it had no options: css-contain-2 § 3.1).
         let mut first = None;
-        let mut stack: Vec<blitz_traits::NodeId> = node.children.iter().rev().copied().collect();
+        let contained = effective_size_containment(&style)
+            .contains(style::values::computed::Contain::INLINE_SIZE | style::values::computed::Contain::BLOCK_SIZE);
+        let mut stack: Vec<blitz_traits::NodeId> =
+            if contained { Vec::new() } else { node.children.iter().rev().copied().collect() };
         while let Some(c) = stack.pop() {
             let n = &self.nodes[c];
             let Some(e) = n.data.downcast_element() else { continue };
@@ -822,6 +836,14 @@ impl LayoutPassState<'_> {
             n.data.downcast_element().filter(|el| el.name.local == local_name!("select")).map(|el| {
                 let listbox = el.attr(local_name!("multiple")).is_some()
                     || el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1);
+                // pyro: a size-contained select is sized as if it had no options (css-contain-2
+                // § 3.1; `size_contained_size` leaves a drop-down to this).
+                if n.primary_styles().is_some_and(|styles| {
+                    effective_size_containment(&styles)
+                        .contains(style::values::computed::Contain::INLINE_SIZE | style::values::computed::Contain::BLOCK_SIZE)
+                }) {
+                    return (listbox, 0);
+                }
                 let longest = n
                     .children
                     .iter()
