@@ -949,6 +949,19 @@ pub fn unpremultiply(data: &mut [u8]) {
     }
 }
 
+/// A pixmap from premultiplied RGBA rows (a rasterized SVG image).
+pub fn pixmap_from_premultiplied(data: Vec<u8>, width: u32, height: u32) -> Option<Pixmap> {
+    if !valid_size(width, height) || data.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+    Some(Pixmap::from_parts(
+        data,
+        width as u16,
+        height as u16,
+        vello_cpu::PixelMetadata::new(peniko::ImageAlphaType::AlphaPremultiplied, true),
+    ))
+}
+
 /// A pixmap from straight RGBA rows (`ImageData`, decoded images).
 pub fn pixmap_from_straight(mut data: Vec<u8>, width: u32, height: u32) -> Option<Pixmap> {
     if !valid_size(width, height) || data.len() != width as usize * height as usize * 4 {

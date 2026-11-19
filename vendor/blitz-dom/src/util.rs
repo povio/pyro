@@ -328,7 +328,7 @@ pub fn walk_tree(indent: usize, node: &Node) {
 
 /// Parse an SVG image.
 #[cfg(feature = "svg")]
-pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
+pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
     // pyro: parsed images by their source. An inline <svg> is
     // parsed from a snapshot of its subtree each time its box is built, and
     // pages that clone content (a header logo on every printed page) build

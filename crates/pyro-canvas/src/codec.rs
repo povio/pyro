@@ -15,9 +15,36 @@ pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
     decode_oriented(bytes, false)
 }
 
+/// Rasterizes an SVG image at its natural size: premultiplied RGBA rows, and the width and height.
+pub type SvgDecoder = fn(&[u8]) -> Option<(Vec<u8>, u32, u32)>;
+
+static SVG_DECODER: std::sync::OnceLock<SvgDecoder> = std::sync::OnceLock::new();
+
+/// Registers the SVG rasterizer [`decode`] uses for SVG images (`pyro-render` registers one: an
+/// `<img>` of an SVG drawn by `drawImage` drew nothing).
+pub fn set_svg_decoder(decoder: SvgDecoder) {
+    let _ = SVG_DECODER.set(decoder);
+}
+
+/// Whether `bytes` look like an SVG document (XML whose root is `<svg>`, or SVGZ).
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        return true;
+    }
+    let head = &bytes[..bytes.len().min(4096)];
+    let text = String::from_utf8_lossy(head);
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    text.starts_with('<') && text.contains("<svg")
+}
+
 /// [`decode`], the pixels turned as the image's EXIF orientation says when `oriented` (an
 /// `<img>` drawn as `image-orientation: from-image` shows it, or an opaque one).
 pub fn decode_oriented(bytes: &[u8], oriented: bool) -> Option<Pixmap> {
+    // pyro: an SVG image, rasterized at its natural size by the registered decoder.
+    if let Some(decoder) = SVG_DECODER.get().filter(|_| looks_like_svg(bytes)) {
+        let (rgba, w, h) = decoder(bytes)?;
+        return crate::pixmap_from_premultiplied(rgba, w, h);
+    }
     let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(crate::MAX_SIDE);

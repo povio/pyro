@@ -866,9 +866,46 @@ fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32) ->
     Some(rgba.chunks_exact(4).map(|px| px[3]).collect())
 }
 
+/// pyro-canvas's SVG images (`drawImage` of an `<img>` showing an SVG): the image at its natural
+/// size (a dimension it lacks from its `viewBox` ratio, else 300 by 150), as an `<img>` paints it.
+fn svg_canvas_image(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let svg = blitz_dom::util::parse_svg_image(bytes).ok()?;
+    let ratio = svg.viewbox_aspect_ratio().filter(|r| r.is_finite() && *r > 0.0);
+    let (width, height) = match (svg.intrinsic_width(), svg.intrinsic_height(), ratio) {
+        (Some(w), Some(h), _) => (w, h),
+        (Some(w), None, Some(r)) => (w, w / r),
+        (None, Some(h), Some(r)) => (h * r, h),
+        (Some(w), None, None) => (w, 150.0),
+        (None, Some(h), None) => (300.0, h),
+        (None, None, Some(r)) => (300.0, 300.0 / r),
+        (None, None, None) => (300.0, 150.0),
+    };
+    let (w, h) = (width.round().max(1.0) as u32, height.round().max(1.0) as u32);
+    if w > u16::MAX as u32 || h > u16::MAX as u32 {
+        return None;
+    }
+    let sized = svg.sized(width, height);
+    let svg = sized.as_ref().unwrap_or(&svg);
+    let viewport = svg.viewport_transform(width, height);
+    let viewport = kurbo::Affine::new([viewport.sx, viewport.ky, viewport.kx, viewport.sy, viewport.tx, viewport.ty].map(f64::from));
+    // Recorded, then replayed as a page is (the replay applies filter graphs and backdrops).
+    let mut scene = Scene::new();
+    if let Some(c) = svg.intrinsic_dimensions.root_background {
+        let color = peniko::Color::from_rgba8(c.red, c.green, c.blue, c.alpha);
+        let rect = kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+        anyrender::PaintScene::fill(&mut scene, peniko::Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+    }
+    anyrender_svg::render_svg_tree(&mut scene, &svg.tree, viewport);
+    let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(w, h);
+    let mut rgba = Vec::new();
+    anyrender::ImageRenderer::render_to_vec(&mut renderer, |p| p.append_scene(scene, kurbo::Affine::IDENTITY), &mut rgba);
+    Some((rgba, w, h))
+}
+
 impl Renderer {
     pub fn new() -> Self {
         blitz_dom::set_svg_rasterizer(svg_shape_alpha);
+        pyro_canvas::codec::set_svg_decoder(svg_canvas_image);
         Self {
             font_ctx: process_fonts(),
             blob_hashes: HashMap::new(),

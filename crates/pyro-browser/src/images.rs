@@ -528,7 +528,10 @@ impl Browser {
             if r.mime == "image/svg+xml" || body.trim_ascii_start().starts_with(b"<svg") {
                 decodable = true;
                 reported = svg_reported_size(body, density);
-                return Some(svg_size(body));
+                let size = svg_size(body);
+                // pyro: its bytes too, for a canvas that draws it (pyro-canvas rasterizes SVG).
+                raster = Some(r);
+                return Some(size);
             }
             decodable = !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp");
             r.mime.starts_with("image/").then_some(None)

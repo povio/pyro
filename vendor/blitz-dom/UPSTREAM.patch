@@ -53087,10 +53087,12 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  // Debug print an RcDom
  pub fn walk_tree(indent: usize, node: &Node) {
      // Skip all-whitespace text nodes entirely
-@@ -156,11 +329,39 @@
+@@ -155,12 +328,40 @@
+ 
  /// Parse an SVG image.
  #[cfg(feature = "svg")]
- pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
+-pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
++pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
 +    // pyro: parsed images by their source. An inline <svg> is
 +    // parsed from a snapshot of its subtree each time its box is built, and
 +    // pages that clone content (a header logo on every printed page) build
