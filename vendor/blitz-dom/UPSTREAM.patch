@@ -16934,7 +16934,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,569 @@
+@@ -0,0 +1,624 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -17237,8 +17237,11 @@ new file mode 100644
 +                        });
 +                // (An empty block is a box of its own, a clamp point after it: WPT css-overflow
 +                // `line-clamp-auto-039`.)
++                // (Out-of-flow children leave a block empty: WPT css-overflow
++                // `line-clamp-with-abspos-023`.)
 +                let descends = in_context
-+                    && (child.flags.is_inline_root() || child.layout_children.borrow().as_ref().is_some_and(|c| !c.is_empty()));
++                    && (child.flags.is_inline_root()
++                        || child.layout_children.borrow().as_ref().is_some_and(|c| c.iter().any(|&c| !self.nodes[c].is_out_of_flow())));
 +                // Any other box of the normal flow here is block-level and a clamp point after it.
 +                let whole = !descends
 +                    && !anonymous
@@ -17395,9 +17398,61 @@ new file mode 100644
 +    /// inlines; not absolutely positioned boxes) whose top is at `y` or below (its coordinates).
 +    fn hide_children_below(&mut self, block: NodeId, y: f32) {
 +        let children: Vec<NodeId> = self.nodes[block].layout_children.borrow().iter().flatten().copied().collect();
++        let scale = self.doc.viewport.scale();
 +        for id in children {
 +            let out_of_flow = self.nodes[id].primary_styles().is_some_and(|style| crate::node::style_is_out_of_flow(&style));
-+            if !out_of_flow && self.nodes[id].unrounded_layout().location.y >= y - 0.01 {
++            if !out_of_flow {
++                if self.nodes[id].unrounded_layout().location.y >= y - 0.01 {
++                    self.nodes[id].flags.insert(NodeFlags::HIDDEN_BY_CLAMP);
++                }
++                continue;
++            }
++            // pyro: an absolutely positioned box whose containing block is a positioned inline of
++            // this block that is after the clamp point (its placeholder on a discarded line) is
++            // discarded with it; one contained by this block or above stays (CSS Overflow 4;
++            // WPT css-overflow `line-clamp-with-abspos-015`, `-024`).
++            let mut inline_cb = None;
++            let mut at = self.nodes[id].parent;
++            while let Some(parent) = at {
++                if parent == block || self.nodes[block].parent == Some(parent) {
++                    break;
++                }
++                if self.nodes[parent].primary_styles().is_some_and(|style| {
++                    style.get_box().position != style::computed_values::position::T::Static
++                }) {
++                    inline_cb = Some(parent);
++                    break;
++                }
++                at = self.nodes[parent].parent;
++            }
++            let Some(cb) = inline_cb else { continue };
++            // (Where the containing inline starts: its first text, else the box's placeholder. One
++            // that starts before the clamp point contains it: WPT css-overflow
++            // `line-clamp-with-abspos-016`.)
++            let is_inside = |mut node: NodeId| loop {
++                if node == cb {
++                    break true;
++                }
++                match self.nodes[node].parent {
++                    Some(parent) if parent != block => node = parent,
++                    _ => break false,
++                }
++            };
++            let after = y == f32::NEG_INFINITY
++                || self.nodes[block].data.downcast_element().and_then(|el| el.inline_layout_data.as_ref()).is_some_and(|text| {
++                    let start = text.text_nodes.iter().filter(|(node, _)| is_inside(*node)).map(|(_, range)| range.start).min();
++                    text.layout.lines().any(|line| {
++                        let top = text.line_box_top + line.metrics().block_min_coord / scale;
++                        let starts_here = match start {
++                            Some(start) => line.text_range().contains(&start),
++                            None => line.items().any(|item| {
++                                matches!(item, parley::PositionedLayoutItem::InlineBox(ibox) if ibox.id == id.as_u64())
++                            }),
++                        };
++                        top >= y - 0.01 && starts_here
++                    })
++                });
++            if after {
 +                self.nodes[id].flags.insert(NodeFlags::HIDDEN_BY_CLAMP);
 +            }
 +        }
