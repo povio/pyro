@@ -1314,7 +1314,7 @@ index 3370fa2..6b6ec48 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..e2012dc 100644
+index 2e9e1c4..341a52f 100644
 --- a/src/render.rs
 +++ b/src/render.rs
 @@ -2,92 +2,73 @@
@@ -1545,7 +1545,7 @@ index 2e9e1c4..e2012dc 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,24 +169,1092 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,26 +169,1109 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -1568,12 +1568,12 @@ index 2e9e1c4..e2012dc 100644
                      global_transform,
                      error_handler,
 +                    ctx,
-+                );
-+            }
-+        }
-+    }
-+}
-+
+                 );
+             }
+         }
+     }
+ }
+ 
 +/// pyro: the Porter-Duff operator a group made for a CSS mask layer (blitz-dom `svg_css`) is
 +/// composited with onto the layers below it, which its id names (`__pyro_compose_srcout_1`).
 +pub(crate) fn compose_marker(id: &str) -> Option<Compose> {
@@ -1919,6 +1919,12 @@ index 2e9e1c4..e2012dc 100644
 +/// function in it reaches as far as its effect does (usvg gives it the bounding box widened by
 +/// half: a `drop-shadow(50px 0)` on a 50 px wide shape was cut off at 25 px).
 +fn layer_bounds(g: &usvg::Group) -> Option<Rect> {
++    // pyro: a `<foreignObject>`'s HTML content reaches past its stand-in image when its
++    // `overflow` is visible (blitz-paint cuts it at the box otherwise): a layer of the group
++    // (its mask's, its clip path's) does not cut it at the image (WPT css-masking `mask-clip-6`).
++    if holds_foreign_object(g) {
++        return Some(Rect::new(-1e9, -1e9, 1e9, 1e9));
++    }
 +    if !has_function_filter(g) {
 +        return Some(to_rect(g.layer_bounding_box()));
 +    }
@@ -1930,6 +1936,15 @@ index 2e9e1c4..e2012dc 100644
 +        };
 +    }
 +    bounds
++}
++
++/// pyro: whether `g` holds a `<foreignObject>`'s stand-in image (blitz-dom `svg_css`).
++fn holds_foreign_object(g: &usvg::Group) -> bool {
++    g.children().iter().any(|node| match node {
++        usvg::Node::Image(image) => crate::foreign_object_id(image.kind()).is_some(),
++        usvg::Node::Group(group) => holds_foreign_object(group),
++        _ => false,
++    })
 +}
 +
 +/// pyro: `g`'s children in its filters' layers (`ts` maps the group's user space to the scene),
@@ -2223,8 +2238,8 @@ index 2e9e1c4..e2012dc 100644
 +                    Color::BLACK,
 +                    None,
 +                    &util::to_bez_path(path),
-                 );
-             }
++                );
++            }
 +            Node::Text(text) => draw_clip_shapes(scene, text.flattened(), clip_ts, rect),
 +            Node::Group(g) => match g.clip_path() {
 +                // A shape clipped by its own clip path is drawn in a layer of
@@ -2394,8 +2409,8 @@ index 2e9e1c4..e2012dc 100644
 +                    scene.pop_layer();
 +                }
 +            }
-         }
-     }
++        }
++    }
 +    let mut items = Vec::new();
 +    let mut paths = Vec::new();
 +    if !collect(mask.root(), ts, &mut items, &mut paths) || paths.is_empty() {
@@ -2638,10 +2653,12 @@ index 2e9e1c4..e2012dc 100644
 +            .map(|(image, ts)| (Paint::Image(image), ts)),
 +        paint => util::to_brush(paint, opacity),
 +    }
- }
- 
++}
++
  fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
-@@ -168,9 +1264,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+     scene: &mut S,
+     error_handler: &mut F,
+@@ -168,9 +1279,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2656,7 +2673,7 @@ index 2e9e1c4..e2012dc 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +1281,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1296,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2665,7 +2682,7 @@ index 2e9e1c4..e2012dc 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +1294,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1309,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2681,7 +2698,7 @@ index 2e9e1c4..e2012dc 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +1310,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1325,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );

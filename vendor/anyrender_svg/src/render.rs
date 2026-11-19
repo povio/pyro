@@ -536,6 +536,12 @@ fn children_bounds(g: &usvg::Group) -> Option<Rect> {
 /// function in it reaches as far as its effect does (usvg gives it the bounding box widened by
 /// half: a `drop-shadow(50px 0)` on a 50 px wide shape was cut off at 25 px).
 fn layer_bounds(g: &usvg::Group) -> Option<Rect> {
+    // pyro: a `<foreignObject>`'s HTML content reaches past its stand-in image when its
+    // `overflow` is visible (blitz-paint cuts it at the box otherwise): a layer of the group
+    // (its mask's, its clip path's) does not cut it at the image (WPT css-masking `mask-clip-6`).
+    if holds_foreign_object(g) {
+        return Some(Rect::new(-1e9, -1e9, 1e9, 1e9));
+    }
     if !has_function_filter(g) {
         return Some(to_rect(g.layer_bounding_box()));
     }
@@ -547,6 +553,15 @@ fn layer_bounds(g: &usvg::Group) -> Option<Rect> {
         };
     }
     bounds
+}
+
+/// pyro: whether `g` holds a `<foreignObject>`'s stand-in image (blitz-dom `svg_css`).
+fn holds_foreign_object(g: &usvg::Group) -> bool {
+    g.children().iter().any(|node| match node {
+        usvg::Node::Image(image) => crate::foreign_object_id(image.kind()).is_some(),
+        usvg::Node::Group(group) => holds_foreign_object(group),
+        _ => false,
+    })
 }
 
 /// pyro: `g`'s children in its filters' layers (`ts` maps the group's user space to the scene),
