@@ -363,12 +363,45 @@ impl BaseDocument {
             }
             root_id
         };
+        // pyro: the nearest ancestor of `node` (itself included) before its stacking context that
+        // clips with the CSS `clip` property, which clips all its descendants (CSS Masking 1 § 5.1),
+        // a fixed one whose containing block lies outside it too: such a descendant paints in it
+        // (WPT css-masking `clip-fixed-pos-transform-descendant-001`).
+        let clip_owner_of = |doc: &Self, mut node: Option<NodeId>| {
+            while let Some(id) = node {
+                let n = &doc.nodes[id];
+                if n.stacking_context.is_some() { return None; }
+                if n.primary_styles().is_some_and(|style| {
+                    matches!(style.clone_position(), Position::Absolute | Position::Fixed)
+                        && matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_))
+                }) {
+                    return Some(id);
+                }
+                node = crate::layout::scroll_markers::box_parent(&doc.nodes, id);
+            }
+            None
+        };
+        // Whether `ancestor` is `id` or one of its containing blocks.
+        let contains = |doc: &Self, ancestor: NodeId, mut id: Option<NodeId>| {
+            while let Some(current) = id {
+                if current == ancestor { return true; }
+                id = doc.nodes[current].containing_block();
+            }
+            false
+        };
         self.oof_hoisted.retain(|id| self.nodes.get(*id).is_some_and(|n| n.oof_containing_block.get().is_some()));
         let mut moves: Vec<_> = self.oof_hoisted.iter().filter_map(|&id| {
             let node = &self.nodes[id];
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;
-            let target = context_of(self, crate::layout::scroll_markers::box_parent(&self.nodes, id));
+            let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, id);
+            if node.z_index() == 0
+                && let Some(owner) = clip_owner_of(self, box_parent)
+                && !contains(self, owner, Some(cb))
+            {
+                return Some((id, owner));
+            }
+            let target = context_of(self, box_parent);
             (target != context_of(self, Some(cb))).then_some((id, target))
         }).collect();
         if moves.is_empty() { return; }
@@ -393,7 +426,8 @@ impl BaseDocument {
             // pyro: one without a `z-index` joins the context's positioned level in its
             // `paint_children`, in tree order (CSS 2.1 Appendix E step 8), not after it: a blending
             // box there must see the earlier ones under it (WPT `mix-blend-mode-root-element-group`).
-            if z == 0 && self.nodes[target].stacking_context.is_some() {
+            // (A `clip` owner, `clip_owner_of`, is no stacking context: one joins its children.)
+            if z == 0 {
                 let mut paint_children = self.nodes[target].paint_children.borrow_mut().take().unwrap_or_default();
                 let flex_or_grid = self.nodes[target]
                     .display_style()
