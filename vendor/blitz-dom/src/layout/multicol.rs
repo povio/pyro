@@ -480,7 +480,9 @@ impl Breaks {
         // The tallest column's content, not more.
         let run = self.fill(height, MAX_COLUMNS);
         let tallest = run.columns.iter().take(fits.max(1)).map(|&(a, b)| b - a).fold(0.0, f32::max);
-        if run.columns.len() <= fits { tallest.min(height).max(EPSILON) } else { height }
+        // pyro: (when what is kept together still breaks, the columns stay as tall as balancing
+        // stretched them: Chromium; WPT css-multicol `multicol-nested-020`)
+        if run.columns.len() <= fits && run.violations == 0 { tallest.min(height).max(EPSILON) } else { height }
     }
 }
 
