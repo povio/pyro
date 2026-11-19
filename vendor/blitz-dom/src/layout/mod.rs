@@ -180,6 +180,8 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) multicol_strip_depth: u32,
     /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
     pub(crate) column_fragment_budget: usize,
+    /// pyro: see `multicol::MEASURE_FRAGMENT_BUDGET`.
+    pub(crate) column_measure_budget: usize,
     /// pyro: see `multicol::NESTED_PASS_BUDGET`.
     pub(crate) nested_pass_budget: usize,
     /// pyro: a table cell being laid out and the border-box height its children's percentage
@@ -255,6 +257,7 @@ impl<'doc> LayoutPassState<'doc> {
             spanner_floors: std::collections::HashMap::new(),
             multicol_strip_depth: 0,
             column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
+            column_measure_budget: multicol::MEASURE_FRAGMENT_BUDGET,
             nested_pass_budget: multicol::NESTED_PASS_BUDGET,
             cell_percent_height: None,
             restricted_cell: None,

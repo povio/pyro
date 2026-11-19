@@ -18842,7 +18842,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
      let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
      let result = calc.resolve(CSSPixelLength::new(parent_size));
-@@ -101,9 +155,62 @@
+@@ -101,9 +155,64 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
@@ -18871,6 +18871,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    pub(crate) multicol_strip_depth: u32,
 +    /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
 +    pub(crate) column_fragment_budget: usize,
++    /// pyro: see `multicol::MEASURE_FRAGMENT_BUDGET`.
++    pub(crate) column_measure_budget: usize,
 +    /// pyro: see `multicol::NESTED_PASS_BUDGET`.
 +    pub(crate) nested_pass_budget: usize,
 +    /// pyro: a table cell being laid out and the border-box height its children's percentage
@@ -18905,7 +18907,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
      /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
      #[inline]
-@@ -138,6 +245,20 @@
+@@ -138,6 +247,21 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
@@ -18919,6 +18921,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            spanner_floors: std::collections::HashMap::new(),
 +            multicol_strip_depth: 0,
 +            column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
++            column_measure_budget: multicol::MEASURE_FRAGMENT_BUDGET,
 +            nested_pass_budget: multicol::NESTED_PASS_BUDGET,
 +            cell_percent_height: None,
 +            restricted_cell: None,
@@ -18926,7 +18929,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +295,25 @@
+@@ -174,14 +298,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -18960,7 +18963,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +323,534 @@
+@@ -191,13 +326,534 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -19497,7 +19500,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +870,188 @@
+@@ -217,13 +873,188 @@
          }
      }
  
@@ -19686,7 +19689,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1067,43 @@
+@@ -239,8 +1070,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -19731,7 +19734,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1118,7 @@
+@@ -255,7 +1121,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -19740,7 +19743,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -283,19 +1146,71 @@
+@@ -283,19 +1149,71 @@
                          .and_then(|val| val.parse::<f32>().ok())
                          .unwrap_or(2.0);
  
@@ -19820,7 +19823,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,87 +1223,256 @@
+@@ -308,87 +1226,256 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -20121,7 +20124,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1491,50 @@
+@@ -407,39 +1494,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -20193,7 +20196,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1567,90 @@
+@@ -472,6 +1570,90 @@
                          _ => unreachable!(),
                      };
  
@@ -20284,7 +20287,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,124 +1667,564 @@
+@@ -488,124 +1670,564 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -20935,7 +20938,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl TraversePartialTree for LayoutPassState<'_> {
-@@ -667,7 +2286,11 @@
+@@ -667,7 +2289,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -20948,7 +20951,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2298,20 @@
+@@ -675,6 +2301,20 @@
      }
  
      #[inline(always)]
@@ -20969,7 +20972,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2335,54 @@
+@@ -698,17 +2338,54 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -21026,7 +21029,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2395,7 @@
+@@ -721,6 +2398,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -21034,7 +21037,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2407,149 @@
+@@ -732,6 +2410,149 @@
      }
  }
  
@@ -21184,7 +21187,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2557,12 @@
+@@ -739,10 +2560,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -21201,7 +21204,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2572,11 @@
+@@ -752,9 +2575,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -21216,7 +21219,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2604,233 @@
+@@ -782,16 +2607,233 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -21454,7 +21457,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2883,30 @@
+@@ -844,6 +2886,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -21485,7 +21488,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2915,19 @@
+@@ -852,7 +2918,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -21506,7 +21509,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2943,30 @@
+@@ -868,6 +2946,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -21537,7 +21540,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3071,201 @@
+@@ -972,3 +3074,201 @@
          })
      }
  }
@@ -21743,7 +21746,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3275 @@
+@@ -0,0 +1,3315 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -21877,6 +21880,17 @@ new file mode 100644
 +/// ones included (`LayoutPassState::column_fragment_budget`); past them a container makes none,
 +/// its strip shown as it is (`FragmentSink`; a page cannot make millions: a thousand columns in each of a thousand nested rows).
 +pub(crate) const COLUMN_FRAGMENT_BUDGET: usize = 200_000;
++/// pyro: how many column fragments a layout pass makes in all, in the runs that only measure its
++/// multi-column containers (`LayoutPassState::column_measure_budget`): each such run is held to
++/// the pass's budget too, but a container measured again and again would make its fragments each
++/// time. Past it a measured container makes none (its strip is measured as it is).
++pub(crate) const MEASURE_FRAGMENT_BUDGET: usize = 1_000_000;
++
++#[cfg(test)]
++thread_local! {
++    /// pyro: the fragments measure runs made (tests: `MEASURE_FRAGMENT_BUDGET` holds).
++    static MEASURED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
 +/// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
 +/// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
 +/// them otherwise.
@@ -22760,7 +22774,14 @@ new file mode 100644
 +        // ends in is balanced (unless `column-fill: auto`). A definite height ends the rows.
 +        // pyro: the fragments this container makes, within its cap and the pass's budget (the only
 +        // place they are added: `FragmentSink::push`).
-+        let mut sink = FragmentSink::new(self.column_fragment_budget, breaks.end, column_x(0), column_width, pb.left);
++        // (A run that only measures takes its fragments from the measure budget too.)
++        let measuring = inputs.run_mode != RunMode::PerformLayout;
++        let start_budget = if measuring {
++            self.column_fragment_budget.min(self.column_measure_budget)
++        } else {
++            self.column_fragment_budget
++        };
++        let mut sink = FragmentSink::new(start_budget, breaks.end, column_x(0), column_width, pb.left);
 +        let mut pushed = false;
 +        if let Some((outer_height, offset)) = nested_ctx {
 +            let box_end = definite_height.map(|height| content_top + height);
@@ -23209,6 +23230,12 @@ new file mode 100644
 +            }
 +        }
 +        let (mut fragments, budget_left, capped) = sink.finish();
++        if measuring {
++            let made = start_budget - budget_left;
++            self.column_measure_budget = self.column_measure_budget.saturating_sub(made);
++            #[cfg(test)]
++            MEASURED_FRAGMENTS.with(|m| m.set(m.get() + made));
++        }
 +        if capped {
 +            // (The rest of the strip is in the last fragment; with none, the strip is shown as it is.)
 +            row_top = fragments.last().map_or(content_top + (breaks.end - breaks.start).max(0.0), |f| f.top + f.height);
@@ -24786,6 +24813,22 @@ new file mode 100644
 +        assert!(hit(&mut doc, 150.0, 95.0).is_some_and(|h| inside.contains(&h)), "its last row's second column");
 +        let over_spanner = hit(&mut doc, 150.0, 65.0);
 +        assert!(!over_spanner.is_some_and(|h| inside.contains(&h)), "not over the spanner's row, where it is not painted: {over_spanner:?} (box {z:?})");
++    }
++
++    /// pyro: the runs that only measure containers make no more than `MEASURE_FRAGMENT_BUDGET`
++    /// fragments in all, however often each is measured (grid items of a thousand columns each,
++    /// measured for their tracks).
++    #[test]
++    fn measure_runs_are_held_to_their_budget() {
++        // (Each measured twice: 1.2 million fragments unbounded.)
++        let items: Vec<Div> = (0..600)
++            .map(|_| div("column-count:1000;column-gap:0", vec![div("height:100000px", vec![])]))
++            .collect();
++        MEASURED_FRAGMENTS.with(|m| m.set(0));
++        let doc = laid_out(vec![div("display:grid;grid-template-columns:repeat(6, auto);width:600px", items)]);
++        let measured = MEASURED_FRAGMENTS.with(|m| m.get());
++        assert!(measured > 0 && measured <= MEASURE_FRAGMENT_BUDGET, "{measured} fragments measured");
++        assert!(fragment_counts(&doc).iter().sum::<usize>() <= COLUMN_FRAGMENT_BUDGET);
 +    }
 +
 +    /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.

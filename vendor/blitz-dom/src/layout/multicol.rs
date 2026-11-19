@@ -131,6 +131,17 @@ impl FragmentSink {
 /// ones included (`LayoutPassState::column_fragment_budget`); past them a container makes none,
 /// its strip shown as it is (`FragmentSink`; a page cannot make millions: a thousand columns in each of a thousand nested rows).
 pub(crate) const COLUMN_FRAGMENT_BUDGET: usize = 200_000;
+/// pyro: how many column fragments a layout pass makes in all, in the runs that only measure its
+/// multi-column containers (`LayoutPassState::column_measure_budget`): each such run is held to
+/// the pass's budget too, but a container measured again and again would make its fragments each
+/// time. Past it a measured container makes none (its strip is measured as it is).
+pub(crate) const MEASURE_FRAGMENT_BUDGET: usize = 1_000_000;
+
+#[cfg(test)]
+thread_local! {
+    /// pyro: the fragments measure runs made (tests: `MEASURE_FRAGMENT_BUDGET` holds).
+    static MEASURED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 /// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
 /// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
 /// them otherwise.
@@ -1014,7 +1025,14 @@ impl LayoutPassState<'_> {
         // ends in is balanced (unless `column-fill: auto`). A definite height ends the rows.
         // pyro: the fragments this container makes, within its cap and the pass's budget (the only
         // place they are added: `FragmentSink::push`).
-        let mut sink = FragmentSink::new(self.column_fragment_budget, breaks.end, column_x(0), column_width, pb.left);
+        // (A run that only measures takes its fragments from the measure budget too.)
+        let measuring = inputs.run_mode != RunMode::PerformLayout;
+        let start_budget = if measuring {
+            self.column_fragment_budget.min(self.column_measure_budget)
+        } else {
+            self.column_fragment_budget
+        };
+        let mut sink = FragmentSink::new(start_budget, breaks.end, column_x(0), column_width, pb.left);
         let mut pushed = false;
         if let Some((outer_height, offset)) = nested_ctx {
             let box_end = definite_height.map(|height| content_top + height);
@@ -1463,6 +1481,12 @@ impl LayoutPassState<'_> {
             }
         }
         let (mut fragments, budget_left, capped) = sink.finish();
+        if measuring {
+            let made = start_budget - budget_left;
+            self.column_measure_budget = self.column_measure_budget.saturating_sub(made);
+            #[cfg(test)]
+            MEASURED_FRAGMENTS.with(|m| m.set(m.get() + made));
+        }
         if capped {
             // (The rest of the strip is in the last fragment; with none, the strip is shown as it is.)
             row_top = fragments.last().map_or(content_top + (breaks.end - breaks.start).max(0.0), |f| f.top + f.height);
@@ -3040,6 +3064,22 @@ mod tests {
         assert!(hit(&mut doc, 150.0, 95.0).is_some_and(|h| inside.contains(&h)), "its last row's second column");
         let over_spanner = hit(&mut doc, 150.0, 65.0);
         assert!(!over_spanner.is_some_and(|h| inside.contains(&h)), "not over the spanner's row, where it is not painted: {over_spanner:?} (box {z:?})");
+    }
+
+    /// pyro: the runs that only measure containers make no more than `MEASURE_FRAGMENT_BUDGET`
+    /// fragments in all, however often each is measured (grid items of a thousand columns each,
+    /// measured for their tracks).
+    #[test]
+    fn measure_runs_are_held_to_their_budget() {
+        // (Each measured twice: 1.2 million fragments unbounded.)
+        let items: Vec<Div> = (0..600)
+            .map(|_| div("column-count:1000;column-gap:0", vec![div("height:100000px", vec![])]))
+            .collect();
+        MEASURED_FRAGMENTS.with(|m| m.set(0));
+        let doc = laid_out(vec![div("display:grid;grid-template-columns:repeat(6, auto);width:600px", items)]);
+        let measured = MEASURED_FRAGMENTS.with(|m| m.get());
+        assert!(measured > 0 && measured <= MEASURE_FRAGMENT_BUDGET, "{measured} fragments measured");
+        assert!(fragment_counts(&doc).iter().sum::<usize>() <= COLUMN_FRAGMENT_BUDGET);
     }
 
     /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.
