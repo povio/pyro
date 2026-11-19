@@ -81,7 +81,7 @@ impl TableTreeWrapper<'_, '_> {
         }
         // pyro: columns of mixed kinds (a `<col>` width beside auto columns, say) get the automatic
         // table layout's widths too (`percent_column_widths`, Blink's distribution), not the grid's.
-        if !(all_auto || all_hinted) {
+        if !all_auto {
             return self.percent_column_widths(inputs, &ctx);
         }
         // The new hinted-track path inspects physical widths. Keep vertical
@@ -367,7 +367,7 @@ impl TableTreeWrapper<'_, '_> {
                             }
                             taffy::BoxSizing::BorderBox => 0.0,
                         };
-                        hi.max(width.value() + box_extra)
+                        hi.max(cell.length_width.unwrap_or(width.value() + box_extra))
                     }
                     _ => hi,
                 };
@@ -393,7 +393,8 @@ impl TableTreeWrapper<'_, '_> {
                         taffy::BoxSizing::BorderBox => 0.0,
                     };
                     fixed[column] = true;
-                    max[column] = max[column].max(width.value() + box_extra);
+                    // (`length_width`: its border box, no wider than a length `max-width` says)
+                    max[column] = max[column].max(cell.length_width.unwrap_or(width.value() + box_extra));
                 }
                 // pyro: a column with a length width (its `<col>`'s) keeps it as its max-content
                 // width: its auto cells' content widens it only to their min-content width (Blink;
