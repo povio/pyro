@@ -21403,7 +21403,7 @@ diff --git a/packages/blitz-paint/src/render/multicol.rs b/packages/blitz-paint/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/multicol.rs
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,400 @@
 +//! pyro: multi-column containers (blitz-dom `layout/multicol.rs`).
 +//!
 +//! A multi-column container's content is laid out in one strip a column wide; each column shows
@@ -21539,9 +21539,17 @@ new file mode 100644
 +                .context
 +                .inline_column_range
 +                .replace((!single && vertical.is_none()).then_some((fragment.start, fragment.end)));
-+            self.draw_inline_layout(scene, pos);
++            // (A spanner's row, unclipped in the block axis, shows its spanner alone: not the
++            // container's own lines, which are the columns', nor its marker, unless the row is
++            // its first fragment: WPT css-multicol `multicol-list-item-005`,
++            // `multicol-span-all-list-item-001`.)
++            if row_spanner.is_none() {
++                self.draw_inline_layout(scene, pos);
++            }
++            if row_spanner.is_none() || fragment.start == f32::NEG_INFINITY {
++                self.draw_marker(scene, pos);
++            }
 +            self.context.inline_column_range.set(outer_inline_range);
-+            self.draw_marker(scene, pos);
 +            // pyro: the container's boxes are not clipped to the column in the block axis, as in
 +            // Chromium: a box the column holds whole is painted with what overflows it, above or
 +            // below; a box a break goes through is sliced; a box another column holds is left to

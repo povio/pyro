@@ -133,9 +133,17 @@ impl ElementCx<'_, '_> {
                 .context
                 .inline_column_range
                 .replace((!single && vertical.is_none()).then_some((fragment.start, fragment.end)));
-            self.draw_inline_layout(scene, pos);
+            // (A spanner's row, unclipped in the block axis, shows its spanner alone: not the
+            // container's own lines, which are the columns', nor its marker, unless the row is
+            // its first fragment: WPT css-multicol `multicol-list-item-005`,
+            // `multicol-span-all-list-item-001`.)
+            if row_spanner.is_none() {
+                self.draw_inline_layout(scene, pos);
+            }
+            if row_spanner.is_none() || fragment.start == f32::NEG_INFINITY {
+                self.draw_marker(scene, pos);
+            }
             self.context.inline_column_range.set(outer_inline_range);
-            self.draw_marker(scene, pos);
             // pyro: the container's boxes are not clipped to the column in the block axis, as in
             // Chromium: a box the column holds whole is painted with what overflows it, above or
             // below; a box a break goes through is sliced; a box another column holds is left to
