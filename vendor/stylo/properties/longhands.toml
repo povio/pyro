@@ -525,8 +525,20 @@ affects = "layout"
 type = "color::CaretColor"
 initial = "generics::color::CaretColor::auto()"
 struct = "inherited_ui"
+# pyro: two colours (the second for the text under a block caret).
+boxed = true
 spec = "https://drafts.csswg.org/css-ui/#caret-color"
 ignored_when_colors_disabled = true
+servo_restyle_damage = "repaint"
+affects = "paint"
+
+# pyro: CSS UI 4 caret-shape (the caret is painted in blitz-paint).
+[caret-shape]
+type = "CaretShape"
+initial = "computed::CaretShape::Auto"
+struct = "inherited_ui"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-ui/#caret-shape"
 servo_restyle_damage = "repaint"
 affects = "paint"
 

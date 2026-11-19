@@ -289,6 +289,33 @@ pub enum PointerEvents {
     BoundingBox,
 }
 
+/// pyro: the caret-shape property (CSS UI 4 § 6.2.3).
+/// https://drafts.csswg.org/css-ui/#caret-shape
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    FromPrimitive,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum CaretShape {
+    Auto,
+    Bar,
+    Block,
+    Underscore,
+}
+
 /// Internal property to represent the inert attribute state:
 /// https://html.spec.whatwg.org/multipage/#inert-subtrees
 #[allow(missing_docs)]

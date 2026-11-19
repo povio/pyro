@@ -30,10 +30,29 @@ impl ToResolvedValue for computed::Color {
     }
 }
 
+/// pyro: a resolved caret-color: the caret's colour (`auto` resolved to currentcolor) and the
+/// colour of the text under a block caret, when it has one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedCaretColor(pub computed::Color, pub Option<computed::Color>);
+
+impl style_traits::ToCss for ResolvedCaretColor {
+    fn to_css<W>(&self, dest: &mut style_traits::CssWriter<W>) -> std::fmt::Result
+    where
+        W: std::fmt::Write,
+    {
+        self.0.to_css(dest)?;
+        if let Some(text) = &self.1 {
+            std::fmt::Write::write_str(dest, " ")?;
+            text.to_css(dest)?;
+        }
+        Ok(())
+    }
+}
+
 impl ToResolvedValue for computed::CaretColor {
     // A resolved caret-color value is an rgba color, with auto resolving to
     // currentcolor.
-    type ResolvedValue = computed::Color;
+    type ResolvedValue = ResolvedCaretColor;
 
     #[inline]
     fn to_resolved_value(self, context: &Context) -> Self::ResolvedValue {
@@ -41,13 +60,20 @@ impl ToResolvedValue for computed::CaretColor {
             generics::ColorOrAuto::Color(color) => color,
             generics::ColorOrAuto::Auto => generics::Color::currentcolor(),
         };
-        color.to_resolved_value(context)
+        let text = match self.1 {
+            generics::ColorOrAuto::Color(color) => Some(color.to_resolved_value(context)),
+            generics::ColorOrAuto::Auto => None,
+        };
+        ResolvedCaretColor(color.to_resolved_value(context), text)
     }
 
     #[inline]
     fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
-        generics::CaretColor(generics::ColorOrAuto::Color(
-            computed::Color::from_resolved_value(resolved),
-        ))
+        generics::CaretColor(
+            generics::ColorOrAuto::Color(computed::Color::from_resolved_value(resolved.0)),
+            resolved.1.map_or(generics::ColorOrAuto::Auto, |text| {
+                generics::ColorOrAuto::Color(computed::Color::from_resolved_value(text))
+            }),
+        )
     }
 }

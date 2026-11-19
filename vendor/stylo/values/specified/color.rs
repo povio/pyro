@@ -1010,7 +1010,15 @@ pub type CaretColor = GenericCaretColor<Color>;
 
 impl Parse for CaretColor {
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-        ColorOrAuto::parse(context, input).map(GenericCaretColor)
+        // pyro: and the optional colour of the text under a block caret, after a colour.
+        let caret = ColorOrAuto::parse(context, input)?;
+        let text = match caret {
+            GenericColorOrAuto::Auto => GenericColorOrAuto::Auto,
+            GenericColorOrAuto::Color(_) => {
+                input.try_parse(|input| ColorOrAuto::parse(context, input)).unwrap_or(GenericColorOrAuto::Auto)
+            },
+        };
+        Ok(GenericCaretColor(caret, text))
     }
 }
 

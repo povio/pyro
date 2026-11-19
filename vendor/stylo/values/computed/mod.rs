@@ -141,7 +141,7 @@ pub use self::tree_counting::TreeCountingResult;
 #[cfg(feature = "gecko")]
 pub use self::ui::CursorImage;
 pub use self::ui::{
-    BoolInteger, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
+    BoolInteger, CaretShape, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
     ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
 };
 pub use super::specified::TextTransform;
