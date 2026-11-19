@@ -533,6 +533,7 @@ pub(crate) fn collect_layout_children(
 ) {
     collect_layout_children_with_wrap(doc, container_node_id, out, None);
     place_inside_marker(doc, container_node_id, out);
+    place_rendered_legend(doc, container_node_id, out);
     // pyro: table parts among a block container's children are wrapped in anonymous tables
     // (CSS 2.1 §17.2.1, `table_fixup`). A table fixes up its own children; an inline root's
     // layout children are its atomic inlines.
@@ -541,6 +542,31 @@ pub(crate) fn collect_layout_children(
     if !is_table && !node.flags.is_inline_root() {
         let LayoutChildren { children, anonymous_blocks, .. } = out;
         super::table_fixup::wrap_misparented_table_parts(doc, container_node_id, children, anonymous_blocks);
+    }
+}
+
+/// pyro: a fieldset's rendered legend is laid out first, before content that precedes it (the
+/// text of a `display: contents` legend before it, say). As in Chromium, that is its first child
+/// box that is a `legend` (looking through `display: contents`), unless that is floated or
+/// absolutely positioned (HTML § 15.3.13). WPT css-display
+/// `display-contents-dynamic-fieldset-legend-001`.
+fn place_rendered_legend(doc: &BaseDocument, container: NodeId, out: &mut LayoutChildren) {
+    let node = &doc.nodes[container];
+    if !node.is_fieldset() || node.flags.is_inline_root() {
+        return;
+    }
+    let Some(index) = out.children.iter().position(|&id| {
+        let child = &doc.nodes[id];
+        child.data.downcast_element().is_some_and(|el| el.name.local == local_name!("legend"))
+            && child.primary_styles().is_some_and(|style| {
+                !style.get_box().float.is_floating() && !crate::node::style_is_out_of_flow(&style)
+            })
+    }) else {
+        return;
+    };
+    if index > 0 {
+        let id = out.children.remove(index);
+        out.children.insert(0, id);
     }
 }
 
