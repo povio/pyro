@@ -182,9 +182,45 @@ struct PageFetcher {
     page: PageId,
     /// The page's document when the snapshot was taken (`pyro_browser::document_client`).
     client: String,
+    /// pyro: the page's document had fired `load` when the snapshot was taken.
+    loaded: bool,
+    /// pyro: what the document's own layout fetched (`Browser::layout_bodies`).
+    bodies: Option<Arc<pyro_dom::layout::SubresourceBodies>>,
+    /// pyro: the URLs of the document's list of available images.
+    available: std::collections::HashSet<String>,
+}
+
+/// pyro: the key of a renderer request (`options`, for the document `client` names) in the
+/// document's layout bodies, and whether it is an image's.
+fn layout_key(url: &str, options: &pyro_render::FetchOptions, client: &str) -> (String, bool) {
+    let layout = pyro_dom::layout::SubresourceOptions {
+        crossorigin: options.cors.map(|credentials| match credentials {
+            pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
+            pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
+        }),
+        integrity: options.integrity.clone(),
+        referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
+        referrer_policy: options.referrer_policy.clone(),
+    };
+    let client = options.client.as_deref().unwrap_or(client);
+    let document = client.split_once('#').map(|(_, loader)| loader);
+    let key = layout.body_key(url, document.filter(|_| layout != Default::default()));
+    let image = pyro_render::is_plain_cors(options) || kind_of(url) == ResourceKind::Image;
+    (key, image)
 }
 
 impl Fetcher for PageFetcher {
+    /// pyro: an image the document never fetched itself, asked for after its `load` (a style
+    /// change since): Chrome paints it once it arrives, and a capture does not wait for it. One
+    /// its layout fetched (or is fetching), or one in its list of available images, is waited for.
+    fn defers(&self, url: &str, options: &pyro_render::FetchOptions) -> bool {
+        let (key, image) = layout_key(url, options, &self.client);
+        image
+            && self.loaded
+            && !self.available.contains(url)
+            && self.bodies.as_ref().is_some_and(|bodies| !bodies.lock().contains_key(&key))
+    }
+
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         self.request(url, &pyro_render::FetchOptions::default(), body_only(done))
     }
@@ -239,20 +275,10 @@ impl PageFetcher {
         let kind = if pyro_render::is_plain_cors(options) { ResourceKind::Image } else { kind_of(&url) };
         // pyro: the key of the same request in the document's layout bodies (its own fetch of the
         // image, made by its layout, `SubresourceOptions::body_key`).
-        let layout = pyro_dom::layout::SubresourceOptions {
-            crossorigin: options.cors.map(|credentials| match credentials {
-                pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
-                pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
-            }),
-            integrity: options.integrity.clone(),
-            referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
-            referrer_policy: options.referrer_policy.clone(),
-        };
+        let (key, _) = layout_key(&url, options, &self.client);
         let cors = options.cors.is_some();
         let mut options = subresource_options(options);
         options.client.get_or_insert_with(|| self.client.clone());
-        let document = options.client.as_deref().and_then(|c| c.split_once('#')).map(|(_, loader)| loader.to_owned());
-        let key = layout.body_key(&url, document.as_deref().filter(|_| layout != Default::default()));
         // A closed loop drops `done`: the render stops waiting at its deadline.
         let _ = self.handle.post(move |b| {
             // pyro: an image the document's own layout has fetched (its load waited for it) is used
@@ -521,13 +547,16 @@ impl EngineHost {
     }
 
     fn fetcher(&self, pid: PageId) -> Arc<dyn Fetcher> {
-        let client = self
-            .thread
-            .browser
-            .page(pid)
-            .map(|p| pyro_browser::document_client(&p.main_frame))
+        let browser = &self.thread.browser;
+        let page = browser.page(pid);
+        let client = page.map(|p| pyro_browser::document_client(&p.main_frame)).unwrap_or_default();
+        let loaded = page.is_some_and(|p| p.main_frame.loaded);
+        let available = page
+            .and_then(|p| p.main_frame.page_dom.as_ref())
+            .map(|d| d.available_image_urls().into_iter().collect())
             .unwrap_or_default();
-        Arc::new(PageFetcher { handle: self.thread.handle(), page: pid, client })
+        let bodies = browser.layout_bodies(pid);
+        Arc::new(PageFetcher { handle: self.thread.handle(), page: pid, client, loaded, bodies, available })
     }
 
     /// `Page.captureScreenshot`: replied to from `flush_renders`.

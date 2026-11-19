@@ -47,6 +47,12 @@ pub trait Fetcher: Send + Sync + 'static {
     /// pyro: [`Self::fetch`], [`Self::fetch_cors`] or [`Self::fetch_with`] as `options` say,
     /// `done` also getting the response's URL after redirects (a style sheet resolves its URLs
     /// against it). A fetcher that does not know it reports `url` (the default).
+    /// pyro: whether a render need not wait for `url` (fetched with `options`): an image the
+    /// document never fetched itself (a style change since its load), which Chrome paints only once
+    /// it has arrived. Its bytes reach the document at a later render of it (the default: none).
+    fn defers(&self, _url: &str, _options: &blitz_traits::net::FetchOptions) -> bool {
+        false
+    }
     fn fetch_final(
         &self,
         url: String,
@@ -109,8 +115,8 @@ impl ResourceCache {
 }
 
 /// A handler, the URL asked for, the response's URL after redirects, whether its tainting is
-/// opaque, and the body.
-type Delivery = (Box<dyn NetHandler>, String, String, bool, Bytes);
+/// opaque, the body, and whether the render waits for it (counted in `outstanding`).
+type Delivery = (Box<dyn NetHandler>, String, String, bool, Bytes, bool);
 
 pub(crate) fn new_cache() -> Cache {
     Cache::default()
@@ -172,7 +178,7 @@ impl NetProvider for Provider {
         if let Some(bytes) = ready {
             let (final_url, opaque) =
                 self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| (url.clone(), false));
-            let _ = self.tx.send((handler, url, final_url, opaque, bytes));
+            let _ = self.tx.send((handler, url, final_url, opaque, bytes, true));
             return;
         }
         let tx = self.tx.clone();
@@ -180,6 +186,12 @@ impl NetProvider for Provider {
         let finals = self.finals.clone();
         let fetcher = self.fetcher.lock().map(|f| f.clone());
         let Ok(fetcher) = fetcher else { return };
+        // pyro: a fetch the render need not wait for (`Fetcher::defers`) is not outstanding: its
+        // bytes reach the document at a later settle of it.
+        let counted = inline || !fetcher.defers(&url, &options);
+        if !counted {
+            self.outstanding.fetch_sub(1, Ordering::AcqRel);
+        }
         let done: Box<dyn FnOnce(Result<Fetched, String>) + Send> = Box::new(move |result| {
             let (bytes, final_url, opaque) = match result {
                 Ok(Fetched { body, url: final_url, opaque }) => {
@@ -199,7 +211,7 @@ impl NetProvider for Provider {
                 // Empty bytes: Blitz's handlers treat it as a failed load.
                 Err(_) => (Bytes::new(), url.clone(), false),
             };
-            let _ = tx.send((handler, url, final_url, opaque, bytes));
+            let _ = tx.send((handler, url, final_url, opaque, bytes, counted));
         });
         fetcher.fetch_final(request.url.to_string(), &options, done);
     }
@@ -273,6 +285,13 @@ impl Bridge {
         let mut waited = Duration::ZERO;
         let mut passes = 0;
         let mut first_layout = Some(Instant::now() + first_layout_wait);
+        // pyro: what arrived since the last settle, deferred fetches' bytes included.
+        while let Ok((handler, url, final_url, opaque, bytes, counted)) = self.rx.try_recv() {
+            handler.bytes_from(url, final_url, opaque, bytes);
+            if counted {
+                self.outstanding.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
         loop {
             let wait_until = first_layout.map_or(deadline, |t| t.min(deadline));
             while self.outstanding.load(Ordering::Acquire) > 0 {
@@ -283,9 +302,11 @@ impl Bridge {
                 };
                 waited += t.elapsed();
                 match next {
-                    Ok((handler, url, final_url, opaque, bytes)) => {
+                    Ok((handler, url, final_url, opaque, bytes, counted)) => {
                         handler.bytes_from(url, final_url, opaque, bytes);
-                        self.outstanding.fetch_sub(1, Ordering::AcqRel);
+                        if counted {
+                            self.outstanding.fetch_sub(1, Ordering::AcqRel);
+                        }
                     }
                     Err(RecvTimeoutError::Timeout) if first_layout.is_some() && Instant::now() < deadline => {
                         // Lay out with what arrived; keep waiting afterwards.
@@ -365,7 +386,7 @@ mod cors_tests {
         let mut cors = Request::get(url.parse().unwrap());
         blitz_dom::net::mark_cors(&mut cors);
         provider.fetch(0, cors, Box::new(Sink(got.clone())));
-        while let Ok((handler, url, final_url, opaque, bytes)) = bridge.rx.try_recv() {
+        while let Ok((handler, url, final_url, opaque, bytes, _)) = bridge.rx.try_recv() {
             handler.bytes_from(url, final_url, opaque, bytes);
         }
         assert_eq!(*recorder.0.lock().unwrap(), vec![(url.to_string(), false), (url.to_string(), true)]);

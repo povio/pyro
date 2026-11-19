@@ -2437,6 +2437,11 @@ impl PageDom {
         }
     }
 
+    /// pyro: the URLs in the list of available images (any CORS state).
+    pub fn available_image_urls(&self) -> Vec<String> {
+        self.available_images.borrow().iter().map(|((url, _), _)| url.clone()).collect()
+    }
+
     /// pyro: the list of available images' entry for `url` in CORS state `cors`.
     pub fn available_image(&self, url: &str, cors: u8) -> Option<AvailableImage> {
         let list = self.available_images.borrow();
