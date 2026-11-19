@@ -662,7 +662,7 @@ impl ElementCx<'_, '_> {
                             // A `url()` image: its slot among the element's stored images
                             // (`blitz_dom::util::image_slots`), found by its URL.
                             let image_data = match blitz_dom::util::unfiltered_image(image) {
-                                GenericImage::Url(style::values::computed::url::ComputedUrl::Valid(url)) => self
+                                GenericImage::Url(style::values::computed::url::ComputedUrl::Valid(url, _)) => self
                                     .element
                                     .background_images
                                     .iter()
