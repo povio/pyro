@@ -140,6 +140,7 @@ mod table_part_positioning;
 mod table_flex_items;
 mod table_paint_order;
 mod table_parts;
+mod table_review_r6;
 mod table_structure;
 mod tagged_images;
 mod text_aliasing;

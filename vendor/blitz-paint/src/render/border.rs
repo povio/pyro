@@ -1244,14 +1244,21 @@ impl ElementCx<'_, '_> {
             let (lo, lo_w, hi, hi_w) = if from <= to { (from, a, to, b) } else { (to, b, from, a) };
             (snap(lo - lo_w / 2.0, lo_w), snap(hi - hi_w / 2.0, hi_w) + hi_w)
         };
-        for line in 0..=edges.rows {
-            let mut c = 0;
-            while c < edges.columns {
-                let edge = *edges.horizontal_at(line, c);
-                let mut end = c + 1;
-                while end < edges.columns && same_edge(edges.horizontal_at(line, end), &edge) {
-                    end += 1;
+        // pyro: the runs of one grid line (`CollapsedEdges::*_runs`, only those some border reaches),
+        // joined where they look the same, so that a long rule has no seams.
+        let joined = |runs: Vec<(usize, usize, blitz_dom::CollapsedEdge)>| {
+            let mut out: Vec<(usize, usize, blitz_dom::CollapsedEdge)> = Vec::with_capacity(runs.len());
+            for (s, e, edge) in runs {
+                match out.last_mut() {
+                    Some(prev) if prev.1 == s && same_edge(&prev.2, &edge) => prev.1 = e,
+                    _ => out.push((s, e, edge)),
                 }
+            }
+            out
+        };
+        for line in 0..=edges.rows {
+            let runs = joined(edges.horizontal_runs(line).map(|(s, e, edge)| (s, e, *edge)).collect());
+            for (c, end, edge) in runs {
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
                     let across = |col: usize| {
@@ -1270,17 +1277,11 @@ impl ElementCx<'_, '_> {
                         fill(x0, y0, x1, y0 + width, edge.color);
                     }
                 }
-                c = end;
             }
         }
         for line in 0..=edges.columns {
-            let mut r = 0;
-            while r < edges.rows {
-                let edge = *edges.vertical_at(r, line);
-                let mut end = r + 1;
-                while end < edges.rows && same_edge(edges.vertical_at(end, line), &edge) {
-                    end += 1;
-                }
+            let runs = joined(edges.vertical_runs(line).map(|(s, e, edge)| (s, e, *edge)).collect());
+            for (r, end, edge) in runs {
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
                     let x0 = snap_x(xs[line] - width / 2.0, width);
@@ -1293,7 +1294,6 @@ impl ElementCx<'_, '_> {
                         fill(x0, y0, x0 + width, y1, edge.color);
                     }
                 }
-                r = end;
             }
         }
         // pyro: where rules cross, the square they share is the colour of the edge that wins there
@@ -1301,7 +1301,15 @@ impl ElementCx<'_, '_> {
         // crossing, the column line's before it, the row line's after and the column line's after:
         // the row-start and column-start ones win, as among the borders of cells).
         for hl in 0..=edges.rows {
-            for vl in 0..=edges.columns {
+            // (Only where a row line's rule is: the column lines at its runs' ends and inside them.)
+            let mut crossings: Vec<usize> = Vec::new();
+            for (s, e, edge) in edges.horizontal_runs(hl) {
+                if edge.width > 0.0 {
+                    crossings.extend(s..=e);
+                }
+            }
+            crossings.dedup();
+            for vl in crossings {
                 let left = vl.checked_sub(1).map(|c| *edges.horizontal_at(hl, c));
                 let right = (vl < edges.columns).then(|| *edges.horizontal_at(hl, vl));
                 let above = hl.checked_sub(1).map(|r| *edges.vertical_at(r, vl));

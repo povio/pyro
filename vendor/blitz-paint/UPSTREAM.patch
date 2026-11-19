@@ -14737,15 +14737,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
          // No need to draw transparent borders (as they won't be visible anyway)
          if border_color == Color::TRANSPARENT {
-             return;
-         }
- 
--        // Border widths are not adjusted for border-style in computed styles,
--        // so a border with `none`/`hidden` style must be treated as zero-width.
--        if border_style.border_top_style.none_or_hidden() {
 -            return;
 -        }
 -
+-        // Border widths are not adjusted for border-style in computed styles,
+-        // so a border with `none`/`hidden` style must be treated as zero-width.
+-        if border_style.border_top_style.none_or_hidden() {
+             return;
+         }
+ 
          // The borders are laid out as the gutters between the tracks, and as the border
          // of the table around them. Track positions are relative to the table's border box.
          let border_width = table.style.gap.map(|gap| gap.into_raw().value() as f64);
@@ -14798,7 +14798,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,10 +1176,197 @@
+@@ -589,10 +1176,205 @@
          }
      }
  
@@ -14872,14 +14872,21 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            let (lo, lo_w, hi, hi_w) = if from <= to { (from, a, to, b) } else { (to, b, from, a) };
 +            (snap(lo - lo_w / 2.0, lo_w), snap(hi - hi_w / 2.0, hi_w) + hi_w)
 +        };
-+        for line in 0..=edges.rows {
-+            let mut c = 0;
-+            while c < edges.columns {
-+                let edge = *edges.horizontal_at(line, c);
-+                let mut end = c + 1;
-+                while end < edges.columns && same_edge(edges.horizontal_at(line, end), &edge) {
-+                    end += 1;
++        // pyro: the runs of one grid line (`CollapsedEdges::*_runs`, only those some border reaches),
++        // joined where they look the same, so that a long rule has no seams.
++        let joined = |runs: Vec<(usize, usize, blitz_dom::CollapsedEdge)>| {
++            let mut out: Vec<(usize, usize, blitz_dom::CollapsedEdge)> = Vec::with_capacity(runs.len());
++            for (s, e, edge) in runs {
++                match out.last_mut() {
++                    Some(prev) if prev.1 == s && same_edge(&prev.2, &edge) => prev.1 = e,
++                    _ => out.push((s, e, edge)),
 +                }
++            }
++            out
++        };
++        for line in 0..=edges.rows {
++            let runs = joined(edges.horizontal_runs(line).map(|(s, e, edge)| (s, e, *edge)).collect());
++            for (c, end, edge) in runs {
 +                if edge.width > 0.0 {
 +                    let width = edge.width as f64;
 +                    let across = |col: usize| {
@@ -14898,17 +14905,11 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                        fill(x0, y0, x1, y0 + width, edge.color);
 +                    }
 +                }
-+                c = end;
 +            }
 +        }
 +        for line in 0..=edges.columns {
-+            let mut r = 0;
-+            while r < edges.rows {
-+                let edge = *edges.vertical_at(r, line);
-+                let mut end = r + 1;
-+                while end < edges.rows && same_edge(edges.vertical_at(end, line), &edge) {
-+                    end += 1;
-+                }
++            let runs = joined(edges.vertical_runs(line).map(|(s, e, edge)| (s, e, *edge)).collect());
++            for (r, end, edge) in runs {
 +                if edge.width > 0.0 {
 +                    let width = edge.width as f64;
 +                    let x0 = snap_x(xs[line] - width / 2.0, width);
@@ -14921,7 +14922,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                        fill(x0, y0, x0 + width, y1, edge.color);
 +                    }
 +                }
-+                r = end;
 +            }
 +        }
 +        // pyro: where rules cross, the square they share is the colour of the edge that wins there
@@ -14929,7 +14929,15 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        // crossing, the column line's before it, the row line's after and the column line's after:
 +        // the row-start and column-start ones win, as among the borders of cells).
 +        for hl in 0..=edges.rows {
-+            for vl in 0..=edges.columns {
++            // (Only where a row line's rule is: the column lines at its runs' ends and inside them.)
++            let mut crossings: Vec<usize> = Vec::new();
++            for (s, e, edge) in edges.horizontal_runs(hl) {
++                if edge.width > 0.0 {
++                    crossings.extend(s..=e);
++                }
++            }
++            crossings.dedup();
++            for vl in crossings {
 +                let left = vl.checked_sub(1).map(|c| *edges.horizontal_at(hl, c));
 +                let right = (vl < edges.columns).then(|| *edges.horizontal_at(hl, vl));
 +                let above = hl.checked_sub(1).map(|r| *edges.vertical_at(r, vl));
@@ -14999,7 +15007,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
      /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
      /// ❌ ridge - Defines a 3D ridged border. The effect depends on the border-color value
      /// ❌ inset - Defines a 3D inset border. The effect depends on the border-color value
-@@ -600,33 +1374,102 @@
+@@ -600,33 +1382,102 @@
      /// ✅ none - Defines no border
      /// ✅ hidden - Defines a hidden border
      pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {

@@ -598,7 +598,7 @@ impl TableContext {
     /// resolved (a vertical table: the first cell's borders are the gutters' then).
     pub fn gutter_border_color(&self) -> Option<Option<style::color::AbsoluteColor>> {
         let edges = self.spare_edges.as_ref()?;
-        Some(edges.vertical.iter().chain(&edges.horizontal).find(|edge| edge.width > 0.0).map(|edge| edge.color))
+        Some(edges.edges().find(|edge| edge.width > 0.0).map(|edge| edge.color))
     }
 
     /// pyro: each row's hit-test extent (parallel to `rows`): the union of its cells'
@@ -863,7 +863,7 @@ impl CellWidths {
 // }
 
 /// One segment of a collapsed border; width 0 when no border wins.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollapsedEdge {
     pub width: f32,
     pub color: style::color::AbsoluteColor,
@@ -914,23 +914,125 @@ pub struct CollapsedEdges {
     sides: [u8; 4],
     /// The table's writing mode (the one its grid runs in).
     wm: WritingMode,
-    /// `rows * (columns + 1)`: the segment of each row on each column line.
-    pub vertical: Vec<CollapsedEdge>,
-    /// `(rows + 1) * columns`: the segment of each column on each row line.
-    pub horizontal: Vec<CollapsedEdge>,
+    /// `columns + 1` column lines: the segment of each row on each (pyro: runs, `EdgeLine`).
+    vertical: Vec<EdgeLine>,
+    /// `rows + 1` row lines: the segment of each column on each.
+    horizontal: Vec<EdgeLine>,
+}
+
+/// pyro: the segments of one grid line, as runs of equal segments (the ones no border reaches are
+/// gaps), so that a table's collapsed borders cost its lines and runs, not rows x columns: one
+/// `colspan="1000" rowspan="10000"` cell over empty rows allocated 20 million segments.
+#[derive(Debug, Clone, Default)]
+struct EdgeLine {
+    /// Sorted, disjoint `(start, end, edge)`, no edge `CollapsedEdge::NONE`.
+    runs: Vec<(u32, u32, CollapsedEdge)>,
+}
+
+impl EdgeLine {
+    fn get(&self, at: usize) -> &CollapsedEdge {
+        let at = at as u32;
+        let i = self.runs.partition_point(|run| run.1 <= at);
+        match self.runs.get(i) {
+            Some(run) if run.0 <= at => &run.2,
+            _ => &CollapsedEdge::NONE,
+        }
+    }
+
+    /// Replaces each segment of `range` by `f` of it, in time proportional to the runs it meets.
+    fn update(&mut self, range: Range<usize>, f: impl Fn(CollapsedEdge) -> CollapsedEdge) {
+        if range.is_empty() {
+            return;
+        }
+        let (a, b) = (range.start as u32, range.end as u32);
+        let first = self.runs.partition_point(|run| run.1 <= a);
+        let last = self.runs.partition_point(|run| run.0 < b);
+        let mut pieces: Vec<(u32, u32, CollapsedEdge)> = Vec::new();
+        let mut push = |pieces: &mut Vec<(u32, u32, CollapsedEdge)>, s: u32, e: u32, edge: CollapsedEdge| {
+            if s >= e || edge == CollapsedEdge::NONE {
+                return;
+            }
+            match pieces.last_mut() {
+                Some(prev) if prev.1 == s && prev.2 == edge => prev.1 = e,
+                _ => pieces.push((s, e, edge)),
+            }
+        };
+        let mut at = a;
+        for &(s, e, edge) in &self.runs[first..last] {
+            // The part of the run before the range stays as it is.
+            if s < a {
+                push(&mut pieces, s, a, edge);
+            }
+            let (s2, e2) = (s.max(a), e.min(b));
+            push(&mut pieces, at, s2, f(CollapsedEdge::NONE));
+            push(&mut pieces, s2, e2, f(edge));
+            at = e2;
+            if e > b {
+                push(&mut pieces, b, e, edge);
+            }
+        }
+        push(&mut pieces, at, b, f(CollapsedEdge::NONE));
+        self.runs.splice(first..last, pieces);
+        // Runs equal to their neighbours outside the range join them.
+        self.runs.dedup_by(|next, prev| {
+            if prev.1 == next.0 && prev.2 == next.2 {
+                prev.1 = next.1;
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    /// Replaces the segments `range` by `len` without borders, moving those after.
+    fn splice(&mut self, range: Range<usize>, len: usize) {
+        self.update(range.clone(), |_| CollapsedEdge::NONE);
+        let (b, shift) = (range.end as i64, len as i64 - range.len() as i64);
+        for run in &mut self.runs {
+            if i64::from(run.0) >= b {
+                run.0 = (i64::from(run.0) + shift) as u32;
+                run.1 = (i64::from(run.1) + shift) as u32;
+            }
+        }
+    }
+
+    fn edges(&self) -> impl Iterator<Item = &CollapsedEdge> {
+        self.runs.iter().map(|run| &run.2)
+    }
+
+    /// Whether every one of the line's `len` segments is `width` wide.
+    fn all_width(&self, len: usize, width: f32) -> bool {
+        let covered: u32 = self.runs.iter().map(|run| run.1 - run.0).sum();
+        (covered as usize >= len || width == 0.0) && self.runs.iter().all(|run| run.2.width == width)
+    }
 }
 
 impl CollapsedEdges {
     pub fn vertical_at(&self, row: usize, line: usize) -> &CollapsedEdge {
-        &self.vertical[row * (self.columns + 1) + line]
+        self.vertical[line].get(row)
     }
     pub fn horizontal_at(&self, line: usize, column: usize) -> &CollapsedEdge {
-        &self.horizontal[line * self.columns + column]
+        self.horizontal[line].get(column)
+    }
+
+    /// pyro: every edge some border reaches (the segments without one are `CollapsedEdge::NONE`).
+    fn edges(&self) -> impl Iterator<Item = &CollapsedEdge> {
+        self.vertical.iter().chain(&self.horizontal).flat_map(EdgeLine::edges)
+    }
+
+    /// pyro: the runs of equal segments on row line `line`: `(first column, end column, edge)`,
+    /// the columns between them without a border (`blitz-paint`'s `draw_collapsed_edges`).
+    pub fn horizontal_runs(&self, line: usize) -> impl Iterator<Item = (usize, usize, &CollapsedEdge)> {
+        self.horizontal[line].runs.iter().map(|run| (run.0 as usize, run.1 as usize, &run.2))
+    }
+
+    /// pyro: the runs of equal segments on column line `line`: `(first row, end row, edge)`.
+    pub fn vertical_runs(&self, line: usize) -> impl Iterator<Item = (usize, usize, &CollapsedEdge)> {
+        self.vertical[line].runs.iter().map(|run| (run.0 as usize, run.1 as usize, &run.2))
     }
 
     fn new(rows: usize, columns: usize, wm: WritingMode) -> Self {
         use stylo_taffy::WritingModeExt as _;
-        let none = CollapsedEdge::NONE;
         // Taffy's top and bottom are the grid's row-start and row-end sides; its left is the
         // column-start side unless the columns run from its right (`direction`).
         let taffy = wm.logical_rect(taffy::Rect { top: 0u8, right: 1, bottom: 2, left: 3 });
@@ -943,8 +1045,8 @@ impl CollapsedEdges {
             columns,
             sides: [taffy.top, column_end, taffy.bottom, column_start],
             wm,
-            vertical: vec![none; rows * (columns + 1)],
-            horizontal: vec![none; (rows + 1) * columns],
+            vertical: vec![EdgeLine::default(); columns + 1],
+            horizontal: vec![EdgeLine::default(); rows + 1],
         }
     }
 
@@ -984,29 +1086,32 @@ impl CollapsedEdges {
 
     /// Uniform: every vertical segment one width, every horizontal one width, one color.
     fn uniform(&self) -> Option<(f32, f32)> {
-        let (x, y) = (self.vertical.first()?.width, self.horizontal.first()?.width);
-        let visible = self.vertical.iter().chain(&self.horizontal).find(|e| e.width > 0.0)?;
-        let same_color = self.vertical.iter().chain(&self.horizontal).all(|e| e.width == 0.0 || e.color == visible.color);
+        if self.rows == 0 || self.columns == 0 {
+            return None;
+        }
+        let (x, y) = (self.vertical_at(0, 0).width, self.horizontal_at(0, 0).width);
+        let visible = self.edges().find(|e| e.width > 0.0)?;
+        let same_color = self.edges().all(|e| e.width == 0.0 || e.color == visible.color);
         (same_color
-            && self.vertical.iter().all(|e| e.width == x)
-            && self.horizontal.iter().all(|e| e.width == y))
+            && self.vertical.iter().all(|line| line.all_width(self.rows, x))
+            && self.horizontal.iter().all(|line| line.all_width(self.columns, y)))
         .then_some((x, y))
     }
 
     fn is_empty(&self) -> bool {
-        self.vertical.iter().chain(&self.horizontal).all(|e| e.width == 0.0)
+        self.edges().all(|e| e.width == 0.0)
     }
 }
 
 /// Conflict resolution (css-tables-3 §11): `hidden` wins, then the wider, then by style, then
 /// the inner box; among equals the first offered (left and top) stays.
 fn offer_edge(
-    edge: &mut CollapsedEdge,
+    mut edge: CollapsedEdge,
     border: &Border,
     side: usize,
     current_color: &style::color::AbsoluteColor,
     priority: u8,
-) {
+) -> CollapsedEdge {
     use style::values::computed::BorderStyle as B;
     let (width, border_style, color) = match side {
         0 => (border.border_top_width.0, border.border_top_style, &border.border_top_color),
@@ -1015,16 +1120,16 @@ fn offer_edge(
         _ => (border.border_left_width.0, border.border_left_style, &border.border_left_color),
     };
     if edge.hidden || border_style == B::None {
-        return;
+        return edge;
     }
     if border_style == B::Hidden {
         edge.hidden = true;
         edge.width = 0.0;
-        return;
+        return edge;
     }
     let width = width.to_f32_px();
     if width == 0.0 {
-        return;
+        return edge;
     }
     let rank = match border_style {
         B::Double => 8,
@@ -1037,8 +1142,9 @@ fn offer_edge(
         _ => 1,
     };
     if (width, rank, priority) > (edge.width, edge.rank, edge.priority) {
-        *edge = CollapsedEdge { width, color: color.resolve_to_absolute(current_color), rank, priority, hidden: false };
+        edge = CollapsedEdge { width, color: color.resolve_to_absolute(current_color), rank, priority, hidden: false };
     }
+    edge
 }
 
 /// The grid area (rows, columns) each cell ends up in: the column the HTML table model gives it
@@ -1094,17 +1200,12 @@ fn clear_spanned(edges: &mut CollapsedEdges, (r0, c0, r1, c1): (usize, usize, us
     if r1 > edges.rows || c1 > ncols {
         return;
     }
-    for line in (r0 + 1)..r1 {
-        if range.lines.contains(&line) {
-            for c in c0..c1 {
-                edges.horizontal[line * ncols + c] = CollapsedEdge::NONE;
-            }
-        }
+    for line in ((r0 + 1)..r1).filter(|line| range.lines.contains(line)) {
+        edges.horizontal[line].update(c0..c1, |_| CollapsedEdge::NONE);
     }
-    for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
-        for line in (c0 + 1)..c1 {
-            edges.vertical[r * (ncols + 1) + line] = CollapsedEdge::NONE;
-        }
+    let rows = r0.max(range.rows.start)..r1.min(range.rows.end);
+    for line in (c0 + 1)..c1 {
+        edges.vertical[line].update(rows.clone(), |_| CollapsedEdge::NONE);
     }
 }
 
@@ -1145,19 +1246,15 @@ fn offer_box(
         }
     }
     let color = styles.clone_color();
-    let ncols = edges.columns;
     let [row_start, column_end, row_end, column_start] = edges.sides.map(usize::from);
     for (line, side) in [(r0, row_start), (r1, row_end)] {
         if range.lines.contains(&line) {
-            for c in c0..c1 {
-                offer_edge(&mut edges.horizontal[line * ncols + c], border, side, &color, priority);
-            }
+            edges.horizontal[line].update(c0..c1, |edge| offer_edge(edge, border, side, &color, priority));
         }
     }
-    for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
-        offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, column_start, &color, priority);
-        offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, column_end, &color, priority);
-    }
+    let rows = r0.max(range.rows.start)..r1.min(range.rows.end);
+    edges.vertical[c0].update(rows.clone(), |edge| offer_edge(edge, border, column_start, &color, priority));
+    edges.vertical[c1].update(rows, |edge| offer_edge(edge, border, column_end, &color, priority));
 }
 
 /// Offers the borders of `rows[span]`, of the row groups they are in (each whole) and of the table
@@ -1426,9 +1523,12 @@ impl ColumnCursor {
 
     /// Advance past occupied columns, returning the column of the next cell
     fn next_free(&mut self) -> u16 {
-        while self.rowspans.get(self.col as usize).is_some_and(|r| *r > 0) {
+        // pyro: never past the last column a cell can start in (`PLACEMENT_LINE_LIMIT`): cells
+        // beyond it share that column.
+        while self.col < PLACEMENT_LINE_LIMIT - 1 && self.rowspans.get(self.col as usize).is_some_and(|r| *r > 0) {
             self.col += 1;
         }
+        self.col = self.col.min(PLACEMENT_LINE_LIMIT - 1);
         self.col
     }
 
@@ -1438,7 +1538,7 @@ impl ColumnCursor {
     }
 
     fn place(&mut self, colspan: u16, rowspan: u16) {
-        let end = self.col + colspan;
+        let end = self.col.saturating_add(colspan).min(PLACEMENT_LINE_LIMIT).max(self.col);
         if self.rowspans.len() < end as usize {
             self.rowspans.resize(end as usize, 0);
         }
@@ -2746,9 +2846,11 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
             }
         }
         if let Some(edges) = ctx.collapsed_edges.as_mut().or(ctx.spare_edges.as_mut()) {
-            let none = CollapsedEdge::NONE;
-            edges.vertical.splice(a * (ncols + 1)..b * (ncols + 1), std::iter::repeat_n(none, new_rows * (ncols + 1)));
-            edges.horizontal.splice(a * ncols..(b + 1) * ncols, std::iter::repeat_n(none, (new_rows + 1) * ncols));
+            debug_assert_eq!(edges.vertical.len(), ncols + 1);
+            for line in &mut edges.vertical {
+                line.splice(a..b, new_rows);
+            }
+            edges.horizontal.splice(a..b + 1, std::iter::repeat_n(EdgeLine::default(), new_rows + 1));
             edges.rows = edges.rows + new_rows - (b - a);
         }
     }
@@ -3377,7 +3479,7 @@ fn collect_table_cells(
             let node = &mut doc.nodes[node_id];
             let rowspan: u16 = node
                 .attr(local_name!("rowspan"))
-                .and_then(|val| val.parse::<u16>().ok())
+                .and_then(|val| val.trim().parse::<u32>().ok().map(|v| v.min(65534) as u16))
                 // pyro: `rowspan="0"` spans the rest of the row group (HTML § 4.9.11; cut at
                 // the group's end below), WPT `css-tables/zero-rowspan-001/002`.
                 .map(|v| if v == 0 { 65534 } else { v.clamp(1, 65534) })
@@ -3392,10 +3494,12 @@ fn collect_table_cells(
             }
             let stylo_style = &node.primary_styles().unwrap();
             let percent_width = stylo_taffy::convert::dimension(stylo_style.get_width()).tag() == taffy::CompactLength::PERCENT_TAG;
+            // pyro: HTML § 4.9.11: `colspan` is 1 to 1000 (0 and junk are 1); `rowspan` 0 to
+            // 65534 (0: the rest of the row group, above).
             let colspan: u16 = node
                 .attr(local_name!("colspan"))
-                .and_then(|val| val.parse().ok())
-                .unwrap_or(1);
+                .and_then(|val| val.trim().parse::<u32>().ok())
+                .map_or(1, |v| v.clamp(1, 1000) as u16);
             let mut style = table_taffy_style(node, wm);
             // pyro: a cell `width` that stays a `calc()` (a length and a percentage) is `auto` in
             // table layout, as in Blink (WPT css-values `calc-width-table-auto-1`, `-fixed-1`).
@@ -3406,6 +3510,9 @@ fn collect_table_cells(
                 style.size.width = taffy::Dimension::auto();
             }
             let col = cursor.next_free();
+            // pyro: no cell reaches past the table's last column line (`PLACEMENT_LINE_LIMIT`):
+            // 66 cells of `colspan="1000"` overflowed the cursor's `u16` arithmetic.
+            let colspan = colspan.min(PLACEMENT_LINE_LIMIT - col).max(1);
             // pyro: relative positioning of the cell, its row and its row group, which move the
             // cell (`table_cell_relative_offset`).
             if let Some(offset) = relative.filter(|_| !wm.is_vertical()) {
@@ -3979,7 +4086,7 @@ pub(crate) mod tests {
         ])]),
         // A vertical table
         ("writing-mode:vertical-rl", &[], &[("table-row-group", &[&[(1, 2, ""), (2, 1, "")], &[(1, 1, ""), (1, 1, "")]])]),
-        // colspan=0 is not a span the table places: the grid places the cells
+        // colspan=0 is colspan=1 (HTML § 4.9.11)
         ("", &[], &[("table-row-group", &[&[(0, 1, ""), (1, 1, "")], &[(1, 1, ""), (1, 1, "")]])]),
     ];
 
@@ -4203,6 +4310,30 @@ pub(crate) mod tests {
     /// cells itself. Covers rowspan holes beside colspans, rowspans clamped to their group, thead/tfoot
     /// reordering, `<col span>`, out-of-flow and `display:none` cells, a vertical table, and the fallback
     /// to the grid for a span the table does not place. (Debug builds also assert it on every grid layout.)
+    /// pyro: a grid line's segments as runs (`EdgeLine`): offers over ranges split and join runs,
+    /// clearing a span costs its runs, not its length, and a splice moves the runs after it.
+    #[test]
+    fn edge_line_runs() {
+        use super::{CollapsedEdge, EdgeLine};
+        let edge = |width: f32| CollapsedEdge { width, ..CollapsedEdge::NONE };
+        let mut line = EdgeLine::default();
+        line.update(0..1_000_000, |_| edge(2.0));
+        assert_eq!(line.runs.len(), 1);
+        line.update(10..20, |e| if e.width < 5.0 { edge(5.0) } else { e });
+        assert_eq!(line.runs.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(), [(0, 10), (10, 20), (20, 1_000_000)]);
+        assert_eq!(line.get(15).width, 5.0);
+        assert_eq!(line.get(25).width, 2.0);
+        line.update(10..20, |_| edge(2.0));
+        assert_eq!(line.runs.len(), 1, "equal neighbours join");
+        line.update(1..999_999, |_| CollapsedEdge::NONE);
+        assert_eq!(line.runs.len(), 2);
+        assert_eq!(line.get(500).width, 0.0);
+        line.splice(0..1, 3);
+        assert_eq!(line.get(2).width, 0.0);
+        assert_eq!(line.get(1_000_001).width, 2.0);
+        assert!(line.all_width(1_000_002, 2.0) == false);
+    }
+
     #[test]
     fn table_cell_placement_is_the_grids() {
         let (own, grid) = (build(false), build(true));
@@ -4242,8 +4373,8 @@ pub(crate) mod tests {
                 }
             }
         }
-        // The colspan=0 table is left to the grid
-        assert_eq!(placed, TABLES.len() - 1);
+        // Every table is placed (colspan=0 is colspan=1)
+        assert_eq!(placed, TABLES.len());
         assert_eq!(own.nodes.len(), grid.nodes.len());
         for ((id, own_node), (_, grid_node)) in own.nodes.iter().zip(grid.nodes.iter()) {
             if !(own_node.is_element() || own_node.is_anonymous()) {
