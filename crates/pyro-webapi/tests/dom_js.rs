@@ -6506,6 +6506,22 @@ fn css_rule_interfaces_rule_lists_and_rule_media() {
     e.page.dispose();
 }
 
+/// `outerHTML` of an element of an XML document is its XML serialization
+/// (html/syntax/serializing-xml-fragments/outerHTML.html).
+#[test]
+fn outer_html_of_an_xml_document_element_is_xml() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const doc = document.implementation.createDocument(null, ''); const ns = 'http://www.w3.org/1999/xhtml';
+             [doc.createElementNS(ns, 'p').outerHTML, doc.createElementNS(ns, 'br').outerHTML, document.createElement('br').outerHTML].join('|')"
+        ),
+        "<p xmlns=\"http://www.w3.org/1999/xhtml\"></p>|<br xmlns=\"http://www.w3.org/1999/xhtml\" />|<br>"
+    );
+    e.page.dispose();
+}
+
 /// ImageData is structured-cloneable (html/webappapis/structured-clone).
 #[test]
 fn image_data_structured_clones() {

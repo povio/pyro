@@ -1419,7 +1419,12 @@ impl JsClass for Element {
         );
         def.accessor(
             "outerHTML",
-            |s, n| Ok(s.string(&n.page().dom.borrow().outer_html(n.id).js()?)),
+            // An element of an XML document serializes as XML (DOM Parsing "fragment serializing").
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                let xml = dom.node_document(n.id).is_ok_and(|d| dom.is_xml_document(d));
+                Ok(s.string(&if xml { dom.xml_serialize(n.id) } else { dom.outer_html(n.id) }.js()?))
+            },
             |s, n, v| {
                 let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element outerHTML", true)?;
                 let has_parent = n.page().dom.borrow().parent(n.id).js()?.is_some();
