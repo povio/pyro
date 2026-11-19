@@ -4956,7 +4956,7 @@ index f465832..772be0f 100644
          }
      }
 diff --git a/src/resolve/tree.rs b/src/resolve/tree.rs
-index c102610..64f6475 100644
+index c102610..87b68cf 100644
 --- a/src/resolve/tree.rs
 +++ b/src/resolve/tree.rs
 @@ -16,6 +16,9 @@ struct StyleTreeNode<B: Brush> {
@@ -5150,7 +5150,7 @@ index c102610..64f6475 100644
                          let break_len = rest.chars().next().unwrap().len_utf8();
                          self.commit_text(span, &rest[..break_len]);
                          rest = &rest[break_len..];
-@@ -155,8 +240,24 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -155,8 +240,42 @@ impl<B: Brush> TreeStyleBuilder<B> {
                      let text_len = rest
                          .find(|c| mode.is_collapsible(c) || is_segment_break(c))
                          .unwrap_or(rest.len());
@@ -5169,13 +5169,31 @@ index c102610..64f6475 100644
 +                    {
 +                        self.drop_pending_whitespace();
 +                    }
++                    // pyro: a segment break between two East Asian (F, W or H) characters other
++                    // than Hangul is removed, with the white space around it (CSS Text 3 § 4.1.3);
++                    // default-ignorable and bidi formatting characters are passed over.
++                    if self.pending_whitespace.as_ref().is_some_and(|pending| pending.segment_break) {
++                        let invisible = |c: &char| {
++                            is_bidi_control(*c)
++                                || *c == EMPTY_BOX_STRUT
++                                || parley_engine::shape::is_format(*c)
++                                || matches!(*c, '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}' | '\u{180B}'..='\u{180F}')
++                        };
++                        let before = self.text.chars().rev().find(|c| !invisible(c));
++                        let after = rest[..text_len].chars().find(|c| !invisible(c));
++                        if let (Some(before), Some(after)) = (before, after)
++                            && parley_engine::removes_segment_break(before, after)
++                        {
++                            self.drop_pending_whitespace();
++                        }
++                    }
                      self.flush_pending_whitespace();
                      self.commit_text(span, &rest[..text_len]);
 +                    self.discard_leading_whitespace = false;
                      rest = &rest[text_len..];
                  }
              }
-@@ -173,8 +274,22 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -173,8 +292,22 @@ impl<B: Brush> TreeStyleBuilder<B> {
          // Whitespace at the start of the inline formatting context is removed, as is whitespace
          // immediately following a preserved segment break. Whitespace following a preserved space
          // or tab is retained, as only collapsible whitespace collapses.
@@ -5200,7 +5218,7 @@ index c102610..64f6475 100644
              return;
          }
  
-@@ -184,6 +299,90 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -184,6 +317,90 @@ impl<B: Brush> TreeStyleBuilder<B> {
              self.resolve_style_id(pending.span)
          };
          self.commit_styled_text(style_index, " ");
@@ -5291,7 +5309,7 @@ index c102610..64f6475 100644
      }
  
      /// The style table index of the span that text is currently being pushed into.
-@@ -211,6 +410,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -211,6 +428,10 @@ impl<B: Brush> TreeStyleBuilder<B> {
              }),
          }
          self.last_item_is_inline_box = false;
@@ -5302,7 +5320,7 @@ index c102610..64f6475 100644
      }
  
      /// The index of `span`'s style in the style table, adding it (and any ancestors that have not
-@@ -226,18 +429,43 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -226,18 +447,43 @@ impl<B: Brush> TreeStyleBuilder<B> {
          let parent_id = self.resolve_style_id(parent);
          let mut style = self.tree[span].style.clone();
          style.parent = parent_id;
@@ -5349,7 +5367,7 @@ index c102610..64f6475 100644
      /// The index of `span`'s style with wrapping enabled, adding it to the table if necessary.
      fn resolve_wrappable_style_id(&mut self, span: usize) -> u16 {
          if self.tree[span].style.text_wrap_mode == TextWrapMode::Wrap {
-@@ -250,7 +478,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -250,7 +496,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
          let span_id = self.resolve_style_id(span);
          let mut style = self.style_table[usize::from(span_id)].clone();
          style.text_wrap_mode = TextWrapMode::Wrap;
@@ -5358,7 +5376,7 @@ index c102610..64f6475 100644
          self.tree[span].wrappable_style_id = Some(style_id);
          style_id
      }
-@@ -272,6 +500,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -272,6 +518,7 @@ impl<B: Brush> TreeStyleBuilder<B> {
              style,
              style_id: None,
              wrappable_style_id: None,
@@ -5366,7 +5384,7 @@ index c102610..64f6475 100644
          });
          self.current_span = self.tree.len() - 1;
      }
-@@ -304,11 +533,17 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -304,11 +551,17 @@ impl<B: Brush> TreeStyleBuilder<B> {
          while self.tree[self.current_span].parent.is_some() {
              self.pop_style_span();
          }
@@ -5384,7 +5402,7 @@ index c102610..64f6475 100644
  
          if style_runs.is_empty() {
              // If there's no text, the layout still needs the root style, e.g., to size a cursor.
-@@ -322,6 +557,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
+@@ -322,6 +575,69 @@ impl<B: Brush> TreeStyleBuilder<B> {
      }
  }
  

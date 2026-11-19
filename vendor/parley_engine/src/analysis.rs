@@ -1100,6 +1100,32 @@ fn phrase_breaks(
 ///   anything but punctuation that does not open and white space, as if they were opening and
 ///   closing brackets (Chromium breaks `国国国国“` before the quotation mark in `zh`, not in `ja`).
 /// Not where breaking is anywhere already or `keep-all` keeps East Asian text together.
+/// pyro: whether a segment break between `before` and `after` is removed (CSS Text 3 § 4.1.3):
+/// both are East Asian Width F, W or H and not Hangul, or either is such punctuation, as in Gecko
+/// (WPT css-text `segment-break-transformation-punctuation-001`, Mozilla bug 1935148).
+pub fn removes_segment_break(before: char, after: char) -> bool {
+    use icu_properties::props::EastAsianWidth;
+    let east_asian = |ch: char| {
+        let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+        matches!(width, EastAsianWidth::Fullwidth | EastAsianWidth::Wide | EastAsianWidth::Halfwidth)
+            && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+    };
+    let punctuation = |ch: char| {
+        east_asian(ch)
+            && matches!(
+                icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+                GeneralCategory::ConnectorPunctuation
+                    | GeneralCategory::DashPunctuation
+                    | GeneralCategory::OpenPunctuation
+                    | GeneralCategory::ClosePunctuation
+                    | GeneralCategory::InitialPunctuation
+                    | GeneralCategory::FinalPunctuation
+                    | GeneralCategory::OtherPunctuation
+            )
+    };
+    (east_asian(before) && east_asian(after)) || punctuation(before) || punctuation(after)
+}
+
 fn quotation_mark_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
     if !text.chars().any(|ch| matches!(ch, '\u{2018}'..='\u{201F}')) {
         return;

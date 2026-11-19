@@ -1559,7 +1559,12 @@
  //!         },
  //!      }],
  //!      select_font, // Selects fonts covering each cluster.
-@@ -122,5 +129,5 @@
+@@ -118,9 +125,9 @@
+ pub use linebender_resource_handle::FontData;
+ pub use parlance::{BaseDirection, NormalizedCoord};
+ 
+-pub use analysis::{Analysis, AnalysisDataSources, CharInfo};
++pub use analysis::{Analysis, AnalysisDataSources, CharInfo, removes_segment_break};
  pub use analyzer::{AnalysisOptions, Analyzer, LineBreakConfig};
  pub use glyph::Glyph;
  pub use shape::atom::{Atom, Atoms, Grapheme, Graphemes, ShapedClusterGlyphs, ShapedSlice};
@@ -1729,10 +1734,12 @@
  
      fn new(
          script: Script,
-@@ -281,6 +339,27 @@
+@@ -279,8 +337,29 @@
+                 | (is_emoji_modifier as u16) << Self::EMOJI_MODIFIER_SHIFT
+                 | (is_emoji_modifier_base as u16) << Self::EMOJI_MODIFIER_BASE_SHIFT,
          }
-     }
- 
++    }
++
 +    /// pyro: sets whether there is a soft wrap opportunity before the character.
 +    #[inline(always)]
 +    fn set_soft_wrap_opportunity(&mut self, value: bool) {
@@ -1745,8 +1752,8 @@
 +    #[inline(always)]
 +    fn set_phrase_fallback(&mut self, value: bool) {
 +        self.flags = self.flags & !Self::PHRASE_FALLBACK_MASK | (value as u16) << Self::PHRASE_FALLBACK_SHIFT;
-+    }
-+
+     }
+ 
 +    /// pyro: whether there is a soft wrap opportunity before the character only for a line whose
 +    /// phrase does not fit (CSS `word-break: auto-phrase` falls back to `normal` there).
 +    #[inline(always)]
@@ -1757,28 +1764,27 @@
      /// Whether this character is a variation selector.
      #[inline(always)]
      pub fn is_variation_selector(self) -> bool {
-@@ -634,6 +713,13 @@
-         .line_break
-         .iter()
+@@ -636,6 +715,13 @@
          .filter(|(_, config)| config.line_break == LineBreak::Anywhere)
-+        .map(|(range, _)| range)
-+        .peekable();
+         .map(|(range, _)| range)
+         .peekable();
 +    // pyro: the `word-break: break-all` ranges.
 +    let mut break_all_iter = options
 +        .line_break
 +        .iter()
 +        .filter(|(_, config)| config.word_break == WordBreak::BreakAll && config.line_break != LineBreak::Anywhere)
-         .map(|(range, _)| range)
-         .peekable();
++        .map(|(range, _)| range)
++        .peekable();
      let boundary_iter = text.char_indices().map(|(byte_pos, ch)| {
-@@ -716,7 +802,11 @@
-             .is_some_and(|range| range.end <= byte_pos)
+         // advance any stale word boundary positions
+         while let Some(&w) = wb_iter.peek() {
+@@ -717,6 +803,10 @@
          {
              _ = break_anywhere_iter.next();
-+        }
+         }
 +        while break_all_iter.peek().is_some_and(|range| range.end <= byte_pos) {
 +            _ = break_all_iter.next();
-         }
++        }
 +        let is_break_all = break_all_iter.peek().is_some_and(|range| range.contains(&byte_pos));
          let is_break_anywhere = break_anywhere_iter
              .peek()
@@ -1813,7 +1819,7 @@
              };
              // Consumers can override soft wrap opportunities, except around a mandatory
              // break.
-@@ -808,21 +919,246 @@
+@@ -808,21 +919,272 @@
          ));
      }
  
@@ -1893,16 +1899,16 @@
 +        if analysis.paragraph_levels.iter().all(|&(_, level)| level == first) {
 +            analysis.paragraph_levels.clear();
 +        }
-     }
- }
- 
++    }
++}
++
 +/// pyro: `word-break: keep-all` keeps letters together, not what a hyphen-minus separates: the
 +/// line may break after one before a letter, as under `normal` (UAX #14: HY ÷ AL; ICU4X's
 +/// keep-all data drops it; WPT css-text `word-break-keep-all-u002d`).
 +fn keep_all_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
 +    if !text.contains('-') || !options.line_break.iter().any(|(_, config)| config.word_break == WordBreak::KeepAll) {
 +        return;
-+    }
+     }
 +    let config_at = |byte: usize| {
 +        options
 +            .line_break
@@ -1926,8 +1932,8 @@
 +            info[index + 1].set_soft_wrap_opportunity(true);
 +        }
 +    }
-+}
-+
+ }
+ 
 +/// pyro: a soft hyphen whose style ends no line there (`hyphens: none`) is no soft wrap
 +/// opportunity, so it does not narrow min-content sizes either; under `word-break: auto-phrase`
 +/// it is a phrase fallback. Runs after [`phrase_breaks`].
@@ -2009,6 +2015,32 @@
 +///   anything but punctuation that does not open and white space, as if they were opening and
 +///   closing brackets (Chromium breaks `国国国国“` before the quotation mark in `zh`, not in `ja`).
 +/// Not where breaking is anywhere already or `keep-all` keeps East Asian text together.
++/// pyro: whether a segment break between `before` and `after` is removed (CSS Text 3 § 4.1.3):
++/// both are East Asian Width F, W or H and not Hangul, or either is such punctuation, as in Gecko
++/// (WPT css-text `segment-break-transformation-punctuation-001`, Mozilla bug 1935148).
++pub fn removes_segment_break(before: char, after: char) -> bool {
++    use icu_properties::props::EastAsianWidth;
++    let east_asian = |ch: char| {
++        let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
++        matches!(width, EastAsianWidth::Fullwidth | EastAsianWidth::Wide | EastAsianWidth::Halfwidth)
++            && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
++    };
++    let punctuation = |ch: char| {
++        east_asian(ch)
++            && matches!(
++                icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
++                GeneralCategory::ConnectorPunctuation
++                    | GeneralCategory::DashPunctuation
++                    | GeneralCategory::OpenPunctuation
++                    | GeneralCategory::ClosePunctuation
++                    | GeneralCategory::InitialPunctuation
++                    | GeneralCategory::FinalPunctuation
++                    | GeneralCategory::OtherPunctuation
++            )
++    };
++    (east_asian(before) && east_asian(after)) || punctuation(before) || punctuation(after)
++}
++
 +fn quotation_mark_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
 +    if !text.chars().any(|ch| matches!(ch, '\u{2018}'..='\u{201F}')) {
 +        return;

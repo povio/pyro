@@ -255,6 +255,24 @@ impl<B: Brush> TreeStyleBuilder<B> {
                     {
                         self.drop_pending_whitespace();
                     }
+                    // pyro: a segment break between two East Asian (F, W or H) characters other
+                    // than Hangul is removed, with the white space around it (CSS Text 3 § 4.1.3);
+                    // default-ignorable and bidi formatting characters are passed over.
+                    if self.pending_whitespace.as_ref().is_some_and(|pending| pending.segment_break) {
+                        let invisible = |c: &char| {
+                            is_bidi_control(*c)
+                                || *c == EMPTY_BOX_STRUT
+                                || parley_engine::shape::is_format(*c)
+                                || matches!(*c, '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}' | '\u{180B}'..='\u{180F}')
+                        };
+                        let before = self.text.chars().rev().find(|c| !invisible(c));
+                        let after = rest[..text_len].chars().find(|c| !invisible(c));
+                        if let (Some(before), Some(after)) = (before, after)
+                            && parley_engine::removes_segment_break(before, after)
+                        {
+                            self.drop_pending_whitespace();
+                        }
+                    }
                     self.flush_pending_whitespace();
                     self.commit_text(span, &rest[..text_len]);
                     self.discard_leading_whitespace = false;
