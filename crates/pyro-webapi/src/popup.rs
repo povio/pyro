@@ -204,25 +204,19 @@ impl PopupData {
         crate::storage::document_origin(&self.page)
     }
 
-    /// Whether the opener may reach into the popup: its document is the
-    /// initial about:blank (which inherits the opener's origin) or shares
-    /// the opener's tuple origin.
+    /// Whether the opener may reach into the popup: their documents have the same origin, compared
+    /// by identity (`PageDom::origin_key`: an opaque origin equals only itself, which an about:blank
+    /// document shares with its creator), as postMessage's "/" compares them.
     fn same_origin(&self) -> bool {
         if let Some(page) = self.popup.page() {
-            return match crate::storage::document_origin(&page) {
-                Some(origin) => self.opener_origin() == Some(origin),
-                None => {
-                    let url = page.dom.borrow().document_data(page.document()).ok().map(|d| d.url.to_string());
-                    url.as_deref() == Some("about:blank")
-                }
-            };
+            return page.origin_key() == self.page.origin_key();
         }
+        // No document of its own (yet): only a tuple origin can be compared.
         let url = self.popup.url.borrow();
-        url.as_str() == "about:blank"
-            || pyro_net::Url::parse(&url).is_ok_and(|u| {
-                let origin = u.origin();
-                origin.is_tuple() && self.opener_origin() == Some(origin.ascii_serialization())
-            })
+        pyro_net::Url::parse(&url).is_ok_and(|u| {
+            let origin = u.origin();
+            origin.is_tuple() && self.opener_origin() == Some(origin.ascii_serialization())
+        })
     }
 
     /// The popup's current URL: its document's once the page exists,

@@ -11148,6 +11148,83 @@ fn post_message_reaches_a_navigated_popup() {
     assert_eq!(value(&mut h, "got.join()"), json!("echo:one"));
 }
 
+/// A popup opened by a sandboxed (opaque) child of an opaque top-level document has the child's
+/// origin, not the top-level opener's: its later about:blank documents inherit that same origin, so
+/// the child's property access and its postMessage("/") agree about the popup (both reach it).
+#[test]
+fn a_popup_takes_the_origin_of_the_document_that_opened_it() {
+    let mut h = Harness::new();
+    let child = r#"<script>
+let w;
+onmessage = (e) => {
+  const say = (v) => parent.postMessage(v, '*');
+  if (e.data === 'open') { w = window.open(); say('opened'); }
+  else if (e.data === 'blank') { w.location.href = 'about:blank'; say('navigating'); }
+  else if (e.data === 'check') {
+    let access;
+    try { access = typeof w.document.body; w.got = []; w.onmessage = (m) => w.got.push(m.data); } catch (err) { access = err.name; }
+    w.postMessage('slash', '/');
+    say('access:' + access);
+  } else if (e.data === 'got') {
+    let got; try { got = w.got.join(); } catch (err) { got = err.name; }
+    say('got:' + got);
+  }
+};
+</script>"#;
+    let top = format!(
+        "<!doctype html><script>window.log = []; onmessage = (e) => log.push(e.data);</script><iframe sandbox='allow-scripts allow-popups' srcdoc=\"{}\"></iframe>",
+        child.replace('"', "&quot;")
+    );
+    load_html(&mut h, &top);
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    h.run_for(50);
+    value(&mut h, "frames[0].postMessage('open', '*'); 1");
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    h.until_response(id);
+    h.run_for(100);
+    value(&mut h, "frames[0].postMessage('blank', '*'); 1");
+    let session = popup.clone();
+    h.until_event(move |m| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(session));
+    h.run_for(100);
+    value(&mut h, "frames[0].postMessage('check', '*'); 1");
+    h.run_for(100);
+    value(&mut h, "frames[0].postMessage('got', '*'); 1");
+    h.run_for(100);
+    assert_eq!(value(&mut h, "log.join(' ')"), json!("opened navigating access:object got:slash"));
+}
+
+/// BroadcastChannel matches opaque origins by identity: an about:blank iframe inherits its opaque
+/// parent's origin and the two talk; a sandboxed frame (an opaque origin of its own) hears neither.
+#[test]
+fn broadcast_channel_matches_opaque_origins_by_identity() {
+    let mut h = Harness::new();
+    let sandboxed = "<script>new BroadcastChannel('c').onmessage = (e) => parent.postMessage('sandboxed:' + e.data, '*')</script>";
+    load_html(
+        &mut h,
+        &format!(
+            "<!doctype html><script>window.log = []; onmessage = (e) => log.push(e.data); new BroadcastChannel('c').onmessage = (e) => log.push('top:' + e.data);</script><iframe id=blank></iframe><iframe sandbox=allow-scripts srcdoc=\"{sandboxed}\"></iframe>"
+        ),
+    );
+    h.run_for(100);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({ "expression": "blank.contentWindow.eval(\"new BroadcastChannel('c').postMessage('hi')\"); 1", "returnByValue": true }),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!(1), "{r}");
+    h.run_for(100);
+    let r = h.page("Runtime.evaluate", json!({ "expression": "log.join(' ')", "returnByValue": true }));
+    assert_eq!(r["result"]["result"]["value"], json!("top:hi"));
+}
+
 /// A closed popup's document leaves the DOM store it shares with its opener and is freed, even while
 /// the opener keeps its WindowProxy (and a function it read through it): after close the proxy answers
 /// `closed` and holds nothing that keeps the popup's realm or DOM alive. Freeing takes two garbage

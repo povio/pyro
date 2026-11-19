@@ -1572,11 +1572,23 @@ impl Browser {
         p.session_storage = session.clone();
         p.frames.settings.borrow_mut().session = session.clone();
         p.main_frame.name = ticket.name().to_owned();
-        if let Some((frames, origin)) = opener_state {
+        if let Some((frames, opener_main)) = opener_state {
+            // The popup's creator is the document that called `window.open`, which may be a frame of
+            // the opener page (a sandboxed child has an opaque origin of its own): a popup made in that
+            // document's context (`FrameHost::prebuild_popup`, sharing its DOM store) already has its
+            // origin, which later about:blank documents of the popup inherit. Otherwise the initial
+            // about:blank document takes the opener page's.
+            let prebuilt = frames.upgrade().is_some_and(|f| Rc::ptr_eq(&f.dom, &p.frames.dom))
+                && p.main_frame.url == "about:blank";
+            let origin = if prebuilt {
+                (p.main_frame.origin.clone(), p.main_frame.opaque_origin, p.main_frame.base_url.clone())
+            } else {
+                opener_main
+            };
             *p.frames.opener.borrow_mut() = Some(frames);
             *p.frames.popup.borrow_mut() = Some(ticket.clone());
             // The initial about:blank document is the opener's creation.
-            if p.main_frame.url == "about:blank" {
+            if p.main_frame.url == "about:blank" && !prebuilt {
                 p.main_frame.origin = origin.0.clone();
                 p.main_frame.opaque_origin = origin.1;
                 p.main_frame.base_url = origin.2.clone();
