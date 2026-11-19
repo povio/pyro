@@ -818,10 +818,14 @@ fn collect_layout_children_with_wrap(
     let skips_contents = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
         !matches!(el.name.local.as_ref(), "input" | "textarea" | "select")
     }) && doc.nodes[container_node_id].display_style().is_some_and(|display| {
+        // pyro: nor a table or an internal table box, to which size containment does not apply
+        // (CSS Contain 2 § 3.1; WPT css-contain `content-visibility-094`).
         !display.is_contents()
             && !display.is_none()
             && !(display.outside() == style::values::specified::box_::DisplayOutside::Inline
                 && display.inside() == DisplayInside::Flow)
+            && display.inside() != DisplayInside::Table
+            && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
     }) && doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
         style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
     });
