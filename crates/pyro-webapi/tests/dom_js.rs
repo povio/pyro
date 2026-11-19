@@ -6521,6 +6521,31 @@ fn image_data_structured_clones() {
     e.page.dispose();
 }
 
+/// `@page` rules expose their declarations as CSSPageDescriptors and their
+/// margin rules as CSSMarginRules, edits write back into the page rule, and
+/// a removed rule has no parent sheet (css/cssom/idlharness.html,
+/// cssom-pagerule.html, page-descriptors.html).
+#[test]
+fn page_rules_have_descriptors_and_margin_rules() {
+    let e = env("<style id=s>@page :first { margin: 1in; @top-left { content: 'a' } }</style>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const sh = document.getElementById('s').sheet, page = sh.cssRules[0], m = page.cssRules[0]; const out = [];
+             out.push(Object.prototype.toString.call(page.style), page.style.marginTop, page.cssRules.length,
+                      m.constructor.name, m.name, m.type, m.parentRule === page, m === page.cssRules[0], m.style.getPropertyValue('content'));
+             page.style.marginTop = '2px'; m.style.color = 'red';
+             out.push(page.cssText, m.cssText);
+             sh.deleteRule(0); out.push(page.parentStyleSheet === null ? '' : 'attached');
+             out.join('|')"
+        ),
+        "[object CSSPageDescriptors]|1in|1|CSSMarginRule|top-left|9|true|true|\"a\"|\
+         @page :first { margin: 2px 1in 1in; @top-left { content: 'a'; color: red; } }|\
+         @top-left { content: 'a'; color: red; }|"
+    );
+    e.page.dispose();
+}
+
 /// CSSOM interface shapes (css/cssom/idlharness.html): StyleSheet carries the
 /// sheet attributes, styles are CSSStyleProperties, required arguments are
 /// required (a bare `deleteRule()` must not delete rule 0), and an `@import`

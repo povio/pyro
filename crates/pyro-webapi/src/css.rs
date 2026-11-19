@@ -363,6 +363,12 @@ impl StyleData {
             }
             StyleSource::Rule { node, .. } => match &node.kind {
                 RuleKind::Style { block, .. } => block.borrow().clone(),
+                // `@page` (its declarations, not its margin rules), margin and descriptor rules.
+                RuleKind::Other { text, .. } => {
+                    let text = text.borrow();
+                    let Some((_, body)) = split_block(&text) else { return String::new() };
+                    if is_page(node) { page_parts(body).0 } else { body.trim().to_owned() }
+                }
                 _ => String::new(),
             },
         }
@@ -386,10 +392,22 @@ impl StyleData {
         match &self.source {
             StyleSource::Inline(el) => el.page.dom.borrow_mut().set_attribute(el.id, "style", &text).js(),
             StyleSource::Rule { owner, node } => {
-                if let RuleKind::Style { block, .. } = &node.kind {
-                    *block.borrow_mut() = text;
-                    owner.commit(&owner.model());
+                match &node.kind {
+                    RuleKind::Style { block, .. } => *block.borrow_mut() = text,
+                    RuleKind::Other { .. } if is_page(node) => write_page(&owner.model(), node, Some(&text)),
+                    RuleKind::Other { text: rule, .. } => {
+                        let head = split_block(&rule.borrow()).map(|(h, _)| h.to_owned());
+                        let Some(head) = head else { return Ok(()) };
+                        *rule.borrow_mut() =
+                            if text.trim().is_empty() { format!("{head} {{ }}") } else { format!("{head} {{ {} }}", text.trim()) };
+                        // A margin rule lives in its `@page` rule's text.
+                        if let Some(page) = node.parent.upgrade().filter(|p| is_page(p)) {
+                            write_page(&owner.model(), &page, None);
+                        }
+                    }
+                    RuleKind::Group { .. } => return Ok(()),
                 }
+                owner.commit(&owner.model());
                 Ok(())
             }
         }
@@ -611,7 +629,12 @@ pub struct SheetModel {
     namespaces: RefCell<Namespaces>,
     /// `Dom::version` at the last source check: unchanged means nothing to compare.
     checked: Cell<u64>,
+    /// The margin rules of each `@page` rule of the sheet (by its identity),
+    /// parsed from its text when that changes, so their objects stay the same.
+    margins: RefCell<MarginCache>,
 }
+
+type MarginCache = std::collections::HashMap<(u64, u64), (Vec<String>, Vec<Rc<RuleNode>>)>;
 
 impl SheetModel {
     /// CSSOM edits replaced the text the style engine reads for this sheet.
@@ -733,6 +756,7 @@ fn sheet_model(page: &PageDom, owner: NodeId) -> Rc<SheetModel> {
             list: RuleList::default(),
             namespaces: RefCell::default(),
             checked: Cell::new(version),
+            margins: RefCell::default(),
         });
         page.sheet_models.borrow_mut().insert(owner, model.clone());
         model
@@ -741,6 +765,7 @@ fn sheet_model(page: &PageDom, owner: NodeId) -> Rc<SheetModel> {
     if *model.source.borrow() != source {
         let mut namespaces = Vec::new();
         model.list.replace(parsed_nodes(&source, &mut namespaces));
+        model.margins.borrow_mut().clear();
         *model.namespaces.borrow_mut() = namespaces;
         if model.edited.replace(false) {
             page.set_style_element_sheet(owner);
@@ -818,6 +843,7 @@ impl RuleListData {
         match &self.group {
             Some(node) => match &node.kind {
                 RuleKind::Group { list, .. } => list.rules.borrow().clone(),
+                _ if is_page(node) => page_margins(&self.owner.model(), node),
                 _ => Vec::new(),
             },
             None => self.owner.model().list.rules.borrow().clone(),
@@ -865,6 +891,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
         RuleKind::Group { .. } => s.wrap::<CssConditionRule>(data, key),
         RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, key),
+        RuleKind::Other { rule_type: MARGIN_RULE, .. } => s.wrap::<CssMarginRule>(data, key),
         RuleKind::Other { text, .. } => {
             let text = text.borrow();
             match at_name(&text).as_str() {
@@ -931,7 +958,15 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
         Some(parent) => Ok(rule_wrapper(s, &parent, &r.owner)?.value()),
         None => Ok(s.null()),
     });
-    def.getter("parentStyleSheet", |s, r| Ok(r.owner.wrapper(s)?.value()));
+    // Null once the rule (or the rule holding it) was removed from its sheet.
+    def.getter("parentStyleSheet", |s, r| {
+        let mut top = r.node.clone();
+        while let Some(parent) = top.parent.upgrade() {
+            top = parent;
+        }
+        let attached = r.owner.model().list.rules.borrow().iter().any(|n| Rc::ptr_eq(n, &top));
+        if attached { Ok(r.owner.wrapper(s)?.value()) } else { Ok(s.null()) }
+    });
 }
 
 pub struct CssStyleRule;
@@ -1033,6 +1068,123 @@ impl JsClass for CssRule {
     }
 }
 
+/// `(head, body)` of an at-rule kept as text: before its `{` and inside it.
+fn split_block(text: &str) -> Option<(&str, &str)> {
+    let open = text.find('{')?;
+    let close = text.rfind('}').filter(|&c| c > open)?;
+    Some((text[..open].trim_end(), &text[open + 1..close]))
+}
+
+/// A `@page` body split into its declarations and its margin at-rules.
+fn page_parts(body: &str) -> (String, Vec<String>) {
+    let (mut decls, mut margins) = (String::new(), Vec::new());
+    let mut rest = body;
+    while let Some(at) = rest.find('@') {
+        decls.push_str(&rest[..at]);
+        let after = &rest[at..];
+        let Some(open) = after.find('{') else {
+            rest = "";
+            break;
+        };
+        let mut depth = 0;
+        let mut end = after.len();
+        for (i, c) in after[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        margins.push(after[..end].trim().to_owned());
+        rest = &after[end..];
+    }
+    decls.push_str(rest);
+    (decls.trim().to_owned(), margins)
+}
+
+/// The margin names of `@page` (CSS Paged Media 3 §4.2).
+const MARGIN_RULES: &[&str] = &[
+    "top-left-corner", "top-left", "top-center", "top-right", "top-right-corner", "bottom-left-corner",
+    "bottom-left", "bottom-center", "bottom-right", "bottom-right-corner", "left-top", "left-middle",
+    "left-bottom", "right-top", "right-middle", "right-bottom",
+];
+
+/// `CSSRule.type` of a margin rule.
+const MARGIN_RULE: u16 = 9;
+
+
+fn is_page(node: &RuleNode) -> bool {
+    matches!(&node.kind, RuleKind::Other { rule_type: 6, .. })
+}
+
+/// The margin rules of a `@page` rule.
+fn page_margins(model: &SheetModel, page: &Rc<RuleNode>) -> Vec<Rc<RuleNode>> {
+    let RuleKind::Other { text, rule_type: 6 } = &page.kind else { return Vec::new() };
+    let margins = split_block(&text.borrow()).map(|(_, body)| page_parts(body).1).unwrap_or_default();
+    let margins: Vec<String> = margins
+        .into_iter()
+        .filter(|m| MARGIN_RULES.contains(&at_name(m).as_str()))
+        .collect();
+    let key = (page.identity.0, page.identity.1);
+    {
+        let mut cache = model.margins.borrow_mut();
+        if let Some((texts, nodes)) = cache.get(&key) {
+            if *texts == margins {
+                return nodes.clone();
+            }
+        }
+        let nodes: Vec<Rc<RuleNode>> = margins
+            .iter()
+            .map(|m| {
+                let text = match split_block(m) {
+                    Some((head, body)) if body.trim().is_empty() => format!("{head} {{ }}"),
+                    Some((head, body)) => format!("{head} {{ {} }}", body.trim()),
+                    None => m.clone(),
+                };
+                RuleNode::new(ParsedRule::Other { rule_type: MARGIN_RULE, text }, Rc::downgrade(page))
+            })
+            .collect();
+        // Keep the texts as the page holds them, so an unchanged page reuses the nodes.
+        cache.insert(key, (margins, nodes.clone()));
+        nodes
+    }
+}
+
+/// Rewrites a `@page` rule's text from its declarations and margin rules.
+fn write_page(model: &SheetModel, page: &RuleNode, decls: Option<&str>) {
+    let RuleKind::Other { text, .. } = &page.kind else { return };
+    let current = text.borrow().clone();
+    let Some((head, body)) = split_block(&current) else { return };
+    let (old_decls, _) = page_parts(body);
+    let decls = decls.unwrap_or(&old_decls).trim().to_owned();
+    let key = (page.identity.0, page.identity.1);
+    let margins: Vec<String> = model
+        .margins
+        .borrow()
+        .get(&key)
+        .map(|(_, nodes)| {
+            nodes.iter().map(|n| match &n.kind { RuleKind::Other { text, .. } => text.borrow().clone(), _ => String::new() }).collect()
+        })
+        .unwrap_or_else(|| page_parts(body).1);
+    let mut inner: Vec<String> = Vec::new();
+    if !decls.is_empty() {
+        inner.push(decls);
+    }
+    inner.extend(margins.iter().cloned());
+    let body = if inner.is_empty() { " ".to_owned() } else { format!(" {} ", inner.join(" ")) };
+    *text.borrow_mut() = format!("{head} {{{body}}}");
+    // The cached margins now match the new text.
+    if let Some(entry) = model.margins.borrow_mut().get_mut(&key) {
+        entry.0 = margins;
+    }
+}
+
 /// The text of a rule kept as written (`@import ...;`), or "".
 fn rule_text(r: &RuleData) -> String {
     match &r.node.kind {
@@ -1126,6 +1278,53 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
     });
 });
 rule_class!(CssFontFaceRule, "CSSFontFaceRule", CssRule);
+/// `style` of a rule whose block holds declarations: one object per rule
+/// and realm, of class `C`.
+fn rule_style<'s, C: JsClass<Data = StyleData>>(s: &Scope<'s>, r: &RuleData) -> JsResult<Value<'s>> {
+    let key = IdentityKey(r.node.identity.0 | (1 << 55), r.node.identity.1);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node.clone() };
+    Ok(s.wrap::<C>(StyleData { source }, Some(key))?.value())
+}
+
+/// `CSSPageDescriptors`: the declarations of a `@page` rule.
+pub struct CssPageDescriptors;
+impl JsClass for CssPageDescriptors {
+    const NAME: &'static str = "CSSPageDescriptors";
+    type Data = StyleData;
+    type Parent = CssStyleDeclaration;
+    fn define(def: &mut ClassDef<Self>) {
+        // The page descriptors, by their IDL and dashed names.
+        macro_rules! descriptors {
+            ($(($idl:literal, $css:literal)),* $(,)?) => {$(
+                def.accessor($idl, |s, st| Ok(s.string(&st.get($css))), |_s, st, v| st.set($css, &dom_string(v)?, false));
+                if $idl != $css {
+                    def.accessor($css, |s, st| Ok(s.string(&st.get($css))), |_s, st, v| st.set($css, &dom_string(v)?, false));
+                }
+            )*};
+        }
+        descriptors!(
+            ("margin", "margin"),
+            ("marginTop", "margin-top"),
+            ("marginRight", "margin-right"),
+            ("marginBottom", "margin-bottom"),
+            ("marginLeft", "margin-left"),
+            ("size", "size"),
+            ("pageOrientation", "page-orientation"),
+        );
+    }
+}
+
+rule_class!(CssMarginRule, "CSSMarginRule", CssRule, |def| {
+    def.getter("name", |s, r| Ok(s.string(&at_name(&rule_text(r)))));
+    def.accessor("style", rule_style::<CssStyleProperties>, |_s, r, v| {
+        let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node.clone() };
+        StyleData { source }.set_css_text(&dom_string(v)?)
+    });
+});
+
 /// A page selector list as `CSSPageRule.selectorText` serializes it
 /// (`name:first`, pseudo-pages lowercased), or `None` when it is invalid.
 fn page_selector(text: &str) -> Option<String> {
@@ -1152,6 +1351,10 @@ fn page_selector(text: &str) -> Option<String> {
 }
 
 rule_class!(CssPageRule, "CSSPageRule", CssGroupRule, |def| {
+    def.accessor("style", rule_style::<CssPageDescriptors>, |_s, r, v| {
+        let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node.clone() };
+        StyleData { source }.set_css_text(&dom_string(v)?)
+    });
     def.accessor(
         "selectorText",
         |s, r| Ok(s.string(&rule_prelude(r))),
@@ -1394,6 +1597,7 @@ impl Constructed {
                 list: RuleList::default(),
                 namespaces: RefCell::default(),
                 checked: Cell::new(0),
+                margins: RefCell::default(),
             }),
             media: RefCell::new(media_text(&media)),
             disabled: Cell::new(disabled),
@@ -1419,6 +1623,7 @@ impl Constructed {
                 list: RuleList::default(),
                 namespaces: RefCell::new(namespaces),
                 checked: Cell::new(0),
+                margins: RefCell::default(),
             }),
             media: RefCell::new(media),
             disabled: Cell::new(false),
@@ -1468,6 +1673,7 @@ impl Constructed {
             .map(|r| RuleNode::new(r, Weak::new()))
             .collect();
         self.model.list.replace(rules);
+        self.model.margins.borrow_mut().clear();
         *self.model.namespaces.borrow_mut() = namespaces;
         self.commit();
     }
@@ -2212,6 +2418,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssImportRule>();
     engine.register::<CssFontFaceRule>();
     engine.register::<CssPageRule>();
+    engine.register::<CssPageDescriptors>();
+    engine.register::<CssMarginRule>();
     engine.register::<CssKeyframesRule>();
     engine.register::<CssNamespaceRule>();
     engine.register::<CssFontFeatureValuesRule>();
