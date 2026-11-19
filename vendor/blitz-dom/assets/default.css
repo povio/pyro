@@ -90,6 +90,7 @@ input[type="checkbox"] {
 input[type="checkbox" i],
 input[type="radio" i],
 input[type="range" i],
+select,
 progress,
 meter {
     appearance: auto;
@@ -101,6 +102,19 @@ input[type="radio"] {
     border: none;
     padding: initial;
     margin: 3px 3px 0 5px;
+}
+
+/* pyro: Chromium's color well (html.css): sized in logical axes, so it turns with the
+   writing mode. */
+input[type="color" i] {
+    box-sizing: border-box;
+    inline-size: 50px;
+    block-size: 27px;
+    border: 1px solid #767676;
+    padding-block: 1px;
+    padding-inline: 2px;
+    background-color: #EFEFEF;
+    cursor: default;
 }
 
 /* pyro: Chromium's range, progress and meter (html.css): a range is 129x16 by
@@ -135,7 +149,8 @@ meter {
    padding (a 40x30 input's box is 48x36), textareas 1px solid with 2px. */
 input {
     border: 2px inset #767676;
-    padding: 1px 2px;
+    padding-block: 1px;
+    padding-inline: 2px;
     background-color: Field;
 }
 
@@ -240,7 +255,8 @@ input[type="button"] {
        appearance-disabling properties; WPT css-ui `compute-kind-widget-generated/*`). */
     -moz-default-appearance: button;
     appearance: auto;
-    padding: 1px 6px;
+    padding-block: 1px;
+    padding-inline: 6px;
     color: black;
     background-color: #EFEFEF;
     text-align: center;
@@ -278,7 +294,8 @@ input[type="file" i]::file-selector-button {
     border: 1px solid #999;
     -moz-default-appearance: button;
     appearance: auto;
-    padding: 1px 6px;
+    padding-block: 1px;
+    padding-inline: 6px;
     color: black;
     background-color: #EFEFEF;
     text-align: center;

@@ -7581,7 +7581,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,502 +2586,3467 @@
+@@ -967,502 +2586,3524 @@
          }
      }
  
@@ -9404,9 +9404,66 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        }
 +    }
 +
++    /// pyro: the value of a text control in a vertical writing mode. The editor's layout is
++    /// logical (laid out at the content box's inline size, `layout/mod.rs`): each line is turned
++    /// as a vertical inline layout's are (`draw_vertical_inline_layout`), lines running from the
++    /// right in `vertical-rl` and from the left in `vertical-lr`, glyph tops to the right
++    /// (`sideways-lr`: turned the other way, from the bottom). A single line is centred in the
++    /// block axis. Returns `false` when the control is horizontal.
++    fn draw_vertical_text_input_text(&self, scene: &mut impl PaintScene, pos: Point, input_data: &TextInputData) -> bool {
++        let Some(block_lr) = self.node.vertical_block_axis() else { return false };
++        let Some(layout) = input_data.editor.try_layout() else { return true };
++        let unrounded = self.node.unrounded_layout();
++        let content_width = unrounded.content_box_width() as f64;
++        let content_height = unrounded.content_box_height() as f64;
++        let scroll = self.node.scroll_offset();
++        let left = pos.x + scroll.x + input_data.content_box_subpixel_offset.x as f64;
++        let top = pos.y + scroll.y + input_data.content_box_subpixel_offset.y as f64;
++        // The block-axis offset of the first line: a single line is centred.
++        let block_offset = if input_data.is_multiline {
++            0.0
++        } else {
++            ((content_width - layout.height() as f64 / self.scale) / 2.0).max(0.0)
++        };
++        let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
++        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
++        let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
++        for line in layout.lines() {
++            let metrics = line.metrics();
++            let transform = if sideways_lr {
++                let origin = left + block_offset;
++                self.transform
++                    * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, (top + content_height) * self.scale])
++            } else if block_lr {
++                let flip = (metrics.block_min_coord + metrics.block_max_coord) as f64;
++                let origin = left + block_offset;
++                self.transform * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
++            } else {
++                let origin = left + content_width - block_offset;
++                self.transform * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale, top * self.scale])
++            };
++            crate::text::stroke_text(
++                scene,
++                std::iter::once(line),
++                self.context.dom,
++                transform,
++                options,
++                self.node.id,
++                None,
++                &mut draw_text_context,
++                None,
++                None,
++            );
++        }
++        true
++    }
++
 +    fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
 +        // Render the text in text inputs
 +        if let Some(input_data) = self.text_input {
++            if self.draw_vertical_text_input_text(scene, pos, input_data) {
++                return;
++            }
 +            // For single-line inputs, add an offset to vertically center the text input layout
 +            // within the content box of it's node.
 +            let y_offset = self.node.text_input_v_centering_offset(self.scale);
@@ -18403,7 +18460,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 diff --git a/packages/blitz-paint/src/render/form_controls.rs b/packages/blitz-paint/src/render/form_controls.rs
 --- a/packages/blitz-paint/src/render/form_controls.rs
 +++ b/packages/blitz-paint/src/render/form_controls.rs
-@@ -9,21 +9,37 @@
+@@ -9,21 +9,41 @@
  
  impl ElementCx<'_, '_> {
      pub(super) fn draw_input(&self, scene: &mut impl PaintScene) {
@@ -18412,6 +18469,10 @@ diff --git a/packages/blitz-paint/src/render/form_controls.rs b/packages/blitz-p
 +        }
 +        if matches!(&**self.node.local_name(), "progress" | "meter") {
 +            self.draw_bar_widget(scene);
++            return;
++        }
++        if self.node.local_name() == "select" {
++            self.draw_select_arrow(scene);
 +            return;
 +        }
          if self.node.local_name() != "input" {
@@ -18443,12 +18504,55 @@ diff --git a/packages/blitz-paint/src/render/form_controls.rs b/packages/blitz-p
          };
  
          let width = self.frame.border_box.width();
-@@ -102,3 +118,197 @@
+@@ -102,3 +122,240 @@
          scene.fill(Fill::NonZero, transform, Color::WHITE, None, &gap);
      }
  }
 +
 +impl ElementCx<'_, '_> {
++    /// pyro: the drop-down arrow of a native drop-down `<select>` (a menu list; a list box,
++    /// `multiple` or `size` above 1, has none), a chevron in the room its intrinsic size keeps for it
++    /// at the inline end (`layout/mod.rs`), centred in the block axis. `appearance: none` has none
++    /// (CSS UI 4). In a vertical writing mode the inline end is the bottom (`direction: rtl`: the top).
++    fn draw_select_arrow(&self, scene: &mut impl PaintScene) {
++        if self.native_appearance_none() {
++            return;
++        }
++        let listbox = self.node.attr(local_name!("multiple")).is_some()
++            || self
++                .node
++                .attr(local_name!("size"))
++                .and_then(|s| s.trim().parse::<u32>().ok())
++                .is_some_and(|s| s > 1);
++        if listbox {
++            return;
++        }
++        let wm = self.style.writing_mode;
++        let vertical = wm.is_vertical();
++        let rtl = !wm.is_bidi_ltr();
++        let padding = self.frame.padding_box;
++        let s = self.scale;
++        // The arrow's centre, 9.5px in from the inline-end padding edge.
++        let inset = 9.5 * s;
++        let center = if vertical {
++            Point::new((padding.x0 + padding.x1) / 2.0, if rtl { padding.y0 + inset } else { padding.y1 - inset })
++        } else {
++            Point::new(if rtl { padding.x0 + inset } else { padding.x1 - inset }, (padding.y0 + padding.y1) / 2.0)
++        };
++        let inline_size = if vertical { padding.height() } else { padding.width() };
++        if inline_size < 2.0 * inset {
++            return;
++        }
++        let (half, depth) = (3.5 * s, 2.0 * s);
++        let mut path = BezPath::new();
++        path.move_to((center.x - half, center.y - depth));
++        path.line_to((center.x, center.y + depth));
++        path.line_to((center.x + half, center.y - depth));
++        let color = self.style.clone_color().as_srgb_color();
++        let stroke = Stroke::new(1.5 * s).with_caps(Cap::Round).with_join(Join::Round);
++        scene.stroke(&stroke, self.transform, color, None, &path);
++    }
++
 +    /// pyro: whether the element's `appearance` is `none` (no native look, CSS UI 4).
 +    fn native_appearance_none(&self) -> bool {
 +        use style::computed_values::appearance::T as Appearance;

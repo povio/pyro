@@ -3908,9 +3908,66 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: the value of a text control in a vertical writing mode. The editor's layout is
+    /// logical (laid out at the content box's inline size, `layout/mod.rs`): each line is turned
+    /// as a vertical inline layout's are (`draw_vertical_inline_layout`), lines running from the
+    /// right in `vertical-rl` and from the left in `vertical-lr`, glyph tops to the right
+    /// (`sideways-lr`: turned the other way, from the bottom). A single line is centred in the
+    /// block axis. Returns `false` when the control is horizontal.
+    fn draw_vertical_text_input_text(&self, scene: &mut impl PaintScene, pos: Point, input_data: &TextInputData) -> bool {
+        let Some(block_lr) = self.node.vertical_block_axis() else { return false };
+        let Some(layout) = input_data.editor.try_layout() else { return true };
+        let unrounded = self.node.unrounded_layout();
+        let content_width = unrounded.content_box_width() as f64;
+        let content_height = unrounded.content_box_height() as f64;
+        let scroll = self.node.scroll_offset();
+        let left = pos.x + scroll.x + input_data.content_box_subpixel_offset.x as f64;
+        let top = pos.y + scroll.y + input_data.content_box_subpixel_offset.y as f64;
+        // The block-axis offset of the first line: a single line is centred.
+        let block_offset = if input_data.is_multiline {
+            0.0
+        } else {
+            ((content_width - layout.height() as f64 / self.scale) / 2.0).max(0.0)
+        };
+        let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
+        for line in layout.lines() {
+            let metrics = line.metrics();
+            let transform = if sideways_lr {
+                let origin = left + block_offset;
+                self.transform
+                    * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, (top + content_height) * self.scale])
+            } else if block_lr {
+                let flip = (metrics.block_min_coord + metrics.block_max_coord) as f64;
+                let origin = left + block_offset;
+                self.transform * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
+            } else {
+                let origin = left + content_width - block_offset;
+                self.transform * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale, top * self.scale])
+            };
+            crate::text::stroke_text(
+                scene,
+                std::iter::once(line),
+                self.context.dom,
+                transform,
+                options,
+                self.node.id,
+                None,
+                &mut draw_text_context,
+                None,
+                None,
+            );
+        }
+        true
+    }
+
     fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
         // Render the text in text inputs
         if let Some(input_data) = self.text_input {
+            if self.draw_vertical_text_input_text(scene, pos, input_data) {
+                return;
+            }
             // For single-line inputs, add an offset to vertically center the text input layout
             // within the content box of it's node.
             let y_offset = self.node.text_input_v_centering_offset(self.scale);

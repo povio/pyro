@@ -16,6 +16,10 @@ impl ElementCx<'_, '_> {
             self.draw_bar_widget(scene);
             return;
         }
+        if self.node.local_name() == "select" {
+            self.draw_select_arrow(scene);
+            return;
+        }
         if self.node.local_name() != "input" {
             return;
         }
@@ -120,6 +124,49 @@ fn draw_radio_button(
 }
 
 impl ElementCx<'_, '_> {
+    /// pyro: the drop-down arrow of a native drop-down `<select>` (a menu list; a list box,
+    /// `multiple` or `size` above 1, has none), a chevron in the room its intrinsic size keeps for it
+    /// at the inline end (`layout/mod.rs`), centred in the block axis. `appearance: none` has none
+    /// (CSS UI 4). In a vertical writing mode the inline end is the bottom (`direction: rtl`: the top).
+    fn draw_select_arrow(&self, scene: &mut impl PaintScene) {
+        if self.native_appearance_none() {
+            return;
+        }
+        let listbox = self.node.attr(local_name!("multiple")).is_some()
+            || self
+                .node
+                .attr(local_name!("size"))
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .is_some_and(|s| s > 1);
+        if listbox {
+            return;
+        }
+        let wm = self.style.writing_mode;
+        let vertical = wm.is_vertical();
+        let rtl = !wm.is_bidi_ltr();
+        let padding = self.frame.padding_box;
+        let s = self.scale;
+        // The arrow's centre, 9.5px in from the inline-end padding edge.
+        let inset = 9.5 * s;
+        let center = if vertical {
+            Point::new((padding.x0 + padding.x1) / 2.0, if rtl { padding.y0 + inset } else { padding.y1 - inset })
+        } else {
+            Point::new(if rtl { padding.x0 + inset } else { padding.x1 - inset }, (padding.y0 + padding.y1) / 2.0)
+        };
+        let inline_size = if vertical { padding.height() } else { padding.width() };
+        if inline_size < 2.0 * inset {
+            return;
+        }
+        let (half, depth) = (3.5 * s, 2.0 * s);
+        let mut path = BezPath::new();
+        path.move_to((center.x - half, center.y - depth));
+        path.line_to((center.x, center.y + depth));
+        path.line_to((center.x + half, center.y - depth));
+        let color = self.style.clone_color().as_srgb_color();
+        let stroke = Stroke::new(1.5 * s).with_caps(Cap::Round).with_join(Join::Round);
+        scene.stroke(&stroke, self.transform, color, None, &path);
+    }
+
     /// pyro: whether the element's `appearance` is `none` (no native look, CSS UI 4).
     fn native_appearance_none(&self) -> bool {
         use style::computed_values::appearance::T as Appearance;
