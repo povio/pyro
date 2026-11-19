@@ -178,6 +178,9 @@ pub struct ElementData {
     /// pyro: the node holding this list item's `::marker` style, the brush of its marker's text
     /// (`layout::list`). Not in the tree; its parent is the item.
     pub marker_style: Option<NodeId>,
+    /// pyro: the box of this list item's inside marker when its `::marker` style combines it in a
+    /// vertical line (`text-combine-upright: all`, `layout::combined_text`). Not in the tree.
+    pub marker_combined_box: Option<NodeId>,
     /// pyro: the element's scroll pseudo-element boxes (its `::scroll-marker-group`,
     /// `::scroll-button()`s and `::scroll-marker`), or what pseudo-element box this node is
     /// (`layout::scroll_markers`).
@@ -459,6 +462,7 @@ impl Clone for ElementData {
             sampled_animations: None,
             sampled_marker: None,
             sampled_backdrop: None,
+            marker_combined_box: None,
             sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
@@ -592,6 +596,7 @@ impl ElementData {
             sampled_animations: None,
             sampled_marker: None,
             sampled_backdrop: None,
+            marker_combined_box: None,
             sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,

@@ -641,7 +641,29 @@ fn build_inline_layout_with(
                 bidi_scan.rtl |= rtl;
             }
         }
+        // pyro: combined in a vertical line: its box (`layout::combined_text`), placed as one
+        // letter.
+        let combined = root_node
+            .element_data()
+            .and_then(|element| element.marker_combined_box)
+            .filter(|&id| nodes.get(id).is_some());
+        if let Some(box_id) = combined {
+            bidi_scan.atomic_boxes += 1;
+            builder.push_inline_box(InlineBox {
+                id: box_id.as_u64(),
+                kind: InlineBoxKind::InFlow,
+                index: 0,
+                width: 0.0,
+                height: 0.0,
+                baseline: None,
+                vertical_align: Default::default(),
+                rtl: false,
+                central: false,
+                glue: true,
+            });
+        }
         match marker {
+            _ if combined.is_some() => {}
             // Bullet glyphs live in the bundled bullet font. The position-outside
             // path already asks for it; without the same span here a marker like
             // disclosure-closed (U+25B8) falls back to the element's own font and

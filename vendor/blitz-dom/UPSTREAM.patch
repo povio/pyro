@@ -6099,7 +6099,7 @@ diff --git a/packages/blitz-dom/src/layout/combined_text.rs b/packages/blitz-dom
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/combined_text.rs
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,266 @@
 +//! pyro: `text-combine-upright: all` text that is no inline element's (CSS Writing Modes 3 § 9.1).
 +//!
 +//! Stylo makes an inline element whose text is combined in a vertical line a horizontal box one em
@@ -6134,6 +6134,7 @@ new file mode 100644
 +/// takes the boxes of those that are not), before the root's inline layout is built
 +/// (`BaseDocument::resolve_deferred_tasks`).
 +pub(crate) fn prepare(doc: &mut BaseDocument, root: NodeId) {
++    prepare_marker(doc, root);
 +    let Some(style) = doc.nodes[root].primary_styles().map(|style| Arc::clone(&*style)) else { return };
 +    let combines = root_combines(&style);
 +    // The root's direct text, and the text of its inline elements (`digits N`).
@@ -6181,6 +6182,56 @@ new file mode 100644
 +        if let NodeData::Text(data) = &mut doc.nodes[text_id].data {
 +            data.combined_box = Some(box_id);
 +        }
++    }
++}
++
++/// pyro: an inside list marker whose `::marker` style combines its text in a vertical line gets a
++/// box as combined text does (`ElementData::marker_combined_box`), which the item's inline layout
++/// places in place of the marker's text (WPT css-pseudo `marker-text-combine-upright*`).
++fn prepare_marker(doc: &mut BaseDocument, root: NodeId) {
++    use crate::node::{ListItemLayoutPosition, Marker};
++    let Some(element) = doc.nodes[root].element_data() else { return };
++    let existing = element.marker_combined_box.filter(|&id| doc.nodes.contains_key(id));
++    let wanted = element.list_item_data.as_deref().and_then(|item| {
++        let text = match (&item.position, &item.marker) {
++            (ListItemLayoutPosition::Inside, Marker::String(text)) => text.clone(),
++            (ListItemLayoutPosition::Inside, Marker::Char(c)) => format!("{c} "),
++            _ => return None,
++        };
++        let style = doc.nodes.get(item.style_node?)?.primary_styles().map(|style| Arc::clone(&*style))?;
++        // (In the item's writing mode: the marker's style node is no box of its own.)
++        let writing_mode = doc.nodes[root].primary_styles()?.writing_mode;
++        (style.get_inherited_text().text_combine_upright == TextCombineUpright::All
++            && writing_mode.is_vertical()
++            && !writing_mode.is_sideways()
++            && !text.trim().is_empty())
++        .then_some((text, style))
++    });
++    let Some((text, style)) = wanted else {
++        if let Some(box_id) = existing {
++            drop_box(doc, root, box_id);
++        }
++        if let Some(element) = doc.nodes[root].element_data_mut() {
++            element.marker_combined_box = None;
++        }
++        return;
++    };
++    let box_id = existing.unwrap_or_else(|| {
++        const NAME: QualName = QualName { prefix: None, ns: ns!(html), local: local_name!("span") };
++        doc.create_node(NodeData::AnonymousBlock(Box::new(ElementData::new(NAME, Vec::new()))))
++    });
++    set_box_style(doc, box_id, &style);
++    set_box_text(doc, root, box_id, &text);
++    {
++        let mut children = doc.nodes[root].layout_children.borrow_mut();
++        let children = children.get_or_insert_with(Default::default);
++        if !children.contains(&box_id) {
++            children.push(box_id);
++        }
++    }
++    build_box_layout(doc, box_id);
++    if let Some(element) = doc.nodes[root].element_data_mut() {
++        element.marker_combined_box = Some(box_id);
 +    }
 +}
 +
@@ -12540,7 +12591,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          ));
      }
  
-@@ -59,15 +576,71 @@
+@@ -59,16 +576,94 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -12609,10 +12660,33 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                bidi_scan.rtl |= rtl;
 +            }
 +        }
++        // pyro: combined in a vertical line: its box (`layout::combined_text`), placed as one
++        // letter.
++        let combined = root_node
++            .element_data()
++            .and_then(|element| element.marker_combined_box)
++            .filter(|&id| nodes.get(id).is_some());
++        if let Some(box_id) = combined {
++            bidi_scan.atomic_boxes += 1;
++            builder.push_inline_box(InlineBox {
++                id: box_id.as_u64(),
++                kind: InlineBoxKind::InFlow,
++                index: 0,
++                width: 0.0,
++                height: 0.0,
++                baseline: None,
++                vertical_align: Default::default(),
++                rtl: false,
++                central: false,
++                glue: true,
++            });
++        }
          match marker {
++            _ if combined.is_some() => {}
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
-@@ -76,54 +649,512 @@
+             // disclosure-closed (U+25B8) falls back to the element's own font and
+@@ -76,54 +671,512 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -12819,11 +12893,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            annotations,
 +            bidi,
 +            &mut bidi_scan,
-         );
-     }
- 
--    text_layout.text = builder.build_into(&mut text_layout.layout);
--    return;
++        );
++    }
++
 +    for end in piece_ends.into_iter().rev().flatten() {
 +        close_span(&mut builder, end, bidi, &mut bidi_scan);
 +    }
@@ -12904,8 +12976,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            strut_build,
 +            &space,
 +            bidi,
-+        );
-+    }
+         );
+     }
 +    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
 +    // overflowing line with, in the root's own style (its first available font, as in Chromium).
 +    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
@@ -12975,7 +13047,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.percent_span_edges = bidi_scan.percent_edges;
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
- 
++
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -13033,7 +13105,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        layout.break_all_lines(None);
 +        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
 +    }
-+
+ 
+-    text_layout.text = builder.build_into(&mut text_layout.layout);
+-    return;
 +    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
 +    /// a head has its start, a tail its end (`construct::split_inline_part`).
 +    #[allow(clippy::too_many_arguments)]
@@ -13079,19 +13153,19 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
-+
+ 
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
 +    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
 +    /// `node_id`'s box) placed them already (`scroll_markers::siblings_of`).
 +    #[allow(clippy::too_many_arguments)]
      fn build_inline_layout_recursive(
-+        builder: &mut TreeBuilder<TextBrush>,
-+        text_transformer: &mut TextTransformer,
-+        nodes: &crate::NodeTree,
+         builder: &mut TreeBuilder<TextBrush>,
+         text_transformer: &mut TextTransformer,
+         nodes: &crate::NodeTree,
 +        container: NodeId,
-+        node_id: NodeId,
-+        parent_text_transform: &CaseTransform,
+         node_id: NodeId,
+         parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -13117,11 +13191,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +
 +    #[allow(clippy::too_many_arguments)]
 +    fn build_inline_layout_node(
-         builder: &mut TreeBuilder<TextBrush>,
-         text_transformer: &mut TextTransformer,
-         nodes: &crate::NodeTree,
-         node_id: NodeId,
-         parent_text_transform: &CaseTransform,
++        builder: &mut TreeBuilder<TextBrush>,
++        text_transformer: &mut TextTransformer,
++        nodes: &crate::NodeTree,
++        node_id: NodeId,
++        parent_text_transform: &CaseTransform,
 +        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
 +        strut: &mut bool,
 +        first_letter: Option<&FirstLetterSplit>,
@@ -13131,7 +13205,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1174,51 @@
+@@ -143,6 +1196,51 @@
                      }
                  }
  
@@ -13183,7 +13257,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1237,44 @@
+@@ -161,41 +1259,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -13250,7 +13324,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1289,218 @@
+@@ -210,66 +1311,218 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -13490,7 +13564,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,17 +1515,139 @@
+@@ -284,17 +1537,139 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -13633,7 +13707,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1656,314 @@
+@@ -303,3 +1678,314 @@
          }
      }
  }
@@ -37136,7 +37210,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// Parley text layout (elements with inline inner display mode only)
      pub inline_layout_data: Option<Box<TextLayout>>,
  
-@@ -114,10 +147,41 @@
+@@ -114,10 +147,44 @@
      /// element (or its pseudo-elements). Lets Stylo skip the animation lookups
      /// for elements that have never animated.
      pub may_have_animations: AtomicBool,
@@ -37171,6 +37245,9 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +    /// pyro: the node holding this list item's `::marker` style, the brush of its marker's text
 +    /// (`layout::list`). Not in the tree; its parent is the item.
 +    pub marker_style: Option<NodeId>,
++    /// pyro: the box of this list item's inside marker when its `::marker` style combines it in a
++    /// vertical line (`text-combine-upright: all`, `layout::combined_text`). Not in the tree.
++    pub marker_combined_box: Option<NodeId>,
 +    /// pyro: the element's scroll pseudo-element boxes (its `::scroll-marker-group`,
 +    /// `::scroll-button()`s and `::scroll-marker`), or what pseudo-element box this node is
 +    /// (`layout::scroll_markers`).
@@ -37178,7 +37255,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
      /// Detailed layout information from the most recent layout (currently
      /// grid track sizing information for grid containers only). Used by
-@@ -129,6 +193,9 @@
+@@ -129,6 +196,9 @@
      /// Layout output state (`None` until layout first writes to this node).
      pub layout_data: Option<Box<LayoutData>>,
      pub transform: Option<Box<Affine>>,
@@ -37188,7 +37265,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  /// Taffy layout output state (cache, layouts, scroll offset and overflow).
-@@ -142,7 +209,40 @@
+@@ -142,7 +212,40 @@
      pub unrounded_layout: Layout,
      pub final_layout: Layout,
      pub scroll_offset: crate::Point<f64>,
@@ -37229,7 +37306,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
      /// recorded by the layout pass for CSSOM geometry lookups.
      #[cfg(feature = "writing-mode")]
-@@ -156,7 +256,16 @@
+@@ -156,7 +259,16 @@
              unrounded_layout: Layout::new(),
              final_layout: Layout::new(),
              scroll_offset: crate::Point::ZERO,
@@ -37246,7 +37323,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              #[cfg(feature = "writing-mode")]
              writing_mode: stylo_taffy::WritingMode::empty(),
          }
-@@ -295,6 +404,10 @@
+@@ -295,6 +407,10 @@
              .field("special_data", &self.special_data)
              .field("background_images", &self.background_images)
              .field("mask_images", &self.mask_images)
@@ -37257,7 +37334,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .field("inline_layout_data", &self.inline_layout_data)
              .field("list_item_data", &self.list_item_data)
              .field("template_contents", &self.template_contents)
-@@ -321,6 +434,14 @@
+@@ -321,6 +437,14 @@
              special_data: self.special_data.clone(),
              background_images: self.background_images.clone(),
              mask_images: self.mask_images.clone(),
@@ -37272,13 +37349,14 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              inline_layout_data: self.inline_layout_data.clone(),
              list_item_data: self.list_item_data.clone(),
              template_contents: self.template_contents,
-@@ -335,12 +456,23 @@
+@@ -335,12 +459,24 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
 +            sampled_animations: None,
 +            sampled_marker: None,
 +            sampled_backdrop: None,
++            marker_combined_box: None,
 +            sampled_pseudos: Default::default(),
 +            sampled_transitions: None,
 +            animation_stacking_context: false,
@@ -37296,7 +37374,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -417,7 +549,7 @@
+@@ -417,7 +553,7 @@
      pub fn new(name: QualName, attrs: Vec<Attribute>) -> Self {
          let id_attr_atom = attrs
              .iter()
@@ -37305,7 +37383,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .map(|attr| attr.value.as_ref())
              .map(|value: &str| Atom::from(value));
          let classes = attrs
-@@ -439,6 +571,14 @@
+@@ -439,6 +575,14 @@
              template_contents: None,
              background_images: ThinVec::new(),
              mask_images: ThinVec::new(),
@@ -37320,13 +37398,14 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
              stylo_element_data: Default::default(),
              selector_flags: Cell::new(ElementSelectorFlags::empty()),
-@@ -449,12 +589,23 @@
+@@ -449,12 +593,24 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
 +            sampled_animations: None,
 +            sampled_marker: None,
 +            sampled_backdrop: None,
++            marker_combined_box: None,
 +            sampled_pseudos: Default::default(),
 +            sampled_transitions: None,
 +            animation_stacking_context: false,
@@ -37344,7 +37423,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          };
          data.flush_is_focussable();
          data.flush_link_state();
-@@ -470,6 +621,12 @@
+@@ -470,6 +626,12 @@
          {
              data.element_state.insert(ElementState::CHECKED);
          }
@@ -37357,7 +37436,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -504,6 +661,12 @@
+@@ -504,6 +666,12 @@
          self.attrs.iter().any(|attr| name == attr.name.local)
      }
  
@@ -37370,7 +37449,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn can_be_disabled(&self) -> bool {
          local_names!("button", "input", "select", "textarea").contains(&self.name.local)
      }
-@@ -529,6 +692,23 @@
+@@ -529,6 +697,23 @@
          }
      }
  
@@ -37394,7 +37473,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn flush_open_state(&mut self) {
          let is_open = matches!(
              self.name.local,
-@@ -648,6 +828,30 @@
+@@ -648,6 +833,30 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -37425,7 +37504,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      #[cfg(feature = "file-input")]
      pub fn file_data(&self) -> Option<&FileData> {
          match &self.special_data {
-@@ -875,6 +1079,9 @@
+@@ -875,6 +1084,9 @@
      pub height: u32,
      /// The raw image data in RGBA8 format
      pub data: Blob<u8>,
@@ -37435,7 +37514,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  impl RasterImageData {
      pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
-@@ -882,6 +1089,35 @@
+@@ -882,6 +1094,35 @@
              width,
              height,
              data: Blob::new(data),
@@ -37471,7 +37550,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -909,6 +1145,10 @@
+@@ -909,6 +1150,10 @@
      pub status: Status,
      /// The image data
      pub image: ImageData,
@@ -37482,7 +37561,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  impl ImageResourceData {
-@@ -917,8 +1157,25 @@
+@@ -917,8 +1162,25 @@
              url,
              status: Status::Loading,
              image: ImageData::None,
@@ -37508,7 +37587,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  #[derive(Debug, Clone)]
-@@ -953,11 +1210,26 @@
+@@ -953,11 +1215,26 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -37535,7 +37614,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //We seperate chars from strings in order to optimise rendering - ie not needing to
-@@ -966,6 +1238,9 @@
+@@ -966,6 +1243,9 @@
  pub enum Marker {
      Char(char),
      String(String),
@@ -37545,7 +37624,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //Value depends on list-style-position, determining whether a seperate layout is created for it
-@@ -1054,9 +1329,10 @@
+@@ -1054,9 +1334,10 @@
                  data.scroll_offset > 0.0,
                  "expected horizontal scroll for overflowing single-line input"
              );

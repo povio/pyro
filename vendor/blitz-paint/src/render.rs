@@ -4804,6 +4804,9 @@ impl ElementCx<'_, '_> {
                 self.draw_marker_image(scene, pos, *width, *height, layout);
                 return;
             }
+            if self.draw_combined_outside_marker(scene, pos, layout) {
+                return;
+            }
             let first_line = self
                 .element
                 .inline_layout_data
@@ -4885,6 +4888,72 @@ impl ElementCx<'_, '_> {
                 }
             }
         }
+    }
+
+    /// pyro: an outside marker whose `::marker` style combines it (`text-combine-upright: all`) in
+    /// the item's vertical lines: upright in a box one em square (its text squeezed to fit, as
+    /// combined text is), before the start of the item's first line and its inline-start padding
+    /// and border, on the line's baseline (WPT css-pseudo `marker-text-combine-upright*`). `false`
+    /// when the marker is not such a one.
+    fn draw_combined_outside_marker(
+        &self,
+        scene: &mut impl PaintScene,
+        pos: Point,
+        layout: &parley::Layout<blitz_dom::node::TextBrush>,
+    ) -> bool {
+        use style::values::computed::TextCombineUpright;
+        let Some(block_lr) = self.node.vertical_block_axis() else { return false };
+        if self.style.writing_mode.is_sideways() {
+            return false;
+        }
+        let Some(style_node) = self.list_item.and_then(|item| item.style_node) else { return false };
+        let Some(marker_style) = self.context.dom.get_node(style_node).and_then(|node| node.primary_styles()) else {
+            return false;
+        };
+        if marker_style.get_inherited_text().text_combine_upright != TextCombineUpright::All {
+            return false;
+        }
+        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return false };
+        let Some(line) = text_layout.layout.lines().next() else { return false };
+        let Some(marker_line) = layout.lines().next() else { return false };
+        // In the item's line space (device px along the line, then across it).
+        let scale = f64::from(text_layout.layout.scale());
+        let em = f64::from(marker_style.get_font().font_size.used_size.0.px()) * scale;
+        let item = self.node.final_layout();
+        let inline_inset = f64::from(item.padding.top + item.border.top) * scale;
+        // As an inline-block of combined text on the line: one em tall, its text's line (the
+        // marker's) centred in it, on the line's baseline.
+        let metrics = line.metrics();
+        let marker_metrics = marker_line.metrics();
+        let marker_height = f64::from(marker_metrics.block_max_coord - marker_metrics.block_min_coord);
+        let marker_ascent = f64::from(marker_metrics.baseline - marker_metrics.block_min_coord);
+        let top = f64::from(metrics.baseline) - (em - marker_height) / 2.0 - marker_ascent;
+        let start = f64::from(marker_line_x(&line)) - inline_inset - em;
+        let in_line = Rect::new(start, top, start + em, top + em);
+        let line_transform = self.vertical_line_transform(text_layout, pos, block_lr)(0);
+        let local = (self.transform.inverse() * line_transform).transform_rect_bbox(in_line);
+        // The marker's text, upright, squeezed to the em and centred in the box.
+        // (With its trailing space: Blink's outside markers keep their white space.)
+        let width = f64::from(marker_metrics.advance.max(layout.full_width()));
+        let squeeze = if width > em { em / width } else { 1.0 };
+        let line_height = marker_height;
+        let x = local.x0 + (local.width() - width * squeeze) / 2.0;
+        let y = local.y0 + (local.height() - line_height) / 2.0 - f64::from(marker_metrics.block_min_coord);
+        let transform = self.transform * Affine::translate((x, y)) * Affine::scale_non_uniform(squeeze, 1.0);
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        crate::text::stroke_text(
+            scene,
+            layout.lines(),
+            self.context.dom,
+            transform,
+            TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+            self.node.id,
+            None,
+            &mut draw_text_context,
+            None,
+            None,
+        );
+        true
     }
 
     /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape

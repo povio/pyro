@@ -32,6 +32,7 @@ fn root_combines(style: &ComputedValues) -> bool {
 /// takes the boxes of those that are not), before the root's inline layout is built
 /// (`BaseDocument::resolve_deferred_tasks`).
 pub(crate) fn prepare(doc: &mut BaseDocument, root: NodeId) {
+    prepare_marker(doc, root);
     let Some(style) = doc.nodes[root].primary_styles().map(|style| Arc::clone(&*style)) else { return };
     let combines = root_combines(&style);
     // The root's direct text, and the text of its inline elements (`digits N`).
@@ -79,6 +80,56 @@ pub(crate) fn prepare(doc: &mut BaseDocument, root: NodeId) {
         if let NodeData::Text(data) = &mut doc.nodes[text_id].data {
             data.combined_box = Some(box_id);
         }
+    }
+}
+
+/// pyro: an inside list marker whose `::marker` style combines its text in a vertical line gets a
+/// box as combined text does (`ElementData::marker_combined_box`), which the item's inline layout
+/// places in place of the marker's text (WPT css-pseudo `marker-text-combine-upright*`).
+fn prepare_marker(doc: &mut BaseDocument, root: NodeId) {
+    use crate::node::{ListItemLayoutPosition, Marker};
+    let Some(element) = doc.nodes[root].element_data() else { return };
+    let existing = element.marker_combined_box.filter(|&id| doc.nodes.contains_key(id));
+    let wanted = element.list_item_data.as_deref().and_then(|item| {
+        let text = match (&item.position, &item.marker) {
+            (ListItemLayoutPosition::Inside, Marker::String(text)) => text.clone(),
+            (ListItemLayoutPosition::Inside, Marker::Char(c)) => format!("{c} "),
+            _ => return None,
+        };
+        let style = doc.nodes.get(item.style_node?)?.primary_styles().map(|style| Arc::clone(&*style))?;
+        // (In the item's writing mode: the marker's style node is no box of its own.)
+        let writing_mode = doc.nodes[root].primary_styles()?.writing_mode;
+        (style.get_inherited_text().text_combine_upright == TextCombineUpright::All
+            && writing_mode.is_vertical()
+            && !writing_mode.is_sideways()
+            && !text.trim().is_empty())
+        .then_some((text, style))
+    });
+    let Some((text, style)) = wanted else {
+        if let Some(box_id) = existing {
+            drop_box(doc, root, box_id);
+        }
+        if let Some(element) = doc.nodes[root].element_data_mut() {
+            element.marker_combined_box = None;
+        }
+        return;
+    };
+    let box_id = existing.unwrap_or_else(|| {
+        const NAME: QualName = QualName { prefix: None, ns: ns!(html), local: local_name!("span") };
+        doc.create_node(NodeData::AnonymousBlock(Box::new(ElementData::new(NAME, Vec::new()))))
+    });
+    set_box_style(doc, box_id, &style);
+    set_box_text(doc, root, box_id, &text);
+    {
+        let mut children = doc.nodes[root].layout_children.borrow_mut();
+        let children = children.get_or_insert_with(Default::default);
+        if !children.contains(&box_id) {
+            children.push(box_id);
+        }
+    }
+    build_box_layout(doc, box_id);
+    if let Some(element) = doc.nodes[root].element_data_mut() {
+        element.marker_combined_box = Some(box_id);
     }
 }
 
