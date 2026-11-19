@@ -19669,7 +19669,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,2076 @@
+@@ -0,0 +1,2111 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -21237,6 +21237,38 @@ new file mode 100644
 +        }
 +    }
 +
++    /// pyro: the floats among inline root `parent`'s layout children (its border box at strip
++    /// position `top`), into `found` as `collect_breaks` takes a block's floats.
++    fn collect_inline_floats(&self, parent: crate::NodeId, top: f32, found: &mut Found) {
++        let children = self.nodes[parent].layout_children.borrow();
++        let Some(children) = children.as_deref() else { return };
++        for &child_id in children {
++            let child = &self.nodes[child_id];
++            let Some(style) = child.primary_styles() else { continue };
++            if style.clone_float() == Float::None || style.get_box().display.is_none() || child.is_out_of_flow() {
++                continue;
++            }
++            let layout = child.unrounded_layout();
++            let child_top = top + layout.location.y;
++            let child_bottom = child_top + layout.size.height;
++            found.bottom = found.bottom.max(child_bottom);
++            found.floats.push((child_top, child_bottom));
++            if fragmentable(child, &style) {
++                if style.get_box().break_inside != BreakWithin::Auto {
++                    found.strict.push((child_top, child_bottom));
++                }
++                crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, (false, false)));
++            } else {
++                let margin_box = (child_top - layout.margin.top.max(0.0), child_bottom + layout.margin.bottom.max(0.0));
++                found.strict.push(margin_box);
++                found.loose.push(margin_box);
++                if held_whole(child, &style) {
++                    found.whole.push((child_top, child_bottom));
++                }
++            }
++        }
++    }
++
 +    /// pyro: the multi-column table cells in table box `id` (whose border box starts at strip
 +    /// position `top`) and their tops, through its internal boxes.
 +    fn multicol_cells(&self, id: crate::NodeId, top: f32, depth: usize, out: &mut Vec<(crate::NodeId, f32)>) {
@@ -21290,6 +21322,9 @@ new file mode 100644
 +            _ => trims,
 +        };
 +        if node.flags.is_inline_root() {
++            // pyro: the floats of the inline formatting context are kept from breaks as those
++            // of a block's (WPT css-multicol `multicol-fill-balance-032`, `-034`..`-036`).
++            self.collect_inline_floats(parent, top, found);
 +            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else {
 +                return;
 +            };
