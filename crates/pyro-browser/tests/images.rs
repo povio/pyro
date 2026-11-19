@@ -340,6 +340,31 @@ fn objects_fire_load_and_error_for_their_data() {
     assert!(events.ends_with("window:load"), "{events}");
 }
 
+/// A deferred module script runs as soon as its graph is ready, with no task in between: the
+/// `load` of an `<object>` before it, whose resource is already there, has not fired yet when
+/// the module adds its listener (WPT css/css-conditional/container-queries/crashtests/
+/// chrome-bug-439886903-crash.html).
+#[test]
+fn a_deferred_module_runs_before_a_ready_object_loads() {
+    let (mut thread, page, loader) = setup(
+        "<object id=svg data=/a.svg></object>\
+         <script type=module>\
+           globalThis.order = ['module'];\
+           await new Promise(r => svg.addEventListener('load', r, { once: true }));\
+           order.push('object-load');\
+         </script>",
+    );
+    loader.insert(
+        "http://site.test/a.svg",
+        "image/svg+xml",
+        "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='16'/>",
+        Duration::ZERO,
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "order.join()"), "module,object-load");
+}
+
 /// `naturalWidth`/`naturalHeight` of SVG images follow CSS Images 3 (a missing dimension from the
 /// ratio, else the default object size's), and `width`/`height` read the rendered size, or when
 /// not rendered the attribute, else the natural size; a sourceless image reads 0.

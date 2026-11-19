@@ -2460,8 +2460,8 @@ impl Browser {
     /// its evaluation: a top-level await holds up neither the scripts after
     /// it nor DOMContentLoaded and load. With the engine's two steps
     /// ([`pyro_js::Scope::has_module_phases`]) the graph is fetched
-    /// ([`pyro_js::Scope::load_module_graph`]), then linked and evaluated in a
-    /// task, after which the script has run. A fetch failure of the graph
+    /// ([`pyro_js::Scope::load_module_graph`]), then linked and evaluated as
+    /// soon as it is ready, after which the script has run. A fetch failure of the graph
     /// (the script's result is null) fires `error` at the element; anything
     /// else (a parse, link or evaluation error is reported) fires `load` at
     /// an `external` one and no event at an inline one.
@@ -2479,29 +2479,14 @@ impl Browser {
         let loader_id = self.frame_loader(page);
         let sched = self.scheduler();
         let counted = self.load_mut(page).is_some();
-        // Ends the script in a task: runs its graph first (`ModuleRun`), then
-        // the element's event (`Some(true)` load, `Some(false)` error), then
-        // what waits for it.
+        // Ends the script in a task, after it ran: the element's event
+        // (`Some(true)` load, `Some(false)` error), then what waits for it.
         let finish = {
             let element = element.clone();
-            Rc::new(move |run: ModuleRun, event: Option<bool>| {
+            Rc::new(move |event: Option<bool>| {
                 let loader_id = loader_id.clone();
                 let element = element.clone();
                 sched.post(TaskSource::Networking, move |b| {
-                    if b.frame_loader(page) != loader_id {
-                        return;
-                    }
-                    match run {
-                        ModuleRun::Graph(url) => b.run_module_graph(page, &url),
-                        ModuleRun::Report(error) => {
-                            if let Some(realm) = b.main_realm(page) {
-                                if let Ok(scope) = realm.scope() {
-                                    scope.report_exception(&JsError::thrown(error));
-                                }
-                            }
-                        }
-                        ModuleRun::Nothing => {}
-                    }
                     if b.frame_loader(page) != loader_id {
                         return;
                     }
@@ -2534,22 +2519,29 @@ impl Browser {
             Ok(Some(loaded)) => {
                 let (fetched, failed) = (finish.clone(), finish.clone());
                 let url = url.to_owned();
+                let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+                // The script runs as soon as its graph is ready, with no task
+                // in between (one could deliver an event, an <object>'s load,
+                // before the script's listener for it exists).
                 scope.then(
                     loaded,
-                    move |_s, _v| fetched(ModuleRun::Graph(url.clone()), ran),
+                    move |s, _v| {
+                        run_module_graph(s, bindings.as_ref(), &url);
+                        fetched(ran)
+                    },
                     move |s, e| {
                         // A graph that does not parse still runs: running it
-                        // reports the error (in the task, in script order);
-                        // one a fetch failed has no result.
+                        // reports the error; one a fetch failed has no result.
                         let parse_error = e
                             .as_object()
                             .and_then(|o| o.get_atom("name").ok())
                             .and_then(|n| n.as_string())
                             .is_some_and(|n| n == "SyntaxError");
                         if parse_error {
-                            failed(ModuleRun::Report(Persistent::new(s, e)), ran);
+                            s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+                            failed(ran);
                         } else {
-                            failed(ModuleRun::Nothing, Some(false));
+                            failed(Some(false));
                         }
                     },
                 )
@@ -2574,29 +2566,6 @@ impl Browser {
         true
     }
 
-    /// HTML "run a module script" for the graph `execute_module` fetched:
-    /// links and evaluates it; a link error and an evaluation error (now or
-    /// when the evaluation promise rejects) are reported.
-    fn run_module_graph(&mut self, page: FrameKey, url: &str) {
-        let Some(realm) = self.main_realm(page) else { return };
-        let Ok(scope) = realm.scope() else { return };
-        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
-        let evaluated = match &bindings {
-            Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
-            None => scope.link_and_evaluate_module(url),
-        };
-        let reported = evaluated.and_then(|promise| {
-            scope.then(
-                promise,
-                |_s, _v| {},
-                |s, e| s.report_exception(&JsError::thrown(Persistent::new(s, e))),
-            )
-        });
-        if let Err(e) = reported {
-            scope.report_exception(&e);
-        }
-    }
-
     /// `execute_module` without the engine's two steps (an older patched
     /// JavaScriptCore, the system framework): the graph's fetch and the
     /// evaluation are one promise. The script counts as run once the
@@ -2613,7 +2582,7 @@ impl Browser {
         deferred: bool,
         element: Option<Rc<ResourceNode>>,
         ran: Option<bool>,
-        finish: Rc<dyn Fn(ModuleRun, Option<bool>)>,
+        finish: Rc<dyn Fn(Option<bool>)>,
     ) -> bool {
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
@@ -2637,7 +2606,7 @@ impl Browser {
             let done = done.clone();
             Rc::new(move |ok: bool| {
                 if !done.replace(true) {
-                    finish(ModuleRun::Nothing, if ok { ran } else { Some(false) });
+                    finish(if ok { ran } else { Some(false) });
                 }
             })
         };
@@ -2695,13 +2664,28 @@ impl Browser {
     }
 }
 
-/// What ending a module script does first (`Browser::execute_module`).
-enum ModuleRun {
-    /// Links and evaluates the fetched graph at this URL.
-    Graph(String),
-    /// Reports the graph's parse error.
-    Report(Persistent),
-    Nothing,
+/// HTML "run a module script" for the graph `Browser::execute_module`
+/// fetched for `url`: links and evaluates it (destructive writes ignored);
+/// a link error and an evaluation error are reported upon the evaluation
+/// promise's rejection, so after the microtasks the evaluation queued (it
+/// runs inside a microtask, where they do not drain on return).
+fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi::PageDom>>, url: &str) {
+    let evaluated = match bindings {
+        Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
+        None => scope.link_and_evaluate_module(url),
+    };
+    let report = |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+    let reported = match evaluated {
+        Ok(promise) => scope.then(promise, |_s, _v| {}, report),
+        Err(JsError::Thrown(error)) => {
+            // A microtask later, as a rejection would be reported.
+            scope.then(scope.undefined(), move |s, _v| s.report_exception(&JsError::Thrown(error)), |_s, _v| {})
+        }
+        Err(e) => Err(e),
+    };
+    if let Err(e) = reported {
+        scope.report_exception(&e);
+    }
 }
 
 /// Calls `then` in a later task in which `fetcher` has no fetch in flight,
