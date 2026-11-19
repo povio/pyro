@@ -1938,7 +1938,7 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
      }
  
      let gradient_transform = Some(
-@@ -299,201 +411,368 @@
+@@ -299,201 +411,380 @@
      (gradient, gradient_transform)
  }
  
@@ -2089,7 +2089,7 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +                stops[j].0 = Some(from + (to - from) * (j - (i - 1)) as f64 / steps);
 +            }
 +            i = run_end + 1;
-         }
++        }
 +        let mut ramp = Vec::with_capacity(count);
 +        for (idx, (position, color, hint)) in stops.iter().enumerate() {
 +            let offset = position.unwrap_or(0.0);
@@ -2101,7 +2101,7 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +            // The midpoint is where the hint puts it without one.
 +            let hint = hint.filter(|fraction| (*fraction - 0.5).abs() > 1e-9);
 +            ramp.push(RampStop { offset, color: *color, hint });
-+        }
+         }
 +        Self { stops: ramp, method }
 +    }
  
@@ -2318,6 +2318,18 @@ diff --git a/packages/blitz-paint/src/gradient.rs b/packages/blitz-paint/src/gra
 +                // Equal ends are not a constant colour: a full turn of hue ends where it began.
 +                self.subdivide(segment, (p, start), (q, end), depth, 4, &at, out);
              }
++            // pyro: the renderer looks a colour up in a table of as many entries as its shortest
++            // stop interval needs, the entry below: a curve sampled into intervals of a 512th
++            // lagged up to a level behind. A last sample a 4096th before the segment's end (the
++            // table's largest size) makes the table fine enough.
++            if self.curved(segment) {
++                let span = at(q) - at(p);
++                let fine = 1.0 / 4096.0;
++                if span > 2.0 * fine {
++                    let t = q - (q - p) * fine / span;
++                    out.push((at(t), self.color_in(segment, t)));
++                }
++            }
 +            out.push((at(q), end));
          }
 -        (0.0, 1.0)
