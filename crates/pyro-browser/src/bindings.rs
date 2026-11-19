@@ -814,12 +814,20 @@ impl Browser {
         // `<style>` elements processed by this drain (a parsed one's
         // insertion and pop come together): once each, until removed.
         let mut style_nodes = std::collections::HashSet::new();
+        // The store is shared with the pages of this page's DOM-store group (its popups, its opener):
+        // the queue holds their documents' events too, which go to their frames, not dropped.
+        let peers = host.dom_group();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
-            let target =
-                host.keys().into_iter().find(|key| host.with_frame(*key, |f| f.document == document).unwrap_or(false));
-            let Some(target) = target else { continue };
-            let Some(bindings) = host.page_dom(target) else { continue };
+            let find = |h: &crate::frames::FrameHost| {
+                h.keys().into_iter().find(|key| h.with_frame(*key, |f| f.document == document).unwrap_or(false))
+            };
+            let Some((frame_host, target)) =
+                find(&host).map(|t| (host.clone(), t)).or_else(|| peers.iter().find_map(|p| find(p).map(|t| (p.clone(), t))))
+            else {
+                continue;
+            };
+            let Some(bindings) = frame_host.page_dom(target) else { continue };
             if event.kind == pyro_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
                     self.stylesheet_event(target, event.node, unlinked.contains(&event.node));

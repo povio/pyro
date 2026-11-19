@@ -1155,9 +1155,15 @@ impl Dom {
 
     /// The documents the iframes show, for the renderer to paint as their content (see
     /// [`FrameDocument`]); iframes not in `documents` paint none.
-    pub fn set_frame_documents(&mut self, documents: Vec<(NodeId, FrameDocument)>) {
+    ///
+    /// `scope`: the documents of the page whose frames these are. The store may be shared by pages (a
+    /// popup shares its opener's): only entries of iframes in those documents (or of freed nodes) are
+    /// dropped when missing from `documents`, never another page's.
+    pub fn set_frame_documents(&mut self, scope: &[NodeId], documents: Vec<(NodeId, FrameDocument)>) {
         let keep: Vec<u32> = documents.iter().filter_map(|(iframe, _)| self.check(*iframe).ok()).collect();
-        let stale: Vec<u32> = self.frame_documents.keys().copied().filter(|i| !keep.contains(i)).collect();
+        let in_scope = self.scope_indices(scope);
+        let stale: Vec<u32> =
+            self.frame_documents.keys().copied().filter(|i| !keep.contains(i) && self.in_frame_scope(*i, &in_scope)).collect();
         for i in stale {
             self.frame_documents.remove(&i);
             if self.slot_live(i) {
@@ -1168,6 +1174,18 @@ impl Dom {
         for (iframe, document) in documents {
             self.set_frame_document(iframe, Some(document));
         }
+    }
+
+    fn scope_indices(&self, scope: &[NodeId]) -> Vec<u32> {
+        scope.iter().filter_map(|d| self.check(*d).ok()).collect()
+    }
+
+    /// Whether iframe slot `i` belongs to one of the documents `scope` (by slot index), or is freed.
+    fn in_frame_scope(&self, i: u32, scope: &[u32]) -> bool {
+        if !self.slot_live(i) {
+            return true;
+        }
+        scope.contains(&self.n(i).owner_doc)
     }
 
     /// [`Dom::set_frame_documents`] for one iframe (`None`: it paints none).
@@ -1185,9 +1203,16 @@ impl Dom {
     }
 
     /// [`Dom::set_frame_content_height`] for all iframes at once: those not in `heights` have none.
-    pub fn set_frame_content_heights(&mut self, heights: &[(NodeId, f32)]) {
+    /// `scope`: as for [`Dom::set_frame_documents`].
+    pub fn set_frame_content_heights(&mut self, scope: &[NodeId], heights: &[(NodeId, f32)]) {
         let keep: Vec<u32> = heights.iter().filter_map(|&(iframe, _)| self.check(iframe).ok()).collect();
-        let stale: Vec<u32> = self.frame_content_heights.keys().copied().filter(|i| !keep.contains(i)).collect();
+        let in_scope = self.scope_indices(scope);
+        let stale: Vec<u32> = self
+            .frame_content_heights
+            .keys()
+            .copied()
+            .filter(|i| !keep.contains(i) && self.in_frame_scope(*i, &in_scope))
+            .collect();
         for i in stale {
             self.frame_content_heights.remove(&i);
             if self.slot_live(i) {

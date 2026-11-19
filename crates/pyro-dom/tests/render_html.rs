@@ -453,3 +453,23 @@ fn a_pages_own_frame_attributes_are_left_out() {
     assert!(!html.contains("evil.test"), "{html}");
     assert!(html.contains("data-pyro-frame-client=\"F#L\""), "{html}");
 }
+
+/// The frame documents a page sets cover its own documents only: a store shared by pages (a popup
+/// shares its opener's) keeps another page's iframe entries when one page, with no frames of its
+/// own, refreshes its (empty) set.
+#[test]
+fn frame_documents_are_replaced_per_page() {
+    let (dom, opener) = doc("<iframe id=f></iframe>");
+    let popup = parse_document(&dom, "http://test/popup", "<p>popup</p>");
+    let f = find(&dom.borrow(), opener, "#f");
+    let document = FrameDocument { html: "<p>inner</p>".into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: "F#L".into() };
+    dom.borrow_mut().set_frame_documents(&[opener], vec![(f, document)]);
+    assert!(render(&dom.borrow(), opener).contains("inner"));
+    // The popup refreshes its own frames (it has none).
+    dom.borrow_mut().set_frame_documents(&[popup], Vec::new());
+    dom.borrow_mut().set_frame_content_heights(&[popup], &[]);
+    assert!(render(&dom.borrow(), opener).contains("inner"), "the opener's iframe keeps its document");
+    // The opener refreshing its own set without the frame does drop it.
+    dom.borrow_mut().set_frame_documents(&[opener], Vec::new());
+    assert!(!render(&dom.borrow(), opener).contains("inner"));
+}

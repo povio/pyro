@@ -636,9 +636,21 @@ impl Page {
         let store = store.or_else(|| self.main_frame.page_dom.as_ref().map(|p| p.dom.clone()));
         if let Some(store) = store {
             if let Ok(mut dom) = store.try_borrow_mut() {
-                dom.set_frame_content_heights(&heights);
+                dom.set_frame_content_heights(&self.frame_tree_documents(), &heights);
             }
         }
+    }
+
+    /// The documents of this page's frames (the store may hold other pages' too).
+    fn frame_tree_documents(&self) -> Vec<pyro_dom::NodeId> {
+        let mut docs: Vec<pyro_dom::NodeId> =
+            self.frames.keys().into_iter().filter_map(|k| self.frames.with_frame(k, |f| f.document).flatten()).collect();
+        if let Some(d) = self.main_frame.page_dom.as_ref().map(|p| p.document()) {
+            if !docs.contains(&d) {
+                docs.push(d);
+            }
+        }
+        docs
     }
 
     /// Gives each iframe of the page the document it shows as the renderer paints it (its render
@@ -650,7 +662,7 @@ impl Page {
         if !self.frames.has_children() {
             if let Some(page_dom) = &self.main_frame.page_dom {
                 if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
-                    dom.set_frame_documents(Vec::new());
+                    dom.set_frame_documents(&self.frame_tree_documents(), Vec::new());
                 }
             }
             return sheets;
@@ -689,7 +701,7 @@ impl Page {
         let store = self.main_frame.page_dom.as_ref().map(|p| p.dom.clone());
         if let Some(store) = store {
             if let Ok(mut dom) = store.try_borrow_mut() {
-                dom.set_frame_documents(documents);
+                dom.set_frame_documents(&self.frame_tree_documents(), documents);
             }
         }
         sheets

@@ -11015,3 +11015,36 @@ fn closing_the_opener_frees_its_document_in_the_shared_store() {
     let after = nodes(&mut h, &popup);
     assert!(after < 100.0, "the closed opener's document is freed: before {before}, after {after}");
 }
+
+/// The DOM store a popup shares with its opener holds one queue of resource events: one page's
+/// checkpoint drains its peers' events too and hands them to their pages. An opener adding a style
+/// sheet to its same-origin popup gets the sheet's `load` event and the sheet applied there.
+#[test]
+fn an_opener_adding_a_style_sheet_to_its_popup_loads_it() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><p>opener</p>");
+    let opener = h.frame_id.clone();
+    h.page("Runtime.evaluate", json!({"expression": "globalThis.w = window.open(); 1"}));
+    // A client resumes the popup (Playwright does), which makes it a page of its own.
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    h.until_response(id);
+    h.run_for(50);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"new Promise((done) => {
+            const link = w.document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'data:text/css,p{color:rgb(1,2,3)}';
+            link.onload = () => done(['load', w.getComputedStyle(w.document.querySelector('p')).color]);
+            link.onerror = () => done(['error']);
+            w.document.body.innerHTML = '<p>popup</p>';
+            w.document.head.append(link);
+            setTimeout(() => done(['timeout']), 2000);
+          })"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!(["load", "rgb(1, 2, 3)"]), "{r}");
+}
