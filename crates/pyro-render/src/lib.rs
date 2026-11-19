@@ -902,10 +902,50 @@ fn svg_canvas_image(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgba, w, h))
 }
 
+/// pyro-canvas's `filter`: the draw's output as the image of an SVG document holding the
+/// referenced `<filter>`s, filtered by the value, as the canvas's pixels (user units are its
+/// pixels, as Chromium filters a canvas in its bitmap's space).
+/// pyro: registers the process's rasterizers other crates draw through: blitz-dom's for
+/// `shape-outside` SVG images, pyro-canvas's for SVG images and canvas filters. Idempotent; done
+/// by [`Renderer::new`] and by whoever installs layout before a page's scripts draw (pyro-layout).
+pub fn register_hooks() {
+    blitz_dom::set_svg_rasterizer(svg_shape_alpha);
+    pyro_canvas::codec::set_svg_decoder(svg_canvas_image);
+    pyro_canvas::set_filter_renderer(canvas_filter);
+}
+
+fn canvas_filter(source: &pyro_canvas::Pixmap, filter: &pyro_canvas::CanvasFilter) -> Option<pyro_canvas::Pixmap> {
+    use anyrender_svg::usvg;
+    let (w, h) = (u32::from(source.width()), u32::from(source.height()));
+    let mut straight = source.data_as_u8_slice().to_vec();
+    pyro_canvas::unpremultiply(&mut straight);
+    let png = Arc::new(pyro_canvas::codec::encode(&straight, w, h, pyro_canvas::Encoding::Png)?);
+    let attr = |s: &str| s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let source = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\"><defs>{}</defs>\
+         <image width=\"{w}\" height=\"{h}\" href=\"pyro-canvas-source\" filter=\"{}\"/></svg>",
+        filter.defs,
+        attr(&filter.value),
+    );
+    let options = usvg::Options {
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
+            resolve_string: Box::new(move |href, _| (href == "pyro-canvas-source").then(|| usvg::ImageKind::PNG(png.clone()))),
+        },
+        ..usvg::Options::default()
+    };
+    let svg = blitz_dom::node::SvgImageData::from_data(source.as_bytes(), &options).ok()?;
+    let mut scene = Scene::new();
+    anyrender_svg::render_svg_tree(&mut scene, &svg.tree, kurbo::Affine::IDENTITY);
+    let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(w, h);
+    let mut rgba = Vec::new();
+    anyrender::ImageRenderer::render_to_vec(&mut renderer, |p| p.append_scene(scene, kurbo::Affine::IDENTITY), &mut rgba);
+    pyro_canvas::pixmap_from_premultiplied(rgba, w, h)
+}
+
 impl Renderer {
     pub fn new() -> Self {
-        blitz_dom::set_svg_rasterizer(svg_shape_alpha);
-        pyro_canvas::codec::set_svg_decoder(svg_canvas_image);
+        register_hooks();
         Self {
             font_ctx: process_fonts(),
             blob_hashes: HashMap::new(),

@@ -143,6 +143,8 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 /// from its network ([`GeometrySource::set_subresource_loader`]), so what it
 /// is laid out with loads the way its own sub-resource requests go.
 pub fn install_with(fetchers: FetcherFactory) {
+    // pyro: before a page's scripts draw on a canvas (an SVG image, a `filter`).
+    pyro_render::register_hooks();
     if profile::on() {
         pyro_render::profiling::enable();
     }

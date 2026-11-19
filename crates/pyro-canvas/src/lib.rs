@@ -197,6 +197,28 @@ pub struct DrawState<'a> {
     pub shadow: Option<Shadow>,
     /// `imageSmoothingEnabled` (bilinear) or nearest neighbour.
     pub smoothing: bool,
+    /// pyro: `filter` (none: `None`).
+    pub filter: Option<&'a CanvasFilter>,
+}
+
+/// pyro: a canvas `filter` other than `none`: the value as given (CSS filter functions and
+/// `url(#id)` references) and the markup of the document's elements it references by id (SVG
+/// `<filter>`s), which the registered [`FilterRenderer`] applies to each draw's output.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasFilter {
+    pub value: String,
+    pub defs: String,
+}
+
+/// Applies a canvas filter to a draw's output (premultiplied, the canvas's size), or `None`
+/// when it cannot (the output is then drawn unfiltered).
+pub type FilterRenderer = fn(&Pixmap, &CanvasFilter) -> Option<Pixmap>;
+
+static FILTER_RENDERER: std::sync::OnceLock<FilterRenderer> = std::sync::OnceLock::new();
+
+/// Registers the renderer of canvas filters (`pyro-render` registers one).
+pub fn set_filter_renderer(renderer: FilterRenderer) {
+    let _ = FILTER_RENDERER.set(renderer);
 }
 
 impl DrawState<'_> {
@@ -686,7 +708,8 @@ impl Surface {
         }
         let Some((w, h)) = self.reserve() else { return };
         let shadow = state.visible_shadow();
-        if state.composite == Composite::SourceOver && shadow.is_none() {
+        let filter = state.filter.filter(|_| FILTER_RENDERER.get().is_some());
+        if state.composite == Composite::SourceOver && shadow.is_none() && filter.is_none() {
             let full = self.batch.as_ref().is_some_and(|b| b.ops >= MAX_BATCH);
             if full {
                 self.flush();
@@ -706,6 +729,13 @@ impl Surface {
         let mut source = Pixmap::new(w, h);
         ctx.flush();
         ctx.render(&mut source, &mut resources);
+        // pyro: the filter applies to the draw's output before its shadow and compositing (HTML
+        // canvas drawing model).
+        if let (Some(filter), Some(render)) = (filter, FILTER_RENDERER.get()) {
+            if let Some(filtered) = render(&source, filter).filter(|p| p.width() == w && p.height() == h) {
+                source = filtered;
+            }
+        }
         let mask = self.clip_mask(state.clip);
         let op = state.composite;
         let alpha = state.alpha.clamp(0.0, 1.0);

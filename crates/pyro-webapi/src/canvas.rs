@@ -267,6 +267,9 @@ pub(crate) struct State {
     image_smoothing: bool,
     image_smoothing_quality: &'static str,
     filter: String,
+    /// pyro: `filter` resolved for drawing (`None` for `none`): its value and the markup of the
+    /// document's elements it references (`canvas_filter`).
+    filter_spec: Option<pyro_canvas::CanvasFilter>,
     letter_spacing: String,
     word_spacing: String,
     font_kerning: &'static str,
@@ -303,6 +306,7 @@ impl State {
             image_smoothing: true,
             image_smoothing_quality: "low",
             filter: "none".into(),
+            filter_spec: None,
             letter_spacing: "0px".into(),
             word_spacing: "0px".into(),
             font_kerning: "auto",
@@ -327,6 +331,7 @@ impl State {
                 offset: kurbo::Vec2::new(self.shadow_offset_x, self.shadow_offset_y),
             }),
             smoothing: self.image_smoothing,
+            filter: self.filter_spec.as_ref(),
         }
     }
 
@@ -396,6 +401,37 @@ impl ContextData {
 
 fn default_font() -> FontSpec {
     text_metrics::parse_font("10px sans-serif", 10.0).expect("default canvas font")
+}
+
+/// pyro: a canvas `filter` value for drawing: `None` for `none` (or nothing); else the value
+/// and the markup of the `<filter>` elements of the document its `url(#id)`s name (an `id` the
+/// document lacks is left out: the filter then names nothing, and draws nothing filtered).
+fn canvas_filter(page: &PageDom, value: &str) -> Option<pyro_canvas::CanvasFilter> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let dom = page.dom.borrow();
+    let doc = page.document();
+    let mut defs = String::new();
+    let mut rest = trimmed;
+    while let Some(at) = rest.find("url(") {
+        let after = &rest[at + 4..];
+        let Some(end) = after.find(')') else { break };
+        let reference = after[..end].trim().trim_matches(|c| c == '"' || c == '\'');
+        if let Some(id) = reference.strip_prefix('#') {
+            if let Some(markup) = dom
+                .get_element_by_id(doc, id)
+                .ok()
+                .flatten()
+                .and_then(|el| dom.xml_serialize(el).ok())
+            {
+                defs.push_str(&markup);
+            }
+        }
+        rest = &after[end + 1..];
+    }
+    Some(pyro_canvas::CanvasFilter { value: trimmed.to_string(), defs })
 }
 
 /// A canvas element's bitmap size: its `width`/`height` attributes.
@@ -1454,7 +1490,18 @@ impl JsClass for CanvasRenderingContext2D {
         number_state!(def, "shadowBlur", shadow_blur, |n| n >= 0.0);
         number_state!(def, "shadowOffsetX", shadow_offset_x, |_| true);
         number_state!(def, "shadowOffsetY", shadow_offset_y, |_| true);
-        string_state!(def, "filter", filter);
+        def.accessor(
+            "filter",
+            |s, c| Ok(s.string(&c.state.borrow().filter)),
+            |_s, c, v| {
+                let value = dom_string(v)?;
+                let spec = canvas_filter(&c.page, &value);
+                let mut state = c.state.borrow_mut();
+                state.filter = value;
+                state.filter_spec = spec;
+                Ok(())
+            },
+        );
         string_state!(def, "letterSpacing", letter_spacing);
         string_state!(def, "wordSpacing", word_spacing);
         def.accessor(

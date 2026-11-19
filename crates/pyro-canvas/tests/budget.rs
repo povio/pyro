@@ -11,7 +11,7 @@ fn state() -> DrawState<'static> {
         composite: Composite::SourceOver,
         clip: &[],
         shadow: None,
-        smoothing: true,
+        smoothing: true, filter: None,
     }
 }
 
