@@ -4,6 +4,9 @@
   "css/css-backgrounds/animations/background-color-transition-currentcolor.html": {
    "reason": "Timing: the page's reftest-wait is removed only after two rAFs, a transition's anim.ready and one more rAF; in CI run 44298843277 (--jobs 16, lp-m1) it was not removed within 10 s on the first run (setup 2 ms, goto 6 ms, settle 10,002 ms, no browser restart, the only incomplete page of the shard) and passed both reruns. Today's CI runs: 8 of 9 executions pass (5 at --jobs 8, 1 at 12, 2 reruns at 16); locally 80 of 80 (--repeat 40 at --jobs 16 and 8, load 100). Its pass stays gated whenever it completes.",
    "allowIncomplete": true
+  },
+  "scroll-animations/scroll-timelines/*": {
+   "reason": "Timing (2026-11-19): these reftests fail on a page's first run and pass every rerun (runs 44457705714..44462705032: animation-with-overflow-hidden, animation-with-animatable-interface, layout-changes-on-percentage-based-timeline, animation-with-root-scroller, animation-with-transform, set-current-time-before-play, progress-based-effect-delay, two-animations-attach-to-same-scroll-timeline*), so every run recorded new flaky gains. Likely scroll-timeline sampling before the first layout on a cold page; lane F2 follow-up. Remove once fixed."
   }
  }
 }

@@ -21861,7 +21861,7 @@
   "scroll-animations/scroll-timelines/animation-with-display-none.html": {"status":"complete","ms":140,"n":1,"fail":[],"h":"0e440bf2"},
   "scroll-animations/scroll-timelines/animation-with-overflow-hidden.html": {"status":"complete","ms":140,"n":1,"fail":[],"h":"0e440bf2"},
   "scroll-animations/scroll-timelines/animation-with-root-scroller.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
-  "scroll-animations/scroll-timelines/animation-with-transform.html": {"status":"complete","ms":130,"n":1,"pass":[]},
+  "scroll-animations/scroll-timelines/animation-with-transform.html": {"status":"complete","ms":130,"n":1,"fail":[],"h":"0e440bf2"},
   "scroll-animations/scroll-timelines/custom-property.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
   "scroll-animations/scroll-timelines/layout-changes-on-percentage-based-timeline.html": {"status":"complete","ms":70,"n":1,"fail":[],"h":"0e440bf2"},
   "scroll-animations/scroll-timelines/progress-based-effect-delay.tentative.html": {"status":"complete","ms":120,"n":1,"fail":[],"h":"0e440bf2"},
