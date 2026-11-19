@@ -1474,7 +1474,7 @@
      synthesis: &'a fontique::Synthesis,
 --- a/src/break_overrides.rs
 +++ b/src/break_overrides.rs
-@@ -90,6 +90,30 @@
+@@ -90,9 +90,33 @@
      CHROMIUM_LINE_BREAK_TABLE.lookup(before, after)
  }
  
@@ -1504,7 +1504,11 @@
 +
  /// A static table mirroring Chromium's preferred line breaking behavior for `before` / `after`
  /// printable ASCII code points.
- static CHROMIUM_LINE_BREAK_TABLE: AsciiLineBreakTable<5> =
+-static CHROMIUM_LINE_BREAK_TABLE: AsciiLineBreakTable<5> =
++pub(crate) static CHROMIUM_LINE_BREAK_TABLE: AsciiLineBreakTable<5> =
+     AsciiLineBreakTableBuilder::chromium().build::<5>();
+ 
+ /// A line break override table for ASCII character pairs.
 @@ -323,6 +347,7 @@
      use super::CHROMIUM_LINE_BREAK_TABLE;
      use super::LineBreakContext;
@@ -1513,13 +1517,10 @@
  
      fn cx(before_before: Option<char>, before: char, after: char) -> LineBreakContext {
          LineBreakContext {
-@@ -344,6 +369,22 @@
-         // No preceding character (start of text) behaves like a non-alphanumeric
-         // context, matching Chromium's `last_last_ch == 0`.
-         assert_eq!(chromium_override(cx(None, '-', '1')), Some(false));
-+    }
-+
-+    #[test]
+@@ -347,6 +372,22 @@
+     }
+ 
+     #[test]
 +    fn hyphen_digit_override_only_breaks_after_an_alphanumeric() {
 +        assert_eq!(hyphen_digit_override(cx(Some('b'), '-', '9')), Some(true));
 +        assert_eq!(hyphen_digit_override(cx(Some('0'), '-', '2')), Some(true));
@@ -1533,9 +1534,12 @@
 +        assert_eq!(hyphen_digit_override(cx(Some('a'), '\u{2011}', '1')), None);
 +        assert_eq!(hyphen_digit_override(cx(Some('a'), '-', '\u{0661}')), None);
 +        assert_eq!(hyphen_digit_override(cx(Some('\u{e9}'), '-', '1')), None);
-     }
- 
-     #[test]
++    }
++
++    #[test]
+     fn chromium_ignores_uax_14_lb13() {
+         // Blink allows a break after a space run unconditionally.
+         // See comment in non-test code for more details.
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -52,9 +52,16 @@
@@ -1725,12 +1729,10 @@
  
      fn new(
          script: Script,
-@@ -279,8 +337,29 @@
-                 | (is_emoji_modifier as u16) << Self::EMOJI_MODIFIER_SHIFT
-                 | (is_emoji_modifier_base as u16) << Self::EMOJI_MODIFIER_BASE_SHIFT,
+@@ -281,6 +339,27 @@
          }
-+    }
-+
+     }
+ 
 +    /// pyro: sets whether there is a soft wrap opportunity before the character.
 +    #[inline(always)]
 +    fn set_soft_wrap_opportunity(&mut self, value: bool) {
@@ -1743,8 +1745,8 @@
 +    #[inline(always)]
 +    fn set_phrase_fallback(&mut self, value: bool) {
 +        self.flags = self.flags & !Self::PHRASE_FALLBACK_MASK | (value as u16) << Self::PHRASE_FALLBACK_SHIFT;
-     }
- 
++    }
++
 +    /// pyro: whether there is a soft wrap opportunity before the character only for a line whose
 +    /// phrase does not fit (CSS `word-break: auto-phrase` falls back to `normal` there).
 +    #[inline(always)]
@@ -1755,7 +1757,33 @@
      /// Whether this character is a variation selector.
      #[inline(always)]
      pub fn is_variation_selector(self) -> bool {
-@@ -733,7 +812,15 @@
+@@ -634,6 +713,13 @@
+         .line_break
+         .iter()
+         .filter(|(_, config)| config.line_break == LineBreak::Anywhere)
++        .map(|(range, _)| range)
++        .peekable();
++    // pyro: the `word-break: break-all` ranges.
++    let mut break_all_iter = options
++        .line_break
++        .iter()
++        .filter(|(_, config)| config.word_break == WordBreak::BreakAll && config.line_break != LineBreak::Anywhere)
+         .map(|(range, _)| range)
+         .peekable();
+     let boundary_iter = text.char_indices().map(|(byte_pos, ch)| {
+@@ -716,7 +802,11 @@
+             .is_some_and(|range| range.end <= byte_pos)
+         {
+             _ = break_anywhere_iter.next();
++        }
++        while break_all_iter.peek().is_some_and(|range| range.end <= byte_pos) {
++            _ = break_all_iter.next();
+         }
++        let is_break_all = break_all_iter.peek().is_some_and(|range| range.contains(&byte_pos));
+         let is_break_anywhere = break_anywhere_iter
+             .peek()
+             .is_some_and(|range| range.contains(&byte_pos));
+@@ -733,7 +823,28 @@
                  // `line-break: anywhere`: an opportunity around every grapheme.
                  prev_char.is_some() && is_grapheme_start
              } else {
@@ -1766,13 +1794,26 @@
 +                // (`LazyLineBreakIterator::NextBreakablePosition`), where UAX #14 LB13 has none
 +                // before an exclamation mark (`six, !seven`); not before a closing bracket, which
 +                // LB13 keeps on the line (`Yes )`).
++                // pyro: `word-break: break-all` breaks next to letters; between two ASCII
++                // punctuation characters Chromium keeps its usual pairs (`\\\` stays whole,
++                // WPT css-text `word-break-break-all-023`), where UAX #14 breaks `PR ÷ PR`.
++                let punctuation_pair = is_break_all
++                    && ch.is_ascii_punctuation()
++                    && prev_char.is_some_and(|prev: char| prev.is_ascii_punctuation());
++                let is_icu_line = match punctuation_pair {
++                    true => is_icu_line
++                        && crate::break_overrides::CHROMIUM_LINE_BREAK_TABLE
++                            .lookup(prev_char.unwrap_or(' '), ch)
++                            .unwrap_or(true),
++                    false => is_icu_line,
++                };
 +                (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
 +                    || (prev_char == Some(' ') && !matches!(ch, ' ' | ')' | ']' | '}'))
 +                    || after_break_space
              };
              // Consumers can override soft wrap opportunities, except around a mandatory
              // break.
-@@ -808,21 +895,246 @@
+@@ -808,21 +919,246 @@
          ));
      }
  
@@ -1852,16 +1893,16 @@
 +        if analysis.paragraph_levels.iter().all(|&(_, level)| level == first) {
 +            analysis.paragraph_levels.clear();
 +        }
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: `word-break: keep-all` keeps letters together, not what a hyphen-minus separates: the
 +/// line may break after one before a letter, as under `normal` (UAX #14: HY ÷ AL; ICU4X's
 +/// keep-all data drops it; WPT css-text `word-break-keep-all-u002d`).
 +fn keep_all_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
 +    if !text.contains('-') || !options.line_break.iter().any(|(_, config)| config.word_break == WordBreak::KeepAll) {
 +        return;
-     }
++    }
 +    let config_at = |byte: usize| {
 +        options
 +            .line_break
@@ -1885,8 +1926,8 @@
 +            info[index + 1].set_soft_wrap_opportunity(true);
 +        }
 +    }
- }
- 
++}
++
 +/// pyro: a soft hyphen whose style ends no line there (`hyphens: none`) is no soft wrap
 +/// opportunity, so it does not narrow min-content sizes either; under `word-break: auto-phrase`
 +/// it is a phrase fallback. Runs after [`phrase_breaks`].

@@ -715,6 +715,13 @@ pub(crate) fn analyze_text(
         .filter(|(_, config)| config.line_break == LineBreak::Anywhere)
         .map(|(range, _)| range)
         .peekable();
+    // pyro: the `word-break: break-all` ranges.
+    let mut break_all_iter = options
+        .line_break
+        .iter()
+        .filter(|(_, config)| config.word_break == WordBreak::BreakAll && config.line_break != LineBreak::Anywhere)
+        .map(|(range, _)| range)
+        .peekable();
     let boundary_iter = text.char_indices().map(|(byte_pos, ch)| {
         // advance any stale word boundary positions
         while let Some(&w) = wb_iter.peek() {
@@ -796,6 +803,10 @@ pub(crate) fn analyze_text(
         {
             _ = break_anywhere_iter.next();
         }
+        while break_all_iter.peek().is_some_and(|range| range.end <= byte_pos) {
+            _ = break_all_iter.next();
+        }
+        let is_break_all = break_all_iter.peek().is_some_and(|range| range.contains(&byte_pos));
         let is_break_anywhere = break_anywhere_iter
             .peek()
             .is_some_and(|range| range.contains(&byte_pos));
@@ -818,6 +829,19 @@ pub(crate) fn analyze_text(
                 // (`LazyLineBreakIterator::NextBreakablePosition`), where UAX #14 LB13 has none
                 // before an exclamation mark (`six, !seven`); not before a closing bracket, which
                 // LB13 keeps on the line (`Yes )`).
+                // pyro: `word-break: break-all` breaks next to letters; between two ASCII
+                // punctuation characters Chromium keeps its usual pairs (`\\\` stays whole,
+                // WPT css-text `word-break-break-all-023`), where UAX #14 breaks `PR ÷ PR`.
+                let punctuation_pair = is_break_all
+                    && ch.is_ascii_punctuation()
+                    && prev_char.is_some_and(|prev: char| prev.is_ascii_punctuation());
+                let is_icu_line = match punctuation_pair {
+                    true => is_icu_line
+                        && crate::break_overrides::CHROMIUM_LINE_BREAK_TABLE
+                            .lookup(prev_char.unwrap_or(' '), ch)
+                            .unwrap_or(true),
+                    false => is_icu_line,
+                };
                 (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
                     || (prev_char == Some(' ') && !matches!(ch, ' ' | ')' | ']' | '}'))
                     || after_break_space
