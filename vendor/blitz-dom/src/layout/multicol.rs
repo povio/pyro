@@ -2569,9 +2569,12 @@ impl BaseDocument {
                     // The collapsed margin, no more (clearance is no margin).
                     let margin = margin.max(layout.margin.top).max(0.0);
                     found.gaps.push(((child_top - margin).max(bottom), child_top));
-                } else if previous.is_none() && layout.margin.top > 0.0 {
+                } else if previous.is_none() && layout.margin.top > 0.0 && container_content_top.is_some() {
                     // pyro: the first child's own top margin, which a break before it truncates too
                     // (a column with nothing but it before the break holds no content: `fill_range`).
+                    // (The container's first child only: in a box further down, its top is a break
+                    // between it and the box before, which is taken; a break before its first child
+                    // would leave the box's top shown nowhere.)
                     found.gaps.push(((child_top - layout.margin.top).max(top), child_top));
                 }
                 previous = Some(match previous {
