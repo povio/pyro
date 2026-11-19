@@ -51,6 +51,7 @@ impl Browser {
             kind: if request.video { ResourceKind::Video } else { ResourceKind::Audio },
             page: page.page,
             referrer: Some(base),
+            referrer_policy: None,
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: request.crossorigin,

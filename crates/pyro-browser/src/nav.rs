@@ -505,6 +505,7 @@ impl PageNav {
                 cdp_request_id: None,
                 // The document that navigates (`location`, `window.open`).
                 referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
+                referrer_policy: None,
             };
             if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);
@@ -570,6 +571,7 @@ impl PageNav {
                     reason: NavigationReason::History,
                     cdp_request_id: None,
                     referrer: None,
+                    referrer_policy: None,
                 };
                 if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
                     b.report_navigation_error(page, &e);

@@ -39,10 +39,41 @@ impl ReferrerPolicy {
         ALL.iter().find(|(name, _)| name.eq_ignore_ascii_case(token)).map(|(_, p)| *p)
     }
 
+    /// The state of a `referrerpolicy` content attribute (an enumerated
+    /// attribute: a keyword, ASCII case-insensitive, nothing around it);
+    /// `None` for the empty state (missing, empty or unknown value), in
+    /// which the document's policy applies.
+    pub fn from_attribute(value: Option<&str>) -> Option<Self> {
+        let space = |c: char| c.is_ascii_whitespace();
+        value.filter(|v| !v.starts_with(space) && !v.ends_with(space)).and_then(Self::parse)
+    }
+
+    /// The policy of a link or `window.open` feature list: `rel=noreferrer`
+    /// sends none whatever `referrerpolicy` says.
+    pub fn of_link(rel: Option<&str>, referrerpolicy: Option<&str>) -> Option<Self> {
+        if rel.is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("noreferrer"))) {
+            return Some(ReferrerPolicy::NoReferrer);
+        }
+        Self::from_attribute(referrerpolicy)
+    }
+
     /// The `Referrer-Policy` response header: the last token it names that
     /// is a known policy, across comma-separated values and header lines.
+    ///
+    /// An unknown token is skipped (a newer policy an older browser falls
+    /// back from); an item that is not a token at all (`origin no-referrer`)
+    /// makes the whole header give no policy, as in Chromium.
     pub fn from_header<'a>(values: impl IntoIterator<Item = &'a str>) -> Option<Self> {
-        values.into_iter().flat_map(|v| v.split(',')).filter_map(Self::parse).last()
+        let is_tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+        let mut policy = None;
+        for item in values.into_iter().flat_map(|v| v.split(',')) {
+            match Self::parse(item) {
+                Some(p) => policy = Some(p),
+                None if item.trim_matches(|c: char| c.is_ascii_whitespace()).chars().all(is_tchar) => {}
+                None => return None,
+            }
+        }
+        policy
     }
 
     /// The `<meta name=referrer content>` value, which also accepts the
@@ -116,6 +147,41 @@ pub fn referrer_for(referrer: &Url, target: &Url, policy: ReferrerPolicy) -> Opt
             } else {
                 (!downgrade).then(origin)
             }
+        }
+    }
+}
+
+/// A request's referrer across its redirect chain. Fetch sets a request's
+/// referrer to the value "determine request's referrer" gave (main fetch),
+/// so each hop after a redirect starts from what the hop before it sent,
+/// not from the original referrer: a referrer cut to its origin (or dropped)
+/// on a cross-origin hop stays cut when a redirect leads back.
+#[derive(Clone, Debug)]
+pub struct ReferrerChain {
+    /// The referrer source of the hop being made.
+    pub referrer: Option<Url>,
+    pub policy: ReferrerPolicy,
+}
+
+impl ReferrerChain {
+    pub fn new(referrer: Option<Url>, policy: ReferrerPolicy) -> Self {
+        ReferrerChain { referrer, policy }
+    }
+
+    /// The `Referer` value of a hop to `target`.
+    pub fn header(&self, target: &Url) -> Option<String> {
+        self.referrer.as_ref().and_then(|r| referrer_for(r, target, self.policy))
+    }
+
+    /// A redirect answered the hop to `from` with `headers`: the next hop's
+    /// referrer is the one `from` was sent, and a `Referrer-Policy` header
+    /// naming a known policy replaces the request's.
+    pub fn redirect(&mut self, from: &Url, headers: &http::HeaderMap) {
+        self.referrer = self.header(from).and_then(|r| Url::parse(&r).ok());
+        if let Some(policy) =
+            ReferrerPolicy::from_header(headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()))
+        {
+            self.policy = policy;
         }
     }
 }
@@ -262,6 +328,43 @@ mod tests {
     }
 
     #[test]
+    fn a_redirect_chain_keeps_what_the_hop_before_sent() {
+        use ReferrerPolicy::*;
+        let page = u("http://a.example/page?q");
+        let same = u("http://a.example/r");
+        let cross = u("http://b.example/r");
+        let none = http::HeaderMap::new();
+        // (policy, sent to a cross-origin hop, then sent after its redirect back to the page's origin)
+        let cases = [
+            (NoReferrer, None, None),
+            (UnsafeUrl, Some("http://a.example/page?q"), Some("http://a.example/page?q")),
+            (Origin, Some("http://a.example/"), Some("http://a.example/")),
+            (SameOrigin, None, None),
+            (StrictOrigin, Some("http://a.example/"), Some("http://a.example/")),
+            (OriginWhenCrossOrigin, Some("http://a.example/"), Some("http://a.example/")),
+            (StrictOriginWhenCrossOrigin, Some("http://a.example/"), Some("http://a.example/")),
+            (NoReferrerWhenDowngrade, Some("http://a.example/page?q"), Some("http://a.example/page?q")),
+        ];
+        for (policy, first, back) in cases {
+            let mut chain = ReferrerChain::new(Some(page.clone()), policy);
+            assert_eq!(chain.header(&cross).as_deref(), first, "{policy:?} first hop");
+            chain.redirect(&cross, &none);
+            assert_eq!(chain.header(&same).as_deref(), back, "{policy:?} back to the origin");
+        }
+        // Same-origin first, then away: the full URL, then the policy again.
+        let mut chain = ReferrerChain::new(Some(page.clone()), SameOrigin);
+        assert_eq!(chain.header(&same).as_deref(), Some("http://a.example/page?q"));
+        chain.redirect(&same, &none);
+        assert_eq!(chain.header(&cross), None);
+        // A redirect's own policy applies from the next hop on.
+        let mut chain = ReferrerChain::new(Some(page), UnsafeUrl);
+        let mut headers = http::HeaderMap::new();
+        headers.insert("referrer-policy", "bogus, origin".parse().unwrap());
+        chain.redirect(&same, &headers);
+        assert_eq!(chain.header(&same).as_deref(), Some("http://a.example/"));
+    }
+
+    #[test]
     fn policy_tokens() {
         assert_eq!(ReferrerPolicy::parse(" Origin "), Some(ReferrerPolicy::Origin));
         assert_eq!(ReferrerPolicy::parse("bogus"), None);
@@ -270,8 +373,20 @@ mod tests {
             Some(ReferrerPolicy::UnsafeUrl)
         );
         assert_eq!(ReferrerPolicy::from_header(["bogus"]), None);
+        assert_eq!(ReferrerPolicy::from_header(["origin, ,same-origin,"]), Some(ReferrerPolicy::SameOrigin));
+        // Not a token: the header as a whole is dropped.
+        assert_eq!(ReferrerPolicy::from_header(["origin", "origin no-referrer"]), None);
+        assert_eq!(ReferrerPolicy::from_header(["origin no-referrer", "origin"]), None);
         assert_eq!(ReferrerPolicy::from_meta("never"), Some(ReferrerPolicy::NoReferrer));
         assert_eq!(ReferrerPolicy::from_meta("same-origin"), Some(ReferrerPolicy::SameOrigin));
+        assert_eq!(ReferrerPolicy::from_attribute(Some("Unsafe-URL")), Some(ReferrerPolicy::UnsafeUrl));
+        for empty_state in [None, Some(""), Some(" origin"), Some("never"), Some("bogus")] {
+            assert_eq!(ReferrerPolicy::from_attribute(empty_state), None, "{empty_state:?}");
+        }
+        let noreferrer = ReferrerPolicy::of_link(Some("nofollow NoReferrer"), Some("unsafe-url"));
+        assert_eq!(noreferrer, Some(ReferrerPolicy::NoReferrer));
+        assert_eq!(ReferrerPolicy::of_link(Some("noopener"), Some("origin")), Some(ReferrerPolicy::Origin));
+        assert_eq!(ReferrerPolicy::of_link(None, None), None);
     }
 
     #[test]

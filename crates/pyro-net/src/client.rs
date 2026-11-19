@@ -482,6 +482,7 @@ impl Shared {
         &self,
         cookies: &Mutex<CookieJar>,
         req: &Request,
+        referrer: Option<&Url>,
         origin_url: Option<&Url>,
         cors_cross: bool,
         site: FetchSite,
@@ -521,7 +522,7 @@ impl Shared {
                 }
             }
         }
-        if let Some(r) = &req.referrer {
+        if let Some(r) = referrer {
             // A serialized URL is ASCII: the value takes the string as it is.
             if let Some(v) = crate::referrer::referrer_for(r, &req.url, req.referrer_policy)
                 .and_then(|v| HeaderValue::from_maybe_shared(Bytes::from(v)).ok())
@@ -1025,8 +1026,15 @@ impl LocalPause {
         }
         let cors_cross = shared.config.enforce_cors && req.mode == RequestMode::Cors && !same_origin;
         let site = hop_site(&req, origin_url.as_ref());
-        let mut headers =
-            shared.build_headers(&inner.cookies, &req, origin_url.as_ref(), cors_cross, site, same_origin);
+        let mut headers = shared.build_headers(
+            &inner.cookies,
+            &req,
+            req.referrer.as_ref(),
+            origin_url.as_ref(),
+            cors_cross,
+            site,
+            same_origin,
+        );
         shared.cache_mode(&req, &mut headers);
         let info = || RequestInfo {
             url: req.url.clone(),
@@ -1843,6 +1851,9 @@ impl Io {
         let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
         let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
         let mut redirects = 0u32;
+        // The referrer of the hop being made. `req.referrer` stays the
+        // request's initiator (Fetch Metadata, the `file:` check).
+        let mut referrer = crate::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy);
         // `Sec-Fetch-Site`: the most cross-site relation of the chain so far.
         let mut site = FetchSite::None;
         let mut redirect_response: Option<ResponseHead> = None;
@@ -1884,7 +1895,15 @@ impl Io {
             let (mut headers, mut decided) = match staged.take() {
                 Some(staged) => (staged.headers, Some(staged.decision)),
                 None => (
-                    self.shared.build_headers(&self.cookies, &req, origin_url.as_ref(), cors_cross, site, same_origin),
+                    self.shared.build_headers(
+                        &self.cookies,
+                        &req,
+                        referrer.referrer.as_ref(),
+                        origin_url.as_ref(),
+                        cors_cross,
+                        site,
+                        same_origin,
+                    ),
                     None,
                 ),
             };
@@ -2265,12 +2284,10 @@ impl Io {
                             tainted = true;
                         }
                     }
-                    // Referrer Policy: a redirect's header sets the next hop's.
-                    if let Some(policy) = crate::referrer::ReferrerPolicy::from_header(
-                        head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
-                    ) {
-                        req.referrer_policy = policy;
-                    }
+                    // Referrer Policy: the next hop's referrer is the one this
+                    // hop sent, under the redirect's policy if it names one.
+                    referrer.redirect(&url, &head.headers);
+                    req.referrer_policy = referrer.policy;
                     req.url = target;
                     redirect_response = Some(head);
                     continue;

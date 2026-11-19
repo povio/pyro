@@ -128,3 +128,36 @@ fn a_module_worker_script_needs_a_javascript_mime_type() {
     env.until("msgs.length >= 2");
     assert_eq!(env.eval("msgs.sort().join()"), "ok.js:ran,sheet.css:error");
 }
+
+/// A message posted to a module worker before its graph has loaded waits for
+/// the script: the worker's message queue is enabled once it ran (HTML "run
+/// a worker"), so a handler the module sets after its imports gets it.
+#[test]
+fn a_module_worker_gets_the_messages_posted_while_its_imports_load() {
+    if !unsafe { pyro_js::sys::modules::pyro_jsc_modules_available() == 1 } {
+        eprintln!("module SPI unavailable; skipping");
+        return;
+    }
+    let server = Server::new(&[
+        (
+            "/worker.js",
+            "text/javascript",
+            "import { tag } from './dep.js';
+             self.onmessage = e => postMessage(tag + ':' + e.data);",
+        ),
+        ("/dep.js", "text/javascript", "export const tag = 'dep';"),
+        ("/plain.js", "text/javascript", "self.onmessage = e => postMessage('plain:' + e.data);"),
+    ]);
+    let env = Env::new(&format!("{}/page", server.base));
+    env.eval(&format!(
+        "globalThis.msgs = [];
+         for (const name of ['worker.js', 'plain.js']) {{
+           const w = new Worker('{}/' + name, {{ type: 'module' }});
+           w.onmessage = e => msgs.push(e.data); w.onerror = e => msgs.push('error:' + e.message);
+           w.postMessage('first'); w.postMessage('second');
+         }}",
+        server.base
+    ));
+    env.until("msgs.length >= 4");
+    assert_eq!(env.eval("msgs.sort().join()"), "dep:first,dep:second,plain:first,plain:second");
+}

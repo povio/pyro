@@ -43,6 +43,7 @@ mod performance_timeline;
 mod popups;
 mod preload_scanner;
 mod referrer;
+mod referrer_policy;
 mod remote_ordering;
 mod resource_timing;
 mod runloop_idle_finalization;

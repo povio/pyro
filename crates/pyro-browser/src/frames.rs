@@ -1545,6 +1545,9 @@ impl Browser {
                 }
                 Ok(())
             } else {
+                // The container's `referrerpolicy`, else its document's policy (the request's client).
+                let referrer_policy =
+                    crate::loader::container_referrer_policy(&host.dom.borrow(), owner, parent.page_dom.as_deref());
                 self.navigate_frame_with_handling(
                     key,
                     NavigateOpts {
@@ -1553,6 +1556,7 @@ impl Browser {
                         reason: NavigationReason::InitialFrameNavigation,
                         cdp_request_id: None,
                         referrer: Some(parent.url),
+                        referrer_policy,
                     },
                     HistoryHandling::Replace,
                 )
@@ -1588,6 +1592,7 @@ impl Browser {
             reason: NavigationReason::InitialFrameNavigation,
             cdp_request_id: None,
             referrer: Some(referrer),
+            referrer_policy: None,
         };
         self.emit(
             key.page,
@@ -1613,7 +1618,8 @@ impl Browser {
                 header_csp: None,
                 refresh: None,
                 content_language: None,
-                referrer_policy: None,
+                referrer_policy: crate::loader::parent_referrer_policy(self, key),
+                sent_referrer: None,
                 timing: None,
                 partial: None,
                 nosniff: false,

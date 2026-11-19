@@ -288,6 +288,7 @@ impl Browser {
             kind,
             page: page.page,
             referrer: Some(frame.base_url.clone()),
+            referrer_policy: None,
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,

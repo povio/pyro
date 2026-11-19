@@ -920,6 +920,7 @@ impl Dom {
             head: NIL,
             body: NIL,
             viewport_meta: None,
+            meta_referrer_policy: None,
             responsive_embedded: false,
             content_language: None,
         };
@@ -1052,12 +1053,39 @@ impl Dom {
         self.viewport_meta_version += 1;
     }
 
+    /// HTML's `<meta name=referrer>` steps, after the `<meta>` `idx` was
+    /// inserted or its `name` or `content` changed: in a document tree, with
+    /// a `content` naming a policy (or a legacy keyword), it sets its
+    /// document's referrer policy. The latest one processed wins wherever it
+    /// is in the tree; an empty or unknown value changes nothing, and
+    /// neither does removing the element.
+    pub(crate) fn process_referrer_meta(&mut self, idx: u32) {
+        let n = self.n(idx);
+        if !n.in_document_tree() {
+            return;
+        }
+        let Some(e) = n.element() else { return };
+        if !e.attr_local(&local_name!("name")).is_some_and(|name| name.eq_ignore_ascii_case("referrer")) {
+            return;
+        }
+        let Some(policy) = e.attr_local(&local_name!("content")).and_then(meta_referrer_policy) else { return };
+        let doc = n.owner_doc;
+        self.doc_data_mut(doc).meta_referrer_policy = Some(policy);
+    }
+
+    /// The referrer policy `doc`'s `<meta name=referrer>` elements gave it
+    /// (a policy token), if any did.
+    pub fn meta_referrer_policy(&self, doc: NodeId) -> Option<&'static str> {
+        self.document_data(doc).ok()?.meta_referrer_policy
+    }
+
     /// [`Dom::process_viewport_meta`] for the `<meta>` elements of an
     /// inserted subtree, in tree order.
     pub(crate) fn process_viewport_metas(&mut self, root: u32) {
         let mut i = root;
         while i != NIL {
             if self.is_html_meta(i) {
+                self.process_referrer_meta(i);
                 self.process_viewport_meta(i);
             }
             i = self.following_in(i, root);
@@ -4357,4 +4385,33 @@ pub struct FrameDocument {
     pub html: String,
     pub url: String,
     pub scroll: (f64, f64),
+}
+
+/// The policy token a `<meta name=referrer content>` value names: a
+/// referrer policy, ASCII case-insensitive (the empty string is none), or
+/// one of the legacy keywords `never`, `default`, `always` and
+/// `origin-when-crossorigin`.
+fn meta_referrer_policy(content: &str) -> Option<&'static str> {
+    const POLICIES: [&str; 8] = [
+        "no-referrer",
+        "no-referrer-when-downgrade",
+        "same-origin",
+        "origin",
+        "strict-origin",
+        "origin-when-cross-origin",
+        "strict-origin-when-cross-origin",
+        "unsafe-url",
+    ];
+    const LEGACY: [(&str, &str); 4] = [
+        ("never", "no-referrer"),
+        ("default", "strict-origin-when-cross-origin"),
+        ("always", "unsafe-url"),
+        ("origin-when-crossorigin", "origin-when-cross-origin"),
+    ];
+    let token = content.trim_matches(|c: char| c.is_ascii_whitespace());
+    LEGACY
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(token))
+        .map(|(_, policy)| *policy)
+        .or_else(|| POLICIES.iter().find(|p| p.eq_ignore_ascii_case(token)).copied())
 }

@@ -143,11 +143,12 @@ impl Browser {
                         url,
                         attr("crossorigin").map(str::to_owned),
                         attr("integrity").filter(|v| !pyro_webapi::sri::is_empty(v)).map(str::to_owned),
+                        crate::loader::element_referrer_policy(&dom, node),
                     ))
                 })
                 .flatten()
         };
-        let Some((url, crossorigin, integrity)) = config else {
+        let Some((url, crossorigin, integrity, referrer_policy)) = config else {
             drop(state);
             self.doc_mut(page).expect("page").stylesheets.remove(node);
             bindings.unblock_rendering(node);
@@ -254,6 +255,7 @@ impl Browser {
             kind: ResourceKind::Stylesheet,
             page: page.page,
             referrer: Some(referrer),
+            referrer_policy,
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,
@@ -557,6 +559,7 @@ impl Browser {
             kind: ResourceKind::Stylesheet,
             page: page.page,
             referrer: Some(referrer.to_owned()),
+            referrer_policy: None,
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: None,

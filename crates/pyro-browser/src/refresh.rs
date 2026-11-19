@@ -163,6 +163,7 @@ impl Browser {
                 reason: NavigationReason::Script,
                 cdp_request_id: None,
                 referrer: Some(referrer),
+                referrer_policy: None,
             };
             let history = if time <= 1 { HistoryHandling::Replace } else { HistoryHandling::Push };
             let _ = b.navigate_frame_with_handling(page, opts, history);

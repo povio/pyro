@@ -399,6 +399,7 @@ impl Browser {
                     refresh: None,
                     content_language: None,
                     referrer_policy: None,
+                    sent_referrer: None,
                     timing: None,
                     partial: None,
                 nosniff: false,
@@ -418,9 +419,10 @@ impl Browser {
             kind: ResourceKind::Image,
             page: page.page,
             referrer: Some(base),
+            referrer_policy: crate::loader::element_referrer_policy(&bindings.dom.borrow(), node),
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
-            crossorigin: None,
+            crossorigin: bindings.dom.borrow().get_attribute(node, "crossorigin").ok().flatten().map(str::to_owned),
             initiator: Some(pyro_webapi::resource_timing::Initiator::Img),
             module: None,
             part: None,
@@ -453,6 +455,10 @@ impl Browser {
         image.pending = false;
         let src = image.src.clone();
         let density = image.density;
+        // A CORS request (`crossorigin`): its response passed the CORS check, so its pixels may
+        // be read back, which is what the attribute is for (the bytes are kept for a canvas
+        // the script makes later).
+        let cors = image.request_state.0 != 0;
         // Nothing needs the element pinned once its request completed.
         let hold = image._node.take();
         drop(state);
@@ -493,8 +499,8 @@ impl Browser {
         bindings.image_loaded(node, &src, decodable);
         // Canvas drawing decodes the pixels from the bytes, when the
         // document may draw images (it has a canvas or used canvas APIs).
-        if let Some(r) = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES && bindings.wants_image_bytes()) {
-            let clean = self.image_origin_clean(page, &r.url);
+        if let Some(r) = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES && (cors || bindings.wants_image_bytes())) {
+            let clean = cors || self.image_origin_clean(page, &r.url);
             bindings.set_image_bytes(node, r.body, clean);
         }
         if let Some(mut state) = self.doc_mut(page) {
@@ -806,7 +812,7 @@ impl Browser {
         if url.starts_with("blob:") {
             let ok = bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Vec::new(), content_disposition: None, header_csp: None, refresh: None, content_language: None, referrer_policy: None, timing: None, partial: None, nosniff: false }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Vec::new(), content_disposition: None, header_csp: None, refresh: None, content_language: None, referrer_policy: None, sent_referrer: None, timing: None, partial: None, nosniff: false }) } else { Err("revoked or unknown blob URL".into()) })
             });
             return;
         }
@@ -821,6 +827,7 @@ impl Browser {
             kind: ResourceKind::Object,
             page: page.page,
             referrer: Some(base),
+            referrer_policy: None,
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: None,

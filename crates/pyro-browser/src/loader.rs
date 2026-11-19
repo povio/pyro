@@ -92,6 +92,10 @@ pub struct FetchRequest {
     pub kind: ResourceKind,
     pub page: PageId,
     pub referrer: Option<String>,
+    /// The request's own referrer policy (a `referrerpolicy` attribute,
+    /// `rel=noreferrer`, a navigation's initiator); `None`: the policy of
+    /// the document of `frame_id`.
+    pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     pub frame_id: Option<String>,
     pub loader_id: Option<String>,
     /// HTML crossorigin attribute (absent uses the resource default).
@@ -151,6 +155,10 @@ pub struct Resource {
     pub content_language: Option<String>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// A navigation's `Referer` as its last hop sent it (`document.referrer`
+    /// of the document it commits; empty: none was sent). `None`: the
+    /// loader does not say, and it is computed from the navigation.
+    pub sent_referrer: Option<String>,
     /// A navigation's fetch as the network saw it (Navigation Timing of the
     /// document it commits); `None` for other kinds and other loaders.
     pub timing: Option<Box<pyro_webapi::resource_timing::FetchReport>>,
@@ -339,6 +347,9 @@ impl ResourceLoader for NetLoader {
             }
             req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
         }
+        let referrer = request_referrer(browser, &request);
+        req.referrer = referrer.referrer;
+        req.referrer_policy = referrer.policy;
         let part = request.part;
         if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {
             if let Ok(value) = pyro_net::http::HeaderValue::from_str(&format!("bytes={start}-")) {
@@ -360,20 +371,6 @@ impl ResourceLoader for NetLoader {
             req.timing_origin = Some(
                 parent_origin(browser, request.page, request.frame_id.as_deref()).unwrap_or_else(|| "null".into()),
             );
-        }
-        req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
-        // The requesting document's policy (for a navigation: the frame's
-        // current document, which started it).
-        if req.referrer.is_some() {
-            if let Some(policy) = request
-                .frame_id
-                .as_deref()
-                .and_then(|id| browser.page(request.page)?.frames.key_of(id))
-                .and_then(|key| browser.page(request.page)?.frames.page_dom(key))
-                .map(|page_dom| page_dom.referrer_policy())
-            {
-                req.referrer_policy = policy;
-            }
         }
         req.frame_id = request.frame_id;
         req.loader_id = request.loader_id;
@@ -426,6 +423,11 @@ impl ResourceLoader for NetLoader {
                 refresh: None,
                 content_language: None,
                 referrer_policy: None,
+                sent_referrer: document.then(|| {
+                    pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy)
+                        .header(&req.url)
+                        .unwrap_or_default()
+                }),
                 body: hit.file.body.to_vec(),
                 timing: report.filter(|_| document).map(Box::new),
                 partial: None,
@@ -447,6 +449,10 @@ impl ResourceLoader for NetLoader {
         }
         let mut head: Option<pyro_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
+        // A navigation's referrer, followed across its redirects as the
+        // client sends it: the last hop's is `document.referrer`.
+        let mut chain =
+            document.then(|| pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy));
         // Navigation Timing of the document this fetch commits.
         let start = std::time::Instant::now();
         let navigation_url = document.then(|| req.url.as_str().to_owned());
@@ -464,7 +470,11 @@ impl ResourceLoader for NetLoader {
             // A cut body was delivered: the rest (and the cancellation's
             // failure) is dropped.
             _ if cut => {}
-            pyro_net::ResponseEvent::Redirect { .. } => {}
+            pyro_net::ResponseEvent::Redirect { from, headers, .. } => {
+                if let Some(chain) = chain.as_mut() {
+                    chain.redirect(&from, &headers);
+                }
+            }
             pyro_net::ResponseEvent::Response(h) => {
                 if part.is_some() && !h.headers.contains_key(http::header::CONTENT_ENCODING) {
                     total =
@@ -491,6 +501,7 @@ impl ResourceLoader for NetLoader {
                     refresh: None,
                     content_language: None,
                     referrer_policy: None,
+                    sent_referrer: None,
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
                     nosniff: false,
@@ -555,6 +566,7 @@ impl ResourceLoader for NetLoader {
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
+                        sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
                         body: std::mem::take(&mut body),
                     }),
                     None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
@@ -621,6 +633,53 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<p
     frames.page_dom(key)
 }
 
+/// The referrer source and policy `request` is sent with: its own policy,
+/// else the policy of the document of its frame (for a navigation without
+/// one: the frame's current document, which started it).
+pub(crate) fn request_referrer(browser: &Browser, request: &FetchRequest) -> pyro_net::referrer::ReferrerChain {
+    let referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
+    // The document's policy is read only when a referrer could be sent.
+    let policy = match (&referrer, request.referrer_policy) {
+        (_, Some(policy)) => policy,
+        (None, None) => Default::default(),
+        (Some(_), None) => request
+            .frame_id
+            .as_deref()
+            .and_then(|id| browser.page(request.page)?.frames.key_of(id))
+            .and_then(|key| browser.page(request.page)?.frames.page_dom(key))
+            .map(|page_dom| page_dom.referrer_policy())
+            .unwrap_or_default(),
+    };
+    pyro_net::referrer::ReferrerChain::new(referrer, policy)
+}
+
+/// The state of `node`'s `referrerpolicy` attribute: the policy its request
+/// is sent with (`None`: its document's).
+pub(crate) fn element_referrer_policy(dom: &pyro_dom::Dom, node: NodeId) -> Option<pyro_net::ReferrerPolicy> {
+    pyro_net::ReferrerPolicy::from_attribute(dom.get_attribute(node, "referrerpolicy").ok().flatten())
+}
+
+/// The policy a frame's container (`<iframe referrerpolicy>`) navigates it
+/// with: its own state, else the policy of its document (`parent`), which
+/// is the request's client (not the frame's current document).
+pub(crate) fn container_referrer_policy(
+    dom: &pyro_dom::Dom,
+    owner: NodeId,
+    parent: Option<&pyro_webapi::PageDom>,
+) -> Option<pyro_net::ReferrerPolicy> {
+    element_referrer_policy(dom, owner).or_else(|| parent.map(|p| p.referrer_policy()))
+}
+
+/// The referrer policy of the document that holds the frame of `key`: what
+/// an `about:srcdoc` document starts with (its policy container is a clone
+/// of its container document's), until a `<meta name=referrer>` of its own.
+pub(crate) fn parent_referrer_policy(browser: &Browser, key: FrameKey) -> Option<pyro_net::ReferrerPolicy> {
+    let parent = browser.doc(key)?.main_frame.parent.clone()?;
+    let page = browser.page(key.page)?;
+    let parent = page.frames.key_of(&parent.0)?;
+    Some(page.frames.page_dom(parent)?.referrer_policy())
+}
+
 /// The serialized origin of the parent of frame `frame_id`.
 fn parent_origin(browser: &Browser, page: PageId, frame_id: Option<&str>) -> Option<String> {
     let key = browser.page(page)?.frames.key_of(frame_id?)?;
@@ -646,6 +705,11 @@ pub struct StaticLoader {
     /// The `Content-Security-Policy` header value served with a URL.
     csp: RefCell<std::collections::HashMap<String, String>>,
     pub log: RefCell<Vec<String>>,
+    /// The `Referrer-Policy` header value served with a URL.
+    referrer_policy: RefCell<std::collections::HashMap<String, String>>,
+    /// Each request's URL and the `Referer` the network loader would send
+    /// with it (its referrer under its policy), in request order.
+    pub referers: RefCell<Vec<(String, Option<String>)>>,
 }
 
 impl StaticLoader {
@@ -659,6 +723,15 @@ impl StaticLoader {
     pub fn set_csp(&self, url: &str, policy: &str) {
         self.csp.borrow_mut().insert(url.to_string(), policy.to_string());
     }
+    /// Serves `url` with a `Referrer-Policy: {policy}` header.
+    pub fn set_referrer_policy(&self, url: &str, policy: &str) {
+        self.referrer_policy.borrow_mut().insert(url.to_string(), policy.to_string());
+    }
+    /// The `Referer` of the last request for `url`: `None` if it was not
+    /// requested, `Some(None)` if it was sent without one.
+    pub fn referer_of(&self, url: &str) -> Option<Option<String>> {
+        self.referers.borrow().iter().rev().find(|(u, _)| u == url).map(|(_, r)| r.clone())
+    }
 }
 
 impl ResourceLoader for StaticLoader {
@@ -669,6 +742,16 @@ impl ResourceLoader for StaticLoader {
         } else {
             request.url.clone()
         });
+        let sent_referrer =
+            url::Url::parse(&request.url).ok().and_then(|u| request_referrer(browser, &request).header(&u));
+        self.referers.borrow_mut().push((request.url.clone(), sent_referrer.clone()));
+        let document = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
+        let sent_referrer = document.then(|| sent_referrer.unwrap_or_default());
+        let referrer_policy = self
+            .referrer_policy
+            .borrow()
+            .get(&request.url)
+            .and_then(|v| pyro_net::ReferrerPolicy::from_header([v.as_str()]));
         let entry = self.entries.borrow().get(&request.url).cloned();
         let csp = self.csp.borrow().get(&request.url).cloned();
         let url = request.url;
@@ -710,7 +793,8 @@ impl ResourceLoader for StaticLoader {
                         header_csp: csp.clone(),
                         refresh: None,
                         content_language: None,
-                        referrer_policy: None,
+                        referrer_policy,
+                        sent_referrer: sent_referrer.clone(),
                         timing: None,
                         partial,
                         nosniff: false,
@@ -910,6 +994,8 @@ pub(crate) struct ScriptFetch {
     /// The module type of a [`ResourceKind::ModuleScript`] fetch, whose
     /// response MIME type must match it (`None`: JavaScript).
     pub module: Option<ModuleType>,
+    /// The element's `referrerpolicy` state (`None`: the document's policy).
+    pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
 }
 
 impl ScriptFetch {
@@ -918,6 +1004,7 @@ impl ScriptFetch {
             integrity: info.integrity.clone().filter(|v| !pyro_webapi::sri::is_empty(v)),
             crossorigin: info.crossorigin.clone(),
             module: None,
+            referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
         }
     }
 }
@@ -1053,6 +1140,7 @@ impl Browser {
             kind: if page.child.is_some() { ResourceKind::Iframe } else { ResourceKind::Document },
             page: page.page,
             referrer: opts.referrer.clone(),
+            referrer_policy: opts.referrer_policy,
             frame_id,
             loader_id: Some(loader_id.0.clone()),
             crossorigin: None,
@@ -1203,6 +1291,7 @@ impl Browser {
             refresh: None,
             content_language: None,
             referrer_policy: None,
+            sent_referrer: None,
             timing: None,
             partial: None,
                 nosniff: false,
@@ -1276,9 +1365,11 @@ impl Browser {
     ) -> Result<(), JsError> {
         let origin = origin_of(&resource.url);
         // The policy the navigation request was sent with (its initiator's).
-        let policy = match &opts.referrer {
-            Some(_) => self.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
-            None => None,
+        let policy = match (&opts.referrer, opts.referrer_policy) {
+            (Some(_), None) if resource.sent_referrer.is_none() => {
+                self.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy()))
+            }
+            (_, policy) => policy,
         };
         // Navigation Timing: the commit takes the fetch's phases (and a
         // failed commit must not leave them for the next one).
@@ -1292,7 +1383,15 @@ impl Browser {
         }
         committed?;
         let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
-        page_dom.set_document_referrer(opts.referrer.as_deref(), policy.unwrap_or_default(), resource.referrer_policy);
+        match resource.sent_referrer.take() {
+            // What the request's last hop was sent (a redirect chain may have cut it).
+            Some(sent) => page_dom.set_sent_referrer(sent, resource.referrer_policy),
+            None => page_dom.set_document_referrer(
+                opts.referrer.as_deref(),
+                policy.unwrap_or_default(),
+                resource.referrer_policy,
+            ),
+        }
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
         // A page that bypasses CSP (`Page.setBypassCSP`) records no policy.
@@ -1629,7 +1728,7 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin, module } = opts;
+        let ScriptFetch { integrity, crossorigin, module, referrer_policy } = opts;
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
@@ -1639,6 +1738,7 @@ impl Browser {
             kind,
             page: page.page,
             referrer,
+            referrer_policy,
             frame_id,
             loader_id,
             crossorigin,
@@ -1965,6 +2065,7 @@ impl Browser {
                     kind: ResourceKind::Download,
                     page: page.page,
                     referrer,
+                    referrer_policy: None,
                     frame_id: Some(frame_id.0.clone()),
                     loader_id,
                     crossorigin: None,

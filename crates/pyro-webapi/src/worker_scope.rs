@@ -281,18 +281,46 @@ pub struct WorkerLoop {
     poster: RemotePoster,
     /// An `error` listener is running: an exception it throws goes to the page only.
     in_error: bool,
+    /// A module worker whose script has not finished evaluating (its graph
+    /// is still loading, or it awaits at its top level): the messages and
+    /// connections that arrive wait in `held`, as the worker's port message
+    /// queue is enabled once its script ran (HTML "run a worker").
+    starting: Rc<Cell<bool>>,
+    held: Vec<Held>,
+}
+
+/// What a worker that is still starting was sent.
+enum Held {
+    Message(WireMessage),
+    Connect(WireMessage),
 }
 
 impl LoopState for WorkerLoop {
     fn after_task(&mut self) {
         self.engine.drain_finalized();
         self.page.after_task();
+        // The script's evaluation settled in this task (or in its microtasks,
+        // just run): what was sent meanwhile is delivered, in order, each as
+        // the task it would have been.
+        if !self.held.is_empty() && !self.starting.get() {
+            for held in std::mem::take(&mut self.held) {
+                match held {
+                    Held::Message(message) => self.receive(message),
+                    Held::Connect(message) => self.connect(message),
+                }
+                self.engine.drain_finalized();
+                self.page.after_task();
+            }
+        }
     }
 }
 
 impl WorkerLoop {
     /// A message from the page, as its own task.
     pub(crate) fn receive(&mut self, message: WireMessage) {
+        if self.starting.get() {
+            return self.held.push(Held::Message(message));
+        }
         message_taken(&self.shared, message.size());
         if self.shared.closing.load(Ordering::Acquire) {
             return;
@@ -305,6 +333,9 @@ impl WorkerLoop {
     /// A document connected to this shared worker: `connect` at the global,
     /// with the port `message` transfers as `ports[0]` and `source`.
     pub(crate) fn connect(&mut self, message: WireMessage) {
+        if self.starting.get() {
+            return self.held.push(Held::Connect(message));
+        }
         if self.shared.closing.load(Ordering::Acquire) {
             return;
         }
@@ -589,6 +620,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         id: start.id,
         poster: start.poster.clone(),
         in_error: false,
+        starting: Rc::new(Cell::new(false)),
+        held: Vec::new(),
     };
     if script.is_none() && start.service.is_none() && !start.shared.closing.load(Ordering::Acquire) {
         let id = start.id;
@@ -644,10 +677,21 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     // A module's graph loads, then it evaluates: an import that fails or a
     // throw at its top level rejects the evaluation promise, which reports
     // the error (`error` at the Worker).
+    // Until it settles, what the worker is sent waits (`WorkerLoop::held`).
+    state.starting.set(true);
+    let (started, failed) = (state.starting.clone(), state.starting.clone());
     let evaluated = s.eval_module(&script.0, &script.1).and_then(|promise| {
-        s.then(promise, |_, _| {}, |s, error| s.report_exception(&JsError::thrown(pyro_js::Persistent::new(s, error))))
+        s.then(
+            promise,
+            move |_, _| started.set(false),
+            move |s, error| {
+                failed.set(false);
+                s.report_exception(&JsError::thrown(pyro_js::Persistent::new(s, error)))
+            },
+        )
     });
     if let Err(e) = evaluated {
+        state.starting.set(false);
         s.report_exception(&e);
         return false;
     }

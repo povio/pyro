@@ -409,6 +409,7 @@ pub(crate) fn form_submission(
             content_type: None,
             opener: false,
             popup: None,
+            referrer_policy: None,
         });
     }
     let (ct, body) = match enctype.as_deref() {
@@ -434,6 +435,7 @@ pub(crate) fn form_submission(
         content_type: Some(ct),
         opener: false,
         popup: None,
+        referrer_policy: None,
     })
 }
 

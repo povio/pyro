@@ -32,6 +32,8 @@ pub struct ScriptInfo {
     pub inline_text: String,
     pub crossorigin: Option<String>,
     pub integrity: Option<String>,
+    /// The `referrerpolicy` content attribute.
+    pub referrerpolicy: Option<String>,
 }
 
 const JS_MIME: &[&str] = &[
@@ -277,6 +279,12 @@ impl Dom {
     /// The resource events of an inserted `node` whose subtree holds no
     /// other element: `scan_subtree` of the node alone.
     fn resources_after_single_insert(&mut self, node: u32) {
+        // A document's referrer policy is its own state, kept with or
+        // without a loader listening for resource events.
+        let meta = self.is_html_meta(node);
+        if meta {
+            self.process_referrer_meta(node);
+        }
         if !self.resources.enabled || !self.connected_for_resources(node) {
             return;
         }
@@ -291,7 +299,7 @@ impl Dom {
                 self.push_resource(node, k, ResourceReason::Connected);
             }
         }
-        if self.is_html_meta(node) {
+        if meta {
             self.process_viewport_meta(node);
         }
     }
@@ -335,10 +343,14 @@ impl Dom {
         // not have. No other attribute change (`type`, a changed or removed
         // `src`) prepares it again.
         let script_src = local == "src" && added && self.script_steps_due(idx);
+        let meta = matches!(local, "name" | "content") && self.is_html_meta(idx);
+        if meta {
+            self.process_referrer_meta(idx);
+        }
         if !self.resources.enabled {
             return;
         }
-        if matches!(local, "name" | "content") && self.is_html_meta(idx) {
+        if meta {
             self.process_viewport_meta(idx);
         }
         // An `<img>`'s CORS settings and referrer policy are relevant mutations too (HTML "update
@@ -513,6 +525,7 @@ impl Dom {
             inline_text,
             crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
+            referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
         })
     }
 

@@ -321,6 +321,11 @@ impl PageHooks for Hooks {
                         },
                         cdp_request_id: None,
                         referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
+                        // The link's own policy, else that of the document that navigates
+                        // (not of the frame a `target` names).
+                        referrer_policy: request.referrer_policy.or_else(|| {
+                            b.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy()))
+                        }),
                     },
                     crate::HistoryHandling::Push,
                 )

@@ -118,6 +118,9 @@ pub struct DocumentData {
     /// The viewport `<meta>` this document processed last
     /// (`Dom::viewport_meta`).
     pub(crate) viewport_meta: Option<crate::viewport_meta::MetaViewport>,
+    /// The referrer policy the last processed `<meta name=referrer>` gave
+    /// the document (`Dom::meta_referrer_policy`).
+    pub(crate) meta_referrer_policy: Option<&'static str>,
     /// A `<meta name="responsive-embedded-sizing">` was processed before the document had a body: an
     /// iframe of `frame-sizing: content-height` showing it takes its content's height (css-sizing-4
     /// responsive iframes; `Dom::is_responsively_embedded`).

@@ -547,6 +547,19 @@ fn local(dom: &Dom, id: NodeId) -> Option<String> {
     dom.element(id).ok().filter(|e| e.is_html()).map(|e| e.name.local.to_string())
 }
 
+/// The `href` of an SVG `a` element (`href`, else `xlink:href`): a hyperlink
+/// as an HTML `a` is (SVG 2 "Links out of SVG content").
+fn svg_link_href(dom: &Dom, el: NodeId) -> Option<&str> {
+    let e = dom.element(el).ok()?;
+    if e.name.ns != markup5ever::ns!(svg) || &*e.name.local != "a" {
+        return None;
+    }
+    dom.get_attribute(el, "href")
+        .ok()
+        .flatten()
+        .or_else(|| dom.get_attribute_ns(el, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
+}
+
 /// A `summary` that is the summary of its parent `details`.
 fn is_details_summary(dom: &Dom, el: NodeId) -> bool {
     let Some(parent) = dom.parent(el).ok().flatten() else { return false };
@@ -567,7 +580,7 @@ fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
         Some("input" | "button" | "label") => true,
         Some("a" | "area") => dom.has_attribute(el, "href").unwrap_or(false),
         Some("summary") => is_details_summary(dom, el),
-        _ => false,
+        _ => svg_link_href(dom, el).is_some(),
     }
 }
 
@@ -695,7 +708,12 @@ fn run_activation_behavior(
     target: NodeId,
     ev: &EventData,
 ) {
-    let Some(name) = local(&page.dom.borrow(), el) else { return };
+    let Some(name) = local(&page.dom.borrow(), el) else {
+        if svg_link_href(&page.dom.borrow(), el).is_some() {
+            follow_hyperlink(page, el);
+        }
+        return;
+    };
     match name.as_str() {
         "input" => {
             let (ty, disabled, connected) = {
@@ -910,9 +928,11 @@ fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
 }
 
 fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
-    let (url, target, opener) = {
+    let (url, target, opener, referrer_policy) = {
         let dom = page.dom.borrow();
-        let Some(href) = dom.get_attribute(el, "href").ok().flatten() else { return };
+        let Some(href) = dom.get_attribute(el, "href").ok().flatten().or_else(|| svg_link_href(&dom, el)) else {
+            return;
+        };
         let url = crate::html::resolve_url(&dom, el, href);
         // HTML "download the hyperlink": a `download` link to a blob:, data:
         // or same-origin URL downloads instead of navigating (browsers ignore
@@ -951,7 +971,12 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         // `<base target>`'s.
         let own = dom.get_attribute(el, "target").ok().flatten().filter(|t| !t.is_empty()).map(str::to_owned);
         let target = own.or_else(|| dom.node_document(el).ok().and_then(|doc| dom.base_target(doc)));
-        (url, target, opener)
+        // `rel=noreferrer`, else the link's `referrerpolicy` state.
+        let referrer_policy = pyro_net::ReferrerPolicy::of_link(
+            dom.get_attribute(el, "rel").ok().flatten(),
+            dom.get_attribute(el, "referrerpolicy").ok().flatten(),
+        );
+        (url, target, opener, referrer_policy)
     };
     page.navigate(crate::page::NavigationRequest {
         url,
@@ -961,6 +986,7 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         content_type: None,
         opener,
         popup: None,
+        referrer_policy,
     });
 }
 

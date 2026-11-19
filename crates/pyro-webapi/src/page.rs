@@ -460,6 +460,9 @@ pub struct NavigationRequest {
     pub opener: bool,
     /// `window.open`'s returned object watches this popup.
     pub popup: Option<Rc<crate::popup::PopupTicket>>,
+    /// The request's own referrer policy: a link's `referrerpolicy` state,
+    /// no-referrer for `rel=noreferrer` (`None`: the document's policy).
+    pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
 }
 
 /// How a blocking `alert`/`confirm`/`prompt` was answered.
