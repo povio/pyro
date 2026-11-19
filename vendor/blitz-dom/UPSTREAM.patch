@@ -367,7 +367,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,6 +1034,33 @@
+@@ -838,10 +1034,42 @@
      border-radius: 0 ! important;
  }
  
@@ -401,7 +401,16 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  iframe {
      border: 2px inset;
  }
-@@ -851,8 +1074,18 @@
+ 
++/* pyro: HTML § 15.4.1 (embedded content): the `frameborder` attribute's "no border". */
++iframe[frameborder="0"], iframe[frameborder=no i] {
++    border: none;
++}
++
+ spacer {
+     position: static ! important;
+     float: none ! important;
+@@ -851,8 +1079,18 @@
      user-select: none;
  }
  
@@ -420,7 +429,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1119,15 @@
+@@ -886,14 +1124,15 @@
      display: none;
  }
  
@@ -439,7 +448,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -1128,37 +1362,42 @@
+@@ -1128,37 +1367,42 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

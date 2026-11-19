@@ -1065,6 +1065,11 @@ iframe {
     border: 2px inset;
 }
 
+/* pyro: HTML § 15.4.1 (embedded content): the `frameborder` attribute's "no border". */
+iframe[frameborder="0"], iframe[frameborder=no i] {
+    border: none;
+}
+
 spacer {
     position: static ! important;
     float: none ! important;
