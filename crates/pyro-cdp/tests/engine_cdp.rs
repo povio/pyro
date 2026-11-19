@@ -11111,3 +11111,39 @@ fn paint_worklet_modules_load_their_imports_at_the_final_url() {
     );
     assert_eq!(r["result"]["result"]["value"], json!("loaded"), "{r}");
 }
+
+/// The opener's WindowProxy for a popup targets the browsing context, not a document: once the popup
+/// navigated (here to a document of another origin), the opener's postMessage reaches the popup's
+/// current document.
+#[test]
+fn post_message_reaches_a_navigated_popup() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>");
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    value(&mut h, "globalThis.w = window.open(); 1");
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let page = "data:text/html,<script>onmessage = (e) => opener.postMessage('echo:' + e.data, '*')</script>";
+    value(&mut h, &format!("w.location.href = {}; 1", json!(page)));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let events = h.until_response(id);
+    // Wait for the navigation to the data: document (the initial about:blank reports a load of its own).
+    let session = popup.clone();
+    let navigated = |m: &Value| {
+        m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(session) && m["params"]["frame"]["url"].as_str().is_some_and(|u| u.starts_with("data:"))
+    };
+    if !events.iter().any(navigated) {
+        h.until_event(navigated);
+    }
+    h.run_for(100);
+    value(&mut h, "w.postMessage('one', '*'); 1");
+    h.run_for(200);
+    assert_eq!(value(&mut h, "got.join()"), json!("echo:one"));
+}
