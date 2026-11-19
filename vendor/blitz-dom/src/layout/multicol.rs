@@ -199,6 +199,9 @@ struct Breaks {
     /// pyro: the container has `column-height: 0`: its columns hold what cannot break whole
     /// (`fill`).
     whole_in_empty_columns: bool,
+    /// pyro: monolithic boxes a column holds whole even when they are taller than it, overflowing
+    /// it (`held_whole`). Merged.
+    whole: Vec<(f32, f32)>,
     /// The space between consecutive in-flow blocks (their margins): a column after a break in it
     /// starts at its end. Sorted by start.
     gaps: Vec<(f32, f32)>,
@@ -382,7 +385,10 @@ impl Breaks {
                     // (`multicol-span-all-children-height-003`).
                     loose.unwrap_or_else(|| match containing(&self.loose, limit) {
                         Some((a, b)) if no_height && a <= start + EPSILON => b,
-                        _ => limit,
+                        _ => match containing(&self.whole, limit) {
+                            Some((a, b)) if a <= start + EPSILON => b,
+                            _ => limit,
+                        },
                     })
                 }
             };
@@ -443,9 +449,11 @@ impl Breaks {
 /// The number and width of a container's columns (CSS Multi-column Layout 1 §3.4): the content
 /// box width `available`, `column-gap` `gap`.
 fn column_boxes(count: Option<u32>, width: Option<f32>, available: f32, gap: f32) -> (usize, f32) {
+    // pyro: a column width under 1px counts as 1px (Chromium's `ResolveUsedColumnCount`; WPT
+    // css-multicol `zero-column-width-layout`).
     let fitting = |width: f32| {
-        let pitch = width.max(0.0) + gap;
-        if pitch > 0.0 { ((available + gap) / pitch).floor().max(1.0) as usize } else { MAX_COLUMNS }
+        let pitch = width.max(1.0) + gap;
+        ((available + gap) / pitch).floor().max(1.0) as usize
     };
     let n = match (count, width) {
         (Some(count), None) => count as usize,
@@ -765,6 +773,11 @@ impl LayoutPassState<'_> {
                     height.max(0.0)
                 } else if spanners.is_empty() && fill_auto {
                     definite_height.unwrap_or(0.0)
+                } else if fill_auto && part == spanners.len() {
+                    // pyro: `column-fill: auto` fills the columns after the last spanner to the
+                    // end of the container's height, unbalanced (only content followed by a
+                    // spanner is balanced; WPT css-multicol `no-balancing-after-column-span`).
+                    definite_height.map_or(0.0, |height| (height - (row_top - content_top)).max(0.0))
                 } else {
                     // pyro: a run between or after spanners balances within what is left of a
                     // definite height (css-multicol-1 § 7.2: the columns after a spanner fit
@@ -1188,6 +1201,7 @@ impl BaseDocument {
             strict: merge(found.strict),
             loose: merge(found.loose),
             whole_in_empty_columns: false,
+            whole: merge(found.whole),
             gaps: found.gaps,
             trims: found.trims,
             forced: found.forced,
@@ -1354,6 +1368,9 @@ impl BaseDocument {
             } else {
                 found.strict.push((child_top, child_bottom));
                 found.loose.push((child_top, child_bottom));
+                if held_whole(child, &style) {
+                    found.whole.push((child_top, child_bottom));
+                }
             }
         }
     }
@@ -1363,6 +1380,8 @@ impl BaseDocument {
 #[derive(Default)]
 struct Found {
     strict: Vec<(f32, f32)>,
+    /// pyro: see [`Breaks::whole`].
+    whole: Vec<(f32, f32)>,
     loose: Vec<(f32, f32)>,
     gaps: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::trims`].
@@ -1402,6 +1421,26 @@ fn fragmentable(node: &crate::Node, style: &ComputedValues) -> bool {
     matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
 }
 
+/// pyro: whether monolithic `node` is held whole by a column it is taller than: a scroll
+/// container, a replaced element or a form control, which Chromium never slices in a multi-column
+/// container (WPT css-multicol `overflow-unsplittable-*`). The other boxes pyro keeps from
+/// breaks (tables, flex and grid containers, nested multi-column containers, boxes of size
+/// containment) are fragmented by Chromium, which a cut at the column's end comes closer to.
+fn held_whole(node: &crate::Node, style: &ComputedValues) -> bool {
+    let Some(element) = node.element_data() else {
+        return false;
+    };
+    if super::replaced::is_replaced(element)
+        || element.text_input_data().is_some()
+        || matches!(&*element.name.local, "button" | "select" | "input" | "textarea")
+    {
+        return true;
+    }
+    let box_style = style.get_box();
+    let scrolls = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
+    scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1413,6 +1452,7 @@ mod tests {
             strict: merge(strict),
             loose: merge(loose),
             whole_in_empty_columns: false,
+            whole: Vec::new(),
             gaps: Vec::new(),
             trims: Vec::new(),
             forced: Vec::new(),
