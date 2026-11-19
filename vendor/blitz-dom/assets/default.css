@@ -1078,6 +1078,12 @@ canvas {
 
 iframe:focus-visible,
 body:focus-visible,
+/* pyro: the root's text color is CanvasText (CSS Color Adjust: its initial value), so it follows the
+   page's color scheme (`<meta name=color-scheme>`, `color-scheme`); black in the light scheme. */
+:root {
+  color: CanvasText;
+}
+
 html:focus-visible {
     /* These elements historically don't show outlines when focused by default.
    * We could consider changing that if needed. */

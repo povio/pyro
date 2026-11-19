@@ -1270,7 +1270,10 @@ impl Renderer {
         // Blitz paints the document at its own scale; the area's origin and
         // a clip scale are applied as a transform of the recorded scene.
         let mut scene = Scene::new();
-        let [r, g, b, a] = snap.background.unwrap_or([255; 4]);
+        // The canvas of a dark page color scheme (`<meta name=color-scheme content=dark>`) is
+        // Chromium's dark Canvas.
+        let default = if doc.page_color_scheme_is_dark() { [18, 18, 18, 255] } else { [255; 4] };
+        let [r, g, b, a] = snap.background.unwrap_or(default);
         if a > 0 {
             let color = Color::from_rgba8(r, g, b, a);
             scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &Rect::new(0.0, 0.0, w as f64, h as f64));

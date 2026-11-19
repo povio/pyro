@@ -385,6 +385,10 @@ pub struct BaseDocument {
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
     pub(crate) pending_device_changes: DeviceChanges,
+    /// pyro: the page's supported color schemes, from its first valid `<meta name=color-scheme>`.
+    pub(crate) page_color_scheme: style::values::specified::color::ColorSchemeFlags,
+    /// pyro: the `<meta>` elements made in this document (removed ones drop out when looked at).
+    pub(crate) meta_nodes: Vec<NodeId>,
     /// pyro: the root's available space in the last layout pass.
     pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
     /// See [`BaseDocument::set_layout_size`].
@@ -802,6 +806,8 @@ impl BaseDocument {
             svg_sprites: HashMap::new(),
             svg_images: HashMap::new(),
             pending_device_changes: DeviceChanges::empty(),
+            page_color_scheme: style::values::specified::color::ColorSchemeFlags::empty(),
+            meta_nodes: Default::default(),
             last_layout_space: None,
             layout_size: None,
             layout_available: None,
@@ -3453,6 +3459,89 @@ impl BaseDocument {
 
     /// Record pending [`DeviceChanges`] and request a redraw so that they are
     /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
+    /// pyro: HTML `<meta name=color-scheme>`: the first such element (tree order) whose content
+    /// is a valid value gives the page's supported color schemes; a change rebuilds the device.
+    pub(crate) fn update_page_color_scheme(&mut self) {
+        use style::values::specified::color::ColorSchemeFlags;
+        let mut flags = None;
+        // Only `<meta name=color-scheme>` elements in the document, in tree order (by a walk when
+        // there are several).
+        let mut candidates: Vec<NodeId> = Vec::new();
+        let nodes = &self.nodes;
+        self.meta_nodes.retain(|&id| nodes.get(id).is_some_and(|n| n.element_data().is_some_and(|e| e.name.local == markup5ever::local_name!("meta"))));
+        for &id in &self.meta_nodes {
+            let node = &self.nodes[id];
+            // In the document tree, not a shadow tree.
+            if node.is_in_document()
+                && node.containing_shadow_host_id().is_none()
+                && node.element_data().is_some_and(|e| e.attr(markup5ever::local_name!("name")).is_some_and(|n| n.trim().eq_ignore_ascii_case("color-scheme")))
+            {
+                candidates.push(id);
+            }
+        }
+        if candidates.is_empty() && self.page_color_scheme.is_empty() {
+            return;
+        }
+        if candidates.len() > 1 {
+            let mut order = Vec::new();
+            let root = self.root_node_id;
+            self.iter_subtree_mut(root, |id, _| {
+                if candidates.contains(&id) {
+                    order.push(id);
+                }
+            });
+            candidates = order;
+        }
+        for id in candidates {
+            let node = &self.nodes[id];
+            let Some(el) = node.element_data() else { continue };
+            if el.name.local != markup5ever::local_name!("meta")
+                || !el.attr(markup5ever::local_name!("name")).is_some_and(|n| n.trim().eq_ignore_ascii_case("color-scheme"))
+            {
+                continue;
+            }
+            let Some(content) = el.attr(markup5ever::local_name!("content")) else { continue };
+            let tokens: Vec<String> = content.split_ascii_whitespace().map(str::to_ascii_lowercase).collect();
+            let parsed = if tokens.len() == 1 && tokens[0] == "normal" {
+                Some(ColorSchemeFlags::empty())
+            } else if !tokens.is_empty() && !tokens.iter().any(|t| t == "normal") {
+                let mut f = ColorSchemeFlags::empty();
+                for t in &tokens {
+                    match t.as_str() {
+                        "light" => f |= ColorSchemeFlags::LIGHT,
+                        "dark" => f |= ColorSchemeFlags::DARK,
+                        "only" => f |= ColorSchemeFlags::ONLY,
+                        _ => {}
+                    }
+                }
+                (f.intersects(ColorSchemeFlags::LIGHT | ColorSchemeFlags::DARK)).then_some(f)
+            } else {
+                None
+            };
+            if parsed.is_some() {
+                flags = parsed;
+                break;
+            }
+        }
+        let flags = flags.unwrap_or_else(ColorSchemeFlags::empty);
+        if flags != self.page_color_scheme {
+            self.page_color_scheme = flags;
+            self.queue_device_changes(DeviceChanges::COLOR_SCHEME);
+        }
+    }
+
+    /// pyro: whether the page's color scheme (its `<meta name=color-scheme>`, with the user's
+    /// preference when it supports both) is dark: the canvas is painted dark then.
+    pub fn page_color_scheme_is_dark(&self) -> bool {
+        use style::values::specified::color::ColorSchemeFlags;
+        let flags = self.page_color_scheme;
+        let (dark, light) = (flags.contains(ColorSchemeFlags::DARK), flags.contains(ColorSchemeFlags::LIGHT));
+        if dark != light {
+            return dark;
+        }
+        dark && self.viewport.color_scheme == blitz_traits::shell::ColorScheme::Dark
+    }
+
     pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
         if changes.is_empty() {
             return;
@@ -3469,12 +3558,9 @@ impl BaseDocument {
             return;
         }
 
-        self.set_stylist_device(make_device(
-            &self.viewport,
-            self.layout_size,
-            self.media_type.clone(),
-            self.font_ctx.clone(),
-        ));
+        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.font_ctx.clone());
+        device.set_page_color_scheme(self.page_color_scheme);
+        self.set_stylist_device(device);
         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
         // pyro: shadow roots' cascade data holds their sheets' media query results.
         self.invalidate_shadow_styles();

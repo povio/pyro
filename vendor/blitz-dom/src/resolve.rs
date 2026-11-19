@@ -48,6 +48,8 @@ impl BaseDocument {
         if self.has_pending_critical_resources() {
             return;
         }
+        // pyro: the page's `<meta name=color-scheme>`.
+        self.update_page_color_scheme();
         // A viewport/device update can change percentage/auto content boxes
         // without changing their computed styles. Remember it before flushing.
         let device_changed = !self.pending_device_changes.is_empty();
@@ -137,6 +139,8 @@ impl BaseDocument {
         debug_timer!(timer, feature = "log-phase-times");
         let mut phase_t = phase_profile::start();
 
+        // pyro: the page's `<meta name=color-scheme>`.
+        self.update_page_color_scheme();
         // Apply any device changes (viewport resize, zoom, color-scheme, etc)
         // accumulated since the last resolve as a single device rebuild.
         self.flush_pending_device_changes();

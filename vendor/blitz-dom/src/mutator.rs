@@ -1613,6 +1613,12 @@ impl<'doc> DocumentMutator<'doc> {
                 }
                 _ if has_custom_widget => {}
                 "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
+                // pyro: candidates for `<meta name=color-scheme>` (`update_page_color_scheme`).
+                "meta" => {
+                    if !doc.meta_nodes.contains(&node_id) {
+                        doc.meta_nodes.push(node_id);
+                    }
+                }
                 "img" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
                 // pyro: a `<video>` paints its poster image (no
                 // video frame is ever decoded).
