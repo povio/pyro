@@ -2341,7 +2341,22 @@ impl BaseDocument {
             let Some(style) = child.primary_styles() else {
                 continue;
             };
-            if child.is_out_of_flow() || style.get_box().display.is_none() {
+            if style.get_box().display.is_none() {
+                continue;
+            }
+            if child.is_out_of_flow() {
+                // pyro: an out-of-flow box whose containing block is its parent in the strip (not
+                // the container, whose own are not fragmented) is fragmented with the columns:
+                // they go on as far as it does (Chromium; WPT css-multicol
+                // `fixed-in-multicol-with-transform-container`).
+                if child.containing_block() == Some(parent) && found.container.is_some_and(|c| c != parent) {
+                    let layout = child.unrounded_layout();
+                    let child_top = top + layout.location.y;
+                    found.bottom = found.bottom.max(child_top + layout.size.height);
+                    if fragmentable(child, &style) {
+                        crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
+                    }
+                }
                 continue;
             }
             let layout = child.unrounded_layout();
