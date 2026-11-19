@@ -5749,10 +5749,21 @@ impl ElementCx<'_, '_> {
         let b = (self.frame.border_width, self.frame.padding_width);
         let inset = b.0.x0 + b.1.x0 != 0.0 || b.0.y0 + b.1.y0 != 0.0 || b.0.x1 + b.1.x1 != 0.0 || b.0.y1 + b.1.y1 != 0.0;
         let rounded_content = inset && self.content_edge_is_rounded();
+        // pyro: a raster image the element's own layer clips already (`should_clip_node`), at a
+        // padding box that is its content box: cut once, not twice (two antialiased cuts along
+        // a rounded edge cover its pixels as the square of one; WPT css-overflow
+        // `overflow-img-display-table`).
+        let p = self.frame.padding_width;
+        let clipped_by_element = self.element.raster_image_data().is_some()
+            && !replaced_overflow_is_visible(self.element, &self.style)
+            && p.x0 == 0.0
+            && p.y0 == 0.0
+            && p.x1 == 0.0
+            && p.y1 == 0.0;
         let push = match clip {
             ReplacedClip::Never => false,
             ReplacedClip::Always => true,
-            ReplacedClip::Fit => overflows || rounded_content,
+            ReplacedClip::Fit => (overflows || rounded_content) && !clipped_by_element,
         };
         self.context.layer_manager.maybe_with_layer(
             scene,
