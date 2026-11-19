@@ -3462,7 +3462,24 @@ impl Layout {
             return Vec::new();
         }
         let mut moved = Vec::new();
-        let mut cur = dom.parent_element(el).ok().flatten();
+        // pyro: up the flat tree: a slotted element's slot (and a shadow root's host) are
+        // ancestors whose scroll containers scroll it (WPT cssom-view
+        // `scrollIntoView-should-treat-slot-as-scroll-container`).
+        let flat_parent = |node: NodeId| -> Option<NodeId> {
+            if let Ok(Some(slot)) = dom.assigned_slot(node) {
+                return Some(slot);
+            }
+            match dom.parent_element(node).ok().flatten() {
+                Some(parent) => Some(parent),
+                None => dom
+                    .parent(node)
+                    .ok()
+                    .flatten()
+                    .filter(|&frag| dom.is_shadow_root(frag).unwrap_or(false))
+                    .and_then(|root| dom.fragment_host(root).ok().flatten()),
+            }
+        };
+        let mut cur = flat_parent(el);
         while let Some(node) = cur {
             if self.is_root_container(dom, node) {
                 break;
@@ -3500,7 +3517,7 @@ impl Layout {
                     moved.push(ScrollTarget::Container(node));
                 }
             }
-            cur = dom.parent_element(node).ok().flatten();
+            cur = flat_parent(node);
         }
         // Fixed boxes do not move with the window.
         if self.layout_box(dom, el).is_some_and(|b| b.fixed) {
