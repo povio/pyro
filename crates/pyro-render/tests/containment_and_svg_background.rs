@@ -102,11 +102,12 @@ fn an_svg_image_paints_its_root_background() {
 fn layout_and_paint_containment_make_a_stacking_context() {
     // WPT contain-paint-stacking-context-001a: a z-index inside a contained box stays under a
     // positioned sibling painted after it in a higher context.
-    for contain in ["paint", "layout"] {
+    // `will-change: contain` makes one as well (`-001b`).
+    for contain in ["contain:paint", "contain:layout", "will-change:contain"] {
         let test = format!(
             "<style>div{{width:40px;height:40px}}</style>\
              <div style='position:absolute;z-index:10;background:#00a000'></div>\
-             <div style='contain:{contain}'><div style='position:absolute;z-index:1000;background:#f00'></div></div>"
+             <div style='{contain}'><div style='position:absolute;z-index:1000;background:#f00'></div></div>"
         );
         matches(&test, "<div style='width:40px;height:40px;background:#00a000'></div>", "<div style='width:40px;height:40px;background:#f00'></div>");
     }
