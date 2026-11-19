@@ -127,7 +127,8 @@ impl ElementCx<'_, '_> {
     /// pyro: the drop-down arrow of a native drop-down `<select>` (a menu list; a list box,
     /// `multiple` or `size` above 1, has none), a chevron in the room its intrinsic size keeps for it
     /// at the inline end (`layout/mod.rs`), centred in the block axis. `appearance: none` has none
-    /// (CSS UI 4). In a vertical writing mode the inline end is the bottom (`direction: rtl`: the top).
+    /// (CSS UI 4). In a vertical writing mode the inline end is the bottom where the inline axis runs
+    /// downward, else the top.
     fn draw_select_arrow(&self, scene: &mut impl PaintScene) {
         if self.native_appearance_none() {
             return;
@@ -143,20 +144,21 @@ impl ElementCx<'_, '_> {
         }
         let wm = self.style.writing_mode;
         let vertical = wm.is_vertical();
-        let rtl = !wm.is_bidi_ltr();
         let padding = self.frame.padding_box;
         let s = self.scale;
-        // The arrow's centre, 9.5px in from the inline-end padding edge.
-        let inset = 9.5 * s;
-        let center = if vertical {
-            Point::new((padding.x0 + padding.x1) / 2.0, if rtl { padding.y0 + inset } else { padding.y1 - inset })
-        } else {
-            Point::new(if rtl { padding.x0 + inset } else { padding.x1 - inset }, (padding.y0 + padding.y1) / 2.0)
-        };
+        // The inline end: the right (left in right-to-left text) of a horizontal select; the bottom
+        // of a vertical one whose inline axis runs downward, else the top (`sideways-lr`, or
+        // right-to-left `vertical-*`).
+        let end_is_start_side = if vertical { !wm.is_inline_tb() } else { !wm.is_bidi_ltr() };
         let inline_size = if vertical { padding.height() } else { padding.width() };
-        if inline_size < 2.0 * inset {
-            return;
-        }
+        // The arrow's centre, 9.5px in from the inline-end padding edge (in the middle of a
+        // narrower box, which clips it).
+        let inset = (9.5 * s).min(inline_size / 2.0);
+        let center = if vertical {
+            Point::new((padding.x0 + padding.x1) / 2.0, if end_is_start_side { padding.y0 + inset } else { padding.y1 - inset })
+        } else {
+            Point::new(if end_is_start_side { padding.x0 + inset } else { padding.x1 - inset }, (padding.y0 + padding.y1) / 2.0)
+        };
         let (half, depth) = (3.5 * s, 2.0 * s);
         let mut path = BezPath::new();
         path.move_to((center.x - half, center.y - depth));

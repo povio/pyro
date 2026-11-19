@@ -34,6 +34,9 @@ pub(crate) struct VerticalLine {
     all_upright: bool,
     /// pyro: the line is turned a quarter counterclockwise (`sideways-lr`).
     counterclockwise: bool,
+    /// pyro: the line's text is sideways (`sideways-*`, `text-orientation: sideways`): it keeps
+    /// the alphabetic baseline, but for runs of an upright span, which stand on the central one.
+    sideways: bool,
 }
 
 impl VerticalLine {
@@ -41,27 +44,23 @@ impl VerticalLine {
         // A fragment's box is its whole-pixel ascent and descent, around the middle of which the
         // tallest fragment in the line (the one that sets its height) has the central baseline.
         let mut central_x_height = 0.0;
-        let central = (!sideways)
-            .then(|| {
-                line.items()
-                    .filter_map(|item| match item {
-                        // pyro: a run aligned by its box's edge keeps its own place
-                        // (`VerticalLine::central_for`).
-                        PositionedLayoutItem::GlyphRun(run) if !run.edge_aligned() => Some(run),
-                        _ => None,
-                    })
-                    .max_by_key(|run| {
-                        let metrics = run.run().font_metrics();
-                        (metrics.ascent.round() + metrics.descent.round()) as i64
-                    })
-                    .map(|run| {
-                        let metrics = run.run().font_metrics();
-                        central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
-                        run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
-                    })
+        let central = line.items()
+            .filter_map(|item| match item {
+                // pyro: a run aligned by its box's edge keeps its own place
+                // (`VerticalLine::central_for`).
+                PositionedLayoutItem::GlyphRun(run) if !run.edge_aligned() => Some(run),
+                _ => None,
             })
-            .flatten();
-        Self { central, central_x_height, all_upright, counterclockwise: false }
+            .max_by_key(|run| {
+                let metrics = run.run().font_metrics();
+                (metrics.ascent.round() + metrics.descent.round()) as i64
+            })
+            .map(|run| {
+                let metrics = run.run().font_metrics();
+                central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
+                run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
+            });
+        Self { central, central_x_height, all_upright, counterclockwise: false, sideways }
     }
 
     /// pyro: for a line turned a quarter counterclockwise (`sideways-lr`).
@@ -103,6 +102,9 @@ impl VerticalLine {
         scale: f64,
     ) -> Option<CentralMetrics> {
         self.central?;
+        if self.sideways && !run.style().upright {
+            return None;
+        }
         let metrics = run.run().font_metrics();
         // The fragment's box, as `fragment_shift` centres it: its whole-CSS-pixel ascent above the
         // baseline (Chrome's geometry at a device scale is its geometry at 1, scaled).
@@ -126,6 +128,10 @@ impl VerticalLine {
     /// fragment box, so that it stays where the line put it.
     fn central_for(self, run: &parley::GlyphRun<'_, TextBrush>) -> Option<f32> {
         let central = self.central?;
+        // A sideways line's runs keep the alphabetic baseline, but an upright span's.
+        if self.sideways && !run.style().upright {
+            return None;
+        }
         if !run.edge_aligned() {
             // `middle`: the box's middle goes half the parent's x-height over the central
             // baseline (as Blink, which aligns on the central baseline in vertical lines).
@@ -164,8 +170,9 @@ impl VerticalLine {
         // bidi control before it decides nothing.
         // pyro: by the run's own `text-orientation` (a `mixed` span in an `upright` block).
         let run_upright = run.style().upright;
+        // (In a sideways line only an upright span's glyphs stand up.)
         let upright = run_upright
-            || source
+            || !self.sideways && source
                 .and_then(|text| {
                     text.get(run.run().text_range())?.chars().find(|&c| {
                         !matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')

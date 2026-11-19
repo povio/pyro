@@ -4019,15 +4019,18 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    /// pyro: the value of a text control in a vertical writing mode. The editor's layout is
-    /// logical (laid out at the content box's inline size, `layout/mod.rs`): each line is turned
-    /// as a vertical inline layout's are (`draw_vertical_inline_layout`), lines running from the
-    /// right in `vertical-rl` and from the left in `vertical-lr`, glyph tops to the right
-    /// (`sideways-lr`: turned the other way, from the bottom). A single line is centred in the
-    /// block axis. Returns `false` when the control is horizontal.
+    /// pyro: a text control in a vertical writing mode. The editor's layout is logical (laid out at
+    /// the content box's inline size, `layout/mod.rs`): its value, placeholder, selection and caret
+    /// are drawn through the turn of a vertical line (`draw_vertical_inline_layout`), lines running
+    /// from the right in `vertical-rl` and from the left in `vertical-lr` with glyph tops to the
+    /// right (`sideways-lr`: turned the other way, from the bottom), a single line centred in the
+    /// block axis. A focused control's text is scrolled to its caret as a horizontal one's is
+    /// (`TextInputData::scroll_offset`: the inline axis of a single line, the block axis of a
+    /// textarea). Returns `false` when the control is horizontal.
     fn draw_vertical_text_input_text(&self, scene: &mut impl PaintScene, pos: Point, input_data: &TextInputData) -> bool {
         let Some(block_lr) = self.node.vertical_block_axis() else { return false };
         let Some(layout) = input_data.editor.try_layout() else { return true };
+        let s = self.scale;
         let unrounded = self.node.unrounded_layout();
         let content_width = unrounded.content_box_width() as f64;
         let content_height = unrounded.content_box_height() as f64;
@@ -4035,33 +4038,85 @@ impl ElementCx<'_, '_> {
         let left = pos.x + scroll.x + input_data.content_box_subpixel_offset.x as f64;
         let top = pos.y + scroll.y + input_data.content_box_subpixel_offset.y as f64;
         // The block-axis offset of the first line: a single line is centred.
-        let block_offset = if input_data.is_multiline {
-            0.0
-        } else {
-            ((content_width - layout.height() as f64 / self.scale) / 2.0).max(0.0)
+        let centred = |height: f32| {
+            if input_data.is_multiline { 0.0 } else { ((content_width - height as f64 / s) / 2.0).max(0.0) }
         };
+        let block_offset = centred(layout.height());
         let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
-        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-        let options = TextPaintOptions { scale: self.scale, brush_override: None, shadows: true };
-        for line in layout.lines() {
-            let metrics = line.metrics();
-            let transform = if sideways_lr {
-                let origin = left + block_offset;
-                self.transform
-                    * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, (top + content_height) * self.scale])
+        // The editor's scroll, in its logical device pixels.
+        let scroll_offset = if self.node.is_focussed() { input_data.scroll_offset as f64 * s } else { 0.0 };
+        let (scroll_x, scroll_y) = if input_data.is_multiline { (0.0, scroll_offset) } else { (scroll_offset, 0.0) };
+        // Logical (x inline, y block, device px) to physical device px, for shapes (a reflection in
+        // `vertical-lr`, where only glyphs keep their tops to the right).
+        let shapes = |block_offset: f64| -> Affine {
+            let to_physical = if sideways_lr {
+                Affine::new([0.0, -1.0, 1.0, 0.0, (left + block_offset) * s, (top + content_height) * s])
             } else if block_lr {
-                let flip = (metrics.block_min_coord + metrics.block_max_coord) as f64;
-                let origin = left + block_offset;
-                self.transform * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
+                Affine::new([0.0, 1.0, 1.0, 0.0, (left + block_offset) * s, top * s])
             } else {
-                let origin = left + content_width - block_offset;
-                self.transform * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale, top * self.scale])
+                Affine::new([0.0, 1.0, -1.0, 0.0, (left + content_width - block_offset) * s, top * s])
             };
+            self.transform * to_physical * Affine::translate((-scroll_x, -scroll_y))
+        };
+        // One line's glyphs.
+        let line_transform = |metrics: &parley::layout::LineMetrics, block_offset: f64, scroll: (f64, f64)| -> Affine {
+            let base = if sideways_lr {
+                Affine::new([0.0, -1.0, 1.0, 0.0, (left + block_offset) * s, (top + content_height) * s])
+            } else if block_lr {
+                // The line flipped within its slot (whose scrolled position is mirrored with it).
+                let flip = (metrics.block_min_coord + metrics.block_max_coord) as f64 - 2.0 * scroll.1;
+                Affine::new([0.0, 1.0, -1.0, 0.0, (left + block_offset) * s + flip, top * s])
+            } else {
+                Affine::new([0.0, 1.0, -1.0, 0.0, (left + content_width - block_offset) * s, top * s])
+            };
+            self.transform * base * Affine::translate((-scroll.0, -scroll.1))
+        };
+
+        // An empty control shows its placeholder, unscrolled, under the caret.
+        if let Some(placeholder) = input_data.shown_placeholder() {
+            let block_offset = centred(placeholder.layout.height());
+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            for line in placeholder.layout.lines() {
+                crate::text::stroke_text(
+                    scene,
+                    std::iter::once(line.clone()),
+                    self.context.dom,
+                    line_transform(line.metrics(), block_offset, (0.0, 0.0)),
+                    TextPaintOptions { scale: s, brush_override: Some(placeholder.color.as_srgb_color()), shadows: true },
+                    self.node.id,
+                    Some(&placeholder.text),
+                    &mut draw_text_context,
+                    None,
+                    None,
+                );
+            }
+        }
+
+        if self.node.is_focussed() {
+            let text_color = self.style.get_inherited_text().color.as_srgb_color();
+            let (selection_background, _) =
+                crate::highlight::control_selection_colors(self.context.dom, self.node.id, text_color);
+            for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
+                scene.fill(Fill::NonZero, shapes(block_offset), selection_background, None, &convert_rect(rect));
+            }
+            if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
+                let color = self.style.get_inherited_text().color;
+                let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
+                    ColorOrAuto::Auto => color,
+                    ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
+                };
+                scene.fill(Fill::NonZero, shapes(block_offset), caret_color.as_srgb_color(), None, &convert_rect(&cursor));
+            }
+        }
+
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        let options = TextPaintOptions { scale: s, brush_override: None, shadows: true };
+        for line in layout.lines() {
             crate::text::stroke_text(
                 scene,
-                std::iter::once(line),
+                std::iter::once(line.clone()),
                 self.context.dom,
-                transform,
+                line_transform(line.metrics(), block_offset, (scroll_x, scroll_y)),
                 options,
                 self.node.id,
                 None,
@@ -4717,7 +4772,7 @@ impl ElementCx<'_, '_> {
             - f64::from(width + gap);
         let mut y = pos.y + f64::from(subpixel.y + baseline - height);
         // pyro: in a vertical writing mode the marker goes before the item's inline-start edge
-        // (its top; the bottom in `sideways-lr`), centred on its first line in the block axis.
+        // (its top, or its bottom where the inline axis runs upward), centred on its first line.
         if let Some(block_lr) = self.node.vertical_block_axis() {
             let content_width = f64::from(item_layout.content_box_width());
             let content_height = f64::from(item_layout.content_box_height());
@@ -4731,10 +4786,12 @@ impl ElementCx<'_, '_> {
                     Some(f64::from(text.block_offset) + f64::from(metrics.block_min_coord + metrics.block_max_coord) / 2.0 / f64::from(text.layout.scale()))
                 })
                 .unwrap_or(0.0);
-            let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
+            // (The inline start is the bottom where the inline axis runs upward: `sideways-lr`, or
+            // right-to-left `vertical-*`.)
+            let start_at_bottom = !self.style.writing_mode.is_inline_tb();
             let block = if block_lr { center } else { content_width - center };
             x = pos.x + block - f64::from(width) / 2.0;
-            y = if sideways_lr {
+            y = if start_at_bottom {
                 pos.y + content_height + f64::from(item_layout.padding.bottom + item_layout.border.bottom) + f64::from(gap)
             } else {
                 pos.y - f64::from(item_layout.padding.top + item_layout.border.top + height + gap)

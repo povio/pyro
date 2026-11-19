@@ -4045,6 +4045,9 @@ impl BaseDocument {
         };
         let (start, end) = (byte_of(start), byte_of(end));
         self.with_text_input(node_id, |mut driver| driver.select_byte_range(start, end));
+        // pyro: a control scrolls its text to keep the caret in view (as browsers do when the
+        // selection moves).
+        self.clamp_text_input_scroll(node_id);
     }
 
     pub fn with_text_input(
@@ -4074,8 +4077,13 @@ impl BaseDocument {
             return;
         };
 
-        let content_box_width = node.final_layout().content_box_width();
-        let content_box_height = node.final_layout().content_box_height();
+        let mut content_box_width = node.final_layout().content_box_width();
+        let mut content_box_height = node.final_layout().content_box_height();
+        // pyro: the editor's layout is logical: in a vertical writing mode its inline size (the
+        // single line's scroll axis) is the content box's height.
+        if node.vertical_block_axis().is_some() {
+            core::mem::swap(&mut content_box_width, &mut content_box_height);
+        }
 
         if let Some(text_input) = node
             .element_data_mut()
