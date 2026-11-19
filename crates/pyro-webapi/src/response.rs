@@ -370,6 +370,10 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
         return crate::streams::helper(s, &page, "consume", &args);
     }
     let used = if data.body.is_null() { false } else { data.used.replace(true) };
+    if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
+        let pairs = hidden(s, data, HEADERS).ok().and_then(|h| s.unwrap::<Headers>(h).map(|h| h.pairs())).unwrap_or_default();
+        data.body.refresh_mime(&pairs, matches!(kind, ReadKind::Blob));
+    }
     data.body.read(s, kind, used)
 }
 pub(crate) fn wrap<'s>(

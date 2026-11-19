@@ -546,5 +546,8 @@ fn consume<'s>(s: &Scope<'s>, data: &RequestData, kind: ReadKind) -> JsResult<Va
         return Ok(promise);
     }
     let used = if data.body.is_null() { false } else { data.used.replace(true) };
+    if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
+        data.body.refresh_mime(&data.header_pairs(s), matches!(kind, ReadKind::Blob));
+    }
     data.body.read(s, kind, used)
 }

@@ -6549,6 +6549,23 @@ fn blob_parts_endings_slice_container_rules_and_insert_rule_checks() {
     e.page.dispose();
 }
 
+/// A body's blob() type comes from its container's current Content-Type,
+/// lowercased (fetch/api/body/mime-type.any.html, response-consume.html).
+#[test]
+fn body_blob_type_follows_the_current_content_type() {
+    let e = env("<body></body>");
+    eval(
+        &e.main,
+        "globalThis.types = [];
+         const r = new Response('x', { headers: { 'Content-Type': 'text/plain' } }); r.headers.set('Content-Type', 'Test/TEST');
+         r.blob().then(b => types.push(b.type));
+         const q = new Request('about:blank', { method: 'POST', body: new URLSearchParams('a=1') }); q.headers.delete('Content-Type');
+         q.blob().then(b => types.push(b.type || 'empty')); 0",
+    );
+    assert_eq!(eval(&e.main, "types.join()"), "test/test,empty");
+    e.page.dispose();
+}
+
 /// ImageData is structured-cloneable (html/webappapis/structured-clone).
 #[test]
 fn image_data_structured_clones() {
