@@ -180,6 +180,10 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: the caret of the focused editing host, when it is not painted as a highlight (a
     /// block caret over the character after it is: `Layer::Caret`).
     pub(crate) caret: Option<crate::caret::CaretPaint>,
+    /// pyro: what `paint_inline_box_fragment` paints of an inline box's outline: 0 all of the
+    /// fragment with its outline, 1 the fragment without it, 2 only the outline (an inline root
+    /// draws its boxes' outlines after its text, CSS 2.1 Appendix E step 10).
+    pub(crate) inline_outlines: std::cell::Cell<u8>,
     /// pyro: the content of positioned inline boxes listed in the paint tree
     /// (`NodeFlags::INLINE_PASS_ENTRY`), left by their inline root for their own entry: the span's id ->
     /// (its inline root, the root's transform, the root's content position), painted in the positioned
@@ -299,6 +303,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             highlight_layers,
             highlight_ranges,
             caret,
+            inline_outlines: std::cell::Cell::new(0),
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
             backgrounds: true,
@@ -3099,6 +3104,24 @@ impl ElementCx<'_, '_> {
             };
             cx.frame = create_css_rect_with_corners(&cx.style, &layout, self.scale, keep);
         }
+        // pyro: a box painted in a group of its own (a clip path, a mask, opacity) keeps its outline
+        // under the text, in its group (WPT css-masking `clip-path-inline-007`).
+        let grouped = {
+            use style::values::generics::image::GenericImage;
+            !matches!(cx.style.get_svg().clip_path, style::values::computed::basic_shape::ClipPath::None)
+                || cx.style.get_svg().mask_image.0.iter().any(|image| !matches!(image, GenericImage::None))
+                || cx.style.get_effects().opacity < 1.0
+        };
+        let outline_now = match self.context.inline_outlines.get() {
+            0 => true,
+            1 => grouped,
+            _ => {
+                if !grouped {
+                    cx.draw_outline(scene);
+                }
+                return;
+            }
+        };
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
         // sides and above and below it.
@@ -3168,8 +3191,11 @@ impl ElementCx<'_, '_> {
             None => cx.draw_inset_box_shadow(scene),
         }
         cx.draw_border(scene);
-        // Over the box, as a block's outline is (see `render_element`).
-        cx.draw_outline(scene);
+        // Over the box, as a block's outline is (see `render_element`), unless the inline root
+        // draws it after its text (`inline_outlines`).
+        if outline_now {
+            cx.draw_outline(scene);
+        }
     }
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
@@ -3210,6 +3236,8 @@ impl ElementCx<'_, '_> {
             // the first line reaches above its line and no selection, ellipsis or annotation
             // interleaves.
             let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
+            // pyro: the boxes' outlines go over the text (`inline_outlines`), drawn at the end.
+            let outer_outlines = self.context.inline_outlines.replace(1);
             let selection = self.context.selection_ranges.get(&self.node.id).copied();
             let highlighted = self.context.highlight_ranges.get(&self.node.id);
             let by_line = highlighted.is_none()
@@ -3278,6 +3306,11 @@ impl ElementCx<'_, '_> {
                         draw_text_context.cut = outer_cut;
                     }
                 }
+                self.context.inline_outlines.set(2);
+                for fragment in &fragments {
+                    self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                }
+                self.context.inline_outlines.set(outer_outlines);
                 return;
             }
             // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`;
@@ -3433,6 +3466,25 @@ impl ElementCx<'_, '_> {
                     None => transform,
                 }, content_width, self.scale);
             }
+            // (A box listed in the paint tree paints its own outline with its entry.)
+            let entries: Vec<NodeId> = passes
+                .iter()
+                .skip(1)
+                .filter_map(|&pass| pass)
+                .filter(|&span| {
+                    self.context.dom.get_node(span).is_some_and(|node| {
+                        node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
+                    })
+                })
+                .collect();
+            self.context.inline_outlines.set(2);
+            for fragment in &fragments {
+                if entries.iter().any(|&span| self.fragment_in_pass(fragment.node, Some(Some(span)))) {
+                    continue;
+                }
+                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+            }
+            self.context.inline_outlines.set(outer_outlines);
         } else if let Some(caret) = self.context.caret.as_ref().filter(|caret| caret.node == self.node.id && caret.empty) {
             // pyro: the caret of an empty editing host, at the start of its content box.
             let layout = self.node.final_layout();
