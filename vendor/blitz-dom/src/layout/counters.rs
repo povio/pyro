@@ -586,8 +586,19 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
 fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, list: bool, walk: &mut Walk) {
     for pair in style.get_counters().counter_reset.iter().filter(|pair| pair.is_reversed) {
         let value = if pair.value == i32::MIN { reversed_initial(doc, node, &pair.name.0) } else { pair.value };
+        // pyro: the element's own increment of the counter follows its reset (this runs after
+        // the walk applied it to the instance it reset).
+        let own: i32 = style
+            .get_counters()
+            .counter_increment
+            .iter()
+            .filter(|increment| increment.name.0 == pair.name.0)
+            .fold(0i32, |sum, increment| sum.saturating_add(increment.value));
+        // (A list item increments `list-item` without one, by -1 in a reversed counter.)
+        let explicit = style.get_counters().counter_increment.iter().any(|increment| increment.name.0 == pair.name.0);
+        let own = if !explicit && &*pair.name.0 == "list-item" && style.clone_display().is_list_item() { -1 } else { own };
         if let Some(instance) = walk.counters.get_mut(&pair.name.0).and_then(|stack| stack.last_mut()) {
-            instance.value = value;
+            instance.value = value.saturating_add(own);
             instance.reversed = true;
         }
     }
@@ -626,10 +637,14 @@ fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, lis
 fn reversed_initial(doc: &BaseDocument, node: NodeId, name: &Atom) -> i32 {
     let (mut num, mut last) = (0i32, 0i32);
     // pyro: the counter's scope (CSS Lists 3 § 4.4): the element itself, its descendants, and
-    // its following siblings with theirs. (Not the siblings for `list-item`: the items after a
-    // nested reversed list are its parent list's, WPT css-lists `li-value-reversed-007a`.)
+    // its following siblings with theirs. (Not the siblings for the `list-item` of an HTML list:
+    // the items after a nested reversed list are its parent list's, WPT css-lists
+    // `li-value-reversed-007a`.)
+    let html_list = doc.nodes[node].element_data().is_some_and(|element| {
+        matches!(&*element.name.local, "ol" | "ul" | "menu" | "dir")
+    });
     let done = scan_reversed_element(doc, node, name, &mut num, &mut last, true)
-        || (&**name != "list-item" && doc.nodes[node].parent.is_some_and(|parent| {
+        || (!(html_list && &**name == "list-item") && doc.nodes[node].parent.is_some_and(|parent| {
             let siblings = &doc.nodes[parent].children;
             let at = siblings.iter().position(|&id| id == node).map_or(siblings.len(), |at| at + 1);
             siblings[at..]
@@ -703,7 +718,41 @@ fn scan_reversed_element(
             return false;
         }
     }
-    crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last))
+    // pyro: its `::before` and `::after` boxes come before and after its children (as in
+    // `walk_element`; WPT css-lists `counter-reset-reversed-pseudo-001`).
+    let pseudos: [Option<Arc<ComputedValues>>; 2] =
+        match doc.nodes[child].try_stylo_element_data().and_then(|data| data.get()) {
+            Some(data) if !data.styles.pseudos.is_empty() => [
+                data.styles.pseudos.get(&PseudoElement::Before).cloned(),
+                data.styles.pseudos.get(&PseudoElement::After).cloned(),
+            ],
+            _ => [None, None],
+        };
+    let pseudo = |style: Option<&Arc<ComputedValues>>, num: &mut i32, last: &mut i32| -> bool {
+        let Some(style) = style.filter(|style| generates(style)) else { return false };
+        let counters = style.get_counters();
+        if counters.counter_reset.iter().any(|pair| pair.name.0 == *name) {
+            return false;
+        }
+        let increment = counters
+            .counter_increment
+            .iter()
+            .filter(|pair| pair.name.0 == *name)
+            .fold(0i32, |sum, pair| sum.saturating_add(pair.value));
+        let negated = increment.saturating_neg();
+        if negated != 0 {
+            *last = negated;
+        }
+        if let Some(set) = counters.counter_set.iter().filter(|pair| pair.name.0 == *name).map(|pair| pair.value).last() {
+            *num = num.saturating_add(set);
+            return true;
+        }
+        *num = num.saturating_add(negated);
+        false
+    };
+    pseudo(pseudos[0].as_ref(), num, last)
+        || crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last))
+        || pseudo(pseudos[1].as_ref(), num, last)
 }
 
 /// pyro: the `value` attribute of an `li` (`node`, style `style`), a presentational hint
