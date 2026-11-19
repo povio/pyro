@@ -336,7 +336,9 @@ impl LayoutPassState<'_> {
             }
             return Some((bottom, id));
         };
-        self.set_clamp(id, kept, discards, &ellipsis_text);
+        // (The legacy `-webkit-line-clamp` too puts its ellipsis at a soft wrap opportunity, as
+        // Chromium does: WPT css-overflow `line-clamp/webkit-line-clamp-035`.)
+        self.set_clamp(id, kept, true, &ellipsis_text);
         // pyro: the floats and atomic inlines of the clamp line's block below its clamp line,
         // and those of the blocks discarded after it, are hidden with the lines (WPT css-overflow
         // `line-clamp-with-floats-003`, `-005`).
