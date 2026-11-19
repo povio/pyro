@@ -501,8 +501,8 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
         };
         let rects: SmallVec<[Rect; 4]> = pieces.iter().map(rect).collect();
         const FAR: f64 = 1e6;
-        // pyro: what the passes in and outside the stretches are clipped to: a stretch from the
-        // line's start (or to its end) reaches past it, so what its text draws beyond the text
+        // pyro: what the passes in and outside the stretches are clipped to: a stretch over the
+        // line's whole content reaches past its ends, so what its text draws beyond the text
         // (a wavy line's ends) is drawn in the highlight's colours too, as Chromium does (WPT
         // css-text-decor `selection-pseudo-with-decoration-invalidation-001`).
         let metrics = line.metrics();
@@ -517,8 +517,12 @@ pub(crate) fn stroke_highlighted_text<S: PaintScene>(
             .iter()
             .zip(&rects)
             .map(|(piece, rect)| {
-                let x0 = if piece.x0 <= line_start + 0.5 { -FAR } else { rect.x0 };
-                let x1 = if piece.x1 >= line_end - 0.5 { FAR } else { rect.x1 };
+                // (Only a stretch over the line's whole content: past a partly highlighted line's
+                // ends a wavy line's tips stay the text's own, as Blink paints them; WPT css-pseudo
+                // `highlight-painting-004`.)
+                let whole = piece.x0 <= line_start + 0.5 && piece.x1 >= line_end - 0.5;
+                let x0 = if whole { -FAR } else { rect.x0 };
+                let x1 = if whole { FAR } else { rect.x1 };
                 Rect::new(x0, rect.y0, x1, rect.y1)
             })
             .collect();

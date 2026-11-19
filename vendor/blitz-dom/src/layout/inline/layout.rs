@@ -1544,6 +1544,16 @@ impl LayoutPassState<'_> {
             let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
             let fit_width = width.max(max_content_width);
             let rounding_error = (fit_width + pbw).abs() * 8.0 * f32::EPSILON;
+            // pyro: and the layout unit (1/64 px) each atomic inline's width was rounded up to
+            // (`ceil_layout_unit`): text that fits beside them as Chromium measures it fits here
+            // (WPT css-pseudo `highlight-painting-004-ref*`: `qui` and an inline-block `ck` in a box
+            // as wide as `quick`).
+            let atomics = inline_layout
+                .layout
+                .inline_boxes()
+                .filter(|ibox| ibox.kind == parley::InlineBoxKind::InFlow && ibox.width > 0.0)
+                .count();
+            let rounding_error = rounding_error + atomics as f32 * scale / 64.0;
             if (max_content_width - width).abs() <= rounding_error {
                 fit_width + rounding_error
             } else {
