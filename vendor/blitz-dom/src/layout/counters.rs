@@ -668,7 +668,14 @@ fn scan_reversed_scope(doc: &BaseDocument, node: NodeId, name: &Atom, num: &mut 
             }
             *num = num.saturating_add(negated);
         }
+        // pyro: style containment keeps its descendants' counter changes in its subtree
+        // (CSS Contain 2 § 3.3; WPT css-contain `contain-style-ol-ordinal-reversed`).
+        let contains_style = !display.is_contents()
+            && style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE);
         drop(style);
+        if contains_style {
+            continue;
+        }
         if crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last)) {
             return true;
         }

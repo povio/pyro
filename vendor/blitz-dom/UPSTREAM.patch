@@ -7503,7 +7503,7 @@ diff --git a/packages/blitz-dom/src/layout/counters.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/counters.rs
-@@ -0,0 +1,1048 @@
+@@ -0,0 +1,1055 @@
 +//! pyro: CSS counters and quotes in generated content (CSS Lists 3 4, CSS 2.1 12.3-12.4).
 +//!
 +//! Before construction, a walk over the document in tree order applies each box's
@@ -8174,7 +8174,14 @@ new file mode 100644
 +            }
 +            *num = num.saturating_add(negated);
 +        }
++        // pyro: style containment keeps its descendants' counter changes in its subtree
++        // (CSS Contain 2 § 3.3; WPT css-contain `contain-style-ol-ordinal-reversed`).
++        let contains_style = !display.is_contents()
++            && style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE);
 +        drop(style);
++        if contains_style {
++            continue;
++        }
 +        if crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last)) {
 +            return true;
 +        }
