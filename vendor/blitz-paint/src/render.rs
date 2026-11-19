@@ -197,6 +197,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: the clip (screen space) of the element being painted (`render_element`): dotted and
     /// dashed borders make their marks in it only.
     pub(crate) paint_clip: std::cell::Cell<Rect>,
+    /// pyro: while a multi-column container paints one of its columns (not a spanner's row): the
+    /// container, whose spanners that pass leaves out (they are painted in their own rows).
+    pub(crate) column_pass_container: std::cell::Cell<Option<NodeId>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -312,6 +315,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             inline_outlines: std::cell::Cell::new(0),
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
+            column_pass_container: std::cell::Cell::new(None),
             paint_clip: std::cell::Cell::new(Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)),
             backgrounds: true,
             fractional_text_x: false,
@@ -5017,6 +5021,13 @@ impl ElementCx<'_, '_> {
         // pyro: so does one lifted here from a containing block that is no
         // layer root (a `backdrop-filter` box): it is placed by its offset.
         if self.multicol_skips(child_id) || self.skips_positioned(child_id) {
+            return;
+        }
+        // pyro: a column spanner is painted in its own row, not in a column that reaches it (its
+        // outline over the row's edge would show in the column before it).
+        if let Some(container) = self.context.column_pass_container.get()
+            && self.context.dom.as_ref().is_column_spanner_of(container, child_id)
+        {
             return;
         }
         let child = &self.context.dom.as_ref().tree()[child_id];

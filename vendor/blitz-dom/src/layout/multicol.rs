@@ -1544,6 +1544,15 @@ impl Node {
 }
 
 impl BaseDocument {
+    /// pyro: whether `id` is a column spanner of multi-column container `container` (painted in
+    /// its own row, not in a column).
+    pub fn is_column_spanner_of(&self, container: crate::NodeId, id: crate::NodeId) -> bool {
+        let node = &self.nodes[id];
+        !node.is_out_of_flow()
+            && node.primary_styles().is_some_and(|style| is_spanner_style(&style))
+            && self.spans_columns_of(container, id)
+    }
+
     /// The columns of multi-column container `node_id` (see [`Node::column_fragments`]).
     #[inline]
     pub fn column_fragments(&self, node_id: crate::NodeId) -> Option<&ColumnFragments> {

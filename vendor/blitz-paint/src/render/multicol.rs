@@ -70,6 +70,17 @@ impl ElementCx<'_, '_> {
                     ),
                 ),
             };
+            // pyro: a spanner's row shows its outline over the row's edges too.
+            let range = if fragment.spanner && vertical.is_none() {
+                let outline = self.spanner_ink_outset() * scale;
+                Rect::new(range.x0, range.y0 - outline, range.x1, range.y1 + outline)
+            } else {
+                range
+            };
+            let outer_column_pass = self
+                .context
+                .column_pass_container
+                .replace((!fragment.spanner && vertical.is_none()).then_some(self.node.id));
             let transform = base.pre_translate(offset);
             // The column's part of what is visible, for culling its content; a column out of
             // sight is not painted (`Rect::intersect` never gives a negative size: overlap it is).
@@ -93,6 +104,7 @@ impl ElementCx<'_, '_> {
             self.draw_marker(scene, pos);
             self.draw_children(scene, transform, if single { clip_rect } else { column_clip });
             self.context.layer_manager.maybe_pop_layer(scene, pushed);
+            self.context.column_pass_container.set(outer_column_pass);
             // pyro: a box broken at the column's end fills the rest of the column (its fragment
             // is as tall as the column: Chromium; WPT css-multicol `multicol-fill-balance-041`).
             // (Not in the rows of an explicit `column-height`, where Chromium keeps a broken box
@@ -176,6 +188,41 @@ impl ElementCx<'_, '_> {
             cx.draw_border(scene);
             self.draw_broken_boxes(scene, transform, id, at_box, at, free, depth + 1);
         }
+    }
+
+    /// pyro: how far the outlines of the container's spanners reach out of their rows (CSS px):
+    /// an outline's width and positive offset.
+    fn spanner_ink_outset(&self) -> f64 {
+        let dom = self.context.dom.as_ref();
+        let tree = dom.tree();
+        let mut out = 0.0f64;
+        let mut stack: Vec<blitz_dom::NodeId> = tree[self.node.id].layout_children.borrow().iter().flatten().copied().collect();
+        let mut seen = 0;
+        while let Some(id) = stack.pop() {
+            seen += 1;
+            if seen > 4096 {
+                break;
+            }
+            if dom.is_column_spanner_of(self.node.id, id) {
+                if let Some(style) = tree[id].primary_styles() {
+                    let outline = style.get_outline();
+                    // (An outline that is drawn: `none` keeps its computed width.)
+                    let drawn = match outline.outline_style {
+                        style::values::computed::OutlineStyle::Auto => true,
+                        style::values::computed::OutlineStyle::BorderStyle(style) => !style.none_or_hidden(),
+                    };
+                    if drawn {
+                        let reach = outline.outline_width.0.to_f64_px() + outline.outline_offset.to_f64_px().max(0.0);
+                        out = out.max(reach);
+                    }
+                }
+                continue;
+            }
+            if let Some(children) = tree[id].layout_children.borrow().as_deref() {
+                stack.extend(children.iter().copied());
+            }
+        }
+        out
     }
 
     /// The column rules of a multi-column container (`column-rule`): one in the middle of the
