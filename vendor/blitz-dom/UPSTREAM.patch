@@ -5673,6 +5673,189 @@ new file mode 100644
 +        }
 +    }
 +}
+diff --git a/packages/blitz-dom/src/layout/combined_text.rs b/packages/blitz-dom/src/layout/combined_text.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/layout/combined_text.rs
+@@ -0,0 +1,178 @@
++//! pyro: `text-combine-upright: all` text that is no inline element's (CSS Writing Modes 3 § 9.1).
++//!
++//! Stylo makes an inline element whose text is combined in a vertical line a horizontal box one em
++//! square (`adjust_for_text_combine_upright`), which the line places as an atomic inline. Text that
++//! is the direct content of a vertical block container (or of the anonymous block holding its
++//! inline content) has no such element: each such text run gets a box of its own here, as
++//! `layout::first_letter` gives an initial letter one. The box is no child of the DOM: it is an
++//! anonymous span holding a copy of the text, a layout child of the inline root, which builds an
++//! inline box for it in place of the text (`TextNodeData::combined_box`).
++
++use blitz_traits::node_id::NodeId;
++use markup5ever::{QualName, local_name, ns};
++use style::{
++    data::ElementData as StyloElementData,
++    properties::ComputedValues,
++    servo_arc::Arc,
++    values::computed::{Display, TextCombineUpright},
++};
++
++use crate::{BaseDocument, ElementData, NodeData, node::NodeFlags};
++
++/// Whether the inline root `root`'s direct text is combined text that needs boxes.
++fn root_combines(style: &ComputedValues) -> bool {
++    style.get_inherited_text().text_combine_upright == TextCombineUpright::All
++        && style.writing_mode.is_vertical()
++        && !style.writing_mode.is_sideways()
++        // Emphasis marks of combined text are left as Stylo leaves them (upright glyphs).
++        && matches!(style.get_inherited_text().text_emphasis_style, style::values::computed::TextEmphasisStyle::None)
++}
++
++/// Gives each direct text child of the inline root `root` that is combined text its box (and
++/// takes the boxes of those that are not), before the root's inline layout is built
++/// (`BaseDocument::resolve_deferred_tasks`).
++pub(crate) fn prepare(doc: &mut BaseDocument, root: NodeId) {
++    let Some(style) = doc.nodes[root].primary_styles().map(|style| Arc::clone(&*style)) else { return };
++    let combines = root_combines(&style);
++    let texts: Vec<NodeId> = doc.nodes[root]
++        .children
++        .iter()
++        .copied()
++        .filter(|&id| matches!(doc.nodes[id].data, NodeData::Text(_)))
++        .collect();
++    for text_id in texts {
++        let content = match &doc.nodes[text_id].data {
++            NodeData::Text(data) => data.content.clone(),
++            _ => continue,
++        };
++        let wanted = combines && !content.trim().is_empty();
++        let existing = match &doc.nodes[text_id].data {
++            NodeData::Text(data) => data.combined_box.filter(|&id| doc.nodes.contains_key(id)),
++            _ => None,
++        };
++        if !wanted {
++            if let Some(box_id) = existing {
++                drop_box(doc, root, box_id);
++            }
++            if let NodeData::Text(data) = &mut doc.nodes[text_id].data {
++                data.combined_box = None;
++            }
++            continue;
++        }
++        let box_id = existing.unwrap_or_else(|| {
++            const NAME: QualName = QualName { prefix: None, ns: ns!(html), local: local_name!("span") };
++            doc.create_node(NodeData::AnonymousBlock(Box::new(ElementData::new(NAME, Vec::new()))))
++        });
++        set_box_style(doc, box_id, &style);
++        set_box_text(doc, root, box_id, content.trim());
++        {
++            let mut children = doc.nodes[root].layout_children.borrow_mut();
++            let children = children.get_or_insert_with(Default::default);
++            if !children.contains(&box_id) {
++                children.push(box_id);
++            }
++        }
++        build_box_layout(doc, box_id);
++        if let NodeData::Text(data) = &mut doc.nodes[text_id].data {
++            data.combined_box = Some(box_id);
++        }
++    }
++}
++
++/// The box's style: the root's inherited properties, as Stylo adjusts a combined inline element
++/// (horizontal, one em square, not wrapping, centred, the line one em tall), an inline-block.
++fn set_box_style(doc: &mut BaseDocument, box_id: NodeId, parent: &ComputedValues) {
++    use style::computed_values::writing_mode::T as WritingModeProperty;
++    use style::values::computed::{Length, LengthPercentage, Size, TextAlign};
++    use style::values::generics::NonNegative;
++    use style::values::specified::text::TextWrapMode;
++    let mut builder =
++        style::properties::StyleBuilder::for_inheritance(doc.stylist.device(), Some(&doc.stylist), Some(parent), None);
++    builder.set_display(Display::InlineBlock);
++    builder.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
++    builder.writing_mode = style::logical_geometry::WritingMode::new(builder.get_inherited_box());
++    let em = parent.get_font().slow_clone_font_size().computed_size();
++    {
++        let text = builder.mutate_inherited_text();
++        text.set_text_wrap_mode(TextWrapMode::Nowrap);
++        text.set_text_align(TextAlign::Center);
++    }
++    let one_em = || Size::LengthPercentage(NonNegative(LengthPercentage::new_length(em)));
++    builder.mutate_position().set_width(one_em());
++    builder.mutate_position().set_height(one_em());
++    builder
++        .mutate_font()
++        .set_line_height(style::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
++    let style = builder.build();
++    let node = &mut doc.nodes[box_id];
++    let mut data = StyloElementData::default();
++    data.styles.primary = Some(style);
++    data.set_restyled();
++    data.damage = super::damage::ALL_DAMAGE;
++    *node.stylo_element_data_mut().ensure_init_mut() = data;
++    node.update_layout_styles();
++}
++
++/// The box holds a copy of the text and is an inline root, a layout child of `root`.
++fn set_box_text(doc: &mut BaseDocument, root: NodeId, box_id: NodeId, content: &str) {
++    let existing = doc.nodes[box_id]
++        .children
++        .first()
++        .copied()
++        .filter(|&id| matches!(doc.nodes.get(id).map(|node| &node.data), Some(NodeData::Text(_))));
++    let text_id = match existing {
++        Some(text_id) => {
++            if let NodeData::Text(data) = &mut doc.nodes[text_id].data
++                && data.content != content
++            {
++                data.content = content.to_string();
++            }
++            text_id
++        }
++        None => {
++            let text_id = doc.create_text_node(content);
++            doc.nodes[text_id].parent = Some(box_id);
++            doc.nodes[box_id].children.push(text_id);
++            text_id
++        }
++    };
++    let in_document = doc.nodes[root].flags.is_in_document();
++    for id in [box_id, text_id] {
++        doc.nodes[id].flags.set(NodeFlags::IS_IN_DOCUMENT, in_document);
++    }
++    let node = &mut doc.nodes[box_id];
++    node.parent = Some(root);
++    node.flags.insert(NodeFlags::IS_INLINE_ROOT);
++    *node.layout_children.borrow_mut() = Some(Default::default());
++    node.layout_parent.set(Some(root));
++}
++
++fn build_box_layout(doc: &mut BaseDocument, box_id: NodeId) {
++    let scale = doc.viewport.scale();
++    let mut layout = doc.nodes[box_id]
++        .element_data_mut()
++        .and_then(|element| element.inline_layout_data.take())
++        .map(|layout| *layout)
++        .unwrap_or_else(crate::node::TextLayout::new);
++    layout = crate::node::TextLayout { layout: std::mem::take(&mut layout.layout), ..crate::node::TextLayout::new() };
++    {
++        let BaseDocument { nodes, layout_ctx, font_ctx, .. } = doc;
++        let mut font_ctx = font_ctx.lock().unwrap();
++        super::inline::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut layout, scale, box_id);
++    }
++    let node = &mut doc.nodes[box_id];
++    node.clear_layout_cache();
++    if let Some(element) = node.element_data_mut() {
++        element.inline_layout_data = Some(Box::new(layout));
++    }
++}
++
++fn drop_box(doc: &mut BaseDocument, root: NodeId, box_id: NodeId) {
++    if let Some(children) = doc.nodes[root].layout_children.borrow_mut().as_mut() {
++        children.retain(|&id| id != box_id);
++    }
++    for child in std::mem::take(&mut doc.nodes[box_id].children) {
++        doc.remove_node_from_tree(child);
++    }
++    doc.remove_node_from_tree(box_id);
++}
 diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src/layout/construct.rs
 --- a/packages/blitz-dom/src/layout/construct.rs
 +++ b/packages/blitz-dom/src/layout/construct.rs
@@ -11801,11 +11984,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            annotations,
 +            bidi,
 +            &mut bidi_scan,
-         );
-     }
- 
--    text_layout.text = builder.build_into(&mut text_layout.layout);
--    return;
++        );
++    }
++
 +    for end in piece_ends.into_iter().rev().flatten() {
 +        close_span(&mut builder, end, bidi, &mut bidi_scan);
 +    }
@@ -11886,8 +12067,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +            strut_build,
 +            &space,
 +            bidi,
-+        );
-+    }
+         );
+     }
 +    // pyro: the "…" (or the string of `text-overflow: "<string>"`) that `text-overflow` ends an
 +    // overflowing line with, in the root's own style (its first available font, as in Chromium).
 +    // (An anonymous block holds lines of its parent: `overflow` and `text-overflow` are the
@@ -11957,7 +12138,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    text_layout.percent_span_edges = bidi_scan.percent_edges;
 +    text_layout.span_block_edges = bidi_scan.block_edges;
 +    return true;
- 
++
 +    /// pyro: lays out on one line what an annotation draws: a ruby annotation's content in its
 +    /// style, or the emphasis mark of an element in its font at half its size (as an `<rt>` has it).
 +    fn build_annotation(
@@ -12008,7 +12189,9 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        layout.break_all_lines(None);
 +        Some(TextAnnotation { node_id, kind, under, layout: Box::new(layout) })
 +    }
-+
+ 
+-    text_layout.text = builder.build_into(&mut text_layout.layout);
+-    return;
 +    /// pyro: the head (`tail: false`) or the tail of the split inline `node_id`, in its span:
 +    /// a head has its start, a tail its end (`construct::split_inline_part`).
 +    #[allow(clippy::too_many_arguments)]
@@ -12054,7 +12237,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +        }
 +        close_span(builder, end, bidi, bidi_scan);
 +    }
-+
+ 
 +    #[allow(clippy::too_many_arguments)]
 +    /// pyro: builds `node_id`'s inline content, with the scroll pseudo-element boxes generated
 +    /// beside it (`scroll_markers`) before and after it, unless `container` (whose box list holds
@@ -12427,7 +12610,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,6 +1415,16 @@
+@@ -284,17 +1415,131 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -12444,8 +12627,27 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          });
                      }
                  };
-@@ -291,10 +1432,95 @@
+             }
              NodeData::Text(data) => {
++                // pyro: combined text no inline element holds is a box of its own, placed as one
++                // letter (`layout::combined_text`, `InlineBox::glue`).
++                if let Some(box_id) = data.combined_box.filter(|&id| nodes.get(id).is_some()) {
++                    bidi_scan.atomic_boxes += 1;
++                    text_transformer.word_break(builder);
++                    builder.push_inline_box(InlineBox {
++                        id: box_id.as_u64(),
++                        kind: InlineBoxKind::InFlow,
++                        index: 0,
++                        width: 0.0,
++                        height: 0.0,
++                        baseline: None,
++                        vertical_align: Default::default(),
++                        rtl: false,
++                        central: false,
++                        glue: true,
++                    });
++                    return;
++                }
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // dbg!(&data.content);
 +                // pyro: white space between two table parts generates no box (`table_fixup`).
@@ -12543,7 +12745,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1529,314 @@
+@@ -303,3 +1548,314 @@
          }
      }
  }
@@ -16525,9 +16727,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  use std::cell::Ref;
  use std::ops::{Deref, DerefMut};
  use std::sync::Arc;
-@@ -24,18 +24,29 @@
+@@ -23,19 +23,31 @@
+     compute_oof_layout, prelude::*,
  };
  
++pub(crate) mod combined_text;
  pub(crate) mod construct;
 +pub(crate) mod counters;
 +mod quotes_table;
@@ -16557,7 +16761,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  };
  use self::table::TableTreeWrapper;
  
-@@ -47,16 +58,21 @@
+@@ -47,16 +59,21 @@
  };
  
  /// The intrinsic dimensions and default object size for a replaced element
@@ -16586,7 +16790,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          return (IntrinsicSizes::default(), taffy::Size::ZERO);
      }
      if *tag_name == local_name!("canvas") {
-@@ -74,6 +90,33 @@
+@@ -74,6 +91,33 @@
      (IntrinsicSizes::default(), DEFAULT_OBJECT_SIZE)
  }
  
@@ -16620,7 +16824,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
      let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
      let result = calc.resolve(CSSPixelLength::new(parent_size));
-@@ -101,9 +144,50 @@
+@@ -101,9 +145,50 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
@@ -16671,7 +16875,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
      /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
      #[inline]
-@@ -138,6 +222,15 @@
+@@ -138,6 +223,15 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
@@ -16687,7 +16891,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +267,25 @@
+@@ -174,14 +268,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -16721,7 +16925,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +295,476 @@
+@@ -191,13 +296,476 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -17200,7 +17404,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +784,128 @@
+@@ -217,13 +785,128 @@
          }
      }
  
@@ -17329,7 +17533,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +921,43 @@
+@@ -239,8 +922,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -17374,7 +17578,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +972,7 @@
+@@ -255,7 +973,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -17383,7 +17587,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -287,15 +1004,47 @@
+@@ -287,15 +1005,47 @@
                          .attr(local_name!("cols"))
                          .and_then(|val| val.parse::<f32>().ok());
  
@@ -17436,7 +17640,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -322,73 +1071,202 @@
+@@ -322,73 +1072,202 @@
                                  &mut doc.font_ctx.lock().unwrap(),
                                  &mut doc.layout_ctx,
                              );
@@ -17678,7 +17882,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1285,50 @@
+@@ -407,39 +1286,50 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -17750,7 +17954,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1361,90 @@
+@@ -472,6 +1362,90 @@
                          _ => unreachable!(),
                      };
  
@@ -17841,7 +18045,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1461,550 @@
+@@ -488,126 +1462,550 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -18478,7 +18682,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2064,11 @@
+@@ -667,7 +2065,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -18491,7 +18695,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -698,17 +2099,26 @@
+@@ -698,17 +2100,26 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -18520,7 +18724,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2131,7 @@
+@@ -721,6 +2132,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -18528,7 +18732,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2143,122 @@
+@@ -732,6 +2144,122 @@
      }
  }
  
@@ -18651,7 +18855,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2266,12 @@
+@@ -739,10 +2267,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -18668,7 +18872,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2281,11 @@
+@@ -752,9 +2282,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -18683,7 +18887,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2313,132 @@
+@@ -782,16 +2314,132 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -18820,7 +19024,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2491,30 @@
+@@ -844,6 +2492,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -18851,7 +19055,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2523,19 @@
+@@ -852,7 +2524,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -18872,7 +19076,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2551,30 @@
+@@ -868,6 +2552,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -18903,7 +19107,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +2679,192 @@
+@@ -972,3 +2680,192 @@
          })
      }
  }
@@ -29393,7 +29597,7 @@ diff --git a/packages/blitz-dom/src/layout/table_fixup.rs b/packages/blitz-dom/s
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/table_fixup.rs
-@@ -0,0 +1,396 @@
+@@ -0,0 +1,393 @@
 +//! pyro: the anonymous table objects of CSS 2.1 §17.2.1 (css-tables-3 §3.3, "fixup").
 +//!
 +//! - Consecutive table parts whose parent box is not a table (cells, rows, row groups, columns,
@@ -29561,19 +29765,16 @@ new file mode 100644
 +/// `None` in the common case, when `parent` lays out its own children (every one a proper child or
 +/// generating no box, which the table build passes over).
 +///
-+/// A table in a vertical writing mode is built as before the fixup (`None`): its children that are
-+/// not its proper children are left out. (Its captions are laid out; the anonymous boxes wait for
-+/// `text-combine-upright` on text that is no element's: WPT css-writing-modes
-+/// `text-combine-upright-inherit-all-002` has such text in a table without rows, and lays it out
-+/// sideways once the table is fixed up.)
++/// (`_vertical`: the table's writing mode is vertical; the fixup is the same. Its bare
++/// `text-combine-upright` text is boxed by `layout::combined_text`.)
 +pub(crate) fn fixup_children(
 +    doc: &mut BaseDocument,
 +    parent: NodeId,
 +    level: Level,
-+    vertical: bool,
++    _vertical: bool,
 +    anonymous: &mut Vec<NodeId>,
 +) -> Option<Vec<NodeId>> {
-+    if vertical || !needs_fixup(doc, parent, level) {
++    if !needs_fixup(doc, parent, level) {
 +        return None;
 +    }
 +    let mut items = Vec::new();
@@ -34526,7 +34727,23 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
                  return y_offset as f64;
              }
-@@ -1061,6 +1998,11 @@
+@@ -965,11 +1902,14 @@
+ pub struct TextNodeData {
+     /// The textual content of the text node
+     pub content: String,
++    /// pyro: the box of this text when it is combined text no inline element holds
++    /// (`layout::combined_text`), which its inline root places in its stead.
++    pub combined_box: Option<NodeId>,
+ }
+ 
+ impl TextNodeData {
+     pub fn new(content: String) -> Self {
+-        Self { content }
++        Self { content, combined_box: None }
+     }
+ }
+ 
+@@ -1061,6 +2001,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -34538,7 +34755,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,13 +2103,24 @@
+@@ -1161,13 +2106,24 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -34565,7 +34782,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
              if el.name.local == local_name!("button") {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON;
-@@ -1175,23 +2128,117 @@
+@@ -1175,23 +2131,117 @@
              if el.is_button_input() {
                  flags |= stylo_taffy::StyleFlags::IS_BUTTON_INPUT;
              }
@@ -34685,7 +34902,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,6 +2281,19 @@
+@@ -1234,6 +2284,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -34705,7 +34922,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2350,7 @@
+@@ -1290,7 +2353,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -34714,7 +34931,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2387,47 @@
+@@ -1327,8 +2390,47 @@
              .unwrap_or(0)
      }
  
@@ -34763,7 +34980,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1358,10 +2457,37 @@
+@@ -1358,10 +2460,37 @@
              return true;
          }
  
@@ -34801,7 +35018,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2495,48 @@
+@@ -1369,7 +2498,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -34851,7 +35068,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2564,14 @@
+@@ -1397,12 +2567,14 @@
              return true;
          }
  
@@ -34872,7 +35089,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1435,6 +2604,16 @@
+@@ -1435,6 +2607,16 @@
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
  
@@ -34889,7 +35106,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
              if matches!(
-@@ -1500,11 +2679,15 @@
+@@ -1500,11 +2682,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -34905,7 +35122,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1533,6 +2716,7 @@
+@@ -1533,6 +2719,7 @@
          {
              *scrollbar = Some(sb);
          }
@@ -34913,7 +35130,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1559,7 +2743,7 @@
+@@ -1559,7 +2746,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -34922,7 +35139,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1574,12 +2758,18 @@
+@@ -1574,12 +2761,18 @@
              let child_position = child.taffy_position();
              let mut child_x = x;
              let mut child_y = y;
@@ -34943,7 +35160,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2780,7 @@
+@@ -1590,7 +2783,7 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -34952,7 +35169,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return Some(hit);
              }
          }
-@@ -1605,7 +2795,7 @@
+@@ -1605,7 +2798,7 @@
                      let pos = hoisted_child.position(self.tree(), self.id);
                      let x = x - pos.x;
                      let y = y - pos.y;
@@ -34961,7 +35178,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                          return Some(hit);
                      }
                  }
-@@ -1716,7 +2906,7 @@
+@@ -1716,7 +2909,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -34970,7 +35187,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +2931,13 @@
+@@ -1741,8 +2934,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -34985,7 +35202,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3013,28 @@
+@@ -1818,8 +3016,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -35016,7 +35233,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3092,36 @@
+@@ -1877,11 +3095,36 @@
                  }
              }
  
@@ -40475,7 +40692,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +1207,30 @@
+@@ -358,6 +1207,32 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -40483,6 +40700,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        // the tree construction left, with the nodes holding their styles made before the builds.
 +        for task in deferred_construction_nodes.iter_mut() {
 +            let ConstructionTaskData::InlineLayout(layout) = &mut task.data;
++            // pyro: the boxes of the root's combined text (`layout::combined_text`).
++            crate::layout::combined_text::prepare(self, task.node_id);
 +            // pyro: the first line's style node first: a first letter on it inherits from it.
 +            layout.first_line = match self.first_line_styles {
 +                true => crate::layout::first_line::style_node_for(self, task.node_id),
@@ -40506,7 +40725,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +1240,9 @@
+@@ -367,9 +1242,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -40519,7 +40738,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +1259,14 @@
+@@ -386,7 +1261,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -40535,7 +40754,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +1275,13 @@
+@@ -395,18 +1277,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -40555,7 +40774,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +1294,7 @@
+@@ -419,10 +1296,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -40567,7 +40786,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,6 +1302,33 @@
+@@ -430,6 +1304,33 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -40601,7 +40820,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1336,797 @@
+@@ -437,32 +1338,797 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  

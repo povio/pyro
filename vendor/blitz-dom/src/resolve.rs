@@ -1211,6 +1211,8 @@ impl BaseDocument {
         // the tree construction left, with the nodes holding their styles made before the builds.
         for task in deferred_construction_nodes.iter_mut() {
             let ConstructionTaskData::InlineLayout(layout) = &mut task.data;
+            // pyro: the boxes of the root's combined text (`layout::combined_text`).
+            crate::layout::combined_text::prepare(self, task.node_id);
             // pyro: the first line's style node first: a first letter on it inherits from it.
             layout.first_line = match self.first_line_styles {
                 true => crate::layout::first_line::style_node_for(self, task.node_id),

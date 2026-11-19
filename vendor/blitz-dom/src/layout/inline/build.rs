@@ -1430,6 +1430,25 @@ fn build_inline_layout_with(
                 };
             }
             NodeData::Text(data) => {
+                // pyro: combined text no inline element holds is a box of its own, placed as one
+                // letter (`layout::combined_text`, `InlineBox::glue`).
+                if let Some(box_id) = data.combined_box.filter(|&id| nodes.get(id).is_some()) {
+                    bidi_scan.atomic_boxes += 1;
+                    text_transformer.word_break(builder);
+                    builder.push_inline_box(InlineBox {
+                        id: box_id.as_u64(),
+                        kind: InlineBoxKind::InFlow,
+                        index: 0,
+                        width: 0.0,
+                        height: 0.0,
+                        baseline: None,
+                        vertical_align: Default::default(),
+                        rtl: false,
+                        central: false,
+                        glue: true,
+                    });
+                    return;
+                }
                 // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 // dbg!(&data.content);
                 // pyro: white space between two table parts generates no box (`table_fixup`).

@@ -165,19 +165,16 @@ fn needs_fixup(doc: &BaseDocument, parent: NodeId, level: Level) -> bool {
 /// `None` in the common case, when `parent` lays out its own children (every one a proper child or
 /// generating no box, which the table build passes over).
 ///
-/// A table in a vertical writing mode is built as before the fixup (`None`): its children that are
-/// not its proper children are left out. (Its captions are laid out; the anonymous boxes wait for
-/// `text-combine-upright` on text that is no element's: WPT css-writing-modes
-/// `text-combine-upright-inherit-all-002` has such text in a table without rows, and lays it out
-/// sideways once the table is fixed up.)
+/// (`_vertical`: the table's writing mode is vertical; the fixup is the same. Its bare
+/// `text-combine-upright` text is boxed by `layout::combined_text`.)
 pub(crate) fn fixup_children(
     doc: &mut BaseDocument,
     parent: NodeId,
     level: Level,
-    vertical: bool,
+    _vertical: bool,
     anonymous: &mut Vec<NodeId>,
 ) -> Option<Vec<NodeId>> {
-    if vertical || !needs_fixup(doc, parent, level) {
+    if !needs_fixup(doc, parent, level) {
         return None;
     }
     let mut items = Vec::new();

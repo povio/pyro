@@ -23,6 +23,7 @@ use taffy::{
     compute_oof_layout, prelude::*,
 };
 
+pub(crate) mod combined_text;
 pub(crate) mod construct;
 pub(crate) mod counters;
 mod quotes_table;

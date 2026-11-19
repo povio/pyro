@@ -1902,11 +1902,14 @@ impl NodeData {
 pub struct TextNodeData {
     /// The textual content of the text node
     pub content: String,
+    /// pyro: the box of this text when it is combined text no inline element holds
+    /// (`layout::combined_text`), which its inline root places in its stead.
+    pub combined_box: Option<NodeId>,
 }
 
 impl TextNodeData {
     pub fn new(content: String) -> Self {
-        Self { content }
+        Self { content, combined_box: None }
     }
 }
 
