@@ -463,6 +463,7 @@ fn compute_oof_layout_for_area_with_origin(
         reversed,
         &mut hoisted,
         &mut unclaimed,
+        false,
     );
 
     #[cfg(feature = "content_size")]
@@ -958,7 +959,22 @@ pub(crate) fn perform_oof_layout(
     #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
     hoisted: &mut Vec<NodeId>,
     unclaimed: &mut OofCandidates,
+    initial_containing_block: bool,
 ) -> Rect<f32> {
+    // pyro: a fixed box in the top layer has the initial containing block, whatever its
+    // ancestors claim (css-position-4 § 3.2): only the root pass lays it out.
+    fn claimed(
+        tree: &impl LayoutContainingBlock,
+        claims: ContainingBlockClaims,
+        initial_containing_block: bool,
+        candidate: &OofCandidate,
+    ) -> bool {
+        candidate.containing_block.is_some()
+            || (claims.for_position(candidate.position)
+                && (initial_containing_block
+                    || candidate.position != crate::Position::Fixed
+                    || !tree.static_position_is_containing_block(candidate.node)))
+    }
     #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
     let mut absolute_overflow_rect = Rect::ZERO;
     #[cfg(feature = "content_size")]
@@ -986,7 +1002,7 @@ pub(crate) fn perform_oof_layout(
     let mut worklist: Vec<OofCandidate> = Vec::new();
     for candidate in candidates {
         // pyro: a candidate with a containing block of its own is laid out here.
-        if candidate.containing_block.is_some() || claims.for_position(candidate.position) {
+        if claimed(&*tree, claims, initial_containing_block, candidate) {
             worklist.push(*candidate);
         } else {
             unclaimed.push(*candidate);
@@ -1033,7 +1049,7 @@ pub(crate) fn perform_oof_layout(
         if !surfaced.is_empty() {
             surfaced.translate(location);
             for surfaced_candidate in surfaced.iter() {
-                if surfaced_candidate.containing_block.is_some() || claims.for_position(surfaced_candidate.position) {
+                if claimed(&*tree, claims, initial_containing_block, surfaced_candidate) {
                     worklist.push(*surfaced_candidate);
                 } else {
                     unclaimed.push(*surfaced_candidate);

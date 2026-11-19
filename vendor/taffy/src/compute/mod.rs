@@ -188,6 +188,7 @@ pub fn compute_root_layout_in(
             Point { x: direction.is_rtl(), y: false },
             &mut hoisted,
             &mut unclaimed,
+            true,
         );
         debug_assert!(unclaimed.is_empty(), "the root positioning pass must claim all remaining candidates");
         if !root_is_cached {

@@ -8039,7 +8039,7 @@ index 70838fe7..674c80a0 100644
      pub(crate) fn area_column_count(&self) -> u16 {
          self.area_column_count
 diff --git a/src/compute/mod.rs b/src/compute/mod.rs
-index bb954acf..eb14e801 100644
+index bb954acf..4c8071d0 100644
 --- a/src/compute/mod.rs
 +++ b/src/compute/mod.rs
 @@ -80,13 +80,24 @@ pub fn compute_root_layout(
@@ -8077,7 +8077,12 @@ index bb954acf..eb14e801 100644
              node: root,
              order: 0,
              position,
-@@ -181,6 +192,15 @@ pub fn compute_root_layout(
+@@ -177,10 +188,20 @@ pub fn compute_root_layout(
+             Point { x: direction.is_rtl(), y: false },
+             &mut hoisted,
+             &mut unclaimed,
++            true,
+         );
          debug_assert!(unclaimed.is_empty(), "the root positioning pass must claim all remaining candidates");
          if !root_is_cached {
              tree.add_hoisted_children(root, &hoisted);
@@ -8093,7 +8098,7 @@ index bb954acf..eb14e801 100644
          }
      }
  }
-@@ -244,7 +264,41 @@ fn compute_in_flow_root_layout(
+@@ -244,7 +265,41 @@ fn compute_in_flow_root_layout(
              });
  
              // Block nodes automatically stretch fit their width to fit available space if available space is definite
@@ -8136,7 +8141,7 @@ index bb954acf..eb14e801 100644
  
              let styled_based_known_dimensions = known_dimensions
                  .or(min_max_definite_size)
-@@ -284,8 +338,10 @@ fn compute_in_flow_root_layout(
+@@ -284,8 +339,10 @@ fn compute_in_flow_root_layout(
      let is_rtl = style.direction().is_rtl();
  
      // The root's margin box is placed at the origin of the initial containing block
@@ -8148,7 +8153,7 @@ index bb954acf..eb14e801 100644
              (true, Some(available_width)) => available_width - output.size.width - margin.right,
              _ => margin.left,
          },
-@@ -381,6 +437,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -381,6 +438,9 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
      /// Recursive function to apply rounding to all descendents
      fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
          let unrounded_layout = tree.get_unrounded_layout(node_id);
@@ -8158,7 +8163,7 @@ index bb954acf..eb14e801 100644
          let mut layout = unrounded_layout;
  
          let parent_x = cumulative_x;
-@@ -416,6 +475,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
+@@ -416,6 +476,7 @@ pub fn round_layout(tree: &mut impl RoundTree, node_id: NodeId) {
          );
  
          tree.set_final_layout(node_id, &layout);
@@ -8166,7 +8171,7 @@ index bb954acf..eb14e801 100644
  
          // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
          // they are instead visited via their containing block's hoisted child list below, which
-@@ -489,7 +549,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
+@@ -489,7 +550,8 @@ pub fn compute_hidden_layout(tree: &mut (impl LayoutPartialTree + CacheTree), no
  pub mod detailed_info {
      #[cfg(feature = "grid")]
      pub use super::grid::{
@@ -8177,7 +8182,7 @@ index bb954acf..eb14e801 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..7359caa4 100644
+index 2c6179a4..ff7ad9aa 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -8204,7 +8209,15 @@ index 2c6179a4..7359caa4 100644
              // The fallback alignment of `baseline` is `start`
              AlignItemsKeyword::Start
              | AlignItemsKeyword::FlexStart
-@@ -559,6 +565,8 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -457,6 +463,7 @@ fn compute_oof_layout_for_area_with_origin(
+         reversed,
+         &mut hoisted,
+         &mut unclaimed,
++        false,
+     );
+ 
+     #[cfg(feature = "content_size")]
+@@ -559,6 +566,8 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
          .maybe_apply_aspect_ratio(aspect_ratio)
          .maybe_add(box_sizing_adjustment);
@@ -8213,7 +8226,7 @@ index 2c6179a4..7359caa4 100644
      let mut min_size = child_style
          .min_size()
          .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
-@@ -566,12 +574,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -566,12 +575,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          .maybe_add(box_sizing_adjustment)
          .or(padding_border_sum.map(Some))
          .maybe_max(padding_border_sum);
@@ -8229,7 +8242,7 @@ index 2c6179a4..7359caa4 100644
  
      let is_replaced = child_style.is_replaced();
      let is_table = child_style.is_table();
-@@ -592,15 +602,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -592,15 +603,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
  
      // Static positions are relative to the containing block's border box: make them relative to
      // the inset-resolution area
@@ -8262,7 +8275,7 @@ index 2c6179a4..7359caa4 100644
      };
  
      let horizontal = OofAxis {
-@@ -649,8 +667,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -649,8 +668,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
              &mut known_dimensions,
              size_style,
              area_size,
@@ -8272,7 +8285,7 @@ index 2c6179a4..7359caa4 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,8 +708,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +709,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -8421,7 +8434,7 @@ index 2c6179a4..7359caa4 100644
          _ => {
              let measured_size = tree.measure_child_size_both(
                  candidate.node,
-@@ -709,7 +866,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -709,7 +867,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
  
      let layout_input = LayoutInput {
          known_dimensions: final_size.map(Some),
@@ -8430,17 +8443,40 @@ index 2c6179a4..7359caa4 100644
          parent_size: area_size.map(Some),
          available_space,
          sizing_mode: SizingMode::ContentSize,
-@@ -828,7 +985,8 @@ pub(crate) fn perform_oof_layout(
+@@ -801,7 +959,22 @@ pub(crate) fn perform_oof_layout(
+     #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
+     hoisted: &mut Vec<NodeId>,
+     unclaimed: &mut OofCandidates,
++    initial_containing_block: bool,
+ ) -> Rect<f32> {
++    // pyro: a fixed box in the top layer has the initial containing block, whatever its
++    // ancestors claim (css-position-4 § 3.2): only the root pass lays it out.
++    fn claimed(
++        tree: &impl LayoutContainingBlock,
++        claims: ContainingBlockClaims,
++        initial_containing_block: bool,
++        candidate: &OofCandidate,
++    ) -> bool {
++        candidate.containing_block.is_some()
++            || (claims.for_position(candidate.position)
++                && (initial_containing_block
++                    || candidate.position != crate::Position::Fixed
++                    || !tree.static_position_is_containing_block(candidate.node)))
++    }
+     #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
+     let mut absolute_overflow_rect = Rect::ZERO;
+     #[cfg(feature = "content_size")]
+@@ -828,7 +1001,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
 -        if claims.for_position(candidate.position) {
 +        // pyro: a candidate with a containing block of its own is laid out here.
-+        if candidate.containing_block.is_some() || claims.for_position(candidate.position) {
++        if claimed(&*tree, claims, initial_containing_block, candidate) {
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1009,21 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1025,21 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -8473,12 +8509,12 @@ index 2c6179a4..7359caa4 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1033,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1049,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {
 -                if claims.for_position(surfaced_candidate.position) {
-+                if surfaced_candidate.containing_block.is_some() || claims.for_position(surfaced_candidate.position) {
++                if claimed(&*tree, claims, initial_containing_block, surfaced_candidate) {
                      worklist.push(*surfaced_candidate);
                  } else {
                      unclaimed.push(*surfaced_candidate);
