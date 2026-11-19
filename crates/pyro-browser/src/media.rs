@@ -70,7 +70,7 @@ impl Browser {
                 if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                     done(result.map(|r| {
                         // CORS-checked (a `crossorigin` request), or same origin.
-                        let clean = cors || b.image_origin_clean(page, &r.url);
+                        let clean = cors || (!r.opaque && b.image_origin_clean(page, &r.url));
                         MediaResponse { status: r.status, mime: r.mime, body: r.body, partial: r.partial, clean }
                     }));
                 }

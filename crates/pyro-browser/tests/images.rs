@@ -444,3 +444,54 @@ fn sizes_auto_and_deferred_lazy_images() {
     settle(&mut thread);
     assert!(fetched(&loader, "l.png?b"), "eager fetches the source selected while deferred (auto skipped: 500px)");
 }
+
+/// Serves through a static loader, marking the response of URLs with `detour` in them opaque (as
+/// pyro-net reports a no-cors redirect chain that went to another origin and came back).
+struct Opaquing(Rc<StaticLoader>);
+impl pyro_browser::ResourceLoader for Opaquing {
+    fn fetch(&self, browser: &mut pyro_browser::Browser, request: pyro_browser::FetchRequest, done: pyro_browser::FetchDone) {
+        let detour = request.url.contains("detour");
+        self.0.fetch(
+            browser,
+            request,
+            Box::new(move |b, result| {
+                done(b, result.map(|mut r| {
+                    r.opaque |= detour;
+                    r
+                }))
+            }),
+        );
+    }
+}
+
+/// An image whose response is opaque taints a canvas it is drawn on, though its URL is of the
+/// document's origin: the response's tainting decides origin-cleanness, not the final URL
+/// (security review cycle 1, HIGH 3). Its entry in the list of available images is not clean
+/// either.
+#[test]
+fn an_opaque_image_at_the_documents_origin_taints_a_canvas() {
+    let (mut thread, page, loader) = setup(
+        "<canvas id=c width=4 height=4></canvas><script>\
+           globalThis.read = [];\
+           function draw(src) { const i = new Image(); i.onload = () => {\
+             const x = document.getElementById('c').getContext('2d'); x.drawImage(i, 0, 0);\
+             try { const d = x.getImageData(0, 0, 1, 1).data; read.push(src + ':clean:' + d[3]); } catch (e) { read.push(src + ':' + e.name); }\
+           }; i.src = src; }\
+           draw('/plain.png'); draw('/detour.png');\
+         </script>",
+    );
+    // A whole 2x2 opaque red PNG (`png()` writes only a header, which no canvas decodes).
+    const RED: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182, 13,
+        36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132, 25, 96, 12, 0, 71, 202, 7, 249, 103,
+        89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    loader.insert_bytes("http://site.test/plain.png", "image/png", RED, Duration::ZERO);
+    loader.insert_bytes("http://site.test/detour.png", "image/png", RED, Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Opaquing(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let read = eval(&thread, page, "read.sort().join('|')");
+    assert!(read.starts_with("/detour.png:SecurityError|"), "{read}");
+    assert!(read.contains("/plain.png:clean:255") || read.contains("/plain.png:SecurityError"), "{read}");
+}

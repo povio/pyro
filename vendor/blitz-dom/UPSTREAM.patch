@@ -36180,7 +36180,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +822,136 @@
+@@ -585,37 +822,144 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -36223,13 +36223,21 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
 -        let result = self.data.parse(bytes);
 -        self.respond(resolved_url, result)
++        self.bytes_from(resolved_url.clone(), resolved_url, false, bytes)
++    }
++
++    /// pyro: the response's tainting, as the network saw it, decides an opaque image (a no-cors
++    /// redirect chain through another origin is opaque though it ends at the document's); the
++    /// final URL's origin decides for a provider that does not report it.
++    fn bytes_from(self: Box<Self>, resolved_url: String, final_url: String, tainted: bool, bytes: Bytes) {
 +        let mut result = self.data.parse(&resolved_url, bytes);
 +        // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
 +        // orientation 1, which `image-orientation: none` has nothing to undo of.
 +        let opaque = self.data.options.cors.is_none()
-+            && self.data.document.as_ref().is_some_and(|document| {
-+                Url::parse(&resolved_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
-+            });
++            && (tainted
++                || self.data.document.as_ref().is_some_and(|document| {
++                    Url::parse(&final_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
++                }));
 +        if opaque {
 +            if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
 +                *orientation = 1;
@@ -36332,7 +36340,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +960,46 @@
+@@ -624,12 +968,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -36382,7 +36390,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1019,62 @@
+@@ -649,6 +1027,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -36445,7 +36453,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1226,11 @@
+@@ -800,3 +1234,11 @@
          );
      }
  }

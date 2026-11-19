@@ -54,3 +54,39 @@ fn image_orientation_none_slices_the_border_image_as_stored() {
     assert_eq!([at(3, 10), at(36, 10)], [blue, red], "turned by its orientation");
     assert_eq!([at(3, 30), at(36, 30)], [red, blue], "as stored");
 }
+
+/// Serves `image` at every URL as an opaque response (a no-cors redirect chain that went to
+/// another origin and came back to the document's).
+struct OpaqueImage(Vec<u8>);
+impl Fetcher for OpaqueImage {
+    fn fetch(&self, _: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Ok(self.0.clone()));
+    }
+    fn fetch_final(&self, url: String, _: &FetchOptions, done: Box<dyn FnOnce(Result<Fetched, String>) + Send>) {
+        done(Ok(Fetched { body: self.0.clone(), url, opaque: true }))
+    }
+}
+
+/// An opaque image (CSS Images 3 § 5.1) is shown as its EXIF orientation says whatever
+/// `image-orientation` says, even when its final URL is of the document's origin: the response's
+/// tainting decides, not the final URL (security review cycle 1, HIGH 3).
+#[test]
+fn an_opaque_image_at_the_documents_origin_keeps_its_orientation() {
+    let fetcher: Arc<dyn Fetcher> = Arc::new(OpaqueImage(mirrored_png()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><body style='margin:0;background:#fff'>\
+               <div style='width:40px;height:20px;border-image:url(http://test/i.png) 0 fill;image-orientation:none'></div>"
+            .into(),
+        base_url: "http://test/".into(),
+        width: 100,
+        height: 100,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let img = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    let at = |x: usize, y: usize| {
+        let i = (y * img.width as usize + x) * 4;
+        [img.data[i], img.data[i + 1], img.data[i + 2]]
+    };
+    assert_eq!([at(3, 10), at(36, 10)], [[0, 0, 255], [255, 0, 0]], "turned by its orientation");
+}

@@ -203,7 +203,7 @@ impl Fetcher for PageFetcher {
         &self,
         url: String,
         options: &pyro_render::FetchOptions,
-        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+        done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
     ) {
         self.request(url, options, done)
     }
@@ -221,8 +221,8 @@ impl Fetcher for PageFetcher {
 /// `done` for the body alone.
 fn body_only(
     done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
-) -> Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send> {
-    Box::new(move |result| done(result.map(|(body, _)| body)))
+) -> Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send> {
+    Box::new(move |result| done(result.map(|fetched| fetched.body)))
 }
 
 impl PageFetcher {
@@ -232,7 +232,7 @@ impl PageFetcher {
         &self,
         url: String,
         options: &pyro_render::FetchOptions,
-        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+        done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
     ) {
         let page = self.page;
         // A CORS fetch without other options is an image's (`shape-outside`, `mask-image`).
@@ -251,8 +251,8 @@ impl PageFetcher {
                 Box::new(move |_, result| {
                     done(result.and_then(|r| {
                         if (200..300).contains(&r.status) {
-                            let final_url = r.url.clone();
-                            Ok((r.render_body(environment.as_slice()), final_url))
+                            let (url, opaque) = (r.url.clone(), r.opaque);
+                            Ok(pyro_render::Fetched { body: r.render_body(environment.as_slice()), url, opaque })
                         } else {
                             Err(format!("HTTP {}", r.status))
                         }

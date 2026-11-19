@@ -51,10 +51,11 @@ pub trait Fetcher: Send + Sync + 'static {
         &self,
         url: String,
         options: &blitz_traits::net::FetchOptions,
-        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+        done: Box<dyn FnOnce(Result<Fetched, String>) + Send>,
     ) {
         let asked = url.clone();
-        let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> = Box::new(move |r| done(r.map(|b| (b, asked))));
+        let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> =
+            Box::new(move |r| done(r.map(|body| Fetched { body, url: asked, opaque: false })));
         if options.is_default() {
             self.fetch(url, done);
         } else if is_plain_cors(options) {
@@ -63,6 +64,18 @@ pub trait Fetcher: Send + Sync + 'static {
             self.fetch_with(url, options, done);
         }
     }
+}
+
+/// pyro: a response as [`Fetcher::fetch_final`] reports it.
+#[derive(Clone, Debug)]
+pub struct Fetched {
+    /// The body of a successful response.
+    pub body: Vec<u8>,
+    /// Its URL after redirects.
+    pub url: String,
+    /// Its tainting is "opaque" (Fetch): a no-cors request that reached another origin at any
+    /// hop, though it ended back at the document's.
+    pub opaque: bool,
 }
 
 /// pyro: whether `options` ask only for a CORS fetch with credentials to the same origin
@@ -95,8 +108,9 @@ impl ResourceCache {
     }
 }
 
-/// A handler, the URL asked for, the response's URL after redirects, and the body.
-type Delivery = (Box<dyn NetHandler>, String, String, Bytes);
+/// A handler, the URL asked for, the response's URL after redirects, whether its tainting is
+/// opaque, and the body.
+type Delivery = (Box<dyn NetHandler>, String, String, bool, Bytes);
 
 pub(crate) fn new_cache() -> Cache {
     Cache::default()
@@ -108,8 +122,9 @@ struct Provider {
     fetcher: Mutex<Arc<dyn Fetcher>>,
     sheets: Mutex<HashMap<String, String>>,
     cache: Cache,
-    /// pyro: the URL after redirects of a cached response that was redirected, by cache key.
-    finals: Arc<Mutex<HashMap<String, String>>>,
+    /// pyro: the URL after redirects of a cached response that was redirected, or whose tainting
+    /// is opaque, by cache key, with that tainting.
+    finals: Arc<Mutex<HashMap<String, (String, bool)>>>,
     /// pyro: the client of each frame document's requests, by document id
     /// (`NetProvider::document_client`).
     clients: Mutex<HashMap<usize, String>>,
@@ -155,8 +170,9 @@ impl NetProvider for Provider {
                 .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&key).cloned()))
         };
         if let Some(bytes) = ready {
-            let final_url = self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| url.clone());
-            let _ = self.tx.send((handler, url, final_url, bytes));
+            let (final_url, opaque) =
+                self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| (url.clone(), false));
+            let _ = self.tx.send((handler, url, final_url, opaque, bytes));
             return;
         }
         let tx = self.tx.clone();
@@ -164,26 +180,26 @@ impl NetProvider for Provider {
         let finals = self.finals.clone();
         let fetcher = self.fetcher.lock().map(|f| f.clone());
         let Ok(fetcher) = fetcher else { return };
-        let done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send> = Box::new(move |result| {
-            let (bytes, final_url) = match result {
-                Ok((body, final_url)) => {
+        let done: Box<dyn FnOnce(Result<Fetched, String>) + Send> = Box::new(move |result| {
+            let (bytes, final_url, opaque) = match result {
+                Ok(Fetched { body, url: final_url, opaque }) => {
                     let bytes = Bytes::from(body);
                     if !inline {
-                        if final_url != url {
+                        if final_url != url || opaque {
                             if let Ok(mut f) = finals.lock() {
-                                f.insert(key.clone(), final_url.clone());
+                                f.insert(key.clone(), (final_url.clone(), opaque));
                             }
                         }
                         if let Ok(mut c) = cache.lock() {
                             c.insert(key, bytes.clone());
                         }
                     }
-                    (bytes, final_url)
+                    (bytes, final_url, opaque)
                 }
                 // Empty bytes: Blitz's handlers treat it as a failed load.
-                Err(_) => (Bytes::new(), url.clone()),
+                Err(_) => (Bytes::new(), url.clone(), false),
             };
-            let _ = tx.send((handler, url, final_url, bytes));
+            let _ = tx.send((handler, url, final_url, opaque, bytes));
         });
         fetcher.fetch_final(request.url.to_string(), &options, done);
     }
@@ -267,8 +283,8 @@ impl Bridge {
                 };
                 waited += t.elapsed();
                 match next {
-                    Ok((handler, url, final_url, bytes)) => {
-                        handler.bytes_at(url, final_url, bytes);
+                    Ok((handler, url, final_url, opaque, bytes)) => {
+                        handler.bytes_from(url, final_url, opaque, bytes);
                         self.outstanding.fetch_sub(1, Ordering::AcqRel);
                     }
                     Err(RecvTimeoutError::Timeout) if first_layout.is_some() && Instant::now() < deadline => {
@@ -349,8 +365,8 @@ mod cors_tests {
         let mut cors = Request::get(url.parse().unwrap());
         blitz_dom::net::mark_cors(&mut cors);
         provider.fetch(0, cors, Box::new(Sink(got.clone())));
-        while let Ok((handler, url, final_url, bytes)) = bridge.rx.try_recv() {
-            handler.bytes_at(url, final_url, bytes);
+        while let Ok((handler, url, final_url, opaque, bytes)) = bridge.rx.try_recv() {
+            handler.bytes_from(url, final_url, opaque, bytes);
         }
         assert_eq!(*recorder.0.lock().unwrap(), vec![(url.to_string(), false), (url.to_string(), true)]);
         assert_eq!(*got.lock().unwrap(), vec![Bytes::from_static(b"no-cors"), Bytes::new()]);

@@ -50,6 +50,14 @@ pub trait NetHandler: Send + Sync + 'static {
         let _ = final_url;
         self.bytes(resolved_url, bytes)
     }
+
+    /// pyro: [`Self::bytes_at`] for a response whose tainting is known: `opaque` when it is
+    /// "opaque" (a no-cors request that reached another origin at any hop, though it ended back
+    /// at the document's). An image handler shows an opaque image as its EXIF orientation says.
+    fn bytes_from(self: Box<Self>, resolved_url: String, final_url: String, opaque: bool, bytes: Bytes) {
+        let _ = opaque;
+        self.bytes_at(resolved_url, final_url, bytes)
+    }
 }
 
 /// A callback which gets called every time a network request completes

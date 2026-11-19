@@ -262,13 +262,17 @@ impl Fetcher for RedirectingFetcher {
         &self,
         url: String,
         _options: &FetchOptions,
-        done: Box<dyn FnOnce(Result<(Vec<u8>, String), String>) + Send>,
+        done: Box<dyn FnOnce(Result<Fetched, String>) + Send>,
     ) {
         self.0 .0.lock().unwrap().push(url.clone());
         if url.ends_with("/a.css") {
-            done(Ok((b"@import \"b.css\";".to_vec(), "http://elsewhere.test/dir/a.css".into())));
+            done(Ok(Fetched {
+                body: b"@import \"b.css\";".to_vec(),
+                url: "http://elsewhere.test/dir/a.css".into(),
+                opaque: false,
+            }));
         } else {
-            done(Ok((Vec::new(), url)));
+            done(Ok(Fetched { body: Vec::new(), url, opaque: false }));
         }
     }
 }

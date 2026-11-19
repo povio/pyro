@@ -858,13 +858,21 @@ impl ImageHandler {
 
 impl NetHandler for ResourceHandler<ImageHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        self.bytes_from(resolved_url.clone(), resolved_url, false, bytes)
+    }
+
+    /// pyro: the response's tainting, as the network saw it, decides an opaque image (a no-cors
+    /// redirect chain through another origin is opaque though it ends at the document's); the
+    /// final URL's origin decides for a provider that does not report it.
+    fn bytes_from(self: Box<Self>, resolved_url: String, final_url: String, tainted: bool, bytes: Bytes) {
         let mut result = self.data.parse(&resolved_url, bytes);
         // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
         // orientation 1, which `image-orientation: none` has nothing to undo of.
         let opaque = self.data.options.cors.is_none()
-            && self.data.document.as_ref().is_some_and(|document| {
-                Url::parse(&resolved_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
-            });
+            && (tainted
+                || self.data.document.as_ref().is_some_and(|document| {
+                    Url::parse(&final_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
+                }));
         if opaque {
             if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
                 *orientation = 1;

@@ -550,7 +550,9 @@ impl Browser {
         // pyro: a successful load goes into the list of available images (HTML "update the image
         // data"), its bytes with it for a canvas the script makes later.
         let raster = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES);
-        let clean = raster.as_ref().is_some_and(|r| cors || self.image_origin_clean(page, &r.url));
+        // pyro: a no-cors response is clean only if its tainting is "basic": not one whose redirect
+        // chain went to another origin, though it ended at the document's.
+        let clean = raster.as_ref().is_some_and(|r| cors || (!r.opaque && self.image_origin_clean(page, &r.url)));
         if outcome.is_some() && density == 1.0 {
             bindings.remember_available_image(
                 &request_url,
