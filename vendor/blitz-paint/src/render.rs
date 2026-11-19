@@ -5887,10 +5887,10 @@ impl ElementCx<'_, '_> {
     /// pyro: whether `child` is a flex or grid container painted in this box's phases
     /// (`Node::items_paint_in_ancestor_phases`), its paint children all in-flow items.
     fn items_in_phases(&self, child: &Node) -> bool {
-        child.items_paint_in_ancestor_phases()
+        // (Shared with hit testing; a box in the top layer is painted there, not as an item.)
+        child.items_in_phases()
             && child.paint_children.borrow().as_ref().is_some_and(|children| {
-                let tree = self.context.dom.as_ref().tree();
-                children.iter().all(|&id| self.paint_level(&tree[id]) == 0)
+                children.iter().all(|&id| !self.context.dom.is_in_top_layer(id))
             })
     }
 

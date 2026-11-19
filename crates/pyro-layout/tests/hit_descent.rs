@@ -371,3 +371,20 @@ fn a_mutation_between_hit_tests_is_seen() {
     assert_ne!(p.layout.element_from_point(&p.dom, x, y), Some(first_cell));
     assert!(p.compare("table after mutation") > 5);
 }
+
+/// A static flex item overflowing its container downward paints over the next empty block's
+/// background (it paints with the inline content: blitz-dom `Node::items_in_phases`), so it takes
+/// the hit there too; the block keeps it beside the item. The block took it (siblings were hit in
+/// reverse list order, not in their paint phases). Review cycle 2, finding 2 (8fcda743).
+#[test]
+fn an_overflowing_flex_item_is_hit_over_the_next_blocks_background() {
+    let p = page(
+        "<!doctype html><body style='margin:0'><div>\
+         <div style='display:flex;height:50px;border:1px solid blue'><div id=item style='width:100px;height:120px;background:green;align-self:flex-start'></div></div>\
+         <div id=next style='height:100px;background:yellow;border:1px solid red'></div></div>",
+    );
+    let (item, next) = (p.id("item"), p.id("next"));
+    assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 90.0), Some(item), "over the next block's background");
+    assert_eq!(p.layout.element_from_point(&p.dom, 150.0, 90.0), Some(next), "beside the item");
+    assert!(p.compare("overflowing flex item") > 2);
+}

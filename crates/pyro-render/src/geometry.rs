@@ -53,6 +53,10 @@ pub struct LayoutBox {
     /// `x`/`y`), when a transform on its containing-block chain moves it: `offsetLeft` and
     /// `offsetTop` ignore transforms (CSSOM View; Chromium).
     pub layout_origin: Option<[f64; 2]>,
+    /// pyro: a flex or grid container whose items paint with its painter's inline content, its own
+    /// box with the block backgrounds (blitz-dom `Node::items_in_phases`): hit testing orders its
+    /// items as the painter does.
+    pub items_in_phases: bool,
 }
 
 /// An element's `position`.
@@ -495,6 +499,7 @@ impl Geometry {
             position: BoxPosition::Static,
             hidden: hidden_by_clamp(doc, id),
             layout_origin: None,
+            items_in_phases: false,
         })
     }
 
@@ -546,6 +551,7 @@ impl Geometry {
             position: box_position(doc.get_node(id)?),
             hidden: b.hidden,
             layout_origin: self.untransformed_origin(doc, id).map(|origin| origin.map(unit)),
+            items_in_phases: doc.get_node(id).is_some_and(|node| node.items_in_phases()),
         })
     }
 

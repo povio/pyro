@@ -1289,6 +1289,27 @@ impl Node {
     /// content (step 7; WPT css-flexbox `flexbox-align-self-baseline-horiz-006`, an item overflowing
     /// onto the next block's border). No layer root, no stacking context, no flex or grid item; the
     /// painter phases it only when its paint children are all in-flow (`blitz-paint`).
+    /// pyro: whether this flex or grid container's items paint whole with its painter's inline
+    /// content (`items_paint_in_ancestor_phases`, all its paint children in-flow boxes of the normal
+    /// paint level: not positioned, floated or a stacking context), its own box with the block
+    /// backgrounds. The one description the painter (blitz-paint `items_in_phases`) and hit testing
+    /// (`Node::hit_inner`, which tests the items before the boxes painted under them) share.
+    pub fn items_in_phases(&self) -> bool {
+        // (Its layout children: its items, known from layout before the paint tree is built, which
+        // hit testing may read first.)
+        self.items_paint_in_ancestor_phases()
+            && self.layout_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().all(|&id| {
+                    let item = &self.tree()[id];
+                    item.primary_styles().is_none_or(|style| {
+                        style.clone_position() == Position::Static
+                            && style.clone_float() == Float::None
+                            && !item.is_stacking_context_root(false)
+                    })
+                })
+            })
+    }
+
     pub fn items_paint_in_ancestor_phases(&self) -> bool {
         use style::values::specified::box_::{DisplayInside, DisplayOutside};
         let Some(style) = self.primary_styles() else {

@@ -1967,7 +1967,9 @@ impl Layout {
             key.push(layer);
         }
         let own = chain.own_layer;
-        key.push((if own { 0 } else { 2 }, 0, if own { 0 } else { result.get(el).map_or(0, |b| b.order) }));
+        // pyro: an in-flow box in the inline-content phase (`PaintChain::flow_phase`) paints over
+        // the block backgrounds of its layer, after the boxes of the earlier phase.
+        key.push((if own { 0 } else { 2 }, if own { 0 } else { chain.flow_phase }, if own { 0 } else { result.get(el).map_or(0, |b| b.order) }));
         let key: Rc<[PaintEntry]> = key.into();
         result.hit.borrow_mut().keys.insert(el, key.clone());
         key
@@ -1997,7 +1999,18 @@ impl Layout {
             // The chain's first element (no parent element) always starts a context.
             let is_root = reached_root && i == pending.len() - 1;
             if let Some(bounds) = result.get(node) {
+                // pyro: the items of a container whose items paint with the inline content.
+                let in_items_phase = dom
+                    .check(node)
+                    .ok()
+                    .and_then(|i| crate::style::flat_tree_parent_element(dom, i))
+                    .map(|i| dom.id_of(i))
+                    .and_then(|parent| result.get(parent))
+                    .is_some_and(|parent| parent.items_in_phases);
                 state = self.paint_step(dom, node, bounds.order, is_root, state);
+                if in_items_phase && !state.own_layer {
+                    state.flow_phase = 1;
+                }
             }
             result.hit.borrow_mut().chains.insert(node, state.clone());
         }
@@ -2044,11 +2057,13 @@ impl Layout {
             }
             state.positioned_layer = None;
             state.own_layer = true;
+            state.flow_phase = 0;
         } else if positioned {
             // z-auto positioned boxes group their normal content, but their
             // positioned descendants belong to the enclosing real context.
             state.positioned_layer = Some((3, 0, order));
             state.own_layer = true;
+            state.flow_phase = 0;
         } else {
             state.own_layer = false;
         }

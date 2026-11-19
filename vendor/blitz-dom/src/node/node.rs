@@ -453,7 +453,12 @@ unsafe impl Sync for Node {}
 /// (element / anonymous block nodes) and [`DocumentData`] (the document node).
 macro_rules! universal_accessors {
     ($($(#[$meta:meta])* $field:ident / $field_mut:ident : $ty:ty),* $(,)?) => {
-        impl Node {
+        std::thread_local! {
+    /// pyro: set while a flex or grid container is hit for its items alone (`Node::hit_inner`).
+    static ITEMS_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl Node {
             $(
                 $(#[$meta])*
                 #[inline]
@@ -2779,6 +2784,41 @@ impl Node {
                     }
                 }
             }
+        }
+
+        // pyro: the items of a flex or grid child painted with the inline content of this box's
+        // painter (`Node::items_in_phases`) lie over every child's own box painted with the block
+        // backgrounds: they are hit first, as they paint (a later empty block's background does not
+        // take the hit from an item overflowing onto it).
+        if !ITEMS_ONLY.get() {
+            for child_id in self.paint_children.borrow().iter().flatten().rev() {
+                let Some(child) = self.tree().get(*child_id) else { continue };
+                if child.taffy_position().is_out_of_flow() || !child.items_in_phases() {
+                    continue;
+                }
+                let (mut child_x, mut child_y) = (x, y);
+                if let Some(offset) = child.lifted_paint_offset(self.id) {
+                    child_x -= offset.x;
+                    child_y -= offset.y;
+                }
+                ITEMS_ONLY.set(true);
+                let hit = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar));
+                ITEMS_ONLY.set(false);
+                if let Some(hit) = hit {
+                    return Some(hit);
+                }
+            }
+        }
+        // pyro: hit for its items alone (see above): its own box and content come in their turn.
+        let items_only = ITEMS_ONLY.replace(false);
+        if items_only {
+            for child_id in self.paint_children.borrow().iter().flatten().rev() {
+                let Some(child) = self.tree().get(*child_id) else { continue };
+                if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
+                    return Some(hit);
+                }
+            }
+            return None;
         }
 
         // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).

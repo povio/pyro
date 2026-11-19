@@ -58,6 +58,9 @@ pub struct ExternalBox {
     /// The border box's origin with no CSS transform applied, when a transform moves it
     /// (`offsetLeft`/`offsetTop` ignore transforms).
     pub layout_origin: Option<[f64; 2]>,
+    /// A flex or grid container whose items paint with the inline content of its painter, its own
+    /// box with the block backgrounds (the engine's paint phases; hit testing follows them).
+    pub items_in_phases: bool,
 }
 
 /// One word of a text node on a line (document CSS px).
@@ -582,6 +585,8 @@ pub struct LayoutBox {
     pub hidden: bool,
     /// See [`ExternalBox::layout_origin`].
     pub layout_origin: Option<[f64; 2]>,
+    /// See [`ExternalBox::items_in_phases`].
+    pub items_in_phases: bool,
 }
 
 impl LayoutBox {
@@ -601,6 +606,7 @@ impl LayoutBox {
             in_positioned: b.position != BoxPosition::Static,
             hidden: b.hidden,
             layout_origin: b.layout_origin,
+            items_in_phases: b.items_in_phases,
         }
     }
 
@@ -700,6 +706,10 @@ pub(crate) struct PaintChain {
     pub(crate) positioned_layer: Option<PaintEntry>,
     /// The last box of the chain makes its own layer.
     pub(crate) own_layer: bool,
+    /// pyro: the normal-flow phase the chain's in-flow boxes paint in within their layer: 0 with
+    /// the block backgrounds, 1 with the inline content (the items of a container whose items
+    /// paint so, the engine's `items_in_phases`, and their in-flow descendants).
+    pub(crate) flow_phase: i32,
 }
 
 /// Per-box hit-testing data of one [`LayoutResult`].

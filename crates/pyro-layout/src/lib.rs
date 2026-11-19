@@ -351,6 +351,7 @@ fn external(b: pyro_render::LayoutBox) -> ExternalBox {
         },
         hidden: b.hidden,
         layout_origin: b.layout_origin,
+        items_in_phases: b.items_in_phases,
     }
 }
 
