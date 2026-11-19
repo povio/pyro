@@ -16456,7 +16456,7 @@ diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/sr
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/line_clamp.rs
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,450 @@
 +//! pyro: the legacy line clamp (`-webkit-line-clamp` on a `display: -webkit-box` box with
 +//! `-webkit-box-orient: vertical`; Stylo's `WEBKIT_LINE_CLAMP_APPLIES`), as Blink lays it out.
 +//!
@@ -16627,10 +16627,13 @@ new file mode 100644
 +        // The last block whose lines all stay, how many it has and the last one's bottom.
 +        let mut last_lines: Option<(NodeId, u32, f32)> = None;
 +        // Blocks to visit (last first) with their top from the root's border box, and what the
-+        // blocks around them (in the root) add below their content: bottom padding, border and
-+        // margin, which must fit under a clamp line of `line-clamp: auto` too.
-+        let mut stack: Vec<(NodeId, f32, f32)> = vec![(root, 0.0, 0.0)];
-+        while let Some((id, top, below)) = stack.pop() {
++        // blocks around them (in the root) add below their margin box: a margin their bottom
++        // margin collapses with and, past it, bottom padding, borders and margins that do not
++        // (`BelowBlock`). With the block's own, that must fit under a clamp line of
++        // `line-clamp: auto` too (WPT css-overflow `line-clamp-auto-029`).
++        let mut stack: Vec<(NodeId, f32, BelowBlock)> = vec![(root, 0.0, BelowBlock::default())];
++        while let Some((id, top, around)) = stack.pop() {
++            let below = if id == root { 0.0 } else { around.under(self.nodes[id].unrounded_layout()) };
 +            if self.nodes[id].flags.is_inline_root() {
 +                // (What an earlier clamp hid in it shows again unless this one hides it.)
 +                let all: Vec<NodeId> = self.nodes[id].layout_children.borrow().iter().flatten().copied().collect();
@@ -16717,8 +16720,10 @@ new file mode 100644
 +                        });
 +                if in_context && (child.flags.is_inline_root() || child.layout_children.borrow().is_some()) {
 +                    let layout = child.unrounded_layout();
-+                    let below = below + layout.padding.bottom + layout.border.bottom + layout.margin.bottom;
-+                    stack.push((child_id, top + layout.location.y, below));
++                    // (The root is a formatting context of its own: its children's margins stay
++                    // in it.)
++                    let around = if id == root { BelowBlock::default() } else { around.inside(&self.nodes[id]) };
++                    stack.push((child_id, top + layout.location.y, around));
 +                }
 +            }
 +            stack[first..].reverse();
@@ -16769,27 +16774,34 @@ new file mode 100644
 +            }
 +        }
 +        let top: f32 = chain.iter().map(|&id| self.nodes[id].unrounded_layout().location.y).sum();
-+        // The clamp point in the coordinates of the block at hand.
++        // The clamp point in the coordinates of the block at hand, and the margin below it that
++        // collapses through the bottom of the blocks around it (CSS 2.1 § 8.3.1; WPT css-overflow
++        // `line-clamp-auto-029`).
 +        let mut inner = bottom - top;
++        let mut margin = 0.0f32;
 +        for (index, &id) in chain.iter().enumerate() {
-+            use taffy::CoreStyle as _;
-+            let auto = self.nodes[id].is_anonymous() || self.nodes[id].layout_style().size().height.is_auto();
 +            let layout = *self.nodes[id].unrounded_layout();
-+            let end = match auto {
-+                true => {
-+                    let top_inset = layout.padding.top + layout.border.top;
-+                    (inner.max(top_inset) + layout.padding.bottom + layout.border.bottom).min(layout.size.height)
-+                }
-+                false => layout.size.height,
++            let end = if block_end_collapses_through(&self.nodes[id]) {
++                inner.max(layout.padding.top + layout.border.top).min(layout.size.height)
++            } else if height_is_auto(&self.nodes[id]) {
++                let top_inset = layout.padding.top + layout.border.top;
++                margin = (inner + margin).max(top_inset) - inner;
++                let end = (inner + margin + layout.padding.bottom + layout.border.bottom).min(layout.size.height);
++                margin = 0.0;
++                end
++            } else {
++                margin = 0.0;
++                layout.size.height
 +            };
++            margin = collapse_margins(margin, layout.margin.bottom);
 +            if end < layout.size.height {
 +                self.nodes[id].update_unrounded_layout(|unrounded| unrounded.size.height = end);
 +            }
 +            let parent = chain.get(index + 1).copied().unwrap_or(root);
 +            self.hide_boxes_after(parent, id);
-+            inner = layout.location.y + end + layout.margin.bottom;
++            inner = layout.location.y + end;
 +        }
-+        inner
++        inner + margin
 +    }
 +
 +    /// pyro: hides the children of the inline root `block` laid out in it (floats, atomic
@@ -16847,6 +16859,51 @@ new file mode 100644
 +        drop(style);
 +        if let Some(text_layout) = doc.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut()) {
 +            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, at_soft_wraps });
++        }
++    }
++}
++
++/// pyro: whether the bottom margin of a block's last child collapses with the block's own: an
++/// auto height and no bottom padding or border (CSS 2.1 § 8.3.1; the blocks a line clamp walks
++/// are in its formatting context).
++fn block_end_collapses_through(node: &crate::node::Node) -> bool {
++    let layout = node.unrounded_layout();
++    height_is_auto(node) && layout.padding.bottom == 0.0 && layout.border.bottom == 0.0
++}
++
++fn height_is_auto(node: &crate::node::Node) -> bool {
++    use taffy::CoreStyle as _;
++    node.is_anonymous() || node.layout_style().size().height.is_auto()
++}
++
++/// Two adjoining margins collapsed: the largest positive one less the most negative one.
++fn collapse_margins(a: f32, b: f32) -> f32 {
++    a.max(b).max(0.0) + a.min(b).min(0.0)
++}
++
++/// pyro: what lies below a block's margin box in a line clamp's formatting context, to its
++/// content edge: a margin the block's bottom margin collapses with, and past it the bottom
++/// padding, borders and margins that do not collapse with it.
++#[derive(Clone, Copy, Default)]
++struct BelowBlock {
++    margin: f32,
++    solid: f32,
++}
++
++impl BelowBlock {
++    /// Below the content of a block with `layout` that this lies below.
++    fn under(self, layout: &taffy::Layout) -> f32 {
++        layout.padding.bottom + layout.border.bottom + collapse_margins(layout.margin.bottom, self.margin) + self.solid
++    }
++
++    /// Below a child of `node` (that this lies below).
++    fn inside(self, node: &crate::node::Node) -> BelowBlock {
++        let layout = node.unrounded_layout();
++        let margin = collapse_margins(layout.margin.bottom, self.margin);
++        if block_end_collapses_through(node) {
++            BelowBlock { margin, solid: self.solid }
++        } else {
++            BelowBlock { margin: 0.0, solid: layout.padding.bottom + layout.border.bottom + margin + self.solid }
 +        }
 +    }
 +}
