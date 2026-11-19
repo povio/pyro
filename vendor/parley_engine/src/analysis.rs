@@ -860,11 +860,7 @@ pub(crate) fn analyze_text(
                     && is_grapheme_start
                     && ch.is_alphanumeric()
                     && prev_char.is_some_and(|prev: char| prev.is_alphanumeric());
-                // pyro: and after a space that a zero width joiner extends (one grapheme, GB9), whose
-                // opportunity before the joiner falls inside the cluster and LB8a forbids one after
-                // it, as Gecko and WebKit break (WPT css-text `white-space-vs-joiners-002`).
-                let after_joined_space = prev_char == Some('\u{200D}') && prev_prev_char == Some(' ');
-                let is_icu_line = is_icu_line || leaves_break_all || after_joined_space;
+                let is_icu_line = is_icu_line || leaves_break_all;
                 (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
                     // (Nor before a word joiner or zero width space, which UAX #14 LB7 and LB11
                     // keep: `a &#x2060;b`.)

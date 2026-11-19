@@ -108,11 +108,6 @@ pub(crate) fn atom_hanging_advance<B: Brush>(
                     &styles[character.style_index as usize],
                 )
             });
-        // pyro: a cluster of no advance that is no white space (a zero width joiner after a space)
-        // neither hangs nor stops the white space before it from hanging.
-        if !cluster_hangs && cluster.advance == 0.0 && cluster.whitespace() == Whitespace::None {
-            continue;
-        }
         if !cluster_hangs {
             all_hang = false;
             break;

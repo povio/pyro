@@ -752,7 +752,7 @@ index 25f0b3b..f8ff3ed 100644
      pub fn is_soft_line_break(&self) -> bool {
          self.is_end_of_line()
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..ddc1e98 100644
+index e6ab383..23d6fd7 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -1306,14 +1306,7 @@ index e6ab383..ddc1e98 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -653,17 +971,25 @@ impl ContentWidthsMeasurer {
-                 self.running_hanging_whitespace += advance;
-                 self.hangs_conditionally =
-                     style.white_space_collapse == WhiteSpaceCollapse::Preserve;
--            } else {
-+            } else if !(advance == 0.0 && whitespace == Whitespace::None) {
-+                // pyro: a cluster of no advance (a zero width joiner after a space) does not end
-+                // the hanging white space before it (WPT css-text `white-space-vs-joiners-002`).
+@@ -657,13 +975,19 @@ impl ContentWidthsMeasurer {
                  self.running_hanging_whitespace = 0.0;
              }
          }
@@ -4925,7 +4918,7 @@ index 7b7b147..7278cdc 100644
 +    (value + 0.5).floor()
 +}
 diff --git a/src/layout/whitespace.rs b/src/layout/whitespace.rs
-index 2b2ae69..e62d249 100644
+index 2b2ae69..e43eda0 100644
 --- a/src/layout/whitespace.rs
 +++ b/src/layout/whitespace.rs
 @@ -38,7 +38,9 @@ impl WhiteSpaceCollapse {
@@ -4939,18 +4932,6 @@ index 2b2ae69..e62d249 100644
              Self::Preserve | Self::BreakSpaces => false,
              Self::PreserveBreaks => matches!(c, ' ' | '\t'),
          }
-@@ -106,6 +108,11 @@ pub(crate) fn atom_hanging_advance<B: Brush>(
-                     &styles[character.style_index as usize],
-                 )
-             });
-+        // pyro: a cluster of no advance that is no white space (a zero width joiner after a space)
-+        // neither hangs nor stops the white space before it from hanging.
-+        if !cluster_hangs && cluster.advance == 0.0 && cluster.whitespace() == Whitespace::None {
-+            continue;
-+        }
-         if !cluster_hangs {
-             all_hang = false;
-             break;
 diff --git a/src/lib.rs b/src/lib.rs
 index e967f50..68055ee 100644
 --- a/src/lib.rs
