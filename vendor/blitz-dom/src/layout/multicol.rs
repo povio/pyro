@@ -2482,13 +2482,16 @@ impl BaseDocument {
                 // the container, whose own are not fragmented) is fragmented with the columns:
                 // they go on as far as it does (Chromium; WPT css-multicol
                 // `fixed-in-multicol-with-transform-container`).
-                if child.containing_block() == Some(parent) && found.container.is_some_and(|c| c != parent) {
+                // (A monolithic one is not: it stays whole in the column of its static position,
+                // overflowing it; WPT css-contain `contain-size-monolithic-002`.)
+                if child.containing_block() == Some(parent)
+                    && found.container.is_some_and(|c| c != parent)
+                    && fragmentable(child, &style)
+                {
                     let layout = child.unrounded_layout();
                     let child_top = top + layout.location.y;
                     found.bottom = found.bottom.max(child_top + layout.size.height);
-                    if fragmentable(child, &style) {
-                        crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
-                    }
+                    crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
                 }
                 continue;
             }
