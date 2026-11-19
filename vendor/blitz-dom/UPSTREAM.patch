@@ -10282,7 +10282,7 @@ diff --git a/packages/blitz-dom/src/layout/first_letter.rs b/packages/blitz-dom/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/first_letter.rs
-@@ -0,0 +1,777 @@
+@@ -0,0 +1,793 @@
 +//! pyro: `::first-letter` (CSS 2.1 5.12.2, CSS Pseudo-Elements 4 2.2).
 +//!
 +//! The first letter of a block container's first formatted line takes the style of the
@@ -10407,6 +10407,12 @@ new file mode 100644
 +/// Where the first letter is in `text` (Chromium's `FirstLetterPseudoElement::FirstLetterLength`
 +/// for one text node; collapsible white space before it stays outside the letter).
 +pub(crate) fn scan_text(text: &str) -> TextScan {
++    scan_text_in(text, false)
++}
++
++/// pyro: [`scan_text`] in Dutch text when `dutch`: the digraph "IJ" (or "ij") is one letter
++/// (CSS Pseudo-Elements 4 § 2.2.2; WPT css-pseudo `first-letter-digraph`).
++pub(crate) fn scan_text_in(text: &str, dutch: bool) -> TextScan {
 +    let mut chars = text.char_indices().peekable();
 +    while chars.next_if(|&(_, c)| c.is_ascii_whitespace()).is_some() {}
 +    let Some(&(start, first)) = chars.peek() else {
@@ -10433,6 +10439,10 @@ new file mode 100644
 +    let regional = |c: char| ('\u{1F1E6}'..='\u{1F1FF}').contains(&c);
 +    if regional(letter) {
 +        chars.next_if(|&(_, c)| regional(c));
++    }
++    if dutch && matches!(letter, 'I' | 'i') {
++        // (Not mixed case: "Ij" is two letters.)
++        chars.next_if(|&(_, c)| c == if letter == 'I' { 'J' } else { 'j' });
 +    }
 +    // pyro: and an Indic conjunct goes on after each virama to the next consonant (Unicode 15.1
 +    // grapheme rule GB9c, as Chromium's ICU: "स्थ" is one letter; WPT css-pseudo
@@ -10595,7 +10605,13 @@ new file mode 100644
 +            {
 +                Some(Found::Stop)
 +            }
-+            NodeData::Text(data) => match scan_text(&data.content) {
++            NodeData::Text(data) => match scan_text_in(&data.content, {
++                // The text's language: its element's.
++                node.parent.and_then(|parent| crate::lang::language(&doc.nodes[parent])).is_some_and(|lang| {
++                    let primary = lang.split(['-', '_']).next().unwrap_or("");
++                    primary.eq_ignore_ascii_case("nl")
++                })
++            }) {
 +                // pyro: preserved white space before the letter is part of it (Blink's
 +                // `FirstLetterLength`: "leading white-space is always included"; WPT css-inline
 +                // `initial-letter-with-tab`).
