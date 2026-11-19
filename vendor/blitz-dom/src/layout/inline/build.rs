@@ -1161,6 +1161,15 @@ fn build_inline_layout_with(
                             style.annotation_space = space_of(&annotations.space, node_id);
                             if let Some(computed) = node.primary_styles() {
                                 style.text_box_trim = crate::layout::text_box::span_trim(&computed);
+                                // pyro: an inline bidi isolate breaks shaping at its edges (CSS
+                                // Text 3 § 7.3). A `<ruby>` (an inline box here, which the UA
+                                // sheet isolates) lays its bases out as one text.
+                                use style::computed_values::unicode_bidi::T as UnicodeBidi;
+                                style.isolates = !matches!(*tag_name, local_name!("ruby") | local_name!("rb") | local_name!("rtc"))
+                                    && matches!(
+                                        computed.clone_unicode_bidi(),
+                                        UnicodeBidi::Isolate | UnicodeBidi::IsolateOverride | UnicodeBidi::Plaintext
+                                    );
                             }
 
                             builder.push_style_span(style);

@@ -4565,7 +4565,7 @@ index e967f50..f77853e 100644
  
  pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};
 diff --git a/src/resolve/mod.rs b/src/resolve/mod.rs
-index f465832..2e3615e 100644
+index f465832..89af26b 100644
 --- a/src/resolve/mod.rs
 +++ b/src/resolve/mod.rs
 @@ -15,7 +15,7 @@ use super::style::{
@@ -4577,13 +4577,14 @@ index f465832..2e3615e 100644
  use crate::util::nearly_eq;
  use crate::{LineBreak, LineHeight, OverflowWrap, VerticalAlign, layout};
  use crate::{TextWrapMode, WhiteSpaceCollapse, WordBreak};
-@@ -169,6 +169,18 @@ impl ResolveContext {
+@@ -169,6 +169,19 @@ impl ResolveContext {
              StyleProperty::OverflowWrap(value) => OverflowWrap(*value),
              StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
              StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
 +            StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
 +            StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
 +            StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
++            StyleProperty::Isolates(value) => Isolates(*value),
 +            StyleProperty::PhraseBreaks(value) => PhraseBreaks(*value),
 +            StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
 +            StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
@@ -4596,13 +4597,14 @@ index f465832..2e3615e 100644
          }
      }
  
-@@ -210,6 +222,20 @@ impl ResolveContext {
+@@ -210,6 +223,21 @@ impl ResolveContext {
              overflow_wrap: raw_style.overflow_wrap,
              text_wrap_mode: raw_style.text_wrap_mode,
              white_space_collapse: raw_style.white_space_collapse,
 +            tab_size: scale_tab_size(raw_style.tab_size, scale),
 +            soft_hyphen: raw_style.soft_hyphen,
 +            dictionary_breaks: raw_style.dictionary_breaks,
++            isolates: raw_style.isolates,
 +            phrase_breaks: raw_style.phrase_breaks,
 +            font_size_adjusted: raw_style.font_size_adjusted,
 +            auto_optical_size: raw_style.auto_optical_size,
@@ -4617,7 +4619,7 @@ index f465832..2e3615e 100644
          }
      }
  
-@@ -400,6 +426,38 @@ pub(crate) enum ResolvedProperty<B: Brush> {
+@@ -400,6 +428,39 @@ pub(crate) enum ResolvedProperty<B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -4627,6 +4629,7 @@ index f465832..2e3615e 100644
 +    SoftHyphen(crate::style::SoftHyphen),
 +    /// pyro: whether lines may break where dictionaries find word boundaries.
 +    DictionaryBreaks(bool),
++    Isolates(bool),
 +    /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
 +    PhraseBreaks(bool),
 +    /// pyro: whether the font size is set by `font-size-adjust`.
@@ -4656,7 +4659,7 @@ index f465832..2e3615e 100644
  }
  
  /// Flattened group of style properties.
-@@ -448,6 +506,35 @@ pub(crate) struct ResolvedStyle<B: Brush> {
+@@ -448,6 +509,37 @@ pub(crate) struct ResolvedStyle<B: Brush> {
      pub(crate) text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub(crate) white_space_collapse: WhiteSpaceCollapse,
@@ -4666,6 +4669,8 @@ index f465832..2e3615e 100644
 +    pub(crate) soft_hyphen: crate::style::SoftHyphen,
 +    /// pyro: whether lines may break where dictionaries find word boundaries.
 +    pub(crate) dictionary_breaks: bool,
++    /// pyro: the span is a bidi isolate (see [`crate::TextStyle::isolates`]).
++    pub(crate) isolates: bool,
 +    /// pyro: whether lines break between phrases ([`TextStyle::phrase_breaks`]).
 +    pub(crate) phrase_breaks: bool,
 +    /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
@@ -4692,13 +4697,14 @@ index f465832..2e3615e 100644
  }
  
  impl<B: Brush> ResolvedStyle<B> {
-@@ -481,6 +568,18 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -481,6 +573,19 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap = value,
              TextWrapMode(value) => self.text_wrap_mode = value,
              WhiteSpaceCollapse(value) => self.white_space_collapse = value,
 +            TabSize(value) => self.tab_size = value,
 +            SoftHyphen(value) => self.soft_hyphen = value,
 +            DictionaryBreaks(value) => self.dictionary_breaks = value,
++            Isolates(value) => self.isolates = value,
 +            PhraseBreaks(value) => self.phrase_breaks = value,
 +            FontSizeAdjusted(value) => self.font_size_adjusted = value,
 +            AutoOpticalSize(value) => self.auto_optical_size = value,
@@ -4711,13 +4717,14 @@ index f465832..2e3615e 100644
          }
      }
  
-@@ -513,6 +612,18 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -513,6 +618,19 @@ impl<B: Brush> ResolvedStyle<B> {
              OverflowWrap(value) => self.overflow_wrap == *value,
              TextWrapMode(value) => self.text_wrap_mode == *value,
              WhiteSpaceCollapse(value) => self.white_space_collapse == *value,
 +            TabSize(value) => self.tab_size == *value,
 +            SoftHyphen(value) => self.soft_hyphen == *value,
 +            DictionaryBreaks(value) => self.dictionary_breaks == *value,
++            Isolates(value) => self.isolates == *value,
 +            PhraseBreaks(value) => self.phrase_breaks == *value,
 +            FontSizeAdjusted(value) => self.font_size_adjusted == *value,
 +            AutoOpticalSize(value) => self.auto_optical_size == *value,
@@ -4730,7 +4737,7 @@ index f465832..2e3615e 100644
          }
      }
  
-@@ -527,6 +638,9 @@ impl<B: Brush> ResolvedStyle<B> {
+@@ -527,6 +645,9 @@ impl<B: Brush> ResolvedStyle<B> {
              overflow_wrap: self.overflow_wrap,
              text_wrap_mode: self.text_wrap_mode,
              white_space_collapse: self.white_space_collapse,
@@ -5432,7 +5439,7 @@ index 0000000..246bca1
 +    }
 +}
 diff --git a/src/shape/mod.rs b/src/shape/mod.rs
-index 060a32d..bf57d99 100644
+index 060a32d..2a25c00 100644
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -4,6 +4,10 @@
@@ -5513,7 +5520,7 @@ index 060a32d..bf57d99 100644
                          inline_box_iter.next();
                          split = true;
                      } else {
-@@ -145,41 +162,59 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -145,41 +162,62 @@ pub(crate) fn shape_text<'a, B: Brush>(
                  }
  
                  if split {
@@ -5537,7 +5544,10 @@ index 060a32d..bf57d99 100644
 +                        || spacing_trim(style) != spacing_trim(item_style)
 +                        // pyro: and where a span shifted by `vertical-align` starts or ends
 +                        // (CSS Text 3 § 7.3, WPT css-text `boundary-shaping-002/006`).
-+                        || shifted_span(styles, style_index) != shifted_span(styles, item_style_index);
++                        || shifted_span(styles, style_index) != shifted_span(styles, item_style_index)
++                        // pyro: and at the edges of a bidi isolate (CSS Text 3 § 7.3, WPT css-text
++                        // `boundary-shaping-008`), where HarfBuzz would ligate across.
++                        || isolating_span(styles, style_index) != isolating_span(styles, item_style_index);
                  }
  
                  if split {
@@ -5577,7 +5587,7 @@ index 060a32d..bf57d99 100644
  
      scx.shape_text(
          text,
-@@ -190,6 +225,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -190,6 +228,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
          &mut layout.data.shaped_text,
      );
  
@@ -5585,7 +5595,7 @@ index 060a32d..bf57d99 100644
      let mut inline_box_iter = inline_boxes
          .iter()
          .map(|b| &b.inline_box)
-@@ -201,19 +237,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -201,19 +240,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
          let run_style_index = char_style_indices[shaped_run.range.char_range.start];
          let run_style = &styles[usize::from(run_style_index)];
  
@@ -5608,7 +5618,7 @@ index 060a32d..bf57d99 100644
                  inline_box_iter.next();
              } else {
                  break;
-@@ -228,25 +256,121 @@ pub(crate) fn shape_text<'a, B: Brush>(
+@@ -228,27 +259,123 @@ pub(crate) fn shape_text<'a, B: Brush>(
              // we probably shouldn't itemize on them; we should just ensure we don't ligate if
              // they're non-zero).
              run_style,
@@ -5655,9 +5665,9 @@ index 060a32d..bf57d99 100644
 +        | TextSpacingTrim::SpaceFirst
 +        | TextSpacingTrim::TrimStart
 +        | TextSpacingTrim::TrimBoth => SpacingTrim::Adjacent,
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: the bidi level of each inline box. An atomic or out-of-flow box takes the level it
 +/// resolved to as U+FFFC (`Analysis::object_levels`); a span's start edge takes the level of what
 +/// follows it and its end edge that of what precedes it (the edges sit inside the span's bidi
@@ -5711,7 +5721,7 @@ index 060a32d..bf57d99 100644
 +            levels[index] = last;
 +        }
 +        last = level_of(slot, &levels).or(last);
-     }
++    }
 +    let mut next = None;
 +    for slot in slots.iter().rev() {
 +        if let Slot::Box(index) = *slot
@@ -5739,10 +5749,12 @@ index 060a32d..bf57d99 100644
 +        after = level_of(slot, &levels).or(after);
 +    }
 +    levels.into_iter().map(|level| level.unwrap_or(paragraph)).collect()
- }
- 
++}
++
  /// The font to use if a font query doesn't return any font candidates at all.
-@@ -259,6 +383,15 @@ enum LastResortFont {
+ #[derive(Debug)]
+ enum LastResortFont {
+@@ -259,6 +386,15 @@ enum LastResortFont {
  
  struct FontSelector<'a, 'b, B: Brush> {
      query: &'b mut Query<'a>,
@@ -5758,7 +5770,7 @@ index 060a32d..bf57d99 100644
      fonts_id: Option<usize>,
      rcx: &'a ResolveContext,
      styles: &'a [ResolvedStyle<B>],
-@@ -284,11 +417,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
+@@ -284,11 +420,14 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
          rcx: &'a ResolveContext,
          styles: &'a [ResolvedStyle<B>],
          analysis_data_sources: &'a AnalysisDataSources,
@@ -5773,7 +5785,7 @@ index 060a32d..bf57d99 100644
              fonts_id: None,
              rcx,
              styles,
-@@ -360,12 +496,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -360,12 +499,36 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
          // not *too* expensive, once the new borrow checker (Polonius) is stable, we could remove
          // this check and do the last-resort scan after the failed query:
          // <https://blog.rust-lang.org/2026/08/04/enabling-polonius-alpha-on-nightly/>.
@@ -5812,7 +5824,7 @@ index 060a32d..bf57d99 100644
                      fontique::QueryStatus::Stop
                  } else {
                      fontique::QueryStatus::Continue
-@@ -373,6 +533,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -373,6 +536,12 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
              });
              yields_font
          });
@@ -5825,7 +5837,7 @@ index 060a32d..bf57d99 100644
          if !query_yields_font {
              if matches!(self.last_resort_font, LastResortFont::Unresolved) {
                  if let Some(font) = any_font(self.query) {
-@@ -405,15 +571,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
+@@ -405,15 +574,15 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                  return fontique::QueryStatus::Continue;
              };
  
@@ -5848,13 +5860,27 @@ index 060a32d..bf57d99 100644
                  },
                  self.analysis_data_sources,
              );
-@@ -473,3 +639,44 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
+@@ -473,3 +642,58 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
  
      found
  }
 +
 +/// pyro: the nearest span around the text of style `index` (itself included) that `vertical-align`
 +/// shifts, if any: text on either side of the edge of such a span is shaped apart.
++/// pyro: the nearest span at or above `index` that is a bidi isolate, if any.
++fn isolating_span<B: Brush>(styles: &[ResolvedStyle<B>], mut index: u16) -> Option<u16> {
++    loop {
++        let style = &styles[usize::from(index)];
++        if style.isolates {
++            return Some(index);
++        }
++        if style.parent == index {
++            return None;
++        }
++        index = style.parent;
++    }
++}
++
 +fn shifted_span<B: Brush>(styles: &[ResolvedStyle<B>], mut index: u16) -> Option<u16> {
 +    loop {
 +        let style = &styles[usize::from(index)];
@@ -5947,7 +5973,7 @@ index 0000000..e8fc4f6
 +    }
 +}
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index d9977df..0338df3 100644
+index d9977df..0cb081f 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -43,6 +43,158 @@ pub enum WhiteSpaceCollapse {
@@ -6208,7 +6234,7 @@ index d9977df..0338df3 100644
              _ => self,
          }
      }
-@@ -277,6 +469,31 @@ pub enum StyleProperty<'a, B: Brush> {
+@@ -277,6 +469,33 @@ pub enum StyleProperty<'a, B: Brush> {
      TextWrapMode(TextWrapMode),
      /// Whitespace collapsing and hanging behavior.
      WhiteSpaceCollapse(WhiteSpaceCollapse),
@@ -6218,6 +6244,8 @@ index d9977df..0338df3 100644
 +    SoftHyphen(SoftHyphen),
 +    /// pyro: whether lines may break inside words where dictionaries find boundaries.
 +    DictionaryBreaks(bool),
++    /// pyro: whether the span is a bidi isolate ([`TextStyle::isolates`]).
++    Isolates(bool),
 +    /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
 +    PhraseBreaks(bool),
 +    /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
@@ -6240,7 +6268,7 @@ index d9977df..0338df3 100644
  }
  
  /// Unresolved styles.
-@@ -334,6 +551,90 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
+@@ -334,6 +553,94 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
      pub text_wrap_mode: TextWrapMode,
      /// Whitespace collapsing and hanging behavior.
      pub white_space_collapse: WhiteSpaceCollapse,
@@ -6251,6 +6279,10 @@ index d9977df..0338df3 100644
 +    /// pyro: whether lines may break inside words where dictionaries find boundaries (Thai, Lao,
 +    /// Khmer, Burmese). `false` for CSS `word-break: manual`.
 +    pub dictionary_breaks: bool,
++    /// pyro: whether the span is a bidi isolate (CSS `unicode-bidi: isolate`, `isolate-override`
++    /// or `plaintext`): shaping breaks at its edges (CSS Text 3 § 7.3). Not inherited: set on the
++    /// span's own style.
++    pub isolates: bool,
 +    /// pyro: CSS `word-break: auto-phrase`: with `word_break` [`WordBreak::KeepAll`], lines also
 +    /// break between Japanese phrases, and a line whose phrase does not fit breaks as under
 +    /// [`WordBreak::Normal`].
@@ -6331,13 +6363,14 @@ index d9977df..0338df3 100644
  }
  
  impl<B: Brush> Default for TextStyle<'static, 'static, B> {
-@@ -365,6 +666,20 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
+@@ -365,6 +672,21 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
              overflow_wrap: OverflowWrap::default(),
              text_wrap_mode: TextWrapMode::default(),
              white_space_collapse: WhiteSpaceCollapse::default(),
 +            tab_size: TabSize::default(),
 +            soft_hyphen: SoftHyphen::default(),
 +            dictionary_breaks: true,
++            isolates: false,
 +            phrase_breaks: false,
 +            font_size_adjusted: false,
 +            auto_optical_size: false,

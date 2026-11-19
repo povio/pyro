@@ -180,7 +180,10 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         || spacing_trim(style) != spacing_trim(item_style)
                         // pyro: and where a span shifted by `vertical-align` starts or ends
                         // (CSS Text 3 § 7.3, WPT css-text `boundary-shaping-002/006`).
-                        || shifted_span(styles, style_index) != shifted_span(styles, item_style_index);
+                        || shifted_span(styles, style_index) != shifted_span(styles, item_style_index)
+                        // pyro: and at the edges of a bidi isolate (CSS Text 3 § 7.3, WPT css-text
+                        // `boundary-shaping-008`), where HarfBuzz would ligate across.
+                        || isolating_span(styles, style_index) != isolating_span(styles, item_style_index);
                 }
 
                 if split {
@@ -642,6 +645,20 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
 
 /// pyro: the nearest span around the text of style `index` (itself included) that `vertical-align`
 /// shifts, if any: text on either side of the edge of such a span is shaped apart.
+/// pyro: the nearest span at or above `index` that is a bidi isolate, if any.
+fn isolating_span<B: Brush>(styles: &[ResolvedStyle<B>], mut index: u16) -> Option<u16> {
+    loop {
+        let style = &styles[usize::from(index)];
+        if style.isolates {
+            return Some(index);
+        }
+        if style.parent == index {
+            return None;
+        }
+        index = style.parent;
+    }
+}
+
 fn shifted_span<B: Brush>(styles: &[ResolvedStyle<B>], mut index: u16) -> Option<u16> {
     loop {
         let style = &styles[usize::from(index)];

@@ -826,6 +826,8 @@ pub(crate) fn style(
         text_wrap_mode,
         white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
         dictionary_breaks,
+        // (Set where an inline element's span is built, `inline::build`.)
+        isolates: false,
         phrase_breaks: itext_styles.word_break == stylo::WordBreak::AutoPhrase,
         // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
         font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,

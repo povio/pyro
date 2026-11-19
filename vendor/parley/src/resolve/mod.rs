@@ -172,6 +172,7 @@ impl ResolveContext {
             StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
             StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
+            StyleProperty::Isolates(value) => Isolates(*value),
             StyleProperty::PhraseBreaks(value) => PhraseBreaks(*value),
             StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
             StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
@@ -225,6 +226,7 @@ impl ResolveContext {
             tab_size: scale_tab_size(raw_style.tab_size, scale),
             soft_hyphen: raw_style.soft_hyphen,
             dictionary_breaks: raw_style.dictionary_breaks,
+            isolates: raw_style.isolates,
             phrase_breaks: raw_style.phrase_breaks,
             font_size_adjusted: raw_style.font_size_adjusted,
             auto_optical_size: raw_style.auto_optical_size,
@@ -432,6 +434,7 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     SoftHyphen(crate::style::SoftHyphen),
     /// pyro: whether lines may break where dictionaries find word boundaries.
     DictionaryBreaks(bool),
+    Isolates(bool),
     /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
     PhraseBreaks(bool),
     /// pyro: whether the font size is set by `font-size-adjust`.
@@ -512,6 +515,8 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: whether lines may break where dictionaries find word boundaries.
     pub(crate) dictionary_breaks: bool,
+    /// pyro: the span is a bidi isolate (see [`crate::TextStyle::isolates`]).
+    pub(crate) isolates: bool,
     /// pyro: whether lines break between phrases ([`TextStyle::phrase_breaks`]).
     pub(crate) phrase_breaks: bool,
     /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
@@ -571,6 +576,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size = value,
             SoftHyphen(value) => self.soft_hyphen = value,
             DictionaryBreaks(value) => self.dictionary_breaks = value,
+            Isolates(value) => self.isolates = value,
             PhraseBreaks(value) => self.phrase_breaks = value,
             FontSizeAdjusted(value) => self.font_size_adjusted = value,
             AutoOpticalSize(value) => self.auto_optical_size = value,
@@ -615,6 +621,7 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size == *value,
             SoftHyphen(value) => self.soft_hyphen == *value,
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
+            Isolates(value) => self.isolates == *value,
             PhraseBreaks(value) => self.phrase_breaks == *value,
             FontSizeAdjusted(value) => self.font_size_adjusted == *value,
             AutoOpticalSize(value) => self.auto_optical_size == *value,

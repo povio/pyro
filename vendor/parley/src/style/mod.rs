@@ -475,6 +475,8 @@ pub enum StyleProperty<'a, B: Brush> {
     SoftHyphen(SoftHyphen),
     /// pyro: whether lines may break inside words where dictionaries find boundaries.
     DictionaryBreaks(bool),
+    /// pyro: whether the span is a bidi isolate ([`TextStyle::isolates`]).
+    Isolates(bool),
     /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
     PhraseBreaks(bool),
     /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
@@ -558,6 +560,10 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: whether lines may break inside words where dictionaries find boundaries (Thai, Lao,
     /// Khmer, Burmese). `false` for CSS `word-break: manual`.
     pub dictionary_breaks: bool,
+    /// pyro: whether the span is a bidi isolate (CSS `unicode-bidi: isolate`, `isolate-override`
+    /// or `plaintext`): shaping breaks at its edges (CSS Text 3 § 7.3). Not inherited: set on the
+    /// span's own style.
+    pub isolates: bool,
     /// pyro: CSS `word-break: auto-phrase`: with `word_break` [`WordBreak::KeepAll`], lines also
     /// break between Japanese phrases, and a line whose phrase does not fit breaks as under
     /// [`WordBreak::Normal`].
@@ -669,6 +675,7 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             tab_size: TabSize::default(),
             soft_hyphen: SoftHyphen::default(),
             dictionary_breaks: true,
+            isolates: false,
             phrase_breaks: false,
             font_size_adjusted: false,
             auto_optical_size: false,
