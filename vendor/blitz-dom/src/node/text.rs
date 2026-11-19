@@ -30,6 +30,10 @@ pub struct LineClamp {
     /// pyro: "-" and the ellipsis, for a clamp line that ends at a soft hyphen (shown before the
     /// ellipsis: WPT css-overflow `line-clamp/block-ellipsis-028`); empty with no ellipsis.
     pub hyphenated_ellipsis: Box<parley::layout::Layout<TextBrush>>,
+    /// pyro: the clamp line keeps root text alone beside its ellipsis (or nothing): it is laid
+    /// out again as a line of the ellipsis's height, the ellipsis at its top (Chromium; WPT
+    /// css-overflow `line-clamp/block-ellipsis-036`).
+    pub relaid: bool,
     /// pyro: the standard `line-clamp` (not `-webkit-line-clamp`): the ellipsis goes after the
     /// last soft wrap opportunity of the line that leaves room for it (CSS Overflow 4
     /// `block-ellipsis`), not after the last atom that fits.

@@ -2553,7 +2553,11 @@ fn stroke_inline_text(
             let filter = context.run_filter.take();
             let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
             let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
-            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
+            // pyro: a clamp line laid out again holds the ellipsis alone at its top
+            // (`LineClamp::relaid`).
+            let relaid = clamp.is_some_and(|clamp| clamp.relaid && index + 1 == clamp.lines as usize);
+            let y = if relaid { line.metrics().block_min_coord } else { line.metrics().baseline - baseline };
+            let offset = (x as f64, y as f64 + shift);
             context.line_tops = None;
             // pyro: on the first line, in the `::first-line` colour (the line's root style).
             let mut options = options;

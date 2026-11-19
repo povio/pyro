@@ -98,7 +98,8 @@ impl LayoutPassState<'_> {
             .flatten()
             .map(|block_size| block_size - padding.bottom - border.bottom);
         let content_top = padding.top + border.top;
-        let found = self.find_clamp_line(root, spec.lines, limit, content_top);
+        let root_width = output.size.width - padding.left - padding.right - border.left - border.right;
+        let found = self.find_clamp_line(root, spec.lines, limit, content_top, root_width);
         self.nodes[root].flags.set(NodeFlags::CLAMPS_LINES, found.is_some());
         let Some((bottom, block)) = found else { return };
         // pyro: the blocks the clamp line is in end after it (CSS Overflow 4 § 5.4: the content
@@ -146,7 +147,7 @@ impl LayoutPassState<'_> {
 
     /// Forgets the clamp a box that no longer clamps its lines left on them.
     pub(crate) fn unclamp_lines(&mut self, root: NodeId) {
-        self.find_clamp_line(root, u32::MAX, None, 0.0);
+        self.find_clamp_line(root, u32::MAX, None, 0.0, 0.0);
         self.nodes[root].flags.remove(NodeFlags::CLAMPS_LINES);
     }
 
@@ -162,6 +163,7 @@ impl LayoutPassState<'_> {
         max_lines: u32,
         limit: Option<f32>,
         content_top: f32,
+        root_width: f32,
     ) -> Option<(f32, NodeId)> {
         let scale = self.doc.viewport.scale();
         // pyro: the clamp line is the box's last formatted line: `text-box-trim: trim-end` trims
@@ -190,6 +192,8 @@ impl LayoutPassState<'_> {
         // block-level box whose lines are not the root's (`ClampPoint::Box`), and its bottom.
         let mut clamp_line: Option<ClampPoint> = None;
         let mut clamped = false;
+        // Whether the clamp line is laid out again (`LineClamp::relaid`).
+        let mut relaid_line = false;
         // The last clamp point before the one at hand: after the last line of a block whose lines
         // all stay, or after a box of its own (WPT css-overflow `line-clamp-auto-034`, `-039`).
         let mut last_lines: Option<ClampPoint> = None;
@@ -255,18 +259,28 @@ impl LayoutPassState<'_> {
                 let bottoms: Vec<f32> = (0..lines).map(|index| line_bottom(index)).collect();
                 drop(line_bottom);
                 drop(root_style);
+                // pyro: the bottom each line would have as the clamp line laid out again with root
+                // text alone beside the ellipsis (`LineClamp::relaid`), if it would be.
+                let relaid: Vec<Option<f32>> = if clamp_line.is_none() && lines > 0 && !ellipsis_text.is_empty() {
+                    // (The root's layout is not stored yet: its width from the caller.)
+                    let width = if id == root { root_width } else { self.nodes[id].unrounded_layout().content_box_width() };
+                    self.relaid_clamp_line_bottoms(id, top, &ellipsis_text, lines, width)
+                } else {
+                    vec![None; lines as usize]
+                };
                 if clamp_line.is_none() && lines > 0 {
                     // The lines of this block that stay: no more than the count leaves, and none
                     // that ends past the limit.
                     let mut kept = (max_lines - count).min(lines);
                     if let Some(limit) = limit {
-                        kept = (0..kept)
-                            .find(|&index| {
-                                let bottom = bottoms[index as usize];
-                                let end = if id == root { bottom } else { self.clamp_point_end(root, id, bottom, 0.0) };
-                                end > limit + 0.01
-                            })
-                            .unwrap_or(kept);
+                        let end_of = |this: &Self, bottom: f32| if id == root { bottom } else { this.clamp_point_end(root, id, bottom, 0.0) };
+                        let first_over = (0..kept).find(|&index| end_of(self, bottoms[index as usize]) > limit + 0.01);
+                        kept = match first_over {
+                            // (A line that does not fit may as the clamp line laid out again.)
+                            Some(index) if relaid[index as usize].is_some_and(|b| end_of(self, b) <= limit + 0.01) => index + 1,
+                            Some(index) => index,
+                            None => kept,
+                        };
                     }
                     if kept == 0 {
                         // The clamp point is before this block's first line: after the last line
@@ -277,8 +291,16 @@ impl LayoutPassState<'_> {
                             discarded.push(id);
                         }
                     } else if kept < lines || count + lines >= max_lines {
-                        clamp_line = Some(ClampPoint::Lines(id, kept, bottoms[kept as usize - 1]));
                         clamped = lines > kept;
+                        let index = kept as usize - 1;
+                        let bottom = match relaid[index] {
+                            Some(relaid) if clamped => {
+                                relaid_line = true;
+                                relaid
+                            }
+                            _ => bottoms[index],
+                        };
+                        clamp_line = Some(ClampPoint::Lines(id, kept, bottom));
                     } else {
                         last_lines = Some(ClampPoint::Lines(id, lines, bottoms[lines as usize - 1]));
                     }
@@ -358,7 +380,7 @@ impl LayoutPassState<'_> {
                 if let Some(text_layout) =
                     self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
                 {
-                    text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), hyphenated_ellipsis: Box::default(), at_soft_wraps: discards });
+                    text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), hyphenated_ellipsis: Box::default(), relaid: false, at_soft_wraps: discards });
                 }
             }
             return Some((bottom, id));
@@ -366,6 +388,13 @@ impl LayoutPassState<'_> {
         // (The legacy `-webkit-line-clamp` too puts its ellipsis at a soft wrap opportunity, as
         // Chromium does: WPT css-overflow `line-clamp/webkit-line-clamp-035`.)
         self.set_clamp(id, kept, true, &ellipsis_text);
+        if relaid_line {
+            if let Some(clamp) =
+                self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut()).and_then(|t| t.clamp.as_mut())
+            {
+                clamp.relaid = true;
+            }
+        }
         // pyro: the floats and atomic inlines of the clamp line's block below its clamp line,
         // and those of the blocks discarded after it, are hidden with the lines (WPT css-overflow
         // `line-clamp-with-floats-003`, `-005`).
@@ -389,7 +418,7 @@ impl LayoutPassState<'_> {
             if let Some(text_layout) =
                 self.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut())
             {
-                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), hyphenated_ellipsis: Box::default(), at_soft_wraps: discards });
+                text_layout.clamp = Some(LineClamp { lines: 0, ellipsis: Box::default(), hyphenated_ellipsis: Box::default(), relaid: false, at_soft_wraps: discards });
             }
         }
         Some((bottom, id))
@@ -427,6 +456,94 @@ impl LayoutPassState<'_> {
             inner = layout.location.y + end;
         }
         inner + margin
+    }
+
+    /// pyro: for each of the `lines` lines of the inline root `id` (whose border box's top is
+    /// `top` from the clamp root's), its bottom (from the same top) as the clamp line laid out
+    /// again, when the ellipsis would leave root text alone beside it (or nothing): its top plus
+    /// the height of a line of the ellipsis, which is in the root's style (Chromium; WPT
+    /// css-overflow `line-clamp/block-ellipsis-036`, `-039`, `line-clamp-auto-041`).
+    fn relaid_clamp_line_bottoms(&mut self, id: NodeId, top: f32, text: &str, lines: u32, width: f32) -> Vec<Option<f32>> {
+        let scale = self.doc.viewport.scale();
+        let ellipsis = self.shape_ellipsis(id, text);
+        let Some(ellipsis_line) = ellipsis.lines().next() else { return vec![None; lines as usize] };
+        let (ellipsis_width, ellipsis_height) = (ellipsis.full_width().max(0.0), ellipsis_line.metrics().line_height);
+        let width = width * scale;
+        let Some(text_layout) = self.nodes[id].data.downcast_element().and_then(|el| el.inline_layout_data.as_deref()) else {
+            return vec![None; lines as usize];
+        };
+        if text_layout.layout.is_rtl() {
+            return vec![None; lines as usize];
+        }
+        (0..lines as usize)
+            .map(|index| {
+                let line = text_layout.layout.get(index)?;
+                let metrics = line.metrics();
+                let root_style = line.root_style();
+                let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
+                let epsilon = scale / 64.0;
+                // The line's atoms in visual order: (x0, x1, space, soft wrap opportunity before
+                // it, root text).
+                let mut atoms: Vec<(f32, f32, bool, bool, bool)> = Vec::new();
+                for item in line.items() {
+                    match item {
+                        parley::PositionedLayoutItem::GlyphRun(run) => {
+                            let root = run.style_index() == root_style;
+                            let mut x = run.offset();
+                            for cluster in run.run().visual_clusters() {
+                                let advance = cluster.advance();
+                                let space = cluster.is_space_or_nbsp() || cluster.is_hard_line_break() || advance <= 0.0;
+                                atoms.push((x, x + advance, space, cluster.is_soft_wrap_opportunity(), root));
+                                x += advance;
+                            }
+                        }
+                        parley::PositionedLayoutItem::InlineBox(ibox) => {
+                            if ibox.kind == parley::InlineBoxKind::InFlow {
+                                atoms.push((ibox.x, ibox.x + ibox.width, false, false, false));
+                            }
+                        }
+                    }
+                }
+                atoms.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let fits = |far: f32| far + ellipsis_width <= width + epsilon;
+                let mut far = metrics.inline_min_coord + metrics.offset;
+                let mut kept_end = 0usize;
+                for (i, &(_, x1, space, opportunity, _)) in atoms.iter().enumerate() {
+                    if i > 0 && opportunity && fits(far) {
+                        kept_end = i;
+                    }
+                    if !space {
+                        far = far.max(x1);
+                    }
+                }
+                if fits(far) {
+                    // (The whole line fits beside the ellipsis: it stays as it is.)
+                    return None;
+                }
+                let root_only = atoms[..kept_end].iter().all(|&(_, _, space, _, root)| root || space);
+                root_only.then(|| top + text_layout.line_box_top + metrics.block_min_coord / scale + ellipsis_height / scale)
+            })
+            .collect()
+    }
+
+    /// pyro: `text` shaped as an ellipsis in the style of the inline root `id` ([`Self::set_clamp`]).
+    fn shape_ellipsis(&mut self, id: NodeId, text: &str) -> Box<parley::layout::Layout<crate::node::TextBrush>> {
+        let scale = self.doc.viewport.scale();
+        let doc = &mut *self.doc;
+        let node = &doc.nodes[id];
+        let Some(style) =
+            node.primary_styles().or_else(|| node.parent.and_then(|parent| doc.nodes[parent].primary_styles()))
+        else {
+            return Box::default();
+        };
+        let parley_style = crate::stylo_to_parley::style(id, &style);
+        drop(style);
+        let mut font_ctx = doc.font_ctx.lock().unwrap();
+        let mut builder = doc.layout_ctx.tree_builder(&mut font_ctx, scale, true, &parley_style);
+        builder.push_text(text);
+        let mut layout = builder.build().0;
+        layout.break_all_lines(None);
+        Box::new(layout)
     }
 
     /// pyro: block `id` closed after content ending at `inner` (its border box's coordinates)
@@ -616,7 +733,7 @@ impl LayoutPassState<'_> {
             }
         }
         if let Some(text_layout) = doc.nodes[id].data.downcast_element_mut().and_then(|el| el.inline_layout_data.as_mut()) {
-            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, hyphenated_ellipsis, at_soft_wraps });
+            text_layout.clamp = Some(LineClamp { lines: kept, ellipsis, hyphenated_ellipsis, relaid: false, at_soft_wraps });
         }
     }
 }
