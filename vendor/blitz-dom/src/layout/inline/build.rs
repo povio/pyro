@@ -232,6 +232,27 @@ fn reopen_bidi_controls(builder: &mut TreeBuilder<TextBrush>, bidi_scan: &BidiSc
 /// pyro: the split inlines (`NodeFlags::IS_SPLIT_INLINE`) whose box holds the anonymous block
 /// `root_id` (inline content between two of their block-level boxes), innermost first: its
 /// content is inside their spans, with neither their start nor their end.
+/// pyro: the `unicode-bidi` an inline root's lines take: an anonymous block's is its parent's
+/// (the block's immediate inline content, which a block's `bidi-override` or `plaintext` governs;
+/// `unicode-bidi` is not inherited), not that of its `::before` or `::after`.
+fn root_unicode_bidi(
+    nodes: &crate::NodeTree,
+    node_id: NodeId,
+    style: &style::properties::ComputedValues,
+) -> style::computed_values::unicode_bidi::T {
+    let node = &nodes[node_id];
+    if node.is_anonymous()
+        && let Some(parent_id) = node.layout_parent.get().or(node.parent)
+        && nodes[parent_id].before() != Some(node_id)
+        && nodes[parent_id].after() != Some(node_id)
+        && let Some(parent_style) = nodes[parent_id].primary_styles()
+        && parent_style.clone_display().outside() != style::values::specified::box_::DisplayOutside::Inline
+    {
+        return parent_style.clone_unicode_bidi();
+    }
+    style.clone_unicode_bidi()
+}
+
 /// pyro: the direction of an anonymous box of the root element (its own text, a run of its
 /// inline children): the root's used direction, that of its `<body>` child (css-writing-modes-3 §8,
 /// unless either has containment). `None` for other boxes.
@@ -470,7 +491,10 @@ fn build_inline_layout_with(
     let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
     if let Some(style) = root_node_style.as_deref() {
         let direction = principal_direction(nodes, inline_context_root_node_id).unwrap_or_else(|| style.clone_direction());
-        builder.set_base_direction(stylo_to_parley::base_direction(direction, style.clone_unicode_bidi()));
+        builder.set_base_direction(stylo_to_parley::base_direction(
+            direction,
+            root_unicode_bidi(nodes, inline_context_root_node_id, style),
+        ));
     }
 
     let text_transform = root_node_style
@@ -485,7 +509,10 @@ fn build_inline_layout_with(
         use style::computed_values::unicode_bidi::T as UnicodeBidi;
         let rtl = style.clone_direction() == Direction::Rtl;
         bidi_scan.rtl = rtl;
-        if matches!(style.clone_unicode_bidi(), UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride) {
+        if matches!(
+            root_unicode_bidi(nodes, inline_context_root_node_id, style),
+            UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride
+        ) {
             bidi_scan.controls = true;
             if bidi {
                 let control: &'static [char] = if rtl { &['\u{202E}'] } else { &['\u{202D}'] };
