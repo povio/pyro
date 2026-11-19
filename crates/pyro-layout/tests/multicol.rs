@@ -125,3 +125,32 @@ fn column_breaks_are_not_page_breaks() {
     let n = rect(&p, "n");
     assert_eq!((n[0], n[1]), (100.0, 130.0), "the nested container avoiding breaks starts the next column");
 }
+
+fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
+    p.layout.client_rects(&p.dom, p.id(id)).iter().map(|r| [r.x, r.y, r.width, r.height]).collect()
+}
+
+/// pyro: a nested container laid out in rows of an outer container's columns is laid out again
+/// when that fragmentation goes away (a sibling becomes a spanner, the outer box stops being a
+/// multi-column container): it is where a fresh layout of the final page puts it.
+#[test]
+fn nested_rows_go_with_their_outer_fragmentation() {
+    let html = |outer: &str, sibling: &str| {
+        format!(
+            "<!doctype html><body style='margin:0'><div id=o style='{outer}'>\
+             <div style='columns:2;column-gap:0'><div id=t style='height:300px'></div></div>\
+             <div id=s style='{sibling}height:10px'></div></div>"
+        )
+    };
+    let fragmented = "columns:2;column-gap:0;column-fill:auto;height:100px;width:200px";
+    for (outer, sibling) in [(fragmented, "column-span:all;"), ("width:200px", "")] {
+        let mut p = page(&html(fragmented, ""));
+        let before = rects(&p, "t");
+        assert!(before.len() >= 2, "{before:?}");
+        let (o, s) = (p.id("o"), p.id("s"));
+        p.dom.set_attribute(o, "style", outer).unwrap();
+        p.dom.set_attribute(s, "style", &format!("{sibling}height:10px")).unwrap();
+        let fresh = page(&html(outer, sibling));
+        assert_eq!(rects(&p, "t"), rects(&fresh, "t"), "outer {outer:?}, sibling {sibling:?}");
+    }
+}
