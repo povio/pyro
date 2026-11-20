@@ -406,6 +406,11 @@ impl Dom {
         self.events.connected_hook.is_some()
     }
 
+    /// Whether this target has a registered listener of the given type.
+    pub fn has_listener_for(&self, target: TargetKey, ty: &str) -> bool {
+        self.events.map.get(&target).is_some_and(|list| list.iter().any(|listener| &*listener.ty == ty))
+    }
+
     pub fn has_listeners(&self, target: TargetKey) -> bool {
         self.events.map.get(&target).is_some_and(|l| !l.is_empty())
     }
@@ -419,6 +424,11 @@ impl Dom {
     /// Drops every listener of a non-node target (e.g. XHR finalized).
     pub fn forget_target(&mut self, target: TargetKey) {
         self.events.forget(target);
+    }
+
+    /// Pending cleanup makes the next task checkpoint observable to the binding.
+    pub fn has_released_listeners(&self) -> bool {
+        !self.events.released.is_empty()
     }
 
     /// Handles whose listener entries were removed natively; bindings

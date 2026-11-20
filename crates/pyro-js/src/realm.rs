@@ -1785,6 +1785,14 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// Invoke a WebIDL callback with undefined as its this value and no
+    /// arguments. JavaScriptCore's C API substitutes the global for a null
+    /// object receiver; the realm's intrinsic Reflect.apply preserves undefined.
+    pub fn invoke_callback(&self, callback: Object<'_>) -> JsResult<Value<'s>> {
+        let call = self.realm.cached_helper(self, "callWith")?;
+        call.call(None, &[callback.value(), self.undefined()])
+    }
+
     /// Runs `f` inside a JavaScript frame (a helper calls it), so the
     /// microtasks the callbacks it invokes queue run when the frame returns,
     /// not after each callback (JavaScriptCore performs a checkpoint when the
@@ -1800,8 +1808,7 @@ impl<'s> Scope<'s> {
             }
             Ok(s.undefined())
         })?;
-        let call = self.realm.cached_helper(self, "callWith")?;
-        let called = call.call(None, &[native.value(), self.undefined()]);
+        let called = self.invoke_callback(native);
         let result = out.borrow_mut().take();
         match (result, called) {
             (Some(r), _) => Ok(r),

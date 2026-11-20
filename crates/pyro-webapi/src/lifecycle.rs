@@ -290,6 +290,7 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
 /// bindings drop their roots into it, but its wrappers stay registered, so
 /// a node keeps its wrapper while script still reaches the document.
 pub fn realm_detached(page: &PageDom, realm: RealmId) {
+    page.web_tasks.cancel_realm(realm);
     crate::fetch::cancel_realm(page, realm);
     crate::websocket::cancel_realm(realm);
     crate::xhr::cancel_realm(page, realm);

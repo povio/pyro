@@ -379,6 +379,7 @@ pub struct PageDom {
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
     /// Tasks queued through [`PageDom::post_task`] so far.
     posted_tasks: Cell<u64>,
+    pub(crate) web_tasks: crate::scheduler::PendingTasks,
     /// HTML "completely loaded": the document's `load` and `pageshow` have
     /// been dispatched. Until then a navigation its script starts without a
     /// user gesture replaces its history entry.
@@ -674,6 +675,15 @@ pub trait PageHooks {
 
     /// Schedules `task` on the page's event loop as a separate task.
     fn post_task(&self, task: Box<dyn FnOnce()>);
+    /// Admit a prioritized web task onto the window or worker's event loop.
+    fn post_web_task(
+        &self,
+        _priority: pyro_runtime::WebPrioritySource,
+        _delay: std::time::Duration,
+        _task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        None
+    }
     /// Schedules `task` as a separate task after `delay` (default: at once).
     fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
         self.post_task(task)
@@ -964,6 +974,7 @@ impl PageDom {
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
             posted_tasks: Cell::new(0),
+            web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
             fullscreen_stack: RefCell::new(Vec::new()),
@@ -1155,6 +1166,7 @@ impl PageDom {
     }
 
     fn release_activity(&self) {
+        self.web_tasks.clear();
         self.transition_captures.borrow_mut().take();
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
@@ -2183,6 +2195,7 @@ impl PageDom {
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
             && !dom.has_gc_candidates()
+            && !dom.has_released_listeners()
             && self.mutations.pending_drops_is_empty()
             && self.pending_release.borrow().is_empty()
             && self.pending_port_reconcile.borrow().is_empty()

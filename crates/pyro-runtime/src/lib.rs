@@ -18,6 +18,9 @@
 //! deferred work) to the run loop of the thread that created the VM and
 //! nothing else ever runs that loop. See [`native_runloop`].
 
+mod web_scheduling;
+pub use web_scheduling::{WebPrioritySource, WebTaskPriority};
+
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
@@ -370,6 +373,7 @@ struct Timer<S> {
 struct Inner<S> {
     /// Local tasks with the time they were queued (their readiness time).
     tasks: RefCell<VecDeque<(Instant, TaskSource, Task<S>)>>,
+    web: RefCell<web_scheduling::WebQueues<S>>,
     heap: RefCell<BinaryHeap<Reverse<(Instant, u64, TimerId)>>>,
     timers: RefCell<HashMap<TimerId, Timer<S>>>,
     next_timer: Cell<u32>,
@@ -619,7 +623,7 @@ impl<S: 'static> Scheduler<S> {
     }
 
     pub fn pending_tasks(&self) -> usize {
-        self.inner.tasks.borrow().len()
+        self.inner.tasks.borrow().len() + self.inner.web.borrow().len()
     }
 
     /// Remote tasks posted (from any thread) that have not started yet, e.g.
@@ -778,6 +782,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
             sched: Scheduler {
                 inner: Rc::new(Inner {
                     tasks: RefCell::new(VecDeque::new()),
+                    web: RefCell::default(),
                     heap: RefCell::new(BinaryHeap::new()),
                     timers: RefCell::new(HashMap::new()),
                     next_timer: Cell::new(1),
@@ -906,6 +911,18 @@ impl<S: LoopState + 'static> EventLoop<S> {
             (Some(l), Some(t)) => Some(l.min(t)),
             (l, t) => l.or(t),
         };
+        if !self.sched.inner.web.borrow().is_empty() {
+            let ordinary = [local, timer, remote].into_iter().flatten().min();
+            let task = self.sched.inner.web.borrow_mut().take_ready(ordinary);
+            if let Some(task) = task {
+                begin_task();
+                task(state);
+                next_task();
+                state.after_task();
+                end_task();
+                return true;
+            }
+        }
         if let Some(r) = remote {
             if earliest_page.is_none_or(|p| r < p) {
                 let (_, task) = self.remote.pop_front().expect("remote front");
@@ -1057,7 +1074,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
     }
 
     fn has_keepalive_work(&self) -> bool {
-        !self.remote.is_empty() || !self.sched.inner.tasks.borrow().is_empty() || self.sched.active_timers() > 0
+        !self.remote.is_empty() || !self.sched.inner.tasks.borrow().is_empty() || !self.sched.inner.web.borrow().is_empty() || self.sched.active_timers() > 0
     }
 
     /// Runs until `done(state)` is true, the deadline passes, the loop is
@@ -1552,6 +1569,42 @@ mod tests {
         fn after_native_runloop_pass(&mut self) {
             self.pass_safe_points += 1;
         }
+    }
+
+    #[test]
+    fn web_priority_uses_the_selected_jobs_readiness_against_other_sources() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let mut state = St::default();
+        let _ = s.post_web_task(WebPrioritySource::Fixed(WebTaskPriority::Background), Duration::ZERO,
+            Box::new(|s| s.log.push("low".into())));
+        lp.handle().post(|s| s.log.push("remote".into())).unwrap();
+        s.set_timer(Duration::ZERO, false, true, |s| s.log.push("timer".into()));
+        s.post(TaskSource::Internal, |s| s.log.push("local".into()));
+        let _ = s.post_web_task(WebPrioritySource::Fixed(WebTaskPriority::UserBlocking), Duration::ZERO,
+            Box::new(|s| s.log.push("high".into())));
+        while lp.run_one(&mut state) {}
+        assert_eq!(state.log.len(), 5);
+        assert!(state.log[..3].contains(&"remote".to_string()));
+        assert!(state.log[..3].contains(&"timer".to_string()));
+        assert!(state.log[..3].contains(&"local".to_string()));
+        assert_eq!(&state.log[3..], ["high", "low"]);
+    }
+
+    #[test]
+    fn canceled_web_tasks_release_queue_entries_and_delayed_timers() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let mut state = St::default();
+        let cancel_ready = s.post_web_task(WebPrioritySource::Fixed(WebTaskPriority::UserVisible), Duration::ZERO,
+            Box::new(|_| panic!("canceled ready task ran")));
+        let cancel_delayed = s.post_web_task(WebPrioritySource::Fixed(WebTaskPriority::UserBlocking), Duration::from_secs(60),
+            Box::new(|_| panic!("canceled delayed task ran")));
+        cancel_ready();
+        cancel_delayed();
+        assert_eq!(s.pending_tasks(), 0);
+        assert_eq!(s.active_timers(), 0);
+        assert!(!lp.run_one(&mut state));
     }
 
     #[test]
