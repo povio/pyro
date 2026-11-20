@@ -102,6 +102,22 @@ fn start_server() -> Server {
                             &[("Location", format!("http://127.0.0.1:{port}/cookie"))],
                             b"",
                         ),
+                        // pyro: away and back to a response that sets a cookie.
+                        (_, "/away-set") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://localhost:{port}/back-set"))],
+                            b"",
+                        ),
+                        (_, "/back-set") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://127.0.0.1:{port}/set-tainted"))],
+                            b"",
+                        ),
+                        (_, "/set-tainted") => {
+                            respond(&mut stream, "200 OK", &[("Set-Cookie", "tainted=1; Path=/".into())], b"ok")
+                        }
                         (_, "/back") => respond(
                             &mut stream,
                             "302 Found",
@@ -650,6 +666,28 @@ fn same_origin_credentials_follow_the_response_tainting() {
     assert_eq!(e, None, "{kinds:?}");
     assert_eq!(head.expect("a response").url.host_str(), Some("127.0.0.1"));
     assert_eq!(String::from_utf8(body).unwrap(), "", "no cookie once the tainting is opaque");
+}
+/// The cookies a hop stores follow the same decision as the cookies it sends: a no-cors request
+/// whose chain went to another origin stores no `Set-Cookie` of its last, same-origin hop (its
+/// response tainting is opaque); the same response fetched directly does. The store checked the
+/// hop's origin alone (security review cycles 2-3, 2a).
+#[test]
+fn a_tainted_hop_stores_no_cookie() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let origin = url(&s, "/").origin().ascii_serialization();
+    let request = |path: &str| {
+        let mut r = Request::get(url(&s, path), Destination::Image);
+        r.origin = Some(origin.clone());
+        r.credentials = Credentials::SameOrigin;
+        r
+    };
+    let (kinds, _, _, e) = collect(&c, request("/away-set"));
+    assert_eq!(e, None, "{kinds:?}");
+    let jar = |c: &NetClient| String::from_utf8(collect(c, Request::get(url(&s, "/cookie"), Destination::Document)).2).unwrap();
+    assert_eq!(jar(&c), "", "a tainted hop's Set-Cookie is not stored");
+    collect(&c, request("/set-tainted"));
+    assert_eq!(jar(&c), "tainted=1", "the same response fetched directly stores it");
 }
 #[test]
 fn regression_data_body_cap() {

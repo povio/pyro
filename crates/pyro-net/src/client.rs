@@ -542,11 +542,8 @@ impl Shared {
             }
         }
         // Cookies.
-        let send_cookies = match req.credentials {
-            Credentials::Include => true,
-            Credentials::SameOrigin => same_origin,
-            Credentials::Omit => false,
-        };
+        // (`same_origin` is the hop's response tainting being "basic": `includes_credentials`.)
+        let send_cookies = includes_credentials(req.credentials, same_origin);
         if send_cookies && !h.contains_key(header::COOKIE) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
@@ -2046,11 +2043,8 @@ impl Io {
             let sent = if cacheable { Some(headers.clone()) } else { None };
             // pyro: whether this hop carries credentials (as the cookie decision above): the cache
             // serves a response only to a request of the same kind (`HttpCache::lookup`).
-            let credentialed = match req.credentials {
-                Credentials::Include => true,
-                Credentials::SameOrigin => basic_tainting,
-                Credentials::Omit => false,
-            } || headers.contains_key(header::AUTHORIZATION);
+            let credentialed =
+                includes_credentials(req.credentials, basic_tainting) || headers.contains_key(header::AUTHORIZATION);
             let mut revalidating = None;
             if cacheable {
                 let lookup =
@@ -2210,12 +2204,9 @@ impl Io {
             if protocol == Version::HTTP_2 {
                 self.multiplexing(&url);
             }
-            let cookies_allowed = match req.credentials {
-                Credentials::Include => true,
-                Credentials::SameOrigin => same_origin,
-                Credentials::Omit => false,
-            };
-            self.store_cookies(&url, &resp_headers, cookies_allowed);
+            // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
+            // (a no-cors chain that went through another origin) neither sends nor stores.
+            self.store_cookies(&url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
             let response_time = wall_time();
             if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
                 && (status.is_success() || status.is_redirection())
@@ -2226,12 +2217,14 @@ impl Io {
                 if let Some(cached) = revalidating.take() {
                     drop(resp);
                     drop(permit);
+                    // pyro: into an entry of the same kind as the request as last sent only.
                     let updated = self.shared.cache.lock().unwrap().update_from_304(
                         &url,
                         cached.id,
                         &resp_headers,
                         request_time,
                         response_time,
+                        credentialed,
                     );
                     match updated {
                         Some(updated) => {
@@ -3067,5 +3060,17 @@ mod decoder_tests {
         }
         assert_eq!(decode(" GZIP ", &gz, 5).unwrap(), b"abc");
         assert_eq!(decode("x-gzip", &gz, 5).unwrap(), b"abc");
+    }
+}
+
+/// pyro: whether a hop includes credentials (Fetch § 4.4 "includes credentials"): its credentials
+/// mode is "include", or "same-origin" and its response tainting is "basic" (`basic_tainting`:
+/// same-origin, and no no-cors hop before it went to another origin). The ONE decision for the
+/// cookies sent, the `Set-Cookie` stored and the cache entry's kind.
+pub(crate) fn includes_credentials(credentials: Credentials, basic_tainting: bool) -> bool {
+    match credentials {
+        Credentials::Include => true,
+        Credentials::SameOrigin => basic_tainting,
+        Credentials::Omit => false,
     }
 }
