@@ -4192,6 +4192,16 @@ aliases = ["-webkit-text-size-adjust"]
 type = "TextSizeAdjust"
 initial = "computed::TextSizeAdjust::Auto"
 
+[text-size-adjust]
+struct = "inherited_text"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-size-adjust/#adjustment-control"
+animation_type = "normal"
+affects = "layout"
+aliases = ["-webkit-text-size-adjust"]
+type = "TextAdjustment"
+initial = "computed::TextAdjustment::Auto"
+
 [ruby-align]
 struct = "inherited_text"
 servo_pref = "layout.css.ruby.enabled"

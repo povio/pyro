@@ -95,6 +95,9 @@ pub use self::outline::OutlineStyle;
 pub use self::page::{PageName, PageOrientation, PageSize, PageSizeOrientation, PaperSize};
 pub use self::param::LinkParameters;
 pub use self::percentage::{NoCalcPercentage, NonNegativePercentage, Percentage};
+
+/// The specified text inflation control.
+pub type TextAdjustment = super::generics::text::GenericTextAdjustment<NonNegativePercentage>;
 pub use self::position::{
     AnchorFunction, AnchorName, AnchorNameIdent, AspectRatio, BoxSizing, FrameSizing, FlexDirection, FlexWrap,
     GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,

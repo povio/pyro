@@ -813,16 +813,18 @@ diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
 --- a/properties/counted_unknown_properties.py	2026-11-11 19:55:57
 +++ b/properties/counted_unknown_properties.py	2026-11-11 19:55:57
-@@ -7,8 +7,6 @@
+@@ -5,10 +5,7 @@
+ COUNTED_UNKNOWN_PROPERTIES = [
+     "-webkit-tap-highlight-color",
      "speak",
-     "text-size-adjust",
+-    "text-size-adjust",
      "-webkit-user-drag",
 -    "orphans",
 -    "widows",
      "-webkit-user-modify",
      "-webkit-margin-before",
      "-webkit-margin-after",
-@@ -86,7 +84,6 @@
+@@ -86,7 +83,6 @@
      "-webkit-mask-repeat-y",
      "user-zoom",
      "min-zoom",
@@ -2015,7 +2017,24 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4093,6 +4284,17 @@
+@@ -4001,6 +4192,16 @@
+ type = "TextSizeAdjust"
+ initial = "computed::TextSizeAdjust::Auto"
+ 
++[text-size-adjust]
++struct = "inherited_text"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-size-adjust/#adjustment-control"
++animation_type = "normal"
++affects = "layout"
++aliases = ["-webkit-text-size-adjust"]
++type = "TextAdjustment"
++initial = "computed::TextAdjustment::Auto"
++
+ [ruby-align]
+ struct = "inherited_text"
+ servo_pref = "layout.css.ruby.enabled"
+@@ -4093,6 +4294,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -2033,7 +2052,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4109,6 +4311,61 @@
+@@ -4109,6 +4321,61 @@
  affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
@@ -2095,7 +2114,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [mask-mode]
  struct = "svg"
-@@ -4249,7 +4506,7 @@
+@@ -4249,7 +4516,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -2104,7 +2123,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4289,6 +4546,61 @@
+@@ -4289,6 +4556,61 @@
  aliases = ["-webkit-box-orient"]
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
@@ -2166,7 +2185,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [-moz-box-pack]
  struct = "xul"
-@@ -4344,8 +4656,8 @@
+@@ -4344,8 +4666,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -6366,16 +6385,20 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
  pub use self::corner_shape::{CornerShape, CornerShapeRect};
  pub use self::counters::{Content, ContentItem, CounterIncrement, CounterReset, CounterSet};
  pub use self::easing::TimingFunction;
-@@ -106,7 +106,7 @@
+@@ -105,8 +105,11 @@
+ pub use self::page::{PageName, PageOrientation, PageSize, PageSizeOrientation, PaperSize};
  pub use self::param::LinkParameters;
  pub use self::percentage::{NonNegativePercentage, Percentage};
++
++/// The computed text inflation control.
++pub type TextAdjustment = super::generics::text::GenericTextAdjustment<NonNegativePercentage>;
  pub use self::position::{
 -    AnchorFunction, AnchorName, AspectRatio, BoxSizing, DashedIdentAndOrTryTactic, FlexDirection,
 +    AnchorFunction, AnchorName, AspectRatio, BoxSizing, FrameSizing, DashedIdentAndOrTryTactic, FlexDirection,
      FlexWrap, GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,
      PositionOrAuto, PositionTryFallbacks, PositionTryOrder, PositionVisibility, ScopedName, ZIndex,
  };
-@@ -129,7 +129,7 @@
+@@ -129,7 +132,7 @@
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextIndent};
  pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
  pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
@@ -6384,7 +6407,7 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
-@@ -141,7 +141,7 @@
+@@ -141,7 +144,7 @@
  #[cfg(feature = "gecko")]
  pub use self::ui::CursorImage;
  pub use self::ui::{
@@ -6806,7 +6829,26 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
 diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 --- a/values/generics/text.rs	2026-11-11 19:55:57
 +++ b/values/generics/text.rs	2026-11-16 17:29:45
-@@ -84,6 +84,103 @@
+@@ -8,6 +8,18 @@
+ use crate::derives::*;
+ use std::fmt::{self, Write};
+ use style_traits::{CssWriter, ToCss};
++
++/// Text inflation control: a keyword or a non-negative percentage.
++#[allow(missing_docs)]
++#[derive(Animate, Clone, ComputeSquaredDistance, Copy, Debug, MallocSizeOf, Parse, PartialEq,
++         SpecifiedValueInfo, ToAnimatedValue, ToAnimatedZero, ToComputedValue, ToCss,
++         ToResolvedValue, ToShmem, ToTyped)]
++#[repr(C, u8)]
++pub enum GenericTextAdjustment<Percentage> {
++    Auto,
++    None,
++    Percentage(Percentage),
++}
+ 
+ /// A generic value that is either a number or `auto`.
+ #[derive(
+@@ -84,6 +96,103 @@
      }
  }
  
@@ -6910,7 +6952,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
  /// A generic value for the `initial-letter` property.
  #[derive(
      Clone,
-@@ -103,8 +200,36 @@
+@@ -103,6 +212,34 @@
      pub size: Number,
      /// The sink, >=1, if specified, 0 otherwise.
      pub sink: Integer,
@@ -6918,8 +6960,8 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    /// as written: `sink` is 0 then.
 +    #[css(skip)]
 +    pub keyword: InitialLetterKeyword,
- }
- 
++}
++
 +/// pyro: the keyword of `initial-letter` that stands for its sink: `drop` (the size rounded
 +/// down) or `raise` (1).
 +#[derive(
@@ -6942,12 +6984,10 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    Drop,
 +    /// `raise`
 +    Raise,
-+}
-+
+ }
+ 
  pub use self::GenericInitialLetter as InitialLetter;
- impl<N: Zero, I: Zero> InitialLetter<N, I> {
-     /// Returns `normal`.
-@@ -113,6 +238,7 @@
+@@ -113,6 +250,7 @@
          InitialLetter {
              size: N::zero(),
              sink: I::zero(),
@@ -6955,7 +6995,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
          }
      }
  }
-@@ -126,6 +252,11 @@
+@@ -126,6 +264,11 @@
              return dest.write_str("normal");
          }
          self.size.to_css(dest)?;
@@ -8733,16 +8773,20 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
  pub use self::corner_shape::{CornerShape, CornerShapeRect, SuperellipseArg};
  pub use self::counters::{Content, ContentItem, CounterIncrement, CounterReset, CounterSet};
  pub use self::easing::TimingFunction;
-@@ -96,7 +96,7 @@
+@@ -95,8 +95,11 @@
+ pub use self::page::{PageName, PageOrientation, PageSize, PageSizeOrientation, PaperSize};
  pub use self::param::LinkParameters;
  pub use self::percentage::{NoCalcPercentage, NonNegativePercentage, Percentage};
++
++/// The specified text inflation control.
++pub type TextAdjustment = super::generics::text::GenericTextAdjustment<NonNegativePercentage>;
  pub use self::position::{
 -    AnchorFunction, AnchorName, AnchorNameIdent, AspectRatio, BoxSizing, FlexDirection, FlexWrap,
 +    AnchorFunction, AnchorName, AnchorNameIdent, AspectRatio, BoxSizing, FrameSizing, FlexDirection, FlexWrap,
      GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,
      PositionAnchorKeyword, PositionArea, PositionAreaKeyword, PositionComponent, PositionOrAuto,
      PositionTryFallbacks, PositionTryOrder, PositionVisibility, ScopedName, ZIndex,
-@@ -121,7 +121,7 @@
+@@ -121,7 +124,7 @@
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextAlign, TextIndent};
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
  pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
@@ -8751,7 +8795,7 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
-@@ -133,7 +133,7 @@
+@@ -133,7 +136,7 @@
  #[cfg(feature = "gecko")]
  pub use self::ui::CursorImage;
  pub use self::ui::{
@@ -8760,7 +8804,7 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
      ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
  };
  pub use super::generics::grid::GridTemplateComponent as GenericGridTemplateComponent;
-@@ -201,6 +201,19 @@
+@@ -201,6 +204,19 @@
          if let Ok(per) = input.try_parse(|i| Percentage::parse(context, i)) {
              return Ok(AngleOrPercentage::Percentage(per));
          }
