@@ -203,7 +203,7 @@ fn form_entries_with_charset(
                 }
             }
             "textarea" if !name.is_empty() => {
-                let v = dom.value(c).unwrap_or_default().replace('\n', "\r\n");
+                let v = dom.value(c).unwrap_or_default();
                 out.push((name, EntryValue::Text(v)));
             }
             _ if dom.is_form_associated(c) => crate::internals::face_entries(&dom, c, &mut out),
@@ -230,10 +230,11 @@ pub fn urlencode(entries: &[(String, EntryValue)], enc: &'static Encoding) -> St
         ser.encoding_override(Some(encode));
     }
     for (k, v) in entries {
-        match v {
-            EntryValue::Text(t) => ser.append_pair(k, t),
-            EntryValue::File(f) => ser.append_pair(k, &f.name),
+        let value = match v {
+            EntryValue::Text(t) => t,
+            EntryValue::File(f) => &f.name,
         };
+        ser.append_pair(&crlf(k), &crlf(value));
     }
     ser.finish()
 }
@@ -250,16 +251,16 @@ pub fn multipart(entries: &[(String, EntryValue)], enc: &'static Encoding) -> (S
             EntryValue::Text(t) => {
                 body.extend_from_slice(&encode_entry(
                     enc,
-                    &format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", esc(k)),
+                    &format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", esc(&crlf(k))),
                 ));
-                body.extend_from_slice(&encode_entry(enc, t));
+                body.extend_from_slice(&encode_entry(enc, &crlf(t)));
             }
             EntryValue::File(f) => {
                 body.extend_from_slice(&encode_entry(
                     enc,
                     &format!(
                         "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
-                        esc(k),
+                        esc(&crlf(k)),
                         esc(&f.name),
                         if f.mime.is_empty() { "application/octet-stream" } else { &f.mime }
                     ),
@@ -338,21 +339,7 @@ fn submission_entries(
         EntryList::FormData(fd) => {
             let s = scope.as_ref()?;
             match crate::form_data::entries_of(s, fd) {
-                // Entries script added: "converting an entry list to a list
-                // of name-value pairs" gives their names and text CRLF line
-                // breaks (the controls' own entries already have them).
-                Ok(entries) => Some(
-                    entries
-                        .into_iter()
-                        .map(|(name, v)| {
-                            let v = match v {
-                                EntryValue::Text(t) => EntryValue::Text(crlf(t)),
-                                file => file,
-                            };
-                            (crlf(name), v)
-                        })
-                        .collect(),
-                ),
+                Ok(entries) => Some(entries),
                 Err(e) => {
                     s.report_exception(&e);
                     None
@@ -363,11 +350,11 @@ fn submission_entries(
 }
 
 /// `s` with every CR, LF and CRLF as CRLF.
-fn crlf(s: String) -> String {
+fn crlf(s: &str) -> Cow<'_, str> {
     if !s.contains(['\r', '\n']) {
-        return s;
+        return Cow::Borrowed(s);
     }
-    s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n")
+    Cow::Owned(s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n"))
 }
 
 /// Builds the navigation for submitting `form` (None for `method=dialog`
@@ -436,10 +423,10 @@ pub(crate) fn form_submission(
             let mut b = String::new();
             for (k, v) in &entries {
                 let v = match v {
-                    EntryValue::Text(t) => t.clone(),
-                    EntryValue::File(f) => f.name.clone(),
+                    EntryValue::Text(t) => t,
+                    EntryValue::File(f) => &f.name,
                 };
-                b.push_str(&format!("{k}={v}\r\n"));
+                b.push_str(&format!("{}={}\r\n", crlf(k), crlf(v)));
             }
             ("text/plain".to_owned(), encode_entry(enc, &b).into_owned())
         }
