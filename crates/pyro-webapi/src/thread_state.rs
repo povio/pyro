@@ -18,7 +18,11 @@
 //!   document): it stays, and tells a page nothing but that the thread is
 //!   older than the page;
 //! - `worker::ENDED`, a note that a worker's end left something to collect:
-//!   forgotten, since the engine it was about is dropped or recycled.
+//!   forgotten, since the engine it was about is dropped or recycled;
+//! - `paint_worklet::FORCE_GRAPH_FALLBACK`, a test hook compiled only with the
+//!   `test-hooks` feature (test builds, never the browser's): the test that sets
+//!   it clears it. Listed in every configuration, as the source scan of
+//!   `tests/thread_state.rs` sees it in every one.
 
 /// The crate's thread-local statics, as `module::NAME`.
 pub const STATICS: &[&str] = &[
@@ -38,6 +42,7 @@ pub const STATICS: &[&str] = &[
     "message_channel::MADE",
     "message_channel::REMOTE",
     "node::FOUND",
+    "paint_worklet::FORCE_GRAPH_FALLBACK",
     "port_link::RELEASE_ACTIVE",
     "port_link::RELEASING",
     "resource_timing::PAGES",

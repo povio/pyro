@@ -49,7 +49,12 @@ pub mod formdata;
 pub mod fullscreen;
 mod web_locks;
 mod media_devices;
-pub mod paint_worklet;
+mod paint_worklet;
+/// Hooks only tests use (feature `test-hooks`, enabled by test builds through dev-dependencies).
+#[cfg(feature = "test-hooks")]
+pub mod test_hooks {
+    pub use crate::paint_worklet::force_graph_fallback_for_tests;
+}
 mod secure_context;
 pub mod handlers;
 pub mod headers;

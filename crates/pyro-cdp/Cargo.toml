@@ -38,6 +38,7 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros", "
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+pyro-webapi = { workspace = true, features = ["test-hooks"] }
 
 [[test]]
 name = "integration"

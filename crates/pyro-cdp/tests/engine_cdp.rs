@@ -11632,9 +11632,9 @@ fn paint_worklet_add_module_of_an_import_settles_with_its_graph() {
 /// included.
 #[test]
 fn paint_worklet_add_module_of_an_import_settles_with_its_graph_without_graph_phases() {
-    pyro_webapi::paint_worklet::force_graph_fallback_for_tests(true);
+    pyro_webapi::test_hooks::force_graph_fallback_for_tests(true);
     add_module_of_an_import_settles_with_its_graph();
-    pyro_webapi::paint_worklet::force_graph_fallback_for_tests(false);
+    pyro_webapi::test_hooks::force_graph_fallback_for_tests(false);
 }
 
 fn add_module_of_an_import_settles_with_its_graph() {

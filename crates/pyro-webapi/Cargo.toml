@@ -7,6 +7,11 @@ license.workspace = true
 # One integration test binary (tests/integration.rs) instead of one per file.
 autotests = false
 
+[features]
+# Hooks only tests use (`test_hooks`): enabled through dev-dependencies (pyro-cdp's), never in a build
+# of the browser (resolver 2 does not unify dev-dependency features into it).
+test-hooks = []
+
 [dependencies]
 # Web Crypto (crypto_subtle.rs) uses the RustCrypto primitives below; the
 # AES modes (GCM with any IV and tag length, CBC, CTR) are built on aes + ghash.

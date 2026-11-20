@@ -162,6 +162,7 @@ fn evaluate<'s>(
 /// as "fetch a worklet script graph" ends; not when the module's own source arrived. `null` without
 /// a worklet realm or an engine that loads graphs in phases (`Scope::load_registered_module_graph`).
 fn await_graph<'s>(s: &Scope<'s>, page: &Rc<PageDom>, url: &str) -> JsResult<Value<'s>> {
+    #[cfg(feature = "test-hooks")]
     if FORCE_GRAPH_FALLBACK.get() {
         return Ok(s.null());
     }
@@ -266,15 +267,16 @@ impl Settle {
     }
 }
 
+#[cfg(feature = "test-hooks")]
 thread_local! {
     /// Tests: take paint_worklet.js's path for an engine without module graph phases.
     static FORCE_GRAPH_FALLBACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Tests only: on this thread, `addModule()` of another graph's import waits as it does with a
-/// JavaScriptCore that cannot load a registered module's graph (without patch 0037), so that path
-/// is tested on a patched build too.
-#[doc(hidden)]
+/// Tests only (feature `test-hooks`): on this thread, `addModule()` of another graph's import waits
+/// as it does with a JavaScriptCore that cannot load a registered module's graph (without patch
+/// 0037), so that path is tested on a patched build too.
+#[cfg(feature = "test-hooks")]
 pub fn force_graph_fallback_for_tests(on: bool) {
     FORCE_GRAPH_FALLBACK.set(on);
 }
