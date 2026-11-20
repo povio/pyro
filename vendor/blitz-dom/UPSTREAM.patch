@@ -49704,7 +49704,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              #[cfg(feature = "tracing")]
              tracing::warn!("No DOM - not resolving");
              return;
-@@ -63,74 +136,201 @@
+@@ -63,74 +136,194 @@
              return;
          }
  
@@ -49738,6 +49738,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        // Container conditions consume content-box sizes from layout. Re-match
 +        // only when an actually queried size changes; bound cyclic feedback.
 +        self.container_float_floors.clear();
++        let mut checked_query_scrollbars = false;
 +        for pass in 0..32 {
 +            // we need to resolve stylist first since it will need to drive our layout bits
 +            self.resolve_stylist(current_time_for_animations);
@@ -49817,6 +49818,11 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            self.resolve_layout_in_flush();
 +            timer.record_time("layout");
 +            phase_profile::mark(4, &mut phase_t);
++            if self.nodes.classic_scrollbars && self.layout_ran && !self.nodes.container_query_sizes.lock().unwrap().is_empty() {
++                self.resolve_transforms(root_node_id, true, ContainingTransform::default());
++                self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
++                checked_query_scrollbars = true;
++            }
 +            let changed_containers = self.refresh_container_query_sizes();
 +            let choices_changed = pass == 0 && self.refresh_anchored_query_choices();
 +            let container_sizes_changed = !changed_containers.is_empty();
@@ -49888,20 +49894,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        if self.nodes.classic_scrollbars
 +            && std::mem::take(&mut self.layout_ran)
 +        {
-+            for pass in 0..3 {
-+                let may_remove = pass == 0;
-+                let boxes_changed = self.update_auto_scrollbars(may_remove);
-+                let viewport_changed = self.update_viewport_scrollbars(may_remove);
-+                if !boxes_changed && !viewport_changed {
-+                    break;
-+                }
-+                self.last_layout_space = None;
-+                self.resolve_layout_in_flush();
-+                self.resolve_transforms(root_node_id, false, ContainingTransform::default());
-+                for fo in self.foreign_object_roots() {
-+                    self.resolve_transforms(fo, false, ContainingTransform::default());
-+                }
-+            }
++            self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
 +            self.layout_ran = false;
 +        }
 +        // pyro: `content-visibility: auto` relevance with the transforms this pass placed (the
@@ -49944,7 +49937,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          // Re-resolve the hover node from the pointer position against the fresh
          // layout. This must run *after* the damage/dirty flags are cleared
-@@ -144,8 +344,36 @@
+@@ -144,8 +337,36 @@
          let mut subdoc_is_animating = false;
          for &node_id in &self.sub_document_nodes {
              let node = &mut self.nodes[node_id];
@@ -49982,7 +49975,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  // Set viewport
                  // viewport_mut handles change detection. So we just unconditionally set the values;
                  let mut sub_viewport = sub_doc.viewport_mut();
-@@ -154,57 +382,751 @@
+@@ -154,57 +375,751 @@
                  sub_viewport.color_scheme = self.viewport.color_scheme;
  
                  let viewport_scale = self.viewport.scale();
@@ -50759,7 +50752,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              for &child_id in children {
                  // Out-of-flow children are laid out relative to their containing
                  // block, not their DOM parent: they are visited (and their overflow
-@@ -212,18 +1134,83 @@
+@@ -212,18 +1127,83 @@
                  if self.nodes[child_id].is_out_of_flow() {
                      continue;
                  }
@@ -50849,7 +50842,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +1218,630 @@
+@@ -231,28 +1211,630 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -50865,8 +50858,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
 +                overflow = unite_overflow(overflow, padded);
 +            }
-         }
- 
++        }
++
 +        // pyro: the lines of an inline formatting context are
 +        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
 +        // a scroll container adds its end padding after them.
@@ -50939,8 +50932,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                (grid.right as f64 + bl) * scale,
 +                (grid.bottom as f64 + bt) * scale,
 +            ));
-+        }
-+
+         }
+ 
 +        // pyro: a right-to-left item's outside marker, painted after its border box's right edge
 +        // (blitz-paint's outside markers), is its overflow there. Chrome: WPT css-lists
 +        // `list-style-type-string-003`, a long rtl string marker makes the document 1137px wide.
@@ -50962,7 +50955,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
 +        place_overflow(&self.nodes[node_id], (scaled_x, scaled_y), scale, contribution)
 +    }
-+
+ 
+-        let full = if let Some(t) = transform {
+-            Affine::translate((scaled_x, scaled_y)) * t
 +    /// pyro: an in-flow child's border box in its scroll container (device px), grown on each
 +    /// side by the container's `padding` and the child's margin there (not below zero), the
 +    /// child's part of the container's scrollable overflow with the end padding after it. Its
@@ -51084,9 +51079,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            .primary_styles()
 +            .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed)
 +    }
- 
--        let full = if let Some(t) = transform {
--            Affine::translate((scaled_x, scaled_y)) * t
++
 +    /// pyro: the box of the lines of `node_id`'s inline formatting
 +    /// context or text control (its own coordinates, device px; a scroll
 +    /// container's end padding added after them), and whether they reach
@@ -51488,7 +51481,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -261,9 +1850,46 @@
+@@ -261,9 +1843,46 @@
                  return;
              }
  
@@ -51538,7 +51531,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +1903,35 @@
+@@ -277,20 +1896,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -51581,7 +51574,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +1941,33 @@
+@@ -300,16 +1934,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -51619,7 +51612,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -320,10 +1978,45 @@
+@@ -320,10 +1971,45 @@
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              }
  
@@ -51665,7 +51658,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +2051,32 @@
+@@ -358,6 +2044,32 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -51698,7 +51691,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +2086,9 @@
+@@ -367,9 +2079,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -51711,7 +51704,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +2105,14 @@
+@@ -386,7 +2098,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -51727,7 +51720,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +2121,13 @@
+@@ -395,18 +2114,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -51747,7 +51740,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +2140,7 @@
+@@ -419,10 +2133,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -51759,7 +51752,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,39 +2148,1183 @@
+@@ -430,39 +2141,1200 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -51799,6 +51792,23 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        self.resolve_layout_in_flush();
 +        // pyro: a layout outside `resolve` (which bumps once after all its passes) changes geometry.
 +        self.nodes.bump_geometry_generation();
++    }
++
++    fn resolve_classic_scrollbars(&mut self, root: NodeId, allow_removal: bool) {
++        for pass in 0..3 {
++            let may_remove = allow_removal && pass == 0;
++            let boxes_changed = self.update_auto_scrollbars(may_remove);
++            let viewport_changed = self.update_viewport_scrollbars(may_remove);
++            if !boxes_changed && !viewport_changed {
++                break;
++            }
++            self.last_layout_space = None;
++            self.resolve_layout_in_flush();
++            self.resolve_transforms(root, false, ContainingTransform::default());
++            for fo in self.foreign_object_roots() {
++                self.resolve_transforms(fo, false, ContainingTransform::default());
++            }
++        }
 +    }
 +
 +    fn resolve_layout_in_flush(&mut self) {
