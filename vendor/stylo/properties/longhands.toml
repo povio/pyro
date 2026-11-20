@@ -596,6 +596,62 @@ ignored_when_colors_disabled = true
 servo_restyle_damage = "repaint"
 affects = "paint"
 
+[column-rule-inset-cap-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[column-rule-inset-cap-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[column-rule-inset-junction-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[column-rule-inset-junction-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-cap-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-cap-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-junction-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-junction-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
 [column-count]
 type = "ColumnCount"
 initial = "computed::ColumnCount::Auto"

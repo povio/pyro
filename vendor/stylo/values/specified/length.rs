@@ -1684,6 +1684,8 @@ pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
 pub type NonNegativeLengthPercentageOrNormal =
     GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
 
+/// An inset at a gap decoration endpoint.
+pub type RuleInset = crate::values::generics::length::GenericRuleInset<LengthPercentage>;
 /// A specified `fit-tolerance` value.
 pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
 

@@ -453,6 +453,8 @@ impl From<NonNegativeLength> for Au {
 pub type NonNegativeLengthPercentageOrNormal =
     GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
 
+/// An inset at a gap decoration endpoint.
+pub type RuleInset = crate::values::generics::length::GenericRuleInset<LengthPercentage>;
 /// A computed `fit-tolerance` value.
 pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
 

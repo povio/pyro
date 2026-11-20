@@ -385,6 +385,32 @@ pub enum GenericLengthPercentageOrNormal<LengthPercent> {
 
 pub use self::GenericLengthPercentageOrNormal as LengthPercentageOrNormal;
 
+/// A gap decoration inset offset.
+#[derive(
+    Animate,
+    Clone,
+    ComputeSquaredDistance,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToAnimatedValue,
+    ToAnimatedZero,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(C, u8)]
+#[allow(missing_docs)]
+pub enum GenericRuleInset<LengthPercent> {
+    LengthPercentage(LengthPercent),
+    OverlapJoin,
+}
+
 /// A generic `normal | <length-percentage> | infinite` value, as used by `fit-tolerance`.
 #[derive(
     Animate,

@@ -623,6 +623,9 @@ pub mod ${property.ident} {
         % if shorthand.kind == "four_sides":
         ${self.four_sides_shorthand(shorthand)}
         % endif
+        % if shorthand.kind in ("inset_single", "inset_pair", "inset_quad"):
+        ${self.gap_inset_shorthand(shorthand)}
+        % endif
         % if shorthand.kind == "single_border":
         ${self.single_border_shorthand(shorthand)}
         % endif
@@ -660,6 +663,48 @@ pub mod ${property.ident} {
                 dest.write_char(' ')?;
                 second.to_css(dest)?;
             }
+            Ok(())
+        }
+    }
+</%def>
+
+<%def name="gap_inset_shorthand(shorthand)">
+    <% count = {"inset_single": 1, "inset_pair": 2, "inset_quad": 4}[shorthand.kind] %>
+    type Inset = crate::values::specified::length::RuleInset;
+
+    fn parse_value(context: &ParserContext, input: &mut Parser) -> Result<Longhands, ParseError> {
+        use crate::parser::Parse;
+        let first = Inset::parse(context, input)?;
+        % if count >= 2:
+        let second = input.try_parse(|input| Inset::parse(context, input)).unwrap_or_else(|_| first.clone());
+        % endif
+        % if count == 4:
+        let (third, fourth) = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
+            let third = Inset::parse(context, input)?;
+            let fourth = input.try_parse(|input| Inset::parse(context, input)).unwrap_or_else(|_| third.clone());
+            (third, fourth)
+        } else { (first.clone(), second.clone()) };
+        % endif
+        Ok(crate::properties::shorthands::expanded! {
+            % for index, prop in enumerate(shorthand.sub_properties):
+            ${prop.ident}: ${['first', 'second', 'third', 'fourth'][index % count]}.clone(),
+            % endfor
+        })
+    }
+
+    impl<'a> ToCss for LonghandsToSerialize<'a> {
+        fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
+            % for index, prop in enumerate(shorthand.sub_properties[count:]):
+            if self.${prop.ident} != self.${shorthand.sub_properties[index % count].ident} { return Ok(()); }
+            % endfor
+            self.${shorthand.sub_properties[0].ident}.to_css(dest)?;
+            % if count > 1:
+            if ${' && '.join('self.' + prop.ident + ' == self.' + shorthand.sub_properties[0].ident for prop in shorthand.sub_properties[1:count])} { return Ok(()); }
+            % for index, prop in enumerate(shorthand.sub_properties[1:count], 1):
+            dest.write_str("${' / ' if index == 2 else ' '}")?;
+            self.${prop.ident}.to_css(dest)?;
+            % endfor
+            % endif
             Ok(())
         }
     }

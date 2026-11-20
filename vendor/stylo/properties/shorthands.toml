@@ -1,3 +1,78 @@
+[column-rule-inset]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_quad"
+
+[column-rule-inset-cap]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[column-rule-inset-junction]
+sub_properties = ["column-rule-inset-junction-start", "column-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[column-rule-inset-start]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-junction-start"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[column-rule-inset-end]
+sub_properties = ["column-rule-inset-cap-end", "column-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[row-rule-inset]
+sub_properties = ["row-rule-inset-cap-start", "row-rule-inset-cap-end", "row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_quad"
+
+[row-rule-inset-cap]
+sub_properties = ["row-rule-inset-cap-start", "row-rule-inset-cap-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[row-rule-inset-junction]
+sub_properties = ["row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[row-rule-inset-start]
+sub_properties = ["row-rule-inset-cap-start", "row-rule-inset-junction-start"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[row-rule-inset-end]
+sub_properties = ["row-rule-inset-cap-end", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[rule-inset]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end", "row-rule-inset-cap-start", "row-rule-inset-cap-end", "row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_quad"
+
+[rule-inset-cap]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "row-rule-inset-cap-start", "row-rule-inset-cap-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_pair"
+
+[rule-inset-junction]
+sub_properties = ["column-rule-inset-junction-start", "column-rule-inset-junction-end", "row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_pair"
+
+[rule-inset-start]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-junction-start", "row-rule-inset-cap-start", "row-rule-inset-junction-start"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[rule-inset-end]
+sub_properties = ["column-rule-inset-cap-end", "column-rule-inset-junction-end", "row-rule-inset-cap-end", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
 [margin]
 flags = "SCROLL_LINKED_EFFECTIVE"
 sub_properties = ["margin-top", "margin-right", "margin-bottom", "margin-left"]
