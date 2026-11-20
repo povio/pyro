@@ -15570,6 +15570,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -        }
 -        let t = if seg_len > 0.0 {
 -            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
+-        } else {
+-            0.0
 +/// The marks of one dotted or dashed straight side, appended to `path`, as
 +/// Blink's `GraphicsContext::DrawLine` places them.
 +///
@@ -15626,7 +15628,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                }
 +                path.extend(Circle::new(center, radius).path_elements(0.1));
 +            }
-+        };
+         };
+-        points.push(poly[seg].lerp(poly[seg + 1], t));
 +        if len <= width {
 +            dot(len / 2.0);
 +            return;
@@ -15724,8 +15727,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        if depth < 20 && off.x.abs().max(off.y.abs()) > tolerance {
 +            halve(points, (t0, p0), (half_t, half), tolerance, depth + 1, chords);
 +            halve(points, (half_t, half), (t1, p1), tolerance, depth + 1, chords);
-         } else {
--            0.0
++        } else {
 +            let distance = chords.last().map_or(0.0, |&(_, distance)| distance);
 +            chords.push((t1, distance + (p1 - p0).hypot()));
 +        }
@@ -15782,8 +15784,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let radius = |r: Vec2, inset_x: f64, inset_y: f64| {
 +            let r = Vec2::new((r.x - inset_x).max(0.0), (r.y - inset_y).max(0.0));
 +            if r.x == 0.0 || r.y == 0.0 { Vec2::ZERO } else { r }
-         };
--        points.push(poly[seg].lerp(poly[seg + 1], t));
++        };
 +        let radii = frame.border_radii;
 +        let tl = radius(radii.top_left, left, top);
 +        let tr = radius(radii.top_right, right, top);
@@ -16253,42 +16254,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -        }
 -
 -        let (dash_ratio, gap_ratio) = dashed_ratios(thickness, self.scale);
-+    /// On a box with square corners each side is a straight line from corner to
-+    /// corner over the whole side, so sides of one style and colour overlap in
-+    /// their corner (and a side is mitred only against a neighbour of another
-+    /// style or colour). On a box with rounded corners every side strokes one
-+    /// line around the whole box, clipped to the side.
-+    fn draw_dotted_dashed_sides(&self, scene: &mut impl PaintScene, frame: &CssBox, sides: [Side; 4]) {
-+        let scale = self.scale;
-+        // pyro: the part of the element's space that can show (its paint clip): a side a million
-+        // pixels long makes the marks in it only (`straight_side_marks`).
-+        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
-+        let seen = (screen * self.transform).inverse().transform_rect_bbox(self.context.paint_clip.get());
-+        let seen = (seen.x0.is_finite() && seen.y0.is_finite() && seen.x1.is_finite() && seen.y1.is_finite())
-+            .then_some(seen);
-+        // The visible interval of a side from `origin` along `along` (unit), when bounded.
-+        let visible = |origin: Point, along: Vec2| {
-+            seen.map(|r| {
-+                let ds = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x0, r.y1), Point::new(r.x1, r.y1)]
-+                    .map(|p| (p - origin).dot(along));
-+                (ds.iter().copied().fold(f64::INFINITY, f64::min), ds.iter().copied().fold(f64::NEG_INFINITY, f64::max))
-+            })
-+        };
-+        let thickness = |edge: Edge| match edge {
-+            Edge::Top => frame.border_width.y0,
-+            Edge::Right => frame.border_width.x1,
-+            Edge::Bottom => frame.border_width.y1,
-+            Edge::Left => frame.border_width.x0,
-+        };
-+        let marked = |side: Side| {
-+            side.filter(|(style, color)| {
-+                matches!(style, BorderStyle::Dotted | BorderStyle::Dashed) && color.components[3] > 0.0
-+            })
-+        };
-+        let first_width = thickness(Edge::Top);
-+        let uniform = sides.iter().all(|side| *side == sides[0])
-+            && SIDES.iter().all(|&edge| thickness(edge) == first_width);
- 
+-
 -        // Work out the centre line to stroke and the dash/gap lengths along it.
 -        let (centerline, dash, gap) = if self.frame.has_border_radius() {
 -            // Rounded corners: stroke the rounded centre line running through the
@@ -16300,11 +16266,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -            centerline.close_path();
 -            let perimeter = centerline.perimeter(0.1);
 -            if perimeter <= 0.0 {
-+        if frame.has_border_radius() {
-+            let line = CenterLine::new(frame, scale);
-+            if line.blink_length <= 0.0 {
-                 return;
-             }
+-                return;
+-            }
 -            let period0 = (dash_ratio + gap_ratio) * thickness;
 -            let count = (perimeter / period0).round().max(1.0);
 -            let period = perimeter / count;
@@ -16340,6 +16303,113 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -            };
 -            if length <= 0.0 {
 -                return;
+-            }
+-            let dash0 = dash_ratio * thickness;
+-            let gap0 = gap_ratio * thickness;
+-            // `count` dashes with `count - 1` gaps between them.
+-            let count = ((length + gap0) / (dash0 + gap0)).round().max(1.0);
+-            let r = dash_ratio / gap_ratio;
+-            let gap = length / (count * r + count - 1.0);
+-
+-            let mut line = BezPath::new();
+-            line.move_to(start);
+-            line.line_to(end);
+-            (line, r * gap, gap)
++    /// On a box with square corners each side is a straight line from corner to
++    /// corner over the whole side, so sides of one style and colour overlap in
++    /// their corner (and a side is mitred only against a neighbour of another
++    /// style or colour). On a box with rounded corners every side strokes one
++    /// line around the whole box, clipped to the side.
++    fn draw_dotted_dashed_sides(&self, scene: &mut impl PaintScene, frame: &CssBox, sides: [Side; 4]) {
++        let scale = self.scale;
++        // pyro: the part of the element's space that can show (its paint clip): a side a million
++        // pixels long makes the marks in it only (`straight_side_marks`).
++        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
++        let seen = (screen * self.transform).inverse().transform_rect_bbox(self.context.paint_clip.get());
++        let seen = (seen.x0.is_finite() && seen.y0.is_finite() && seen.x1.is_finite() && seen.y1.is_finite())
++            .then_some(seen);
++        // The visible interval of a side from `origin` along `along` (unit), when bounded.
++        let visible = |origin: Point, along: Vec2| {
++            seen.map(|r| {
++                let ds = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x0, r.y1), Point::new(r.x1, r.y1)]
++                    .map(|p| (p - origin).dot(along));
++                (ds.iter().copied().fold(f64::INFINITY, f64::min), ds.iter().copied().fold(f64::NEG_INFINITY, f64::max))
++            })
+         };
++        let thickness = |edge: Edge| match edge {
++            Edge::Top => frame.border_width.y0,
++            Edge::Right => frame.border_width.x1,
++            Edge::Bottom => frame.border_width.y1,
++            Edge::Left => frame.border_width.x0,
++        };
++        let marked = |side: Side| {
++            side.filter(|(style, color)| {
++                matches!(style, BorderStyle::Dotted | BorderStyle::Dashed) && color.components[3] > 0.0
++            })
++        };
++        let first_width = thickness(Edge::Top);
++        let uniform = sides.iter().all(|side| *side == sides[0])
++            && SIDES.iter().all(|&edge| thickness(edge) == first_width);
+ 
+-        let stroke = Stroke::new(thickness)
+-            .with_caps(Cap::Butt)
+-            .with_dashes(0.0, [dash, gap]);
+-        let clip = self.frame.border_edge_shape(edge);
+-        scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
+-        scene.stroke(&stroke, self.transform, color, None, &centerline);
+-        scene.pop_layer();
+-    }
+-
+-    /// Draw a single `dotted` border edge.
+-    ///
+-    /// Dots are filled circles (diameter == border thickness). Unlike dashes they
+-    /// can't be produced by stroking, because kurbo doesn't emit zero-length dashes
+-    /// (so a round-capped dash pattern would render nothing); drawing them
+-    /// explicitly also lets us anchor a dot in each square corner. Everything is
+-    /// clipped to the edge's region, as for the other styles.
+-    fn draw_dotted_border_edge(&self, scene: &mut impl PaintScene, edge: Edge, color: Color) {
+-        let thickness = self.edge_width(edge);
+-        if thickness <= 0.0 {
+-            return;
+-        }
+-        let radius = thickness / 2.0;
+-
+-        let mut path = BezPath::new();
+-        if self.frame.has_border_radius() {
+-            // Rounded corners: dots spaced evenly around the rounded centre line so
+-            // the ring wraps seamlessly around the corners.
+-            let mut centerline = self.frame.border_slice(0.0, 0.5).padding_box_path();
+-            centerline.close_path();
+-            let perimeter = centerline.perimeter(0.1);
+-            if perimeter <= 0.0 {
++        if frame.has_border_radius() {
++            let line = CenterLine::new(frame, scale);
++            if line.blink_length <= 0.0 {
+                 return;
+             }
+-            let count = (perimeter / (2.0 * thickness)).round().max(1.0);
+-            let spacing = perimeter / count;
+-            for center in sample_points_along_path(&centerline, spacing, count as usize) {
+-                path.extend(Circle::new(center, radius).path_elements(0.1));
+-            }
+-        } else {
+-            // Square corners: a dot is anchored in each corner (both ends of the
+-            // edge, inset by the radius so it sits snugly in the corner) and the
+-            // rest are spread evenly between them.
+-            let bb = self.frame.border_box;
+-            let length = match edge {
+-                Edge::Top | Edge::Bottom => bb.width(),
+-                Edge::Left | Edge::Right => bb.height(),
+-            };
+-            if length <= 0.0 {
+-                return;
+-            }
+-            let dot_center = |along: f64| -> Point {
+-                match edge {
+-                    Edge::Top => Point::new(bb.x0 + along, bb.y0 + radius),
+-                    Edge::Bottom => Point::new(bb.x0 + along, bb.y1 - radius),
+-                    Edge::Left => Point::new(bb.x0 + radius, bb.y0 + along),
+-                    Edge::Right => Point::new(bb.x1 - radius, bb.y0 + along),
 +            for (i, &edge) in SIDES.iter().enumerate() {
 +                let Some((style, color)) = marked(sides[i]) else {
 +                    continue;
@@ -16347,7 +16417,22 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                // All four sides alike draw the same marks: once, in the ring.
 +                if uniform && i > 0 {
 +                    break;
-+                }
+                 }
+-            };
+-
+-            let span = length - thickness;
+-            if span <= 0.0 {
+-                // Edge too short to fit two dots; place a single centred dot.
+-                let center = dot_center(length / 2.0);
+-                path.extend(Circle::new(center, radius).path_elements(0.1));
+-            } else {
+-                // Aim for a centre-to-centre spacing of about two dot diameters,
+-                // then adjust it so the first and last dots land in the corners.
+-                let gaps = (span / (2.0 * thickness)).round().max(1.0) as usize;
+-                let spacing = span / gaps as f64;
+-                for i in 0..=gaps {
+-                    let center = dot_center(radius + i as f64 * spacing);
+-                    path.extend(Circle::new(center, radius).path_elements(0.1));
 +                let clip = if uniform {
 +                    frame.border_ring()
 +                } else {
@@ -16396,68 +16481,16 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                        at += period;
 +                    }
 +                    scene.fill(Fill::NonZero, self.transform, color, None, &dots);
-+                }
+                 }
 +                scene.pop_layer();
              }
--            let dash0 = dash_ratio * thickness;
--            let gap0 = gap_ratio * thickness;
--            // `count` dashes with `count - 1` gaps between them.
--            let count = ((length + gap0) / (dash0 + gap0)).round().max(1.0);
--            let r = dash_ratio / gap_ratio;
--            let gap = length / (count * r + count - 1.0);
--
--            let mut line = BezPath::new();
--            line.move_to(start);
--            line.line_to(end);
--            (line, r * gap, gap)
--        };
--
--        let stroke = Stroke::new(thickness)
--            .with_caps(Cap::Butt)
--            .with_dashes(0.0, [dash, gap]);
++            return;
+         }
+ 
 -        let clip = self.frame.border_edge_shape(edge);
 -        scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
--        scene.stroke(&stroke, self.transform, color, None, &centerline);
+-        scene.fill(Fill::NonZero, self.transform, color, None, &path);
 -        scene.pop_layer();
--    }
--
--    /// Draw a single `dotted` border edge.
--    ///
--    /// Dots are filled circles (diameter == border thickness). Unlike dashes they
--    /// can't be produced by stroking, because kurbo doesn't emit zero-length dashes
--    /// (so a round-capped dash pattern would render nothing); drawing them
--    /// explicitly also lets us anchor a dot in each square corner. Everything is
--    /// clipped to the edge's region, as for the other styles.
--    fn draw_dotted_border_edge(&self, scene: &mut impl PaintScene, edge: Edge, color: Color) {
--        let thickness = self.edge_width(edge);
--        if thickness <= 0.0 {
-             return;
-         }
--        let radius = thickness / 2.0;
- 
--        let mut path = BezPath::new();
--        if self.frame.has_border_radius() {
--            // Rounded corners: dots spaced evenly around the rounded centre line so
--            // the ring wraps seamlessly around the corners.
--            let mut centerline = self.frame.border_slice(0.0, 0.5).padding_box_path();
--            centerline.close_path();
--            let perimeter = centerline.perimeter(0.1);
--            if perimeter <= 0.0 {
--                return;
--            }
--            let count = (perimeter / (2.0 * thickness)).round().max(1.0);
--            let spacing = perimeter / count;
--            for center in sample_points_along_path(&centerline, spacing, count as usize) {
--                path.extend(Circle::new(center, radius).path_elements(0.1));
--            }
--        } else {
--            // Square corners: a dot is anchored in each corner (both ends of the
--            // edge, inset by the radius so it sits snugly in the corner) and the
--            // rest are spread evenly between them.
--            let bb = self.frame.border_box;
--            let length = match edge {
--                Edge::Top | Edge::Bottom => bb.width(),
--                Edge::Left | Edge::Right => bb.height(),
 +        let bb = frame.border_box;
 +        // The sides that need no clip, by colour, each colour filled at once so
 +        // that the marks of two sides in a corner are not blended twice.
@@ -16465,38 +16498,13 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        for (i, &edge) in SIDES.iter().enumerate() {
 +            let Some((style, color)) = marked(sides[i]) else {
 +                continue;
-             };
--            if length <= 0.0 {
--                return;
--            }
--            let dot_center = |along: f64| -> Point {
--                match edge {
--                    Edge::Top => Point::new(bb.x0 + along, bb.y0 + radius),
--                    Edge::Bottom => Point::new(bb.x0 + along, bb.y1 - radius),
--                    Edge::Left => Point::new(bb.x0 + radius, bb.y0 + along),
--                    Edge::Right => Point::new(bb.x1 - radius, bb.y0 + along),
--                }
++            };
 +            let (origin, along, across, length) = match edge {
 +                Edge::Top => (Point::new(bb.x0, bb.y0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), bb.width()),
 +                Edge::Bottom => (Point::new(bb.x0, bb.y1), Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0), bb.width()),
 +                Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
 +                Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
-             };
--
--            let span = length - thickness;
--            if span <= 0.0 {
--                // Edge too short to fit two dots; place a single centred dot.
--                let center = dot_center(length / 2.0);
--                path.extend(Circle::new(center, radius).path_elements(0.1));
--            } else {
--                // Aim for a centre-to-centre spacing of about two dot diameters,
--                // then adjust it so the first and last dots land in the corners.
--                let gaps = (span / (2.0 * thickness)).round().max(1.0) as usize;
--                let spacing = span / gaps as f64;
--                for i in 0..=gaps {
--                    let center = dot_center(radius + i as f64 * spacing);
--                    path.extend(Circle::new(center, radius).path_elements(0.1));
--                }
++            };
 +            let side = ((along, across), (length, thickness(edge)));
 +            // A neighbour of another style or colour meets this side in a
 +            // mitre; one alike is drawn over, and a missing one leaves the
@@ -16515,7 +16523,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                let (_, marks, dots) = &mut open[group];
 +                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale, visible(origin, side.0.0));
 +                continue;
-             }
++            }
 +            let mut marks = BezPath::new();
 +            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale, visible(origin, side.0.0));
 +            // The side's box, an end cut back along the corner's diagonal where
@@ -16537,12 +16545,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
 +            scene.fill(Fill::NonZero, self.transform, color, None, &marks);
 +            scene.pop_layer();
-         }
--
--        let clip = self.frame.border_edge_shape(edge);
--        scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
--        scene.fill(Fill::NonZero, self.transform, color, None, &path);
--        scene.pop_layer();
++        }
 +        for (color, marks, _) in open {
 +            scene.fill(Fill::NonZero, self.transform, color, None, &marks);
 +        }
@@ -16649,7 +16652,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,44 +1246,536 @@
+@@ -589,44 +1246,617 @@
          }
      }
  
@@ -16977,6 +16980,81 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 -        let outline = self.style.get_outline();
 +    /// pyro: the box an `auto` outline goes around: the border box, and the boxes of the
 +    /// element's descendants that overflow it unless it clips them.
++    /// pyro: the rects an `auto` outline goes around (device px, in its border box's frame): its
++    /// border box, and the border boxes of descendants reaching out of it (not into a box that
++    /// clips them), as Chromium's outline rects with block ink overflow. One rect: none reach out.
++    fn auto_outline_rects(&self) -> Vec<Rect> {
++        use style::computed_values::overflow_x::T as Overflow;
++        let bb = self.frame.border_box;
++        let mut rects = vec![bb];
++        let clips = |node: &blitz_dom::Node| {
++            node.primary_styles().is_some_and(|s| {
++                let b = s.get_box();
++                b.overflow_x != Overflow::Visible || b.overflow_y != Overflow::Visible
++            })
++        };
++        if self.text_input.is_some() || clips(self.node) {
++            return rects;
++        }
++        let dom = self.context.dom.as_ref();
++        let scale = self.scale;
++        let mut stack: Vec<(blitz_dom::NodeId, f64, f64)> = Vec::new();
++        let push_children = |stack: &mut Vec<(blitz_dom::NodeId, f64, f64)>, node: &blitz_dom::Node, x: f64, y: f64| {
++            if let Some(children) = node.layout_children.borrow().as_ref() {
++                for &c in children.iter() {
++                    stack.push((c, x, y));
++                }
++            }
++        };
++        let outside = |r: &Rect| r.x0 < bb.x0 - 0.01 || r.y0 < bb.y0 - 0.01 || r.x1 > bb.x1 + 0.01 || r.y1 > bb.y1 + 0.01;
++        // The content of each line of an inline root at (x, y) (CSS px): text reaching out counts
++        // as boxes do (Chromium's line box fragments).
++        let lines = |rects: &mut Vec<Rect>, node: &blitz_dom::Node, x: f64, y: f64| {
++            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else { return };
++            let l = node.final_layout();
++            let ox = (x + (l.padding.left + l.border.left) as f64) * scale;
++            let oy = (y + (l.padding.top + l.border.top) as f64) * scale + text.block_offset as f64;
++            for line in text.layout.lines() {
++                let m = line.metrics();
++                if m.advance <= 0.0 {
++                    continue;
++                }
++                let r = Rect::new(
++                    ox + m.offset as f64,
++                    oy + m.block_min_coord as f64,
++                    ox + (m.offset + m.advance) as f64,
++                    oy + m.block_max_coord as f64,
++                );
++                if outside(&r) {
++                    rects.push(r);
++                }
++            }
++        };
++        lines(&mut rects, self.node, 0.0, 0.0);
++        push_children(&mut stack, self.node, 0.0, 0.0);
++        while let Some((id, x, y)) = stack.pop() {
++            let Some(node) = dom.get_node(id) else { continue };
++            let l = node.final_layout();
++            let (cx, cy) = (x + l.location.x as f64, y + l.location.y as f64);
++            if node.is_element() && l.size.width > 0.0 && l.size.height > 0.0 {
++                let r = Rect::new(cx * scale, cy * scale, (cx + l.size.width as f64) * scale, (cy + l.size.height as f64) * scale);
++                if outside(&r) {
++                    rects.push(r);
++                }
++            }
++            if !clips(node) {
++                lines(&mut rects, node, cx, cy);
++                push_children(&mut stack, node, cx, cy);
++            }
++        }
++        rects
++    }
+ 
+-        let current_color = self.style.clone_color();
+-        let color = outline
+-            .outline_color
+-            .resolve_to_absolute(&current_color)
+-            .as_srgb_color();
 +    fn auto_outline_box(&self) -> Rect {
 +        use style::computed_values::overflow_x::T as Overflow;
 +        let bb = self.frame.border_box;
@@ -16988,12 +17066,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        }
 +    }
  
--        let current_color = self.style.clone_color();
--        let color = outline
--            .outline_color
--            .resolve_to_absolute(&current_color)
--            .as_srgb_color();
--
 -        let style = match outline.outline_style {
 -            OutlineStyle::Auto => return,
 -            OutlineStyle::BorderStyle(style) => style,
@@ -17010,6 +17082,17 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        {
 +            let path = match self.border_shape() {
 +                Some(shape) => shape.outer_edge(),
++                // pyro: descendants' boxes reach out of it: the ring is one path along the union
++                // of the boxes (Chromium's focus ring over the element's outline rects, not their
++                // bounding box), its joins round.
++                None if self.auto_outline_rects().len() > 1 => {
++                    use crate::kurbo_css::contoured::{boolean, flatten};
++                    let shapes: Vec<_> = self.auto_outline_rects().iter().map(|r| flatten(&r.to_path(0.1))).collect();
++                    let union = boolean(&shapes, |inside| inside.iter().any(|&b| b));
++                    let stroke = Stroke::new(width).with_join(Join::Round);
++                    scene.stroke(&stroke, self.transform, color, None, &union);
++                    return;
++                }
 +                None => {
 +                    // (Around the overflowing descendants' boxes too: that box, its corners
 +                    // rounded as the border box's.)

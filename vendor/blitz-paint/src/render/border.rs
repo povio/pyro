@@ -1565,6 +1565,76 @@ impl ElementCx<'_, '_> {
     /// ✅ hidden - Defines a hidden border
     /// pyro: the box an `auto` outline goes around: the border box, and the boxes of the
     /// element's descendants that overflow it unless it clips them.
+    /// pyro: the rects an `auto` outline goes around (device px, in its border box's frame): its
+    /// border box, and the border boxes of descendants reaching out of it (not into a box that
+    /// clips them), as Chromium's outline rects with block ink overflow. One rect: none reach out.
+    fn auto_outline_rects(&self) -> Vec<Rect> {
+        use style::computed_values::overflow_x::T as Overflow;
+        let bb = self.frame.border_box;
+        let mut rects = vec![bb];
+        let clips = |node: &blitz_dom::Node| {
+            node.primary_styles().is_some_and(|s| {
+                let b = s.get_box();
+                b.overflow_x != Overflow::Visible || b.overflow_y != Overflow::Visible
+            })
+        };
+        if self.text_input.is_some() || clips(self.node) {
+            return rects;
+        }
+        let dom = self.context.dom.as_ref();
+        let scale = self.scale;
+        let mut stack: Vec<(blitz_dom::NodeId, f64, f64)> = Vec::new();
+        let push_children = |stack: &mut Vec<(blitz_dom::NodeId, f64, f64)>, node: &blitz_dom::Node, x: f64, y: f64| {
+            if let Some(children) = node.layout_children.borrow().as_ref() {
+                for &c in children.iter() {
+                    stack.push((c, x, y));
+                }
+            }
+        };
+        let outside = |r: &Rect| r.x0 < bb.x0 - 0.01 || r.y0 < bb.y0 - 0.01 || r.x1 > bb.x1 + 0.01 || r.y1 > bb.y1 + 0.01;
+        // The content of each line of an inline root at (x, y) (CSS px): text reaching out counts
+        // as boxes do (Chromium's line box fragments).
+        let lines = |rects: &mut Vec<Rect>, node: &blitz_dom::Node, x: f64, y: f64| {
+            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else { return };
+            let l = node.final_layout();
+            let ox = (x + (l.padding.left + l.border.left) as f64) * scale;
+            let oy = (y + (l.padding.top + l.border.top) as f64) * scale + text.block_offset as f64;
+            for line in text.layout.lines() {
+                let m = line.metrics();
+                if m.advance <= 0.0 {
+                    continue;
+                }
+                let r = Rect::new(
+                    ox + m.offset as f64,
+                    oy + m.block_min_coord as f64,
+                    ox + (m.offset + m.advance) as f64,
+                    oy + m.block_max_coord as f64,
+                );
+                if outside(&r) {
+                    rects.push(r);
+                }
+            }
+        };
+        lines(&mut rects, self.node, 0.0, 0.0);
+        push_children(&mut stack, self.node, 0.0, 0.0);
+        while let Some((id, x, y)) = stack.pop() {
+            let Some(node) = dom.get_node(id) else { continue };
+            let l = node.final_layout();
+            let (cx, cy) = (x + l.location.x as f64, y + l.location.y as f64);
+            if node.is_element() && l.size.width > 0.0 && l.size.height > 0.0 {
+                let r = Rect::new(cx * scale, cy * scale, (cx + l.size.width as f64) * scale, (cy + l.size.height as f64) * scale);
+                if outside(&r) {
+                    rects.push(r);
+                }
+            }
+            if !clips(node) {
+                lines(&mut rects, node, cx, cy);
+                push_children(&mut stack, node, cx, cy);
+            }
+        }
+        rects
+    }
+
     fn auto_outline_box(&self) -> Rect {
         use style::computed_values::overflow_x::T as Overflow;
         let bb = self.frame.border_box;
@@ -1589,6 +1659,17 @@ impl ElementCx<'_, '_> {
         {
             let path = match self.border_shape() {
                 Some(shape) => shape.outer_edge(),
+                // pyro: descendants' boxes reach out of it: the ring is one path along the union
+                // of the boxes (Chromium's focus ring over the element's outline rects, not their
+                // bounding box), its joins round.
+                None if self.auto_outline_rects().len() > 1 => {
+                    use crate::kurbo_css::contoured::{boolean, flatten};
+                    let shapes: Vec<_> = self.auto_outline_rects().iter().map(|r| flatten(&r.to_path(0.1))).collect();
+                    let union = boolean(&shapes, |inside| inside.iter().any(|&b| b));
+                    let stroke = Stroke::new(width).with_join(Join::Round);
+                    scene.stroke(&stroke, self.transform, color, None, &union);
+                    return;
+                }
                 None => {
                     // (Around the overflowing descendants' boxes too: that box, its corners
                     // rounded as the border box's.)
