@@ -683,6 +683,7 @@ pub struct BaseDocument {
     /// pyro: the elements with scroll pseudo-element boxes (`ElementData::scroll`).
     pub(crate) scroll_pseudo_owners: std::collections::HashSet<NodeId>,
     pub(crate) transition_trees: Option<Box<style::FxHashMap<NodeId, crate::view_transition::Tree>>>,
+    pub transition_paint: Option<Box<crate::view_transition::PaintState>>,
     /// pyro: each element with `scroll-target-group: auto` and the links in its group.
     pub(crate) scroll_target_groups: Vec<(NodeId, Vec<NodeId>)>,
     /// pyro: each scroll container's current scroll target (CSS Overflow 5 § 2.1; the viewport's
@@ -1011,6 +1012,7 @@ impl BaseDocument {
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             transition_trees: None,
+            transition_paint: None,
             scroll_target_groups: Vec::new(),
             scroll_targets: Default::default(),
             first_line_styles: false,

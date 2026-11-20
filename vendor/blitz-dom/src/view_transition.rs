@@ -15,6 +15,19 @@ pub struct Participant {
     pub new: Option<Geometry>,
 }
 
+#[derive(Default)]
+pub struct PaintState {
+    pub roots: style::FxHashMap<NodeId, NodeId>,
+    pub suppressed: style::FxHashSet<NodeId>,
+    pub images: style::FxHashMap<NodeId, Raster>,
+}
+
+pub struct Raster {
+    pub pixels: std::sync::Arc<Vec<u8>>,
+    pub size: (f64, f64),
+    pub ink: [f64; 4],
+}
+
 #[derive(Clone, Copy)]
 pub struct Geometry {
     pub size: (f64, f64),
@@ -49,6 +62,35 @@ pub(crate) struct Tree {
 }
 
 impl BaseDocument {
+    pub fn activate_transition_paint(&mut self, origin: NodeId, images: Vec<Option<Raster>>) -> bool {
+        use PseudoElement::*;
+        let Some(tree) = self.transition_trees.as_ref().and_then(|trees| trees.get(&origin)) else { return false };
+        let mut images = images.into_iter();
+        let mut bindings = Vec::new();
+        for item in &tree.nodes {
+            if !matches!(item.pseudo, ViewTransitionOld(_) | ViewTransitionNew(_)) { continue; }
+            let Some(image) = images.next() else { return false; };
+            if let Some(image) = image { bindings.push((item.id, image)); }
+            else if matches!(item.pseudo, ViewTransitionNew(_)) {
+                let mut ancestor = Some(item.id);
+                let mut visible = true;
+                while let Some(id) = ancestor.filter(|id| *id != origin) {
+                    let node = &self.nodes[id];
+                    if node.taffy_display() == taffy::Display::None { visible = false; break; }
+                    ancestor = node.parent;
+                }
+                if visible { return false; }
+            }
+        }
+        let root = tree.nodes[0].id;
+        let paint = self.transition_paint.get_or_insert_with(Default::default);
+        paint.suppressed.extend(tree.live_participants.iter().copied());
+        paint.roots.insert(origin, root);
+        paint.images.extend(bindings);
+        self.resolve_transition_transforms(root);
+        self.build_transition_paint_tree(root);
+        true
+    }
     pub fn transition_animation_styles(&self, origin: NodeId) -> Option<Vec<(usize, String, Arc<ComputedValues>)>> {
         let tree = self.transition_trees.as_ref()?.get(&origin)?;
         let mut result = Vec::new();
@@ -160,11 +202,13 @@ impl BaseDocument {
                 (part.new.is_some(), ViewTransitionNew(arg), "in"),
             ] {
                 if exists {
+                    let intrinsic = if fade == "out" { part.old? } else { part.new? };
                     descriptors.push((
                         pseudo,
                         group + 1,
                         format!(
-                            "animation-name:-ua-view-transition-fade-{fade}{}",
+                            "aspect-ratio:{} / {};animation-name:-ua-view-transition-fade-{fade}{}",
+                            intrinsic.size.0, intrinsic.size.1,
                             if both { ",-ua-mix-blend-mode-plus-lighter" } else { "" }
                         ),
                         format!("::view-transition-{}({ident})", if fade == "out" {"old"} else {"new"}),

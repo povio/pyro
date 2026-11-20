@@ -952,6 +952,10 @@ impl BaseDocument {
     ///
     /// pyro: `containing`: what `node_id`'s containing block gives the transforms of the
     /// boxes it contains (its perspective).
+    pub(crate) fn resolve_transition_transforms(&mut self, root: NodeId) {
+        self.resolve_transforms(root, true, ContainingTransform::default());
+    }
+
     fn resolve_transforms(&mut self, node_id: NodeId, resolve_all: bool, containing: ContainingTransform) -> Rect {
         if !self.nodes.contains_key(node_id) {
             return Rect::ZERO;

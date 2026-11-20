@@ -689,6 +689,10 @@ impl BaseDocument {
 
     /// `stacking_context` is the entry list of the nearest ancestor stacking
     /// context, or `None` when `node_id` is itself a stacking-context root.
+    pub(crate) fn build_transition_paint_tree(&mut self, root: NodeId) {
+        self.build_paint_tree_impl(root, None);
+    }
+
     fn build_paint_tree_impl(
         &mut self,
         node_id: NodeId,

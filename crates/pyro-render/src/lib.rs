@@ -1497,7 +1497,7 @@ impl Renderer {
                 m.doc.clear_content_visibility_forcing();
             }
         }
-        let (doc, clip, _transitions) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
+        let (doc, clip, mut transitions) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
@@ -1596,11 +1596,13 @@ impl Renderer {
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
+        for transition in &mut transitions { transition.install(doc); }
         anyrender_svg::with_text_threshold(threshold, || {
             blitz_paint::with_glyph_grid(transform, subpixel, || {
                 blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
             });
         });
+        for transition in &transitions { transition.clear(doc); }
         doc.set_dom_selection(None);
         doc.set_dom_highlights(Vec::new());
         // pyro: a backdrop filter's output takes the place of its backdrop where the page painted

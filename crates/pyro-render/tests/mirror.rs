@@ -101,6 +101,25 @@ fn view_transition_collection_bounds_work_before_visiting_children() {
 }
 
 #[test]
+fn view_transition_old_paints_in_styled_group_and_suppresses_original() {
+    use pyro_dom::{geometry::{TransitionBox, TransitionFrame}, snapshot::render_key};
+    let page = Page::new("<!doctype html><style>*{margin:0}main{position:relative;width:80px;height:80px}b{display:block;background:red;width:20px;height:20px;view-transition-name:tile}main::view-transition-new(tile){display:none}main::view-transition-group(tile){transform:translateX(40px)}main::view-transition-old(tile){animation:none}</style><main><b></b></main>");
+    let mut snap = page.snapshot(1, page.tree());
+    let image = TransitionBox { key: render_key(page.find("b")), name: "tile".into(), size: (20.,20.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,20.,20.], rgba: Some(Arc::new([0,128,0,255].repeat(400))) };
+    snap.transition_frames.push(TransitionFrame { document: snap.frames.nonce.clone(), root: render_key(page.find("main")), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(), reservation: Arc::new(()) });
+    let mut renderer = Renderer::new();
+    for (original, shifted) in [([255,255,255,255],[0,128,0,255]), ([255,0,0,255],[255,255,255,255])] {
+        let scene = paint(&mut renderer, &snap);
+        let (bitmap, _) = renderer.raster(scene, Backend::Cpu);
+        for (x, expected) in [(5, original),(45, shifted)] {
+            let offset = (5 * bitmap.width as usize + x) * 4;
+            assert_eq!(&bitmap.data[offset..offset+4], &expected, "x={x}");
+        }
+        snap.transition_frames.clear();
+    }
+}
+
+#[test]
 fn view_transition_recycled_document_has_fresh_snapshot_identity() {
     let mut dom = Dom::new();
     let old = dom.create_document(pyro_dom::DocumentKind::Html, "about:blank");

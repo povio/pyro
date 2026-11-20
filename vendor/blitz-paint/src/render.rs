@@ -467,6 +467,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             viewport_clip_rect,
         );
 
+        if let Some(root) = self.dom.transition_paint.as_deref().and_then(|state| state.roots.get(&root_id)) {
+            self.render_element(scene, *root, Affine::translate((self.initial_x, self.initial_y)), viewport_clip_rect);
+        }
         if !self.top_layer.is_empty() {
             self.paint_top_layer(scene, root_id, viewport_scroll, viewport_clip_rect);
         }
@@ -1065,6 +1068,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         clip_rect: Rect,
     ) {
         if self.transition_children.is_some_and(|children| children.contains(&node_id)) && self.top_layer_root.get() != Some(node_id) { return; }
+        if self.dom.transition_paint.as_deref().is_some_and(|state| state.suppressed.contains(&node_id)) { return; }
         if self.capture_budget.is_some_and(|budget| !budget.take(1)) { return; }
         // pyro: the element's clip while it paints (`PaintContext::paint_clip`).
         let outer_clip = self.paint_clip.replace(clip_rect);
@@ -1897,6 +1901,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 if !hidden {
                     if !skipped && content_filter.is_none() {
                         cx.draw_image(scene);
+                        if let Some(image) = self.dom.transition_paint.as_deref().and_then(|state| state.images.get(&node.id)) {
+                            let size = node.final_layout().size;
+                            let [left, top, right, bottom] = image.ink;
+                            let (width, height) = ((right-left) as u32, (bottom-top) as u32);
+                            if width != 0 && height != 0 && image.size.0 > 0. && image.size.1 > 0. {
+                                let brush = peniko::ImageBrush::new(ImageData { data: peniko::Blob::new(image.pixels.clone()), format: peniko::ImageFormat::Rgba8, width, height, alpha_type: peniko::ImageAlphaType::AlphaPremultiplied });
+                                let factor = Affine::scale_non_uniform(size.width as f64 * self.scale / image.size.0, size.height as f64 * self.scale / image.size.1);
+                                scene.draw_image(brush.as_ref(), cx.transform * factor * Affine::translate((left,top)));
+                            }
+                        }
                         cx.draw_selection_tint(scene);
                         cx.draw_content_gradient(scene);
                     }
@@ -1944,6 +1958,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         cx.draw_inline_boxes_over_atomics(scene, content_position);
                     }
                 }
+        }
+        if !node.is_root_element() && let Some(root) = self.dom.transition_paint.as_deref().and_then(|state| state.roots.get(&node.id)) {
+            self.render_element(scene, *root, cx.transform, child_clip_rect);
         }
         self.layer_manager.maybe_pop_layer(scene, content_layer);
         self.clip_escapes_of.set(outer_escapes);
