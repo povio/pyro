@@ -131,6 +131,23 @@ fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
 }
 
 #[test]
+fn contained_floats_fragment_without_excluding_siblings() {
+    for (count, side) in [(2, "left"), (3, "left"), (2, "right")] {
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{gap:0;columns:{count};width:160px;height:100px;column-fill:auto}}header{{height:40px}}section{{columns:2;gap:0}}aside{{contain:layout;height:0}}b{{float:{side};width:12px;height:100px}}article{{contain:size;width:20px;height:80px}}</style><main><header></header><section id=s><aside id=a><b id=f></b></aside><article id=m></article></section></main>"));
+        let outer_width = 160.0 / f64::from(count);
+        for (id, heights) in [("s", &[80.0][..]), ("m", &[80.0]), ("a", &[0.0, 0.0]), ("f", &[80.0, 20.0])] {
+            let pieces = rects(&p, id);
+            assert_eq!(pieces.len(), heights.len(), "{count} {side} {id}: {pieces:?}");
+            for (index, (piece, height)) in pieces.iter().zip(heights).enumerate() {
+                let inset = if id == "f" && side == "right" { outer_width / 2.0 - 12.0 } else { 0.0 };
+                let x = outer_width + index as f64 * outer_width / 2.0 + inset;
+                assert!((piece[0] - x).abs() <= 0.51 && piece[1] == 0.0 && piece[3] == *height, "{count} {side} {id} {piece:?} vs ({x}, 0, _, {height})");
+            }
+        }
+    }
+}
+
+#[test]
 fn parallel_children_spend_the_parent_slot_independently_of_later_siblings() {
     for (count, tail) in [(4, "static"), (5, "static"), (4, "absolute")] {
         let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{gap:0;columns:{count};width:200px;height:50px;column-fill:auto}}section{{min-height:190px;border-inline:4px solid}}header{{height:10px}}aside{{height:0}}article{{height:29px;break-inside:avoid}}i{{display:block;height:1px;position:{tail}}}footer{{height:4px}}</style><main><section id=p><header></header><aside id=a><article></article><article></article><article></article></aside><i></i></section><footer id=f></footer></main>"));

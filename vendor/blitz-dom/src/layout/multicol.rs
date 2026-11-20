@@ -381,6 +381,7 @@ struct Breaks {
     forced: Vec<f32>,
     overflow_breaks: Vec<FlowContinuation>,
     overflow_parents: Vec<FlowContinuation>,
+    overflow_continuations: std::collections::HashMap<crate::NodeId, f32>,
     parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
     /// pyro: the multi-column containers in the strip's flow (no other break context between
     /// them and the container) and their tops.
@@ -972,7 +973,8 @@ impl LayoutPassState<'_> {
                 && offset > EPSILON && outer > offset + EPSILON
             {
                 let room = outer - offset;
-                let row_end = content_top + room * count as f32;
+                let slots = breaks.fill_range(breaks.start, breaks.end, room, count + 1).columns;
+                let row_end = slots.iter().take(count).last().map_or(content_top, |slot| slot.1);
                 let mut pending = Vec::new();
                 let mut floats: Vec<(f32, f32, f32, f32)> = Vec::new();
                 pending.extend(self.nodes[dom_id].layout_children.borrow().iter().flatten().rev().take(MAX_FRAGMENTS).map(|&id| (id, 0.0, 0.0)));
@@ -991,11 +993,20 @@ impl LayoutPassState<'_> {
                         floats.push((x - layout.margin.left, x + layout.size.width + layout.margin.right,
                             y - layout.margin.top, (y + layout.size.height + layout.margin.bottom).min(row_end)));
                     } else if fragmentable(child, &style) && style.clone_display().inside() == DisplayInside::Flow {
+                        let item = child.layout_style();
+                        if item.contain().establishes_independent_formatting_context()
+                            || taffy::BlockItemStyle::align_content(&item).keyword != taffy::AlignContentKeyword::Normal
+                            || taffy::BlockItemStyle::establishes_independent_formatting_context(&item)
+                            || taffy::LayoutBlockContainer::block_child_establishes_formatting_context(self, crate::taffy_node_id(id))
+                        { continue; }
                         let left = work.saturating_sub(pending.len());
                         pending.extend(child.layout_children.borrow().iter().flatten().rev().take(left).map(|&id| (id, x, y)));
                     } else if !fragmentable(child, &style)
-                        && layout.size.height > room + EPSILON && layout.size.height <= outer + EPSILON
+                        && y < row_end && layout.size.height <= outer + EPSILON
                     {
+                        let index = slots.partition_point(|slot| slot.1 <= y + EPSILON);
+                        let Some(&(start, _)) = slots.get(index).filter(|_| index < count) else { continue };
+                        if layout.size.height <= room - (y - start).max(0.0) + EPSILON { continue; }
                         if floats.len() > work { break; }
                         work -= floats.len();
                         let floor = floats.iter().filter(|&&(left, right, top, bottom)| {
@@ -1011,7 +1022,6 @@ impl LayoutPassState<'_> {
                                 at = self.nodes[node].layout_parent.get();
                             }
                             changed = true;
-                            break;
                         }
                     }
                 }
@@ -1960,7 +1970,7 @@ impl LayoutPassState<'_> {
                 }
             }
         }
-        let mut continuation_ends = std::collections::HashMap::<_, f32>::new();
+        let mut continuation_ends = breaks.overflow_continuations;
         for token in &breaks.overflow_breaks {
             let layout = self.nodes[token.resume].unrounded_layout();
             let end = token.origin + layout.location.y + layout.size.height;
@@ -1973,10 +1983,6 @@ impl LayoutPassState<'_> {
                 let start = token.origin + token.consumed;
                 let earliest = consumed_by_owner.entry(token.owner).or_insert(start);
                 *earliest = earliest.min(start);
-                let layout = self.nodes[token.resume].unrounded_layout();
-                let end = token.origin + layout.location.y + layout.scrollable_overflow_rect.bottom();
-                let entry = continuation_ends.entry(token.resume).or_insert(end);
-                *entry = entry.max(end);
             }
         }
         let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
@@ -2792,6 +2798,7 @@ impl BaseDocument {
             forced: found.forced,
             overflow_breaks: found.overflow_breaks,
             overflow_parents: found.overflow_parents,
+            overflow_continuations: found.overflow_continuations,
             parallel_floats: found.parallel_floats,
             nested: found.nested,
             baselines: found.baselines,
@@ -3265,6 +3272,9 @@ impl BaseDocument {
                     found.strict.push((child_top, child_bottom));
                 }
             } else if fragmentable(child, &style) {
+                if layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON {
+                    found.overflow_continuations.insert(child_id, child_top + layout.scrollable_overflow_rect.bottom());
+                }
                 if avoids_column_break_inside(&style) {
                     found.strict.push((child_top, child_bottom));
                 }
@@ -3385,6 +3395,7 @@ struct Found {
     parallel_break_after: bool,
     overflow_breaks: Vec<FlowContinuation>,
     overflow_parents: Vec<FlowContinuation>,
+    overflow_continuations: std::collections::HashMap<crate::NodeId, f32>,
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::baselines`].
@@ -3841,6 +3852,7 @@ mod tests {
             forced: Vec::new(),
             overflow_breaks: Vec::new(),
             overflow_parents: Vec::new(),
+            overflow_continuations: Default::default(),
             parallel_floats: Vec::new(),
             nested: Vec::new(),
             baselines: Vec::new(),
