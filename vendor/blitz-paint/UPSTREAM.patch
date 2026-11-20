@@ -25416,6 +25416,39 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                    start.resolve(line_length).px() as f64 * scale,
 -                    end.resolve(line_length).px() as f64 * scale,
 -                )
+-            }
+-            GenericTextDecorationInset::Auto => (0.0, 0.0),
+-        };
+-
+-        if deco.line.contains(TextDecorationLine::UNDERLINE) {
+-            let size = decoration_size(
+-                &deco.thickness,
+-                geom.underline_size,
+-                geom.css_font_size,
+-                scale,
+-            );
+-
+-            // `text-underline-offset` moves the underline away from the text. `auto` keeps
+-            // the font's suggested position; otherwise it resolves against the font size
+-            // (percentages relative to 1em).
+-            let extra_underline_offset = deco
+-                .underline_offset
+-                .as_ref()
+-                .map(|lp| lp.resolve(Length::new(geom.css_font_size as f32)).px() as f64 * scale)
+-                .unwrap_or(0.0);
+-
+-            // `text-underline-position: under` places the underline below the glyph box
+-            // (below descenders) rather than at the font's suggested position near the
+-            // alphabetic baseline. We anchor the top of the line at the descent so it clears
+-            // descending glyphs like "gqy".
+-            // An explicit offset under `auto` is taken from the alphabetic
+-            // baseline, as CSS and Chrome have it, not from the auto gap.
+-            let base_offset = if deco.underline_under {
+-                -geom.descent
+-            } else if deco.underline_offset.is_some() && !deco.underline_from_font {
+-                0.0
+-            } else {
+-                geom.underline_offset
 +        // left and right ends (pyro: resolved per box in `stroke_text`, see `line_insets`).
 +        let (inset_start, inset_end) = (acc.inset_left, acc.inset_right);
 +        // pyro: the shadow this phase draws over each part of the line: the runs' shadows, in
@@ -25425,7 +25458,25 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        if let DecorationPhase::Shadow(index) = phase {
 +            let shadow_of = |(_, _, shadows): &(f64, f64, std::ops::Range<usize>)| {
 +                run_shadows.get(shadows.clone()).and_then(|shadows| shadows.get(index))
-+            };
+             };
+-            let offset = base_offset - extra_underline_offset as f32;
+-
+-            // A `double` underline extends downward, away from the text.
+-            draw_decoration_line(
+-                scene,
+-                transform,
+-                scale,
+-                acc.min_x,
+-                width,
+-                geom.baseline,
+-                offset,
+-                size,
+-                &brush,
+-                1.0,
+-                deco.style,
+-                inset_start,
+-                inset_end,
+-            );
 +            let mut start = f64::NEG_INFINITY;
 +            for (i, segment) in acc.segments.iter().enumerate() {
 +                let shadow = shadow_of(segment);
@@ -25439,12 +25490,62 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    shadow_pieces.push((start, end, shadow));
 +                }
 +                start = end;
-             }
--            GenericTextDecorationInset::Auto => (0.0, 0.0),
++            }
 +            if shadow_pieces.is_empty() {
 +                continue;
 +            }
-+        }
+         }
+-        if deco.line.contains(TextDecorationLine::OVERLINE) {
+-            // Fonts don't provide a dedicated overline metric, so reuse the underline
+-            // thickness. The line sits at the top of the "em box": its lower edge rests on
+-            // the ascent so it clears the glyphs, and it extends upward from there.
+-            //
+-            // Browsers use the OS/2 `usWinAscent` for this edge, which is taller than the
+-            // hhea-based ascent Parley reports; using the smaller value would draw the
+-            // overline too low. Fall back to Parley's ascent for fonts without a usable
+-            // OS/2 table.
+-            let size = decoration_size(
+-                &deco.thickness,
+-                geom.underline_size,
+-                geom.css_font_size,
+-                scale,
+-            );
+-            let ascent =
+-                win_ascent(win_ascent_ratios, &geom.font, geom.font_size).unwrap_or(geom.ascent);
+-            let offset = ascent + size;
+-
+-            // A `double` overline extends upward, away from the text.
+-            draw_decoration_line(
+-                scene,
+-                transform,
+-                scale,
+-                acc.min_x,
+-                width,
+-                geom.baseline,
+-                offset,
+-                size,
+-                &brush,
+-                -1.0,
+-                deco.style,
+-                inset_start,
+-                inset_end,
+-            );
+-        }
+-        if deco.line.contains(TextDecorationLine::LINE_THROUGH) {
+-            let size = decoration_size(
+-                &deco.thickness,
+-                geom.strikethrough_size,
+-                geom.css_font_size,
+-                scale,
+-            );
+-
+-            // Centre the line-through a third of the ascent above the baseline, matching
+-            // Chrome (which places it `2/3 * ascent` below the text-top). Parley's
+-            // `strikethrough_offset` (the font's `yStrikeoutPosition`) sits lower and would
+-            // draw the line too close to the baseline.
+-            let ascent =
+-                win_ascent(win_ascent_ratios, &geom.font, geom.font_size).unwrap_or(geom.ascent);
+-            let offset = ascent / 3.0 + size / 2.0;
 +        let baseline = f64::from(geom.baseline);
 +        // pyro: a decoration line (or its shadow), `top` CSS px below the baseline and
 +        // `thickness` CSS px thick (both whole); a wavy or double line reaches a few sizes further.
@@ -25568,15 +25669,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                    }
 +                });
 +            }
-         };
--
--        if deco.line.contains(TextDecorationLine::UNDERLINE) {
--            let size = decoration_size(
--                &deco.thickness,
--                geom.underline_size,
--                geom.css_font_size,
--                scale,
--            );
++        };
 +        // The font's ascent and descent in whole CSS px.
 +        let ascent = (f64::from(geom.content_ascent) / scale).round();
 +        let descent = (f64::from(geom.content_descent) / scale).round();
@@ -25592,29 +25685,27 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        // still goes away from the text: toward the line-over side for the underline.
 +        let outward = if geom.central.is_some() && deco.underline_over_in_vertical { -1.0 } else { 1.0 };
  
--            // `text-underline-offset` moves the underline away from the text. `auto` keeps
--            // the font's suggested position; otherwise it resolves against the font size
--            // (percentages relative to 1em).
--            let extra_underline_offset = deco
+-            draw_decoration_line(
+-                scene,
+-                transform,
+-                scale,
+-                acc.min_x,
+-                width,
+-                geom.baseline,
+-                offset,
+-                size,
+-                &brush,
+-                1.0,
+-                deco.style,
+-                inset_start,
+-                inset_end,
+-            );
 +        if wanted.contains(TextDecorationLine::UNDERLINE) && deco.line.contains(TextDecorationLine::UNDERLINE) {
 +            let t = decoration_thickness(&deco.thickness, geom.underline_size, geom.css_font_size, scale);
 +            // `text-underline-offset` (percentages of 1em), in whole CSS px.
 +            let offset = deco
-                 .underline_offset
-                 .as_ref()
--                .map(|lp| lp.resolve(Length::new(geom.css_font_size as f32)).px() as f64 * scale)
--                .unwrap_or(0.0);
--
--            // `text-underline-position: under` places the underline below the glyph box
--            // (below descenders) rather than at the font's suggested position near the
--            // alphabetic baseline. We anchor the top of the line at the descent so it clears
--            // descending glyphs like "gqy".
--            // An explicit offset under `auto` is taken from the alphabetic
--            // baseline, as CSS and Chrome have it, not from the auto gap.
--            let base_offset = if deco.underline_under {
--                -geom.descent
--            } else if deco.underline_offset.is_some() && !deco.underline_from_font {
--                0.0
++                .underline_offset
++                .as_ref()
 +                .map(|lp| f64::from(lp.resolve(Length::new(geom.css_font_size as f32)).px()));
 +            let top = if let Some(top) = central_top(true, offset.unwrap_or(0.0), t) {
 +                top
@@ -25626,79 +25717,21 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            } else if let Some(offset) = offset {
 +                // An explicit offset under `auto` is taken from the alphabetic baseline.
 +                offset.round()
-             } else {
--                geom.underline_offset
++            } else {
 +                (t / 2.0).ceil().max(1.0)
-             };
--            let offset = base_offset - extra_underline_offset as f32;
--
-             // A `double` underline extends downward, away from the text.
--            draw_decoration_line(
--                scene,
--                transform,
--                scale,
--                acc.min_x,
--                width,
--                geom.baseline,
--                offset,
--                size,
--                &brush,
--                1.0,
--                deco.style,
--                inset_start,
--                inset_end,
--            );
++            };
++            // A `double` underline extends downward, away from the text.
 +            draw_line(scene, top, whole_css_px(t), outward, Some(t));
          }
--        if deco.line.contains(TextDecorationLine::OVERLINE) {
 +        if wanted.contains(TextDecorationLine::OVERLINE) && deco.line.contains(TextDecorationLine::OVERLINE) {
-             // Fonts don't provide a dedicated overline metric, so reuse the underline
--            // thickness. The line sits at the top of the "em box": its lower edge rests on
--            // the ascent so it clears the glyphs, and it extends upward from there.
--            //
--            // Browsers use the OS/2 `usWinAscent` for this edge, which is taller than the
--            // hhea-based ascent Parley reports; using the smaller value would draw the
--            // overline too low. Fall back to Parley's ascent for fonts without a usable
--            // OS/2 table.
--            let size = decoration_size(
--                &deco.thickness,
--                geom.underline_size,
--                geom.css_font_size,
--                scale,
--            );
--            let ascent =
--                win_ascent(win_ascent_ratios, &geom.font, geom.font_size).unwrap_or(geom.ascent);
--            let offset = ascent + size;
--
++            // Fonts don't provide a dedicated overline metric, so reuse the underline
 +            // thickness. The line rests on the ascent and extends upward from there.
 +            let t = decoration_thickness(&deco.thickness, geom.underline_size, geom.css_font_size, scale);
 +            let thickness = whole_css_px(t);
-             // A `double` overline extends upward, away from the text.
--            draw_decoration_line(
--                scene,
--                transform,
--                scale,
--                acc.min_x,
--                width,
--                geom.baseline,
--                offset,
--                size,
--                &brush,
--                -1.0,
--                deco.style,
--                inset_start,
--                inset_end,
--            );
++            // A `double` overline extends upward, away from the text.
 +            let top = central_top(false, 0.0, t).unwrap_or(-ascent - thickness);
 +            draw_line(scene, top, thickness, -outward, Some(t));
-         }
--        if deco.line.contains(TextDecorationLine::LINE_THROUGH) {
--            let size = decoration_size(
--                &deco.thickness,
--                geom.strikethrough_size,
--                geom.css_font_size,
--                scale,
--            );
++        }
 +        if wanted.contains(TextDecorationLine::LINE_THROUGH) && deco.line.contains(TextDecorationLine::LINE_THROUGH) {
 +            let t = decoration_thickness(&deco.thickness, geom.strikethrough_size, geom.css_font_size, scale);
 +            // Centred two thirds of the ascent down from the text's top: Blink's
@@ -25706,16 +25739,9 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            let top = (-ascent / 3.0 - t / 2.0 - 0.5).ceil();
 +            draw_line(scene, top, whole_css_px(t), 1.0, None);
 +        }
-+    }
+     }
 +}
- 
--            // Centre the line-through a third of the ascent above the baseline, matching
--            // Chrome (which places it `2/3 * ascent` below the text-top). Parley's
--            // `strikethrough_offset` (the font's `yStrikeoutPosition`) sits lower and would
--            // draw the line too close to the baseline.
--            let ascent =
--                win_ascent(win_ascent_ratios, &geom.font, geom.font_size).unwrap_or(geom.ascent);
--            let offset = ascent / 3.0 + size / 2.0;
++
 +/// pyro: the decoration a box draws as a decorating box (`text-decoration-line`), if any.
 +impl ResolvedDecoration {
 +    /// pyro: the decoration with `color` for its colour when that is the text's (`currentcolor`).
@@ -25726,22 +25752,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        self
 +    }
 +}
- 
--            draw_decoration_line(
--                scene,
--                transform,
--                scale,
--                acc.min_x,
--                width,
--                geom.baseline,
--                offset,
--                size,
--                &brush,
--                1.0,
--                deco.style,
--                inset_start,
--                inset_end,
--            );
++
 +pub(crate) fn own_decoration(styles: &style::properties::ComputedValues) -> Option<ResolvedDecoration> {
 +    let itext = styles.get_inherited_text();
 +    let text = styles.get_text();
@@ -25831,8 +25842,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        .non_auto()
 +        .map_or(0.0, |lp| lp.resolve(em).px().abs());
 +    f64::from(font_size + thickness + offset)
-+}
-+
+ }
+ 
+-pub(crate) fn stroke_text<'a>(
+-    scene: &mut impl PaintScene,
 +/// pyro: whether the decorations of a box's ancestors stop at it (CSS Text Decoration 3, 2.1):
 +/// they are not propagated to out-of-flow boxes (floats, absolutely positioned boxes) nor
 +/// into the contents of atomic inlines (inline blocks, inline tables, inline flex and grid
@@ -25866,7 +25879,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    let remember = |cache: &mut Vec<Option<(NodeId, Propagated)>>, id: NodeId, value: &Propagated| {
 +        if cache.len() <= slot(id) {
 +            cache.resize(slot(id) + 1, None);
-         }
++        }
 +        cache[slot(id)] = Some((id, value.clone()));
 +    };
 +    scratch.clear();
@@ -25908,12 +25921,10 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +        remember(cache, child, &result);
 +        parent = child;
-     }
++    }
 +    result
- }
- 
--pub(crate) fn stroke_text<'a>(
--    scene: &mut impl PaintScene,
++}
++
 +/// `transform` with its content moved `shift` along the x axis of the text.
 +fn shifted(transform: Affine, shift: f64) -> Affine {
 +    if shift == 0.0 {
@@ -26014,7 +26025,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1787,876 @@
+@@ -608,152 +1787,883 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -26511,13 +26522,20 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        // a transform.
 +        let baseline = line.metrics().baseline - line.metrics().block_min_coord;
 +        let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
-+            matches!(item, PositionedLayoutItem::InlineBox(atom) if atom.baseline.is_some() && !atom.kind.is_span_edge())
++            matches!(item, PositionedLayoutItem::InlineBox(atom) if !atom.kind.is_span_edge()
++                && atom.vertical_align == parley::VerticalAlign::BASELINE
++                && atom.baseline.is_some_and(|offset| (atom.y + offset - line.metrics().baseline).abs() < 1.0 / 64.0))
 +        })).map_or(0.0, |tops| {
 +            let top = line.metrics().unquantized_block_min_coord;
 +            (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
 +        });
 +        let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
-+            let transform = transform * Affine::translate((0.0, atomic_baseline_shift));
++            let transform = if atomic_baseline_shift != 0.0 && !glyph_run.edge_aligned()
++                && glyph_run.vertical_align() == parley::VerticalAlign::BASELINE
++                && (glyph_run.baseline() - line.metrics().baseline).abs() < 1.0 / 64.0
++            {
++                transform * Affine::translate((0.0, atomic_baseline_shift))
++            } else { transform };
 +            let run = glyph_run.run();
 +            // pyro: a colour font is drawn in the palette of the run's element (`font-palette`).
 +            let palette_font = crate::palette::palette_font(doc, glyph_run.style().brush.id, run.font());
@@ -27007,7 +27025,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2664,54 @@
+@@ -761,12 +2671,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -27064,7 +27082,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -804,3 +2749,239 @@
+@@ -804,3 +2756,239 @@
      }
      prev.1
  }

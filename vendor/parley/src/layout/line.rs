@@ -368,6 +368,7 @@ pub enum PositionedLayoutItem<'a, B: Brush> {
 /// The computed position of an inline box within a layout
 #[derive(Debug, Clone)]
 pub struct PositionedInlineBox {
+    pub vertical_align: crate::VerticalAlign,
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -659,6 +660,7 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                         self.offset += inline_box.width;
                     }
                     return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {
+                        vertical_align: inline_box.vertical_align,
                         x,
                         y,
                         width: inline_box.width,

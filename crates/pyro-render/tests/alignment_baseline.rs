@@ -27,6 +27,15 @@ fn render(body: &str) -> Vec<u8> {
 }
 
 #[test]
+fn top_aligned_atomic_baseline_does_not_move_plain_text() {
+    let line = |atom: &str| render(&format!("<div style='font:16px/19px serif'><span style='display:inline-block;height:18.5px'></span>Text{atom}</div>"));
+    let plain = line("");
+    for align in ["top", "bottom"] {
+        assert!(plain == line(&format!("<span style='display:inline-block;vertical-align:{align};color:transparent;font:8px/9px serif'>x</span>")));
+    }
+}
+
+#[test]
 fn bottom_aligned_atom_reaches_fractional_line_end() {
     let data = render("<div style='margin-top:0.4px;font:16px/19.2px serif;background:red'>\
         <span style='display:inline-block;vertical-align:bottom;width:100%;height:19.2px;background:green'></span></div>");

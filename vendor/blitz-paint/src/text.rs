@@ -2183,13 +2183,20 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // a transform.
         let baseline = line.metrics().baseline - line.metrics().block_min_coord;
         let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
-            matches!(item, PositionedLayoutItem::InlineBox(atom) if atom.baseline.is_some() && !atom.kind.is_span_edge())
+            matches!(item, PositionedLayoutItem::InlineBox(atom) if !atom.kind.is_span_edge()
+                && atom.vertical_align == parley::VerticalAlign::BASELINE
+                && atom.baseline.is_some_and(|offset| (atom.y + offset - line.metrics().baseline).abs() < 1.0 / 64.0))
         })).map_or(0.0, |tops| {
             let top = line.metrics().unquantized_block_min_coord;
             (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
         });
         let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
-            let transform = transform * Affine::translate((0.0, atomic_baseline_shift));
+            let transform = if atomic_baseline_shift != 0.0 && !glyph_run.edge_aligned()
+                && glyph_run.vertical_align() == parley::VerticalAlign::BASELINE
+                && (glyph_run.baseline() - line.metrics().baseline).abs() < 1.0 / 64.0
+            {
+                transform * Affine::translate((0.0, atomic_baseline_shift))
+            } else { transform };
             let run = glyph_run.run();
             // pyro: a colour font is drawn in the palette of the run's element (`font-palette`).
             let palette_font = crate::palette::palette_font(doc, glyph_run.style().brush.id, run.font());

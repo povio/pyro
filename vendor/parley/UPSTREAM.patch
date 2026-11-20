@@ -2063,7 +2063,7 @@ index 4b0cf9a..4a6656b 100644
      /// given byte `index` in the source text.
      pub(crate) fn line_for_byte_index(&self, index: usize) -> Option<(usize, Line<'_, B>)> {
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..f49f0f3 100644
+index 1569071..e4d356f 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
 @@ -22,11 +22,26 @@ pub struct Line<'a, B: Brush> {
@@ -2240,7 +2240,15 @@ index 1569071..f49f0f3 100644
  }
  
  impl LineMetrics {
-@@ -277,6 +379,12 @@ pub struct PositionedInlineBox {
+@@ -266,6 +368,7 @@ pub enum PositionedLayoutItem<'a, B: Brush> {
+ /// The computed position of an inline box within a layout
+ #[derive(Debug, Clone)]
+ pub struct PositionedInlineBox {
++    pub vertical_align: crate::VerticalAlign,
+     pub x: f32,
+     pub y: f32,
+     pub width: f32,
+@@ -277,6 +380,12 @@ pub struct PositionedInlineBox {
      pub baseline: Option<f32>,
      pub id: u64,
      pub kind: InlineBoxKind,
@@ -2253,7 +2261,7 @@ index 1569071..f49f0f3 100644
  }
  
  /// Sequence of fully positioned glyphs with the same style.
-@@ -299,6 +407,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -299,6 +408,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          &self.run
      }
  
@@ -2282,7 +2290,7 @@ index 1569071..f49f0f3 100644
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
-@@ -313,6 +443,79 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -313,6 +444,79 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          self.style_index
      }
  
@@ -2362,7 +2370,7 @@ index 1569071..f49f0f3 100644
      /// Returns the offset to the baseline.
      pub fn baseline(&self) -> f32 {
          self.baseline
-@@ -356,6 +559,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -356,6 +560,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
  struct AtomIter<'a> {
      atoms: Atoms<'a>,
      spacing: EffectiveSpacing,
@@ -2371,7 +2379,7 @@ index 1569071..f49f0f3 100644
      is_rtl: bool,
      /// The next atom in visual order, if it has been peeked but not yet consumed.
      peeked: Option<Atom<'a>>,
-@@ -372,6 +577,7 @@ impl<'a> AtomIter<'a> {
+@@ -372,6 +578,7 @@ impl<'a> AtomIter<'a> {
                  slice.atoms_start()
              },
              spacing: run.line_spacing(),
@@ -2379,7 +2387,7 @@ index 1569071..f49f0f3 100644
              is_rtl,
              peeked: None,
          }
-@@ -404,7 +610,8 @@ impl<'a> AtomIter<'a> {
+@@ -404,7 +611,8 @@ impl<'a> AtomIter<'a> {
              .iter()
              .map(|cluster| usize::from(cluster.glyph_len()))
              .sum();
@@ -2389,7 +2397,7 @@ index 1569071..f49f0f3 100644
          if glyph_count != 0 && !self.spacing.is_zero() {
              advance += self.spacing.gaps(atom).total();
          }
-@@ -433,23 +640,34 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+@@ -433,23 +641,35 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                      let x = self.offset
                          + self.line.data.metrics.inline_min_coord
                          + self.line.data.metrics.offset;
@@ -2417,6 +2425,7 @@ index 1569071..f49f0f3 100644
                          self.offset += inline_box.width;
                      }
                      return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {
++                        vertical_align: inline_box.vertical_align,
                          x,
                          y,
                          width: inline_box.width,
