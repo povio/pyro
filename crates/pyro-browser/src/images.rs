@@ -98,7 +98,6 @@ pub(crate) struct Images {
     flights: Rc<RefCell<HashMap<Shape, Rc<RefCell<ImageFlight>>>>>,
     offers: VecDeque<(Shape, NodeId, Resource)>,
     offers_tree_version: Option<u64>,
-    pub(crate) layout_requests: HashMap<String, HashMap<pyro_dom::layout::LayoutBodyKey, Shape>>,
     entries: HashMap<NodeId, Image>,
     /// pyro: every URL the document's elements requested as images (`<img>`, SVG `<image>`,
     /// `<object>`), kept after the request ends (a loaded `<img>`'s entry goes): a capture
@@ -654,27 +653,26 @@ impl Browser {
         if let (Some(key), Some(resource)) = (key, raster.as_ref()) {
             let mut used = false;
             if let (Some(state), Some(bodies)) = (self.doc(page), self.layout_bodies(page.page)) {
-                if let Some(slots) = state.images.layout_requests.get(&request_url) {
-                    for (slot, dispatched) in slots {
-                        if dispatched != &key {
-                            let options = slot.options();
-                            let request = crate::subresource_request_with(&state.main_frame, page.page, request_url.clone(), crate::ResourceKind::Image, &crate::SubresourceOptions {
-                                crossorigin: options.crossorigin.clone(), referrer: options.referrer.clone(),
-                                referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
-                                ..Default::default()
-                            });
-                            if Shape::of(self, &request).as_ref() == Some(&key) {
-                                bodies.invalidate_image(slot);
-                            }
-                            continue;
-                        }
-                        let body = resource.immutable_local.then(|| pyro_dom::layout::LayoutBody {
-                            bytes: resource.body.clone(), final_url: resource.url.clone(), status: resource.status,
-                            opaque: crate::loader::is_opaque(resource, cors, &state.main_frame.origin),
-                            referrer_policy: resource.referrer_policy.map(|policy| policy.as_str().to_owned()),
-                        });
-                        used |= bodies.refresh_image(slot, body);
+                for (slot, source, policy) in bodies.dispatched_images(&crate::document_client(&state.main_frame), &request_url) {
+                    let options = slot.options();
+                    let mut request = crate::subresource_request_with(&state.main_frame, page.page, request_url.clone(), crate::ResourceKind::Image, &crate::SubresourceOptions {
+                        crossorigin: options.crossorigin.clone(), referrer: options.referrer.clone(),
+                        referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
+                        ..Default::default()
+                    });
+                    let current = Shape::of(self, &request);
+                    request.referrer = source;
+                    request.referrer_policy = pyro_net::ReferrerPolicy::parse(&policy);
+                    if Shape::of(self, &request).as_ref() != Some(&key) {
+                        if current.as_ref() == Some(&key) { bodies.invalidate_image(&slot); }
+                        continue;
                     }
+                    let body = resource.immutable_local.then(|| pyro_dom::layout::LayoutBody {
+                        bytes: resource.body.clone(), final_url: resource.url.clone(), status: resource.status,
+                        opaque: crate::loader::is_opaque(resource, cors, &state.main_frame.origin),
+                        referrer_policy: resource.referrer_policy.map(|policy| policy.as_str().to_owned()),
+                    });
+                    used |= bodies.refresh_image(&slot, body);
                 }
             }
             if !used && bindings.dom.borrow().is_connected(node) == Ok(true) {

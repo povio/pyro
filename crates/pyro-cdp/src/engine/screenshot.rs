@@ -221,6 +221,7 @@ fn layout_key(url: &str, options: &pyro_render::FetchOptions, client: &str) -> p
 }
 
 impl Fetcher for PageFetcher {
+    fn manages_image_bodies(&self) -> bool { true }
     /// pyro: the snapshot's page document, or a document of the page that was live when the
     /// snapshot was taken (its client in `documents`); any other gets nothing, cached or not.
     fn admits(&self, client: Option<&str>) -> bool {
@@ -294,7 +295,7 @@ impl Fetcher for PageFetcher {
 fn body_only(
     done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
 ) -> Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send> {
-    Box::new(move |result| done(result.map(|fetched| fetched.body)))
+    Box::new(move |result| done(result.map(|fetched| Arc::unwrap_or_clone(fetched.body))))
 }
 
 impl PageFetcher {
@@ -384,7 +385,7 @@ fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(
         // pyro: the stored tainting, as it is.
         let opaque = body.opaque;
         done(Ok(pyro_render::Fetched {
-            body: body.bytes.to_vec(),
+            body: body.bytes.clone(),
             url: body.final_url.clone(),
             opaque,
             referrer_policy: body.referrer_policy.clone(),
@@ -409,7 +410,8 @@ fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(
                 if (200..300).contains(&r.status) {
                     let (url, opaque) = (r.url.clone(), r.opaque);
                     let referrer_policy = r.referrer_policy.map(|p| p.as_str().to_owned());
-                    Ok(pyro_render::Fetched { body: r.render_body(environment.as_slice()), url, opaque, referrer_policy })
+                    let body = if kind == ResourceKind::Image { r.body } else { r.render_body(environment.as_slice()).into() };
+                    Ok(pyro_render::Fetched { body, url, opaque, referrer_policy })
                 } else {
                     Err(format!("HTTP {}", r.status))
                 }

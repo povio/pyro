@@ -23,8 +23,6 @@ struct LayoutLoader {
     bodies: Arc<pyro_dom::layout::SubresourceBodies>,
     /// The fonts this document's layout asked for (`document.fonts`, the load event).
     asked_fonts: std::sync::Mutex<std::collections::HashSet<pyro_dom::layout::LayoutBodyKey>>,
-    /// pyro: the CSS images this document's layout asked for (the load event).
-    asked_images: std::sync::Mutex<std::collections::HashSet<pyro_dom::layout::LayoutBodyKey>>,
 }
 
 impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
@@ -84,14 +82,8 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
         self.asked_fonts.lock().ok().map(|asked| asked.iter().cloned().collect())
     }
 
-    fn image_asked(&self, key: &pyro_dom::layout::LayoutBodyKey) {
-        if let Ok(mut asked) = self.asked_images.lock() {
-            asked.insert(key.clone());
-        }
-    }
-
     fn asked_images(&self) -> Option<Vec<pyro_dom::layout::LayoutBodyKey>> {
-        self.asked_images.lock().ok().map(|asked| asked.iter().cloned().collect())
+        Some(self.bodies.pending_images(&self.document))
     }
 }
 
@@ -1008,7 +1000,6 @@ pub(crate) fn create(
         document: format!("{}#{}", frame.id.0, loader.0),
         bodies: host.layout_bodies.clone(),
         asked_fonts: Default::default(),
-        asked_images: Default::default(),
     }));
     bindings.set_storage_namespaces(settings.local, settings.session);
     let mut viewport = settings.viewport;

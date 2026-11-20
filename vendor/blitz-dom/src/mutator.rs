@@ -805,7 +805,7 @@ impl DocumentMutator<'_> {
             // pyro: the object's frame document is gone: its image or fallback again.
             self.remove_sub_document(node_id);
             self.load_image(node_id);
-        } else if (tag, attr) == tag_and_attr!("object", "data") || (tag, attr) == tag_and_attr!("object", "type") {
+        } else if matches!((&**tag, &**attr), ("object", "data" | "type") | ("img" | "embed", "src") | ("video", "poster")) {
             // pyro: an `<object>` without its image shows its fallback again (`load_image`).
             self.load_image(node_id);
         }
@@ -1972,6 +1972,9 @@ impl<'doc> DocumentMutator<'doc> {
     }
 
     fn load_image(&mut self, target_id: NodeId) {
+        if let Some(element) = self.doc.nodes[target_id].element_data_mut() {
+            element.source_image_request = None;
+        }
         let node = &self.doc.nodes[target_id];
         // pyro: a `<video>`'s image is its poster; without one it
         // paints nothing.
@@ -2064,6 +2067,10 @@ impl<'doc> DocumentMutator<'doc> {
                 }
                 let options = self.doc.request_options(options);
                 let key = options.cache_key(src.as_str());
+                if matches!(src.scheme(), "http" | "https") {
+                    self.doc.nodes[target_id].element_data_mut().unwrap().source_image_request =
+                        Some(Box::new((src.to_string(), options.clone())));
+                }
                 let src_string = key.as_str();
 
                 // Check cache first

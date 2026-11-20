@@ -101,6 +101,7 @@ pub struct ElementData {
     /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
     /// whose own `content` is one image (it is laid out as an `<img>` of it).
     pub content_image: Option<(String, f32)>,
+    pub(crate) source_image_request: Option<Box<(String, blitz_traits::net::FetchOptions)>>,
     /// pyro: an `<img>` whose image failed to load (or has no source) and that has non-empty
     /// `alt` text: it represents its alt text, laid out as a non-replaced box holding it
     /// (HTML rendering § images; `BaseDocument::show_image_alt_text`).
@@ -448,6 +449,7 @@ impl Clone for ElementData {
             list_style_images: self.list_style_images.clone(),
             shape_images: self.shape_images.clone(),
             content_image: self.content_image.clone(),
+            source_image_request: self.source_image_request.clone(),
             image_broken: self.image_broken,
             image_failed: self.image_failed,
             content_gradient: self.content_gradient,
@@ -586,6 +588,7 @@ impl ElementData {
             list_style_images: ThinVec::new(),
             shape_images: ThinVec::new(),
             content_image: None,
+            source_image_request: None,
             image_broken: false,
             image_failed: false,
             content_gradient: false,

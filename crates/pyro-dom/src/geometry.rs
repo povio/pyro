@@ -297,13 +297,79 @@ enum Slot {
     Failed,
 }
 
+#[derive(Default)]
+struct BodySlots {
+    images: indexmap::IndexMap<LayoutBodyKey, ImageSlot>,
+    bytes: usize,
+    other: std::collections::HashMap<LayoutBodyKey, Slot>,
+}
+
+struct ImageSlot {
+    state: Slot,
+    dispatched: Option<(Option<String>, String)>,
+}
+
+impl ImageSlot {
+    fn cost(&self, key: &LayoutBodyKey) -> usize {
+        BodySlots::cost(key, &self.state) + self.dispatched.as_ref().map_or(0, |(source, policy)| {
+            source.as_ref().map_or(0, String::capacity) + policy.capacity()
+        })
+    }
+}
+
+impl BodySlots {
+    const IMAGE_BYTES: usize = 16 << 20;
+    const IMAGE_ENTRIES: usize = 256;
+
+    fn cost(key: &LayoutBodyKey, slot: &Slot) -> usize {
+        let options = &key.options;
+        key.document.capacity() + key.url.capacity() + [&options.crossorigin, &options.integrity, &options.referrer, &options.referrer_policy]
+            .into_iter().flatten().map(String::capacity).sum::<usize>() + match slot {
+                Slot::Ready(body) => body.bytes.capacity() + body.final_url.capacity() + body.referrer_policy.as_ref().map_or(0, String::capacity),
+                _ => 0,
+            }
+    }
+
+    fn get(&self, key: &LayoutBodyKey) -> Option<&Slot> {
+        if key.destination == SubresourceKind::Image { self.images.get(key).map(|image| &image.state) } else { self.other.get(key) }
+    }
+
+    fn remove(&mut self, key: &LayoutBodyKey) -> Option<Slot> {
+        if key.destination != SubresourceKind::Image { return self.other.remove(key); }
+        let (key, slot) = self.images.shift_remove_entry(key)?;
+        self.bytes -= slot.cost(&key);
+        Some(slot.state)
+    }
+
+    fn insert(&mut self, key: LayoutBodyKey, slot: Slot) {
+        if key.destination != SubresourceKind::Image { self.other.insert(key, slot); return; }
+        let dispatched = self.images.shift_remove_entry(&key).and_then(|(old, slot)| {
+            self.bytes -= slot.cost(&old);
+            slot.dispatched
+        });
+        self.insert_image(key, ImageSlot { state: slot, dispatched });
+    }
+
+    fn insert_image(&mut self, key: LayoutBodyKey, mut slot: ImageSlot) {
+        if slot.cost(&key) > Self::IMAGE_BYTES { slot.state = Slot::Failed; }
+        let cost = slot.cost(&key);
+        if cost > Self::IMAGE_BYTES { return; }
+        while self.images.len() >= Self::IMAGE_ENTRIES || self.bytes > Self::IMAGE_BYTES - cost {
+            let (key, slot) = self.images.shift_remove_index(0).unwrap();
+            self.bytes -= slot.cost(&key);
+        }
+        self.images.insert(key, slot);
+        self.bytes += cost;
+    }
+}
+
 /// Sub-resource bodies loaded for documents' layouts (and the screenshots of them), each the
 /// requesting document's alone ([`LayoutBodyKey`]). The only API: [`Self::get`],
 /// [`Self::start`], [`Self::finish`], [`Self::fail`], [`Self::pending`].
 #[derive(Default)]
 pub struct SubresourceBodies {
     next_request: std::sync::atomic::AtomicU64,
-    slots: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, Slot>>,
+    slots: std::sync::Mutex<BodySlots>,
     arrivals: std::sync::atomic::AtomicU64,
     /// pyro: when each body arrived and when its document first needed it: one timeline for a
     /// document's layout and its screenshots ([`Self::late`], `font-display: optional`).
@@ -316,6 +382,37 @@ fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl SubresourceBodies {
+    pub fn image_dispatched(&self, key: &LayoutBodyKey, source: Option<String>, policy: String) {
+        let mut slots = locked(&self.slots);
+        if let Some((key, mut slot)) = slots.images.shift_remove_entry(key) {
+            slots.bytes -= slot.cost(&key);
+            slot.dispatched = Some((source, policy));
+            slots.insert_image(key, slot);
+        }
+    }
+
+    pub fn dispatched_images(&self, document: &str, url: &str) -> Vec<(LayoutBodyKey, Option<String>, String)> {
+        locked(&self.slots).images.iter().filter(|(key, _)| key.document == document && key.url == url)
+            .filter_map(|(key, slot)| slot.dispatched.as_ref().map(|(source, policy)| (key.clone(), source.clone(), policy.clone())))
+            .collect()
+    }
+    pub fn has_images(&self) -> bool {
+        !locked(&self.slots).images.is_empty()
+    }
+
+    pub fn retain_images(&self, document: &str, keep: impl Fn(&LayoutBodyKey) -> bool) {
+        let mut slots = locked(&self.slots);
+        let BodySlots { bytes, images, .. } = &mut *slots;
+        images.retain(|key, slot| {
+            if key.document != document || keep(key) { return true; }
+            *bytes -= slot.cost(key);
+            false
+        });
+    }
+
+    pub fn pending_images(&self, document: &str) -> Vec<LayoutBodyKey> {
+        locked(&self.slots).images.iter().filter(|(key, slot)| key.document == document && matches!(slot.state, Slot::Pending(_))).map(|(key, _)| key.clone()).collect()
+    }
     pub fn invalidate_image(&self, key: &LayoutBodyKey) {
         if key.destination == SubresourceKind::Image && locked(&self.slots).remove(key).is_some() {
             self.arrived();
@@ -327,9 +424,9 @@ impl SubresourceBodies {
             return false;
         }
         let mut slots = locked(&self.slots);
-        let Some(slot) = slots.get_mut(key) else { return false };
+        let Some(slot) = slots.get(key) else { return false };
         match body {
-            Some(body) => *slot = Slot::Ready(std::sync::Arc::new(body)),
+            Some(body) => slots.insert(key.clone(), Slot::Ready(std::sync::Arc::new(body))),
             None if matches!(slot, Slot::Pending(_)) => return false,
             None => { slots.remove(key); }
         }
@@ -353,7 +450,7 @@ impl SubresourceBodies {
 
     /// Whether `key` has a body, a load in flight or a failed load (its document fetched it).
     pub fn known(&self, key: &LayoutBodyKey) -> bool {
-        locked(&self.slots).contains_key(key)
+        locked(&self.slots).get(key).is_some()
     }
 
     /// Marks a load of `key` in flight: `false` when one is, or its body or failure is here,
@@ -364,12 +461,12 @@ impl SubresourceBodies {
 
     pub fn start_request(&self, key: &LayoutBodyKey) -> Option<u64> {
         let mut slots = locked(&self.slots);
-        if slots.contains_key(key) {
+        if slots.get(key).is_some() {
             return None;
         }
         let generation = self.next_request.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         slots.insert(key.clone(), Slot::Pending(generation));
-        Some(generation)
+        slots.get(key).map(|_| generation)
     }
 
     /// `key`'s response arrived and passed its checks: its body, final URL, tainting and status,
@@ -391,7 +488,9 @@ impl SubresourceBodies {
             }
             slots.insert(key.clone(), Slot::Ready(std::sync::Arc::new(body)));
         }
-        locked(&self.came).entry(key).or_insert_with(std::time::Instant::now);
+        if key.destination == SubresourceKind::Font {
+            locked(&self.came).entry(key).or_insert_with(std::time::Instant::now);
+        }
         self.arrived();
     }
 
@@ -440,13 +539,17 @@ impl SubresourceBodies {
 
     /// pyro: whether any load in flight for `document` is one `matches` picks.
     pub fn any_pending(&self, document: &str, matches: impl Fn(&LayoutBodyKey) -> bool) -> bool {
-        locked(&self.slots).iter().any(|(k, slot)| matches!(slot, Slot::Pending(_)) && k.document == document && matches(k))
+        let slots = locked(&self.slots);
+        slots.other.iter().chain(slots.images.iter().map(|(k, slot)| (k, &slot.state))).any(|(k, slot)| matches!(slot, Slot::Pending(_)) && k.document == document && matches(k))
     }
 
     /// pyro: drops what `document` loaded (it is gone: navigated away from, closed); a load still
     /// in flight for it is no longer waited for, and nothing of it serves another document.
     pub fn forget_document(&self, document: &str) {
-        locked(&self.slots).retain(|k, _| k.document != document);
+        let mut slots = locked(&self.slots);
+        slots.other.retain(|k, _| k.document != document);
+        slots.images.retain(|k, _| k.document != document);
+        slots.bytes = slots.images.iter().map(|(key, slot)| slot.cost(key)).sum();
         locked(&self.came).retain(|k, _| k.document != document);
         locked(&self.needed).retain(|k, _| k.document != document);
     }
@@ -463,7 +566,9 @@ impl SubresourceBodies {
 
     /// pyro: `key`'s document needs its body (now, unless it did before).
     pub fn needed(&self, key: &LayoutBodyKey) {
-        locked(&self.needed).entry(key.clone()).or_insert_with(std::time::Instant::now);
+        if key.destination == SubresourceKind::Font {
+            locked(&self.needed).entry(key.clone()).or_insert_with(std::time::Instant::now);
+        }
     }
 
     /// pyro: whether `key`'s body came more than `period` after its document first needed it
@@ -947,6 +1052,30 @@ impl LayoutResult {
 #[cfg(test)]
 mod font_load_tests {
     use super::*;
+
+    #[test]
+    fn layout_image_churn_bounds_encoded_bodies_and_metadata() {
+        let bodies = SubresourceBodies::default();
+        for index in 0..10_000 {
+            let url = format!("https://example.test/{index}");
+            let key = LayoutBodyKey::new("doc", &url, &Default::default(), SubresourceKind::Image);
+            bodies.needed(&key);
+            assert!(bodies.start(&key));
+            bodies.image_dispatched(&key, Some(url.clone()), "origin".into());
+            bodies.finish(key, LayoutBody::local(&url, vec![0; 2048]));
+        }
+        let slots = locked(&bodies.slots);
+        let bytes: usize = slots.images.values().map(|slot| match &slot.state {
+            Slot::Ready(body) => body.bytes.capacity(), _ => 0,
+        }).sum();
+        assert!(slots.images.len() <= 256 && bytes <= 16 << 20, "{} entries, {bytes} bytes", slots.images.len());
+        assert_eq!(slots.bytes, slots.images.iter().map(|(key, slot)| slot.cost(key)).sum::<usize>());
+        drop(slots);
+        bodies.retain_images("doc", |_| false);
+        assert_eq!(locked(&bodies.slots).bytes, 0);
+        assert!(!bodies.has_images());
+        assert!(locked(&bodies.came).is_empty() && locked(&bodies.needed).is_empty());
+    }
 
     #[test]
     fn image_refresh_only_updates_requested_slots() {

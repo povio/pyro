@@ -109,7 +109,7 @@ impl Fetcher for OpaqueImage {
         done(Ok(self.0.clone()));
     }
     fn fetch_final(&self, url: String, _: &FetchOptions, done: Box<dyn FnOnce(Result<Fetched, String>) + Send>) {
-        done(Ok(Fetched { body: self.0.clone(), url, opaque: true, referrer_policy: None }))
+        done(Ok(Fetched { body: self.0.clone().into(), url, opaque: true, referrer_policy: None }))
     }
 }
 

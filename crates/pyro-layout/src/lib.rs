@@ -537,6 +537,17 @@ impl BlitzGeometry {
         });
     }
 
+    fn retain_referenced_images(&self) {
+        let loader = self.loader.borrow();
+        let Some(loader) = loader.as_ref().filter(|loader| loader.bodies().has_images()) else { return };
+        let Some(images) = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.referenced_images(self.page)) else { return };
+        let document = loader.document();
+        let keys = images.into_iter().map(|(url, options)| pyro_dom::layout::LayoutBodyKey::new(
+            &document, &url, &request_options(&options), pyro_dom::layout::SubresourceKind::Image,
+        )).collect::<std::collections::HashSet<_>>();
+        loader.bodies().retain_images(&document, |key| keys.contains(key));
+    }
+
     fn sync_document(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
         let v = style.viewport();
         let viewport = (
@@ -618,6 +629,7 @@ impl BlitzGeometry {
                         })
                     });
                     if let Some(t) = timings {
+                        self.retain_referenced_images();
                         CALLS.fetch_add(1, Ordering::Relaxed);
                         TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
                         DELTAS.fetch_add(1, Ordering::Relaxed);
@@ -637,6 +649,7 @@ impl BlitzGeometry {
             guarded(r.get_or_insert_with(Renderer::new), self.page, |r| r.sync_layout(&snap, &fetcher).ok())
         });
         if let Some(t) = timings {
+            self.retain_referenced_images();
             CALLS.fetch_add(1, Ordering::Relaxed);
             TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
             if pyro_render::profiling::on() {
@@ -1377,6 +1390,45 @@ mod tests {
         assert_eq!(sync_both(), [(id(&one), "http://one.test/a.png".to_owned())]);
         two.arrived();
         assert_eq!(sync_both(), [(id(&two), "http://two.test/b.png".to_owned())]);
+    }
+
+    #[test]
+    fn removed_image_elements_release_layout_responses() {
+        use pyro_dom::layout::{LayoutBody, LayoutBodyKey, SubresourceBodies, SubresourceKind, SubresourceLoader, SubresourceOptions};
+        use std::sync::Arc;
+
+        struct Network(Arc<SubresourceBodies>);
+        impl SubresourceLoader for Network {
+            fn load(&self, _: &str, _: String, _: SubresourceKind, _: &SubresourceOptions, _: Box<dyn FnOnce(Result<LayoutBody, String>) + Send>) {}
+            fn bodies(&self) -> &Arc<SubresourceBodies> { &self.0 }
+            fn document(&self) -> String { "doc".into() }
+        }
+        let (dom, doc, mut layout) = page("<!doctype html><body></body>");
+        let parent = find(&dom.borrow(), doc, "body");
+        let bodies = Arc::new(SubresourceBodies::default());
+        layout.set_subresource_loader(Arc::new(Network(bodies.clone())));
+        for batch in 0..100 {
+            let mut images = Vec::new();
+            for index in 0..100 {
+                let url = format!("http://test/{batch}/{index}");
+                let mut dom = dom.borrow_mut();
+                let node = dom.create_element(doc, "img").unwrap();
+                dom.set_attribute(node, "src", &url).unwrap();
+                dom.append_child(parent, node).unwrap();
+                let key = LayoutBodyKey::new("doc", &url, &Default::default(), SubresourceKind::Image);
+                assert!(bodies.start(&key));
+                bodies.image_dispatched(&key, Some("http://test/".into()), "origin".into());
+                bodies.finish(key.clone(), LayoutBody::local(&url, vec![0; 2048]));
+                images.push((node, key));
+            }
+            assert!(layout.synced_geometry_source(&dom.borrow()).is_some());
+            for (node, key) in images {
+                assert!(bodies.get(&key).is_some());
+                dom.borrow_mut().remove_child(parent, node).unwrap();
+            }
+            assert!(layout.synced_geometry_source(&dom.borrow()).is_some());
+            assert!(!bodies.has_images(), "removed batch {batch}");
+        }
     }
 
     #[test]

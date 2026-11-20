@@ -212,7 +212,7 @@ impl LocalFiles {
         })();
         done(
             body.map(|body| pyro_render::Fetched {
-                body: body.bytes.to_vec(),
+                body: body.bytes.clone(),
                 url: body.final_url.clone(),
                 // pyro: the stored tainting, as it is (a CORS response's is not opaque anyway).
                 opaque: body.opaque,
@@ -224,6 +224,7 @@ impl LocalFiles {
 }
 
 impl Fetcher for LocalFiles {
+    fn manages_image_bodies(&self) -> bool { self.loader.is_some() }
     /// pyro: by the document's timeline in its bodies.
     fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
         let loader = self.loader.as_ref()?;
@@ -270,7 +271,7 @@ impl Fetcher for LocalFiles {
 fn body_only(
     done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
 ) -> Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send> {
-    Box::new(move |result| done(result.map(|fetched| fetched.body)))
+    Box::new(move |result| done(result.map(|fetched| Arc::unwrap_or_clone(fetched.body))))
 }
 
 /// Calls every waiting PDF's waker.

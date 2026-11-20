@@ -18,6 +18,7 @@ use crate::Snapshot;
 /// Loads a sub-resource the renderer needs. `done` may be called on any
 /// thread, at most once; an error renders the resource as missing.
 pub trait Fetcher: Send + Sync + 'static {
+    fn manages_image_bodies(&self) -> bool { false }
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>);
     /// [`Self::fetch`] in CORS mode, credentials only to the same origin ("anonymous", as
     /// `shape-outside` images load): a cross-origin response the CORS check does not pass is an
@@ -74,7 +75,7 @@ pub trait Fetcher: Send + Sync + 'static {
     ) {
         let asked = url.clone();
         let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> =
-            Box::new(move |r| done(r.map(|body| Fetched { body, url: asked, opaque: false, referrer_policy: None })));
+            Box::new(move |r| done(r.map(|body| Fetched { body: body.into(), url: asked, opaque: false, referrer_policy: None })));
         if options.is_default() {
             self.fetch(url, done);
         } else if is_plain_cors(options) {
@@ -89,7 +90,7 @@ pub trait Fetcher: Send + Sync + 'static {
 #[derive(Clone, Debug)]
 pub struct Fetched {
     /// The body of a successful response.
-    pub body: Vec<u8>,
+    pub body: Arc<Vec<u8>>,
     /// Its URL after redirects.
     pub url: String,
     /// Its tainting is "opaque" (Fetch): a no-cors request that reached another origin at any
@@ -97,6 +98,12 @@ pub struct Fetched {
     pub opaque: bool,
     /// pyro: the `Referrer-Policy` it was served with (a style sheet's requests follow it).
     pub referrer_policy: Option<String>,
+}
+
+struct SharedBody(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBody {
+    fn as_ref(&self) -> &[u8] { self.0.as_slice() }
 }
 
 /// pyro: whether `options` ask only for a CORS fetch with credentials to the same origin
@@ -189,7 +196,8 @@ impl NetProvider for Provider {
             options.client = self.clients.lock().ok().and_then(|c| c.get(&doc_id).cloned());
         }
         // pyro: the client is admitted before anything is looked up, sheets and cache included.
-        let admitted = self.fetcher.lock().ok().is_some_and(|f| f.admits(options.client.as_deref()));
+        let fetcher = self.fetcher.lock().ok().map(|fetcher| fetcher.clone());
+        let admitted = fetcher.as_ref().is_some_and(|f| f.admits(options.client.as_deref()));
         if !admitted {
             self.outstanding.fetch_add(1, Ordering::AcqRel);
             let meta = Meta::of(&url);
@@ -205,8 +213,10 @@ impl NetProvider for Provider {
         // A data: URL holds its body: neither the sheets nor the cache (keyed
         // by the whole, possibly megabytes long, URL) can hold it for less.
         let inline = url.starts_with("data:");
+        let fetcher = fetcher.unwrap();
+        let cacheable = !inline && !(options.destination == blitz_traits::net::Destination::Image && fetcher.manages_image_bodies());
         let cached = || self.cache.lock().ok().and_then(|c| c.get(&key).cloned());
-        let ready: Option<(Bytes, Meta)> = if inline {
+        let ready: Option<(Bytes, Meta)> = if !cacheable {
             None
         } else if !plain {
             cached()
@@ -248,8 +258,6 @@ impl NetProvider for Provider {
         }
         let tx = self.tx.clone();
         let cache = self.cache.clone();
-        let fetcher = self.fetcher.lock().map(|f| f.clone());
-        let Ok(fetcher) = fetcher else { return };
         // pyro: a fetch the render need not wait for (`Fetcher::defers`) is not outstanding: its
         // bytes reach the document at a later settle of it.
         let counted = inline || !fetcher.defers(&url, &options);
@@ -259,9 +267,9 @@ impl NetProvider for Provider {
         let done: Box<dyn FnOnce(Result<Fetched, String>) + Send> = Box::new(move |result| {
             let (bytes, meta) = match result {
                 Ok(Fetched { body, url: final_url, opaque, referrer_policy }) => {
-                    let bytes = Bytes::from(body);
+                    let bytes = Bytes::from_owner(SharedBody(body));
                     let meta = Meta { final_url, opaque, referrer_policy };
-                    if !inline {
+                    if cacheable {
                         // pyro: the body with its response's metadata, one entry.
                         if let Ok(mut c) = cache.lock() {
                             c.insert(key, (bytes.clone(), meta.clone()));

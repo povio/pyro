@@ -12,6 +12,7 @@ cssparser = "0.38"
 getrandom = "0.3"
 encoding_rs = "0.8"
 html5ever = "0.40"
+indexmap = "2"
 markup5ever = "0.40"
 # The timing rules' prefilter: a case-insensitive word scan over whole sheets (optimized in dev builds).
 memchr = "2"

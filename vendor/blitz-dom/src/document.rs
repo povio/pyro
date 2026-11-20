@@ -2197,6 +2197,20 @@ impl BaseDocument {
                 continue;
             }
             let Some(element) = node.element_data() else { continue };
+            out.extend(element.source_image_request.as_deref().cloned());
+            if element.name.ns == markup5ever::ns!(svg) && matches!(&*element.name.local, "image" | "feImage" | "use") {
+                for attr in element.attrs() {
+                    if &*attr.name.local == "href" && !attr.value.trim().starts_with('#') {
+                        if let Some(mut url) = self.resolve_url(attr.value.trim()) {
+                            if &*element.name.local == "use" { url.set_fragment(None); }
+                            out.push((url.to_string(), Default::default()));
+                        }
+                    }
+                }
+            }
+            if let Some((url, _)) = &element.content_image {
+                out.push((url.clone(), Default::default()));
+            }
             for slot in element
                 .background_images
                 .iter()

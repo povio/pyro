@@ -330,13 +330,13 @@ impl Fetcher for RedirectingFetcher {
         self.0 .0.lock().unwrap().push(url.clone());
         if url.ends_with("/a.css") {
             done(Ok(Fetched {
-                body: b"@import \"b.css\";".to_vec(),
+                body: b"@import \"b.css\";".to_vec().into(),
                 url: "http://elsewhere.test/dir/a.css".into(),
                 opaque: false,
                 referrer_policy: None,
             }));
         } else {
-            done(Ok(Fetched { body: Vec::new(), url, opaque: false, referrer_policy: None }));
+            done(Ok(Fetched { body: Default::default(), url, opaque: false, referrer_policy: None }));
         }
     }
 }
@@ -437,7 +437,7 @@ fn a_urls_policy_is_its_sheet_objects() {
             self.0 .0.lock().unwrap().push((url.clone(), options.referrer_policy.clone()));
             if url.ends_with("/imp.css") {
                 done(Ok(Fetched {
-                    body: b"#i { width: 10px; height: 10px; background-image: url(http://test/i.png) }".to_vec(),
+                    body: b"#i { width: 10px; height: 10px; background-image: url(http://test/i.png) }".to_vec().into(),
                     url,
                     opaque: false,
                     referrer_policy: Some("no-referrer".into()),
@@ -588,7 +588,7 @@ fn a_redirected_linked_sheet_resolves_against_its_final_url_on_the_network() {
             self.0 .0.lock().unwrap().push(url.clone());
             if url.ends_with("/old/a.css") {
                 done(Ok(Fetched {
-                    body: b"#x { width: 10px; height: 10px; background-image: url(img.png) }".to_vec(),
+                    body: b"#x { width: 10px; height: 10px; background-image: url(img.png) }".to_vec().into(),
                     url: "http://test/new/a.css".into(),
                     opaque: false,
                     referrer_policy: None,
@@ -717,7 +717,7 @@ fn a_warm_render_keeps_the_cached_responses_metadata() {
             self.0 .0.lock().unwrap().push(url.clone());
             if url.ends_with("/old/a.css") {
                 done(Ok(Fetched {
-                    body: b"#x { width: 10px; height: 10px; background-image: url(img.png) }".to_vec(),
+                    body: b"#x { width: 10px; height: 10px; background-image: url(img.png) }".to_vec().into(),
                     url: "http://test/new/a.css".into(),
                     opaque: false,
                     referrer_policy: None,

@@ -1418,13 +1418,13 @@ impl Browser {
         let cors = options.crossorigin.is_some();
         if kind == ResourceKind::Image && options.integrity.is_none() {
             let shape = speculate::Shape::of(self, &request).expect("whole image");
-            if let Some(mut state) = self.doc_mut(frame) {
+            if let (Some(state), Some(bodies)) = (self.doc(frame), self.layout_bodies(frame.page)) {
                 let raw = pyro_dom::layout::SubresourceOptions {
                     crossorigin: options.crossorigin.clone(), integrity: None, referrer: options.referrer.clone(),
                     referrer_policy: options.referrer_policy.map(|policy| policy.as_str().to_owned()),
                 };
                 let slot = pyro_dom::layout::LayoutBodyKey::new(&document_client(&state.main_frame), &request.url, &raw, pyro_dom::layout::SubresourceKind::Image);
-                state.images.layout_requests.entry(request.url.clone()).or_default().insert(slot, shape);
+                bodies.image_dispatched(&slot, shape.referrer_source.map(Into::into), shape.policy.as_str().to_owned());
             }
         }
         let integrity = options.integrity;

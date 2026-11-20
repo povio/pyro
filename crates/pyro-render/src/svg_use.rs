@@ -189,7 +189,7 @@ pub(crate) fn resolve_images(
                 if response.body.is_empty() || response.body.len() > MAX_BYTES {
                     continue;
                 }
-                let data = Arc::new(SvgResource { bytes: Arc::new(response.body), opaque: response.opaque });
+                let data = Arc::new(SvgResource { bytes: response.body, opaque: response.opaque });
                 if !retain_source(sources, key, data.clone(), |(scope, url)| scope.capacity() + url.capacity()) { continue; }
                 data
             }
