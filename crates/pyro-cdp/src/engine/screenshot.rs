@@ -114,6 +114,8 @@ pub(crate) struct Renders {
     /// `IO` streams by handle: bytes and the read offset.
     streams: HashMap<String, (Vec<u8>, usize)>,
     pdf_waits: Vec<PdfWait>,
+    /// pyro: how many times a PDF wait was parked ([`EngineHost::pdf_parks`]).
+    pdf_parks: u64,
 }
 
 impl Renders {
@@ -890,14 +892,24 @@ impl EngineHost {
 
     /// Waits for the layout fetches in flight (woken by the last one, or
     /// at the deadline) before printing.
+    /// pyro: woken only once what the PDF waits for may have finished: a waker is registered first,
+    /// then fired at once only when nothing the PDF waits for is pending ([`Self::pdf_fetching`]);
+    /// otherwise the end of any layout fetch wakes it (`InFlight`'s drop wakes every PDF). It no
+    /// longer parked on the idle top document alone, which woke it at once while only a frame's
+    /// fetch was pending, again and again until the deadline.
     fn park_pdf(&mut self, wait: PdfWait) {
+        self.renders.pdf_parks += 1;
         let deliver = self.renders.deliver(self.thread.handle());
         let at_deadline = deliver.clone();
         let deadline = wait.deadline;
         let first = self.renders.pdf_waits.is_empty();
         let document = self.pdf_document(wait.pid);
+        let pid = wait.pid;
         self.renders.pdf_waits.push(wait);
-        super::blitz_geometry::wake_when_fetched(&document, Box::new(move || deliver(Finished::Fetched)));
+        super::blitz_geometry::park_until_fetched(&document, Box::new(move || deliver(Finished::Fetched)));
+        if !self.pdf_fetching(pid) {
+            super::blitz_geometry::wake_parked(&document);
+        }
         if first {
             // The deadline of the first parked wait; later ones get theirs
             // from a waker that fires before, or this one.
@@ -939,6 +951,12 @@ impl EngineHost {
         let browser = &self.thread.browser;
         let Some(bodies) = browser.layout_bodies(pid) else { return false };
         browser.document_images(pid).keys().any(|client| bodies.any_pending(client, |_| true))
+    }
+
+    /// pyro: how many times a PDF wait was parked on this connection (a wait parks again only after
+    /// a fetch ended).
+    pub fn pdf_parks(&self) -> u64 {
+        self.renders.pdf_parks
     }
 
     /// pyro: the document a PDF of page `pid` waits for the layout fetches of (its client).

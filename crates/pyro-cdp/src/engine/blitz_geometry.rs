@@ -302,12 +302,15 @@ pub(crate) fn fetching(document: &str) -> bool {
     IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().is_some_and(|c| c.contains_key(document))
 }
 
-/// Calls `wake` once no layout fetch of `document` is in flight (at once if none is).
-pub(crate) fn wake_when_fetched(document: &str, wake: Waker) {
+/// pyro: parks `wake` (a PDF of `document`) until a layout fetch ends (any: one of a frame's
+/// documents made by another geometry counts too) or [`wake_parked`].
+pub(crate) fn park_until_fetched(document: &str, wake: Waker) {
     PDF_WAKERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((document.to_owned(), wake));
-    if !fetching(document) {
-        wake_pdfs(document);
-    }
+}
+
+/// pyro: wakes the PDFs of `document` parked with [`park_until_fetched`].
+pub(crate) fn wake_parked(document: &str) {
+    wake_pdfs(document);
 }
 
 /// Brings the page document's own Blitz document (the one its layout
