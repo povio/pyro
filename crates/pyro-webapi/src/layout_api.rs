@@ -106,7 +106,7 @@ pub(crate) fn range_rect<'s>(
     if let Some(t) = text {
         if t == start && start == end {
             if let Some(rect) = page.layout().text_range_rect(&page.dom.borrow(), t, start_offset, end_offset) {
-                return rect_value(s, rect.layout_units());
+                return rect_value(s, rect);
             }
         }
         if let Some(r) = page.layout().text_rect(&page.dom.borrow(), t) {

@@ -3807,6 +3807,23 @@ fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
 }
 
 #[test]
+fn transformed_text_range_and_caret_follow_local_axes() {
+    for style in ["transform:rotate(90deg)", "transform:scale(2,.5)", "transform:skewX(30deg)", "writing-mode:vertical-lr", "writing-mode:vertical-rl"] {
+        let page = page(&format!("<body style='margin:0'><div id=p style='margin-left:100px;width:80px;height:80px;font:20px/20px monospace;transform-origin:0 0;{style}'>abcd</div>"));
+        let element = page.id("p");
+        let text = page.dom.first_child(element).unwrap().unwrap();
+        for offset in 0..4 {
+            let slice = page.layout.text_range_rect(&page.dom, text, offset, offset + 1).unwrap();
+            assert!(slice.width > 1.0 && slice.height > 1.0, "{style}: {slice:?}");
+            let start = page.layout.text_range_rect(&page.dom, text, offset, offset).unwrap();
+            let x = start.x + start.width / 2.0;
+            let y = start.y + start.height / 2.0;
+            assert_eq!(page.layout.caret_from_point(&page.dom, element, x, y, &|_| true).unwrap().1, offset, "{style}");
+        }
+    }
+}
+
+#[test]
 fn text_range_and_hit_test_share_fractional_cluster_edges() {
     let page = page("<body style='margin:0'><div id=p dir=rtl style='font:16px Arial;letter-spacing:.4px;transform:translateX(10.4px)'>שָׁלוֹם שָׁלוֹם</div>");
     let element = page.id("p");

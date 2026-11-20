@@ -66,6 +66,8 @@ pub struct ExternalBox {
 /// One word of a text node on a line (document CSS px).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExternalWord {
+    pub local_to_document: [f64; 6],
+    pub local_block_edges: [f64; 2],
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -900,26 +902,25 @@ impl LayoutBox {
 /// One word of a text node on a line.
 #[derive(Clone, Debug)]
 pub struct TextRun {
+    pub(crate) local_to_document: euclid::default::Transform2D<f64>,
+    pub(crate) local_block_edges: [f64; 2],
     pub node: NodeId,
     /// UTF-16 offsets of the word in the node's data.
     pub start: u32,
     pub end: u32,
     pub rect: Rect,
     pub fixed: bool,
-    /// Caret positions (offset, document x) from `start` to `end`.
+    /// Caret positions (offset, local inline coordinate) from `start` to `end`.
     edges: Rc<[(u32, f64)]>,
 }
 
 impl TextRun {
-    /// Caret positions (UTF-16 offset, document x) from `start` to `end`.
+    /// Caret positions (UTF-16 offset, local inline coordinate) from `start` to `end`.
     pub fn edges(&self) -> &[(u32, f64)] {
         &self.edges
     }
 
-    /// The offset of the character boundary nearest to `dx` px from the
-    /// run's left edge, as Chromium places a caret under a point.
-    pub fn offset_at(&self, dx: f64) -> u32 {
-        let x = self.rect.x + dx;
+    pub(crate) fn offset_at(&self, x: f64) -> u32 {
         self.edges.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(self.start, |e| e.0)
     }
 }
@@ -967,7 +968,12 @@ impl TextResult {
                 let (x1, y1) = ((r.x + r.width).max(rect.x + rect.width), (r.y + r.height).max(rect.y + rect.height));
                 union.0 = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
             }
-            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, edges: w.edges.into() });
+            let [a, b, c, d, tx, ty] = w.local_to_document;
+            out.text_runs.push(TextRun {
+                node, start, end, rect, fixed: w.fixed, edges: w.edges.into(),
+                local_to_document: euclid::Transform2D::new(a, b, c, d, tx, ty),
+                local_block_edges: w.local_block_edges,
+            });
         }
         out
     }

@@ -802,6 +802,8 @@ impl BlitzGeometry {
                     (
                         k,
                         ExternalWord {
+                            local_to_document: w.local_to_document,
+                            local_block_edges: w.local_block_edges,
                             x: w.x,
                             y: w.y,
                             width: w.width,

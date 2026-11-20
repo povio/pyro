@@ -1362,7 +1362,10 @@ impl Layout {
                 } else {
                     continue;
                 };
-                let rect = Rect { x: left, width: right - left, ..run.rect };
+                let [top, bottom] = run.local_block_edges;
+                let local = euclid::Box2D::new(euclid::point2(left, top), euclid::point2(right, bottom));
+                let mapped = run.local_to_document.outer_transformed_box(&local);
+                let rect = Rect { x: mapped.min.x, y: mapped.min.y, width: mapped.width(), height: mapped.height() };
                 if start == end {
                     return Some(self.text_client_rect(dom, text, rect, run.fixed));
                 }
@@ -1431,13 +1434,18 @@ impl Layout {
                     0.0
                 }
             };
-            let key = (gap(y, top, run.rect.height), gap(x, left, run.rect.width));
+            let Some(inverse) = run.local_to_document.inverse() else { continue };
+            let point = inverse.transform_point(euclid::point2(x + sx + dx - kx, y + sy + dy - ky));
+            let [block_start, block_end] = run.local_block_edges;
+            let inline_start = run.edges()[0].1;
+            let inline_end = run.edges().last().unwrap().1;
+            let key = (gap(point.y, block_start, block_end - block_start), gap(point.x, inline_start, inline_end - inline_start));
             if best.is_none_or(|b| key < b.0) {
-                best = Some((key, i as u32, run.node, left));
+                best = Some((key, i as u32, run.node, point.x));
             }
         }
         // The flag: the point is on the word itself.
-        best.map(|(key, i, node, left)| (node, result.text_runs[i as usize].offset_at(x - left), key == (0.0, 0.0)))
+        best.map(|(key, i, node, inline)| (node, result.text_runs[i as usize].offset_at(inline), key == (0.0, 0.0)))
     }
 
     /// Whether a text box (viewport coordinates) lies entirely outside the

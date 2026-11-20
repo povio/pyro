@@ -1027,7 +1027,7 @@ fn page_layout_reports_words_and_hits() {
     let hello = &words_out[0].1;
     assert!(hello.width > 20.0 && hello.height > 10.0 && hello.edges.len() == 6, "{hello:?}");
     assert!(hello.edges.windows(2).all(|e| e[0].1 < e[1].1));
-    let bold = &words_out[3].1;
+    let bold = &words_out.iter().find(|(key, _)| *key == b0).unwrap().1;
     let hit = r.elements_from_point(1, bold.x + 2.0, bold.y + 2.0);
     let dom = page.dom.borrow();
     assert_eq!(hit[0], pyro_dom::snapshot::render_key(page.find("#b")));

@@ -1278,6 +1278,8 @@ fn quad_bounds(q: &[f64; 8]) -> Rect {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextWord {
     pub node: NodeId,
+    pub local_to_document: [f64; 6],
+    pub local_block_edges: [f64; 2],
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -1405,14 +1407,11 @@ impl Geometry {
                         let (x0, x1) = (edges[0].1, edges[edges.len() - 1].1);
                         let r =
                             origin.transform_rect_bbox(Rect::new(x0 / scale, top / scale, x1 / scale, bottom / scale));
-                        let edges = edges
-                            .into_iter()
-                            .map(|(o, ex)| {
-                                (o, origin.transform_rect_bbox(Rect::new(ex / scale, 0.0, ex / scale, 0.0)).x0)
-                            })
-                            .collect();
+                        let edges = edges.into_iter().map(|(offset, position)| (offset, position / scale)).collect();
                         out.push(TextWord {
                             node: text.text_nodes[i].0,
+                            local_to_document: origin.as_coeffs(),
+                            local_block_edges: [top / scale, bottom / scale],
                             x: r.x0,
                             y: r.y0,
                             // Chromium rounds a text fragment's width up to its layout unit.
