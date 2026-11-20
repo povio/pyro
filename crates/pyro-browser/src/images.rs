@@ -38,7 +38,7 @@ use crate::{Browser, FetchRequest, LoaderId, Resource, ResourceCancellation, Res
 use pyro_dom::NodeId;
 use pyro_runtime::TaskSource;
 use pyro_webapi::PageDom;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 /// Bytes kept from an image response for header parsing.
@@ -66,9 +66,17 @@ struct Image {
 
 impl Images {
     /// pyro: the URLs the document's elements requested as images themselves (`<img>`, SVG
-    /// `<image>`, `<object>`), loaded or failed or in flight.
+    /// `<image>`, `<object>`), loaded or failed or in flight, for the document's life.
     pub(crate) fn urls(&self) -> Vec<String> {
-        self.entries.values().map(|i| i.url.clone()).collect()
+        self.requested.iter().cloned().collect()
+    }
+
+    /// Tracks `node`'s request (`image.url`), replacing its previous one.
+    fn track(&mut self, node: NodeId, image: Image) {
+        if self.requested.len() < 4096 {
+            self.requested.insert(image.url.clone());
+        }
+        self.entries.insert(node, image);
     }
 }
 
@@ -104,6 +112,10 @@ fn image_request_state(dom: &pyro_dom::Dom, node: NodeId) -> (u8, String) {
 #[derive(Default)]
 pub(crate) struct Images {
     entries: HashMap<NodeId, Image>,
+    /// pyro: every URL the document's elements requested as images (`<img>`, SVG `<image>`,
+    /// `<object>`), kept after the request ends (a loaded `<img>`'s entry goes): a capture
+    /// waits for those, the document fetched them (`Images::urls`).
+    requested: HashSet<String>,
     /// Lazy images whose source was selected while they were not being rendered (detached, or
     /// `display: none`): their fetch waits (HTML: they never intersect the viewport) until they
     /// are rendered, or until `loading` stops being lazy, which fetches the source selected then.
@@ -347,7 +359,7 @@ impl Browser {
                     let images = &mut guard.images;
                     images.generation += 1;
                     let generation = images.generation;
-                    images.entries.insert(
+                    images.track(
                         node,
                         Image {
                             _node: None,
@@ -414,7 +426,7 @@ impl Browser {
                 images.sweep_at = (images.entries.len() * 2).max(64);
             }
             // Replacing an entry drops its cancellation, stopping the old request.
-            images.entries.insert(
+            images.track(
                 node,
                 Image {
                     _node: Some(hold),
@@ -872,7 +884,7 @@ impl Browser {
             let images = &mut guard.images;
             images.generation += 1;
             let generation = images.generation;
-            images.entries.insert(
+            images.track(
                 node,
                 Image {
                     _node: Some(hold),
