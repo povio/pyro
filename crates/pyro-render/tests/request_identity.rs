@@ -693,3 +693,52 @@ fn engine_attributes_without_the_snapshots_nonce_are_inert() {
         assert!(!asked.iter().any(|u| u == "http://test/renamed.png" || u == "http://test/sheet.png"), "{forged}: {asked:?}");
     }
 }
+
+/// A second render of the same document (its cached bytes reused) takes the cached response's
+/// metadata with them: a redirected sheet still resolves its URLs against its final URL (cached
+/// bytes once outlived the per-render map of response URLs, and fell back to the request URL:
+/// security review cycle 6, 2).
+#[test]
+fn a_warm_render_keeps_the_cached_responses_metadata() {
+    #[derive(Default)]
+    struct Seen(Mutex<Vec<String>>);
+    struct Redirect(Arc<Seen>);
+    impl Fetcher for Redirect {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.0 .0.lock().unwrap().push(url);
+            done(Err("404".into()));
+        }
+        fn fetch_final(&self, url: String, _options: &FetchOptions, done: Box<dyn FnOnce(Result<Fetched, String>) + Send>) {
+            self.0 .0.lock().unwrap().push(url.clone());
+            if url.ends_with("/old/a.css") {
+                done(Ok(Fetched {
+                    body: b"#x { width: 10px; height: 10px; background-image: url(img.png) }".to_vec(),
+                    url: "http://test/new/a.css".into(),
+                    opaque: false,
+                    referrer_policy: None,
+                }));
+            } else {
+                done(Err("404".into()));
+            }
+        }
+    }
+    let seen = Arc::new(Seen::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Redirect(seen.clone()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><link rel=stylesheet href='http://test/old/a.css'><div id=x></div>".into(),
+        base_url: "http://test/".into(),
+        resource_scope: "doc-1".into(),
+        width: 40,
+        height: 40,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let mut renderer = Renderer::new();
+    for pass in 0..2 {
+        seen.0.lock().unwrap().clear();
+        renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+        let asked = seen.0.lock().unwrap().clone();
+        assert!(!asked.iter().any(|u| u == "http://test/old/img.png"), "pass {pass}: {asked:?}");
+        assert!(asked.iter().any(|u| u == "http://test/new/img.png"), "pass {pass}: {asked:?}");
+    }
+}

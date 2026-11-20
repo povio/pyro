@@ -110,7 +110,10 @@ pub fn is_plain_cors(options: &blitz_traits::net::FetchOptions) -> bool {
         }
 }
 
-type Cache = Arc<Mutex<HashMap<String, Bytes>>>;
+/// pyro: a response's body and what the response says beyond it ([`Meta`]), in one entry by
+/// cache key: they live and go together, so a later render's hit has the response's URL after
+/// redirects, tainting and policy, never defaults (as the layout body store keeps them).
+type Cache = Arc<Mutex<HashMap<String, (Bytes, Meta)>>>;
 
 /// Bytes fetched for one document (`Snapshot::resource_scope`), reused by
 /// later renders of it.
@@ -136,7 +139,7 @@ type Delivery = (Box<dyn NetHandler>, String, Meta, Bytes, bool);
 
 /// pyro: what a response says beyond its body: its URL after redirects, tainting and policy.
 #[derive(Clone, Debug)]
-struct Meta {
+pub(crate) struct Meta {
     final_url: String,
     opaque: bool,
     referrer_policy: Option<String>,
@@ -163,9 +166,6 @@ struct Provider {
     /// frame's.
     frame_sheets: Mutex<HashMap<String, std::collections::BTreeMap<String, String>>>,
     cache: Cache,
-    /// pyro: the URL after redirects of a cached response that was redirected, or whose tainting
-    /// is opaque, by cache key, with that tainting.
-    finals: Arc<Mutex<HashMap<String, Meta>>>,
     /// pyro: the client of each frame document's requests, by document id
     /// (`NetProvider::document_client`).
     clients: Mutex<HashMap<usize, String>>,
@@ -205,10 +205,11 @@ impl NetProvider for Provider {
         // A data: URL holds its body: neither the sheets nor the cache (keyed
         // by the whole, possibly megabytes long, URL) can hold it for less.
         let inline = url.starts_with("data:");
-        let ready = if inline {
+        let cached = || self.cache.lock().ok().and_then(|c| c.get(&key).cloned());
+        let ready: Option<(Bytes, Meta)> = if inline {
             None
         } else if !plain {
-            self.cache.lock().ok().and_then(|c| c.get(&key).cloned())
+            cached()
         } else {
             // A sheet's text is decoded already: as UTF-8 behind a byte order
             // mark, Blitz cannot decode it again by an `@charset` it starts with.
@@ -221,16 +222,13 @@ impl NetProvider for Provider {
                 },
                 _ => None,
             };
-            if let (Some(_), Some(sheet)) = (&text, &options.sheet) {
-                // (Its URL is the link's href, the response's after redirects; its tainting the
-                // response's, which the key carries.)
-                let meta = Meta { final_url: url.clone(), opaque: sheet.ends_with(":o"), referrer_policy: None };
-                if let Ok(mut f) = self.finals.lock() {
-                    f.insert(key.clone(), meta);
-                }
-            }
-            text.map(|text| Bytes::from(utf8_sheet(&text)))
-                .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&key).cloned()))
+            // (Its URL is the link's href, the response's after redirects; its tainting the
+            // response's, which the key carries.)
+            let opaque = options.sheet.as_deref().is_some_and(|sheet| sheet.ends_with(":o"));
+            text.map(|text| {
+                (Bytes::from(utf8_sheet(&text)), Meta { final_url: url.clone(), opaque, referrer_policy: None })
+            })
+            .or_else(cached)
         };
         // pyro: a `font-display: optional` font that came after its block period is a failed load
         // (`NetHandler::block_period`, by the document's timeline: `Fetcher::late`).
@@ -243,15 +241,13 @@ impl NetProvider for Provider {
                 _ => false,
             }
         };
-        let ready = ready.map(|bytes| if late() { Bytes::new() } else { bytes });
-        if let Some(bytes) = ready {
-            let meta = self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| Meta::of(&url));
+        if let Some((bytes, meta)) = ready {
+            let bytes = if late() { Bytes::new() } else { bytes };
             let _ = self.tx.send((handler, url, meta, bytes, true));
             return;
         }
         let tx = self.tx.clone();
         let cache = self.cache.clone();
-        let finals = self.finals.clone();
         let fetcher = self.fetcher.lock().map(|f| f.clone());
         let Ok(fetcher) = fetcher else { return };
         // pyro: a fetch the render need not wait for (`Fetcher::defers`) is not outstanding: its
@@ -266,13 +262,9 @@ impl NetProvider for Provider {
                     let bytes = Bytes::from(body);
                     let meta = Meta { final_url, opaque, referrer_policy };
                     if !inline {
-                        if meta.final_url != url || meta.opaque || meta.referrer_policy.is_some() {
-                            if let Ok(mut f) = finals.lock() {
-                                f.insert(key.clone(), meta.clone());
-                            }
-                        }
+                        // pyro: the body with its response's metadata, one entry.
                         if let Ok(mut c) = cache.lock() {
-                            c.insert(key, bytes.clone());
+                            c.insert(key, (bytes.clone(), meta.clone()));
                         }
                     }
                     if late() { (Bytes::new(), meta) } else { (bytes, meta) }
@@ -323,7 +315,6 @@ impl Bridge {
             sheets: Mutex::new(snap.sheets.clone()),
             frame_sheets: Mutex::new(frame_sheets(&snap.frames)),
             cache,
-            finals: Arc::default(),
             clients: Mutex::default(),
             tx,
             outstanding: outstanding.clone(),
