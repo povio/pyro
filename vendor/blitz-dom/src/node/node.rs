@@ -2815,6 +2815,7 @@ impl Node {
         {
             *scrollbar = Some(sb);
         }
+        let column_point = taffy::Point { x, y };
         let (x, y) = (strip_x, strip_y);
 
         // Text clusters and callers of the returned coordinates work in the
@@ -2850,6 +2851,15 @@ impl Node {
             let child_position = child.taffy_position();
             let mut child_x = x;
             let mut child_y = y;
+            if let Some(columns) = self.column_fragments() && let Some(&index) = columns.first_after_spanner.get(&child.id) {
+                let first = &columns.fragments[index];
+                if column_point.y < first.top {
+                    child_x = column_point.x - first.offset.x;
+                    child_y = column_point.y - first.offset.y;
+                } else if let Some(fragment) = columns.fragment_at(child_y) {
+                    columns.child_start(child.id, fragment.start)?;
+                }
+            }
             // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
             // (a fixed box at its stacking context's positioned level) is placed as painted.
             let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();

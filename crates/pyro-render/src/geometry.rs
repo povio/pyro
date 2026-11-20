@@ -384,9 +384,10 @@ impl Geometry {
         };
         // A strip rectangle cut at the container's breaks, each piece where its column shows it
         // (the container's coordinates), with its height in the strip.
-        let cut = |columns: &blitz_dom::ColumnFragments, strip: Rect, out: &mut Vec<(Rect, f64)>| {
+        let cut = |columns: &blitz_dom::ColumnFragments, child, strip: Rect, out: &mut Vec<(Rect, f64)>| {
             for f in &columns.fragments {
-                let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
+                let Some(start) = columns.child_start(child, f.start) else { continue };
+                let (y0, y1) = (strip.y0.max(start as f64), strip.y1.min(f.end as f64));
                 let shows =
                     if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= f.start as f64 && strip.y0 < f.end as f64 };
                 if shows {
@@ -398,7 +399,7 @@ impl Geometry {
         let l = doc.physical_unrounded_layout(id);
         let strip = to_strip(&chain).transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
         let mut out: Vec<(Rect, f64)> = Vec::new();
-        cut(container.column_fragments()?, strip, &mut out);
+        cut(container.column_fragments()?, chain.last()?.id, strip, &mut out);
         // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
         // position against the rounded break) is no fragment of it: a monolithic box a column
         // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
@@ -424,7 +425,7 @@ impl Geometry {
             let mut next = Vec::new();
             for (piece, height) in out {
                 let before = next.len();
-                cut(columns, into.transform_rect_bbox(piece), &mut next);
+                cut(columns, outer_chain.last()?.id, into.transform_rect_bbox(piece), &mut next);
                 for entry in &mut next[before..] {
                     entry.1 = height;
                 }

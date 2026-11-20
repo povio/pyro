@@ -22345,7 +22345,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3811 @@
+@@ -0,0 +1,3839 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22536,6 +22536,7 @@ new file mode 100644
 +    /// pyro: where the strip's content ends (the last fragment's real end, which shows to the
 +    /// strip's end): see `BaseDocument::collect_breaks` on nested containers.
 +    pub strip_end: f32,
++    pub first_after_spanner: std::collections::BTreeMap<crate::NodeId, usize>,
 +}
 +
 +/// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -22572,6 +22573,11 @@ new file mode 100644
 +}
 +
 +impl ColumnFragments {
++    pub fn child_start(&self, child: crate::NodeId, start: f32) -> Option<f32> {
++        let Some(first) = self.first_after_spanner.get(&child).map(|&index| &self.fragments[index]) else { return Some(start) };
++        (start >= first.start).then_some(if start == first.start { f32::NEG_INFINITY } else { start })
++    }
++
 +    /// The column that shows strip position `y` (the first one before the strip, the last after).
 +    /// A position in a margin truncated at a break (after one column's end, before the next
 +    /// one's start) is in the column after the break, where what follows it is shown.
@@ -24178,7 +24184,26 @@ new file mode 100644
 +        // pyro: the baselines are where their lines are shown, in their columns (Chromium takes
 +        // the first baseline from the first column with a line; WPT css-multicol `baseline-001`).
 +        let mut baselines = strip.baselines;
-+        let columns = ColumnFragments { fragments, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
++        let mut first_after_spanner = std::collections::BTreeMap::new();
++        if !spanners.is_empty() && !vertical {
++            let mut owners = std::collections::HashMap::new();
++            for ((mut id, _), (index, _)) in self.doc.column_spanners_of(dom_id).into_iter().zip(fragments.iter().enumerate().filter(|(_, f)| f.spanner)) {
++                while let Some(parent) = self.nodes[id].layout_parent.get().filter(|&p| p != dom_id) { id = parent; }
++                owners.insert(id, index + 1);
++            }
++            let mut next = None;
++            for &id in self.nodes[dom_id].layout_children.borrow().iter().flatten() {
++                if let Some(&index) = owners.get(&id) {
++                    next = Some(index);
++                } else if let Some(index) = next && let Some(first) = fragments.get(index) && !first.spanner {
++                    let child = &self.nodes[id];
++                    if !child.is_out_of_flow() && child.unrounded_layout().location.y < first.start - EPSILON {
++                        first_after_spanner.insert(id, index);
++                    }
++                }
++            }
++        }
++        let columns = ColumnFragments { fragments, first_after_spanner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
 +        if columns.fragments.len() > 1 && !vertical {
 +            for candidate in oof_candidates.as_mut_slice() {
 +                if candidate.containing_block.is_some() {
@@ -26078,6 +26103,7 @@ new file mode 100644
 +    #[test]
 +    fn fragments_map_both_ways() {
 +        let columns = ColumnFragments {
++            first_after_spanner: Default::default(),
 +            strip_end: f32::INFINITY,
 +            nested: None,
 +            pushed: false,
@@ -26102,6 +26128,7 @@ new file mode 100644
 +        // The first column ends at 100 where a margin starts, the second starts past it at 120;
 +        // a third follows.
 +        let columns = ColumnFragments {
++            first_after_spanner: Default::default(),
 +            strip_end: f32::INFINITY,
 +            nested: None,
 +            pushed: false,
@@ -26135,6 +26162,7 @@ new file mode 100644
 +            exact_x: f32::NAN,
 +        };
 +        let columns = ColumnFragments {
++            first_after_spanner: Default::default(),
 +            strip_end: f32::INFINITY,
 +            nested: None,
 +            pushed: false,
@@ -42538,15 +42566,16 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2815,7 @@
+@@ -1533,6 +2815,8 @@
          {
              *scrollbar = Some(sb);
          }
++        let column_point = taffy::Point { x, y };
 +        let (x, y) = (strip_x, strip_y);
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2824,7 @@
+@@ -1541,10 +2825,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -42558,7 +42587,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +2836,32 @@
+@@ -1556,30 +2837,41 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -42587,6 +42616,15 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              let mut child_x = x;
              let mut child_y = y;
 -            if child_position.is_out_of_flow() {
++            if let Some(columns) = self.column_fragments() && let Some(&index) = columns.first_after_spanner.get(&child.id) {
++                let first = &columns.fragments[index];
++                if column_point.y < first.top {
++                    child_x = column_point.x - first.offset.x;
++                    child_y = column_point.y - first.offset.y;
++                } else if let Some(fragment) = columns.fragment_at(child_y) {
++                    columns.child_start(child.id, fragment.start)?;
++                }
++            }
 +            // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
 +            // (a fixed box at its stacking context's positioned level) is placed as painted.
 +            let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
@@ -42603,7 +42641,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,25 +2872,92 @@
+@@ -1590,26 +2882,93 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -42653,7 +42691,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      }
 +                    tested.insert(*child_id);
 +                    continue;
-                 }
++                }
 +                if child.taffy_position().is_out_of_flow() || !child.items_in_phases() {
 +                    continue;
 +                }
@@ -42677,8 +42715,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                let Some(child) = self.tree().get(*child_id) else { continue };
 +                if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
 +                    return Some(hit);
-+                }
-+            }
+                 }
+             }
 +            return None;
 +        }
 +
@@ -42708,10 +42746,11 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            NO_ITEMS.set(false);
 +            if let Some(hit) = hit {
 +                return Some(hit);
-             }
++            }
          }
  
-@@ -1642,6 +2991,24 @@
+         // Inline children
+@@ -1642,6 +3001,24 @@
              }
          }
  
@@ -42736,7 +42775,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3083,7 @@
+@@ -1716,7 +3093,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -42745,7 +42784,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3108,13 @@
+@@ -1741,8 +3118,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -42760,7 +42799,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3190,28 @@
+@@ -1818,8 +3200,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -42791,7 +42830,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3269,36 @@
+@@ -1877,11 +3279,36 @@
                  }
              }
  

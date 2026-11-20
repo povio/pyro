@@ -188,6 +188,7 @@ pub struct ColumnFragments {
     /// pyro: where the strip's content ends (the last fragment's real end, which shows to the
     /// strip's end): see `BaseDocument::collect_breaks` on nested containers.
     pub strip_end: f32,
+    pub first_after_spanner: std::collections::BTreeMap<crate::NodeId, usize>,
 }
 
 /// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -224,6 +225,11 @@ impl ColumnFragment {
 }
 
 impl ColumnFragments {
+    pub fn child_start(&self, child: crate::NodeId, start: f32) -> Option<f32> {
+        let Some(first) = self.first_after_spanner.get(&child).map(|&index| &self.fragments[index]) else { return Some(start) };
+        (start >= first.start).then_some(if start == first.start { f32::NEG_INFINITY } else { start })
+    }
+
     /// The column that shows strip position `y` (the first one before the strip, the last after).
     /// A position in a margin truncated at a break (after one column's end, before the next
     /// one's start) is in the column after the break, where what follows it is shown.
@@ -1830,7 +1836,26 @@ impl LayoutPassState<'_> {
         // pyro: the baselines are where their lines are shown, in their columns (Chromium takes
         // the first baseline from the first column with a line; WPT css-multicol `baseline-001`).
         let mut baselines = strip.baselines;
-        let columns = ColumnFragments { fragments, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
+        let mut first_after_spanner = std::collections::BTreeMap::new();
+        if !spanners.is_empty() && !vertical {
+            let mut owners = std::collections::HashMap::new();
+            for ((mut id, _), (index, _)) in self.doc.column_spanners_of(dom_id).into_iter().zip(fragments.iter().enumerate().filter(|(_, f)| f.spanner)) {
+                while let Some(parent) = self.nodes[id].layout_parent.get().filter(|&p| p != dom_id) { id = parent; }
+                owners.insert(id, index + 1);
+            }
+            let mut next = None;
+            for &id in self.nodes[dom_id].layout_children.borrow().iter().flatten() {
+                if let Some(&index) = owners.get(&id) {
+                    next = Some(index);
+                } else if let Some(index) = next && let Some(first) = fragments.get(index) && !first.spanner {
+                    let child = &self.nodes[id];
+                    if !child.is_out_of_flow() && child.unrounded_layout().location.y < first.start - EPSILON {
+                        first_after_spanner.insert(id, index);
+                    }
+                }
+            }
+        }
+        let columns = ColumnFragments { fragments, first_after_spanner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -3730,6 +3755,7 @@ mod tests {
     #[test]
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
+            first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
             pushed: false,
@@ -3754,6 +3780,7 @@ mod tests {
         // The first column ends at 100 where a margin starts, the second starts past it at 120;
         // a third follows.
         let columns = ColumnFragments {
+            first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
             pushed: false,
@@ -3787,6 +3814,7 @@ mod tests {
             exact_x: f32::NAN,
         };
         let columns = ColumnFragments {
+            first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
             pushed: false,

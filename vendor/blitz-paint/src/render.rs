@@ -6301,6 +6301,7 @@ impl ElementCx<'_, '_> {
                 return;
             }
             let range = outer_range;
+            let Some(start) = self.node.column_fragments().map_or(Some(start), |columns| columns.child_start(child_id, start)) else { return };
             let share = if unranged { ColumnShare::Cut } else { self.column_share(container, child_id, start, end) };
             match share {
                 ColumnShare::Outside => return,
