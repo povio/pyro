@@ -54,6 +54,13 @@ fn parallel_overflow_uses_inflow_end_and_parent_used_size() {
 }
 
 #[test]
+fn break_after_in_parallel_overflow_advances_both_continuations() {
+    let image = render(include_str!("fixtures/parallel-break-after.html"), 1.0);
+    check(&image, 1.0, &[(5.0, 45.0, GREEN), (45.0, 19.0, GREEN), (15.0, 55.0, WHITE),
+        (65.0, 5.0, BLACK), (55.0, 85.0, BLUE), (75.0, 49.0, BLUE), (75.0, 51.0, WHITE)], "parallel and main-flow continuations");
+}
+
+#[test]
 fn anonymous_content_fills_to_host_content_box() {
     let image = render(include_str!("fixtures/anonymous-content-column-fill.html"), 1.0);
     check(&image, 1.0, &[(11.0, 11.0, GREEN), (11.0, 51.0, BLUE), (51.0, 11.0, BLUE), (51.0, 31.0, WHITE),

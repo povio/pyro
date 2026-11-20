@@ -2962,6 +2962,7 @@ impl BaseDocument {
         // would go instead: its top when it has no content to break between (an empty box,
         // breakable anywhere through its space, is kept whole then), else its bottom.
         let mut avoid_after = false;
+        let mut next_parallel_break = false;
         let mut previous_unit_top: f32 = 0.0;
         let last_in_flow = children.iter().rposition(|&id| {
             let child = &self.nodes[id];
@@ -3041,6 +3042,9 @@ impl BaseDocument {
                 found.flow_end = found.flow_end.max(child_bottom + layout.margin.bottom.max(0.0));
             }
             if style.clone_float() == Float::None {
+                if std::mem::take(&mut next_parallel_break) {
+                    found.overflow_breaks.push((child_id, top, child_top - layout.margin.top.max(0.0)));
+                }
                 // pyro: forced breaks between in-flow siblings (margins after them kept).
                 let forces = |b: style::values::computed::BreakBetween| {
                     use style::values::computed::BreakBetween as B;
@@ -3087,7 +3091,13 @@ impl BaseDocument {
                 if forces(style.get_box().break_after)
                     || (!fragmentable(child, &style) && self.last_descendant_forces_break_after(child_id))
                 {
-                    found.forced_after.push(child_bottom + layout.margin.bottom.max(0.0));
+                    let boundary = child_bottom + layout.margin.bottom.max(0.0);
+                    if found.container != Some(parent) && boundary > parent_bottom + EPSILON && boundary < found.parallel_end {
+                        next_parallel_break = true;
+                        found.parallel_break_after = true;
+                    } else {
+                        found.forced_after.push(boundary);
+                    }
                 }
                 // pyro: `break-before: avoid` (and the previous sibling's `break-after: avoid`)
                 // keeps the break between them away where the columns can help it.
@@ -3235,9 +3245,15 @@ impl BaseDocument {
                 if !found.container.is_some_and(|container| self.is_column_spanner_of(container, child_id)) {
                     let previous_parallel = found.parallel;
                     let previous_end = found.parallel_end;
+                    let previous_after = std::mem::take(&mut found.parallel_break_after);
                     found.parallel_end = found.parallel_end.max(parallel_ends.get(child_index).copied().unwrap_or(f32::NEG_INFINITY));
                     found.parallel |= parallel_tail && found.fixed_columns && layout.size.height <= EPSILON;
                     crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
+                    if found.parallel_break_after && parallel_ends.get(child_index).is_some_and(|&end| end > child_bottom + EPSILON) {
+                        next_parallel_break = true;
+                        found.parallel_break_after = false;
+                    }
+                    found.parallel_break_after |= previous_after;
                     found.parallel = previous_parallel;
                     found.parallel_end = previous_end;
                 }
@@ -3300,6 +3316,7 @@ struct Found {
     /// pyro: see [`Breaks::forced`]; `forced_after` from `break-after` (dropped after the last child).
     forced: Vec<f32>,
     forced_after: Vec<f32>,
+    parallel_break_after: bool,
     overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
     overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
     /// The floats' block ranges.
