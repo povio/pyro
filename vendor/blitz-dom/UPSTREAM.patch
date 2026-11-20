@@ -14971,7 +14971,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              mut output,
              margin,
              direction,
-@@ -164,23 +510,62 @@
+@@ -164,23 +510,63 @@
          } = float;
  
          // Note: `pos` is content-box relative
@@ -14984,6 +14984,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 -            false,
 -        );
 +        let margin_box = output.size + margin.sum_axes();
++        let min_y = if self.multicol_strip_depth > 0 { self.spanner_floors.get(&node_id).map_or(min_y, |floor| min_y.max(floor - container_pb.top - margin.top)) } else { min_y };
 +        // pyro: a float with a `shape-outside` float area (CSS Shapes 1)
 +        let wm = self.layout_wm;
 +        let node = &self.nodes[node_id];
@@ -15048,7 +15049,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Translate anchors from item-relative to container-relative
          // coordinates and collect candidates bubbled from the float's subtree
-@@ -190,11 +575,107 @@
+@@ -190,11 +576,107 @@
          }
      }
  
@@ -15156,7 +15157,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
      ) -> taffy::LayoutOutput {
          let LayoutInput {
              known_dimensions,
-@@ -202,7 +683,10 @@
+@@ -202,7 +684,10 @@
              run_mode,
              ..
          } = inputs;
@@ -15168,7 +15169,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Pull these out earlier to avoid borrowing issues
          let is_scroll_container =
-@@ -322,7 +806,9 @@
+@@ -322,7 +807,9 @@
                      && display.inside() == DisplayInside::Flow
                  {
                      let claims = stylo_taffy::convert::inline_containing_block_claims(&style);
@@ -15179,7 +15180,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          flags |= StyleFlags::SPAN_ABSOLUTE_CB;
                      }
                      if claims.fixed {
-@@ -335,6 +821,52 @@
+@@ -335,6 +822,52 @@
          StyleFlags::empty()
      }
  
@@ -15232,7 +15233,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
      fn compute_inline_layout_inner(
          &mut self,
          node_id: NodeId,
-@@ -358,7 +890,9 @@
+@@ -358,7 +891,9 @@
              .take_inline_layout()
              .unwrap();
  
@@ -15243,7 +15244,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Note: both horizontal and vertical percentage padding/borders are resolved against the container's inline size (i.e. width).
          // This is not a bug, but is how CSS is specified (see: https://developer.mozilla.org/en-US/docs/Web/CSS/padding#values)
-@@ -375,18 +909,26 @@
+@@ -375,18 +910,26 @@
          } else {
              Size::ZERO
          };
@@ -15278,7 +15279,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          let has_styles_preventing_being_collapsed_through = !style.is_block()
              || style.overflow().x.is_scroll_container()
-@@ -403,6 +945,16 @@
+@@ -403,6 +946,16 @@
  
          // Resolve node's preferred/min/max sizes (width/heights) against the available space (percentages resolve to pixel values)
          // For ContentSize mode, we pretend that the node has no size styles as these should be ignored.
@@ -15295,7 +15296,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          let (node_size, node_min_size, node_max_size, aspect_ratio) = match sizing_mode {
              SizingMode::ContentSize => {
                  let node_size = known_dimensions;
-@@ -427,8 +979,16 @@
+@@ -427,8 +980,16 @@
                      .maybe_resolve(parent_size, resolve_calc_value)
                      .maybe_add(box_sizing_adjustment);
  
@@ -15312,7 +15313,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  (node_size, style_min_size, style_max_size, aspect_ratio)
              }
          };
-@@ -441,7 +1001,7 @@
+@@ -441,7 +1002,7 @@
  
          // Short circuit if inline context contains no text or inline boxes
          if !has_styles_preventing_being_collapsed_through
@@ -15321,7 +15322,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              && inline_layout.layout.inline_boxes().len() == 0
          {
              // Put layout back
-@@ -450,9 +1010,20 @@
+@@ -450,9 +1011,20 @@
                  .downcast_element_mut()
                  .unwrap()
                  .inline_layout_data = Some(inline_layout);
@@ -15345,7 +15346,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Compute available space
-@@ -482,15 +1053,74 @@
+@@ -482,15 +1054,74 @@
          };
  
          // Compute size of inline boxes
@@ -15422,7 +15423,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  } else {
                      available_space.height.into_option()
                  },
-@@ -507,11 +1137,60 @@
+@@ -507,11 +1138,60 @@
          };
  
          // Update inline boxes
@@ -15486,7 +15487,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
              #[cfg(feature = "floats")]
              let is_floated = style.float().is_floated();
-@@ -543,10 +1222,17 @@
+@@ -543,10 +1223,17 @@
                  && !style
                      .flags
                      .intersects(StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
@@ -15505,7 +15506,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              drop(style);
  
              if is_out_of_flow || is_floated {
-@@ -554,10 +1240,26 @@
+@@ -554,10 +1241,26 @@
                  ibox.height = 0.0;
                  ibox.baseline = None;
              } else {
@@ -15535,7 +15536,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          output.baselines.last.or(output.baselines.first)
                      } else {
                          output.baselines.first.or(output.baselines.last)
-@@ -573,6 +1275,50 @@
+@@ -573,6 +1276,50 @@
                  } else {
                      None
                  };
@@ -15586,7 +15587,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  // Vertical margins adjust the space the box reserves in the line. A box with a
                  // baseline splits that space into ascent (`margin.top + baseline`) and descent
                  // (`margin.bottom + height - baseline`), either of which may be negative. A box
-@@ -592,28 +1338,91 @@
+@@ -592,28 +1339,91 @@
          let text_indent = self.nodes[node_id]
              .primary_styles()
              .map(|s| s.slow_clone_text_indent())
@@ -15689,7 +15690,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  let min_content_width = content_sizes.min;
                  let max_content_width = content_sizes.max;
  
-@@ -622,6 +1431,9 @@
+@@ -622,6 +1432,9 @@
                      AvailableSpace::MinContent => {
                          let mut width: f32 = 0.0;
                          for ibox in inline_layout.layout.inline_boxes_mut() {
@@ -15699,7 +15700,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              let (is_floated, margin) = {
                                  let style =
                                      self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-@@ -659,6 +1471,9 @@
+@@ -659,6 +1472,9 @@
                          let mut right_band: f32 = 0.0;
                          let mut width: f32 = 0.0;
                          for ibox in inline_layout.layout.inline_boxes_mut() {
@@ -15709,7 +15710,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              let (float, clear, margin) = {
                                  let style =
                                      self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
-@@ -708,6 +1523,9 @@
+@@ -708,6 +1524,9 @@
                          .min(max_content_width + float_width)
                          .max(min_content_width),
                  };
@@ -15719,7 +15720,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
                  let style_width = node_size.width.map(|w| w * scale);
                  let min_width = node_min_size.width.map(|w| w * scale);
-@@ -720,6 +1538,19 @@
+@@ -720,6 +1539,19 @@
                      - pbw
              });
  
@@ -15739,7 +15740,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          #[cfg(not(feature = "floats"))]
          let _ = block_ctx; // Suppress unused variable warning
  
-@@ -752,7 +1583,7 @@
+@@ -752,7 +1584,7 @@
                  .inline_layout_data = Some(inline_layout);
  
              let measured_size = inputs.known_dimensions.unwrap_or(taffy::Size {
@@ -15748,7 +15749,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  // Height is ignored if RequestedAxis if Horizontal
                  height: 0.0,
              });
-@@ -773,16 +1604,33 @@
+@@ -773,16 +1605,33 @@
              .px();
          inline_layout
              .layout
@@ -15784,7 +15785,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              if (max_content_width - width).abs() <= rounding_error {
                  fit_width + rounding_error
              } else {
-@@ -791,10 +1639,12 @@
+@@ -791,10 +1640,12 @@
          };
          #[cfg(feature = "floats")]
          let slack = max_advance - width;
@@ -15797,7 +15798,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Out-of-flow candidates bubbled up from this container and its in-flow subtree.
-@@ -808,166 +1658,540 @@
+@@ -808,166 +1659,540 @@
          let mut line_bottoms = [0.0f64; 2];
          #[cfg(feature = "floats")]
          let mut line_count_so_far = 0usize;
@@ -16485,7 +16486,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Propagate the height consumed by floats placed within this container to the
-@@ -984,24 +2208,66 @@
+@@ -984,24 +2209,66 @@
              .map(|s| {
                  (
                      stylo_to_parley::text_align(s.clone_text_align()),
@@ -16562,7 +16563,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          let mut height = if has_inline_content {
              inline_layout.layout.height()
-@@ -1047,9 +2313,79 @@
+@@ -1047,9 +2314,79 @@
              }
          }
  
@@ -16643,7 +16644,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  height = height.max(float_height_contribution * scale)
              };
          }
-@@ -1073,12 +2409,32 @@
+@@ -1073,12 +2410,32 @@
              .or(node_size)
              .unwrap_or(measured_size + content_box_inset.sum_axes())
              .maybe_clamp(node_min_size, node_max_size);
@@ -16677,7 +16678,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      .unwrap_or(0.0),
              ),
          }
-@@ -1097,8 +2453,25 @@
+@@ -1097,8 +2454,25 @@
                  final_size.height - content_box_inset.vertical_axis_sum() - measured_size.height;
              taffy::compute_block_align_content_offset(align_content, free_space)
          };
@@ -16703,7 +16704,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          // Store sizes and positions of inline boxes. Walking a line's items builds every
          // glyph run on it, so lines are only walked when there are boxes to find.
-@@ -1113,6 +2486,13 @@
+@@ -1113,6 +2487,13 @@
                      line_has_in_flow_content |= run.advance() > 0.0;
                  }
                  if let parley::layout::PositionedLayoutItem::InlineBox(ibox) = item {
@@ -16717,7 +16718,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      let order = ibox_order;
                      ibox_order += 1;
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -1172,7 +2552,7 @@
+@@ -1172,7 +2553,7 @@
                              .bottom
                              .maybe_resolve(container_content_size.height, resolve_calc_value),
                      };
@@ -16726,7 +16727,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      drop(style);
  
                      if is_absolute {
-@@ -1186,10 +2566,20 @@
+@@ -1186,10 +2567,20 @@
                          //   box, or below it if in-flow content precedes it on the line (its
                          //   hypothetical box would start a new line after that content).
                          let line_metrics = line.metrics();
@@ -16750,7 +16751,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              (
                                  taffy::Line { start: x, end: x },
                                  taffy::Line {
-@@ -1198,21 +2588,55 @@
+@@ -1198,21 +2589,55 @@
                                  },
                              )
                          } else {
@@ -16815,7 +16816,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              node: taffy::NodeId::from(ibox.id),
                              order,
                              position,
-@@ -1220,11 +2644,11 @@
+@@ -1220,11 +2645,11 @@
                                  x: AxisStaticPosition::from_alignment(
                                      justify_self.resolve_self_relative(
                                          item_direction,
@@ -16829,7 +16830,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                                  ),
                                  y: AxisStaticPosition::from_alignment(
                                      align_self.resolve_self_relative(
-@@ -1238,10 +2662,15 @@
+@@ -1238,10 +2663,15 @@
                              },
                          });
                      } else if is_floated {
@@ -16849,7 +16850,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      } else {
                          line_has_in_flow_content = true;
                          // Re-measure the box to get its border-box size (this hits the layout
-@@ -1250,6 +2679,18 @@
+@@ -1250,6 +2680,18 @@
                          let mut output =
                              self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                          let size = output.size;
@@ -16868,7 +16869,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                          let node = &mut self.nodes[NodeId::from_u64(ibox.id)];
  
                          let is_relative = position == taffy::Position::Relative;
-@@ -1266,23 +2707,45 @@
+@@ -1266,23 +2708,45 @@
                              taffy::Point::ZERO
                          };
  
@@ -16927,7 +16928,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,20 +2760,126 @@
+@@ -1297,20 +2761,126 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -17057,7 +17058,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1320,12 +2889,7 @@
+@@ -1320,12 +2890,7 @@
              .unwrap()
              .inline_layout_data = Some(inline_layout);
  
@@ -17071,7 +17072,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          LayoutOutput {
              size: final_size,
-@@ -1360,14 +2924,19 @@
+@@ -1360,14 +2925,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -17094,7 +17095,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2953,306 @@
+@@ -1384,3 +2954,306 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }
@@ -22345,7 +22346,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3839 @@
+@@ -0,0 +1,3867 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22709,6 +22710,7 @@ new file mode 100644
 +    forced: Vec<f32>,
 +    overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
 +    overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
++    parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
 +    /// pyro: the multi-column containers in the strip's flow (no other break context between
 +    /// them and the container) and their tops.
 +    nested: Vec<(crate::NodeId, f32)>,
@@ -23268,7 +23270,7 @@ new file mode 100644
 +                content_top += (outer - (pb.top - padding_top_of(&self.nodes[dom_id], inputs.parent_size.width))).max(0.0);
 +            }
 +            let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-+            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested);
++            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested, fragmentainer.is_some());
 +            if !pushed_nested.is_empty() {
 +                breaks.forced.extend(pushed_nested.values().copied().filter(|&y| y > breaks.start + EPSILON));
 +                breaks.forced.sort_by(f32::total_cmp);
@@ -23308,6 +23310,20 @@ new file mode 100644
 +            if let Some(height) = fragmentainer && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
 +                let run = breaks.fill(height, MAX_COLUMNS);
 +                let mut changed = false;
++                for &(id, parent_top, top, bottom) in &breaks.parallel_floats {
++                    let index = run.columns.partition_point(|&(_, end)| end <= top + EPSILON);
++                    if let Some(&(start, end)) = run.columns.get(index) && top > start + EPSILON && bottom > end + EPSILON && bottom - top <= height + EPSILON && let Some(&(next, _)) = run.columns.get(index + 1) {
++                        let floor = next - parent_top;
++                        self.spanner_floors.insert(id, floor);
++                        use taffy::CacheTree as _;
++                        let mut at = Some(id);
++                        while let Some(node) = at.filter(|&n| n != dom_id) {
++                            self.cache_clear(crate::taffy_node_id(node));
++                            at = self.nodes[node].layout_parent.get();
++                        }
++                        changed = true;
++                    }
++                }
 +                for &(id, top, bottom, parallel_start) in &breaks.overflow_parents {
 +                    let prior = self.column_space_used.get(&id).copied().unwrap_or(0.0);
 +                    let mut used = 0.0;
@@ -25008,8 +25024,8 @@ new file mode 100644
 +    /// margin edge, its floats' margin edges).
 +    /// pyro: `nested_breakable`: the multi-column containers nested in the strip's flow are
 +    /// fragmented by its columns (`Breaks::nested`), not monolithic.
-+    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>, nested_breakable: bool) -> Breaks {
-+        let mut found = Found { nested_breakable, container: Some(container), ..Found::default() };
++    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>, nested_breakable: bool, fixed_columns: bool) -> Breaks {
++        let mut found = Found { nested_breakable, fixed_columns, container: Some(container), ..Found::default() };
 +        let trims = self.nodes[container]
 +            .primary_styles()
 +            .map_or((false, false), |style| super::text_box::fragment_trims(&style));
@@ -25042,6 +25058,7 @@ new file mode 100644
 +            forced: found.forced,
 +            overflow_breaks: found.overflow_breaks,
 +            overflow_parents: found.overflow_parents,
++            parallel_floats: found.parallel_floats,
 +            nested: found.nested,
 +            baselines: found.baselines,
 +            clones: found.clones,
@@ -25064,6 +25081,10 @@ new file mode 100644
 +            let child_bottom = child_top + layout.size.height;
 +            found.bottom = found.bottom.max(child_bottom);
 +            found.floats.push((child_top, child_bottom));
++            if found.parallel && avoids_column_break_inside(&style) {
++                found.parallel_floats.push((child_id, top, child_top, child_bottom));
++                continue;
++            }
 +            if fragmentable(child, &style) {
 +                if avoids_column_break_inside(&style) {
 +                    found.strict.push((child_top, child_bottom));
@@ -25252,6 +25273,7 @@ new file mode 100644
 +            found.strict.extend_from_slice(&lines);
 +            // pyro: a line taller than a column overflows it whole, as in Chromium.
 +            found.whole.extend_from_slice(&lines);
++            if found.parallel { return; }
 +            let (orphans, widows) = node.primary_styles().map_or((2, 2), |s| {
 +                let text = s.get_inherited_text();
 +                (text.orphans.0.max(1) as usize, text.widows.0.max(1) as usize)
@@ -25318,11 +25340,11 @@ new file mode 100644
 +            };
 +            let child_top = top + layout.location.y - relative;
 +            let child_bottom = child_top + layout.size.height;
-+            if found.container != Some(parent) && children.last() == Some(&child_id)
++            let parallel_tail = found.container != Some(parent) && children.last() == Some(&child_id)
 +                && layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
 +                && !style.get_position().height.is_auto()
-+                && node.primary_styles().is_some_and(|style| !style.get_position().height.is_auto())
-+            {
++                && node.primary_styles().is_some_and(|style| !style.get_position().height.is_auto());
++            if parallel_tail {
 +                found.overflow_parents.push((parent, top, top + node.unrounded_layout().size.height, child_bottom));
 +            }
 +            found.bottom = found.bottom.max(child_bottom);
@@ -25520,7 +25542,10 @@ new file mode 100644
 +                // is no content of the columns after it (WPT css-multicol
 +                // `spanner-fragmentation-005`).
 +                if !found.container.is_some_and(|container| self.is_column_spanner_of(container, child_id)) {
++                    let previous_parallel = found.parallel;
++                    found.parallel |= parallel_tail && found.fixed_columns && layout.size.height <= EPSILON;
 +                    crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
++                    found.parallel = previous_parallel;
 +                }
 +            } else if let Some(bands) = (!held_whole(child, &style))
 +                .then(|| self.grid_row_bands(child_id, child_top))
@@ -25561,6 +25586,9 @@ new file mode 100644
 +/// What [`BaseDocument::collect_breaks`] finds in a strip (see [`Breaks`]).
 +#[derive(Default)]
 +struct Found {
++    fixed_columns: bool,
++    parallel: bool,
++    parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
 +    strict: Vec<(f32, f32)>,
 +    /// pyro: see [`Breaks::whole`].
 +    whole: Vec<(f32, f32)>,
@@ -26017,6 +26045,7 @@ new file mode 100644
 +            forced: Vec::new(),
 +            overflow_breaks: Vec::new(),
 +            overflow_parents: Vec::new(),
++            parallel_floats: Vec::new(),
 +            nested: Vec::new(),
 +            baselines: Vec::new(),
 +            clones: Vec::new(),

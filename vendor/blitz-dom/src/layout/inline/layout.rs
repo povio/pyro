@@ -511,6 +511,7 @@ impl LayoutPassState<'_> {
 
         // Note: `pos` is content-box relative
         let margin_box = output.size + margin.sum_axes();
+        let min_y = if self.multicol_strip_depth > 0 { self.spanner_floors.get(&node_id).map_or(min_y, |floor| min_y.max(floor - container_pb.top - margin.top)) } else { min_y };
         // pyro: a float with a `shape-outside` float area (CSS Shapes 1)
         let wm = self.layout_wm;
         let node = &self.nodes[node_id];

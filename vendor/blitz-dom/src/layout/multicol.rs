@@ -361,6 +361,7 @@ struct Breaks {
     forced: Vec<f32>,
     overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
     overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
+    parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
     /// pyro: the multi-column containers in the strip's flow (no other break context between
     /// them and the container) and their tops.
     nested: Vec<(crate::NodeId, f32)>,
@@ -920,7 +921,7 @@ impl LayoutPassState<'_> {
                 content_top += (outer - (pb.top - padding_top_of(&self.nodes[dom_id], inputs.parent_size.width))).max(0.0);
             }
             let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested);
+            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested, fragmentainer.is_some());
             if !pushed_nested.is_empty() {
                 breaks.forced.extend(pushed_nested.values().copied().filter(|&y| y > breaks.start + EPSILON));
                 breaks.forced.sort_by(f32::total_cmp);
@@ -960,6 +961,20 @@ impl LayoutPassState<'_> {
             if let Some(height) = fragmentainer && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
                 let run = breaks.fill(height, MAX_COLUMNS);
                 let mut changed = false;
+                for &(id, parent_top, top, bottom) in &breaks.parallel_floats {
+                    let index = run.columns.partition_point(|&(_, end)| end <= top + EPSILON);
+                    if let Some(&(start, end)) = run.columns.get(index) && top > start + EPSILON && bottom > end + EPSILON && bottom - top <= height + EPSILON && let Some(&(next, _)) = run.columns.get(index + 1) {
+                        let floor = next - parent_top;
+                        self.spanner_floors.insert(id, floor);
+                        use taffy::CacheTree as _;
+                        let mut at = Some(id);
+                        while let Some(node) = at.filter(|&n| n != dom_id) {
+                            self.cache_clear(crate::taffy_node_id(node));
+                            at = self.nodes[node].layout_parent.get();
+                        }
+                        changed = true;
+                    }
+                }
                 for &(id, top, bottom, parallel_start) in &breaks.overflow_parents {
                     let prior = self.column_space_used.get(&id).copied().unwrap_or(0.0);
                     let mut used = 0.0;
@@ -2660,8 +2675,8 @@ impl BaseDocument {
     /// margin edge, its floats' margin edges).
     /// pyro: `nested_breakable`: the multi-column containers nested in the strip's flow are
     /// fragmented by its columns (`Breaks::nested`), not monolithic.
-    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>, nested_breakable: bool) -> Breaks {
-        let mut found = Found { nested_breakable, container: Some(container), ..Found::default() };
+    fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>, nested_breakable: bool, fixed_columns: bool) -> Breaks {
+        let mut found = Found { nested_breakable, fixed_columns, container: Some(container), ..Found::default() };
         let trims = self.nodes[container]
             .primary_styles()
             .map_or((false, false), |style| super::text_box::fragment_trims(&style));
@@ -2694,6 +2709,7 @@ impl BaseDocument {
             forced: found.forced,
             overflow_breaks: found.overflow_breaks,
             overflow_parents: found.overflow_parents,
+            parallel_floats: found.parallel_floats,
             nested: found.nested,
             baselines: found.baselines,
             clones: found.clones,
@@ -2716,6 +2732,10 @@ impl BaseDocument {
             let child_bottom = child_top + layout.size.height;
             found.bottom = found.bottom.max(child_bottom);
             found.floats.push((child_top, child_bottom));
+            if found.parallel && avoids_column_break_inside(&style) {
+                found.parallel_floats.push((child_id, top, child_top, child_bottom));
+                continue;
+            }
             if fragmentable(child, &style) {
                 if avoids_column_break_inside(&style) {
                     found.strict.push((child_top, child_bottom));
@@ -2904,6 +2924,7 @@ impl BaseDocument {
             found.strict.extend_from_slice(&lines);
             // pyro: a line taller than a column overflows it whole, as in Chromium.
             found.whole.extend_from_slice(&lines);
+            if found.parallel { return; }
             let (orphans, widows) = node.primary_styles().map_or((2, 2), |s| {
                 let text = s.get_inherited_text();
                 (text.orphans.0.max(1) as usize, text.widows.0.max(1) as usize)
@@ -2970,11 +2991,11 @@ impl BaseDocument {
             };
             let child_top = top + layout.location.y - relative;
             let child_bottom = child_top + layout.size.height;
-            if found.container != Some(parent) && children.last() == Some(&child_id)
+            let parallel_tail = found.container != Some(parent) && children.last() == Some(&child_id)
                 && layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
                 && !style.get_position().height.is_auto()
-                && node.primary_styles().is_some_and(|style| !style.get_position().height.is_auto())
-            {
+                && node.primary_styles().is_some_and(|style| !style.get_position().height.is_auto());
+            if parallel_tail {
                 found.overflow_parents.push((parent, top, top + node.unrounded_layout().size.height, child_bottom));
             }
             found.bottom = found.bottom.max(child_bottom);
@@ -3172,7 +3193,10 @@ impl BaseDocument {
                 // is no content of the columns after it (WPT css-multicol
                 // `spanner-fragmentation-005`).
                 if !found.container.is_some_and(|container| self.is_column_spanner_of(container, child_id)) {
+                    let previous_parallel = found.parallel;
+                    found.parallel |= parallel_tail && found.fixed_columns && layout.size.height <= EPSILON;
                     crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
+                    found.parallel = previous_parallel;
                 }
             } else if let Some(bands) = (!held_whole(child, &style))
                 .then(|| self.grid_row_bands(child_id, child_top))
@@ -3213,6 +3237,9 @@ impl BaseDocument {
 /// What [`BaseDocument::collect_breaks`] finds in a strip (see [`Breaks`]).
 #[derive(Default)]
 struct Found {
+    fixed_columns: bool,
+    parallel: bool,
+    parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
     strict: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::whole`].
     whole: Vec<(f32, f32)>,
@@ -3669,6 +3696,7 @@ mod tests {
             forced: Vec::new(),
             overflow_breaks: Vec::new(),
             overflow_parents: Vec::new(),
+            parallel_floats: Vec::new(),
             nested: Vec::new(),
             baselines: Vec::new(),
             clones: Vec::new(),
