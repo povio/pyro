@@ -2891,6 +2891,24 @@ impl BaseDocument {
                 // css-multicol `nested-with-too-tall-line`, `multicol-nested-011`). (From its last
                 // layout: the passes make it hold.)
                 if let Some(columns) = child.column_fragments().filter(|c| c.nested.is_some()) {
+                    // pyro: and no break goes through its lines where its columns show them (from
+                    // its last layout): the outer columns break between its rows of lines, which a
+                    // balanced outer container's passes then settle on (Chromium; WPT
+                    // css-multicol `multicol-nested-margin-004`, `-005`).
+                    if columns.fragments.len() > 1 {
+                        let mut inner = Found { container: Some(child_id), ..Found::default() };
+                        let inner_top = layout.border.top + layout.padding.top;
+                        crate::util::ensure_stack(|| self.collect_breaks(child_id, 0.0, &mut inner, Some(inner_top), (false, false)));
+                        for &(a, b) in inner.loose.iter().take(4096) {
+                            if let Some(fragment) = columns.fragment_at(a).filter(|f| !f.spanner) {
+                                let range = (child_top + a + fragment.offset.y, child_top + b + fragment.offset.y);
+                                if range.1 > range.0 + EPSILON {
+                                    found.strict.push(range);
+                                    found.loose.push(range);
+                                }
+                            }
+                        }
+                    }
                     for fragment in columns.fragments.iter().filter(|f| !f.spanner) {
                         let start = fragment.top - fragment.offset.y;
                         let end = if fragment.end.is_finite() { fragment.end } else { columns.strip_end };
