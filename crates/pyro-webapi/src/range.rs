@@ -858,7 +858,10 @@ impl JsClass for Selection {
             };
             // A range of another tree is ignored, and so is a second range.
             let (start, end) = (r.live.start(), r.live.end());
-            if !Rc::ptr_eq(&r.page, &sel.page)
+            // A range created in another same-origin frame can have both
+            // live endpoints moved into this document. Compare the arena
+            // before looking up node IDs, then check the endpoints below.
+            if !Rc::ptr_eq(&r.page.dom, &sel.page.dom)
                 || !in_document(&sel.page, start.0)
                 || !in_document(&sel.page, end.0)
                 || editing::selection(&sel.page).is_some()
