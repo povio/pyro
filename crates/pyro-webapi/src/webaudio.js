@@ -437,7 +437,12 @@
     return context;
   }
   // The output of `node` (state) for quantum q at frame f0.
-  function pull(n, q, f0) {
+  function pull(n, q, f0, output = 0) {
+    const bus = renderNode(n, q, f0);
+    // A splitter exposes each discrete input channel as its own mono output port.
+    return n.splitChannels ? (bus[output] ? [bus[output]] : silentBus()) : bus;
+  }
+  function renderNode(n, q, f0) {
     if (n.q === q) return n.out;
     if (n.busy) return silentBus();
     n.busy = true;
@@ -454,7 +459,7 @@
   function input(n, q, f0, port = 0) {
     const sources = n.numberOfInputs > 1 ? n.inputs.filter(s => s.input === port) : n.inputs;
     if (!sources.length) return null;
-    const buses = sources.map((s) => pull(s.node, q, f0));
+    const buses = sources.map((s) => pull(s.node, q, f0, s.output));
     let channels = 0;
     for (const b of buses) channels = max(channels, b.length);
     if (n.mode === 'clamped-max') channels = min(channels, n.channelCount);
@@ -505,7 +510,9 @@
     set channelInterpretation(v) {
       const n = nodeOf(this);
       const interp = `${v}`;
-      if (interp === 'speakers' || interp === 'discrete') n.interp = interp;
+      if (interp !== 'speakers' && interp !== 'discrete') return;
+      if (n.fixedInterpretation && interp !== n.interp) throw new DE('The channel interpretation is fixed.', 'InvalidStateError');
+      n.interp = interp;
     }
     connect(destination, output = 0, input = 0) {
       const n = nodeOf(this);
@@ -521,8 +528,8 @@
         throw new DE(`Failed to execute 'connect' on 'AudioNode': output index (${out}) exceeds number of outputs (${n.numberOfOutputs}).`, 'IndexSizeError');
       }
       if (p) {
-        if (!p.inputs.some((s) => s.node === n)) p.inputs.push({ node: n, output: out });
-        if (!n.outs.some((o) => o.param === p)) n.outs.push({ param: p, target: destination, output: out });
+        if (!p.inputs.some((s) => s.node === n && s.output === out)) p.inputs.push({ node: n, output: out });
+        if (!n.outs.some((o) => o.param === p && o.output === out)) n.outs.push({ param: p, target: destination, output: out });
         return undefined;
       }
       const inp = ulong(input);
@@ -538,7 +545,7 @@
     disconnect(destination, output, input) {
       const n = nodeOf(this);
       const drop = (o) => {
-        if (o.param) o.param.inputs = o.param.inputs.filter((s) => s.node !== n);
+        if (o.param) o.param.inputs = o.param.inputs.filter((s) => s.node !== n || s.output !== o.output);
         else o.node.inputs = o.node.inputs.filter(s => s.node !== n || s.output !== o.output || s.input !== o.input);
       };
       if (arguments.length === 0) {
@@ -555,22 +562,23 @@
         n.outs = n.outs.filter((o) => o.output !== out);
         return;
       }
-      if (output !== undefined) {
-        const out = ulong(output);
+      if (arguments.length >= 3 && params.has(destination)) throw new TypeErrorC('The three-argument overload requires an AudioNode.');
+      const out = arguments.length >= 2 ? ulong(output) : null;
+      if (out !== null) {
         if (out >= n.numberOfOutputs) {
           throw new DE(`Failed to execute 'disconnect' on 'AudioNode': The output index provided (${out}) is outside the range [0, ${n.numberOfOutputs - 1}].`, 'IndexSizeError');
         }
       }
-      if (input !== undefined && nodes.has(destination)) {
-        const inp = ulong(input);
+      const inp = arguments.length >= 3 ? ulong(input) : null;
+      if (inp !== null && nodes.has(destination)) {
         const d = nodes.get(destination);
         if (inp >= d.numberOfInputs) {
           throw new DE(`Failed to execute 'disconnect' on 'AudioNode': The input index provided (${inp}) is outside the range [0, ${d.numberOfInputs - 1}].`, 'IndexSizeError');
         }
       }
       const matching = n.outs.filter(o => o.target === destination
-        && (output === undefined || o.output === ulong(output))
-        && (input === undefined || o.input === ulong(input)));
+        && (out === null || o.output === out)
+        && (inp === null || o.input === inp));
       if (!matching.length) {
         throw new DE("Failed to execute 'disconnect' on 'AudioNode': the given destination is not connected.", 'InvalidAccessError');
       }
@@ -950,6 +958,27 @@
   }
   webidl(IIRFilterNode, 'IIRFilterNode');
 
+  class ChannelSplitterNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'ChannelSplitterNode');
+      const inherited = readNodeOptions(options, 'ChannelSplitterNode');
+      const outputs = options?.numberOfOutputs;
+      const count = outputs === undefined ? 6 : ulong(outputs);
+      if (!count || count > MAX_CHANNELS) throw new DE('Unsupported number of splitter outputs.', 'IndexSizeError');
+      super(secret, context, {
+        numberOfOutputs: count, channelCount: count, mode: 'explicit', interp: 'discrete',
+        fixedMode: true, fixedInterpretation: true, splitChannels: true,
+        checkCount(value) {
+          if (value !== count) throw new DE('Splitter channel count must match the number of outputs.', 'InvalidStateError');
+        },
+      });
+      applyNodeOptions(this, inherited);
+      const n = nodeOf(this);
+      n.process = (f0, q) => input(n, q, f0) || [];
+    }
+  }
+  webidl(ChannelSplitterNode, 'ChannelSplitterNode');
+
   // Each connected input is down-mixed to mono; unconnected inputs still
   // occupy their channel in the output.
   class ChannelMergerNode extends AudioNode {
@@ -1269,6 +1298,7 @@
       const a = coefficients(feedback);
       return new IIRFilterNode(this, {feedforward: b, feedback: a}, secret);
     }
+    createChannelSplitter(numberOfOutputs = 6) { return new ChannelSplitterNode(this, {numberOfOutputs}); }
     createChannelMerger(numberOfInputs = 6) { return new ChannelMergerNode(this, {numberOfInputs}); }
     createOscillator() { return new OscillatorNode(this); }
     createConstantSource() { return new ConstantSourceNode(this); }
@@ -1548,6 +1578,6 @@
   return {
     BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })

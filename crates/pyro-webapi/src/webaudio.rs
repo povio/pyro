@@ -54,6 +54,7 @@ where
         "BiquadFilterNode",
         "IIRFilterNode",
         "ChannelMergerNode",
+        "ChannelSplitterNode",
         "OfflineAudioCompletionEvent",
     );
 }
