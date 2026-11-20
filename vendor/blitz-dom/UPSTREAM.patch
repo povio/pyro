@@ -22295,7 +22295,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3697 @@
+@@ -0,0 +1,3696 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -23868,15 +23868,14 @@ new file mode 100644
 +                    let (row, index) = if per_row == usize::MAX { (0, i) } else { (i / per_row, i % per_row) };
 +                    let x = column_x(index);
 +                    let top = snap(row_top + row as f32 * (column_height + row_gap));
-+                    let start = snap(start);
 +                    sink.push(ColumnFragment {
 +                        start,
-+                        end: snap(end),
++                        end,
 +                        x,
 +                        width: column_width,
 +                        top,
 +                        height: if row + 1 == rows { last_height } else { column_height },
-+                        offset: Point { x: x - pb.left, y: snap(top - start) },
++                        offset: Point { x: x - pb.left, y: top - start },
 +                        spanner: false,
 +                        extended: 0.0,
 +                        exact_x: f32::NAN,

@@ -50,7 +50,7 @@ impl ElementCx<'_, '_> {
             let (start, end) = (fragment.start as f64, fragment.end as f64);
             let (offset, range) = match vertical {
                 None => (
-                    Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale),
+                    Vec2::new(fragment.offset.x as f64 * scale, f64::from(fragment.offset.y).round() * scale),
                     Rect::new(
                         -UNBOUNDED,
                         (start * scale).max(-UNBOUNDED),
@@ -114,6 +114,7 @@ impl ElementCx<'_, '_> {
                 (!fragment.spanner && vertical.is_none() && fragment.exact_x.is_finite())
                     .then_some((self.node.id, fragment.offset.x + (fragment.exact_x - fragment.x))),
             );
+            let _block_offset = Restore::set(&self.context.column_block_offset, self.context.column_block_offset.get() + if vertical.is_none() { f64::from(fragment.offset.y) } else { 0.0 });
             let spanner_row_guard = Restore::set(
                 &self.context.spanner_row_container,
                 (fragment.spanner && vertical.is_none()).then_some(self.node.id),

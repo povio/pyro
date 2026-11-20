@@ -1570,15 +1570,14 @@ impl LayoutPassState<'_> {
                     let (row, index) = if per_row == usize::MAX { (0, i) } else { (i / per_row, i % per_row) };
                     let x = column_x(index);
                     let top = snap(row_top + row as f32 * (column_height + row_gap));
-                    let start = snap(start);
                     sink.push(ColumnFragment {
                         start,
-                        end: snap(end),
+                        end,
                         x,
                         width: column_width,
                         top,
                         height: if row + 1 == rows { last_height } else { column_height },
-                        offset: Point { x: x - pb.left, y: snap(top - start) },
+                        offset: Point { x: x - pb.left, y: top - start },
                         spanner: false,
                         extended: 0.0,
                         exact_x: f32::NAN,
