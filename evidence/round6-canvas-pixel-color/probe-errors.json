@@ -1,0 +1,21 @@
+{
+  "control": {
+    "compared": 6,
+    "missing": 14,
+    "maxError": 31,
+    "outsideTwo": {
+      "srgb/display-p3": 17,
+      "display-p3/srgb": 31,
+      "display-p3/croppedBitmap": 10
+    }
+  },
+  "candidate": {
+    "compared": 20,
+    "missing": 0,
+    "maxError": 3,
+    "outsideTwo": {
+      "display-p3-linear/srgb-linear": 3,
+      "display-p3-linear/display-p3-linear": 3
+    }
+  }
+}

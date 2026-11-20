@@ -1,0 +1,11 @@
+{
+  "control": "aa0268b479a6b463da16910b4b743cf38901d962",
+  "candidate": "47bff30cb20ccf323edbbec9e3c439fe93aae846",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "jsc": "0e0dd7038a7a-6f4649e395e0",
+  "localStable": "157.0.8103.80 macOS arm64",
+  "jobs": 4,
+  "controlSHA256": "9623217e05de0c6866256ce4f855edabf2ca810eb0d6a3ae51a93fd5ba50f7a8",
+  "candidateSHA256": "74dc3c0fae19dd76cd76ee2f006739fcf3bd74fd5258168e3a21327e8416b8d9",
+  "runnerSHA256": "d14e5699d0807826c28c5f35e819e5d073f30cb8ac413bf1b3dc9f39035b2184"
+}

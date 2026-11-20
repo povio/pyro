@@ -1,0 +1,344 @@
+{
+  "urls": 201,
+  "columns": [
+    "buffer-canvas-base",
+    "buffer-canvas-head",
+    "Chrome WPT 157.0.8103.80"
+  ],
+  "counts": [
+    {
+      "namedPass": 767,
+      "full": 164,
+      "complete": 197,
+      "error": 4
+    },
+    {
+      "namedPass": 1046,
+      "full": 163,
+      "complete": 197,
+      "error": 4
+    },
+    {
+      "namedPass": 1434,
+      "full": 188,
+      "complete": 201
+    }
+  ],
+  "delta": {
+    "missing": 0,
+    "added": 0,
+    "gained": 315,
+    "lost": 36
+  },
+  "losses": [
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-Blob.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-Blob.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-Blob.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-Blob.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FFFF00000000CCCC.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FFFF00000000CCCC.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FFFF00000000FFFF.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html",
+      "Display-P3-FFFF00000000FFFF.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FFFF00000000CCCC.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FFFF00000000CCCC.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FFFF00000000FFFF.png, Context display-p3, ImageData display-p3, cropSource=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html",
+      "Display-P3-FFFF00000000FFFF.png, Context display-p3, ImageData display-p3, cropSource=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, scaleImage=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3, scaleImage=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, scaleImage=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3, scaleImage=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FFFF00000000CCCC.png, Context display-p3, ImageData display-p3, scaleImage=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FFFF00000000CCCC.png, Context display-p3, ImageData display-p3, scaleImage=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FFFF00000000FFFF.png, Context display-p3, ImageData display-p3, scaleImage=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "Display-P3-FFFF00000000FFFF.png, Context display-p3, ImageData display-p3, scaleImage=true",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html",
+      "sRGB-BB0000CC.png, Context srgb, ImageData srgb, scaleImage=false",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-image.html",
+      "Display-P3-FF0000CC.png, Context display-p3, ImageData display-p3",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-image.html",
+      "Display-P3-FF0000FF.png, Context display-p3, ImageData display-p3",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-image.html",
+      "Display-P3-FFFF00000000CCCC.png, Context display-p3, ImageData display-p3",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-image.html",
+      "Display-P3-FFFF00000000FFFF.png, Context display-p3, ImageData display-p3",
+      1,
+      "Pass",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "html/canvas/element/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.html",
+      "Verify round-trip of 8-bit P3 data ImageData through ImageBitmap",
+      1,
+      "Pass",
+      "Fail",
+      "Fail"
+    ],
+    [
+      "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.html",
+      "Verify round-trip of 8-bit P3 data ImageData through ImageBitmap",
+      1,
+      "Pass",
+      "Fail",
+      "Fail"
+    ],
+    [
+      "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.worker.html",
+      "Verify round-trip of 8-bit P3 data ImageData through ImageBitmap",
+      1,
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  ],
+  "netByUrl": {
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-color-space-settings.html": 4,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-Blob.html": 20,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-ImageData.html": 4,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-canvas.html": 4,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html": 64,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html": 64,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html": 72,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-canvas.html": 2,
+    "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-pattern-image.html": 32,
+    "html/canvas/element/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.html": -1,
+    "html/canvas/element/wide-gamut-canvas/2d.color.space.getImageData.convert.html": 2,
+    "html/canvas/element/wide-gamut-canvas/2d.color.space.toBlob.convert.html": 2,
+    "html/canvas/element/wide-gamut-canvas/2d.color.space.toBlob.toDataURL.jpeg.linear.float.html": 4,
+    "html/canvas/element/wide-gamut-canvas/2d.color.space.toDataURL.convert.html": 2,
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.html": -1,
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.worker.html": -1,
+    "html/canvas/offscreen/wide-gamut-canvas/2d.color.space.getImageData.convert.html": 2,
+    "html/canvas/offscreen/wide-gamut-canvas/2d.color.space.getImageData.convert.worker.html": 2,
+    "html/canvas/offscreen/wide-gamut-canvas/2d.color.space.toBlob.toDataURL.jpeg.linear.float.html": 2
+  }
+}

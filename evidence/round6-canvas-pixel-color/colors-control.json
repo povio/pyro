@@ -1,0 +1,80 @@
+{
+  "srgb": {
+    "srgb": [
+      80,
+      149,
+      105,
+      255,
+      104,
+      137,
+      129,
+      128,
+      0,
+      0,
+      0,
+      0
+    ],
+    "display-p3": [
+      80,
+      149,
+      105,
+      255,
+      104,
+      137,
+      129,
+      128,
+      0,
+      0,
+      0,
+      0
+    ],
+    "srgb-linear": "TypeError",
+    "display-p3-linear": "TypeError",
+    "croppedBitmap": [
+      104,
+      137,
+      129,
+      128
+    ]
+  },
+  "display-p3": {
+    "srgb": [
+      80,
+      149,
+      105,
+      255,
+      104,
+      137,
+      129,
+      128,
+      0,
+      0,
+      0,
+      0
+    ],
+    "display-p3": [
+      80,
+      149,
+      105,
+      255,
+      104,
+      137,
+      129,
+      128,
+      0,
+      0,
+      0,
+      0
+    ],
+    "srgb-linear": "TypeError",
+    "display-p3-linear": "TypeError",
+    "croppedBitmap": [
+      104,
+      137,
+      129,
+      128
+    ]
+  },
+  "srgb-linear": "TypeError",
+  "display-p3-linear": "TypeError"
+}
