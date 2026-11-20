@@ -1271,11 +1271,9 @@ fn editing_host_of(page: &PageDom, target: NodeId) -> Option<NodeId> {
             return None;
         };
         let dom = page.dom.borrow();
-        if dom.node_document(start.0).ok() == Some(doc) {
-            if let Some(host) = crate::editing::editing_host(&dom, start.0) {
-                return Some(host);
-            }
-        }
+        return (dom.node_document(start.0).ok() == Some(doc))
+            .then(|| crate::editing::editing_host(&dom, start.0))
+            .flatten();
     }
     crate::editing::editing_host(&page.dom.borrow(), target)
 }
