@@ -2214,7 +2214,9 @@ impl BaseDocument {
                 self.note_changed_table_cell(id, true);
                 let node = &mut self.nodes[id];
                 node.clear_layout_cache();
-                current = node.parent;
+                // (Up the boxes that lay it out: an inline-block's anonymous block too, which its
+                // DOM parent chain skips; css-flexbox overflow-auto-006 measures its scrollbar.)
+                current = node.layout_parent.get().or(node.parent);
             }
         }
         !changed.is_empty()
