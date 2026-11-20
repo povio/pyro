@@ -13,6 +13,8 @@ getrandom = "0.3"
 encoding_rs = "0.8"
 html5ever = "0.40"
 markup5ever = "0.40"
+# The timing rules' prefilter: a case-insensitive word scan over whole sheets (optimized in dev builds).
+memchr = "2"
 precomputed-hash = "0.1"
 quick-xml = "0.42"
 # `pattern` attributes: ECMAScript regular expressions (the `v` flag).

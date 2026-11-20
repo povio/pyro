@@ -1056,8 +1056,14 @@ fn mentions(text: &str) -> bool {
 }
 
 /// Whether `text` contains `word` (lowercase ASCII), ignoring ASCII case.
+/// pyro: by the positions of its first letter in either case (memchr), not every window: the
+/// prefilter reads whole sheets (megabytes) each time the document's sheets change, and a window
+/// compare per byte held a page with large sheets busy for seconds.
 fn contains_ignore_case(text: &str, word: &str) -> bool {
-    text.as_bytes().windows(word.len()).any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
+    let (bytes, word) = (text.as_bytes(), word.as_bytes());
+    let Some(&first) = word.first() else { return true };
+    memchr::memchr2_iter(first, first.to_ascii_uppercase(), bytes)
+        .any(|at| bytes.get(at..at + word.len()).is_some_and(|w| w.eq_ignore_ascii_case(word)))
 }
 
 fn next_tok<'i>(p: &mut Parser<'i>) -> Option<Token<'i>> {
@@ -1531,4 +1537,19 @@ fn inline_declares(dom: &Dom, id: NodeId, word: &str) -> bool {
         .ok()
         .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
         .is_some_and(|s| contains_ignore_case(s, word))
+}
+
+#[cfg(test)]
+mod prefilter_tests {
+    /// The prefilter finds a word in any ASCII case, at either end, and nothing past the end.
+    #[test]
+    fn contains_ignore_case_finds_every_spelling() {
+        use super::contains_ignore_case as has;
+        assert!(has("a { ANIMATION: x }", "animation"));
+        assert!(has("Transition", "transition"));
+        assert!(has("x timeline-TRIGGER", "timeline-trigger"));
+        assert!(!has("a { anima", "animation"));
+        assert!(!has("", "keyframes"));
+        assert!(has(&format!("{}@KeyFrames", " ".repeat(1 << 20)), "keyframes"));
+    }
 }

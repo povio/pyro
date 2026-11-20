@@ -2838,6 +2838,7 @@ dependencies = [
  "getrandom 0.3.4",
  "html5ever",
  "markup5ever",
+ "memchr",
  "precomputed-hash",
  "quick-xml",
  "regress",
