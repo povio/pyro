@@ -15,6 +15,7 @@ encoding_rs = "0.8"
 html5ever = "0.40"
 indexmap = "2"
 kurbo = "0.13.1"
+svgtypes = "0.16.1"
 markup5ever = "0.40"
 # The timing rules' prefilter: a case-insensitive word scan over whole sheets (optimized in dev builds).
 memchr = "2"

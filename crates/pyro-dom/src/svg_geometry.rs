@@ -705,7 +705,7 @@ fn hit_children(
             }
             continue;
         }
-        if let Some(path) = shape_path(dom, el, tag) {
+        if let Some(path) = shape_path(dom, el, tag, false, |name| attr(dom, el, name)) {
             if fill
                 && tag != "line"
                 && fill_hit(&path, p, crate::stylo::serialize(&computed, "fill-rule").as_deref() == Some("evenodd"))
@@ -788,40 +788,229 @@ fn path_hit(path: &kurbo::BezPath, p: kurbo::Point, evenodd: bool) -> bool {
         || path.segments().any(|s| s.nearest(p, 0.001).distance_sq < 1e-12)
 }
 
-fn shape_path(dom: &Dom, el: NodeId, tag: &str) -> Option<kurbo::BezPath> {
-    use kurbo::{Affine, BezPath, Circle, Ellipse, Line, Rect, RoundedRect, Shape};
-    let v = |name| num(dom, el, name);
+/// Path metrics use the element's equivalent path in local user coordinates.
+/// Author calibration via pathLength affects rendering, not these DOM APIs.
+pub fn total_length(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> f64 {
+    use kurbo::ParamCurveArclen;
+    metric_path(dom, layout, el).map_or(0.0, |path| {
+        path.segments().fold(0.0, |total, segment| total + segment.arclen(1e-5))
+    })
+}
+
+pub fn point_at_length(dom: &Dom, layout: &crate::layout::Layout, el: NodeId, distance: f64) -> Option<kurbo::Point> {
+    use kurbo::{ParamCurve, ParamCurveArclen, PathEl};
+    let path = metric_path(dom, layout, el)?;
+    let PathEl::MoveTo(mut endpoint) = *path.elements().first()? else { return None };
+    if distance <= 0.0 {
+        return Some(endpoint);
+    }
+    let mut remaining = distance;
+    for segment in path.segments() {
+        let length = segment.arclen(1e-5);
+        if remaining < length {
+            return Some(segment.eval(segment.inv_arclen(remaining, 1e-5)));
+        }
+        endpoint = segment.end();
+        if remaining == length {
+            break;
+        }
+        remaining -= length;
+    }
+    Some(endpoint)
+}
+
+fn metric_path(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Option<kurbo::BezPath> {
+    let tag = local_name(dom, el)?;
+    let css = geometry_properties(dom, layout, el);
+    let property = |name: &str| css.iter().find(|(key, _)| *key == name).map(|(_, value)| value.as_str());
+    if tag == "path" {
+        if let Some(value) = property("d") {
+            let data = value.strip_prefix("path(")?.strip_suffix(')')?.trim().trim_matches('"');
+            return Some(parse_shape_path(data));
+        }
+    }
+    let viewport = std::cell::OnceCell::new();
+    let font_context = std::cell::OnceCell::new();
+    let length = |name: &str| {
+        let value = property(name).or_else(|| dom.get_attribute(el, name).ok().flatten())?.trim();
+        if let Ok(n) = value.parse::<f64>() {
+            return n.is_finite().then_some(n);
+        }
+        let cx = font_context.get_or_init(|| length_context(dom, layout, el));
+        let (px, pct) = crate::computed::resolve_len(value, cx)?;
+        if pct == 0.0 {
+            return Some(px);
+        }
+        let (w, h) = (*viewport.get_or_init(|| user_viewport(dom, layout, el)))?;
+        let axis = match name {
+            "y" | "y1" | "y2" | "cy" | "ry" | "height" => h,
+            "r" => w.hypot(h) / 2.0_f64.sqrt(),
+            _ => w,
+        };
+        Some(px + pct * axis / 100.0)
+    };
+    shape_path(dom, el, &tag, true, length)
+}
+
+fn geometry_properties(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Vec<(&'static str, String)> {
+    layout.synced_geometry_source(dom)
+        .map(|source| source.svg_geometry_properties(crate::snapshot::render_key(el)))
+        .unwrap_or_default()
+}
+
+fn length_context(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> crate::computed::LengthContext {
+    let root = dom.node_document(el).ok().and_then(|doc| dom.document_element(doc).ok().flatten());
+    crate::computed::LengthContext {
+        viewport_width: f64::from(layout.inner_width()),
+        viewport_height: f64::from(layout.inner_height()),
+        ..crate::computed::LengthContext::fonts(
+            layout.style().computed_font_size(dom, Some(el)),
+            layout.style().computed_font_size(dom, root),
+        )
+    }
+}
+
+fn user_viewport(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Option<(f64, f64)> {
+    let mut ancestor = dom.parent_element(el).ok()?;
+    let mut viewports = Vec::new();
+    let mut basis = (f64::from(layout.inner_width()), f64::from(layout.inner_height()));
+    while let Some(id) = ancestor {
+        if local_name(dom, id).as_deref() == Some("svg") {
+            if let Some(vb) = dom.get_attribute(id, "viewBox").ok()?.and_then(|v| v.parse::<svgtypes::ViewBox>().ok()) {
+                basis = (vb.w, vb.h);
+                break;
+            }
+            viewports.push(id);
+        }
+        ancestor = dom.parent_element(id).ok()?;
+    }
+    if ancestor.is_none() && viewports.is_empty() {
+        return None;
+    }
+    for id in viewports.into_iter().rev() {
+        let css = geometry_properties(dom, layout, id);
+        let cx = length_context(dom, layout, id);
+        let (w, h) = layout.content_size(dom, id).unwrap_or(basis);
+        let size = |name: &str, reference: f64, fallback| {
+            let value = css.iter().find(|(k, _)| *k == name).map(|(_, v)| v.as_str())
+                .or_else(|| dom.get_attribute(id, name).ok().flatten());
+            let Some(value) = value else { return fallback };
+            value.trim().parse::<f64>().ok().filter(|n| n.is_finite()).or_else(|| {
+                crate::computed::resolve_len(value, &cx).map(|(px, pct)| px + pct * reference / 100.0)
+            }).unwrap_or(fallback)
+        };
+        basis = (size("width", basis.0, w), size("height", basis.1, h));
+    }
+    Some(basis)
+}
+
+/// SVG path error handling keeps every complete segment before the first
+/// malformed command. The parser expands relative and shorthand commands.
+fn parse_shape_path(data: &str) -> kurbo::BezPath {
+    use style::values::generics::basic_shape::{ArcSize, ArcSweep, ShapeCommand};
+    use style::values::specified::svg_path::{CoordPair, SVGPathData};
+    let (data, _) = SVGPathData::parse_bytes(data.as_bytes());
+    let mut path = kurbo::BezPath::new();
+    let coord = |p: CoordPair| kurbo::Point::new(f64::from(p.x), f64::from(p.y));
+    for &command in data.normalize(true).commands() {
+        match command {
+            ShapeCommand::Move { point } => path.move_to(coord(point.into())),
+            ShapeCommand::Line { point } => path.line_to(coord(point.into())),
+            ShapeCommand::CubicCurve { point, control1, control2 } => {
+                path.curve_to(coord(control1.into()), coord(control2.into()), coord(point.into()));
+            }
+            ShapeCommand::Arc { point, radii, arc_sweep, arc_size, rotate } => {
+                let to = coord(point.into());
+                let arc = kurbo::SvgArc {
+                    from: path.current_position().unwrap_or_default(), to,
+                    radii: kurbo::Vec2::new(f64::from(radii.rx), f64::from(radii.ry.as_ref().copied().unwrap_or(radii.rx))),
+                    x_rotation: f64::from(rotate).to_radians(),
+                    large_arc: arc_size == ArcSize::Large,
+                    sweep: arc_sweep == ArcSweep::Cw,
+                };
+                if let Some(arc) = kurbo::Arc::from_svg_arc(&arc) {
+                    path.extend(arc.append_iter(0.001));
+                } else {
+                    path.line_to(to);
+                }
+            }
+            ShapeCommand::Close => path.close_path(),
+            _ => unreachable!("normalized SVG path contains only M, L, C, A and Z"),
+        }
+    }
+    path
+}
+
+fn shape_path(dom: &Dom, el: NodeId, tag: &str, allow_degenerate: bool, length: impl Fn(&str) -> Option<f64>) -> Option<kurbo::BezPath> {
+    use kurbo::{Arc, BezPath, Circle, Line, Rect, Shape};
+    let v = |name| length(name).unwrap_or(0.0);
     let path = match tag {
         "rect" => {
             let (w, h) = (v("width"), v("height"));
-            if w <= 0. || h <= 0. {
+            if w < 0.0 || h < 0.0 || w == 0.0 && h == 0.0 || !allow_degenerate && (w == 0.0 || h == 0.0) {
                 return None;
             }
             let rect = Rect::new(v("x"), v("y"), v("x") + w, v("y") + h);
-            let rx = attr(dom, el, "rx").unwrap_or(v("ry")).clamp(0., w / 2.);
-            let ry = attr(dom, el, "ry").unwrap_or(v("rx")).clamp(0., h / 2.);
+            let rx = length("rx").unwrap_or(v("ry")).clamp(0., w / 2.);
+            let ry = length("ry").unwrap_or(v("rx")).clamp(0., h / 2.);
             if rx > 0. && ry > 0. {
-                let normalized = Rect::new(0., 0., w / rx, h / ry);
-                (Affine::translate((rect.x0, rect.y0)) * Affine::scale_non_uniform(rx, ry))
-                    * RoundedRect::from_rect(normalized, 1.).to_path(0.01)
+                // The SVG equivalent path starts on the top edge after the
+                // upper-left arc. That origin matters for distance queries.
+                use std::f64::consts::{FRAC_PI_2, PI};
+                let mut path = BezPath::new();
+                path.move_to((rect.x0 + rx, rect.y0));
+                for (edge, center, angle) in [
+                    ((rect.x1 - rx, rect.y0), (rect.x1 - rx, rect.y0 + ry), -FRAC_PI_2),
+                    ((rect.x1, rect.y1 - ry), (rect.x1 - rx, rect.y1 - ry), 0.0),
+                    ((rect.x0 + rx, rect.y1), (rect.x0 + rx, rect.y1 - ry), FRAC_PI_2),
+                    ((rect.x0, rect.y0 + ry), (rect.x0 + rx, rect.y0 + ry), PI),
+                ] {
+                    path.line_to(edge);
+                    path.extend(Arc::new(center, (rx, ry), angle, FRAC_PI_2, 0.0).append_iter(0.001));
+                }
+                path.close_path();
+                path
             } else {
                 rect.to_path(0.01)
             }
         }
         "circle" if v("r") > 0. => Circle::new((v("cx"), v("cy")), v("r")).to_path(0.01),
-        "ellipse" if v("rx") > 0. && v("ry") > 0. => {
-            Ellipse::new((v("cx"), v("cy")), (v("rx"), v("ry")), 0.).to_path(0.01)
+        "ellipse" => {
+            // Hit testing only supplies the XML lengths. Inferring an auto
+            // radius there would also override a CSS radius of zero. Metrics
+            // receive the cascade, so can resolve SVG 2's auto radii.
+            let (rx, ry) = if allow_degenerate {
+                (length("rx").unwrap_or(v("ry")), length("ry").unwrap_or(v("rx")))
+            } else {
+                (v("rx"), v("ry"))
+            };
+            if rx < 0.0 || ry < 0.0 || rx == 0.0 && ry == 0.0 || !allow_degenerate && (rx == 0.0 || ry == 0.0) {
+                return None;
+            }
+            if rx == 0.0 || ry == 0.0 {
+                let (cx, cy) = (v("cx"), v("cy"));
+                let mut path = BezPath::new();
+                path.move_to((cx + rx, cy));
+                path.line_to((cx, cy + ry));
+                path.line_to((cx - rx, cy));
+                path.line_to((cx, cy - ry));
+                path.close_path();
+                return Some(path);
+            }
+            // An ellipse begins on its positive x-axis even when ry > rx.
+            let mut path = Arc::new((v("cx"), v("cy")), (rx, ry), 0.0, std::f64::consts::TAU, 0.0).to_path(0.001);
+            path.close_path();
+            path
         }
         "line" => Line::new((v("x1"), v("y1")), (v("x2"), v("y2"))).to_path(0.01),
-        "path" => BezPath::from_svg(dom.get_attribute(el, "d").ok()??).ok()?,
+        "path" => parse_shape_path(dom.get_attribute(el, "d").ok()??),
         "polygon" | "polyline" => {
-            let values = numbers(dom.get_attribute(el, "points").ok()??);
-            let mut coords = values.chunks_exact(2);
+            let mut coords = svgtypes::PointsParser::from(dom.get_attribute(el, "points").ok()??);
             let start = coords.next()?;
             let mut path = BezPath::new();
-            path.move_to((start[0], start[1]));
+            path.move_to(start);
             for pt in coords {
-                path.line_to((pt[0], pt[1]));
+                path.line_to(pt);
             }
             if tag == "polygon" {
                 path.close_path();

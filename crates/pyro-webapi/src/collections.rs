@@ -2373,7 +2373,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgAnimatedAngle>();
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
-    engine.register::<SvgCurrentTranslate>();
+    engine.register::<SvgPoint>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();
@@ -2403,28 +2403,67 @@ mod tests {
     }
 }
 
-/// pyro: `SVGSVGElement.currentTranslate`: a point whose `x` and `y` are the `<svg>`'s pan (pyro-dom
-/// `Dom::svg_pan`), live.
-pub struct SvgCurrentTranslate;
-impl JsClass for SvgCurrentTranslate {
+/// A detached SVG point or the live pan of an SVG viewport.
+pub enum SvgPointData {
+    Detached(Cell<(f32, f32)>),
+    Translate(NodeHold),
+}
+
+impl SvgPointData {
+    fn coordinates(&self) -> (f64, f64) {
+        match self {
+            Self::Detached(value) => {
+                let (x, y) = value.get();
+                (f64::from(x), f64::from(y))
+            }
+            Self::Translate(node) => {
+                let (x, y, _) = node.page.dom.borrow().svg_pan(node.id);
+                (x, y)
+            }
+        }
+    }
+
+    fn set(&self, value: Value<'_>, horizontal: bool) -> JsResult<()> {
+        let value = value.to_number()? as f32;
+        if !value.is_finite() {
+            return Err(JsError::Type("The provided float value is non-finite.".into()));
+        }
+        match self {
+            Self::Detached(point) => {
+                let (x, y) = point.get();
+                point.set(if horizontal { (value, y) } else { (x, value) });
+            }
+            Self::Translate(node) => {
+                let mut dom = node.page.dom.borrow_mut();
+                let (x, y, scale) = dom.svg_pan(node.id);
+                let position = if horizontal { (f64::from(value), y, scale) } else { (x, f64::from(value), scale) };
+                dom.set_svg_pan(node.id, position);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn detached_point<'s>(s: &Scope<'s>, x: f64, y: f64) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<SvgPoint>(SvgPointData::Detached(Cell::new((x as f32, y as f32))), None)?.value())
+}
+
+pub struct SvgPoint;
+impl JsClass for SvgPoint {
     const NAME: &'static str = "SVGPoint";
-    type Data = NodeHold;
+    type Data = SvgPointData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        fn set(t: &NodeHold, v: Value<'_>, axis: usize) -> JsResult<()> {
-            let value = v.to_number()?;
-            if !value.is_finite() {
-                return Err(JsError::Type("The provided float value is non-finite.".into()));
-            }
-            let mut dom = t.page.dom.borrow_mut();
-            let (mut tx, mut ty, scale) = dom.svg_pan(t.id);
-            if axis == 0 { tx = value as f32 as f64 } else { ty = value as f32 as f64 }
-            dom.set_svg_pan(t.id, (tx, ty, scale));
-            Ok(())
-        }
-        def.accessor("x", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).0)), |_s, t, v| set(t, v, 0));
-        def.accessor("y", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).1)), |_s, t, v| set(t, v, 1));
-        def.getter("w", |s, _t| Ok(s.number(1.0)));
-        def.getter("z", |s, _t| Ok(s.number(0.0)));
+        def.accessor("x", |s, p| Ok(s.number(p.coordinates().0)), |_s, p, v| p.set(v, true));
+        def.accessor("y", |s, p| Ok(s.number(p.coordinates().1)), |_s, p, v| p.set(v, false));
+        def.getter("w", |s, _| Ok(s.number(1.0)));
+        def.getter("z", |s, _| Ok(s.number(0.0)));
+        def.method("matrixTransform", 1, |s, p, args| {
+            args.require(1, "SVGPoint.matrixTransform")?;
+            let matrix = s.unwrap::<SvgMatrix>(args.get(0))
+                .ok_or_else(|| JsError::Type("Expected an SVGMatrix.".into()))?;
+            let (x, y) = p.coordinates();
+            detached_point(s, matrix[0] * x + matrix[2] * y + matrix[4], matrix[1] * x + matrix[3] * y + matrix[5])
+        });
     }
 }
