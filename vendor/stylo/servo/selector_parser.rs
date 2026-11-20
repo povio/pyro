@@ -45,6 +45,8 @@ pub enum PseudoElement {
     FirstLetter,
     FirstLine,
     WebkitScrollbar,
+    WebkitScrollbarVertical,
+    WebkitScrollbarHorizontal,
 
     // Non-eager pseudos.
     Backdrop,
@@ -176,7 +178,7 @@ impl ToCss for PseudoElement {
             PickerSelect => "::picker(select)",
             PickerIcon => "::picker-icon",
             WebkitSliderThumb => "::-webkit-slider-thumb",
-            WebkitScrollbar => "::-webkit-scrollbar",
+            WebkitScrollbar | WebkitScrollbarVertical | WebkitScrollbarHorizontal => "::-webkit-scrollbar",
             WebkitScrollbarThumb => "::-webkit-scrollbar-thumb",
             WebkitScrollbarTrack => "::-webkit-scrollbar-track",
             WebkitScrollbarTrackPiece => "::-webkit-scrollbar-track-piece",
@@ -245,7 +247,7 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
 }
 
 /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
-pub const EAGER_PSEUDO_COUNT: usize = 6;
+pub const EAGER_PSEUDO_COUNT: usize = 8;
 
 impl PseudoElement {
     /// Gets the canonical index of this eagerly-cascaded pseudo-element.
@@ -285,7 +287,9 @@ impl PseudoElement {
             2 => PseudoElement::Selection,
             3 => PseudoElement::FirstLetter,
             4 => PseudoElement::FirstLine,
-            _ => PseudoElement::WebkitScrollbar,
+            5 => PseudoElement::WebkitScrollbar,
+            6 => PseudoElement::WebkitScrollbarVertical,
+            _ => PseudoElement::WebkitScrollbarHorizontal,
         };
         debug_assert!(result.is_eager());
         debug_assert_eq!(result.eager_index(), i);
@@ -338,12 +342,23 @@ impl PseudoElement {
     /// node then matches each rule's argument against its direction).
     #[inline]
     pub fn rule_map_key(&self) -> PseudoElement {
-        if self.is_scroll_button() {
+        if self.scrollbar_orientation().is_some() {
+            PseudoElement::WebkitScrollbar
+        } else if self.is_scroll_button() {
             PseudoElement::ScrollButtonAll
         } else if self.is_highlight() {
             PseudoElement::Highlight(ANY_HIGHLIGHT)
         } else {
             *self
+        }
+    }
+
+    /// State used when cascading a custom scrollbar for a physical axis.
+    pub fn scrollbar_orientation(&self) -> Option<NonTSPseudoClass> {
+        match self {
+            Self::WebkitScrollbarVertical => Some(NonTSPseudoClass::ScrollbarVertical),
+            Self::WebkitScrollbarHorizontal => Some(NonTSPseudoClass::ScrollbarHorizontal),
+            _ => None,
         }
     }
 
@@ -429,6 +444,8 @@ impl PseudoElement {
             | PseudoElement::FirstLetter
             | PseudoElement::FirstLine
             | PseudoElement::WebkitScrollbar
+            | PseudoElement::WebkitScrollbarVertical
+            | PseudoElement::WebkitScrollbarHorizontal
             | PseudoElement::Selection => PseudoElementCascadeType::Eager,
             PseudoElement::Backdrop
             | PseudoElement::ColorSwatch

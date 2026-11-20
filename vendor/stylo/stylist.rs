@@ -1881,6 +1881,8 @@ impl Stylist {
         let mut cur = element;
         let mut pseudos = SmallVec::<[_; 2]>::new();
         if let Some(pseudo) = pseudo_element {
+            #[cfg(feature = "servo")]
+            let pseudo = if pseudo.scrollbar_orientation().is_some() { &PseudoElement::WebkitScrollbar } else { pseudo };
             pseudos.push(pseudo.clone());
         }
         while let Some(p) = cur.implemented_pseudo_element() {

@@ -2312,7 +2312,8 @@ impl BaseDocument {
     fn update_viewport_unit_inset(&mut self) -> bool {
         let inset = if self.nodes.classic_scrollbars && self.try_root_element().is_none_or(|root| root.custom_scrollbar_size().is_none()) {
             let g = self.viewport_scrollbars_for(taffy::Point { x: false, y: false }).gutters;
-            (g.left + g.right, g.top + g.bottom)
+            let total = stylo_taffy::scrollbars::Gutters { edges: g }.total();
+            (total.width, total.height)
         } else {
             (0.0, 0.0)
         };
@@ -2343,7 +2344,10 @@ impl BaseDocument {
             y: overflow.y == Overflow::Scroll || (overflow.y == Overflow::Auto && shown.y),
         };
         let gutter = html.get_box().scrollbar_gutter;
-        let thickness = self.root_element().custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness });
+        let viewport = self.stylist.device().au_viewport_size();
+        let thickness = self.root_element().custom_scrollbar_size().map_or(taffy::Size { width: thickness, height: thickness }, |size| {
+            taffy::Size { width: size.width.min(viewport.width.to_f32_px()), height: size.height.min(viewport.height.to_f32_px()) }
+        });
         let inputs = stylo_taffy::scrollbars::GutterInputs {
             thickness,
             overflow,
@@ -2410,12 +2414,18 @@ impl BaseDocument {
             let had = node.flags & (NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
             let Some(style) = node.primary_styles() else {
                 if !had.is_empty() {
-                    changed.push((id, NodeFlags::empty()));
+                    changed.push((id, NodeFlags::empty(), None));
                 }
                 continue;
             };
             let (x, y) = (style.clone_overflow_x(), style.clone_overflow_y());
-            if x != Overflow::Auto && y != Overflow::Auto && had.is_empty() {
+            let old_limit = node.layout_data().scrollbar_size_limit;
+            let limit = if !node.is_root_element() && let Some(size) = node.custom_scrollbar_size() {
+                let layout = node.unrounded_layout();
+                let available = (layout.size - layout.border.sum_axes()).map(|length| length.max(0.0));
+                (available.width < size.width || available.height < size.height).then_some(available)
+            } else { None };
+            if x != Overflow::Auto && y != Overflow::Auto && had.is_empty() && limit == old_limit {
                 continue;
             }
             let eligible = style.clone_scrollbar_width() != ScrollbarWidth::None
@@ -2456,16 +2466,17 @@ impl BaseDocument {
             if !may_remove {
                 want |= had;
             }
-            if want != had {
-                changed.push((id, want));
+            if want != had || limit != old_limit {
+                changed.push((id, want, limit));
             }
         }
         // Each changed box and its ancestors are laid out again, each once: a walk up stops at an
         // ancestor an earlier walk cleared (nested scrollers that all change cost the tree's size,
         // not its depth squared).
         let mut cleared = std::collections::HashSet::new();
-        for &(id, want) in &changed {
+        for &(id, want, limit) in &changed {
             let node = &mut self.nodes[id];
+            node.layout_data_mut().scrollbar_size_limit = limit;
             node.flags.remove(NodeFlags::AUTO_SCROLLBAR_X | NodeFlags::AUTO_SCROLLBAR_Y);
             node.flags.insert(want);
             let mut current = Some(id);

@@ -278,7 +278,7 @@ diff --git a/packages/stylo_taffy/src/scrollbars.rs b/packages/stylo_taffy/src/s
 new file mode 100644
 --- /dev/null
 +++ b/packages/stylo_taffy/src/scrollbars.rs
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,227 @@
 +//! pyro: the scrollbar mode of the process: overlay scrollbars (the default), which take no layout
 +//! space, or classic scrollbars, which take a fixed thickness out of the scroll container's padding
 +//! box (as Chrome's on Linux, the platform wpt.fyi runs it on: 15 CSS px, 11 for
@@ -346,6 +346,13 @@ new file mode 100644
 +pub struct Gutters {
 +    /// The space at each physical edge.
 +    pub edges: taffy::Rect<f32>,
++}
++
++impl Gutters {
++    /// Combined nonnegative gutters, saturated to a finite layout length.
++    pub fn total(&self) -> taffy::Size<f32> {
++        self.edges.sum_axes().map(|length| length.min(f32::MAX))
++    }
 +}
 +
 +/// What decides a box's classic scrollbar gutters (physical axes).

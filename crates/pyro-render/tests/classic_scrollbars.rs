@@ -137,6 +137,45 @@ fn custom_scrollbars_use_their_own_sizes_without_reducing_viewport_units() {
 }
 
 #[test]
+fn custom_scrollbar_review_orientation() {
+    let axes = "::-webkit-scrollbar:vertical{width:24px;height:40px}::-webkit-scrollbar:horizontal{width:50px;height:7px}";
+    for (base, expected) in [("", (85.0, 85.0)), ("::-webkit-scrollbar{background:blue}", (76.0, 93.0))] {
+        let document = doc(&format!("<style>html{{overflow:scroll}}section{{width:100px;height:100px;overflow:scroll}}{base}{axes}</style><section></section>"), true);
+        assert_eq!(client(&document, "section"), expected);
+        let gutters = document.viewport_scrollbars.gutters;
+        assert_eq!((gutters.right, gutters.bottom), (100.0 - expected.0, 100.0 - expected.1));
+    }
+}
+
+#[test]
+fn custom_scrollbar_review_large_gutters() {
+    for length in ["100000px", "3e38px"] {
+        let document = doc(&format!("<style>html,section{{overflow:scroll;scrollbar-gutter:stable both-edges}}::-webkit-scrollbar{{width:{length};height:{length}}}section{{box-sizing:border-box;width:100px;height:80px;border:4px solid}}</style><section><div></div></section>"), true);
+        let viewport = document.viewport_scrollbars;
+        assert!(viewport.gutters.left <= 800.0 && viewport.gutters.right <= 800.0 && viewport.gutters.bottom <= 600.0);
+        let scroller = node(&document, "section");
+        let gutters = scroller.classic_scrollbars().unwrap().gutters;
+        assert_eq!((gutters.left, gutters.right, gutters.bottom), (92.0, 92.0, 72.0));
+        assert_eq!(client(&document, "section"), (0.0, 0.0));
+        assert_eq!(node(&document, "section > div").final_layout().location.x, 96.0);
+    }
+}
+
+#[test]
+fn custom_scrollbar_review_viewport_units() {
+    for stable in [false, true] {
+        for (rule, gutter) in [("", 15.0), ("color:red", 15.0), ("width:0", 0.0), ("display:none", 0.0)] {
+            let gutter_style = if stable { "stable" } else { "auto" };
+            let pseudo = if rule.is_empty() { String::new() } else { format!("html::-webkit-scrollbar{{{rule}}}") };
+            let document = doc(&format!("<style>html{{scrollbar-gutter:{gutter_style}}}{pseudo}</style><div id=wide style='width:100vw;height:650px'></div>"), true);
+            assert_eq!(document.viewport_scrollbars.gutters.right, gutter, "{gutter_style}: {rule}");
+            let expected = if stable && rule.is_empty() { 785.0 } else { 800.0 };
+            assert_eq!(node(&document, "#wide").final_layout().size.width, expected, "{gutter_style}: {rule}");
+        }
+    }
+}
+
+#[test]
 fn an_overflowing_document_shows_the_viewport_scrollbar() {
     let d = doc("<div style='height:2000px'></div>", true);
     assert!(d.viewport_scrollbars.shown.y);

@@ -171,6 +171,9 @@ where
     #[allow(clippy::type_complexity)]
     pub pseudo_element_matching_fn: Option<&'a dyn Fn(&Impl::PseudoElement) -> bool>,
 
+    /// The state of the pseudo-element itself, not its originating element.
+    pub pseudo_element_state: Option<Impl::NonTSPseudoClass>,
+
     /// Extra implementation-dependent matching data.
     pub extra_data: Impl::ExtraMatchingData<'a>,
 
@@ -287,6 +290,7 @@ where
             nesting_level: 0,
             in_negation: false,
             pseudo_element_matching_fn: None,
+            pseudo_element_state: None,
             extra_data: Default::default(),
             current_relative_selector_anchor: None,
             selector_caches,

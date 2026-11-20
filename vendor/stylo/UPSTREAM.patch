@@ -3300,7 +3300,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
      // so we can skip the diffing process for later flags if an earlier flag is true
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-20 07:26:00
++++ b/servo/selector_parser.rs	2026-11-20 08:38:28
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -3309,11 +3309,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  use std::ops::{Deref, DerefMut};
  use style_traits::{ParseError, StyleParseErrorKind};
  
-@@ -45,11 +44,44 @@
+@@ -45,11 +44,46 @@
      // APPLIES_TO_PLACEHOLDER properties expect!
      FirstLetter,
      FirstLine,
 +    WebkitScrollbar,
++    WebkitScrollbarVertical,
++    WebkitScrollbarHorizontal,
  
      // Non-eager pseudos.
      Backdrop,
@@ -3354,7 +3356,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
      // Implemented pseudos. These pseudo elements are representing the
      // elements within an UA shadow DOM, and matching the elements with
-@@ -76,8 +108,36 @@
+@@ -76,8 +110,36 @@
  }
  
  /// The count of all pseudo-elements.
@@ -3392,7 +3394,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  impl ToCss for PseudoElement {
      fn to_css<W>(&self, dest: &mut W) -> fmt::Result
      where
-@@ -93,6 +153,36 @@
+@@ -93,6 +155,36 @@
              Backdrop => "::backdrop",
              DetailsContent => "::details-content",
              Marker => "::marker",
@@ -3419,7 +3421,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            PickerSelect => "::picker(select)",
 +            PickerIcon => "::picker-icon",
 +            WebkitSliderThumb => "::-webkit-slider-thumb",
-+            WebkitScrollbar => "::-webkit-scrollbar",
++            WebkitScrollbar | WebkitScrollbarVertical | WebkitScrollbarHorizontal => "::-webkit-scrollbar",
 +            WebkitScrollbarThumb => "::-webkit-scrollbar-thumb",
 +            WebkitScrollbarTrack => "::-webkit-scrollbar-track",
 +            WebkitScrollbarTrackPiece => "::-webkit-scrollbar-track-piece",
@@ -3429,10 +3431,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              ColorSwatch => "::color-swatch",
              FileSelectorButton => "::file-selector-button",
              Placeholder => "::placeholder",
-@@ -116,28 +206,72 @@
+@@ -115,29 +207,73 @@
+ impl ::selectors::parser::PseudoElement for PseudoElement {
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
-     }
++    }
 +
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
@@ -3444,7 +3447,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // `::marker` (`::column::scroll-marker`, Multi-column 2 § 4.8).
 +    fn is_before_or_after(&self) -> bool {
 +        matches!(self, Self::Before | Self::After | Self::Column)
-+    }
+     }
 +
 +    // pyro: `::scroll-marker:target-current`, `::scroll-button(*):disabled`, and the user action
 +    // states, match the pseudo-element's own state (its box node's, `blitz-dom`). `::column`
@@ -3473,7 +3476,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
  /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
 -pub const EAGER_PSEUDO_COUNT: usize = 5;
-+pub const EAGER_PSEUDO_COUNT: usize = 6;
++pub const EAGER_PSEUDO_COUNT: usize = 8;
  
  impl PseudoElement {
      /// Gets the canonical index of this eagerly-cascaded pseudo-element.
@@ -3506,7 +3509,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Creates a pseudo-element from an eager index.
-@@ -145,8 +279,16 @@
+@@ -145,8 +281,18 @@
      pub fn from_eager_index(i: usize) -> Self {
          const _: () = assert!(EAGER_PSEUDO_COUNT <= (u8::MAX as usize));
          assert!(i < EAGER_PSEUDO_COUNT);
@@ -3517,14 +3520,16 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            2 => PseudoElement::Selection,
 +            3 => PseudoElement::FirstLetter,
 +            4 => PseudoElement::FirstLine,
-+            _ => PseudoElement::WebkitScrollbar,
++            5 => PseudoElement::WebkitScrollbar,
++            6 => PseudoElement::WebkitScrollbarVertical,
++            _ => PseudoElement::WebkitScrollbarHorizontal,
 +        };
          debug_assert!(result.is_eager());
 +        debug_assert_eq!(result.eager_index(), i);
          result
      }
  
-@@ -168,6 +310,43 @@
+@@ -168,6 +314,54 @@
          *self == PseudoElement::Marker
      }
  
@@ -3556,7 +3561,9 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    /// node then matches each rule's argument against its direction).
 +    #[inline]
 +    pub fn rule_map_key(&self) -> PseudoElement {
-+        if self.is_scroll_button() {
++        if self.scrollbar_orientation().is_some() {
++            PseudoElement::WebkitScrollbar
++        } else if self.is_scroll_button() {
 +            PseudoElement::ScrollButtonAll
 +        } else if self.is_highlight() {
 +            PseudoElement::Highlight(ANY_HIGHLIGHT)
@@ -3565,18 +3572,29 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +        }
 +    }
 +
++    /// State used when cascading a custom scrollbar for a physical axis.
++    pub fn scrollbar_orientation(&self) -> Option<NonTSPseudoClass> {
++        match self {
++            Self::WebkitScrollbarVertical => Some(NonTSPseudoClass::ScrollbarVertical),
++            Self::WebkitScrollbarHorizontal => Some(NonTSPseudoClass::ScrollbarHorizontal),
++            _ => None,
++        }
++    }
++
      /// Whether this pseudo-element is the ::selection pseudo.
      #[inline]
      pub fn is_selection(&self) -> bool {
-@@ -249,6 +428,7 @@
+@@ -249,6 +443,9 @@
              | PseudoElement::Before
              | PseudoElement::FirstLetter
              | PseudoElement::FirstLine
 +            | PseudoElement::WebkitScrollbar
++            | PseudoElement::WebkitScrollbarVertical
++            | PseudoElement::WebkitScrollbarHorizontal
              | PseudoElement::Selection => PseudoElementCascadeType::Eager,
              PseudoElement::Backdrop
              | PseudoElement::ColorSwatch
-@@ -261,7 +441,30 @@
+@@ -261,7 +458,30 @@
              | PseudoElement::SliderTrack
              | PseudoElement::MozProgressBar
              | PseudoElement::ServoTextControlInnerContainer
@@ -3608,7 +3626,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              PseudoElement::ServoAnonymousBox
              | PseudoElement::ServoAnonymousTable
              | PseudoElement::ServoAnonymousTableCell
-@@ -292,7 +495,9 @@
+@@ -292,7 +512,9 @@
                  PropertyFlags::APPLIES_TO_MARKER
              },
              PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
@@ -3619,7 +3637,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => PropertyFlags::empty(),
          }
      }
-@@ -313,19 +518,22 @@
+@@ -313,19 +535,22 @@
  
      /// Whether this pseudo-element is the ::highlight pseudo.
      pub fn is_highlight(&self) -> bool {
@@ -3645,7 +3663,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Whether this is a highlight pseudo-element that is styled lazily during
-@@ -341,7 +549,10 @@
+@@ -341,7 +566,10 @@
      #[inline]
      pub fn is_element_backed(&self) -> bool {
          use selectors::parser::PseudoElement;
@@ -3656,7 +3674,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              || matches!(
                  self,
                  Self::Placeholder
-@@ -357,6 +568,14 @@
+@@ -357,6 +585,14 @@
      }
  }
  
@@ -3671,7 +3689,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// The type used for storing `:lang` arguments.
  pub type Lang = Box<str>;
  
-@@ -364,6 +583,25 @@
+@@ -364,6 +600,25 @@
  #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToCss, ToShmem)]
  pub struct CustomState(pub AtomIdent);
  
@@ -3697,7 +3715,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// A non tree-structural pseudo-class.
  /// See https://drafts.csswg.org/selectors-4/#structural-pseudos
  #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToShmem)]
-@@ -376,6 +614,9 @@
+@@ -376,6 +631,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -3707,7 +3725,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +646,17 @@
+@@ -405,6 +663,17 @@
      Required,
      ServoNonZeroBorder,
      Target,
@@ -3725,7 +3743,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +669,24 @@
+@@ -417,11 +686,24 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -3751,11 +3769,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -440,6 +705,20 @@
-             dest.write_str(":lang(")?;
+@@ -441,6 +723,20 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
-+        }
+         }
 +        if let Dir(ref dir) = *self {
 +            dest.write_str(":dir(")?;
 +            serialize_identifier(dir, dest)?;
@@ -3769,10 +3786,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                dest.write_char(')')?;
 +            }
 +            return Ok(());
-         }
++        }
  
          dest.write_str(match *self {
-@@ -481,11 +760,16 @@
+             Self::Active => ":active",
+@@ -481,11 +777,16 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
@@ -3790,7 +3808,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +811,20 @@
+@@ -527,11 +828,20 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -3812,7 +3830,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +939,12 @@
+@@ -646,6 +956,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
@@ -3825,11 +3843,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -696,6 +995,27 @@
-             "state" => {
+@@ -697,6 +1013,27 @@
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-+            },
+             },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
 +            },
@@ -3850,10 +3867,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
 +                }
 +                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
-             },
++            },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
-@@ -714,8 +1034,21 @@
+ 
+@@ -714,8 +1051,21 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -3875,12 +3893,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -774,6 +1107,41 @@
-         };
- 
+@@ -776,6 +1126,41 @@
          Ok(pseudo_element)
-+    }
-+
+     }
+ 
 +    // pyro: `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2).
 +    fn parse_functional_pseudo_element(
 +        &self,
@@ -3914,9 +3930,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            "right" => ScrollButtonRight,
 +            _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
 +        })
-     }
- 
++    }
++
      fn default_namespace(&self) -> Option<Namespace> {
+         self.namespaces.default.as_ref().map(|ns| ns.clone())
+     }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
 +++ b/style_adjuster.rs	2026-11-19 16:24:47
@@ -4250,7 +4268,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
-+++ b/style_resolver.rs	2026-11-18 23:42:41
++++ b/style_resolver.rs	2026-11-20 08:37:14
 @@ -196,8 +196,10 @@
  
          let inside_link = parent_style.is_some_and(|s| s.visited_style().is_some());
@@ -4263,9 +4281,23 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          {
              if self.needs_visited_matching() {
                  let visited_matching_results =
-@@ -588,6 +590,47 @@
+@@ -307,6 +309,10 @@
+             let layout_parent_style_for_pseudo =
+                 layout_parent_style_for_pseudo(&primary_style, layout_parent_style);
+             SelectorImpl::each_eagerly_cascaded_pseudo_element(|pseudo| {
++                #[cfg(feature = "servo")]
++                if pseudo.scrollbar_orientation().is_some() && pseudo_styles.get(&PseudoElement::WebkitScrollbar).is_none() {
++                    return;
++                }
+                 let pseudo_style = self.resolve_pseudo_style(
+                     &pseudo,
+                     &primary_style,
+@@ -587,7 +593,50 @@
+             MatchingForInvalidation::No,
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
++        #[cfg(feature = "servo")]
++        { matching_context.pseudo_element_state = pseudo_element.scrollbar_orientation(); }
  
 +        // pyro: no rule that can generate a `::before`/`::after` box matches, so the
 +        // style matched and cascaded below would be dropped by
@@ -4519,7 +4551,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-19 19:38:22
++++ b/stylist.rs	2026-11-20 08:40:40
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -4531,24 +4563,26 @@ diff -ruN a/stylist.rs b/stylist.rs
  };
  use crate::properties_and_values::registry::{
      PropertyRegistration, ScriptRegistry as CustomPropertyScriptRegistry,
-@@ -1040,6 +1040,13 @@
-     #[inline]
-     pub fn iter_extra_data_origins_rev(&self) -> ExtraStyleDataIterator<'_> {
+@@ -1042,6 +1042,13 @@
          ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
-+    }
-+
+     }
+ 
 +    /// Whether active cascade data contains a container condition.
 +    pub fn has_container_queries(&self) -> bool {
 +        self.cascade_data
 +            .iter_origins()
 +            .any(|(data, _)| data.container_conditions.len() > 1)
-     }
- 
++    }
++
      /// Returns the number of selectors.
-@@ -1219,6 +1226,62 @@
-         doc_author_rules_apply && f(&self.cascade_data.author)
-     }
+     pub fn num_selectors(&self) -> usize {
+         self.cascade_data
+@@ -1217,6 +1224,62 @@
+         }
  
+         doc_author_rules_apply && f(&self.cascade_data.author)
++    }
++
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -4603,15 +4637,19 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-+    }
-+
-     /// Execute callback for all applicable style rule data.
-     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
-     where
-@@ -1371,6 +1434,64 @@
-         ))
      }
  
+     /// Execute callback for all applicable style rule data.
+@@ -1365,6 +1428,64 @@
+         Some(self.compute_pseudo_element_style_with_inputs(
+             cascade_inputs,
+             pseudo,
++            guards,
++            Some(originating_element_style),
++            Some(element),
++        ))
++    }
++
 +    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
 +    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
 +    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
@@ -4664,23 +4702,18 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        Some(self.compute_pseudo_element_style_with_inputs(
 +            inputs,
 +            &pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
-+    }
-+
-     /// Computes a pseudo-element style lazily using the given CascadeInputs.
-     /// This can be used for truly lazy pseudo-elements or to avoid redoing
-     /// selector matching for eager pseudo-elements when we need to recompute
-@@ -1623,10 +1744,9 @@
+             guards,
+             Some(originating_element_style),
+             Some(element),
+@@ -1622,11 +1743,10 @@
+             &mut declarations,
              &mut matching_context,
          );
- 
+-
 -        if declarations.is_empty() && is_probe {
 -            return None;
 -        }
--
+ 
 +        // pyro: a probe with no rules as unvisited still has a style when rules match the
 +        // relevant link as visited (`a:visited::selection`); decided after that pass.
 +        let unvisited_empty = declarations.is_empty();
@@ -4698,7 +4731,16 @@ diff -ruN a/stylist.rs b/stylist.rs
          Some(CascadeInputs {
              rules: Some(rules),
              visited_rules,
-@@ -1857,7 +1981,36 @@
+@@ -1757,6 +1881,8 @@
+         let mut cur = element;
+         let mut pseudos = SmallVec::<[_; 2]>::new();
+         if let Some(pseudo) = pseudo_element {
++            #[cfg(feature = "servo")]
++            let pseudo = if pseudo.scrollbar_orientation().is_some() { &PseudoElement::WebkitScrollbar } else { pseudo };
+             pseudos.push(pseudo.clone());
+         }
+         while let Some(p) = cur.implemented_pseudo_element() {
+@@ -1857,7 +1983,36 @@
          self.lookup_element_dependent_at_rule(element, |data| data.animations.get(name))
      }
  
@@ -4736,10 +4778,13 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// <https://drafts.csswg.org/css-view-transitions-2/#resolve-view-transition-rule>
      #[inline]
      pub fn last_view_transition_rule(&self) -> Option<&Arc<ViewTransitionRule>> {
-@@ -2866,6 +3019,82 @@
-     }
- }
- 
+@@ -2863,7 +3018,83 @@
+     fn clear(&mut self) {
+         self.element_map.clear();
+         self.pseudos_map.clear();
++    }
++}
++
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
 +/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
 +/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
@@ -4803,7 +4848,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        } else {
 +            None
 +        }
-+    }
+     }
 +
 +    fn clear(&mut self) {
 +        self.before.clear();
@@ -4814,12 +4859,10 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
 +    }
-+}
-+
+ }
+ 
  /// The id of a given layer, a sequentially-increasing identifier.
- #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
- pub struct LayerId(u16);
-@@ -3361,6 +3590,10 @@
+@@ -3361,6 +3592,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
  
@@ -4830,7 +4873,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
      /// the featureless host.
-@@ -3522,10 +3755,17 @@
+@@ -3522,10 +3757,17 @@
  }
  
  impl CascadeData {
@@ -4848,7 +4891,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3732,6 +3972,25 @@
+@@ -3732,6 +3974,25 @@
          self.normal_rules.rules(pseudo_elements)
      }
  
@@ -4874,7 +4917,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the featureless pseudo rule map for a given pseudo-element.
      #[inline]
      pub fn featureless_host_rules(
-@@ -3850,6 +4109,7 @@
+@@ -3850,6 +4111,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -4882,7 +4925,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4215,20 @@
+@@ -3955,10 +4217,20 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -4904,7 +4947,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              let pseudo_elements = selector.pseudo_elements();
              let inner_pseudo_element = pseudo_elements.first();
              if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4372,15 @@
+@@ -4102,6 +4374,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -4920,7 +4963,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4476,6 +4755,13 @@
+@@ -4476,6 +4757,13 @@
                                  | ImplicitScopeRoot::DocumentElement => {
                                      StylistImplicitScopeRoot::Normal(root)
                                  },
@@ -4934,7 +4977,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                                  ImplicitScopeRoot::ShadowHost(_)
                                  | ImplicitScopeRoot::InShadowTree(_) => {
                                      // Style data can be shared between shadow trees, so we must
-@@ -4817,6 +5103,7 @@
+@@ -4817,6 +5105,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();

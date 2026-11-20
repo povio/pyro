@@ -211,6 +211,7 @@ pub struct LayoutData {
     pub cache: Cache,
     pub unrounded_layout: Layout,
     pub final_layout: Layout,
+    pub(crate) scrollbar_size_limit: Option<taffy::Size<f32>>,
     pub scroll_offset: crate::Point<f64>,
     /// pyro: how far a `position: sticky` box is moved from where it is laid out (CSS px), with
     /// its descendants: the layout places it as if static, its embedder knows the scroll
@@ -261,6 +262,7 @@ impl LayoutData {
         Self {
             cache: Cache::new(),
             unrounded_layout: Layout::new(),
+            scrollbar_size_limit: None,
             final_layout: Layout::new(),
             scroll_offset: crate::Point::ZERO,
             sticky_offset: crate::Point::ZERO,

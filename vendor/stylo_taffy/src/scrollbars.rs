@@ -67,6 +67,13 @@ pub struct Gutters {
     pub edges: taffy::Rect<f32>,
 }
 
+impl Gutters {
+    /// Combined nonnegative gutters, saturated to a finite layout length.
+    pub fn total(&self) -> taffy::Size<f32> {
+        self.edges.sum_axes().map(|length| length.min(f32::MAX))
+    }
+}
+
 /// What decides a box's classic scrollbar gutters (physical axes).
 #[derive(Clone, Copy, Debug)]
 pub struct GutterInputs {

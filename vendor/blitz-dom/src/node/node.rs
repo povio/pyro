@@ -2225,14 +2225,14 @@ impl Node {
             // Own-layout_wm by default: the node's own algorithm reads its style in its own axes
             let layout_wm = styles.writing_mode;
             let mut style = stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm);
-            style.custom_scrollbars = self.custom_scrollbar_size();
+            style.custom_scrollbars = self.used_custom_scrollbar_size();
             style.natural_ratio = natural_ratio;
             style
         }
         #[cfg(not(feature = "writing-mode"))]
         {
             let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
-            style.custom_scrollbars = self.custom_scrollbar_size();
+            style.custom_scrollbars = self.used_custom_scrollbar_size();
             style.natural_ratio = natural_ratio;
             style
         }
@@ -3365,14 +3365,14 @@ impl Node {
     /// borders and scrollbar)
     pub fn client_width(&self) -> f32 {
         let layout = self.final_layout();
-        layout.size.width - layout.border.left - layout.border.right - layout.scrollbar_size.width
+        (layout.size.width - layout.border.left - layout.border.right - layout.scrollbar_size.width).max(0.0)
     }
 
     /// CSSOM View's `clientHeight`: the height of the padding box (border box minus
     /// borders and scrollbar)
     pub fn client_height(&self) -> f32 {
         let layout = self.final_layout();
-        layout.size.height - layout.border.top - layout.border.bottom - layout.scrollbar_size.height
+        (layout.size.height - layout.border.top - layout.border.bottom - layout.scrollbar_size.height).max(0.0)
     }
 
     /// CSSOM View's `scrollWidth`: the width of the node's content, including

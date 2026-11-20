@@ -309,6 +309,10 @@ where
             let layout_parent_style_for_pseudo =
                 layout_parent_style_for_pseudo(&primary_style, layout_parent_style);
             SelectorImpl::each_eagerly_cascaded_pseudo_element(|pseudo| {
+                #[cfg(feature = "servo")]
+                if pseudo.scrollbar_orientation().is_some() && pseudo_styles.get(&PseudoElement::WebkitScrollbar).is_none() {
+                    return;
+                }
                 let pseudo_style = self.resolve_pseudo_style(
                     &pseudo,
                     &primary_style,
@@ -589,6 +593,8 @@ where
             MatchingForInvalidation::No,
         );
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
+        #[cfg(feature = "servo")]
+        { matching_context.pseudo_element_state = pseudo_element.scrollbar_orientation(); }
 
         // pyro: no rule that can generate a `::before`/`::after` box matches, so the
         // style matched and cascaded below would be dropped by

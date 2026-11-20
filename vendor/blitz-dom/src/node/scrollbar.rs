@@ -62,23 +62,33 @@ pub struct ClassicScrollbars {
 
 impl Node {
     pub(crate) fn custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
+        use style::selector_parser::PseudoElement;
         use style::values::computed::{Display, Size};
         if !self.tree().classic_scrollbars {
             return None;
         }
         let data = self.try_stylo_element_data()?.get()?;
-        let pseudo = data.styles.pseudos.get(&style::selector_parser::PseudoElement::WebkitScrollbar)?;
+        let base = data.styles.pseudos.get(&PseudoElement::WebkitScrollbar)?;
         if data.styles.get_primary()?.clone_scrollbar_width() != ScrollbarWidth::Auto {
             return None;
         }
-        let length = |value: &Size| {
+        let length = |vertical: bool| {
+            let axis = if vertical { PseudoElement::WebkitScrollbarVertical } else { PseudoElement::WebkitScrollbarHorizontal };
+            let pseudo = data.styles.pseudos.get(&axis).unwrap_or(base);
             if pseudo.clone_display() == Display::None { return 0.0; }
+            let position = pseudo.get_position();
+            let value = if vertical { &position.width } else { &position.height };
             if let Size::LengthPercentage(value) = value && let Some(length) = value.0.to_length() {
-                return length.px();
+                return length.px().max(0.0).min(app_units::MAX_AU.to_f32_px());
             }
             stylo_taffy::scrollbars::CLASSIC_THICKNESS
         };
-        Some(taffy::Size { width: length(&pseudo.get_position().width), height: length(&pseudo.get_position().height) })
+        Some(taffy::Size { width: length(true), height: length(false) })
+    }
+
+    pub(crate) fn used_custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
+        let size = self.custom_scrollbar_size()?;
+        Some(self.layout_data().scrollbar_size_limit.map_or(size, |limit| size.zip_map(limit, f32::min)))
     }
     /// pyro: the box's classic scrollbars, when the process has classic scrollbars
     /// (`stylo_taffy::scrollbars`) and the box has any gutter; as layout reserved them
@@ -87,7 +97,7 @@ impl Node {
         use style::values::computed::Overflow;
         let inputs = self.classic_gutter_inputs()?;
         let gutters = inputs.gutters().edges;
-        if gutters.left + gutters.right + gutters.top + gutters.bottom <= 0.0 {
+        if gutters.left == 0.0 && gutters.right == 0.0 && gutters.top == 0.0 && gutters.bottom == 0.0 {
             return None;
         }
         let (overflow, auto_shows) = (inputs.overflow, inputs.auto_shows);
@@ -111,8 +121,7 @@ impl Node {
     pub fn container_query_gutters(&self) -> taffy::Size<f32> {
         let Some(mut inputs) = self.classic_gutter_inputs() else { return taffy::Size { width: 0.0, height: 0.0 } };
         inputs.auto_shows = taffy::Point { x: false, y: false };
-        let g = inputs.gutters().edges;
-        taffy::Size { width: g.left + g.right, height: g.top + g.bottom }
+        inputs.gutters().total()
     }
 
     /// What decides the box's classic scrollbar gutters, when the process has classic scrollbars
@@ -149,7 +158,7 @@ impl Node {
         };
         let wm = style.writing_mode;
         let inputs = GutterInputs {
-            thickness: self.custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness }),
+            thickness: self.used_custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness }),
             overflow,
             auto_shows,
             stable: box_styles.scrollbar_gutter.contains(ScrollbarGutter::STABLE),
