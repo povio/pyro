@@ -1850,7 +1850,7 @@ impl Node {
             if elem.name.ns == ns!(svg)
                 && attr.name.ns == ns!()
                 && matches!(&**name,
-                    "clip-path" | "transform-origin" | "overflow"
+                    "clip-path" | "transform-origin" | "overflow" | "pointer-events"
                     | "fill" | "fill-opacity" | "fill-rule"
                     | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
                     | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"

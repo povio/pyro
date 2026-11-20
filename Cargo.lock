@@ -2855,6 +2855,7 @@ dependencies = [
  "getrandom 0.3.4",
  "html5ever",
  "indexmap",
+ "kurbo",
  "markup5ever",
  "memchr",
  "precomputed-hash",

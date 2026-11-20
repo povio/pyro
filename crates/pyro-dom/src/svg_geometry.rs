@@ -598,3 +598,237 @@ fn transform_bounds(m: [f64; 6], b: Bounds) -> Bounds {
     }
     out
 }
+
+/// Hit-test SVG graphics in reverse paint order. The caller has resolved
+/// the viewport's position among the surrounding CSS boxes.
+pub(crate) fn hit_test(
+    dom: &Dom,
+    style: &StyleEngine,
+    svg: NodeId,
+    viewport: (f64, f64),
+    x: f64,
+    y: f64,
+) -> Option<NodeId> {
+    use kurbo::{Affine, Point};
+    if x < 0. || y < 0. || x > viewport.0 || y > viewport.1 {
+        return None;
+    }
+    let transform = view_box_transform(dom, svg, viewport).map(Affine::new).unwrap_or(Affine::IDENTITY);
+    hit_children(dom, style, svg, Point::new(x, y), transform, 0)
+}
+
+fn hit_children(
+    dom: &Dom,
+    style: &StyleEngine,
+    parent: NodeId,
+    point: kurbo::Point,
+    parent_transform: kurbo::Affine,
+    depth: u8,
+) -> Option<NodeId> {
+    if depth >= 64 {
+        return None;
+    }
+    let mut child = dom.last_child(parent).ok().flatten();
+    while let Some(el) = child {
+        child = dom.prev_sibling(el).ok().flatten();
+        let Ok(element) = dom.element(el) else { continue };
+        if element.name.ns != markup5ever::ns!(svg) {
+            continue;
+        }
+        let tag = &*element.name.local;
+        if !matches!(
+            tag,
+            "g" | "a" | "rect" | "circle" | "ellipse" | "line" | "polygon" | "polyline" | "path" | "text" | "image"
+        ) {
+            continue;
+        }
+        let Some(computed) = style.stylo_style(dom, el) else { continue };
+        // A clipped subtree needs its clip geometry to select a target.
+        // Leave it to the existing viewport hit until that geometry is available.
+        if computed.get_box().display.is_none()
+            || !matches!(computed.slow_clone_clip_path(), style::values::computed::basic_shape::ClipPath::None)
+        {
+            continue;
+        }
+        let transform = match dom.get_attribute(el, "transform").ok().flatten().and_then(parse_transform) {
+            Some(matrix) => parent_transform * kurbo::Affine::new(matrix),
+            None => parent_transform,
+        };
+        let p = transform.inverse() * point;
+        if !p.x.is_finite() || !p.y.is_finite() {
+            continue;
+        }
+        // Non-graphics elements such as defs, clipPath and mask do not
+        // participate in the viewport's painting order.
+        let container = matches!(tag, "g" | "a");
+        if container {
+            if let Some(hit) = hit_children(dom, style, el, point, transform, depth + 1) {
+                return Some(hit);
+            }
+        }
+        use style::computed_values::pointer_events::T as Pe;
+        let pe = computed.get_inherited_ui().pointer_events;
+        if pe == Pe::None
+            || matches!(pe, Pe::Auto | Pe::Visiblepainted | Pe::Visiblefill | Pe::Visiblestroke | Pe::Visible)
+                && computed.get_inherited_box().visibility != style::computed_values::visibility::T::Visible
+        {
+            continue;
+        }
+        let in_bounds = || {
+            bounds(dom, style, el, 0)
+                .is_some_and(|b| p.x >= b.min_x && p.x <= b.max_x && p.y >= b.min_y && p.y <= b.max_y)
+        };
+        if pe == Pe::BoundingBox {
+            if in_bounds() {
+                return Some(el);
+            }
+            continue;
+        }
+        if container {
+            continue;
+        }
+        // Transparent paints and zero opacity still paint for pointer-events.
+        use style::values::generics::svg::SVGPaintKind;
+        let svg = computed.get_inherited_svg();
+        let painted = matches!(pe, Pe::Auto | Pe::Visiblepainted | Pe::Painted);
+        let fill =
+            !matches!(pe, Pe::Stroke | Pe::Visiblestroke) && (!painted || !matches!(svg.fill.kind, SVGPaintKind::None));
+        let stroke =
+            !matches!(pe, Pe::Fill | Pe::Visiblefill) && (!painted || !matches!(svg.stroke.kind, SVGPaintKind::None));
+        if !fill && !stroke {
+            continue;
+        }
+        if tag == "text" {
+            // SVG text hits character cells for both fill and stroke.
+            if in_bounds() {
+                return Some(el);
+            }
+            continue;
+        }
+        if let Some(path) = shape_path(dom, el, tag) {
+            if fill
+                && tag != "line"
+                && fill_hit(&path, p, crate::stylo::serialize(&computed, "fill-rule").as_deref() == Some("evenodd"))
+            {
+                return Some(el);
+            }
+            if stroke {
+                use kurbo::{Cap, Join, Stroke};
+                let property = |name| crate::stylo::serialize(&computed, name).unwrap_or_default();
+                let length = |s: &str| s.trim_end_matches("px").parse::<f64>().ok();
+                let width = length(&property("stroke-width")).unwrap_or(1.);
+                if width <= 0. {
+                    continue;
+                }
+                let cap = match property("stroke-linecap").as_str() {
+                    "square" => Cap::Square,
+                    "round" => Cap::Round,
+                    _ => Cap::Butt,
+                };
+                let join = match property("stroke-linejoin").as_str() {
+                    "bevel" => Join::Bevel,
+                    "round" => Join::Round,
+                    _ => Join::Miter,
+                };
+                let mut outline = Stroke::new(width)
+                    .with_caps(cap)
+                    .with_join(join)
+                    .with_miter_limit(length(&property("stroke-miterlimit")).unwrap_or(4.));
+                let dashes = property("stroke-dasharray");
+                let dashes: Vec<_> = dashes.split([',', ' ']).filter_map(length).collect();
+                if dashes.iter().any(|&n| n > 0.) {
+                    outline = outline.with_dashes(length(&property("stroke-dashoffset")).unwrap_or(0.), dashes);
+                }
+                // Non-scaling strokes are constructed in host coordinates.
+                use style::values::specified::svg::VectorEffect;
+                let (path, stroke_point) =
+                    if computed.get_svg().vector_effect.contains(VectorEffect::NON_SCALING_STROKE) {
+                        (transform * path, point)
+                    } else {
+                        (path, p)
+                    };
+                if path_hit(&kurbo::stroke(path.iter(), &outline, &Default::default(), 0.01), stroke_point, false) {
+                    return Some(el);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// SVG closes every open contour for fill. The stroke still follows the
+/// original open path, including its end caps.
+fn fill_hit(path: &kurbo::BezPath, p: kurbo::Point, evenodd: bool) -> bool {
+    use kurbo::PathEl;
+    let mut previous: Option<&PathEl> = None;
+    let mut closed = None;
+    for (i, el) in path.elements().iter().enumerate() {
+        if matches!(el, PathEl::MoveTo(_)) && previous.is_some_and(|e| !matches!(e, PathEl::ClosePath)) {
+            closed.get_or_insert_with(|| kurbo::BezPath::from_vec(path.elements()[..i].to_vec())).close_path();
+        }
+        if let Some(copy) = &mut closed {
+            copy.push(*el);
+        }
+        previous = Some(el);
+    }
+    if previous.is_some_and(|e| !matches!(e, PathEl::ClosePath)) {
+        closed.get_or_insert_with(|| path.clone()).close_path();
+    }
+    path_hit(closed.as_ref().unwrap_or(path), p, evenodd)
+}
+
+fn path_hit(path: &kurbo::BezPath, p: kurbo::Point, evenodd: bool) -> bool {
+    use kurbo::{ParamCurveNearest, Shape};
+    let bounds = path.bounding_box();
+    if p.x < bounds.x0 - 1e-6 || p.x > bounds.x1 + 1e-6 || p.y < bounds.y0 - 1e-6 || p.y > bounds.y1 + 1e-6 {
+        return false;
+    }
+    let winding = path.winding(p);
+    (if evenodd { winding % 2 != 0 } else { winding != 0 })
+        || path.segments().any(|s| s.nearest(p, 0.001).distance_sq < 1e-12)
+}
+
+fn shape_path(dom: &Dom, el: NodeId, tag: &str) -> Option<kurbo::BezPath> {
+    use kurbo::{Affine, BezPath, Circle, Ellipse, Line, Rect, RoundedRect, Shape};
+    let v = |name| num(dom, el, name);
+    let path = match tag {
+        "rect" => {
+            let (w, h) = (v("width"), v("height"));
+            if w <= 0. || h <= 0. {
+                return None;
+            }
+            let rect = Rect::new(v("x"), v("y"), v("x") + w, v("y") + h);
+            let rx = attr(dom, el, "rx").unwrap_or(v("ry")).clamp(0., w / 2.);
+            let ry = attr(dom, el, "ry").unwrap_or(v("rx")).clamp(0., h / 2.);
+            if rx > 0. && ry > 0. {
+                let normalized = Rect::new(0., 0., w / rx, h / ry);
+                (Affine::translate((rect.x0, rect.y0)) * Affine::scale_non_uniform(rx, ry))
+                    * RoundedRect::from_rect(normalized, 1.).to_path(0.01)
+            } else {
+                rect.to_path(0.01)
+            }
+        }
+        "circle" if v("r") > 0. => Circle::new((v("cx"), v("cy")), v("r")).to_path(0.01),
+        "ellipse" if v("rx") > 0. && v("ry") > 0. => {
+            Ellipse::new((v("cx"), v("cy")), (v("rx"), v("ry")), 0.).to_path(0.01)
+        }
+        "line" => Line::new((v("x1"), v("y1")), (v("x2"), v("y2"))).to_path(0.01),
+        "path" => BezPath::from_svg(dom.get_attribute(el, "d").ok()??).ok()?,
+        "polygon" | "polyline" => {
+            let values = numbers(dom.get_attribute(el, "points").ok()??);
+            let mut coords = values.chunks_exact(2);
+            let start = coords.next()?;
+            let mut path = BezPath::new();
+            path.move_to((start[0], start[1]));
+            for pt in coords {
+                path.line_to((pt[0], pt[1]));
+            }
+            if tag == "polygon" {
+                path.close_path();
+            }
+            path
+        }
+        _ => return None,
+    };
+    Some(path)
+}

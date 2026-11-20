@@ -12,6 +12,8 @@ blitz-html and stylo_taffy are vendored from the same commit unchanged (`vendor/
 `UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout at the commit above) is
 the whole diff: every section below.
 
+SVG `pointer-events` presentation attributes participate in Stylo's author cascade, supplying the computed hit-testing value for each graphics element.
+
 ## Updating or dropping the patch
 
 - To move to a newer blitz main: in a blitz checkout, commit this directory's `src/` and `assets/` over
