@@ -119,8 +119,11 @@ export const reftestEnv = (wpt) => ({
   PYRO_AUTOPLAY_POLICY: 'no-user-gesture-required',
   ...ahemEnv(wpt),
 });
-/** Ahem alone, for testharness pages (wptrunner installs it for every test; geometry pages measure its boxes). */
-export const ahemEnv = (wpt) => ({ PYRO_FONTS: path.join(wpt, 'fonts', 'Ahem.ttf') });
+/** Ahem, for every kind of page (wptrunner installs it for every test; geometry pages measure its boxes), and classic
+ *  scrollbars: wpt.fyi runs Chrome on Linux, whose scrollbars take 15px of their box and whose `scrollbar-gutter`
+ *  reserves that (pyro's `--scrollbars classic`; overlay scrollbars, pyro's default, take none; an A/B run can set
+ *  PYRO_SCROLLBARS=overlay). */
+export const ahemEnv = (wpt) => ({ PYRO_FONTS: path.join(wpt, 'fonts', 'Ahem.ttf'), PYRO_SCROLLBARS: process.env.PYRO_SCROLLBARS ?? 'classic' });
 
 /** One page's render: navigate, settle (bounded by `deadline`, a Date.now() value), capture. `st` (optional) adds
  *  each stage's milliseconds: goto (navigation to commit), settle (load, fonts, the two real frames, reftest-wait),
