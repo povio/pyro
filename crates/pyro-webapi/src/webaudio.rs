@@ -50,6 +50,7 @@ where
         "OscillatorNode",
         "ConstantSourceNode",
         "GainNode",
+        "StereoPannerNode",
         "BiquadFilterNode",
         "IIRFilterNode",
         "ChannelMergerNode",
