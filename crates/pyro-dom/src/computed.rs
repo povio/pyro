@@ -87,6 +87,7 @@ pub fn is_color_property(name: &str) -> bool {
             | "border-left-color"
             | "caret-color"
             | "column-rule-color"
+            | "row-rule-color"
             | "fill"
             | "outline-color"
             | "stroke"

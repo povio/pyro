@@ -694,6 +694,33 @@ initial_specified_value = "specified::BorderSideWidth::medium()"
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
 affects = "layout"
 
+[row-rule-color]
+type = "Color"
+initial = "computed_value::T::currentcolor()"
+struct = "column"
+engine = "servo"
+ignored_when_colors_disabled = true
+spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-color"
+affects = "paint"
+
+[row-rule-style]
+type = "BorderStyle"
+initial = "computed::BorderStyle::None"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-style"
+affects = "paint"
+
+[row-rule-width]
+type = "BorderSideWidth"
+initial = "computed::BorderSideWidth::medium()"
+initial_specified_value = "specified::BorderSideWidth::medium()"
+struct = "column"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-width"
+affects = "paint"
+
 [column-width]
 type = "length::NonNegativeLengthOrAuto"
 initial = "computed::length::NonNegativeLengthOrAuto::auto()"

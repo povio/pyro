@@ -549,6 +549,12 @@ sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
 derive_serialize = true
 
+[row-rule]
+sub_properties = ["row-rule-width", "row-rule-style", "row-rule-color"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule"
+kind = "single_border"
+
 [text-decoration]
 sub_properties = ["text-decoration-color", "text-decoration-line", "text-decoration-style", "text-decoration-thickness"]
 spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-decoration"
