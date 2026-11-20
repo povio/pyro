@@ -26,7 +26,7 @@ type Result<T> = std::result::Result<T, &'static str>;
 /// defined HTML's named character references (HTML, "Parsing XML documents"; Chromium and
 /// Firefox do the same): with one of them, `&nbsp;` is a no-break space instead of a fatal
 /// error. Many XHTML documents use them (most of WPT's CSS 2.1 tests).
-const HTML_ENTITY_PUBLIC_IDS: [&str; 9] = [
+const HTML_ENTITY_PUBLIC_IDS: [&str; 11] = [
     "-//W3C//DTD XHTML 1.0 Transitional//EN",
     "-//W3C//DTD XHTML 1.1//EN",
     "-//W3C//DTD XHTML 1.0 Strict//EN",
@@ -36,6 +36,8 @@ const HTML_ENTITY_PUBLIC_IDS: [&str; 9] = [
     "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN",
     "-//W3C//DTD MathML 2.0//EN",
     "-//WAPFORUM//DTD XHTML Mobile 1.0//EN",
+    "-//WAPFORUM//DTD XHTML Mobile 1.1//EN",
+    "-//WAPFORUM//DTD XHTML Mobile 1.2//EN",
 ];
 
 /// The text HTML's named character reference `&name;` stands for, one or two characters
