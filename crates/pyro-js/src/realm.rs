@@ -2485,6 +2485,12 @@ impl<'s> Scope<'s> {
         Ok(unsafe { Value::from_raw(self.ctx, p) })
     }
 
+    /// Freeze a native binding's array using this realm's intrinsic.
+    pub fn frozen_array(&self, items: &[Value<'_>]) -> JsResult<Value<'s>> {
+        let array = self.array(items)?;
+        self.realm.cached_helper(self, "freeze")?.call(None, &[array.value()])
+    }
+
     /// Stores a GC-traced hidden value on a host object (wrappers and the
     /// global only). Use for per-wrapper JS state such as event listeners so
     /// cycles through it stay collectable. Keys are constants: the thread's

@@ -97,10 +97,21 @@ pub struct ReportedResponse {
     pub mime: String,
     pub encoded: u64,
     pub decoded: u64,
+    pub server_timing: Vec<crate::server_timing::Metric>,
 }
 
 impl ReportedResponse {
     pub fn of(head: &pyro_net::ResponseHead) -> ReportedResponse {
+        Self::from_head(head, head.timing.timing_allow_checked && !head.timing.timing_allow_failed)
+    }
+
+    /// The committed document's own final response. A parent's iframe
+    /// resource entry uses the requesting parent's TAO result instead.
+    pub fn for_navigation(head: &pyro_net::ResponseHead) -> ReportedResponse {
+        Self::from_head(head, true)
+    }
+
+    fn from_head(head: &pyro_net::ResponseHead, allow_metrics: bool) -> ReportedResponse {
         let opaque = matches!(head.kind, pyro_net::ResponseKind::Opaque | pyro_net::ResponseKind::OpaqueRedirect);
         ReportedResponse {
             timing: head.timing,
@@ -111,6 +122,7 @@ impl ReportedResponse {
             mime: if opaque { String::new() } else { head.mime.clone() },
             encoded: 0,
             decoded: 0,
+            server_timing: if allow_metrics { crate::server_timing::parse(&head.headers) } else { Vec::new() },
         }
     }
 }
@@ -144,6 +156,7 @@ pub struct ResourceEntry {
     pub content_type: String,
     pub render_blocking: bool,
     pub delivery_type: &'static str,
+    pub server_timing: Vec<crate::server_timing::Metric>,
 }
 
 impl ResourceEntry {
@@ -205,6 +218,7 @@ pub fn entry_of(report: &FetchReport, base: Instant, base_ms: f64) -> ResourceEn
         e.redirect_count = 0;
         return e;
     }
+    e.server_timing.clone_from(&r.server_timing);
     let fetch_start = e.fetch_start;
     match t.connection {
         Some(c) => {
@@ -335,6 +349,14 @@ thread_local! {
 }
 
 impl PageDom {
+    /// Match the owner environment's secure-context decision. A window's
+    /// hook includes its frame chain; workers use their script's URL.
+    pub fn exposes_server_timing(&self) -> bool {
+        self.hooks_secure_context().unwrap_or_else(|| {
+            self.document_url_parsed().is_some_and(|url| pyro_net::is_potentially_trustworthy_url(&url))
+        })
+    }
+
     pub fn resource_timings(&self) -> &ResourceTimings {
         &self.resource_timings
     }
@@ -382,6 +404,9 @@ impl PageDom {
         let Some(now_ms) = self.event_time() else { return };
         let rt = &self.resource_timings;
         let mut entry = entry_of(report, Instant::now(), now_ms);
+        if !entry.server_timing.is_empty() && !self.exposes_server_timing() {
+            entry.server_timing.clear();
+        }
         entry.seq = rt.next_seq.replace(rt.next_seq.get() + 1);
         let entry = Rc::new(entry);
         if !rt.full_pending.get() && rt.buffer.borrow().len() < rt.limit.get() {

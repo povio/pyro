@@ -976,6 +976,7 @@ impl BrowserThread {
         engine.register::<pyro_webapi::performance::PerformanceMark>();
         engine.register::<pyro_webapi::performance::PerformanceMeasure>();
         engine.register::<pyro_webapi::performance::PerformanceResourceTiming>();
+        engine.register::<pyro_webapi::server_timing::PerformanceServerTiming>();
         engine.register::<pyro_webapi::performance::PerformanceNavigationTiming>();
         engine.register::<nav::PerformanceTiming>();
         engine.register::<nav::PerformanceNavigation>();

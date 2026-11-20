@@ -88,6 +88,7 @@ mod streaming_html;
 pub mod observable;
 pub mod page;
 pub mod performance;
+pub mod server_timing;
 mod pointer_capture;
 mod popover;
 mod popup;

@@ -576,7 +576,7 @@ impl ResourceLoader for NetLoader {
             pyro_net::ResponseEvent::Finished { encoded_len, decoded_len } => {
                 let timing = |h: &pyro_net::ResponseHead| {
                     let url = navigation_url.clone()?;
-                    let mut response = pyro_webapi::resource_timing::ReportedResponse::of(h);
+                    let mut response = pyro_webapi::resource_timing::ReportedResponse::for_navigation(h);
                     response.encoded = encoded_len;
                     response.decoded = decoded_len;
                     // The document's own timing is not cross-origin to

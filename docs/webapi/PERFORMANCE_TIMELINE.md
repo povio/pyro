@@ -85,6 +85,13 @@ the redirect, lookup, connect, request and response times, the sizes and
 and in an iframe's entry for a frame document of another origin (or reached
 through one).
 
+In a secure context the final HTTP response's `Server-Timing` fields provide ordered metrics on
+resource and navigation entries in `serverTiming`, a frozen array of
+`PerformanceServerTiming` objects. A resource exposes metrics after its
+Timing-Allow-Origin check succeeds, including checks on redirects. The
+committed document receives its own final response's metrics. Metrics in
+HTTP trailers are not collected.
+
 Sizes: `encodedBodySize` and `decodedBodySize` as received;
 `transferSize` is `encodedBodySize + 300` (Resource Timing's header
 stand-in), 0 for a cache hit (`deliveryType` `cache`).

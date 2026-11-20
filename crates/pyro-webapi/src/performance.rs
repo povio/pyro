@@ -20,6 +20,7 @@ use pyro_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope,
 
 use crate::page::PageDom;
 use crate::resource_timing::ResourceEntry;
+use crate::server_timing::PerformanceServerTiming;
 use crate::target::EventTargetData;
 
 pub struct PerformanceEntryData {
@@ -119,7 +120,7 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
         for (key, value) in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
             o.set(key, s.number(f.map_or(0.0, value)))?;
         }
-        o.set("serverTiming", s.array(&[])?.value())?;
+        o.set("serverTiming", server_metrics(s, e)?)?;
     }
     if let Some(n) = &e.navigation {
         for (key, value) in navigation_fields(n) {
@@ -129,6 +130,17 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
         o.set("redirectCount", s.number(redirect_count(n)))?;
     }
     Ok(o.value())
+}
+
+fn server_metrics<'s>(s: &Scope<'s>, e: &PerformanceEntryData) -> JsResult<Value<'s>> {
+    let mut values = Vec::new();
+    if let Some(fetch) = e.fetch() {
+        values.reserve(fetch.server_timing.len());
+        for metric in &fetch.server_timing {
+            values.push(s.wrap::<PerformanceServerTiming>(metric.clone(), None)?.value());
+        }
+    }
+    s.frozen_array(&values)
 }
 
 fn initiator_type(e: &PerformanceEntryData) -> &'static str {
@@ -243,7 +255,7 @@ impl JsClass for PerformanceResourceTiming {
         def.getter("deliveryType", |s, e| Ok(s.string(e.fetch().map_or("", |f| f.delivery_type))));
         def.getter("renderBlockingStatus", |s, e| Ok(s.string(render_blocking_status(e))));
         def.getter("contentType", |s, e| Ok(s.string(e.fetch().map_or("", |f| &f.content_type))));
-        def.getter("serverTiming", |s, _e| Ok(s.array(&[])?.value()));
+        def.getter("serverTiming", server_metrics);
         def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
     }
 }
@@ -816,6 +828,7 @@ fn worker_performance_of<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
 pub(crate) fn register_for_worker(engine: &pyro_js::Engine) {
     engine.register::<PerformanceEntry>();
     engine.register::<PerformanceResourceTiming>();
+    engine.register::<PerformanceServerTiming>();
     engine.register::<PerformanceMark>();
     engine.register::<PerformanceMeasure>();
     engine.register::<WorkerPerformance>();

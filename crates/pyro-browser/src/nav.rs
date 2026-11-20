@@ -1483,7 +1483,12 @@ fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
     if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
         return None;
     }
-    let values = navigation_values(&p.target.page, &p.nav);
+    let mut values = navigation_values(&p.target.page, &p.nav);
+    if let Some(fetch) = &mut values.fetch {
+        if !fetch.server_timing.is_empty() && !p.target.page.exposes_server_timing() {
+            Rc::make_mut(fetch).server_timing.clear();
+        }
+    }
     let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
     entry.navigation = Some(Box::new(values));
     Some(entry)

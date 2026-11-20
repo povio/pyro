@@ -344,6 +344,7 @@
   const factoryTargets = { __proto__: null };
 
   const H = {
+    freeze: O.freeze,
     classProtos,
     classTargets,
     populated,
