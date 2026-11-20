@@ -1,0 +1,20 @@
+{
+  "urls": 710,
+  "counts": {
+    "full-0": 211,
+    "full-1": 211,
+    "full-2": 426,
+    "named-0": 103693,
+    "named-1": 103803,
+    "named-2": 108138,
+    "registered": 0,
+    "missing": 0,
+    "gained": 110
+  },
+  "gains": {
+    "editing/run/delete.html": 9,
+    "editing/run/forwarddelete.html": 9,
+    "editing/whitespaces/chrome-compat/delete.tentative.html": 46,
+    "editing/whitespaces/chrome-compat/forwarddelete.tentative.html": 46
+  }
+}
