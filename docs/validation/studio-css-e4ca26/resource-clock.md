@@ -1,0 +1,5 @@
+# Stylesheet resource timing guard
+
+Resource entries now convert recorded monotonic instants against the realm origin before rounding, rather than sampling a second instant and subtracting from a previously rounded time. Four native resource-timing tests passed, including a deterministic same-bucket case. All three CDP virtual-time controls passed.
+
+On the same build and WPT reference as `font-palette-cssom-animation.md`, the 8,082 main and 41 supplemental URLs had identical strict-page, passing-name and observed-name sets before and after. The 255-URL clock control also matched exactly (156 strict, 4,127 passing names, 4,869 observed). In 12 alternating six-job repeats of 35 URLs per binary, all three constructable-sheet import guards passed 12/12 on **both** parent and candidate. This fixes a rounding error but does not establish a measured flake-rate reduction. The earlier failure is retained in `combined-cssom-guard.json.gz`; `resource-clock-guard-repeats.json.gz` preserves all 24 new runs. The 39 withheld URLs remain uncounted.
