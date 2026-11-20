@@ -194,7 +194,7 @@ pub struct DecoderData {
 struct DecoderState {
     decoder: encoding_rs::Decoder,
     // A fatal streaming error leaves the unread suffix in the input queue.
-    pending: Vec<u8>,
+    pending: std::collections::VecDeque<u8>,
 }
 
 pub struct TextDecoder;
@@ -234,7 +234,7 @@ impl JsClass for TextDecoder {
             };
             let mut slot = d.decoder.borrow_mut();
             let state = slot.get_or_insert_with(|| DecoderState {
-                pending: Vec::new(),
+                pending: Default::default(),
                 decoder: if d.ignore_bom {
                     d.encoding.new_decoder_without_bom_handling()
                 } else {
@@ -242,24 +242,26 @@ impl JsClass for TextDecoder {
                     d.encoding.new_decoder_with_bom_removal()
                 },
             });
-            let bytes = if state.pending.is_empty() {
-                bytes
+            let mut input = if state.pending.is_empty() {
+                bytes.into()
             } else {
                 state.pending.extend(bytes);
                 std::mem::take(&mut state.pending)
             };
+            let bytes = input.make_contiguous();
             let decoder = &mut state.decoder;
             let capacity = decoder.max_utf8_buffer_length(bytes.len()).unwrap_or(bytes.len());
             let mut text = String::with_capacity(capacity);
             let malformed = if d.fatal {
-                let (result, read) = decoder.decode_to_string_without_replacement(&bytes, &mut text, last);
+                let (result, read) = decoder.decode_to_string_without_replacement(bytes, &mut text, last);
                 let malformed = matches!(result, encoding_rs::DecoderResult::Malformed(..));
                 if malformed && !last {
-                    state.pending.extend_from_slice(&bytes[read..]);
+                    input.drain(..read);
+                    state.pending = input;
                 }
                 malformed
             } else {
-                let _ = decoder.decode_to_string(&bytes, &mut text, last);
+                let _ = decoder.decode_to_string(bytes, &mut text, last);
                 false
             };
             if last {
