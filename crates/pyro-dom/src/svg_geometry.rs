@@ -888,6 +888,15 @@ fn user_viewport(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Optio
         return None;
     }
     for id in viewports.into_iter().rev() {
+        // In HTML layout, an inline SVG's percentage width and height are
+        // already resolved against its CSS containing block. The content box
+        // is the resulting SVG viewport, before transforms or borders.
+        if dom.parent_element(id).ok().flatten().is_some_and(|parent| dom.element(parent).is_ok_and(|e| e.is_html())) {
+            if let Some(size) = layout.content_size(dom, id) {
+                basis = size;
+                continue;
+            }
+        }
         let css = geometry_properties(dom, layout, id);
         let cx = length_context(dom, layout, id);
         let (w, h) = layout.content_size(dom, id).unwrap_or(basis);
