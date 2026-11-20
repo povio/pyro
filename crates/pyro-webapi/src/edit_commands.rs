@@ -1006,6 +1006,9 @@ fn format_of(command: &str) -> Option<(&'static str, &'static [&'static str], &'
 
 const SUPPORTED: &[&str] = &[
     "inserttext",
+    "stylewithcss",
+    "usecss",
+    "defaultparagraphseparator",
     "copy",
     "cut",
     "selectall",
@@ -1067,10 +1070,20 @@ pub(crate) fn query_supported(command: &str) -> bool {
 /// clipboard from the DOM is off for web pages). `copy` and `cut` run as
 /// from the keyboard; Chromium additionally requires transient user
 /// activation, which is not tracked.
-pub(crate) fn exec_command(page: &Rc<PageDom>, command: &str, value: &str) -> bool {
+pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value: &str) -> bool {
     use crate::clipboard::Action;
     let cmd = command.to_ascii_lowercase();
+    if doc != page.document() {
+        return false;
+    }
     match cmd.as_str() {
+        "stylewithcss" | "usecss" => {
+            let css = value.eq_ignore_ascii_case("false") == (cmd == "usecss");
+            return page.dom.borrow_mut().set_style_with_css(doc, css).is_ok();
+        }
+        "defaultparagraphseparator" => {
+            return page.dom.borrow_mut().set_paragraph_separator(doc, value).unwrap_or(false)
+        }
         "inserttext" => return editing::exec_command(page, "insertText", value),
         "copy" => return crate::clipboard::run(page, Action::Copy),
         "cut" => return crate::clipboard::run(page, Action::Cut),
@@ -1231,9 +1244,23 @@ fn split_texts(dom: &mut Dom, scope: NodeId, start: Point, end: Point) -> Vec<No
 }
 
 fn select_texts(page: &Rc<PageDom>, texts: &[NodeId]) {
-    let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return };
+    let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else {
+        return;
+    };
     let len = editing::len(&page.dom.borrow(), last);
     editing::set_selection(page, (first, 0), (last, len));
+}
+
+// Subscript and superscript keep their elements: both set the font size
+// as well as the vertical alignment.
+fn inline_css(tag: &str) -> Option<(&'static str, &'static str)> {
+    Some(match tag {
+        "b" => ("font-weight", "bold"),
+        "i" => ("font-style", "italic"),
+        "u" => ("text-decoration", "underline"),
+        "s" => ("text-decoration", "line-through"),
+        _ => return None,
+    })
 }
 
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
@@ -1255,20 +1282,30 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             } else {
                 split_texts(&mut dom, host, start, end)
             };
-            let Ok(doc) = dom.node_document(host) else { return };
+            let Ok(doc) = dom.node_document(host) else {
+                return;
+            };
             let mut last_wrapper: Option<NodeId> = None;
             for &t in &texts {
                 let carried = carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some());
                 if carried {
                     continue;
                 }
-                let Ok(Some(parent)) = dom.parent(t) else { continue };
+                let Ok(Some(parent)) = dom.parent(t) else {
+                    continue;
+                };
                 let prev = dom.prev_sibling(t).ok().flatten();
                 if let Some(w) = last_wrapper.filter(|&w| prev == Some(w)) {
                     let _ = dom.append_child(w, t);
                     continue;
                 }
-                let Ok(w) = dom.create_element(doc, tag) else { continue };
+                let style = if dom.document_data(doc).is_ok_and(|d| d.style_with_css) { inline_css(tag) } else { None };
+                let Ok(w) = dom.create_element(doc, if style.is_some() { "span" } else { tag }) else {
+                    continue;
+                };
+                if let Some((property, value)) = style {
+                    let _ = dom.set_attribute(w, "style", &format!("{property}: {value};"));
+                }
                 if let Some(href) = href {
                     let _ = dom.set_attribute(w, "href", href);
                 }
@@ -1283,12 +1320,30 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
 }
 
 fn ancestor_named(dom: &Dom, node: NodeId, host: NodeId, names: &[&str]) -> Option<NodeId> {
+    ancestor_format(dom, node, host, names, false)
+}
+
+fn ancestor_format(dom: &Dom, node: NodeId, host: NodeId, names: &[&str], removing: bool) -> Option<NodeId> {
     let mut cur = dom.parent_element(node).ok().flatten();
     while let Some(c) = cur {
         if c == host {
             return None;
         }
-        if names.contains(&editing::local(dom, c).as_str()) {
+        let tag = editing::local(dom, c);
+        let css_carrier = tag == "span"
+            && dom.attributes(c).is_ok_and(|attrs| attrs.len() == 1)
+            && dom.get_attribute(c, "style").ok().flatten().is_some_and(|text| {
+                let declarations = crate::css::parse_declarations(text);
+                let [declaration] = declarations.as_slice() else {
+                    return false;
+                };
+                names.iter().filter_map(|tag| inline_css(tag)).any(|(property, value)| {
+                    declaration.name.eq_ignore_ascii_case(property)
+                            && (declaration.value.eq_ignore_ascii_case(value)
+                                || removing && property == "font-style" && declaration.value.eq_ignore_ascii_case("oblique"))
+                })
+            });
+        if names.contains(&tag.as_str()) || css_carrier {
             return Some(c);
         }
         cur = dom.parent_element(c).ok().flatten();
@@ -1351,10 +1406,10 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             };
             let texts = split_texts(&mut dom, host, start, end);
             for &t in &texts {
-                while let Some(a) = ancestor_named(&dom, t, host, names) {
+                while let Some(a) = ancestor_format(&dom, t, host, names, true) {
                     hoist(&mut dom, t, a);
                     // A hoist that could not move the text would repeat.
-                    if ancestor_named(&dom, t, host, names) == Some(a) {
+                    if ancestor_format(&dom, t, host, names, true) == Some(a) {
                         break;
                     }
                 }
@@ -1536,14 +1591,22 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
 }
 
 /// `document.queryCommandState(command)`.
-pub(crate) fn query_state(page: &PageDom, command: &str) -> bool {
+pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
     let cmd = command.to_ascii_lowercase();
+    if doc != page.document() {
+        return false;
+    }
     match cmd.as_str() {
+        "stylewithcss" => page.dom.borrow().document_data(doc).is_ok_and(|d| d.style_with_css),
         "insertorderedlist" | "insertunorderedlist" => {
             let tag = if cmd == "insertorderedlist" { "ol" } else { "ul" };
-            let Some((start, _)) = editing::selection_range(page) else { return false };
+            let Some((start, _)) = editing::selection_range(page) else {
+                return false;
+            };
             let dom = page.dom.borrow();
-            let Some(host) = editing::editing_host(&dom, start.0) else { return false };
+            let Some(host) = editing::editing_host(&dom, start.0) else {
+                return false;
+            };
             ancestor_named(&dom, start.0, host, &[tag]).is_some()
         }
         _ if format_of(&cmd).is_some() => format_state(page, &cmd).1,
@@ -1562,18 +1625,29 @@ pub(crate) fn query_indeterm(page: &PageDom, command: &str) -> bool {
 }
 
 /// `document.queryCommandValue(command)`.
-pub(crate) fn query_value(page: &PageDom, command: &str) -> String {
+pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String {
     let cmd = command.to_ascii_lowercase();
+    if doc != page.document() {
+        return String::new();
+    }
     match cmd.as_str() {
         "formatblock" => {
-            let Some((start, _)) = editing::selection_range(page) else { return String::new() };
+            let Some((start, _)) = editing::selection_range(page) else {
+                return String::new();
+            };
             let dom = page.dom.borrow();
-            let Some(host) = editing::editing_host(&dom, start.0) else { return String::new() };
+            let Some(host) = editing::editing_host(&dom, start.0) else {
+                return String::new();
+            };
             ancestor_named(&dom, start.0, host, FORMAT_BLOCKS).map(|b| editing::local(&dom, b)).unwrap_or_default()
         }
-        "defaultparagraphseparator" => "div".into(),
+        "defaultparagraphseparator" => {
+            page.dom.borrow().document_data(doc).map(|d| d.default_paragraph_separator.to_owned()).unwrap_or_default()
+        }
         "fontname" | "forecolor" | "backcolor" => {
-            let Some((start, _)) = editing::selection_range(page) else { return String::new() };
+            let Some((start, _)) = editing::selection_range(page) else {
+                return String::new();
+            };
             let dom = page.dom.borrow();
             let el = if editing::is_text(&dom, start.0) {
                 dom.parent_element(start.0).ok().flatten()
@@ -1589,7 +1663,7 @@ pub(crate) fn query_value(page: &PageDom, command: &str) -> String {
             page.layout().computed_style_value(&dom, el, name)
         }
         _ if format_of(&cmd).is_some() || cmd.starts_with("insert") && cmd.ends_with("list") => {
-            query_state(page, &cmd).to_string()
+            query_state(page, doc, &cmd).to_string()
         }
         _ => String::new(),
     }
@@ -1624,9 +1698,9 @@ fn rich_selection(page: &PageDom, host: NodeId) -> bool {
 }
 
 /// `document.queryCommandEnabled(command)`.
-pub(crate) fn query_enabled(page: &PageDom, command: &str) -> bool {
+pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool {
     let cmd = command.to_ascii_lowercase();
-    if !query_supported(&cmd) {
+    if doc != page.document() || !query_supported(&cmd) {
         return false;
     }
     let has_range = || match command_target(page) {
@@ -1634,7 +1708,7 @@ pub(crate) fn query_enabled(page: &PageDom, command: &str) -> bool {
         _ => editing::selection_range(page).is_some_and(|(s, e)| s != e),
     };
     match cmd.as_str() {
-        "selectall" => true,
+        "selectall" | "stylewithcss" | "usecss" | "defaultparagraphseparator" => true,
         "insertimage" | "inserthorizontalrule" => {
             matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h))
         }
