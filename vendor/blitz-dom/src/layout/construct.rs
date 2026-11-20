@@ -838,6 +838,27 @@ fn collect_layout_children_with_wrap(
         return;
     }
 
+    if doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| el.name == qual_name!("button", html))
+        && doc.nodes[container_node_id].primary_styles().is_some_and(|style| super::multicol::is_multicol_style(&style))
+    {
+        out.create_anonymous_block(container_node_id, doc);
+        let wrapper = out.anonymous_block_id.take().unwrap();
+        let mut children = ThinVec::new();
+        push_children_and_pseudos(&mut children, &doc.nodes[container_node_id]);
+        doc.nodes[wrapper].children = children;
+        let mut values = (**doc.nodes[wrapper].primary_styles().unwrap()).clone();
+        values.mutate_box().set_adjusted_display(Display::Block, false);
+        {
+            let button = doc.nodes[container_node_id].primary_styles().unwrap();
+            *values.mutate_column() = button.get_column().clone();
+            values.mutate_position().column_gap = button.get_position().column_gap.clone();
+            values.mutate_position().row_gap = button.get_position().row_gap.clone();
+        }
+        doc.nodes[wrapper].stylo_element_data_mut().get_mut().unwrap().styles.primary = Some(style::servo_arc::Arc::new(values));
+        doc.nodes[wrapper].update_layout_styles();
+        return;
+    }
+
     // pyro: a select that was a drop-down had its options'
     // construct damage cleared (below); as a list box they must build their
     // boxes again.

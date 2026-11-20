@@ -225,6 +225,13 @@ impl BaseDocument {
         }
 
         // Reconstruction replaces the anonymous boxes with freshly styled ones.
+        if !own_damage.is_empty() && self.nodes[node_id].data.is_element_with_tag_name(&markup5ever::local_name!("button"))
+            && (self.nodes[node_id].primary_styles().is_some_and(|style| super::multicol::is_multicol_style(&style))
+                || self.nodes[node_id].anonymous_blocks.iter().any(|&id| self.nodes.get(id).is_some_and(super::multicol::is_multicol_node)))
+        {
+            damage.insert(CONSTRUCT_FC);
+            damage_for_parent.insert(CONSTRUCT_DESCENDENT);
+        }
         if !own_damage.is_empty() && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
             let anonymous_damage = self.refresh_anonymous_block_styles(node_id) - POS_CHILD_RELAYOUT;
             damage |= anonymous_damage;

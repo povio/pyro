@@ -2102,6 +2102,7 @@ impl LayoutPassState<'_> {
 #[inline]
 pub(crate) fn is_multicol_node(node: &Node) -> bool {
     node.primary_styles().is_some_and(|style| is_multicol_style(&style))
+        && !node.data.downcast_element().is_some_and(|el| el.name == crate::qual_name!("button", html))
 }
 
 impl Node {
