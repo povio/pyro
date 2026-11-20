@@ -1,0 +1,2338 @@
+[
+ [
+  "cookies/partitioned-cookies/partitioned-cookies-top-level-redirect.tentative.https.html",
+  "Partitioned Cookies are available in top-level cross-site to same-site redirects",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+  "In <input type=\"password\">, execCommand(\"styleWithCSS\", false, true), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+  "In <input type=\"password\">, execCommand(\"styleWithCSS\", false, false), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+  "In <input type=\"password\">, execCommand(\"defaultParagraphSeparator\", false, p), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+  "In <input type=\"password\">, execCommand(\"defaultParagraphSeparator\", false, div), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+  "In <input type=\"text\">, execCommand(\"styleWithCSS\", false, true), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+  "In <input type=\"text\">, execCommand(\"styleWithCSS\", false, false), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+  "In <input type=\"text\">, execCommand(\"defaultParagraphSeparator\", false, p), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+  "In <input type=\"text\">, execCommand(\"defaultParagraphSeparator\", false, div), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+  "In <textarea>, execCommand(\"styleWithCSS\", false, true), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+  "In <textarea>, execCommand(\"styleWithCSS\", false, false), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+  "In <textarea>, execCommand(\"defaultParagraphSeparator\", false, p), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+  "In <textarea>, execCommand(\"defaultParagraphSeparator\", false, div), a[b]c): The command should not be enabled",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline\">[]abc</div> (defaultParagraphSeparator: div)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline\">a[]bc</div> (defaultParagraphSeparator: div)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline\"><b>abc[]</b></div> (defaultParagraphSeparator: div) (preserving inline style test)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline-block\">[]abc</div> (defaultParagraphSeparator: div)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline-block\">a[]bc</div> (defaultParagraphSeparator: div)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline-block\"><b>abc[]</b></div> (defaultParagraphSeparator: div) (preserving inline style test)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline\">[]abc</div> (defaultParagraphSeparator: p)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline\">a[]bc</div> (defaultParagraphSeparator: p)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline\"><b>abc[]</b></div> (defaultParagraphSeparator: p) (preserving inline style test)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline-block\">[]abc</div> (defaultParagraphSeparator: p)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline-block\">a[]bc</div> (defaultParagraphSeparator: p)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+  "<div contenteditable style=\"white-space:nowrap; display:inline-block\"><b>abc[]</b></div> (defaultParagraphSeparator: p) (preserving inline style test)",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/plaintext-only/insertLineBreak.html?white-space=normal",
+  "Pressing Enter when A[]B should cause \"insertLineBreak\" and shouldn't insert new paragraph: editingHost.innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/bold.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/bold.html?1001-2000",
+  "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"foo[<span style=\\\"font-weight: bold\\\">bar</span>]baz\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/bold.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"foo[<span style=\\\"font-weight: bold\\\">bar]</span>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/bold.html?2001-3000",
+  "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<h3>foo[bar]baz</h3>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/bold.html?3001-last",
+  "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:100>fo[o</span><span style=font-weight:200>b]ar</span>\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/delete.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"delete\",\"\"]] \"foo<span style=display:none>bar</span>[]baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/delete.html?2001-3000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"delete\",\"\"]] \"<p style=color:blue>foo<p>[]bar\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/delete.html?3001-4000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"delete\",\"\"]] \"<p style=color:blue>foo<p style=color:rgba(0,0,255,1)>[]bar\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/delete.html?4001-5000",
+  "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"p\"],[\"delete\",\"\"]] \"<p>foo<p style=text-decoration:line-through>[]bar\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/delete.html?4001-5000",
+  "[[\"stylewithcss\",\"true\"],[\"delete\",\"\"]] \"<p style=color:blue>foo</p>[]bar\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/delete.html?5001-6000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"delete\",\"\"]] \"<p>foo[bar<p style=color:blue>baz]quz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/delete.html?6001-7000",
+  "[[\"stylewithcss\",\"true\"],[\"delete\",\"\"]] \"<span style=display:block>fo[o</span><span style=display:block>b]ar</span>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/fontname.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/fontname.html?1001-2000",
+  "[[\"stylewithcss\",\"false\"],[\"fontname\",\"sans-serif\"]] \"[foo<pre>bar</pre>baz]\" queryCommandIndeterm(\"fontname\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "editing/run/fontname.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"[foo<samp>bar</samp>baz]\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/fontname.html?2001-last",
+  "[[\"stylewithcss\",\"true\"],[\"fontname\",\"sans-serif\"]] \"fo[o<pre>b]ar</pre>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/fontsize.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/fontsize.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"<table data-start=0 data-end=1><tbody><tr><td>foo<td>bar<td>baz</table>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/fontsize.html?2001-last",
+  "[[\"stylewithcss\",\"false\"],[\"fontsize\",\"4\"]] \"foo<font size=2>ba[r</font>b]az\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/fontsize.html?2001-last",
+  "[[\"stylewithcss\",\"false\"],[\"fontsize\",\"4\"]] \"foo<font size=2>ba[r</font>b]az\" queryCommandIndeterm(\"fontsize\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "editing/run/fontsize.html?2001-last",
+  "[[\"stylewithcss\",\"true\"],[\"fontsize\",\"4\"]] \"fo[o<font size=2>bar</font>b]az\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forecolor.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forecolor.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"{<table><tr><td>foo<td>bar<td>baz</table>}\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forecolor.html?2001-last",
+  "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"fo[o<font color=brown>bar</font>b]az\" queryCommandIndeterm(\"forecolor\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "editing/run/formatblock.html?2001-3000",
+  "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<pre>\"]] \"<div>[foobar]</div>\" queryCommandValue(\"defaultparagraphseparator\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/formatblock.html?4001-5000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<p>\"]] \"<div style=color:blue>[foo]</div>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forwarddelete.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"forwarddelete\",\"\"]] \"foo[]<span style=display:none>bar</span>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forwarddelete.html?2001-3000",
+  "[[\"stylewithcss\",\"true\"],[\"forwarddelete\",\"\"]] \"foo[]<blockquote style=\\\"color: blue\\\">bar</blockquote>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forwarddelete.html?3001-4000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"forwarddelete\",\"\"]] \"<p style=color:blue>foo[]<p style=color:brown>bar\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forwarddelete.html?4001-5000",
+  "[[\"stylewithcss\",\"true\"],[\"forwarddelete\",\"\"]] \"<p style=color:blue>foo[]</p>bar\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/forwarddelete.html?5001-6000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"forwarddelete\",\"\"]] \"<p>foo[bar<p style=color:blue>baz]quz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/hilitecolor.html",
+  "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/indent.html",
+  "[[\"stylewithcss\",\"true\"],[\"indent\",\"\"]] \"<blockquote style=\\\"margin-right: 0\\\" dir=\\\"ltr\\\"><p>foo</blockquote><p>[bar]<blockquote style=\\\"margin-right: 0\\\" dir=\\\"ltr\\\"><p>baz</blockquote><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/inserthorizontalrule.html",
+  "[[\"stylewithcss\",\"true\"],[\"inserthorizontalrule\",\"\"]] \"<div><b>foo</b>{<b>bar</b>}<b>baz</b></div>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/inserthtml.html",
+  "[[\"stylewithcss\",\"true\"],[\"inserthtml\",\"ab<b>c</b>d\"]] \"foo[]bar\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertimage.html",
+  "[[\"stylewithcss\",\"true\"],[\"insertimage\",\"/img/lion.svg\"]] \"[foo<span style=color:#aBcDeF>bar]</span>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertlinebreak.html?1001-last",
+  "[[\"stylewithcss\",\"true\"],[\"insertlinebreak\",\"\"]] \"<p>[foo<span style=color:#aBcDeF>bar]</span>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"stylewithcss\",\"true\"],[\"insertorderedlist\",\"\"]] \"<ul style=color:blue><li>foo<li>[bar]<li>baz</ul>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertparagraph.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"insertparagraph\",\"\"]] \"<div style=display:none>foo[]bar</div>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertparagraph.html?2001-3000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"insertparagraph\",\"\"]] \"<b>foo[]bar</b>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertparagraph.html?3001-4000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"insertparagraph\",\"\"]] \"<div><b>foo[]bar</b></div>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertparagraph.html?4001-5000",
+  "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"p\"],[\"insertparagraph\",\"\"]] \"<p>foo<span style=color:#aBcDeF>[bar]</span>baz\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertparagraph.html?4001-5000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"insertparagraph\",\"\"]] \"<p>foo<span style=color:#aBcDeF>{bar}</span>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/inserttext.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"inserttext\",\"a\"]] \"<p>[foo<span style=color:#aBcDeF>bar]</span>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/inserttext.html?2001-last",
+  "[[\"stylewithcss\",\"true\"],[\"inserttext\",\"a\"]] \"[foo<font color=blue><a href=http://www.google.com>bar]</a></font>baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul style=color:blue><li>foo<li>[bar]<li>baz</ul>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/italic.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"fo[o<dfn>bar</dfn>b]az\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/italic.html?2001-last",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"<span style=font-style:oblique>fo[o</span><span style=font-style:italic>b]ar</span>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"foo[]bar<p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?1001-2000",
+  "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"p\"],[\"justifycenter\",\"\"]] \"<center><p>[foo<p>bar]</center><p>extra\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"<table><tbody><tr><td>foo<td>b[a]r<td>baz</table><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?3001-4000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"<div align=left><p>[foo]<p>bar</div><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?4001-5000",
+  "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"<div style=text-align:center><p>foo</div><p>[bar]<div style=text-align:center><p>baz</div><p>extra\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?4001-5000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifycenter\",\"\"]] \"<div style=text-align:center><p>foo</div><p>[bar]<div style=text-align:center><p>baz</div><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?6001-last",
+  "[[\"stylewithcss\",\"false\"],[\"defaultparagraphseparator\",\"p\"],[\"justifycenter\",\"\"]] \"<div style=text-align:center><p>foo</div> <p>[bar]</p> <div style=text-align:center><p>baz</div>\" queryCommandState(\"stylewithcss\") after",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifycenter.html?6001-last",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifycenter\",\"\"]] \"<center><p>foo</center> <p>[bar]</p> <center><p>baz</center>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyfull.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyfull\",\"\"]] \"foo[]bar<p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyfull.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyfull\",\"\"]] \"<center><p>[foo<p>bar]</center><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyfull.html?4001-last",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifyfull\",\"\"]] \"<p>[foo]<p align=justify>bar<p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyleft.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyleft\",\"\"]] \"<center><p>[foo]<p>bar</center><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyleft.html?2001-last",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyleft\",\"\"]] \"<div style=text-align:inherit><p>[foo]</div><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyright.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyright\",\"\"]] \"foo[]bar<p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyright.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"div\"],[\"justifyright\",\"\"]] \"<center><p>[foo<p>bar]</center><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/justifyright.html?4001-last",
+  "[[\"stylewithcss\",\"true\"],[\"defaultparagraphseparator\",\"p\"],[\"justifyright\",\"\"]] \"<p>[foo]<p align=right>bar<p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/misc.html",
+  "[[\"stylewithcss\",\"true\"]] \"foo[bar]baz\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/outdent.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"outdent\",\"\"]] \"<blockquote style=\\\"margin-right: 0px;\\\" dir=\\\"ltr\\\"><p>foo[bar]</p><p>baz</p></blockquote><p>extra\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/outdent.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"outdent\",\"\"]] \"<ol><li>foo</li><ol style=color:blue><li>[bar]</ol><li>baz</ol>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/removeformat.html",
+  "[[\"stylewithcss\",\"true\"],[\"removeformat\",\"\"]] \"[foo<b>bar</b>baz]\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/strikethrough.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/strikethrough.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"strikethrough\",\"\"]] \"<strike>foo[b<span style=\\\"color:blue\\\">ar]ba</span>z</strike>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/underline.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"<p>[foo</p> <p>bar]</p>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "editing/run/underline.html?1001-2000",
+  "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"<strike>foo[bar]baz</strike>\" queryCommandState(\"stylewithcss\") before",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "fetch/api/basic/response-null-body.any.html",
+  "Response.body is null for responses with status=204 (method=POST)",
+  1,
+  "Fail",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "fetch/api/basic/response-null-body.any.html",
+  "Response.body is null for responses with status=304 (method=OPTIONS)",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "fetch/content-length/content-length.html",
+  "Content-Length Test",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "fetch/metadata/generated/window-location.https.sub.html",
+  "sec-fetch-site - Same-Origin -> Cross-Site -> Same-Origin redirect - location.href",
+  1,
+  null,
+  "Pass",
+  "Pass"
+ ],
+ [
+  "fetch/metadata/window-open.https.sub.html",
+  "Same-origin window, forced, reloaded: sec-fetch-dest",
+  2,
+  null,
+  null,
+  null
+ ],
+ [
+  "fetch/metadata/window-open.https.sub.html",
+  "Same-origin window, forced, reloaded: sec-fetch-mode",
+  2,
+  null,
+  null,
+  null
+ ],
+ [
+  "fetch/metadata/window-open.https.sub.html",
+  "Same-origin window, forced, reloaded: sec-fetch-site",
+  2,
+  null,
+  null,
+  null
+ ],
+ [
+  "fetch/metadata/window-open.https.sub.html",
+  "Same-origin window, forced, reloaded: sec-fetch-user",
+  2,
+  null,
+  null,
+  null
+ ],
+ [
+  "html/browsers/browsing-the-web/navigating-across-documents/form-submit-and-window-stop.html",
+  "The planned navigation of a form should be cancelled by a window stop\n  in the same task as the form submission",
+  1,
+  null,
+  null,
+  "Pass"
+ ],
+ [
+  "html/browsers/origin/origin-keyed-agent-clusters/iframe-navigation/parent-yes-1-no-same-2-no-port.sub.https.html",
+  "Navigation",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "html/canvas/element/manual/imagebitmap/createImageBitmap-origin.sub.html",
+  "redirected to same-origin HTMLVideoElement: origin unclear getImageData",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "html/rendering/non-replaced-elements/tables/table-attribute.html",
+  "table th align attribute middle is correct",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "html/semantics/embedded-content/media-elements/replay.html",
+  "first video playback worked",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "html/semantics/embedded-content/media-elements/replay.html",
+  "second video playback worked",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "html/semantics/scripting-1/the-script-element/moving-between-documents/after-prepare-iframe-fetch-error-external-classic.html",
+  "window error: Move fetch-error external classic script to iframe after-prepare",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "html/syntax/parsing-html-fragments/fragment-parse-form-in-template-001.html",
+  "management of form element pointer inside of a <template>",
+  1,
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "html/webappapis/animation-frames/nested-raf-not-sync.html",
+  "A nested animation callback runs in a later rendering update",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "mixed-content/gen/iframe-inherit.meta/opt-in/sharedworker-classic.https.html",
+  "Mixed-Content: Expects allowed for sharedworker-classic to same-https origin and no-redirect redirection from https context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "mixed-content/gen/iframe-inherit.meta/unset/object-tag.https.html",
+  "Mixed-Content: Expects allowed for object-tag to same-https origin and keep-scheme redirection from https context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "mixed-content/gen/srcdoc-inherit.meta/unset/worklet-paint-import-data.https.html",
+  "Mixed-Content: Expects blocked for worklet-paint-import-data to same-http origin and swap-scheme redirection from https context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/no-referrer/fetch.http.html",
+  "Referrer Policy: Expects omitted for fetch to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/no-referrer/svg-a-tag.http.html",
+  "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects origin for script-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects origin for script-tag to cross-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/same-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/strict-origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects origin for script-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/strict-origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for script-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/always/script-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for script-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/always/svg-a-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/always/worker-classic.http.html",
+  "Referrer Policy: Expects stripped-referrer for worker-classic to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/never/img-tag.http.html",
+  "Referrer Policy: Expects omitted for img-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/never/img-tag.http.html",
+  "Referrer Policy: Expects omitted for img-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin-when-cross-origin/a-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for a-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin-when-crossorigin/xhr.http.html",
+  "Referrer Policy: Expects origin for xhr to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin-when-crossorigin/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin/a-tag.http.html",
+  "Referrer Policy: Expects origin for a-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin/a-tag.http.html",
+  "Referrer Policy: Expects origin for a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin/img-tag.http.html",
+  "Referrer Policy: Expects origin for img-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/origin/img-tag.http.html",
+  "Referrer Policy: Expects origin for img-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/unsafe-url/svg-a-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer-when-downgrade/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer-when-downgrade/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer-when-downgrade/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/script-tag.http.html",
+  "Referrer Policy: Expects omitted for script-tag to cross-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/script-tag.http.html",
+  "Referrer Policy: Expects omitted for script-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/svg-a-tag.http.html",
+  "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects origin for script-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects origin for script-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects origin for script-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for script-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/never/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/never/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/never/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/never/script-tag.http.html",
+  "Referrer Policy: Expects omitted for script-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/script-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for script-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/script-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for script-tag to cross-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer/a-tag.http.html",
+  "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer/a-tag.http.html",
+  "Referrer Policy: Expects omitted for a-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/origin/svg-a-tag.http.html",
+  "Referrer Policy: Expects origin for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/same-origin/a-tag.http.html",
+  "Referrer Policy: Expects omitted for a-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/same-origin/a-tag.http.html",
+  "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc-inherit.meta/unset/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/always/fetch.http.html",
+  "Referrer Policy: Expects stripped-referrer for fetch to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/default/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/never/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/never/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/xhr.http.html",
+  "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer/a-tag.http.html",
+  "Referrer Policy: Expects omitted for a-tag to cross-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer/a-tag.http.html",
+  "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer/a-tag.http.html",
+  "Referrer Policy: Expects omitted for a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer/iframe-tag.http.html",
+  "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/no-referrer/svg-a-tag.http.html",
+  "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "sanitizer-api/sethtml-custom-element-reactions.html",
+  "Element.setHTMLUnsafe with a sanitizer runs custom element reactions before returning",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "sanitizer-api/sethtml-custom-element-reactions.html",
+  "ShadowRoot.setHTMLUnsafe with a sanitizer runs custom element reactions before returning",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "sanitizer-api/sethtml-with-custom-elements.html",
+  "Custom element via is-attribute on html element, where is attribute is not default-allowed.",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "service-workers/service-worker/static-router-subresource.https.html",
+  "Subresource load matched with URLPattern condition",
+  1,
+  "Fail",
+  "Fail",
+  "Pass"
+ ],
+ [
+  "subresource-integrity/signatures/tentative/authority.https.window.html",
+  "`fetch()`: Valid signature (signature=:Mjk5JNXbKtJFgdLIBFiuMzstMJbpLtb4OpgqRx8sTkKK4hjNabVS7I3zR0mZBfo/W0tJiLBY+nUFYz4aN+hmCA==:), no integrity check: loads.",
+  1,
+  null,
+  null,
+  null
+ ],
+ [
+  "subresource-integrity/signatures/tentative/authority.https.window.html",
+  "`<script>`: Valid signature (signature=:Mjk5JNXbKtJFgdLIBFiuMzstMJbpLtb4OpgqRx8sTkKK4hjNabVS7I3zR0mZBfo/W0tJiLBY+nUFYz4aN+hmCA==:), no integrity check: loads with live signature.",
+  1,
+  null,
+  null,
+  null
+ ],
+ [
+  "subresource-integrity/signatures/tentative/authority.https.window.html",
+  "`<script>`: Valid signature (signature=:Mjk5JNXbKtJFgdLIBFiuMzstMJbpLtb4OpgqRx8sTkKK4hjNabVS7I3zR0mZBfo/W0tJiLBY+nUFYz4aN+hmCA==:), matching integrity check: loads with live signature.",
+  1,
+  null,
+  null,
+  null
+ ],
+ [
+  "subresource-integrity/signatures/tentative/authority.https.window.html",
+  "`fetch()`: Valid signature (signature=:W7c7NPyx9ubx60upk6H7qhO+/z+4ZGgeaaSUNna1nHX7Yz5+K3LNhbZkd/ecb+Mhf+43ySQN3gzT/3J6nh62AA==:), no integrity check: loads.",
+  1,
+  null,
+  null,
+  null
+ ],
+ [
+  "subresource-integrity/signatures/tentative/authority.https.window.html",
+  "`<script>`: Valid signature (signature=:W7c7NPyx9ubx60upk6H7qhO+/z+4ZGgeaaSUNna1nHX7Yz5+K3LNhbZkd/ecb+Mhf+43ySQN3gzT/3J6nh62AA==:), no integrity check: loads with live signature.",
+  1,
+  null,
+  null,
+  null
+ ],
+ [
+  "subresource-integrity/signatures/tentative/authority.https.window.html",
+  "`<script>`: Valid signature (signature=:W7c7NPyx9ubx60upk6H7qhO+/z+4ZGgeaaSUNna1nHX7Yz5+K3LNhbZkd/ecb+Mhf+43ySQN3gzT/3J6nh62AA==:), matching integrity check: loads with live signature.",
+  1,
+  null,
+  null,
+  null
+ ],
+ [
+  "timing-entrytypes-registry/registry.window.html",
+  "'paint' entries should be observable",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "uievents/mouse/mouse_boundary_events_after_reappending_last_over_target.tentative.html",
+  "After re-appending the last over element to the deepest mouseenter target without the original parent at mouseover, mouse boundary events should not be fired",
+  1,
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "xhr/send-redirect.htm",
+  "XMLHttpRequest: send() - Redirects (basics) (304, GET, content.py)",
+  1,
+  "Fail",
+  "Fail",
+  "Fail"
+ ],
+ [
+  "xhr/status-error.htm",
+  "XMLHttpRequest: status error handling PUT 200",
+  1,
+  "Pass",
+  "Pass",
+  "Pass"
+ ]
+]

@@ -1,0 +1,694 @@
+{
+ "control": {
+  "passCounts": [
+   35,
+   37,
+   40
+  ],
+  "varyingNames": 12,
+  "names": [
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Fail",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Fail",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Fail",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Fail",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ]
+  ]
+ },
+ "final": {
+  "passCounts": [
+   37,
+   40,
+   42
+  ],
+  "varyingNames": 8,
+  "names": [
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Fail",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Fail",
+    "Pass",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Fail",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+    "Fail",
+    "Fail",
+    "Fail"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+    "Pass",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+    "Fail",
+    "Pass",
+    "Pass"
+   ],
+   [
+    "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+    "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+    "Fail",
+    "Fail",
+    "Pass"
+   ]
+  ]
+ }
+}

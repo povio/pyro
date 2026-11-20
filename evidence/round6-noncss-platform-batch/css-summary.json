@@ -1,0 +1,124 @@
+{
+  "main": {
+    "summary": {
+      "pages": [
+        1038,
+        1038
+      ],
+      "strict": [
+        814,
+        812
+      ],
+      "strictGained": [],
+      "strictLost": [
+        "css/css-animations/transition-ready-time-offscreen.html",
+        "css/cssom/CSSStyleSheet-constructable-disallow-import.tentative.html"
+      ],
+      "passes": [
+        32351,
+        32349
+      ],
+      "gained": 0,
+      "lost": 2,
+      "observed": [
+        35514,
+        35514
+      ],
+      "namesAdded": 0,
+      "namesMissing": 0,
+      "duplicateNameKeys": [
+        0,
+        0
+      ],
+      "harnessStatuses": [
+        {
+          "complete/OK": 1026,
+          "timeout/Timeout": 8,
+          "error/Error": 4
+        },
+        {
+          "complete/OK": 1026,
+          "timeout/Timeout": 8,
+          "error/Error": 4
+        }
+      ],
+      "pageStatusChanges": {}
+    },
+    "details": {
+      "gained": [],
+      "lost": [
+        {
+          "key": [
+            "css/css-animations/transition-ready-time-offscreen.html",
+            "Transitions start at the same time regardless of on-screen status",
+            1
+          ],
+          "candidate": {
+            "name": "Transitions start at the same time regardless of on-screen status",
+            "status": "Fail",
+            "msg": "assert_equals: Both transitions should've started at the same time expected 23.3 but got 23.2"
+          }
+        },
+        {
+          "key": [
+            "css/cssom/CSSStyleSheet-constructable-disallow-import.tentative.html",
+            "@import rules should not trigger any loads.",
+            1
+          ],
+          "candidate": {
+            "name": "@import rules should not trigger any loads.",
+            "status": "Fail",
+            "msg": "assert_greater_than_equal: The entry's start time should be after all throws expected a number greater than or equal to 7.6 but got 7.5"
+          }
+        }
+      ],
+      "added": [],
+      "missing": []
+    }
+  },
+  "workers": {
+    "summary": {
+      "pages": [
+        41,
+        41
+      ],
+      "strict": [
+        27,
+        27
+      ],
+      "strictGained": [],
+      "strictLost": [],
+      "passes": [
+        577,
+        577
+      ],
+      "gained": 0,
+      "lost": 0,
+      "observed": [
+        874,
+        874
+      ],
+      "namesAdded": 0,
+      "namesMissing": 0,
+      "duplicateNameKeys": [
+        0,
+        0
+      ],
+      "harnessStatuses": [
+        {
+          "complete/OK": 41
+        },
+        {
+          "complete/OK": 41
+        }
+      ],
+      "pageStatusChanges": {}
+    },
+    "details": {
+      "gained": [],
+      "lost": [],
+      "added": [],
+      "missing": []
+    }
+  }
+}

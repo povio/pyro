@@ -1,0 +1,94 @@
+{
+  "css/css-animations/transition-ready-time-offscreen.html": {
+    "control": [
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 22.1 but got 22"
+      ],
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 22.4 but got 22.3"
+      ],
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 18.9 but got 18.8"
+      ],
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 20.7 but got 20.6"
+      ],
+      [
+        "Pass",
+        ""
+      ]
+    ],
+    "final": [
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 17.7 but got 17.6"
+      ],
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 23.2 but got 23.1"
+      ],
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 17.6 but got 17.5"
+      ],
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 18.9 but got 18.8"
+      ],
+      [
+        "Fail",
+        "assert_equals: Both transitions should've started at the same time expected 17.7 but got 17.6"
+      ]
+    ]
+  },
+  "css/cssom/CSSStyleSheet-constructable-disallow-import.tentative.html": {
+    "control": [
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ]
+    ],
+    "final": [
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ],
+      [
+        "Pass",
+        ""
+      ]
+    ]
+  }
+}

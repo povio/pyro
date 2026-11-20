@@ -1,0 +1,38 @@
+{
+  "urls": 95,
+  "columns": [
+    "bufferview-control",
+    "bufferview-final",
+    "Chrome WPT 157.0.8103.80"
+  ],
+  "counts": [
+    {
+      "namedPass": 16832,
+      "full": 63,
+      "complete": 93,
+      "error": 2
+    },
+    {
+      "namedPass": 16844,
+      "full": 63,
+      "complete": 95
+    },
+    {
+      "namedPass": 16578,
+      "full": 53,
+      "complete": 95
+    }
+  ],
+  "delta": {
+    "missing": 0,
+    "added": 0,
+    "gained": 12
+  },
+  "losses": [],
+  "netByUrl": {
+    "compression/decompression-buffersource.any.html": 3,
+    "compression/decompression-buffersource.any.serviceworker.html": 3,
+    "compression/decompression-buffersource.any.sharedworker.html": 3,
+    "compression/decompression-buffersource.any.worker.html": 3
+  }
+}

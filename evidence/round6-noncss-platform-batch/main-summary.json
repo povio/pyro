@@ -1,0 +1,54 @@
+{
+  "urls": 2445,
+  "counts": [
+    {
+      "complete": 2322,
+      "namedPass": 175667,
+      "full": 940,
+      "timeout": 88,
+      "error": 35
+    },
+    {
+      "complete": 2325,
+      "namedPass": 176349,
+      "full": 1005,
+      "timeout": 88,
+      "error": 32
+    },
+    {
+      "complete": 2426,
+      "namedPass": 188343,
+      "full": 1896,
+      "timeout": 13,
+      "error": 4,
+      "hang": 2
+    }
+  ],
+  "delta": {
+    "missing": 0,
+    "added": 0,
+    "gained": 682
+  },
+  "localChrome": {
+    "onlyChrome": 15661,
+    "onlyLP": 3667
+  },
+  "byArea": {
+    "FileAPI": {
+      "gained": 70
+    },
+    "compression": {
+      "gained": 184
+    },
+    "html": {
+      "gained": 191
+    },
+    "streams": {
+      "gained": 36
+    },
+    "svg": {
+      "gained": 201
+    }
+  },
+  "losses": []
+}
