@@ -1069,6 +1069,8 @@ impl LayoutPassState<'_> {
         // pyro: an editing host with no content keeps one line (Chromium's `HasLineIfEmpty`):
         // the caret's.
         let empty_editing_host = empty_editing_host(&self.nodes, dom_node_id(node_id));
+        // pyro: the nonce engine attributes are checked against (`crate::engine_marked`).
+        let frames = self.frames.clone();
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -1652,6 +1654,7 @@ impl LayoutPassState<'_> {
                     // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
                     let (intrinsic_sizes, default_object_size) = match element_data
                         .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
+                        .filter(|_| crate::engine_marked(&frames.nonce, element_data))
                         .and_then(|value| value.parse::<f32>().ok())
                     {
                         Some(height)

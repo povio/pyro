@@ -1873,10 +1873,7 @@ impl<'doc> DocumentMutator<'doc> {
                 client: self.doc.request_client(),
                 // pyro: the response's policy as the snapshot wrote it on the link (an engine
                 // attribute page content cannot write).
-                policy: node
-                    .element_data()
-                    .and_then(|e| e.attr(markup5ever::LocalName::from(crate::document::SHEET_POLICY_ATTRIBUTE)))
-                    .map(str::to_owned),
+                policy: self.doc.engine_attr(target_id, crate::document::SHEET_POLICY_ATTRIBUTE).map(str::to_owned),
                 policies: self.doc.sheet_policies.clone(),
             },
         );
@@ -1891,9 +1888,7 @@ impl<'doc> DocumentMutator<'doc> {
         let mut request = self.doc.build_request(url);
         request.options.destination = blitz_traits::net::Destination::Style;
         // pyro: the snapshot's sheet of this link (its engine attribute), served by identity.
-        request.options.sheet = self.doc.nodes[target_id]
-            .attr(markup5ever::LocalName::from(crate::document::SHEET_ATTRIBUTE))
-            .map(str::to_owned);
+        request.options.sheet = self.doc.engine_attr(target_id, crate::document::SHEET_ATTRIBUTE).map(str::to_owned);
         self.doc.net_provider.fetch(self.doc.id(), request, Box::new(handler));
     }
 

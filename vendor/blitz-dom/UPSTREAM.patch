@@ -599,7 +599,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,1448 @@
+@@ -0,0 +1,1449 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -977,6 +977,7 @@ new file mode 100644
 +        let keyed: std::collections::HashMap<u64, NodeId> = self
 +            .nodes
 +            .iter()
++            .filter(|(_, node)| node.element_data().is_some_and(|e| crate::engine_marked(&self.frames.nonce, e)))
 +            .filter_map(|(id, node)| Some((node.attr(attr.clone())?.parse::<u64>().ok()?, id)))
 +            .collect();
 +        let effects: Vec<_> = frame.iter().filter_map(|(key, e)| Some((*keyed.get(key)?, e.clone()))).collect();
@@ -2060,7 +2061,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
  use std::sync::Arc;
  use style::media_queries::MediaType;
  
-@@ -28,12 +28,91 @@
+@@ -28,12 +28,107 @@
      Sequential,
  }
  
@@ -2109,7 +2110,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +/// pyro: whether `given` is `secret`, in time that depends on their lengths only (never on where
 +/// they first differ): a marker's nonce is compared without telling a prober how much of it was
 +/// right.
-+fn same_secret(given: &str, secret: &str) -> bool {
++pub fn same_secret(given: &str, secret: &str) -> bool {
 +    let (given, secret) = (given.as_bytes(), secret.as_bytes());
 +    if given.len() != secret.len() {
 +        return false;
@@ -2136,6 +2137,22 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +/// pyro: the attribute a frame element names its frame table entry in: `"<nonce>:<index>:<version>"`.
 +pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
 +
++/// pyro: the attribute every element the snapshot gives engine attributes (sheet keys and
++/// policies, scroll and sticky offsets, animation keys, the clip mark, a frame's content height,
++/// a `<pre>`'s own name) carries this document's nonce in: an engine attribute of an element
++/// without it is inert, so no difference between the DOM and a reparse of its markup can mint
++/// one ([`engine_marked`]).
++pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
++
++/// pyro: whether the engine attributes of element `element` count in a document whose markup was
++/// serialised with `nonce`: it carries that nonce ([`NONCE_ATTRIBUTE`], compared in constant
++/// time). A document without a nonce is no render snapshot's (markup written by hand): its
++/// markup is taken as written.
++pub fn engine_marked(nonce: &str, element: &crate::node::ElementData) -> bool {
++    nonce.is_empty()
++        || element.attr(markup5ever::LocalName::from(NONCE_ATTRIBUTE)).is_some_and(|value| same_secret(value, nonce))
++}
++
  /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
  pub struct DocumentConfig {
      /// The initial `Viewport`
@@ -2152,7 +2169,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
      ///
      /// The list is used as given, so replacing it removes the default sheet unless it is
-@@ -68,6 +147,25 @@
+@@ -68,6 +163,25 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub subdocument_depth: usize,
@@ -2178,7 +2195,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
      #[cfg(feature = "devtools")]
      pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
-@@ -78,6 +176,8 @@
+@@ -78,6 +192,8 @@
          Self {
              viewport: None,
              base_url: None,
@@ -2187,7 +2204,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
              ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
              net_provider: None,
              navigation_provider: None,
-@@ -89,6 +189,11 @@
+@@ -89,6 +205,11 @@
              incremental: None,
              abort_signal: None,
              subdocument_depth: 0,
@@ -3258,13 +3275,15 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
                  for &anon_id in &node.anonymous_blocks {
                      doc.deallocate_anonymous_block(anon_id);
-@@ -1243,9 +1872,12 @@
+@@ -1243,9 +1872,14 @@
                      if href == href_to_reload
                          && let Some(resolved_href) = self.resolve_url(href)
                      {
 +                        let mut request = self.build_request(resolved_href.clone());
 +                        request.options.destination = blitz_traits::net::Destination::Style;
-+                        request.options.sheet = element.attr(markup5ever::LocalName::from(SHEET_ATTRIBUTE)).map(str::to_owned);
++                        let marked = crate::engine_marked(&self.frames.nonce, element);
++                        request.options.sheet =
++                            element.attr(markup5ever::LocalName::from(SHEET_ATTRIBUTE)).filter(|_| marked).map(str::to_owned);
                          self.net_provider.fetch(
                              self.id(),
 -                            self.build_request(resolved_href.clone()),
@@ -3272,17 +3291,20 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                              ResourceHandler::boxed(
                                  self.tx.clone(),
                                  self.id,
-@@ -1256,6 +1888,9 @@
+@@ -1256,6 +1890,12 @@
                                      guard: self.guard.clone(),
                                      net_provider: self.net_provider.clone(),
                                      abort_signal: self.abort_signal.clone(),
 +                                    client: self.request_client(),
-+                                    policy: element.attr(markup5ever::LocalName::from(SHEET_POLICY_ATTRIBUTE)).map(str::to_owned),
++                                    policy: element
++                                        .attr(markup5ever::LocalName::from(SHEET_POLICY_ATTRIBUTE))
++                                        .filter(|_| marked)
++                                        .map(str::to_owned),
 +                                    policies: self.sheet_policies.clone(),
                                  },
                              ),
                          );
-@@ -1266,12 +1901,101 @@
+@@ -1266,12 +1906,101 @@
      }
  
      pub fn process_style_element(&mut self, target_id: NodeId) {
@@ -3386,7 +3408,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn remove_user_agent_stylesheet(&mut self, sheet: &UserAgentStylesheet) {
          if self.useragent_stylesheets().any(|s| *s == sheet.0) {
              self.stylist
-@@ -1279,11 +2003,94 @@
+@@ -1279,11 +2008,94 @@
          }
      }
  
@@ -3481,7 +3503,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Iterate over the author stylesheets (from `<style>` and `<link>` nodes)
      /// currently associated with this document
      pub fn author_stylesheets(&self) -> impl Iterator<Item = &DocumentStyleSheet> {
-@@ -1305,11 +2112,58 @@
+@@ -1305,11 +2117,58 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -3542,7 +3564,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.guard.clone(),
              Some(&StylesheetLoader {
                  tx: self.tx.clone(),
-@@ -1318,22 +2172,48 @@
+@@ -1318,22 +2177,48 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.abort_signal.clone(),
                  import_depth: 0,
@@ -3595,7 +3617,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
          self.stylesheet_generation += 1;
  
-@@ -1351,6 +2231,7 @@
+@@ -1351,6 +2236,7 @@
              &self.shell_provider,
              &self.guard.read(),
              self.abort_signal.as_ref(),
@@ -3603,7 +3625,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          );
  
          // Store data on element
-@@ -1396,6 +2277,138 @@
+@@ -1396,6 +2282,138 @@
          }
      }
  
@@ -3742,7 +3764,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1409,6 +2422,41 @@
+@@ -1409,6 +2427,41 @@
              Err(err) => {
                  if let Some(url) = res.resolved_url.as_ref() {
                      let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
@@ -3784,7 +3806,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      #[cfg(feature = "tracing")]
                      tracing::warn!(
                          url = url.as_str(),
-@@ -1429,9 +2477,31 @@
+@@ -1429,9 +2482,31 @@
          };
  
          match resource {
@@ -3818,7 +3840,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1441,9 +2511,11 @@
+@@ -1441,9 +2516,11 @@
                  self.stylist
                      .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
              }
@@ -3832,7 +3854,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  let Some(url) = res.resolved_url.as_ref() else {
                      return;
-@@ -1453,6 +2525,8 @@
+@@ -1453,6 +2530,8 @@
              }
              #[cfg(feature = "svg")]
              Resource::Svg(_kind, svg) => {
@@ -3841,7 +3863,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  // Create the ImageData and cache it
                  let image = ImageData::Svg(svg);
  
-@@ -1469,18 +2543,33 @@
+@@ -1469,18 +2548,33 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -3876,7 +3898,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1489,6 +2578,12 @@
+@@ -1489,6 +2583,12 @@
                  global_font_ctx
                      .collection
                      .register_fonts(font.clone(), Some(info_override));
@@ -3889,7 +3911,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  #[cfg(feature = "parallel-construct")]
                  {
-@@ -1513,6 +2608,49 @@
+@@ -1513,6 +2613,49 @@
          }
      }
  
@@ -3939,7 +3961,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Cache a loaded image and apply it to all nodes waiting on it
      /// (`<img>` elements, `background-image` layers and `mask-image` layers).
      fn apply_loaded_image(&mut self, url: &str, image: ImageData) {
-@@ -1541,25 +2679,92 @@
+@@ -1541,25 +2684,92 @@
                      if element.custom_widget_data().is_some() {
                          continue;
                      }
@@ -4034,7 +4056,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
              }
          }
-@@ -1580,7 +2785,75 @@
+@@ -1580,7 +2790,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -4110,7 +4132,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +2973,24 @@
+@@ -1700,14 +2978,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -4138,7 +4160,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +3001,7 @@
+@@ -1718,7 +3006,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -4147,7 +4169,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +3036,7 @@
+@@ -1753,7 +3041,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -4156,7 +4178,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1813,9 +3096,36 @@
+@@ -1813,9 +3101,36 @@
          Some(id)
      }
  
@@ -4193,7 +4215,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              let shell_provider = self.shell_provider.clone();
              self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                  node.blur(shell_provider)
-@@ -1853,17 +3163,25 @@
+@@ -1853,17 +3168,25 @@
  
          // Remove focus from the old node
          if let Some(id) = self.focus_node_id {
@@ -4220,7 +4242,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
          let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
-@@ -1895,6 +3213,38 @@
+@@ -1895,6 +3218,38 @@
          true
      }
  
@@ -4259,7 +4281,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +3341,12 @@
+@@ -1991,10 +3346,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -4273,7 +4295,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +3430,54 @@
+@@ -2078,6 +3435,54 @@
          true
      }
  
@@ -4328,7 +4350,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +3547,156 @@
+@@ -2147,12 +3552,156 @@
          self.mousedown_node_id
      }
  
@@ -4485,7 +4507,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +3732,12 @@
+@@ -2188,6 +3737,12 @@
          self.viewport.clone()
      }
  
@@ -4498,7 +4520,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3798,111 @@
+@@ -2248,6 +3803,111 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4610,7 +4632,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3919,13 @@
+@@ -2264,12 +3924,13 @@
              return;
          }
  
@@ -4629,7 +4651,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +3970,19 @@
+@@ -2314,9 +3975,19 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
@@ -4650,7 +4672,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +4126,19 @@
+@@ -2460,10 +4131,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4670,7 +4692,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4295,35 @@
+@@ -2620,6 +4300,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4706,7 +4728,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4347,22 @@
+@@ -2643,12 +4352,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4734,7 +4756,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4391,7 @@
+@@ -2677,7 +4396,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4743,7 +4765,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4549,10 @@
+@@ -2835,6 +4554,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4754,7 +4776,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5500,7 @@
+@@ -3782,6 +5505,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4762,7 +4784,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5523,52 @@
+@@ -3804,6 +5528,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4815,7 +4837,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5611,121 @@
+@@ -3846,3 +5616,121 @@
          assert!(doc.has_changes());
      }
  }
@@ -6295,7 +6317,7 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
          let sub_doc = self
              .html_parser_provider
              .clone()
-@@ -115,6 +126,40 @@
+@@ -115,6 +126,52 @@
          self.shell_provider.request_redraw();
      }
  
@@ -6317,6 +6339,18 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
 +        !self.frames.nonce.is_empty()
 +    }
 +
++    /// pyro: the nonce this document's markup was serialised with (empty: no render snapshot's).
++    pub fn snapshot_nonce(&self) -> &str {
++        &self.frames.nonce
++    }
++
++    /// pyro: engine attribute `name` of element `node_id`, only when the element carries this
++    /// document's nonce ([`crate::engine_marked`]).
++    pub fn engine_attr(&self, node_id: NodeId, name: &str) -> Option<&str> {
++        let element = self.get_node(node_id)?.element_data()?;
++        crate::engine_marked(&self.frames.nonce, element).then(|| element.attr(markup5ever::LocalName::from(name))).flatten()
++    }
++
 +    /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that
 +    /// entry's document or none, never its own attributes').
 +    pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
@@ -6336,7 +6370,7 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
      /// Attach a sub-document parsed from the iframe's `srcdoc` attribute.
      /// Relative URLs within a `srcdoc` document resolve against the parent
      /// document's base URL.
-@@ -137,7 +182,11 @@
+@@ -137,7 +194,11 @@
          let signal = self.new_iframe_generation(node_id, Some(handler.request_id()));
          self.net_provider.fetch(
              self.id(),
@@ -19937,7 +19971,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +887,188 @@
+@@ -217,13 +887,190 @@
          }
      }
  
@@ -20123,10 +20157,12 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        // pyro: an editing host with no content keeps one line (Chromium's `HasLineIfEmpty`):
 +        // the caret's.
 +        let empty_editing_host = empty_editing_host(&self.nodes, dom_node_id(node_id));
++        // pyro: the nonce engine attributes are checked against (`crate::engine_marked`).
++        let frames = self.frames.clone();
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1084,43 @@
+@@ -239,8 +1086,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -20171,7 +20207,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1135,7 @@
+@@ -255,7 +1137,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -20180,7 +20216,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -283,19 +1163,71 @@
+@@ -283,19 +1165,71 @@
                          .and_then(|val| val.parse::<f32>().ok())
                          .unwrap_or(2.0);
  
@@ -20260,7 +20296,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,87 +1240,278 @@
+@@ -308,87 +1242,278 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -20582,7 +20618,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1530,65 @@
+@@ -407,39 +1532,65 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -20669,7 +20705,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1621,90 @@
+@@ -472,6 +1623,91 @@
                          _ => unreachable!(),
                      };
  
@@ -20704,6 +20740,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
 +                    let (intrinsic_sizes, default_object_size) = match element_data
 +                        .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
++                        .filter(|_| crate::engine_marked(&frames.nonce, element_data))
 +                        .and_then(|value| value.parse::<f32>().ok())
 +                    {
 +                        Some(height)
@@ -20760,7 +20797,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,124 +1721,577 @@
+@@ -488,124 +1724,577 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -21424,7 +21461,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl TraversePartialTree for LayoutPassState<'_> {
-@@ -667,7 +2353,11 @@
+@@ -667,7 +2356,11 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -21437,7 +21474,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2365,32 @@
+@@ -675,11 +2368,32 @@
      }
  
      #[inline(always)]
@@ -21470,7 +21507,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -698,17 +2409,54 @@
+@@ -698,17 +2412,54 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -21527,7 +21564,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2469,7 @@
+@@ -721,6 +2472,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -21535,7 +21572,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2481,148 @@
+@@ -732,6 +2484,148 @@
      }
  }
  
@@ -21684,7 +21721,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2630,12 @@
+@@ -739,10 +2633,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -21701,7 +21738,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2645,11 @@
+@@ -752,9 +2648,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -21716,7 +21753,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2677,236 @@
+@@ -782,16 +2680,236 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -21957,7 +21994,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2959,30 @@
+@@ -844,6 +2962,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -21988,7 +22025,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2991,19 @@
+@@ -852,7 +2994,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -22009,7 +22046,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3019,30 @@
+@@ -868,6 +3022,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -22040,7 +22077,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3147,213 @@
+@@ -972,3 +3150,213 @@
          })
      }
  }
@@ -37678,14 +37715,17 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use crate::layout::replaced::IntrinsicSizes;
  pub use crate::layout::text_transform::{full_size_kana, full_width};
  #[cfg(feature = "custom-widget")]
-@@ -93,10 +123,15 @@
+@@ -93,10 +123,18 @@
  pub use blitz_traits::node_id::NodeId;
  // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
  // `Node::final_layout`)
 -pub use config::{DocumentConfig, StyleThreading};
 -pub use document::{
 +pub use document::SHEET_ATTRIBUTE;
-+pub use config::{DocumentConfig, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, StyleThreading};
++pub use config::{
++    DocumentConfig, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, NONCE_ATTRIBUTE, StyleThreading, engine_marked,
++    same_secret,
++};
 +pub use document::{SvgImageDocument, 
 +    StyleChange,
      BaseDocument, BoundingRect, DocGuard, DocGuardMut, Document, PlainDocument, UserAgentStylesheet,
@@ -38628,22 +38668,19 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              return;
          }
  
-@@ -1382,6 +1870,14 @@
+@@ -1382,6 +1870,11 @@
                  guard: self.doc.guard.clone(),
                  net_provider: self.doc.net_provider.clone(),
                  abort_signal: self.doc.abort_signal.clone(),
 +                client: self.doc.request_client(),
 +                // pyro: the response's policy as the snapshot wrote it on the link (an engine
 +                // attribute page content cannot write).
-+                policy: node
-+                    .element_data()
-+                    .and_then(|e| e.attr(markup5ever::LocalName::from(crate::document::SHEET_POLICY_ATTRIBUTE)))
-+                    .map(str::to_owned),
++                policy: self.doc.engine_attr(target_id, crate::document::SHEET_POLICY_ATTRIBUTE).map(str::to_owned),
 +                policies: self.doc.sheet_policies.clone(),
              },
          );
  
-@@ -1391,11 +1887,14 @@
+@@ -1391,11 +1884,12 @@
                  .insert(handler.request_id());
          }
  
@@ -38656,14 +38693,12 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +        let mut request = self.doc.build_request(url);
 +        request.options.destination = blitz_traits::net::Destination::Style;
 +        // pyro: the snapshot's sheet of this link (its engine attribute), served by identity.
-+        request.options.sheet = self.doc.nodes[target_id]
-+            .attr(markup5ever::LocalName::from(crate::document::SHEET_ATTRIBUTE))
-+            .map(str::to_owned);
++        request.options.sheet = self.doc.engine_attr(target_id, crate::document::SHEET_ATTRIBUTE).map(str::to_owned);
 +        self.doc.net_provider.fetch(self.doc.id(), request, Box::new(handler));
      }
  
      fn unload_stylesheet(&mut self, node_id: NodeId) {
-@@ -1413,6 +1912,11 @@
+@@ -1413,6 +1907,11 @@
              }
          };
  
@@ -38675,7 +38710,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +1924,113 @@
+@@ -1420,21 +1919,113 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -38794,7 +38829,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1458,15 +2054,18 @@
+@@ -1458,15 +2049,18 @@
                      .pending_images
                      .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
  
@@ -38815,7 +38850,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      ),
                  );
              }
-@@ -1483,6 +2082,15 @@
+@@ -1483,6 +2077,15 @@
              return;
          }
  
@@ -38831,7 +38866,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node = &self.doc.nodes[target_id];
          let Some(element) = node.element_data() else {
              return;
-@@ -1544,12 +2152,27 @@
+@@ -1544,12 +2147,27 @@
              return;
          }
  
@@ -38860,7 +38895,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let id = self.create_text_node(&value);
              self.append_children(target_id, &[id]);
              return;
-@@ -1579,6 +2202,20 @@
+@@ -1579,6 +2197,20 @@
      }
  }
  
@@ -38881,7 +38916,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +3014,50 @@
+@@ -2377,6 +3009,50 @@
          }
      }
  
@@ -38932,7 +38967,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3769,254 @@
+@@ -3088,3 +3764,254 @@
          );
      }
  }

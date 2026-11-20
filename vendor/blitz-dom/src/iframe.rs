@@ -144,6 +144,18 @@ impl BaseDocument {
         !self.frames.nonce.is_empty()
     }
 
+    /// pyro: the nonce this document's markup was serialised with (empty: no render snapshot's).
+    pub fn snapshot_nonce(&self) -> &str {
+        &self.frames.nonce
+    }
+
+    /// pyro: engine attribute `name` of element `node_id`, only when the element carries this
+    /// document's nonce ([`crate::engine_marked`]).
+    pub fn engine_attr(&self, node_id: NodeId, name: &str) -> Option<&str> {
+        let element = self.get_node(node_id)?.element_data()?;
+        crate::engine_marked(&self.frames.nonce, element).then(|| element.attr(markup5ever::LocalName::from(name))).flatten()
+    }
+
     /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that
     /// entry's document or none, never its own attributes').
     pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {

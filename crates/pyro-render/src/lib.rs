@@ -1389,6 +1389,11 @@ impl Renderer {
                 let doc = blitz_html::HtmlDocument::from_html(&snap.html, self.config(snap, bridge.provider()));
                 let mut doc = doc.into_inner();
                 for id in doc.query_selector_all("[data-pyro-scroll-left],[data-pyro-scroll-top]").unwrap_or_default() {
+                    // pyro: only an element the snapshot marked with its nonce (`engine_marked`).
+                    let nonce = doc.snapshot_nonce().to_owned();
+                    if !doc.get_node(id).and_then(|n| n.element_data()).is_some_and(|e| blitz_dom::engine_marked(&nonce, e)) {
+                        continue;
+                    }
                     if let Some(node) = doc.get_node_mut(id) {
                         let offset = |name| {
                             node.attr(name).and_then(|s| s.parse::<f64>().ok()).filter(|v| v.is_finite()).unwrap_or(0.0)
@@ -1416,7 +1421,9 @@ impl Renderer {
                     );
                 }
                 let (doc, bridge) = fresh.insert((doc, bridge));
-                let clip = doc.query_selector(&format!("[{CLIP_ATTRIBUTE}]")).ok().flatten();
+                let clip = doc.query_selector_all(&format!("[{CLIP_ATTRIBUTE}]")).unwrap_or_default().into_iter().find(|&id| {
+                    doc.get_node(id).and_then(|n| n.element_data()).is_some_and(|e| blitz_dom::engine_marked(doc.snapshot_nonce(), e))
+                });
                 (doc, &*bridge, clip)
             }
         };

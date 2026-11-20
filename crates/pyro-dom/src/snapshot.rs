@@ -281,7 +281,15 @@ struct HtmlSink<'a> {
     keyed: &'a [u64],
     /// pyro: the elements open in the markup, as written ([`Written`]).
     open: Vec<Written>,
+    /// pyro: the document's snapshot nonce, which every element given engine attributes carries
+    /// ([`NONCE_ATTRIBUTE`]).
+    nonce: String,
 }
+
+/// pyro: the attribute an element given engine attributes carries the document's nonce in: the
+/// renderer takes an engine attribute only from an element with it (blitz-dom `engine_marked`),
+/// so a difference between the DOM and a reparse of its markup cannot mint one.
+pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
 
 /// pyro: how an open element was written, for its text and its end tag.
 #[derive(Clone, Copy, PartialEq)]
@@ -330,6 +338,13 @@ impl Sink for HtmlSink<'_> {
         if !void {
             self.open.push(written);
         }
+        // pyro: engine attributes (the page's with the prefix are never written) or engine marks.
+        let engine = written == Written::AsPre
+            || (marked && self.mark.is_some())
+            || self.scroll.iter().any(|(id, _)| *id == key)
+            || self.sticky.iter().any(|(id, _)| *id == key)
+            || self.keyed.contains(&key)
+            || attrs.iter().any(|a| a.name.ns == ns!() && a.name.local.starts_with(ENGINE_ATTRIBUTE_PREFIX));
         let out = &mut self.out;
         out.push('<');
         if written == Written::AsPre {
@@ -381,6 +396,13 @@ impl Sink for HtmlSink<'_> {
             use std::fmt::Write;
             let _ = write!(out, " data-pyro-key=\"{key}\"");
         }
+        if engine && !self.nonce.is_empty() {
+            out.push(' ');
+            out.push_str(NONCE_ATTRIBUTE);
+            out.push_str("=\"");
+            out.push_str(&self.nonce);
+            out.push('"');
+        }
         out.push('>');
         if written == Written::AsPre {
             // A leading newline right after <pre> is dropped by parsers.
@@ -411,6 +433,8 @@ impl Sink for HtmlSink<'_> {
 
 #[derive(Default)]
 struct TreeSink {
+    /// pyro: as [`HtmlSink::nonce`].
+    nonce: String,
     tree: RenderTree,
     /// Open elements (indices into `tree.nodes`).
     open: Vec<u32>,
@@ -425,10 +449,13 @@ impl TreeSink {
 impl Sink for TreeSink {
     fn doctype(&mut self, _name: &str) {}
     fn open(&mut self, key: u64, _tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, void: bool) {
-        let attrs = attrs
+        let mut attrs: Vec<(QualName, String)> = attrs
             .iter()
             .map(|a| (a.name.clone().into_owned(), if a.valueless { String::new() } else { a.value.to_string() }))
             .collect();
+        if !self.nonce.is_empty() && attrs.iter().any(|(n, _)| n.ns == ns!() && n.local.starts_with(ENGINE_ATTRIBUTE_PREFIX)) {
+            attrs.push((QualName::new(None, ns!(), NONCE_ATTRIBUTE.into()), self.nonce.clone()));
+        }
         let parent = self.parent();
         self.tree.nodes.push(RenderNode { key, parent, kind: RenderNodeKind::Element { name: name.clone(), attrs } });
         if marked {
@@ -485,8 +512,16 @@ impl Dom {
         sticky: &[(u64, (f64, f64))],
         keyed: &[u64],
     ) -> DomResult<String> {
-        let mut sink =
-            HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll, sticky, keyed, open: Vec::new() };
+        let nonce = self.snapshot_nonce(self.check(doc)?);
+        let mut sink = HtmlSink {
+            out: String::with_capacity(64 * 1024),
+            mark: opts.mark.map(|m| m.1),
+            scroll,
+            sticky,
+            keyed,
+            open: Vec::new(),
+            nonce,
+        };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.out)
     }
@@ -494,7 +529,7 @@ impl Dom {
     /// The nodes [`Dom::render_html`] would serialize, keyed (see
     /// [`RenderTree`]).
     pub fn render_tree(&self, doc: NodeId, opts: &RenderHtml<'_>) -> DomResult<RenderTree> {
-        let mut sink = TreeSink::default();
+        let mut sink = TreeSink { nonce: self.snapshot_nonce(self.check(doc)?), ..Default::default() };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.tree)
     }
@@ -839,6 +874,13 @@ impl Dom {
                         stack.push(Step::Synthetic(n, self.value(id).unwrap_or_default(), TextKind::Textarea));
                         continue;
                     }
+                    // pyro: a raw-text element's text is one stream to a parser: written whole (its
+                    // text nodes joined), so an end tag split across nodes is seen and neutralised
+                    // ([`raw_text_safe`]); element children would be text in a reparse anyway.
+                    if html && matches!(local, "noembed" | "noframes") {
+                        stack.push(Step::Synthetic(n, self.child_text_content(id).into_owned(), TextKind::Node));
+                        continue;
+                    }
                     if html && (matches!(local, "iframe" | "frame") || (local == "object" && self.frame_documents.contains_key(&n))) {
                         continue;
                     }
@@ -1045,7 +1087,7 @@ impl Dom {
             }
             let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
             let fresh: Vec<u32> = kids.iter().copied().filter(|k| inserted.contains(k)).collect();
-            let mut sink = TreeSink::default();
+            let mut sink = TreeSink { nonce: self.snapshot_nonce(d), ..Default::default() };
             self.render_walk_from(fresh, opts, &mut sink, NIL, false);
             ops.push(DeltaOp::Children {
                 parent: (p != d).then(|| render_key(self.id_of(p))),
@@ -1106,7 +1148,7 @@ impl Dom {
             }
             // The node alone: the walk stops at the first node it writes
             // (the node's own content, not its subtree).
-            let mut sink = TreeSink::default();
+            let mut sink = TreeSink { nonce: self.snapshot_nonce(d), ..Default::default() };
             self.render_walk_from(vec![i], opts, &mut sink, NIL, true);
             let Some(first) = sink.tree.nodes.into_iter().next() else { continue };
             if first.key != render_key(self.id_of(i)) {

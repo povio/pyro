@@ -73,7 +73,7 @@ impl FrameTableData {
 /// pyro: whether `given` is `secret`, in time that depends on their lengths only (never on where
 /// they first differ): a marker's nonce is compared without telling a prober how much of it was
 /// right.
-fn same_secret(given: &str, secret: &str) -> bool {
+pub fn same_secret(given: &str, secret: &str) -> bool {
     let (given, secret) = (given.as_bytes(), secret.as_bytes());
     if given.len() != secret.len() {
         return false;
@@ -99,6 +99,22 @@ pub type FrameTable = Arc<FrameTableData>;
 
 /// pyro: the attribute a frame element names its frame table entry in: `"<nonce>:<index>:<version>"`.
 pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
+
+/// pyro: the attribute every element the snapshot gives engine attributes (sheet keys and
+/// policies, scroll and sticky offsets, animation keys, the clip mark, a frame's content height,
+/// a `<pre>`'s own name) carries this document's nonce in: an engine attribute of an element
+/// without it is inert, so no difference between the DOM and a reparse of its markup can mint
+/// one ([`engine_marked`]).
+pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
+
+/// pyro: whether the engine attributes of element `element` count in a document whose markup was
+/// serialised with `nonce`: it carries that nonce ([`NONCE_ATTRIBUTE`], compared in constant
+/// time). A document without a nonce is no render snapshot's (markup written by hand): its
+/// markup is taken as written.
+pub fn engine_marked(nonce: &str, element: &crate::node::ElementData) -> bool {
+    nonce.is_empty()
+        || element.attr(markup5ever::LocalName::from(NONCE_ATTRIBUTE)).is_some_and(|value| same_secret(value, nonce))
+}
 
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
 pub struct DocumentConfig {

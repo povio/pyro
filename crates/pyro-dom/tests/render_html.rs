@@ -95,7 +95,7 @@ fn sheets_come_from_the_caller() {
     assert!(html.contains(r#"<style id="e">em { color: red }</style>"#), "{html}");
     // (The engine's `href` comes first, then its sheet key: the renderer serves the sheet by it.)
     assert!(html.contains(r#"<link href="http://test/a.css" data-pyro-sheet=""#), "{html}");
-    assert!(html.contains(r#"" id="l" rel="stylesheet">"#), "{html}");
+    assert!(html.contains(r#"" id="l" rel="stylesheet" data-pyro-n=""#), "{html}");
     assert!(!html.contains("missing.css"), "{html}");
 }
 
@@ -105,7 +105,8 @@ fn clip_target_is_marked() {
     let dom = dom.borrow();
     let b = find(&dom, d, "#b");
     let html = render_with(&dom, d, &|_| None, &|_| None, Some((b, "data-clip")));
-    assert!(html.contains(r#"<div id="a"></div><div id="b" data-clip></div>"#), "{html}");
+    // (With the document's nonce: the mark is an engine attribute.)
+    assert!(html.contains(r#"<div id="a"></div><div id="b" data-clip data-pyro-n=""#), "{html}");
 }
 
 #[test]
@@ -679,4 +680,64 @@ fn every_element_closes_in_a_reparse_where_the_dom_does() {
     let html = render(&dom.borrow(), d);
     let (again, d2) = doc(&html);
     assert_eq!(shape(&again.borrow(), d2), before, "{html}");
+}
+
+/// A raw-text element's text nodes are one stream to a parser: an end tag split across adjacent
+/// text nodes (`</sty` + `le>`) cannot end the element in a reparse and make the rest elements
+/// (an image request, an engine marker), for every element whose text a reparse reads raw or
+/// as RCDATA (security review cycle 6, 1).
+#[test]
+fn an_end_tag_split_across_text_nodes_stays_text() {
+    for tag in ["style", "noembed", "noframes", "xmp", "plaintext", "textarea", "title"] {
+        let (dom, d) = doc("<body><p>p</p></body>");
+        {
+            let mut dom = dom.borrow_mut();
+            let body = find(&dom, d, "body");
+            let parent = if tag == "title" { find(&dom, d, "head") } else { body };
+            let e = dom.create_element(d, tag).unwrap();
+            let (a, b) = tag.split_at(3);
+            for text in [format!("x</{a}"), format!("{b}><img src=\"http://evil.test/x.png\">"), format!("<div data-pyro-scroll-top=40></{tag}>")] {
+                let t = dom.create_text(d, &text).unwrap();
+                dom.append_child(e, t).unwrap();
+            }
+            dom.append_child(parent, e).unwrap();
+            let after = dom.create_element(d, "span").unwrap();
+            dom.append_child(body, after).unwrap();
+        }
+        let tags = |dom: &Dom, doc: NodeId| -> Vec<String> {
+            dom.query_selector_all(doc, &parse_selectors("*").unwrap())
+                .unwrap()
+                .into_iter()
+                .map(|e| {
+                    let own = dom.attributes(e).unwrap().iter().find(|a| &*a.name.local == "data-pyro-tag").map(|a| a.value.to_uppercase());
+                    own.unwrap_or_else(|| dom.tag_name(e).unwrap())
+                })
+                .collect()
+        };
+        let before = tags(&dom.borrow(), d);
+        let html = render(&dom.borrow(), d);
+        let (again, d2) = doc(&html);
+        assert_eq!(tags(&again.borrow(), d2), before, "{tag}: {html}");
+    }
+}
+
+/// Every element the snapshot gives engine attributes carries the document's nonce
+/// (`data-pyro-n`), and no other element does: the renderer takes engine attributes only with it
+/// (security review cycle 6, 1).
+#[test]
+fn engine_marked_elements_carry_the_documents_nonce() {
+    let (dom, d) = doc("<head><link id=l rel=stylesheet href=a.css></head><body><xmp>x</xmp><p id=p>p</p></body>");
+    let l = find(&dom.borrow(), d, "#l");
+    let p = find(&dom.borrow(), d, "#p");
+    let html = render_with(&dom.borrow(), d, &|_| None, &|n| (n == l).then(|| "http://test/a.css".to_owned()), Some((p, "data-pyro-render-clip")));
+    let nonce = dom.borrow().frame_table(d).nonce;
+    assert_eq!(nonce.len(), 32);
+    let marked = format!("data-pyro-n=\"{nonce}\"");
+    assert_eq!(html.matches(&marked).count(), 3, "{html}");
+    for element in ["<link", "<pre", "<p "] {
+        let start = html.find(element).unwrap();
+        let end = start + html[start..].find('>').unwrap();
+        assert!(html[start..end].contains(&marked), "{element}: {html}");
+    }
+    assert!(!html[..html.find("<body").unwrap()].contains("<head data-pyro-n"), "{html}");
 }

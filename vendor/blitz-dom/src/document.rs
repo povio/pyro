@@ -1874,7 +1874,9 @@ impl BaseDocument {
                     {
                         let mut request = self.build_request(resolved_href.clone());
                         request.options.destination = blitz_traits::net::Destination::Style;
-                        request.options.sheet = element.attr(markup5ever::LocalName::from(SHEET_ATTRIBUTE)).map(str::to_owned);
+                        let marked = crate::engine_marked(&self.frames.nonce, element);
+                        request.options.sheet =
+                            element.attr(markup5ever::LocalName::from(SHEET_ATTRIBUTE)).filter(|_| marked).map(str::to_owned);
                         self.net_provider.fetch(
                             self.id(),
                             request,
@@ -1889,7 +1891,10 @@ impl BaseDocument {
                                     net_provider: self.net_provider.clone(),
                                     abort_signal: self.abort_signal.clone(),
                                     client: self.request_client(),
-                                    policy: element.attr(markup5ever::LocalName::from(SHEET_POLICY_ATTRIBUTE)).map(str::to_owned),
+                                    policy: element
+                                        .attr(markup5ever::LocalName::from(SHEET_POLICY_ATTRIBUTE))
+                                        .filter(|_| marked)
+                                        .map(str::to_owned),
                                     policies: self.sheet_policies.clone(),
                                 },
                             ),
