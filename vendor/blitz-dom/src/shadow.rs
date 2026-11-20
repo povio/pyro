@@ -359,13 +359,15 @@ impl BaseDocument {
         }
         let guard = self.guard.read();
         let mut restyle = Vec::new();
+        let mut changed_rules = Vec::new();
         for (&host, root) in self.nodes.shadow_roots.iter_mut() {
             if root.styles.stylesheets.dirty() {
-                root.styles.flush(&mut self.stylist, &guard);
+                changed_rules.extend(root.styles.flush(&mut self.stylist, &guard).cascade_data_difference.changed_position_try_names);
                 restyle.push(host);
             }
         }
         drop(guard);
+        if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
         for host in restyle {
             // `:host` rules, the shadow tree and `::slotted()` (the assigned nodes are in the
             // host's flat subtree).

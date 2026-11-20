@@ -663,6 +663,8 @@ pub struct BaseDocument {
     pub(crate) scroll_markers_dirty: bool,
     pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
+    anchor_rule_users: HashMap<Atom, HashSet<NodeId>>,
+    anchor_user_rules: HashMap<NodeId, style::values::specified::position::PositionTryFallbacksList>,
     pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
     pub(crate) anchor_index: RefCell<crate::layout::anchor_index::AnchorIndex>,
     pub(crate) anchor_try_visits: std::cell::Cell<u64>,
@@ -988,6 +990,8 @@ impl BaseDocument {
             scroll_markers_dirty: true,
             named_anchor_nodes: HashMap::new(),
             anchor_node_names: HashMap::new(),
+            anchor_rule_users: HashMap::new(),
+            anchor_user_rules: HashMap::new(),
             anchor_lookup_visits: Default::default(),
             anchor_index: Default::default(),
             anchor_try_visits: Default::default(),
@@ -1467,6 +1471,7 @@ impl BaseDocument {
             }
         }
         self.update_anchor_names(node_id, None);
+        self.update_anchor_rule_users(node_id, None);
         self.clear_anchor_try_sources(node_id);
         self.anchor_last_option.remove(&node_id);
         self.anchor_scroll_dirty.remove(&node_id);
@@ -1496,6 +1501,46 @@ impl BaseDocument {
     }
 
     pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
+
+    pub(crate) fn update_anchor_rule_users(&mut self, id: NodeId, rules: Option<style::values::specified::position::PositionTryFallbacksList>) {
+        use style::values::specified::position::{PositionTryFallbacksList, PositionTryFallbacksItem};
+        fn names(list: &PositionTryFallbacksList) -> impl Iterator<Item=&Atom> {
+            list.0.iter().filter_map(|item| match item {
+                PositionTryFallbacksItem::IdentAndOrTactic(item) if !item.ident.is_empty() => Some(&item.ident.0),
+                _ => None,
+            })
+        }
+        if rules.is_none() && self.anchor_user_rules.is_empty() { return; }
+        if self.anchor_user_rules.get(&id) == rules.as_ref() { return; }
+        if let Some(old) = self.anchor_user_rules.remove(&id) {
+            for name in names(&old) {
+                if let Some(users) = self.anchor_rule_users.get_mut(name) {
+                    users.remove(&id);
+                    if users.is_empty() { self.anchor_rule_users.remove(name); }
+                }
+            }
+        }
+        if let Some(list) = rules {
+            for name in names(&list) { self.anchor_rule_users.entry(name.clone()).or_default().insert(id); }
+            self.anchor_user_rules.insert(id, list);
+        }
+    }
+
+    pub(crate) fn invalidate_anchor_rule_users(&mut self, names: impl IntoIterator<Item=Atom>) {
+        if self.anchor_rule_users.is_empty() { return; }
+        let mut blocks = HashSet::new();
+        for name in names {
+            if let Some(users) = self.anchor_rule_users.get(&name) {
+                for id in users {
+                    if let Some(node) = self.nodes.get(*id).filter(|node| node.flags.is_in_document()) {
+                        blocks.extend(node.containing_block());
+                        self.anchor_last_option.remove(id);
+                    }
+                }
+            }
+        }
+        for id in blocks { self.nodes[id].insert_damage(crate::layout::damage::ONLY_RELAYOUT); }
+    }
     pub fn anchor_index_work(&self) -> u64 { self.anchor_index.borrow().work.get() }
     pub fn has_named_anchors(&self) -> bool { !self.named_anchor_nodes.is_empty() }
     pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }

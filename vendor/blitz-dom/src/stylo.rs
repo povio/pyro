@@ -109,7 +109,7 @@ impl crate::document::BaseDocument {
         // pyro: shadow roots' sheets (`crate::shadow`).
         self.flush_shadow_styles();
 
-        let guard = &self.guard;
+        let guard = self.guard.clone();
         let guards = StylesheetGuards {
             author: &guard.read(),
             ua_or_user: &guard.read(),
@@ -120,9 +120,9 @@ impl crate::document::BaseDocument {
             .as_element()
             .unwrap();
 
-        self.stylist
-            .flush(&guards)
-            .process_style(root, Some(&self.snapshots));
+        let invalidations = self.stylist.flush(&guards);
+        invalidations.process_style(root, Some(&self.snapshots));
+        let changed_rules = invalidations.cascade_data_difference.changed_position_try_names;
 
         // Mark actively animating nodes as dirty
         let mut sets = self.animations.sets.write();
@@ -302,6 +302,8 @@ impl crate::document::BaseDocument {
 
         // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
         self.stylist.rule_tree().maybe_gc();
+        drop(sets);
+        if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
     }
 
     /// Compute the style of an element which the regular style traversal

@@ -76,6 +76,26 @@ fn scroll_fit_invalidation_coalesces_before_layout() {
 }
 
 #[test]
+fn changed_rule_media_updates_only_subscribed_blocks() {
+    use blitz_dom::{local_name, ns, QualName};
+    let html = "<!doctype html><style>section{position:relative;width:100px;height:100px}b{position:absolute;left:999px;width:10px;height:10px;position-try-fallbacks:--changed}aside b{position-try-fallbacks:--stable}@position-try --stable{left:4px}</style><style id=sheet media=print>@position-try --changed{left:8px}</style><section><b id=target></b></section><aside><section><b></b></section></aside>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let target = doc.query_selector("#target").unwrap().unwrap();
+    let sheet = doc.query_selector("#sheet").unwrap().unwrap();
+    let media = QualName::new(None, ns!(), local_name!("media"));
+    assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, 999.0);
+    for (value, expected) in [("screen", 8.0), ("print", 999.0)] {
+        let before = doc.anchor_try_visits();
+        doc.mutate().set_attribute(sheet, media.clone(), value);
+        doc.resolve(0.0);
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, expected);
+        assert_eq!(doc.anchor_try_visits() - before, 1);
+    }
+}
+
+#[test]
 fn indexed_lookup_excludes_fixed_siblings_hoisted_past_the_query_container() {
     let html = "<!doctype html><style>section{position:relative}i,em{display:block;anchor-name:--a}i{width:21px}em{position:fixed;width:51px}b{position:absolute;width:anchor-size(--a width,1px)}</style><section><i></i><em></em><b></b></section>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

@@ -144,6 +144,8 @@ impl BaseDocument {
                 })
             });
             self.update_anchor_names(node_id, names);
+            let rules = (options && out_of_flow).then(|| self.nodes[node_id].primary_styles().unwrap().get_position().position_try_fallbacks.value.clone());
+            self.update_anchor_rule_users(node_id, rules);
         }
         self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
         self.nodes[node_id].flags.set(NodeFlags::OWN_LAYOUT_DAMAGE, reaches_layout(own_damage));

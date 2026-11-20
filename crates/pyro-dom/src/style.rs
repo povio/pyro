@@ -540,7 +540,7 @@ enum Overflow {
 }
 
 /// The computed `overflow-x`/`overflow-y` keyword of one declared value
-/// after the per-axis coercion (`visible` → `auto`, `clip` → `hidden` when
+/// after the per-axis coercion (`visible` → `auto` when
 /// the other axis scrolls); `overlay` computes to `auto`.
 pub(crate) fn computed_overflow_keywords(x: Option<&str>, y: Option<&str>) -> (String, String) {
     let norm = |v: Option<&str>| -> String {
@@ -557,7 +557,6 @@ pub(crate) fn computed_overflow_keywords(x: Option<&str>, y: Option<&str>) -> (S
     }
     let fix = |v: String| match v.as_str() {
         "visible" => "auto".to_owned(),
-        "clip" => "hidden".to_owned(),
         _ => v,
     };
     (fix(x), fix(y))
