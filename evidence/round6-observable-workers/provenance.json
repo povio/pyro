@@ -1,0 +1,17 @@
+{
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "ciJavaScriptCore": "0e0dd7038a7a-6f4649e395e0",
+  "base": "902fe811fbef4ff0f3e39ca1f896de3a275d20b5",
+  "head": "1bf411411478fc0f2176822c0dc1ea72fdab84c1",
+  "lpBaseBinary": "9f2bfe099b2d87b0626040695a0583d460c9f7b3c8a401941761c2d9b6595cb4",
+  "lpCandidateBinary": "7831f888198723b346d673a2083e9eef8c5f76ee8924687296d9e9da30e097fd",
+  "chromeStable": "157.0.8103.80",
+  "platform": "macOS 27.2.1 arm64",
+  "sourceReceiptHashes": {
+    "lp-base": "4d858b37eb9cdcca03bc7b10385885feb0cae261151a529aeb57a5222f1ab5df",
+    "lp-candidate": "18b5c927e94b67522bf394164fc9be01e1b09259b75cc69858eae483c2cc1693",
+    "chrome-stable": "3750709c0acc875cd96d2aeb8705fe09bbb6bc81e086bc15f039a6a70b26e372"
+  },
+  "observableDraftSha256": "560a44b550a066d9b7be10fd02b85d51aa22cbc48046d7b71bc39a72ba843426",
+  "ecma262AbstractOperationsSha256": "8332d8d15cbce56d47f957b5ad281dbea4f5971953bde191864c67caf9851726"
+}

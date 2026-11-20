@@ -1,0 +1,40 @@
+{
+  "base": {
+    "Pass": 268,
+    "Fail": 239,
+    "fullPages": 25,
+    "page_complete": 48
+  },
+  "head": {
+    "Pass": 505,
+    "fullPages": 46,
+    "page_complete": 48,
+    "Fail": 2
+  },
+  "chrome": {
+    "Pass": 505,
+    "fullPages": 46,
+    "page_complete": 48,
+    "Fail": 2
+  },
+  "gains": 237,
+  "losses": 0,
+  "failures": [
+    [
+      "dom/observable/tentative/observable-from.any.html",
+      "from(): Errors thrown in async iterator's next() GETTER are propagated in a microtask",
+      1,
+      "Fail",
+      "Fail",
+      "Fail"
+    ],
+    [
+      "dom/observable/tentative/observable-from.any.worker.html",
+      "from(): Errors thrown in async iterator's next() GETTER are propagated in a microtask",
+      1,
+      "Fail",
+      "Fail",
+      "Fail"
+    ]
+  ]
+}
