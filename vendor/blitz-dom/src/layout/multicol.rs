@@ -3027,6 +3027,17 @@ fn fragmentable_as(node: &crate::Node, style: &ComputedValues, multicol_ok: bool
     if box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE) {
         return false;
     }
+    // pyro: so is one of a writing mode orthogonal to its parent's (an orthogonal flow is not
+    // fragmented in its parent's block axis: CSS Writing Modes 3 § 7.3; Chromium; WPT css-multicol
+    // `column-fill-balance-orthog-block-001`).
+    let parent_vertical = node
+        .layout_parent
+        .get()
+        .and_then(|parent| node.tree().get(parent))
+        .and_then(|parent| parent.primary_styles().map(|s| s.writing_mode.is_vertical()));
+    if parent_vertical.is_some_and(|vertical| vertical != style.writing_mode.is_vertical()) {
+        return false;
+    }
     matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot)
 }
 
