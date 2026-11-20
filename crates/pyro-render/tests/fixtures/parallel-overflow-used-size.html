@@ -1,0 +1,11 @@
+<!doctype html>
+<style>
+  * { margin: 0 }
+  main { columns: 4; column-gap: 0; column-fill: auto; width: 200px; height: 50px }
+  section { min-height: 190px; border-inline: 4px solid black }
+  header { height: 10px }
+  aside { height: 0 }
+  article { break-inside: avoid; height: 29px; background: blue }
+  i { position: absolute }
+</style>
+<main><section><header></header><aside><article></article><article></article><article></article></aside><i></i></section></main>

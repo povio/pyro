@@ -2959,6 +2959,14 @@ impl BaseDocument {
         // breakable anywhere through its space, is kept whole then), else its bottom.
         let mut avoid_after = false;
         let mut previous_unit_top: f32 = 0.0;
+        let last_in_flow = children.iter().rposition(|&id| {
+            let child = &self.nodes[id];
+            !child.is_out_of_flow() && child.primary_styles().is_some_and(|style| !style.get_box().display.is_none())
+                && !(child.is_anonymous() && child.unrounded_layout().size.height <= EPSILON && child.children.iter().all(|&id| {
+                    let inner = &self.nodes[id];
+                    inner.is_out_of_flow() || inner.is_collapsible_whitespace_node()
+                }))
+        });
         let mut parallel_ends = Vec::new();
         if children.iter().any(|&id| {
             let layout = self.nodes[id].unrounded_layout();
@@ -3016,12 +3024,12 @@ impl BaseDocument {
             };
             let child_top = top + layout.location.y - relative;
             let child_bottom = child_top + layout.size.height;
-            let parallel_tail = found.container != Some(parent) && children.last() == Some(&child_id)
+            let parent_bottom = top + node.unrounded_layout().size.height;
+            let parallel_tail = found.container != Some(parent) && last_in_flow == Some(child_index)
                 && layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
-                && !style.get_position().height.is_auto()
-                && node.primary_styles().is_some_and(|style| !style.get_position().height.is_auto());
+                && parent_bottom > child_bottom + EPSILON;
             if parallel_tail {
-                found.overflow_parents.push((parent, top, top + node.unrounded_layout().size.height, child_bottom));
+                found.overflow_parents.push((parent, top, parent_bottom, child_bottom));
             }
             found.bottom = found.bottom.max(child_bottom);
             if container_content_top.is_some() {

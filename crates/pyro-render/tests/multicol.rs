@@ -47,6 +47,12 @@ fn fractional_column_translation_uses_device_pixels() {
     assert_eq!(pixel(&image, 3.0, 30.0, 8.0 / 3.0), BLUE);
 }
 
+#[test]
+fn parallel_overflow_uses_inflow_end_and_parent_used_size() {
+    let image = render(include_str!("fixtures/parallel-overflow-used-size.html"), 1.0);
+    check(&image, 1.0, &[(151.0, 39.0, BLACK), (151.0, 41.0, WHITE), (201.0, 5.0, WHITE), (105.0, 28.0, BLUE)], "four parent fragments");
+}
+
 fn check(img: &RgbaImage, scale: f64, points: &[(f64, f64, [u8; 3])], what: &str) {
     let wrong: Vec<String> = points
         .iter()
