@@ -324,3 +324,23 @@ fn an_untransformable_inline_keeps_no_positioned_child() {
     let [r, g, b] = pixel(&img, 50, 50);
     assert!(r < 10 && g > 245 && b < 10, "the inline's background over the child: {:?}", [r, g, b]);
 }
+
+/// Two opacity groups in one `overflow: hidden` box (no stacking context), each holding a box whose
+/// containing block lies outside the clip: both boxes escape it, in their groups. Only the first
+/// group was handed the clip; the second was clipped whole. Review cycle 3, finding 3.
+#[test]
+fn boxes_escape_a_clip_in_each_of_two_opacity_groups() {
+    let img = render(
+        "<style>body{margin:0}.g{opacity:.5;height:100px}\
+         .e{position:absolute;left:150px;width:50px;height:50px;background:blue}</style>\
+         <div style='position:relative;width:300px;height:200px'>\
+         <div style='overflow:hidden;width:100px;height:200px'>\
+         <div class=g><div class=e style='top:0'></div></div>\
+         <div class=g><div class=e style='top:100px'></div></div>\
+         </div></div>",
+    );
+    for y in [25, 125] {
+        let [r, g, b] = pixel(&img, 175, y);
+        assert!(r.abs_diff(127) <= 2 && g.abs_diff(127) <= 2 && b > 250, "the box past the clip at y {y}: {:?}", [r, g, b]);
+    }
+}

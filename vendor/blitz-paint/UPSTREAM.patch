@@ -5615,11 +5615,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// after the clip (`ElementCx::escapes_own_clip`).
 +    pub(crate) clip_escapes_of: std::cell::Cell<Option<NodeId>>,
 +    /// pyro: a clipping box that is no stacking context painting its children each in its clip
-+    /// (`ElementCx::clip_transfer_child`), and the child that takes the clip over instead: (the
-+    /// box, the child, the clip in device space). The clip is the box's; boxes it does not contain
++    /// (`ElementCx::clip_transfer_children`), and the children that take the clip over instead:
++    /// (the box, the children, the clip in device space). The clip is the box's; boxes it does not contain
 +    /// escape it inside the child's effect group (Chromium clips by the containing-block chain).
 +    /// (Also the box's own culling rect, uncut by its clip, which the child's effect group takes.)
-+    pub(crate) handed_clips: RefCell<Option<(NodeId, NodeId, kurbo::BezPath, Rect)>>,
++    pub(crate) handed_clips: RefCell<Option<(NodeId, std::rc::Rc<[NodeId]>, kurbo::BezPath, Rect)>>,
 +    /// pyro: the clip handed to the element about to paint: (its owner, the clip in device space).
 +    pub(crate) handed_clip: RefCell<Option<(NodeId, kurbo::BezPath)>>,
 +    /// pyro: the element painting under a handed clip and the clip's owner, against whose
@@ -7124,12 +7124,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let clip = handed_local.as_ref().unwrap_or(&own_clip);
 +        // pyro: a clipping box that is no stacking context whose child holds boxes it does not
 +        // contain clips its children each (a clip layer split is the same clip) and hands the
-+        // child its clip (`ElementCx::clip_transfer_child`).
++        // children its clip (`ElementCx::clip_transfer_children`): each one that holds such boxes.
 +        let transfer = (should_clip && handed.is_none() && !is_text_input && !node.flags.is_inline_root())
-+            .then(|| cx.clip_transfer_child())
-+            .flatten();
-+        let outer_handed_clips = transfer.map(|child| {
-+            self.handed_clips.replace(Some((node.id, child, cx.transform * clip.clone(), clip_rect)))
++            .then(|| cx.clip_transfer_children())
++            .filter(|children| !children.is_empty());
++        let outer_handed_clips = transfer.clone().map(|children| {
++            self.handed_clips.replace(Some((node.id, children, cx.transform * clip.clone(), clip_rect)))
 +        });
 +        let should_clip = should_clip && transfer.is_none();
 +
@@ -11136,10 +11136,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// boxes this box does not contain (their containing block lies outside it): they must escape
 +    /// this box's clip inside the child's effect group, which a clip layer around the child would
 +    /// hold them in (WPT css-color `clip-opacity-out-of-flow`).
-+    fn clip_transfer_child(&self) -> Option<NodeId> {
++    fn clip_transfer_children(&self) -> std::rc::Rc<[NodeId]> {
 +        let tree = self.context.dom.as_ref().tree();
 +        let children = self.node.paint_children.borrow().clone().unwrap_or_default();
-+        children.into_iter().find(|&id| {
++        children.into_iter().filter(|&id| {
 +            let child = &tree[id];
 +            let Some(sc) = &child.stacking_context else { return false };
 +            if child.primary_styles().is_none_or(|style| self.context.should_clip_node(child, &style)) {
@@ -11153,7 +11153,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    .borrow()
 +                    .as_ref()
 +                    .is_some_and(|c| c.iter().any(|&id| escapes_clip_of(tree, self.node.id, id)))
-+        })
++        }).collect()
 +    }
 +
 +    /// pyro: whether `child_id`, one of this element's `paint_children`, paints at the positioned
@@ -11398,7 +11398,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            .clone()
 +            .filter(|(parent, _, _, _)| *parent == self.node.id);
 +        if let Some((_, transfer, device_clip, outer_rect)) = per_child {
-+            if child_id == transfer {
++            if transfer.contains(&child_id) {
 +                *self.context.handed_clip.borrow_mut() = Some((self.node.id, device_clip));
 +                self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, outer_rect);
 +                // (Not left for another element when this one painted nothing.)
