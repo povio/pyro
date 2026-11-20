@@ -22039,7 +22039,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3487 @@
+@@ -0,0 +1,3521 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22183,6 +22183,8 @@ new file mode 100644
 +thread_local! {
 +    /// pyro: the fragments measure runs made (tests: `MEASURE_FRAGMENT_BUDGET` holds).
 +    static MEASURED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++    /// pyro: the fragments rect mapping visited (tests: a rect visits the fragments it reaches).
++    static MAPPED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 +}
 +/// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
 +/// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
@@ -22329,13 +22331,26 @@ new file mode 100644
 +
 +    /// A rectangle of the strip (device px, `scale` per CSS px), cut at the column breaks and
 +    /// shown in the columns: the bounding box of the pieces.
++    /// pyro: the fragments a strip range `from..to` (CSS px) can reach, as a slice range: those
++    /// whose range ends at `from` or after and starts at `to` or before (fragments are in strip
++    /// order, their starts and ends ascending).
++    fn reaching(&self, from: f64, to: f64) -> (usize, usize) {
++        let first = self.fragments.partition_point(|f| (f.end as f64) < from);
++        let last = self.fragments.partition_point(|f| (f.start as f64) <= to).max(first);
++        (first, last)
++    }
++
 +    pub fn map_rect(&self, rect: kurbo::Rect, scale: f64) -> kurbo::Rect {
 +        let mut out: Option<kurbo::Rect> = None;
 +        // pyro: a rect only touching a fragment's range is not in it (a spanner's row starts where
 +        // the column before it ends: mapped through that column too, it widened the container's
 +        // scrollable overflow by its offset); an empty rect goes through one fragment.
 +        let empty = rect.y1 <= rect.y0;
-+        for f in &self.fragments {
++        // (Only the fragments the rect can reach: they are in strip order.)
++        let (first, last) = self.reaching(rect.y0 / scale, rect.y1 / scale);
++        for f in &self.fragments[first..last] {
++            #[cfg(test)]
++            MAPPED_FRAGMENTS.with(|m| m.set(m.get() + 1));
 +            let y0 = rect.y0.max(f.start as f64 * scale);
 +            let y1 = rect.y1.min(f.end as f64 * scale);
 +            if y1 < y0 || (!empty && y1 <= y0) || (empty && out.is_some()) {
@@ -24327,7 +24342,13 @@ new file mode 100644
 +        let mut out: Option<kurbo::Rect> = None;
 +        // (A rect only touching a fragment's range is not in it: `ColumnFragments::map_rect`.)
 +        let empty = rect.x1 <= rect.x0;
-+        for f in &columns.fragments {
++        // (Only the fragments the rect can reach, in strip order: the strip's block axis runs from
++        // the right where the block axis does.)
++        let (from, to) = if rl { (width - rect.x1 / scale, width - rect.x0 / scale) } else { (rect.x0 / scale, rect.x1 / scale) };
++        let (first, last) = columns.reaching(from, to);
++        for f in &columns.fragments[first..last] {
++            #[cfg(test)]
++            MAPPED_FRAGMENTS.with(|m| m.set(m.get() + 1));
 +            let (start, end) = (f.start as f64, f.end as f64);
 +            let (range, offset) = if rl {
 +                ((width - end, width - start), kurbo::Vec2::new(-f.offset.y as f64, f.offset.x as f64))
@@ -25286,6 +25307,19 @@ new file mode 100644
 +        let measured = MEASURED_FRAGMENTS.with(|m| m.get());
 +        assert!(measured > 0 && measured <= MEASURE_FRAGMENT_BUDGET, "{measured} fragments measured");
 +        assert!(fragment_counts(&doc).iter().sum::<usize>() <= COLUMN_FRAGMENT_BUDGET);
++    }
++
++    /// pyro: mapping a container's boxes into its columns (its scrollable overflow) visits the
++    /// fragments each box reaches, not all of them per box: a short scroller with a box per
++    /// column costs boxes, not boxes times columns.
++    #[test]
++    fn mapping_boxes_into_columns_visits_the_columns_they_reach() {
++        let boxes: Vec<Div> = (0..2_000).map(|_| div("height:10px", vec![])).collect();
++        MAPPED_FRAGMENTS.with(|m| m.set(0));
++        let doc = laid_out(vec![div("columns:2;column-fill:auto;column-gap:0;height:10px;width:200px;overflow:auto", boxes)]);
++        let mapped = MAPPED_FRAGMENTS.with(|m| m.get());
++        assert!(fragment_counts(&doc).iter().any(|&c| c >= 2_000), "a column per box: {:?}", fragment_counts(&doc));
++        assert!(mapped <= 20_000, "{mapped} fragments visited for 2000 boxes");
 +    }
 +
 +    /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.
