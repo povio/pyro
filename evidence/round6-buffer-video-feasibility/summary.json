@@ -1,0 +1,17 @@
+{
+  "lp": {
+    "names": {
+      "Fail": 1016
+    },
+    "fullyPassingPages": 0,
+    "urls": 14
+  },
+  "stable": {
+    "names": {
+      "Pass": 878,
+      "Fail": 138
+    },
+    "fullyPassingPages": 6,
+    "urls": 14
+  }
+}
