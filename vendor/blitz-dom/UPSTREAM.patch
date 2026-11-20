@@ -39880,13 +39880,13 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        /// pyro: a `content-visibility: auto` element that is not relevant to the user: its
 +        /// contents are skipped as `hidden` skips them, with size containment
 +        /// (`BaseDocument::update_content_visibility`).
-+        const CV_SKIPPED = 1 << 32;
++        const CV_SKIPPED = 1 << 35;
 +        /// pyro: a `content-visibility: auto` element whose relevance was determined once (a new
 +        /// one is skipped until then).
-+        const CV_DETERMINED = 1 << 33;
++        const CV_DETERMINED = 1 << 36;
 +        /// pyro: a `content-visibility: auto` element a query needs rendered: relevant at the next
 +        /// determination (`BaseDocument::force_content_visibility`).
-+        const CV_FORCED = 1 << 34;
++        const CV_FORCED = 1 << 37;
      }
  }
  
