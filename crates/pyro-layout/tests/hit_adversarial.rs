@@ -845,10 +845,54 @@ fn out_of_flow_boxes_of_anonymous_blocks_match_the_scan() {
              <div>block sibling</div>text <span style=\"position:relative\">inline {inner}</span> after
              <div style=\"height:900px\"></div></body></html>"
         ));
-        let x = p.id("x");
-        assert_eq!(p.layout.element_from_point_scan(&p.dom, 320.0, 280.0), Some(x), "{label}: the scan hits it");
+        assert_hit_at(&p, 380.0, 280.0, "x");
         p.compare(label);
     }
+}
+
+fn assert_hit_at(page: &Page, x: f64, y: f64, id: &str) {
+    let expected = Some(page.id(id));
+    for (selector, actual) in [
+        ("scan", page.layout.element_from_point_scan(&page.dom, x, y)),
+        ("descent", page.layout.element_from_point_descent(&page.dom, x, y)),
+        ("index", page.layout.element_from_point_indexed(&page.dom, x, y)),
+        ("adaptive", page.layout.element_from_point(&page.dom, x, y)),
+    ] {
+        assert_eq!(actual, expected, "{selector} at ({x}, {y}): {}", page.describe(actual));
+    }
+}
+
+#[test]
+fn absolute_child_uses_split_inline_containing_block() {
+    let p = page(r#"<!doctype html><style>body{margin:0;font:13px/15px sans-serif}</style>
+        <div>block sibling</div>text <span style="position:relative">inline <div>
+        <b id=x style="position:absolute;left:300px;top:250px;width:150px;height:90px"></b>
+        </div></span> after<div id=under style="height:900px"></div>"#);
+    assert_hit_at(&p, 320.0, 280.0, "under");
+    assert_hit_at(&p, 350.0, 280.0, "x");
+}
+
+#[test]
+fn relative_split_inline_moves_its_text_hit() {
+    let p = page(r#"<!doctype html><style>body{margin:0;font:16px/20px sans-serif}</style>
+        <div id=under style="height:400px"><span style="position:relative;left:200px">text <i id=x>hello</i><b style="display:block">block</b></span></div>"#);
+    assert_hit_at(&p, 51.0, 11.0, "under");
+    assert_hit_at(&p, 243.0, 11.0, "x");
+}
+
+#[test]
+fn split_inline_does_not_cull_float_in_its_tail() {
+    let p = page(r#"<!doctype html><style>body{margin:0;font:16px/20px sans-serif}</style>
+        <div style="width:300px"><span style="transform:translateX(100px)"><b style="display:block;height:10px"></b>abc <i id=x style="float:left;width:50px;height:50px"></i></span></div>"#);
+    assert_hit_at(&p, 5.0, 30.0, "x");
+}
+
+#[test]
+fn projected_button_content_hits_in_columns_not_the_strip() {
+    let p = page(r#"<!doctype html><html id=root><style>body{margin:0;font:16px/20px sans-serif}</style>
+        <div style="margin-top:400px;height:15px"><button style="position:fixed;left:100px;top:40px;display:list-item;column-count:2"><div style="width:54px;height:116px"><span id=x style="display:flow-root;width:113px;height:165px;transform:perspective(150px) rotateX(40deg)"></span></div></button></div>"#);
+    assert_hit_at(&p, 113.0, 120.0, "x");
+    assert_hit_at(&p, 132.0, 170.0, "root");
 }
 
 /// The glyph reach past the line boxes is measured once per line breaking

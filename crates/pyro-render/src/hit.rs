@@ -298,7 +298,7 @@ impl Descent<'_> {
             // pyro (lane H2): a box in a plane drawn through a perspective is where paint draws it
             // (`Self::placed`); pyro: a box in columns, the union of its pieces in them
             // (`Geometry::columns_box`). The order is `Geometry::laid_out`'s.
-            let mut own = match self.columns.contains(&id) && !projective {
+            let mut own = match self.columns.contains(&id) && (!projective || node.plane_3d().is_some_and(geometry::is_projective_plane)) {
                 true => self.g.columns_box(self.doc, id),
                 false => None,
             }
@@ -316,7 +316,7 @@ impl Descent<'_> {
             // cut at the breaks, `resolve.rs`) missed content the scan of every box reached
             // (`hit_adversarial`'s interleaved-mutations page 26).
             let in_columns = self.columns.contains(&id) || (self.multicol && node.columns_with_axes().is_some());
-            let cull = if in_columns { None } else { self.bound(id).map(|(r, _)| r) };
+            let cull = if in_columns || node.is_split_inline() { None } else { self.bound(id).map(|(r, _)| r) };
             let may_hit_text = (w == 0.0 || h == 0.0) && (node.flags.is_inline_root() || !node.anonymous_blocks.is_empty());
             (candidate || (may_hit_text && cull.is_none_or(|r| self.contains_any(&r, shift))), cull)
         } else if is_table_part {
@@ -455,6 +455,7 @@ impl Descent<'_> {
             }
             for item in line.items() {
                 let (start, r) = geometry::inline_item_rect(&line, &item, scale, text.layout.is_rtl());
+                let origin = geometry::inline_item_origin(doc, root_id, start, text, t, origin);
                 // An element's fragment grows to its border box in the block axis.
                 let to_doc = |r: Rect, (top, bottom): (f64, f64)| {
                     origin.transform_rect_bbox(Rect::new(

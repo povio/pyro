@@ -18415,7 +18415,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/relative.rs b/packages/blitz-d
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/inline/relative.rs
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,243 @@
 +//! pyro: relative positioning of inline boxes that are not atomic (CSS 2.1 § 9.4.3): such a box
 +//! has no layout box of its own, so the offset moves what its fragments hold where they are
 +//! painted (glyph runs, the boxes of its fragments) and the atomic inline boxes in it.
@@ -18538,12 +18538,16 @@ new file mode 100644
 +    /// inline boxes around it, up to the root (see [`inline_span_offset`]), percentages against
 +    /// the root's content box; and how far `position: sticky` holds them where they are painted.
 +    pub fn inline_span_relative_offset(&self, node_id: NodeId, root_id: NodeId) -> (f32, f32) {
++        self.inline_span_offset(node_id, root_id, true)
++    }
++
++    pub fn inline_span_offset(&self, node_id: NodeId, root_id: NodeId, include_sticky: bool) -> (f32, f32) {
 +        let layout = self.nodes[root_id].unrounded_layout();
 +        let cb = taffy::Size {
 +            width: layout.size.width - layout.border.left - layout.border.right - layout.padding.left - layout.padding.right,
 +            height: layout.size.height - layout.border.top - layout.border.bottom - layout.padding.top - layout.padding.bottom,
 +        };
-+        let offset = inline_span_offset_with(&self.nodes, node_id, root_id, cb, true);
++        let offset = inline_span_offset_with(&self.nodes, node_id, root_id, cb, include_sticky);
 +        (offset.x, offset.y)
 +    }
 +
