@@ -120,12 +120,16 @@ impl BaseDocument {
     /// inline boxes around it, up to the root (see [`inline_span_offset`]), percentages against
     /// the root's content box; and how far `position: sticky` holds them where they are painted.
     pub fn inline_span_relative_offset(&self, node_id: NodeId, root_id: NodeId) -> (f32, f32) {
+        self.inline_span_offset(node_id, root_id, true)
+    }
+
+    pub fn inline_span_offset(&self, node_id: NodeId, root_id: NodeId, include_sticky: bool) -> (f32, f32) {
         let layout = self.nodes[root_id].unrounded_layout();
         let cb = taffy::Size {
             width: layout.size.width - layout.border.left - layout.border.right - layout.padding.left - layout.padding.right,
             height: layout.size.height - layout.border.top - layout.border.bottom - layout.padding.top - layout.padding.bottom,
         };
-        let offset = inline_span_offset_with(&self.nodes, node_id, root_id, cb, true);
+        let offset = inline_span_offset_with(&self.nodes, node_id, root_id, cb, include_sticky);
         (offset.x, offset.y)
     }
 

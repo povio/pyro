@@ -431,7 +431,19 @@ impl Geometry {
             }
         };
         let l = doc.physical_unrounded_layout(id);
-        let strip = to_strip(&chain).transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
+        let plane = chain[0].plane_3d().filter(|plane| is_projective_plane(plane));
+        let into_strip = if plane.is_some() {
+            let parent = if chain.len() > 1 {
+                let scroll = chain[1].scroll_offset();
+                to_strip(&chain[1..]) * Affine::translate((-scroll.x, -scroll.y))
+            } else {
+                Affine::IDENTITY
+            };
+            parent * Affine::translate((f64::from(l.location.x), f64::from(l.location.y)))
+        } else {
+            to_strip(&chain)
+        };
+        let strip = into_strip.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
         let mut out = Vec::new();
         cut(container.columns_with_axes()?, &chain, strip, &mut out);
         // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
@@ -439,6 +451,20 @@ impl Geometry {
         // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
         if out.iter().any(|&(_, height)| height.is_some_and(|height| height >= 1.0)) {
             out.retain(|&(_, height)| height.is_none_or(|height| height >= 1.0));
+        }
+        if let Some(plane) = plane {
+            let origin = into_strip * kurbo::Point::ZERO;
+            let local_axes = Affine::translate((-origin.x, -origin.y)) * into_strip;
+            out.retain_mut(|(piece, _)| {
+                let placement = Affine::translate((origin.x + piece.x0 - strip.x0, origin.y + piece.y0 - strip.y0))
+                    * local_axes;
+                let local = placement.inverse().transform_rect_bbox(*piece);
+                let projected = Homography::IDENTITY.then_affine_before(placement).mul(&Homography(plane.local));
+                projected.bbox(local).is_some_and(|rect| {
+                    *piece = rect;
+                    true
+                })
+            });
         }
         // pyro: a container nested in another's columns has its rows there too: the pieces are cut
         // again at the outer container's breaks, out to the outermost one (as paint shows them).
@@ -488,10 +514,13 @@ impl Geometry {
         let border = Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64);
         // pyro (lane H2): a box in a plane drawn through a perspective is where paint draws it;
         // pyro: a box in columns is the union of its pieces in them.
-        let rect = match projective.then(|| self.projective(doc, id)).flatten() {
-            Some(h) => h.bbox(border).unwrap_or(Rect::ZERO),
-            None => self.columns_box(doc, id).unwrap_or_else(|| t.transform_rect_bbox(border)),
-        };
+        let columns = !projective || node.plane_3d().is_some_and(is_projective_plane);
+        let rect = columns.then(|| self.columns_box(doc, id)).flatten().unwrap_or_else(|| {
+            match projective.then(|| self.projective(doc, id)).flatten() {
+                Some(h) => h.bbox(border).unwrap_or(Rect::ZERO),
+                None => t.transform_rect_bbox(border),
+            }
+        });
         let client_width = (l.size.width - l.border.left - l.border.right - l.scrollbar_size.width).max(0.0) as f64;
         let client_height = (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
         // Scrollable overflow is kept in device px.
@@ -991,6 +1020,7 @@ impl Geometry {
             for item in line.items() {
                 let (start, mut r) = inline_item_rect(&line, &item, scale, text.layout.is_rtl());
                 if within(start) {
+                    let origin = inline_item_origin(doc, root_id, start, text, t, origin);
                     if start == Some(id) {
                         r = span_edge_box(doc, &item, r, scale);
                     }
@@ -1037,8 +1067,12 @@ impl Geometry {
             let mut last_line = usize::MAX;
             self.inline_items(doc, id, &mut |origin, line, r| {
                 if line == last_line {
-                    if let Some((_, acc)) = lines.last_mut() {
-                        *acc = acc.union(r);
+                    if let Some((first_origin, acc)) = lines.last_mut() {
+                        let [_, _, _, _, first_x, first_y] = first_origin.as_coeffs();
+                        let [_, _, _, _, x, y] = origin.as_coeffs();
+                        let delta = first_origin.inverse() * kurbo::Point::new(x, y);
+                        let shifted = if x == first_x && y == first_y { r } else { r + delta.to_vec2() };
+                        *acc = acc.union(shifted);
                     }
                 } else {
                     last_line = line;
@@ -1121,6 +1155,20 @@ pub struct BoxQuads {
     /// split by column breaks.
     pub fragments: Vec<[f64; 8]>,
     pub fixed: bool,
+}
+
+pub(crate) fn inline_item_origin(
+    doc: &BaseDocument, root: NodeId, start: Option<NodeId>, text: &blitz_dom::node::TextLayout,
+    placement: Affine, origin: Affine,
+) -> Affine {
+    if let Some(start) = start.filter(|_| text.relative_spans) {
+        let (dx, dy) = doc.inline_span_offset(start, root, false);
+        let [a, b, c, d, _, _] = placement.as_coeffs();
+        let (dx, dy) = (f64::from(dx), f64::from(dy));
+        Affine::translate((a * dx + c * dy, b * dx + d * dy)) * origin
+    } else {
+        origin
+    }
 }
 
 /// One item of `line` in its inline root's text space (device px): the
