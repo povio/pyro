@@ -812,10 +812,12 @@ impl ContentWidthsMeasurer {
                                 self.line_has_content = false;
                             }
                             self.after_span_start = true;
+                            self.running_hanging_whitespace = 0.0;
                         } else {
+                            // pyro: white space before an end edge still hangs at the line's end: the
+                            // line breaker puts the edge before it (`reorder_span_ends_before_trailing_space`).
                             self.after_span_start = false;
                         }
-                        self.running_hanging_whitespace = 0.0;
                         self.running_min_width += inline_box.width;
                         self.running_max_width += inline_box.width;
                     }

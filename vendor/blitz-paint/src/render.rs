@@ -3374,11 +3374,42 @@ impl ElementCx<'_, '_> {
                 })
                 .fold(metrics.inline_min_coord + metrics.offset + metrics.advance, f32::max);
             let content_end = items_end - metrics.collapsed_advance;
-            for item in line.items() {
+            // pyro: collapsible spaces that end a line's last text but come before the end edges of spans (`<span>aaa
+            // </span>` broken after it) hang: those edges are drawn before them, as Blink removes the spaces (the
+            // edges' boxes are after them in the line's items). `(run, spaces' advance)`.
+            let hang_before_edges = (!rtl_layout)
+                .then(|| {
+                    let items: Vec<_> = line.items().collect();
+                    let last_run = items.iter().rposition(|item| matches!(item, PositionedLayoutItem::GlyphRun(_)))?;
+                    let only_end_edges_after = last_run + 1 < items.len()
+                        && items[last_run + 1..].iter().all(|item| {
+                            matches!(item, PositionedLayoutItem::InlineBox(ibox) if ibox.kind == InlineBoxKind::SpanEnd)
+                        });
+                    let PositionedLayoutItem::GlyphRun(run) = &items[last_run] else { return None };
+                    let spaces: f32 = run
+                        .run()
+                        .visual_clusters()
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .rev()
+                        .take_while(|cluster| text_layout.text.get(cluster.text_range()) == Some(" "))
+                        .map(|cluster| cluster.advance())
+                        .sum();
+                    (only_end_edges_after && spaces > 0.0).then_some((last_run, spaces))
+                })
+                .flatten();
+            for (line_item, item) in line.items().enumerate() {
+                let hang = match hang_before_edges {
+                    Some((run_index, spaces)) if line_item >= run_index => Some((line_item == run_index, spaces)),
+                    _ => None,
+                };
                 let (style_index, x0, x1, edge) = match &item {
                     PositionedLayoutItem::GlyphRun(run) => {
                         let x0 = run.offset();
                         let mut x1 = x0 + run.advance();
+                        if let Some((true, spaces)) = hang {
+                            x1 = (x1 - spaces).max(x0);
+                        }
                         // pyro: a run of bidi formatting characters alone (U+202E written in the
                         // text, placed at the level before it) is no content of a box: it made a
                         // fragment of its own away from the content it reorders.
@@ -3400,7 +3431,11 @@ impl ElementCx<'_, '_> {
                     PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
                         InlineBoxKind::InFlow => (ibox.style_index, ibox.x, ibox.x + ibox.width, None),
                         InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd => {
-                            (ibox.style_index, ibox.x, ibox.x + ibox.width, Some((NodeId::from_u64(ibox.id), ibox.kind)))
+                            let shift = match hang {
+                                Some((false, spaces)) => spaces,
+                                _ => 0.0,
+                            };
+                            (ibox.style_index, ibox.x - shift, ibox.x + ibox.width - shift, Some((NodeId::from_u64(ibox.id), ibox.kind)))
                         }
                         _ => continue,
                     },

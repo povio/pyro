@@ -874,7 +874,7 @@ index 25f0b3b..47860c4 100644
      pub fn is_soft_line_break(&self) -> bool {
          self.is_end_of_line()
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..291a4ba 100644
+index e6ab383..668e0be 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -1345,7 +1345,7 @@ index e6ab383..291a4ba 100644
                      let is_rtl = item.bidi_level.is_rtl();
  
                      if run_spacing.is_zero() {
-@@ -522,6 +798,27 @@ impl ContentWidthsMeasurer {
+@@ -522,6 +798,29 @@ impl ContentWidthsMeasurer {
                  }
                  LayoutItemKind::InlineBox => {
                      let inline_box = &layout_data.inline_boxes[item.index].inline_box;
@@ -1363,17 +1363,19 @@ index e6ab383..291a4ba 100644
 +                                self.line_has_content = false;
 +                            }
 +                            self.after_span_start = true;
++                            self.running_hanging_whitespace = 0.0;
 +                        } else {
++                            // pyro: white space before an end edge still hangs at the line's end: the
++                            // line breaker puts the edge before it (`reorder_span_ends_before_trailing_space`).
 +                            self.after_span_start = false;
 +                        }
-+                        self.running_hanging_whitespace = 0.0;
 +                        self.running_min_width += inline_box.width;
 +                        self.running_max_width += inline_box.width;
 +                    }
                      if inline_box.kind == InlineBoxKind::InFlow {
                          let next = items.as_slice().iter().find(|next| {
                              next.kind == LayoutItemKind::TextRun
-@@ -596,8 +893,15 @@ impl ContentWidthsMeasurer {
+@@ -596,8 +895,15 @@ impl ContentWidthsMeasurer {
                  skip_atom = false;
                  let prev_text_wrap_mode = self.text_wrap_mode;
                  self.text_wrap_mode = style.text_wrap_mode;
@@ -1389,7 +1391,7 @@ index e6ab383..291a4ba 100644
                          || style.overflow_wrap == OverflowWrap::Anywhere)
                  {
                      self.soft_break(i != empty_at);
-@@ -611,7 +915,15 @@ impl ContentWidthsMeasurer {
+@@ -611,7 +917,15 @@ impl ContentWidthsMeasurer {
                      continue;
                  }
                  if SPACED {
@@ -1406,7 +1408,7 @@ index e6ab383..291a4ba 100644
                  }
              } else if skip_atom {
                  // The next line starts after the whole newline atom.
-@@ -620,6 +932,15 @@ impl ContentWidthsMeasurer {
+@@ -620,6 +934,15 @@ impl ContentWidthsMeasurer {
              }
  
              let mut advance = cluster.advance;
@@ -1422,7 +1424,7 @@ index e6ab383..291a4ba 100644
              if SPACED {
                  let owns_gap = if is_rtl {
                      is_atom_start
-@@ -630,9 +951,10 @@ impl ContentWidthsMeasurer {
+@@ -630,9 +953,10 @@ impl ContentWidthsMeasurer {
                  };
                  if owns_gap {
                      advance += gap;
@@ -1434,7 +1436,7 @@ index e6ab383..291a4ba 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -657,13 +979,19 @@ impl ContentWidthsMeasurer {
+@@ -657,13 +981,19 @@ impl ContentWidthsMeasurer {
                  self.running_hanging_whitespace = 0.0;
              }
          }

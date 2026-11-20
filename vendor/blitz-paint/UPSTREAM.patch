@@ -8467,7 +8467,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,259 +3238,3594 @@
+@@ -967,259 +3238,3629 @@
          }
      }
  
@@ -8609,13 +8609,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -                        None,
 -                        &convert_rect(rect),
 -                    );
--                }
--                if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
--                    let color = self.style.get_inherited_text().color;
--                    let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
--                        ColorOrAuto::Auto => color,
--                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
--                    };
 +        // Whether an element has a box to paint.
 +        let mut painted: HashMap<NodeId, bool> = HashMap::new();
 +        let mut paints = |id: NodeId| {
@@ -8632,7 +8625,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    || style.clone_display().is_contents()
 +                {
 +                    return false;
-+                }
+                 }
+-                if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
+-                    let color = self.style.get_inherited_text().color;
+-                    let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
+-                        ColorOrAuto::Auto => color,
+-                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
+-                    };
 +                let background = style.get_background();
 +                let border = style.get_border();
 +                background.background_color.resolve_to_absolute(&style.clone_color()).as_srgb_color()
@@ -8722,11 +8721,42 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                })
 +                .fold(metrics.inline_min_coord + metrics.offset + metrics.advance, f32::max);
 +            let content_end = items_end - metrics.collapsed_advance;
-+            for item in line.items() {
++            // pyro: collapsible spaces that end a line's last text but come before the end edges of spans (`<span>aaa
++            // </span>` broken after it) hang: those edges are drawn before them, as Blink removes the spaces (the
++            // edges' boxes are after them in the line's items). `(run, spaces' advance)`.
++            let hang_before_edges = (!rtl_layout)
++                .then(|| {
++                    let items: Vec<_> = line.items().collect();
++                    let last_run = items.iter().rposition(|item| matches!(item, PositionedLayoutItem::GlyphRun(_)))?;
++                    let only_end_edges_after = last_run + 1 < items.len()
++                        && items[last_run + 1..].iter().all(|item| {
++                            matches!(item, PositionedLayoutItem::InlineBox(ibox) if ibox.kind == InlineBoxKind::SpanEnd)
++                        });
++                    let PositionedLayoutItem::GlyphRun(run) = &items[last_run] else { return None };
++                    let spaces: f32 = run
++                        .run()
++                        .visual_clusters()
++                        .collect::<Vec<_>>()
++                        .iter()
++                        .rev()
++                        .take_while(|cluster| text_layout.text.get(cluster.text_range()) == Some(" "))
++                        .map(|cluster| cluster.advance())
++                        .sum();
++                    (only_end_edges_after && spaces > 0.0).then_some((last_run, spaces))
++                })
++                .flatten();
++            for (line_item, item) in line.items().enumerate() {
++                let hang = match hang_before_edges {
++                    Some((run_index, spaces)) if line_item >= run_index => Some((line_item == run_index, spaces)),
++                    _ => None,
++                };
 +                let (style_index, x0, x1, edge) = match &item {
 +                    PositionedLayoutItem::GlyphRun(run) => {
 +                        let x0 = run.offset();
 +                        let mut x1 = x0 + run.advance();
++                        if let Some((true, spaces)) = hang {
++                            x1 = (x1 - spaces).max(x0);
++                        }
 +                        // pyro: a run of bidi formatting characters alone (U+202E written in the
 +                        // text, placed at the level before it) is no content of a box: it made a
 +                        // fragment of its own away from the content it reorders.
@@ -8748,7 +8778,11 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
 +                        InlineBoxKind::InFlow => (ibox.style_index, ibox.x, ibox.x + ibox.width, None),
 +                        InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd => {
-+                            (ibox.style_index, ibox.x, ibox.x + ibox.width, Some((NodeId::from_u64(ibox.id), ibox.kind)))
++                            let shift = match hang {
++                                Some((false, spaces)) => spaces,
++                                _ => 0.0,
++                            };
++                            (ibox.style_index, ibox.x - shift, ibox.x + ibox.width - shift, Some((NodeId::from_u64(ibox.id), ibox.kind)))
 +                        }
 +                        _ => continue,
 +                    },
@@ -12290,7 +12324,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6835,60 @@
+@@ -1229,9 +6870,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12353,7 +12387,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6910,20 @@
+@@ -1253,9 +6945,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12377,7 +12411,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6934,209 @@
+@@ -1266,26 +6969,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12589,7 +12623,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7144,38 @@
+@@ -1293,15 +7179,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12629,7 +12663,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7186,108 @@
+@@ -1312,7 +7221,108 @@
          );
      }
  
@@ -12738,7 +12772,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7304,22 @@
+@@ -1329,9 +7339,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12764,7 +12798,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7335,28 @@
+@@ -1347,10 +7370,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12793,7 +12827,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7364,23 @@
+@@ -1358,8 +7399,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12818,7 +12852,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7404,27 @@
+@@ -1383,22 +7439,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12855,7 +12889,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7453,32 @@
+@@ -1427,6 +7488,32 @@
      }
  }
  
@@ -12888,7 +12922,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7490,13 @@
+@@ -1438,6 +7525,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12902,7 +12936,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7516,364 @@
+@@ -1457,12 +7551,364 @@
          }
      };
      let s_border = style.get_border();
