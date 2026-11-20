@@ -232,7 +232,7 @@ pub(crate) fn local(dom: &Dom, n: NodeId) -> String {
 }
 
 pub(crate) fn is_text(dom: &Dom, n: NodeId) -> bool {
-    dom.node_type(n).ok() == Some(NodeType::Text)
+    matches!(dom.node_type(n), Ok(NodeType::Text | NodeType::CDataSection))
 }
 
 /// Elements a caret descends into (not void/replaced ones).
@@ -783,25 +783,73 @@ fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     if in_text_only_element(dom, caret.0) {
         return insert_at(dom, caret, "\n");
     }
-    let block = block_of(dom, caret.0, host);
-    let Ok(doc) = dom.node_document(host) else { return caret };
-    if block == host {
-        // No block to split: a line break.
-        let Ok(br) = dom.create_element(doc, "br") else { return caret };
-        let (n, off) = caret;
-        if is_text(dom, n) {
-            let Ok(after) = dom.split_text(n, off) else { return caret };
-            if let Ok(Some(p)) = dom.parent(after) {
-                let _ = dom.insert_before(p, br, Some(after));
-            }
-            return (after, 0);
+    let Ok(doc) = dom.node_document(host) else {
+        return caret;
+    };
+    // Address and preformatted paragraphs continue with a line break.
+    let mut ancestor = Some(caret.0);
+    while let Some(node) = ancestor {
+        if matches!(local(dom, node).as_str(), "address" | "listing" | "pre") {
+            return line_break_at(dom, host, caret);
         }
-        let before = dom.child_at(n, off).ok().flatten();
-        let _ = dom.insert_before(n, br, before);
-        return (n, off + 1);
+        if node == host || is_block(dom, node) { break; }
+        ancestor = dom.parent(node).ok().flatten();
+    }
+    let mut block = block_of(dom, caret.0, host);
+    let mut caret = caret;
+    if block == host {
+        // An inline editing host, heading, term or paragraph can't acquire
+        // child paragraphs. Its surrounding block may lie outside this host.
+        if !is_block(dom, host) && local(dom, host) != "body"
+            || matches!(local(dom, host).as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "dt")
+        {
+            return line_break_at(dom, host, caret);
+        }
+        // Make the anonymous paragraph containing the caret explicit before
+        // splitting it. Neighbouring block elements remain outside it.
+        let separator = dom.document_data(doc).map(|d| d.default_paragraph_separator).unwrap_or("div");
+        let Ok(wrapper) = dom.create_element(doc, separator) else {
+            return caret;
+        };
+        let mut child = caret.0;
+        while child != host && dom.parent(child).ok().flatten() != Some(host) {
+            let Ok(Some(parent)) = dom.parent(child) else {
+                return caret;
+            };
+            child = parent;
+        }
+        let children = dom.children(host).map(|c| c.collect::<Vec<_>>()).unwrap_or_default();
+        let at = if child == host {
+            caret.1 as usize
+        } else {
+            let Ok(idx) = dom.index_in_parent(child) else {
+                return caret;
+            };
+            idx as usize
+        };
+        let mut begin = at.min(children.len());
+        while begin > 0 && !is_block(dom, children[begin - 1]) {
+            begin -= 1;
+        }
+        let mut end = at.min(children.len());
+        while end < children.len() && !is_block(dom, children[end]) {
+            end += 1;
+        }
+        if dom.insert_before(host, wrapper, children.get(begin).copied()).is_err() {
+            return caret;
+        }
+        for &node in &children[begin..end] {
+            let _ = dom.append_child(wrapper, node);
+        }
+        if child == host {
+            caret = (wrapper, (at - begin) as u32);
+        }
+        block = wrapper;
     }
     let tag = local(dom, block);
-    let Ok(new_block) = dom.create_element(doc, &tag) else { return caret };
+    let Ok(new_block) = dom.create_element(doc, &tag) else {
+        return caret;
+    };
     // Move everything after the caret (within the block) into the new block.
     let (n, off) = caret;
     let mut split_from = if is_text(dom, n) {
@@ -816,28 +864,50 @@ fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     } else {
         dom.child_at(n, off).ok().flatten()
     };
-    // Climb to the block's direct child, carrying following siblings.
-    let mut anchor_parent = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
-    let mut moved: Vec<NodeId> = Vec::new();
-    while let Some(p) = anchor_parent {
-        let mut cur = split_from;
-        while let Some(c) = cur {
-            let next = dom.next_sibling(c).ok().flatten();
-            moved.push(c);
-            cur = next;
+    // Reconstruct the inline ancestor chain on the right side of the split.
+    // The original nodes and their IDs stay in the first paragraph.
+    let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
+    let mut right_child = None;
+    while let Some(parent) = container {
+        let dest = if parent == block {
+            new_block
+        } else {
+            let Ok(clone) = dom.clone_node(parent, false, None) else {
+                return caret;
+            };
+            let _ = dom.remove_attribute(clone, "id");
+            clone
+        };
+        if let Some(child) = right_child {
+            let _ = dom.append_child(dest, child);
         }
-        if p == block {
+        let mut next = split_from;
+        while let Some(child) = next {
+            next = dom.next_sibling(child).ok().flatten();
+            let _ = dom.append_child(dest, child);
+        }
+        if parent == block {
             break;
         }
-        split_from = dom.next_sibling(p).ok().flatten();
-        anchor_parent = dom.parent(p).ok().flatten();
-    }
-    for m in moved {
-        let _ = dom.append_child(new_block, m);
+        right_child = (dom.child_count(dest).unwrap_or(0) > 0).then_some(dest);
+        split_from = dom.next_sibling(parent).ok().flatten();
+        container = dom.parent(parent).ok().flatten();
     }
     let parent = dom.parent(block).ok().flatten().unwrap_or(host);
     let next = dom.next_sibling(block).ok().flatten();
     let _ = dom.insert_before(parent, new_block, next);
+    // A break at the end of a link is the new paragraph's placeholder.
+    // Starting the next line inside that link would continue its href.
+    let mut only_child = new_block;
+    let mut inside_link = false;
+    while dom.child_count(only_child).ok() == Some(1) {
+        let Ok(Some(child)) = dom.first_child(only_child) else { break };
+        inside_link |= local(dom, only_child) == "a";
+        only_child = child;
+    }
+    if inside_link && local(dom, only_child) == "br" {
+        let _ = dom.replace_all(new_block, Some(only_child));
+    }
     placeholder_if_empty(dom, block);
     placeholder_if_empty(dom, new_block).unwrap_or_else(|| host_start(dom, new_block))
 }
