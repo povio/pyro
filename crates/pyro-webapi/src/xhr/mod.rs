@@ -573,7 +573,7 @@ impl Xhr {
         }
         let page = self.page()?;
         // Referrer "client": the document, under its referrer policy.
-        request.referrer = page.document_url_parsed();
+        request.referrer = page.client_referrer();
         request.referrer_policy = page.referrer_policy();
         let limits = page.xhr_state.limits.get();
         if page.xhr_state.jobs.borrow().len() >= limits.max_requests {
