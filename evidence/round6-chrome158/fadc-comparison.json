@@ -1,0 +1,80 @@
+{
+  "candidate": "fadcbb56ee0afbcbbbed5730c12e24c72480ace6",
+  "receiptEvidence": "038635c7abfef92daecb7225bf7bc187e98e8ac3",
+  "comparison": {
+    "loss": {
+      "paired": 158,
+      "lpFull": 42,
+      "chromeFull": 79,
+      "lpPass": 60231,
+      "chromePass": 60721,
+      "lpOnly": 1236,
+      "chromeOnly": 1726,
+      "both": 58995,
+      "chromeNameAbsent": 13,
+      "lpNameAbsent": 85,
+      "missingChromePages": 1
+    },
+    "main": {
+      "paired": 2405,
+      "lpFull": 1066,
+      "chromeFull": 1896,
+      "lpPass": 179494,
+      "chromePass": 188128,
+      "lpOnly": 3669,
+      "chromeOnly": 12303,
+      "both": 175825,
+      "chromeNameAbsent": 1128,
+      "lpNameAbsent": 1396,
+      "missingChromePages": 2
+    },
+    "ext": {
+      "paired": 38,
+      "lpFull": 29,
+      "chromeFull": 18,
+      "lpPass": 330,
+      "chromePass": 300,
+      "lpOnly": 44,
+      "chromeOnly": 14,
+      "both": 286,
+      "chromeNameAbsent": 0,
+      "lpNameAbsent": 0
+    },
+    "extra": {
+      "paired": 414,
+      "lpFull": 397,
+      "chromeFull": 409,
+      "lpPass": 4693,
+      "chromePass": 3542,
+      "lpOnly": 1217,
+      "chromeOnly": 66,
+      "both": 3476,
+      "chromeNameAbsent": 0,
+      "lpNameAbsent": 0
+    },
+    "css": {
+      "paired": 1050,
+      "lpFull": 819,
+      "chromeFull": 931,
+      "lpPass": 33321,
+      "chromePass": 34502,
+      "lpOnly": 767,
+      "chromeOnly": 1948,
+      "both": 32554,
+      "chromeNameAbsent": 198,
+      "lpNameAbsent": 213
+    },
+    "workers": {
+      "paired": 41,
+      "lpFull": 27,
+      "chromeFull": 35,
+      "lpPass": 577,
+      "chromePass": 619,
+      "lpOnly": 0,
+      "chromeOnly": 42,
+      "both": 577,
+      "chromeNameAbsent": 0,
+      "lpNameAbsent": 0
+    }
+  }
+}

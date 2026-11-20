@@ -1,0 +1,23 @@
+[
+ {
+  "receipt": "base/wasm-002.json",
+  "restarts": 11,
+  "guardedHangCount": 0,
+  "watchdogKills": 0,
+  "possiblyAffectedUrls": 126
+ },
+ {
+  "receipt": "chromeWpt/html-035.json",
+  "restarts": 31,
+  "guardedHangCount": 29,
+  "watchdogKills": 0,
+  "possiblyAffectedUrls": 128
+ },
+ {
+  "receipt": "combined/wasm-002.json",
+  "restarts": 14,
+  "guardedHangCount": 0,
+  "watchdogKills": 0,
+  "possiblyAffectedUrls": 128
+ }
+]

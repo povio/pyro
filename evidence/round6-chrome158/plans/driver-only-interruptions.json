@@ -1,0 +1,13 @@
+[
+  "chrome/html-000.2.log",
+  "chrome/shadow-dom-000.2.log",
+  "chrome/xhr-000.1.log",
+  "chromeWpt/navigation-api-000.1.log",
+  "chromeWpt/html-069.1.log",
+  "chromeWpt/html-069.2.log",
+  "chromeWpt/event-timing-000.2.log",
+  "chromeWpt/event-timing-000.1.log",
+  "chromeWpt/speculation-rules-002.1.log",
+  "chromeWpt/infrastructure-000.1.log",
+  "chromeWpt/infrastructure-000.2.log"
+]
