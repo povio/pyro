@@ -131,6 +131,23 @@ fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
 }
 
 #[test]
+fn nested_layout_shares_the_wrapped_run_slots() {
+    for (count, spans, nested, heights, heading) in [
+        (3, true, true, &[28., 44.][..], 44.),
+        (2, true, true, &[60., 6., 6.][..], 76.),
+        (3, false, true, &[58., 14.][..], 14.),
+        (3, false, false, &[58., 14.][..], 14.),
+    ] {
+        let span = if spans { "all" } else { "none" };
+        let inner = if nested { "columns:2;gap:0" } else { "height:72px" };
+        let content = if nested { "<article></article>" } else { "" };
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{width:180px;columns:{count};column-height:60px;column-wrap:wrap;gap:10px 0}}header{{height:60px}}section{{{inner}}}article{{height:144px}}h2{{column-span:{span};height:15px}}footer{{height:30px}}</style><main><header></header><section id=s>{content}</section><h2 id=h></h2><footer></footer></main>"));
+        assert_eq!(rects(&p, "s").iter().map(|rect| rect[3]).collect::<Vec<_>>(), heights);
+        assert_eq!(rect(&p, "h")[1], heading);
+    }
+}
+
+#[test]
 fn shared_wrapper_resumes_each_overlapping_column_run() {
     for (count, first_spans) in [(2, true), (3, true), (2, false)] {
         let first = if first_spans { "all" } else { "none" };

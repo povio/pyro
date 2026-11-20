@@ -22942,7 +22942,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,4077 @@
+@@ -0,0 +1,4113 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -23360,6 +23360,41 @@ new file mode 100644
 +}
 +
 +impl RowSlots {
++    fn plan(self, run: Part<'_>, row_top: f32, count: usize, left: usize, balance: bool) -> Vec<(f32, f32, f32, f32)> {
++        let rows = self;
++        let (top, available) = rows.content_start(row_top);
++        // The row the run starts in may be partly taken (after a spanner): its
++        // columns are as tall as what is left of it, the rows after it whole.
++        let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
++        let mut rest = Some(run);
++        let mut row = (top, available);
++        if available < rows.height - EPSILON {
++            let first = run.fill(available, count + 1).columns;
++            rest = first.get(count).map(|&(start, _)| Part { start, ..run });
++            placed.extend(first.into_iter().take(count).map(|(a, b)| (a, b, top, available)));
++            row = (rows.next(rows.slot(top).0), rows.height);
++        }
++        if let Some(rest) = rest {
++            for (i, (a, b)) in rest.fill(rows.height, left.saturating_sub(placed.len()).max(1)).columns.into_iter().enumerate() {
++                placed.push((a, b, row.0 + (i / count.max(1)) as f32 * rows.stride, rows.height));
++            }
++        }
++        // `column-fill: balance` balances the last row within its height.
++        if balance
++            && let Some(&(_, _, last_top, limit)) = placed.last()
++        {
++            let from = placed.iter().position(|p| p.2 == last_top).unwrap_or(0);
++            let tail = Part { breaks: run.breaks, start: placed[from].0, end: run.end };
++            let height = tail.balance(count, Some(limit)).min(limit);
++            let refilled = tail.fill(height, left).columns;
++            if refilled.len() <= count {
++                placed.truncate(from);
++                placed.extend(refilled.into_iter().map(|(a, b)| (a, b, last_top, height)));
++            }
++        }
++        placed
++    }
++
 +    /// The slot `y` is in or after: its top and its end.
 +    fn slot(&self, y: f32) -> (f32, f32) {
 +        if self.stride <= EPSILON {
@@ -23886,7 +23921,8 @@ new file mode 100644
 +        // pyro: a balanced container fragments a nested one by its balanced column height, found
 +        // again on each pass.
 +        let balancing = spanning.is_none() && !vertical && multicol.height.is_none() && !fill_auto;
-+        let fragments_nested = fragmentainer.is_some() || balancing;
++        let wrapped_rows = multicol.height.filter(|&height| !vertical && multicol.wrap && height >= 1.0);
++        let fragments_nested = fragmentainer.is_some() || balancing || wrapped_rows.is_some();
 +        let mut pass = 0;
 +        // pyro: the tops of nested containers to break before (`ColumnFragments::pushed`).
 +        let mut pushed_nested: std::collections::HashMap<crate::NodeId, f32> = std::collections::HashMap::new();
@@ -24084,9 +24120,38 @@ new file mode 100644
 +                let pieces = breaks.fill_range(start, breaks.end, balanced, count + 1).columns;
 +                (pieces.len() <= count).then_some((index, start, balanced, pieces))
 +            });
++            let mut planned = Vec::new();
++            if let Some(height) = wrapped_rows.filter(|_| spanning.is_some()) {
++                let rows = RowSlots { origin: content_top, height, stride: height + multicol.row_gap(definite_height) };
++                let spans = self.doc.column_spanner_ranges(dom_id);
++                let leads = self.doc.column_spanner_leads(dom_id);
++                let ids = self.doc.column_spanners_of(dom_id);
++                let mut start = content_top;
++                let mut top = content_top;
++                for part in 0..=spans.len() {
++                    let lift = ids.get(part).map_or(0.0, |(id, _)| (-self.nodes[*id].unrounded_layout().margin.top).max(0.0));
++                    let end = spans.get(part).map_or(breaks.end, |span| span.0 + lift);
++                    if end > start + EPSILON {
++                        let pieces = rows.plan(Part { breaks: &breaks, start, end }, top, count, MAX_COLUMNS.saturating_sub(planned.len()), matches!(multicol.fill, ColumnFill::Balance));
++                        if let Some(last) = pieces.last() {
++                            top = last.2 + last.3;
++                            let tail = pieces.partition_point(|piece| piece.2 < last.2);
++                            for (index, piece) in pieces.iter().enumerate() {
++                                planned.push((piece.0, piece.1, piece.3, tail.saturating_sub(index), last.3));
++                            }
++                        }
++                    }
++                    if planned.len() >= MAX_COLUMNS { break; }
++                    if let Some(&(before, after, _)) = spans.get(part) {
++                        top = rows.spanner_top(top, after - before) - lift + after - before;
++                        start = after - leads.get(part).copied().unwrap_or(0.0);
++                    }
++                }
++            }
 +            let mut changed = false;
 +            for &(id, y) in &breaks.nested {
-+                let wanted = fragmentainer.zip(columns.as_ref()).map(|(height, columns)| {
++                let slot = planned.partition_point(|piece| piece.0 <= y + EPSILON).checked_sub(1).and_then(|index| planned.get(index)).filter(|piece| y < piece.1 + EPSILON);
++                let wanted = slot.map(|&(start, _, height, left, tail)| (height, (y - start).clamp(0.0, height), left, tail)).or_else(|| fragmentainer.zip(columns.as_ref()).map(|(height, columns)| {
 +                    let index = columns.partition_point(|c| c.0 <= y + EPSILON).saturating_sub(1);
 +                    let start = columns.get(index).map_or(breaks.start, |c| c.0);
 +                    if let Some((tail_index, tail_start, balanced, pieces)) = &tail {
@@ -24098,7 +24163,7 @@ new file mode 100644
 +                        return (height, (y - start).clamp(0.0, height), tail_index.saturating_sub(index), *balanced);
 +                    }
 +                    (height, (y - start).clamp(0.0, height), usize::MAX, height)
-+                });
++                }));
 +                let laid_out = self.nodes[id].element_data().and_then(|e| e.layout_data.as_deref()).and_then(|l| l.columns.as_deref());
 +                let used = laid_out.and_then(|c| c.nested);
 +                // (Before its top margin: the margin is truncated at the break.)
@@ -24553,38 +24618,9 @@ new file mode 100644
 +                let left = sink.room().max(1);
 +                // pyro: rows of an explicit `column-height` (`slotted`, below).
 +                if let Some(rows) = slotted {
-+                    let (top, available) = rows.content_start(row_top);
-+                    // The row the run starts in may be partly taken (after a spanner): its
-+                    // columns are as tall as what is left of it, the rows after it whole.
-+                    let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
-+                    let mut rest = Some(run);
-+                    let mut row = (top, available);
-+                    if available < rows.height - EPSILON {
-+                        let first = run.fill(available, count + 1).columns;
-+                        rest = first.get(count).map(|&(start, _)| Part { start, ..run });
-+                        placed.extend(first.into_iter().take(count).map(|(a, b)| (a, b, top, available)));
-+                        row = (rows.next(rows.slot(top).0), rows.height);
-+                    }
-+                    if let Some(rest) = rest {
-+                        for (i, (a, b)) in rest.fill(rows.height, left.saturating_sub(placed.len()).max(1)).columns.into_iter().enumerate() {
-+                            placed.push((a, b, row.0 + (i / count.max(1)) as f32 * rows.stride, rows.height));
-+                        }
-+                    }
-+                    // `column-fill: balance` balances the last row within its height.
-+                    let mut last_height = placed.last().map_or(0.0, |p| p.3);
-+                    if matches!(multicol.fill, ColumnFill::Balance)
-+                        && let Some(&(_, _, last_top, limit)) = placed.last()
-+                    {
-+                        let from = placed.iter().position(|p| p.2 == last_top).unwrap_or(0);
-+                        let tail = Part { breaks: &breaks, start: placed[from].0, end: run_end };
-+                        let height = tail.balance(count, Some(limit)).min(limit);
-+                        let refilled = tail.fill(height, left).columns;
-+                        if refilled.len() <= count {
-+                            placed.truncate(from);
-+                            placed.extend(refilled.into_iter().map(|(a, b)| (a, b, last_top, height)));
-+                            last_height = height;
-+                        }
-+                    }
++                    let placed = rows.plan(run, row_top, count, left, matches!(multicol.fill, ColumnFill::Balance));
++                    let (top, _) = rows.content_start(row_top);
++                    let last_height = placed.last().map_or(0.0, |piece| piece.3);
 +                    let mut index = 0;
 +                    let mut previous_top = f32::NAN;
 +                    let last_top = placed.last().map_or(top, |p| p.2);
@@ -24699,7 +24735,7 @@ new file mode 100644
 +                let last_row = (rows - 1).saturating_mul(per_row.min(columns.len().max(1)));
 +                let mut last_height = column_height;
 +                if fixed_height.is_some()
-+                    && (multicol.height.is_none() || !breaks.nested.is_empty())
++                    && (multicol.height.is_none() || multicol.wrap)
 +                    && matches!(multicol.fill, ColumnFill::Balance)
 +                    && columns.len() - last_row.min(columns.len()) <= count
 +                    && let Some(&(tail_start, _)) = columns.get(last_row)
