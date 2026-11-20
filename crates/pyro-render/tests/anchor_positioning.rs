@@ -2,6 +2,24 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn transformed_anchor_walk_is_bounded_by_depth() {
+    for depth in [4, 40] {
+        let html = format!("<!doctype html><style>main{{position:relative;transform:scale(2)}}i{{display:block;width:20px;height:20px;anchor-name:--a;transform:scale(2);transform-origin:0 0}}b{{position:absolute;left:anchor(--a right);width:anchor-size(--a width)}}</style><main>{}<i></i>{}<b></b></main>", "<div style='transform:translateX(1px)'>".repeat(depth), "</div>".repeat(depth));
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, blitz_dom::DocumentConfig::default());
+        doc.viewport_mut().window_size = (400,300);
+        doc.resolve(0.0);
+        let anchor = doc.query_selector("i").unwrap().unwrap();
+        let target = doc.query_selector("b").unwrap().unwrap();
+        for width in [40.,60.] {
+            if width == 60. { doc.set_style_property(anchor,"transform","scale(3)"); doc.resolve(0.0); }
+            let layout = doc.get_node(target).unwrap().final_layout();
+            assert_eq!((layout.location.x,layout.size.width),(depth as f32 + width,width));
+        }
+        assert!(doc.anchor_geometry_steps() > 0 && doc.anchor_geometry_steps() <= (depth as u64 + 1) * doc.anchor_candidate_visits());
+    }
+}
+
+#[test]
 fn moving_and_resizing_anchor_updates_geometry_in_one_resolve() {
     let html = "<!doctype html><style>body{margin:0}main{position:relative;width:100px;height:100px}i{display:block;width:10px;height:20px;anchor-name:--a}b{position:absolute;position-anchor:--a;top:anchor(bottom);width:anchor-size(width);height:20px;position-try-fallbacks:--up}@position-try --up{top:auto;bottom:anchor(top)}</style><main><i></i><b></b></main>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

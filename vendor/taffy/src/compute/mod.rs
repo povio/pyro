@@ -176,6 +176,10 @@ pub fn compute_root_layout_in(
 
         let mut hoisted: Vec<NodeId> = Vec::new();
         let mut unclaimed = OofCandidates::new();
+        if root_is_cached {
+            let claims = tree.get_core_container_style(root).is_containing_block();
+            if !claims.absolute && !claims.fixed { tree.clear_anchor_geometry_dependencies(root); }
+        }
         oof::perform_oof_layout(
             tree,
             root,

@@ -264,6 +264,9 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     /// so that lists recorded by previous layout runs do not persist.
     fn clear_hoisted_children(&mut self, node_id: NodeId);
 
+    #[allow(missing_docs)]
+    fn clear_anchor_geometry_dependencies(&mut self, _node_id: NodeId) {}
+
     /// Append to the list of out-of-flow boxes whose containing block is `node_id`.
     ///
     /// This is called by each containing block for the boxes it lays out, and by

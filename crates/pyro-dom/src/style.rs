@@ -1025,7 +1025,7 @@ impl StyleEngine {
     }
 
     /// The animated values' stamp now (`None`: no animation source).
-    fn animation_stamp(&self) -> Option<u64> {
+    pub fn animation_stamp(&self) -> Option<u64> {
         let source = self.animation_source.try_borrow().ok()?;
         Some(source.as_ref()?.stamp())
     }

@@ -125,6 +125,15 @@ impl BaseDocument {
         };
         let mut damage = own_damage;
         if !own_damage.is_empty() {
+            if !self.anchor_transform_users.get_mut().is_empty()
+                && let Some((old, blocks)) = self.anchor_transform_users.get_mut().get_mut(&node_id)
+                && let Some(style) = self.nodes[node_id].primary_styles() {
+                let (before, after) = (old.get_box(), style.get_box());
+                if before.transform != after.transform || before.translate != after.translate || before.scale != after.scale || before.rotate != after.rotate || before.transform_origin != after.transform_origin || before.transform_box != after.transform_box || before.transform_style != after.transform_style || before.perspective != after.perspective || before.perspective_origin != after.perspective_origin {
+                    self.anchor_transform_dirty.extend(blocks.iter().copied());
+                }
+                *old = style.clone();
+            }
             let (options,visibility,out_of_flow,queries) = self.nodes[node_id].primary_styles().map_or((false,false,false,false),|style| {
                 let pos = style.get_position();
                 let positioned = style.get_box().position.is_absolutely_positioned();
@@ -210,6 +219,7 @@ impl BaseDocument {
             }
         }
         damage |= damage_from_children;
+        if !self.anchor_transform_dirty.is_empty() && self.anchor_transform_dirty.remove(&node_id) { damage |= ONLY_RELAYOUT; }
 
         // Put children back
         self.nodes[node_id].children = children;

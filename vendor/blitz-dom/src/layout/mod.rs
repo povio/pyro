@@ -2671,6 +2671,10 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         Some((taffy::Size { width: right-left, height: bottom-top }, taffy::Point { x:left, y:top }, taffy::Point { x:horizontal, y:vertical }))
     }
 
+    fn clear_anchor_geometry_dependencies(&mut self, node_id: NodeId) {
+        self.doc.clear_anchor_transform_sources(dom_node_id(node_id));
+    }
+
     fn clear_hoisted_children(&mut self, node_id: NodeId) {
         let containing_block = dom_node_id(node_id);
         self.doc.clear_anchor_try_sources(containing_block);

@@ -35,7 +35,26 @@ use crate::util::DomResultExt;
 use crate::PageDom;
 
 const CALLBACK: &str = "__lpResizeCallback";
-type Stamp = (NodeId, ((u64, u64, u32, u32), u64));
+type Stamp = (NodeId, ((u64, u64, u32, u32), u64), Option<u64>);
+
+fn observation_stamp(page: &PageDom) -> Stamp {
+    let layout = page.layout();
+    (page.document(), layout.observation_stamp(&page.dom.borrow()), layout.style().animation_stamp())
+}
+
+fn schedule_gather(owner: &Rc<PageDom>, delay: Duration) {
+    if owner.resizes.wake_queued.borrow().is_some() { return; }
+    if let Some(hooks) = owner.hooks() {
+        let token = Rc::new(());
+        *owner.resizes.wake_queued.borrow_mut() = Some(token.clone());
+        let weak = Rc::downgrade(owner);
+        hooks.post_delayed_task(delay, Box::new(move || {
+            if let Some(page) = weak.upgrade() {
+                if page.resizes.take_wake(&token) { after_task(&page); }
+            }
+        }));
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct BindingState {
@@ -354,7 +373,7 @@ pub(crate) fn request_update(page: &PageDom) {
     if page.is_disposed() || !page.resizes.has_observers() {
         return;
     }
-    let stamp = (page.document(), page.layout().observation_stamp(&page.dom.borrow()));
+    let stamp = observation_stamp(page);
     if page.resizes.stamp.get() == Some(stamp) && page.resizes.wake_queued.borrow().is_none() {
         return;
     }
@@ -370,7 +389,8 @@ pub(crate) fn after_task(page: &PageDom) {
         return;
     }
     let Some(owner) = page.resizes.owner.borrow().upgrade() else { return };
-    let stamp = (page.document(), page.layout().observation_stamp(&page.dom.borrow()));
+    if !page.resizes.has_observers() { return; }
+    let stamp = observation_stamp(page);
     if page.resizes.stamp.get() != Some(stamp) && !page.resizes.observers.borrow().is_empty() {
         // Each gather lays out the whole document under the flow layout.
         // Chromium gathers once per rendering update, not per task: gather
@@ -378,24 +398,7 @@ pub(crate) fn after_task(page: &PageDom) {
         // once more so the final size is still delivered.
         let now = Instant::now();
         if let Some(next) = page.resizes.next_gather.get().filter(|&n| n > now) {
-            let needs_wake = page.resizes.wake_queued.borrow().is_none();
-            if needs_wake {
-                if let Some(hooks) = page.hooks() {
-                    let token = Rc::new(());
-                    *page.resizes.wake_queued.borrow_mut() = Some(token.clone());
-                    let weak = Rc::downgrade(&owner);
-                    hooks.post_delayed_task(
-                        next - now,
-                        Box::new(move || {
-                            if let Some(page) = weak.upgrade() {
-                                if page.resizes.take_wake(&token) {
-                                    after_task(&page);
-                                }
-                            }
-                        }),
-                    );
-                }
-            }
+            schedule_gather(&owner, next - now);
             return;
         }
     }
@@ -426,6 +429,12 @@ pub(crate) fn after_task(page: &PageDom) {
     }
     let pending =
         page.resizes.observers.borrow().iter().filter_map(Weak::upgrade).any(|o| !o.records.borrow().is_empty());
+    if !page.resizes.pins.borrow().is_empty() && page.resizes.wake_queued.borrow().is_none() {
+        if let Some(interval) = page.moving_animation_frame_interval() {
+            let remaining = page.resizes.next_gather.get().map_or(Duration::ZERO, |next| next.saturating_duration_since(Instant::now()));
+            schedule_gather(&owner, interval.max(remaining));
+        }
+    }
     if pending && !page.resizes.queued.get() {
         if let Some(hooks) = page.hooks() {
             page.resizes.queued.set(true);

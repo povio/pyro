@@ -1,5 +1,20 @@
 use crate::{BaseDocument, Node};
 use stylo_taffy::CopyStyleGetters;
+use euclid::default::{Point3D, Transform3D};
+
+fn projected_bounds(matrix: &Transform3D<f64>, origin: taffy::Point<f32>, size: taffy::Size<f32>) -> Option<taffy::Rect<f32>> {
+    let mut bounds = taffy::Rect { left: f32::INFINITY, right: f32::NEG_INFINITY, top: f32::INFINITY, bottom: f32::NEG_INFINITY };
+    for x in [origin.x, origin.x + size.width] {
+        for y in [origin.y, origin.y + size.height] {
+            let point = matrix.transform_point3d(Point3D::new(x.into(), y.into(), 0.0))?;
+            bounds.left = bounds.left.min(point.x as f32);
+            bounds.right = bounds.right.max(point.x as f32);
+            bounds.top = bounds.top.min(point.y as f32);
+            bounds.bottom = bounds.bottom.max(point.y as f32);
+        }
+    }
+    Some(bounds)
+}
 
 impl Node {
     pub fn hidden_by_anchor(&self) -> bool {
@@ -194,6 +209,8 @@ impl BaseDocument {
             extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
             cursor = anchor.inline_root_ancestor()?.id;
         }
+        let mut matrix = Transform3D::identity();
+        let mut strip = point;
         for _ in 0..self.nodes.len() {
             if cursor == container.id || cursor == node.id {
                 break;
@@ -201,15 +218,44 @@ impl BaseDocument {
             let current = &self.nodes[cursor];
             let parent = if current.is_out_of_flow() { current.containing_block() } else { current.layout_parent.get() };
             let Some(parent) = parent else { break };
-            point.x += current.unrounded_layout().location.x;
-            point.y += current.unrounded_layout().location.y;
+            self.anchor_geometry_steps.set(self.anchor_geometry_steps.get().saturating_add(1));
+            let layout = current.unrounded_layout();
+            if self.anchor_transform_sources.borrow_mut().entry(container.id).or_default().insert(cursor)
+                && let Some(style) = current.primary_styles() {
+                self.anchor_transform_users.borrow_mut().entry(cursor).or_insert_with(|| (style.clone(), Default::default())).1.insert(container.id);
+            }
+            if current.has_transform_style() {
+                use crate::stylo_to_kurbo::{ResolvedTransform, resolve_transform};
+                let style = current.primary_styles()?;
+                let box_style = style.get_box();
+                let reference = Node::layout_transform_reference_box(layout, box_style.transform_box);
+                match resolve_transform(box_style, reference) {
+                    ResolvedTransform::Spatial(own) => matrix = matrix.then(&own),
+                    ResolvedTransform::Flat(Some(own)) => {
+                        let [a, b, c, d, e, f] = own.as_coeffs();
+                        matrix = matrix.then(&Transform3D::new(a,b,0.,0.,c,d,0.,0.,0.,0.,1.,0.,e,f,0.,1.));
+                    }
+                    ResolvedTransform::Flat(None) => (),
+                }
+            }
+            matrix = matrix.then_translate(euclid::vec3(layout.location.x.into(), layout.location.y.into(), 0.));
+            let parent_node = &self.nodes[parent];
+            if let Some(style) = parent_node.primary_styles() {
+                let box_style = style.get_box();
+                if !matches!(box_style.perspective, style::values::generics::box_::GenericPerspective::None) {
+                    let reference = Node::layout_transform_reference_box(parent_node.unrounded_layout(), box_style.transform_box);
+                    if let Some(perspective) = crate::stylo_to_kurbo::resolve_perspective_matrix(box_style, reference) { matrix = matrix.then(&perspective); }
+                }
+            }
+            if !parent_node.is_preserve_3d() { matrix = matrix.then_scale(1.,1.,0.); }
+            strip.x += layout.location.x;
+            strip.y += layout.location.y;
             if let Some(columns) = self.nodes[parent].column_fragments() {
-                let bottom = point.y + extent.height;
-                let pieces = columns.hoisted_columns(point.y, bottom).map(|fragment| taffy::Rect {
-                    left: point.x + fragment.offset.x,
-                    right: point.x + extent.width + fragment.offset.x,
-                    top: point.y.max(fragment.start) + fragment.offset.y,
-                    bottom: bottom.min(fragment.end) + fragment.offset.y,
+                let bottom = strip.y + extent.height;
+                let pieces = columns.hoisted_columns(strip.y, bottom).filter_map(|fragment| {
+                    let start = strip.y.max(fragment.start);
+                    let rect = projected_bounds(&matrix, taffy::Point { x: point.x, y: point.y + (start - strip.y) }, taffy::Size { width: extent.width, height: bottom.min(fragment.end) - start })?;
+                    Some(taffy::Rect { left: rect.left + fragment.offset.x, right: rect.right + fragment.offset.x, top: rect.top + fragment.offset.y, bottom: rect.bottom + fragment.offset.y })
                 });
                 if let Some(rect) = pieces.reduce(|a, b| taffy::Rect {
                     left: a.left.min(b.left),
@@ -219,6 +265,8 @@ impl BaseDocument {
                 }) {
                     point = taffy::Point { x: rect.left, y: rect.top };
                     extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
+                    strip = point;
+                    matrix = Transform3D::identity();
                 }
             }
             cursor = parent;
@@ -226,6 +274,7 @@ impl BaseDocument {
         if cursor != container.id {
             return None;
         }
-        Some((id, point, extent))
+        let rect = projected_bounds(&matrix, point, extent)?;
+        Some((id, taffy::Point { x: rect.left, y: rect.top }, taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top }))
     }
 }

@@ -914,8 +914,11 @@ impl Node {
         &self,
         transform_box: style::values::computed::TransformBox,
     ) -> euclid::default::Rect<CSSPixelLength> {
+        Self::layout_transform_reference_box(self.final_layout(), transform_box)
+    }
+
+    pub(crate) fn layout_transform_reference_box(layout: &Layout, transform_box: style::values::computed::TransformBox) -> euclid::default::Rect<CSSPixelLength> {
         use style::values::computed::TransformBox;
-        let layout = self.final_layout();
         let (origin, size) = match transform_box {
             TransformBox::ContentBox | TransformBox::FillBox => (
                 (

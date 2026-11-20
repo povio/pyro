@@ -666,6 +666,10 @@ pub struct BaseDocument {
     anchor_rule_users: HashMap<Atom, HashSet<NodeId>>,
     anchor_user_rules: HashMap<NodeId, style::values::specified::position::PositionTryFallbacksList>,
     pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
+    pub(crate) anchor_geometry_steps: std::cell::Cell<u64>,
+    pub(crate) anchor_transform_sources: RefCell<HashMap<NodeId, HashSet<NodeId>>>,
+    pub(crate) anchor_transform_users: RefCell<HashMap<NodeId, (ServoArc<ComputedValues>, HashSet<NodeId>)>>,
+    pub(crate) anchor_transform_dirty: HashSet<NodeId>,
     pub(crate) anchor_index: RefCell<crate::layout::anchor_index::AnchorIndex>,
     pub(crate) anchor_try_visits: std::cell::Cell<u64>,
     pub(crate) anchor_try_scrollports: HashMap<Option<NodeId>, HashSet<NodeId>>,
@@ -993,6 +997,10 @@ impl BaseDocument {
             anchor_rule_users: HashMap::new(),
             anchor_user_rules: HashMap::new(),
             anchor_lookup_visits: Default::default(),
+            anchor_geometry_steps: Default::default(),
+            anchor_transform_sources: Default::default(),
+            anchor_transform_users: Default::default(),
+            anchor_transform_dirty: Default::default(),
             anchor_index: Default::default(),
             anchor_try_visits: Default::default(),
             anchor_try_scrollports: Default::default(),
@@ -1473,6 +1481,11 @@ impl BaseDocument {
         self.update_anchor_names(node_id, None);
         self.update_anchor_rule_users(node_id, None);
         self.clear_anchor_try_sources(node_id);
+        self.clear_anchor_transform_sources(node_id);
+        if let Some((_, blocks)) = self.anchor_transform_users.get_mut().remove(&node_id) {
+            for block in blocks { if let Some(sources) = self.anchor_transform_sources.get_mut().get_mut(&block) { sources.remove(&node_id); } }
+        }
+        self.anchor_transform_dirty.remove(&node_id);
         self.anchor_last_option.remove(&node_id);
         self.anchor_scroll_dirty.remove(&node_id);
         if let Some(blocks) = self.anchor_try_scrollports.remove(&Some(node_id)) {
@@ -1501,6 +1514,20 @@ impl BaseDocument {
     }
 
     pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
+    pub fn anchor_geometry_steps(&self) -> u64 { self.anchor_geometry_steps.get() }
+
+    pub(crate) fn clear_anchor_transform_sources(&mut self, block: NodeId) {
+        if self.anchor_transform_sources.get_mut().is_empty() { return; }
+        if let Some(sources) = self.anchor_transform_sources.get_mut().remove(&block) {
+            let users = self.anchor_transform_users.get_mut();
+            for source in sources {
+                if let Some((_, blocks)) = users.get_mut(&source) {
+                    blocks.remove(&block);
+                    if blocks.is_empty() { users.remove(&source); }
+                }
+            }
+        }
+    }
 
     pub(crate) fn update_anchor_rule_users(&mut self, id: NodeId, rules: Option<style::values::specified::position::PositionTryFallbacksList>) {
         use style::values::specified::position::{PositionTryFallbacksList, PositionTryFallbacksItem};
