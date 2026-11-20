@@ -1765,6 +1765,24 @@ impl LayoutPassState<'_> {
                             (intrinsic_sizes, default_object_size)
                         };
 
+                    let mut intrinsic_sizes = intrinsic_sizes;
+                    if let Some(styles) = node.primary_styles() {
+                        use style::values::computed::Contain;
+                        use style::values::generics::box_::ContainIntrinsicSize;
+                        let contain = node_size_containment(node, &styles);
+                        if contain.contains(Contain::INLINE_SIZE) && !contain.contains(Contain::BLOCK_SIZE) {
+                            let position = styles.get_position();
+                            let vertical = styles.writing_mode.is_vertical();
+                            let override_size = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
+                            intrinsic_sizes.width = Some(match override_size {
+                                ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_)
+                                    if let Some((width, height)) = node.layout_data().remembered_size => if vertical { height } else { width },
+                                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+                                _ => 0.0,
+                            });
+                            intrinsic_sizes.height.get_or_insert(default_object_size.height);
+                        }
+                    }
                     let ratio_in_box_sizing_box = node
                         .primary_styles()
                         .is_some_and(|style| !style.get_position().aspect_ratio.auto);
