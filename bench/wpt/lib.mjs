@@ -59,7 +59,7 @@ const LEGACY_VIEWPORT_DIRS = DEFAULT_DIRS.filter((d) => !PAINT_DIRS.includes(d) 
 // Testharness pages in every other directory run as wptrunner runs every page: in an 800x600 viewport (run.mjs; the
 // browser has Ahem for every page). The older directories keep the viewport their baseline was recorded with
 // (Playwright's 1280x720).
-const WPTRUNNER_VIEWPORT = { width: 800, height: 600 };
+export const WPTRUNNER_VIEWPORT = { width: 800, height: 600 };
 
 // ---------- discovery ----------
 function walk(dir, out = []) {

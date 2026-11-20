@@ -683,6 +683,21 @@ listener. Startup requires curl with HTTP2 support and verifies the negotiated p
 WPT certificate authority before loading any page. Browser traffic uses the same CONNECT proxy as HTTPS.
 The result records `http2: true`. Other runner modes keep their existing discovery and transports.
 
+Add `--manifest-inventory` to enumerate URLs and variants directly from the pinned manifest. Use `--list`
+for inventory and `--tests FILE` for an explicit reviewed set of ordinary conformance URLs to execute. The
+runner verifies each selected source's Git blob ID before loading it. Its `inventoryOnly` list retains URLs and
+reasons for gate exclusions, marked crash/vulnerability fixtures and unavailable test environments (JS shell,
+extension harness, proxy auto-configuration and required testdriver features). Subtest outcomes for these URLs
+remain unmeasured. This mode does not use a sampling interval or update gate baselines.
+
+For the complete non-CSS denominator use `--manifest-inventory --generated-globals MANIFEST --dirs non-css
+--server wptserve --http2 --testdriver --list --out inventory.json`. The JSON lists eligible and inventory-only
+URLs with source blob IDs and environments, records the WPT revision and manifest SHA-256, and identifies the selected
+shard, repeats and filters. Actual measurements use a fixed 800×600 CSS-pixel viewport at device scale factor 1 for
+every manifest-first URL regardless of directory selector. Earlier results with a default Playwright viewport can
+only certify viewport-independent behavior. Each manifest-first partial result atomically records the plan and
+completed results, beginning before server startup; compare its eligible URLs with its results to identify omissions.
+
 `run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
 `serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
 subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,

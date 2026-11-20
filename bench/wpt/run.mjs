@@ -26,13 +26,15 @@
 import { createRequire } from 'node:module';
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, dedicatedWorkerEntries, generatedGlobalEntries, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
+import { WPTRUNNER_VIEWPORT, DEFAULT_DIRS, REFTEST_DIRS, allDirs, dedicatedWorkerEntries, generatedGlobalEntries, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
+import { manifestInventory } from './manifest-inventory.mjs';
 import { BROWSER_HOST, startProxy, startWptserve } from './wptserve.mjs';
 import { installTestdriver } from './testdriver.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +66,12 @@ const WPTSERVE = SERVER === 'wptserve';
 const TESTDRIVER = argv.includes('--testdriver');
 if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
 const ALL_GLOBALS = argv.includes('--generated-globals');
+const MANIFEST_FIRST = argv.includes('--manifest-inventory');
+if (MANIFEST_FIRST && (!ALL_GLOBALS || (!argv.includes('--list') && !argv.includes('--tests')) || SAMPLE !== 1)) {
+  throw new Error('--manifest-inventory needs --generated-globals MANIFEST, no sampling, and --list or an explicit --tests selection');
+}
+const NON_CSS = opt('--dirs') === 'non-css';
+if (NON_CSS && !MANIFEST_FIRST) throw new Error('--dirs non-css requires --manifest-inventory');
 const HTTP2 = argv.includes('--http2');
 if (HTTP2 && !ALL_GLOBALS) throw new Error('--http2 needs --generated-globals MANIFEST');
 if (ALL_GLOBALS && argv.includes('--dedicated-workers')) throw new Error('select one manifest mode');
@@ -88,31 +96,54 @@ if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}:
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const wrappers = WORKER_MANIFEST && (ALL_GLOBALS ? generatedGlobalEntries : dedicatedWorkerEntries)(readJson(WORKER_MANIFEST));
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER, generatedGlobals: wrappers, http2: HTTP2 });
+  let selected;
+  if (opt('--tests')) {
+    const j = readJson(opt('--tests'));
+    selected = new Set(Array.isArray(j) ? j : j.results ? j.results.map(t => t.url) : Object.keys(j.tests ?? {}));
+  }
+  const manifest = WORKER_MANIFEST && readJson(WORKER_MANIFEST);
+  const manifestDirs = NON_CSS ? Object.keys(manifest.items.testharness).filter(d => d !== 'css') : DIRS;
+  const wrappers = !MANIFEST_FIRST && WORKER_MANIFEST && (ALL_GLOBALS ? generatedGlobalEntries : dedicatedWorkerEntries)(manifest);
+  const { tests, excluded, info } = MANIFEST_FIRST
+    ? manifestInventory(WPT, manifest, { dirs: manifestDirs, all: opt('--dirs') === 'all', http2: HTTP2, testdriver: TESTDRIVER, selected })
+    : KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER, generatedGlobals: wrappers, http2: HTTP2 });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
-  if (opt('--tests')) {
-    const j = readJson(opt('--tests'));
-    const urls = new Set(Array.isArray(j) ? j : j.results ? j.results.map((t) => t.url) : Object.keys(j.tests ?? {}));
-    sel = sel.filter((t) => urls.has(t.url));
-  }
+  if (selected) sel = sel.filter(t => selected.has(t.url));
   const p = plan(sel, BASELINE, { gate: GATE, timeout: TIMEOUT, longTimeout: LONG });
   const mine = shard(p.tests, SHARD, SHARDS);
   // Copies interleaved (a b c a b c): with few pages and enough jobs, a page's copies run side by side.
   return { tests: Array.from({ length: REPEAT }, () => mine.map((t) => ({ ...t }))).flat(), excluded, info, skipped: p.skipped, discovered: sel.length };
 }
 const { tests, excluded, info, skipped, discovered } = selectTests();
+const gitRev = spawnSync('git', ['-C', WPT, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+const WPT_REVISION = gitRev.status === 0 ? gitRev.stdout.trim() : null;
+
+const inventoryPlan = MANIFEST_FIRST ? {
+  wptRevision: WPT_REVISION,
+  manifestSha256: createHash('sha256').update(fs.readFileSync(WORKER_MANIFEST)).digest('hex'),
+  viewport: { ...WPTRUNNER_VIEWPORT, deviceScaleFactor: 1 },
+  selector: { dirs: opt('--dirs', DIRS.join(',')), match: opt('--match', null), shard: `${SHARD}/${SHARDS}`, repeat: REPEAT,
+    server: SERVER, testdriver: TESTDRIVER, http2: HTTP2 },
+  eligible: tests.map(({ url, dir, source, blob, environment, limit }) => ({ url, dir, source, blob, environment, timeoutMs: limit })),
+  inventoryOnly: info.inventoryOnly,
+} : null;
 if (argv.includes('--list')) {
   const by = {};
   for (const t of tests) by[t.dir] = (by[t.dir] ?? 0) + 1;
   const est = tests.reduce((a, t) => a + t.est, 0);
-  console.log(JSON.stringify({ total: tests.length, by, excluded, ...(info ? { info } : {}), gateSkipped: skipped.length, estimatedMs: est }, null, 1));
+  if (OUT && inventoryPlan) fs.writeFileSync(OUT, JSON.stringify(inventoryPlan));
+  console.log(JSON.stringify({ total: tests.length, by, excluded, ...(info && !(OUT && inventoryPlan) ? { info } : {}), gateSkipped: skipped.length, estimatedMs: est }, null, 1));
   process.exit(0);
 }
-const gitRev = spawnSync('git', ['-C', WPT, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
-const WPT_REVISION = gitRev.status === 0 ? gitRev.stdout.trim() : null;
+function inventoryCheckpoint(results) {
+  const file = OUT + '.partial';
+  fs.writeFileSync(file + '.tmp', JSON.stringify({ label: LABEL, kind: KIND, restricted: true, generatedGlobals: true,
+    manifestInventory: true, partial: true, ...inventoryPlan, results }));
+  fs.renameSync(file + '.tmp', file);
+}
+if (OUT && inventoryPlan) inventoryCheckpoint([]);
 
 // ---------- WPT server ----------
 let BASE = opt('--base');
@@ -527,7 +558,8 @@ async function worker(q) {
     lastFinish = Date.now();
     if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
       lastProgress = Date.now();
-      if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, ...(WORKER_MANIFEST && { dedicatedWorkers: true, restricted: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), ...(HTTP2 && { http2: true }), results }));
+      if (OUT && inventoryPlan) inventoryCheckpoint(results);
+      else if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, ...(WORKER_MANIFEST && { dedicatedWorkers: true, restricted: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), ...(HTTP2 && { http2: true }), ...(MANIFEST_FIRST && { manifestInventory: true }), results }));
       console.error(`${LABEL}: ${done}/${PLAN.length} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
     }
   }
@@ -555,7 +587,8 @@ const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: opt('--dirs') === 'all' ? ['all'] : DIRS, jobs: JOBS,
-  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, ...(WORKER_MANIFEST && { dedicatedWorkers: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), ...(HTTP2 && { http2: true }), wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
+  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, ...(WORKER_MANIFEST && { dedicatedWorkers: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), ...(HTTP2 && { http2: true }), ...(MANIFEST_FIRST && { manifestInventory: true }), wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
+  ...(inventoryPlan && { inventoryPlan }),
   wallMs, loopLagMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
