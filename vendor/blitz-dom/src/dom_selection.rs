@@ -430,7 +430,7 @@ impl BaseDocument {
         crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| *cell.borrow_mut() = overrides);
         let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
         crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| cell.borrow_mut().clear());
-        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source)));
         crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
             if svg.intrinsic_dimensions.view_box.is_none() {
                 svg.inline_source = Some(source.as_str().into());

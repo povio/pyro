@@ -441,7 +441,7 @@ impl crate::BaseDocument {
             next = node.parent;
         }
         let root = root?;
-        let source = self.with_svg_sprites(self.with_svg_images(root.svg_source(), root.id));
+        let source = self.with_svg_sprites(self.with_svg_images(root.svg_source()));
         // pyro: `content` in a group anyrender_svg knows a box's reference by (its masks of
         // opaque shapes are drawn as the shapes).
         let document = format!(

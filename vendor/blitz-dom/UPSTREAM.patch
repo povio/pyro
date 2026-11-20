@@ -2548,9 +2548,9 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// each `<svg>` that refers to them when it is rendered.
 +    pub svg_sprites: HashMap<String, (String, String)>,
 +    /// pyro: external images of SVG `<image href>` and `<feImage href>`, by href as written: `data:`
-+    /// URLs of the fetched resource, turned by its EXIF orientation and not, one of which replaces the href in each `<svg>` that has it
++    /// URLs of the fetched resource, replacing the href in each `<svg>` that has it
 +    /// when it is rendered (usvg loads `data:` URLs only).
-+    pub svg_images: HashMap<String, (String, String)>,
++    pub svg_images: HashMap<String, Arc<str>>,
      /// Changes to the stylist [`Device`] that have been requested since the
      /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
      /// device rebuild) at the start of the next resolve.
@@ -4373,7 +4373,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +3552,156 @@
+@@ -2147,12 +3552,150 @@
          self.mousedown_node_id
      }
  
@@ -4400,20 +4400,14 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// references pointing at local copies of their targets
 +    /// ([`BaseDocument::svg_sprites`]), put in a `<defs>` first in it.
 +    /// pyro: `svg` (the source of the `<svg>` element `root`) with its external `<image>` and
-+    /// `<feImage>` hrefs replaced by the `data:` URLs of [`Self::svg_images`]: turned as their EXIF
-+    /// orientation says, or not under `image-orientation: none`.
-+    pub(crate) fn with_svg_images(&self, mut svg: String, root: NodeId) -> String {
++    /// `<feImage>` hrefs replaced by the `data:` URLs of [`Self::svg_images`].
++    pub(crate) fn with_svg_images(&self, mut svg: String) -> String {
 +        if self.svg_images.is_empty() {
 +            return svg;
 +        }
-+        let unturned = self
-+            .get_node(root)
-+            .and_then(|node| node.primary_styles())
-+            .is_some_and(|style| crate::util::image_unoriented(&style));
-+        for (href, (turned, raw)) in &self.svg_images {
++        for (href, data) in &self.svg_images {
 +            let attr = format!("href=\"{}\"", href.replace('&', "&amp;").replace('"', "&quot;"));
 +            if svg.contains(&attr) {
-+                let data = if unturned { raw } else { turned };
 +                svg = svg.replace(&attr, &format!("href=\"{data}\""));
 +            }
 +        }
@@ -4433,7 +4427,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        }
 +        let node = self.get_node(node_id)?;
 +        let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
-+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
++        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source)));
 +        let svg = crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
 +            if svg.intrinsic_dimensions.view_box.is_none() {
 +                svg.inline_source = Some(source.as_str().into());
@@ -4530,7 +4524,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +3737,12 @@
+@@ -2188,6 +3731,12 @@
          self.viewport.clone()
      }
  
@@ -4543,7 +4537,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3803,111 @@
+@@ -2248,6 +3797,111 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4655,7 +4649,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3924,13 @@
+@@ -2264,12 +3918,13 @@
              return;
          }
  
@@ -4674,7 +4668,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +3975,19 @@
+@@ -2314,9 +3969,19 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
@@ -4695,7 +4689,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +4131,19 @@
+@@ -2460,10 +4125,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4715,7 +4709,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4300,35 @@
+@@ -2620,6 +4294,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4751,7 +4745,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4352,22 @@
+@@ -2643,12 +4346,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4779,7 +4773,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4396,7 @@
+@@ -2677,7 +4390,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4788,7 +4782,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4554,10 @@
+@@ -2835,6 +4548,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4799,7 +4793,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5505,7 @@
+@@ -3782,6 +5499,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4807,7 +4801,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5528,52 @@
+@@ -3804,6 +5522,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4860,7 +4854,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5616,128 @@
+@@ -3846,3 +5610,128 @@
          assert!(doc.has_changes());
      }
  }
@@ -5426,7 +5420,7 @@ new file mode 100644
 +        crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| *cell.borrow_mut() = overrides);
 +        let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
 +        crate::node::svg_css::SELECTED_SVG_TEXT.with(|cell| cell.borrow_mut().clear());
-+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
++        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source)));
 +        crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
 +            if svg.intrinsic_dimensions.view_box.is_none() {
 +                svg.inline_source = Some(source.as_str().into());
@@ -7594,7 +7588,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +            // (`SvgImageData::viewport_dependent`)
 +            let (source, viewport_dependent) = doc.get_node(container_node_id).unwrap().svg_source_for_viewport(None);
 +            doc.viewport_svgs.borrow_mut().remove(&container_node_id);
-+            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source, container_node_id));
++            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source));
 +            // pyro: with the resources it references in the page's other `<svg>`s.
 +            let outer_html = doc.with_cross_svg_references(outer_html);
 +
@@ -43920,7 +43914,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +            next = node.parent;
 +        }
 +        let root = root?;
-+        let source = self.with_svg_sprites(self.with_svg_images(root.svg_source(), root.id));
++        let source = self.with_svg_sprites(self.with_svg_images(root.svg_source()));
 +        // pyro: `content` in a group anyrender_svg knows a box's reference by (its masks of
 +        // opaque shapes are drawn as the shapes).
 +        let document = format!(

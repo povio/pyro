@@ -149,20 +149,12 @@ fn fetch_image(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Duration) -> 
     rx.recv_timeout(timeout).map_err(|e| e.to_string())?
 }
 
-fn data_urls(bytes: &[u8]) -> Option<(String, String)> {
+fn data_url(bytes: &[u8]) -> Option<Arc<str>> {
     if bytes.starts_with(&[0xff, 0xd8]) {
         return None;
     }
-    let url = data_url(bytes);
-    Some((url.clone(), url))
-}
-/// `bytes` as a `data:` URL, its type sniffed (PNG, JPEG, GIF, WebP, else SVG).
-fn data_url(bytes: &[u8]) -> String {
-
     let mime = if bytes.starts_with(b"\x89PNG") {
         "image/png"
-    } else if bytes.starts_with(&[0xFF, 0xD8]) {
-        "image/jpeg"
     } else if bytes.starts_with(b"GIF8") {
         "image/gif"
     } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
@@ -185,7 +177,7 @@ fn data_url(bytes: &[u8]) -> String {
             }
         }
     }
-    out
+    Some(out.into())
 }
 
 /// Resolves the external SVG `<image>`/`<feImage>` hrefs `hrefs` of `doc` into
@@ -197,7 +189,7 @@ pub(crate) fn resolve_images(
     hrefs: Vec<String>,
     base: &str,
     scope: &str,
-    sources: &mut HashMap<(String, String), Arc<(String, String)>>,
+    sources: &mut HashMap<(String, String), Arc<str>>,
     fetcher: &Arc<dyn Fetcher>,
     timeout: Duration,
 ) {
@@ -217,20 +209,15 @@ pub(crate) fn resolve_images(
                 if response.body.is_empty() || response.body.len() > MAX_BYTES {
                     continue;
                 }
+                let Some(data) = data_url(&response.body) else { continue };
                 if sources.len() >= 256 {
                     sources.clear();
                 }
-                let Some((turned, mut raw)) = data_urls(&response.body) else { continue };
-                if response.opaque || url.origin() != doc.url().origin()
-                    || url::Url::parse(&response.url).is_ok_and(|final_url| final_url.origin() != doc.url().origin()) {
-                    raw.clone_from(&turned);
-                }
-                let data = Arc::new((turned, raw));
                 sources.insert(key, data.clone());
                 data
             }
         };
-        doc.svg_images.insert(href, (*data).clone());
+        doc.svg_images.insert(href, data);
         changed = true;
     }
     if changed {
@@ -262,16 +249,33 @@ pub(crate) fn image_hrefs(doc: &BaseDocument) -> Vec<String> {
 #[cfg(test)]
 mod image_tests {
     #[test]
+    fn absolute_image_with_foreign_base_shares_the_cached_resource() {
+        use super::*;
+        struct Image;
+        impl Fetcher for Image {
+            fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+                assert_eq!(url, "https://document.test/image.gif");
+                done(Ok(b"GIF89a".to_vec()));
+            }
+        }
+        let fetcher: Arc<dyn Fetcher> = Arc::new(Image);
+        let mut sources = HashMap::new();
+        let mut document = BaseDocument::new(blitz_dom::DocumentConfig::default());
+        let href = "https://document.test/image.gif";
+        resolve_images(&mut document, vec![href.into()], "https://base.test/", "document", &mut sources, &fetcher, Duration::from_secs(1));
+        assert!(Arc::ptr_eq(&document.svg_images[href], sources.values().next().unwrap()));
+    }
+    #[test]
     fn oversized_svg_jpeg_thumbnail_produces_no_encoded_bytes() {
         use image::codecs::jpeg::JpegEncoder;
         let mut photo = Vec::new();
         JpegEncoder::new(&mut photo).encode(&vec![90; 6000 * 4000], 6000, 4000, image::ExtendedColorType::L8).unwrap();
-        assert!(super::data_urls(&photo).is_none());
+        assert!(super::data_url(&photo).is_none());
     }
 
     #[test]
     fn data_urls_are_base64_with_a_sniffed_type() {
-        assert_eq!(super::data_url(b"GIF8a"), "data:image/gif;base64,R0lGOGE=");
-        assert_eq!(super::data_url(b"<svg/>"), "data:image/svg+xml;base64,PHN2Zy8+");
+        assert_eq!(super::data_url(b"GIF8a").as_deref(), Some("data:image/gif;base64,R0lGOGE="));
+        assert_eq!(super::data_url(b"<svg/>").as_deref(), Some("data:image/svg+xml;base64,PHN2Zy8+"));
     }
 }

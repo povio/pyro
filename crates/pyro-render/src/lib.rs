@@ -836,7 +836,7 @@ pub struct Renderer {
     sprites: HashMap<(String, String), Arc<String>>,
     /// External SVG `<image>`/`<feImage>` resources as `data:` URLs (`svg_use::resolve_images`),
     /// by resource scope and URL.
-    svg_images: HashMap<(String, String), Arc<(String, String)>>,
+    svg_images: HashMap<(String, String), Arc<str>>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the

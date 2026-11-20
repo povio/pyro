@@ -382,9 +382,9 @@ pub struct BaseDocument {
     /// each `<svg>` that refers to them when it is rendered.
     pub svg_sprites: HashMap<String, (String, String)>,
     /// pyro: external images of SVG `<image href>` and `<feImage href>`, by href as written: `data:`
-    /// URLs of the fetched resource, turned by its EXIF orientation and not, one of which replaces the href in each `<svg>` that has it
+    /// URLs of the fetched resource, replacing the href in each `<svg>` that has it
     /// when it is rendered (usvg loads `data:` URLs only).
-    pub svg_images: HashMap<String, (String, String)>,
+    pub svg_images: HashMap<String, Arc<str>>,
     /// Changes to the stylist [`Device`] that have been requested since the
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
@@ -3575,20 +3575,14 @@ impl BaseDocument {
     /// references pointing at local copies of their targets
     /// ([`BaseDocument::svg_sprites`]), put in a `<defs>` first in it.
     /// pyro: `svg` (the source of the `<svg>` element `root`) with its external `<image>` and
-    /// `<feImage>` hrefs replaced by the `data:` URLs of [`Self::svg_images`]: turned as their EXIF
-    /// orientation says, or not under `image-orientation: none`.
-    pub(crate) fn with_svg_images(&self, mut svg: String, root: NodeId) -> String {
+    /// `<feImage>` hrefs replaced by the `data:` URLs of [`Self::svg_images`].
+    pub(crate) fn with_svg_images(&self, mut svg: String) -> String {
         if self.svg_images.is_empty() {
             return svg;
         }
-        let unturned = self
-            .get_node(root)
-            .and_then(|node| node.primary_styles())
-            .is_some_and(|style| crate::util::image_unoriented(&style));
-        for (href, (turned, raw)) in &self.svg_images {
+        for (href, data) in &self.svg_images {
             let attr = format!("href=\"{}\"", href.replace('&', "&amp;").replace('"', "&quot;"));
             if svg.contains(&attr) {
-                let data = if unturned { raw } else { turned };
                 svg = svg.replace(&attr, &format!("href=\"{data}\""));
             }
         }
@@ -3608,7 +3602,7 @@ impl BaseDocument {
         }
         let node = self.get_node(node_id)?;
         let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
-        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
+        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source)));
         let svg = crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
             if svg.intrinsic_dimensions.view_box.is_none() {
                 svg.inline_source = Some(source.as_str().into());

@@ -965,7 +965,7 @@ fn collect_layout_children_with_wrap(
             // (`SvgImageData::viewport_dependent`)
             let (source, viewport_dependent) = doc.get_node(container_node_id).unwrap().svg_source_for_viewport(None);
             doc.viewport_svgs.borrow_mut().remove(&container_node_id);
-            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source, container_node_id));
+            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source));
             // pyro: with the resources it references in the page's other `<svg>`s.
             let outer_html = doc.with_cross_svg_references(outer_html);
 
