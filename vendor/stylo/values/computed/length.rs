@@ -471,8 +471,33 @@ impl crate::values::animated::Animate for Size {
 }
 
 impl Size {
+    /// Returns the sizing basis and calculation used by layout and interpolation.
+    pub fn prepared_size(&self) -> &Self {
+        match self {
+            Self::CalcSizeBasis(value) => value.prepared.as_ref().unwrap(),
+            other => other,
+        }
+    }
+
+    pub(crate) fn compose_size(&self, calculation: &NonNegativeLengthPercentage) -> Self {
+        let (basis, wrap): (_, fn(NonNegativeLengthPercentage) -> Self) = match self {
+            Self::LengthPercentage(value) if value.0.has_percentage() => (value, Self::CalcSizePercentage),
+            Self::CalcSizePercentage(value) => (value, Self::CalcSizePercentage),
+            Self::LengthPercentage(value) | Self::CalcSizeAny(value) => (value, Self::CalcSizeAny),
+            Self::CalcSizeAuto(value) => (value, Self::CalcSizeAuto),
+            Self::CalcSizeStretch(value) => (value, Self::CalcSizeStretch),
+            Self::CalcSizeMinContent(value) => (value, Self::CalcSizeMinContent),
+            Self::CalcSizeMaxContent(value) => (value, Self::CalcSizeMaxContent),
+            Self::CalcSizeFitContent(value) => (value, Self::CalcSizeFitContent),
+            _ => unreachable!(),
+        };
+        wrap(NonNegative(calculation.0.substitute_size(&basis.0)))
+    }
     pub(crate) fn animate_size(&self, other: &Self, procedure: crate::values::animated::Procedure, allow_keywords: bool) -> Result<Self, ()> {
         use crate::values::animated::Animate;
+        if matches!(self, Self::CalcSizeBasis(_)) || matches!(other, Self::CalcSizeBasis(_)) {
+            return self.prepared_size().animate_size(other.prepared_size(), procedure, allow_keywords);
+        }
         let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
         let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
             match (value, basis) {
@@ -491,6 +516,10 @@ impl Size {
             }
         };
         match (self, other) {
+            (Self::CalcSizePercentage(from), Self::CalcSizePercentage(to) | Self::LengthPercentage(to)) |
+            (Self::LengthPercentage(from), Self::CalcSizePercentage(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
+            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) if !from.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
+            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) if !to.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
             (Self::Auto, Self::Auto) => Ok(Self::Auto),
             (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
             (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
@@ -600,8 +629,10 @@ impl TryTacticAdjustment for Size {
             "Sizes should only change axes"
         );
         match self {
+            Self::CalcSizeBasis(_) => {},
             Self::FitContentFunction(lp)
             | Self::CalcSizeAny(lp)
+            | Self::CalcSizePercentage(lp)
             | Self::LengthPercentage(lp)
             | Self::AnchorContainingCalcFunction(lp) => {
                 lp.try_tactic_adjustment(old_side, new_side);

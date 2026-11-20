@@ -145,7 +145,6 @@ impl<LengthPercentage: Parse> Parse for LengthPercentageOrAuto<LengthPercentage>
     PartialEq,
     ToAnimatedValue,
     ToAnimatedZero,
-    ToComputedValue,
     ToResolvedValue,
     ToShmem,
     ToTyped,
@@ -195,6 +194,22 @@ pub enum GenericSize<LengthPercent> {
     #[animation(error)]
     #[css(function = "calc-size")]
     CalcSizeAny(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    #[typed(skip)]
+    CalcSizePercentage(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    #[typed(skip)]
+    CalcSizeBasis(Box<GenericSizeBasis<LengthPercent>>),
+}
+
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, MallocSizeOf, ToShmem, ToAnimatedValue, ToResolvedValue)]
+pub struct GenericSizeBasis<L> {
+    pub basis: GenericSize<L>,
+    pub calculation: L,
+    pub prepared: Option<GenericSize<L>>,
 }
 
 pub(crate) trait SizeCalculationCss: ToCss {
@@ -204,11 +219,22 @@ pub(crate) trait SizeCalculationCss: ToCss {
 impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
     fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result {
         let (basis, calculation) = match self {
+            Self::CalcSizeBasis(value) => {
+                dest.write_str("calc-size(")?;
+                match &value.basis {
+                    Self::LengthPercentage(value) => value.calculation_css::<false, _>(dest)?,
+                    other => other.to_css(dest)?,
+                }
+                dest.write_str(", ")?;
+                value.calculation.calculation_css::<true, _>(dest)?;
+                return dest.write_char(')');
+            },
             Self::CalcSizeAuto(value) => ("auto", value),
             Self::CalcSizeFitContent(value) => ("fit-content", value),
             Self::CalcSizeMinContent(value) => ("min-content", value),
             Self::CalcSizeMaxContent(value) => ("max-content", value),
             Self::CalcSizeStretch(value) => ("stretch", value),
+            Self::CalcSizePercentage(value) => ("100%", value),
             Self::CalcSizeAny(value) => {
                 dest.write_str("calc-size(any, ")?;
                 value.calculation_css::<false, _>(dest)?;

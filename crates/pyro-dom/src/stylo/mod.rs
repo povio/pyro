@@ -37,6 +37,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
         style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
         style_config::set_pref!("layout.css.columns.enabled", true);
+        style_config::set_pref!("layout.css.hyphens.enabled", true);
+        style_config::set_pref!("layout.css.font-variant-emoji.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
@@ -211,6 +213,7 @@ pub(crate) fn url_data() -> UrlExtraData {
 pub fn longhand_names() -> &'static [&'static str] {
     static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         use style::properties::ShorthandId;
+        enable_features();
         // `all` covers every longhand but these two.
         let mut names: Vec<&'static str> = ShorthandId::All.longhands().map(|l| l.name()).collect();
         names.extend(["direction", "unicode-bidi"]);

@@ -755,8 +755,12 @@ fn computed_string<'s>(s: &Scope<'s>, value: &str) -> Value<'s> {
 fn computed_property_names() -> &'static [&'static str] {
     static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     NAMES.get_or_init(|| {
-        let names = crate::computed_properties::COMPUTED_PROPERTIES.iter().copied();
-        names.chain(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property)).collect()
+        let mut names = crate::computed_properties::COMPUTED_PROPERTIES.to_vec();
+        names.extend(pyro_dom::stylo::longhand_names());
+        names.sort_unstable();
+        names.dedup();
+        names.extend(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property));
+        names
     })
 }
 
@@ -780,11 +784,11 @@ macro_rules! property_getters {
 }
 
 /// Room for the property list; the class definition asserts that it fits.
-const MAX_PROPERTIES: usize = 768;
+const MAX_PROPERTIES: usize = 832;
 /// The getters by property index, in blocks of 16.
 static PROPERTY_GETTERS: [[ComputedGetter; 16]; MAX_PROPERTIES / 16] = property_getters!(
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
 );
 
 /// The attribute names of each entry of [`computed_property_names`], each
@@ -814,7 +818,9 @@ fn property_attribute_names() -> &'static [Vec<(&'static str, bool)>] {
             out
         };
         let leak = |n: String| -> &'static str { Box::leak(n.into_boxed_str()) };
-        let mut all: Vec<Vec<(&'static str, bool)>> = crate::computed_properties::COMPUTED_PROPERTIES
+        let properties = computed_property_names();
+        let ordinary = properties.len() - crate::computed_properties::EPUB_ALIASES.len();
+        let mut all: Vec<Vec<(&'static str, bool)>> = properties[..ordinary]
             .iter()
             .map(|&name| {
                 let mut names = Vec::with_capacity(3);

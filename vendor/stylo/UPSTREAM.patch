@@ -2912,14 +2912,11 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-20 20:49:26
-@@ -265,6 +265,152 @@
-                 self.corner_bottom_left_shape,
-             )
-             .to_css(dest)
-+        }
-+    }
-+}
++++ b/properties/shorthands.rs	2026-11-20 22:43:16
+@@ -268,7 +268,153 @@
+         }
+     }
+ }
 +
 +/// pyro: `mask-border` (css-masking-1 §8.6): `border-image`'s grammar plus `<'mask-border-mode'>`.
 +pub mod mask_border {
@@ -3012,7 +3009,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +           mask_border_width: width,
 +        })
 +    }
-+
+ 
 +    impl<'a> ToCss for LonghandsToSerialize<'a> {
 +        fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
 +        where
@@ -3063,9 +3060,13 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +                self.mask_border_mode.to_css(dest)?;
 +            }
 +            Ok(())
-         }
-     }
- }
++        }
++    }
++}
++
+ pub mod border_image {
+     pub use crate::properties::generated::shorthands::border_image::*;
+ 
 @@ -542,7 +688,6 @@
      }
  }
@@ -3134,17 +3135,17 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
          let values = autos + column_count.iter().len() + column_width.iter().len();
          if values == 0 || values > 2 {
 -            Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
-+        }
-+        // pyro: css-multicol-2 `columns: <'column-width'> || <'column-count'> [ / <'column-height'> ]`.
-+        let column_height = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
-+            Some(column_height::parse(context, input)?)
-         } else {
+-        } else {
 -            Ok(expanded! {
 -                column_count: unwrap_or_initial!(column_count),
 -                column_width: unwrap_or_initial!(column_width),
 -            })
--        }
++            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
++        // pyro: css-multicol-2 `columns: <'column-width'> || <'column-count'> [ / <'column-height'> ]`.
++        let column_height = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
++            Some(column_height::parse(context, input)?)
++        } else {
 +            None
 +        };
 +        Ok(expanded! {
@@ -3171,12 +3172,12 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +                    dest.write_char(' ')?;
 +                    self.column_count.to_css(dest)?;
 +                }
-+            }
+             }
 +            // pyro: `column-height`, after a slash when it is not `auto`.
 +            if !self.column_height.is_auto() {
 +                dest.write_str(" / ")?;
 +                self.column_height.to_css(dest)?;
-             }
++            }
              Ok(())
          }
      }
@@ -3289,19 +3290,19 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              #[cfg(feature = "gecko")]
              if self.font_optical_sizing != &font_optical_sizing::get_initial_specified_value() {
                  return Ok(());
-@@ -2635,6 +2800,12 @@
-                 return Ok(());
+@@ -2633,6 +2798,12 @@
              }
- 
+             if self.font_feature_settings != &font_feature_settings::get_initial_specified_value() {
+                 return Ok(());
++            }
++
 +            match self.check_system() {
 +                CheckSystemResult::AllSystem(sys) if self.font_variant_caps == &font_variant_caps::get_initial_specified_value() => return sys.to_css(dest),
 +                CheckSystemResult::AllSystem(_) | CheckSystemResult::SomeSystem => return Ok(()),
 +                CheckSystemResult::None => {},
-+            }
-+
+             }
+ 
              let font_width = match self.font_width {
-                 FontWidth::Keyword(kw) => *kw,
-                 FontWidth::Width(percentage) => {
 @@ -2700,7 +2871,7 @@
                  ($v:expr) => {
                      match $v.get_system() {
@@ -3323,17 +3324,59 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  let has_timing_function = !self.animation_timing_function.0[i].is_ease();
                  let has_delay = !self.animation_delay.0[i].is_zero();
                  let has_iteration_count = !self.animation_iteration_count.0[i].is_one();
-@@ -3682,18 +3854,8 @@
-                     writer.item(repeat)?;
-                 }
+@@ -3455,6 +3627,10 @@
+     pub use crate::properties::generated::shorthands::mask::*;
  
+     use super::*;
++    use crate::properties::longhands::{
++        mask_border_mode, mask_border_outset, mask_border_repeat, mask_border_slice,
++        mask_border_source, mask_border_width,
++    };
+     use crate::parser::Parse;
+     use crate::properties::longhands::{
+         mask_clip, mask_composite, mask_mode, mask_origin, mask_position_x, mask_position_y,
+@@ -3581,6 +3757,12 @@
+            mask_origin: mask_origin::SpecifiedValue(mask_origin.into()),
+            mask_clip: mask_clip::SpecifiedValue(mask_clip.into()),
+            mask_composite: mask_composite::SpecifiedValue(mask_composite.into()),
++           mask_border_mode: mask_border_mode::get_initial_specified_value(),
++           mask_border_outset: mask_border_outset::get_initial_specified_value(),
++           mask_border_repeat: mask_border_repeat::get_initial_specified_value(),
++           mask_border_slice: mask_border_slice::get_initial_specified_value(),
++           mask_border_source: mask_border_source::get_initial_specified_value(),
++           mask_border_width: mask_border_width::get_initial_specified_value(),
+         })
+     }
+ 
+@@ -3594,6 +3776,15 @@
+             use style_traits::values::SequenceWriter;
+ 
+             let len = self.mask_image.0.len();
++            if *self.mask_border_mode != mask_border_mode::get_initial_specified_value()
++                || *self.mask_border_outset != mask_border_outset::get_initial_specified_value()
++                || *self.mask_border_repeat != mask_border_repeat::get_initial_specified_value()
++                || *self.mask_border_slice != mask_border_slice::get_initial_specified_value()
++                || *self.mask_border_source != mask_border_source::get_initial_specified_value()
++                || *self.mask_border_width != mask_border_width::get_initial_specified_value()
++            {
++                return Ok(());
++            }
+             if len == 0 {
+                 return Ok(());
+             }
+@@ -3680,20 +3871,10 @@
+ 
+                 if has_repeat {
+                     writer.item(repeat)?;
+-                }
+-
 -                #[cfg(feature = "gecko")]
 -                {
 -                    if has_origin || (has_clip && *clip != Clip::NoClip) {
 -                        writer.item(origin)?;
 -                    }
--                }
--
+                 }
+ 
 -                #[cfg(feature = "servo")]
 -                {
 -                    if has_origin || has_clip {
@@ -3346,7 +3389,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-19 02:48:31
++++ b/properties/shorthands.toml	2026-11-20 22:43:16
 @@ -1,3 +1,78 @@
 +[column-rule-inset]
 +sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end"]
@@ -3466,18 +3509,18 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["scroll-padding-inline-start", "scroll-padding-inline-end"]
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-inline"
  kind = "two_properties"
-@@ -168,6 +237,11 @@
- [border-inline]
+@@ -169,6 +238,11 @@
  sub_properties = ["border-inline-start-width", "border-inline-start-style", "border-inline-start-color", "border-inline-end-width", "border-inline-end-style", "border-inline-end-color"]
  spec = "https://drafts.csswg.org/css-logical/#propdef-border-inline"
-+
+ 
 +[mask-border]
 +sub_properties = ["mask-border-mode", "mask-border-outset", "mask-border-repeat", "mask-border-slice", "mask-border-source", "mask-border-width"]
 +servo_pref = "layout.css.masking.enabled"
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border"
- 
++
  [border-image]
  sub_properties = ["border-image-outset", "border-image-repeat", "border-image-slice", "border-image-source", "border-image-width"]
+ extra_prefixes = ["moz:layout.css.prefixes.border-image", "webkit"]
 @@ -209,7 +283,7 @@
  kind = "two_properties"
  
@@ -3555,7 +3598,16 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  
  [list-style]
  sub_properties = ["list-style-position", "list-style-image", "list-style-type"]
-@@ -471,15 +539,57 @@
+@@ -388,7 +456,7 @@
+ spec = "https://drafts.csswg.org/css-backgrounds-4/#the-background-position"
+ 
+ [mask]
+-sub_properties = ["mask-mode", "mask-repeat", "mask-clip", "mask-origin", "mask-composite", "mask-position-x", "mask-position-y", "mask-size", "mask-image"]
++sub_properties = ["mask-mode", "mask-repeat", "mask-clip", "mask-origin", "mask-composite", "mask-position-x", "mask-position-y", "mask-size", "mask-image", "mask-border-mode", "mask-border-outset", "mask-border-repeat", "mask-border-slice", "mask-border-source", "mask-border-width"]
+ spec = "https://drafts.fxtf.org/css-masking/#propdef-mask"
+ extra_prefixes = ["webkit"]
+ servo_pref = "layout.css.masking.enabled"
+@@ -471,16 +539,58 @@
  spec = "https://drafts.csswg.org/css-ui/#propdef-outline"
  
  [columns]
@@ -3570,7 +3622,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
  derive_serialize = true
-+
+ 
 +[row-rule]
 +sub_properties = ["row-rule-width", "row-rule-style", "row-rule-color"]
 +engine = "servo"
@@ -3612,9 +3664,10 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule"
 +kind = "mirrored_border"
- 
++
  [text-decoration]
  sub_properties = ["text-decoration-color", "text-decoration-line", "text-decoration-style", "text-decoration-thickness"]
+ spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-decoration"
 @@ -550,13 +660,11 @@
  derive_value_info = false
  
@@ -6864,7 +6917,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 --- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-20 20:21:29
++++ b/values/computed/length.rs	2026-11-20 22:47:50
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -6874,7 +6927,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -461,7 +463,68 @@
+@@ -461,6 +463,96 @@
  
  /// A computed value for `min-width`, `min-height`, `width` or `height` property.
  pub type Size = GenericSize<NonNegativeLengthPercentage>;
@@ -6884,10 +6937,35 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +        self.animate_size(other, procedure, false)
 +    }
 +}
- 
++
 +impl Size {
++    /// Returns the sizing basis and calculation used by layout and interpolation.
++    pub fn prepared_size(&self) -> &Self {
++        match self {
++            Self::CalcSizeBasis(value) => value.prepared.as_ref().unwrap(),
++            other => other,
++        }
++    }
++
++    pub(crate) fn compose_size(&self, calculation: &NonNegativeLengthPercentage) -> Self {
++        let (basis, wrap): (_, fn(NonNegativeLengthPercentage) -> Self) = match self {
++            Self::LengthPercentage(value) if value.0.has_percentage() => (value, Self::CalcSizePercentage),
++            Self::CalcSizePercentage(value) => (value, Self::CalcSizePercentage),
++            Self::LengthPercentage(value) | Self::CalcSizeAny(value) => (value, Self::CalcSizeAny),
++            Self::CalcSizeAuto(value) => (value, Self::CalcSizeAuto),
++            Self::CalcSizeStretch(value) => (value, Self::CalcSizeStretch),
++            Self::CalcSizeMinContent(value) => (value, Self::CalcSizeMinContent),
++            Self::CalcSizeMaxContent(value) => (value, Self::CalcSizeMaxContent),
++            Self::CalcSizeFitContent(value) => (value, Self::CalcSizeFitContent),
++            _ => unreachable!(),
++        };
++        wrap(NonNegative(calculation.0.substitute_size(&basis.0)))
++    }
 +    pub(crate) fn animate_size(&self, other: &Self, procedure: crate::values::animated::Procedure, allow_keywords: bool) -> Result<Self, ()> {
 +        use crate::values::animated::Animate;
++        if matches!(self, Self::CalcSizeBasis(_)) || matches!(other, Self::CalcSizeBasis(_)) {
++            return self.prepared_size().animate_size(other.prepared_size(), procedure, allow_keywords);
++        }
 +        let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
 +        let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
 +            match (value, basis) {
@@ -6906,6 +6984,10 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +            }
 +        };
 +        match (self, other) {
++            (Self::CalcSizePercentage(from), Self::CalcSizePercentage(to) | Self::LengthPercentage(to)) |
++            (Self::LengthPercentage(from), Self::CalcSizePercentage(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
++            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) if !from.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
++            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) if !to.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
 +            (Self::Auto, Self::Auto) => Ok(Self::Auto),
 +            (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
 +            (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
@@ -6939,19 +7021,21 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +        }
 +    }
 +}
-+
+ 
  /// A computed value for `max-width` or `max-height` property.
  pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
- 
-@@ -538,6 +601,7 @@
+@@ -537,7 +629,10 @@
+             "Sizes should only change axes"
          );
          match self {
++            Self::CalcSizeBasis(_) => {},
              Self::FitContentFunction(lp)
 +            | Self::CalcSizeAny(lp)
++            | Self::CalcSizePercentage(lp)
              | Self::LengthPercentage(lp)
              | Self::AnchorContainingCalcFunction(lp) => {
                  lp.try_tactic_adjustment(old_side, new_side);
-@@ -548,7 +612,12 @@
+@@ -548,7 +643,12 @@
              | Self::MinContent
              | Self::FitContent
              | Self::WebkitFillAvailable
@@ -6967,8 +7051,30 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-20 20:06:02
-@@ -640,6 +640,28 @@
++++ b/values/computed/length_percentage.rs	2026-11-20 22:19:25
+@@ -159,6 +159,21 @@
+         }
+     }
+ 
++    pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
++        let mut result = self.to_calc_node();
++        result.visit_depth_first(|node| {
++            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node {
++                let mut scale = CalcNode::Leaf(ComputedLeaf::Number(factor.get()));
++                let mut replacement = basis.to_calc_node();
++                if !replacement.try_product_in_place(&mut scale) {
++                    replacement = CalcNode::Product(vec![scale, replacement].into());
++                }
++                *node = replacement;
++            }
++        });
++        Self::new_calc(result, AllowedNumericType::All)
++    }
++
+     fn map_lengths(&self, mut map_fn: impl FnMut(Length) -> Length) -> Self {
+         match self.unpack() {
+             Unpacked::Length(l) => Self::new_length(map_fn(l)),
+@@ -640,6 +655,28 @@
  }
  
  impl CalcLengthPercentage {
@@ -6997,19 +7103,19 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      /// Resolves the percentage.
      #[inline]
      pub fn resolve(&self, basis: Length) -> Length {
-@@ -1003,6 +1025,12 @@
+@@ -1002,6 +1039,12 @@
+ 
  /// A wrapper of LengthPercentage, whose value must be >= 0.
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
- 
++
 +impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
 +    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
 +        self.0.to_calc_node().write_size_calculation::<SIZE, _>(dest)
 +    }
 +}
-+
+ 
  impl NonNegativeLengthPercentage {
      /// Returns the used value.
-     #[inline]
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
 +++ b/values/computed/mod.rs	2026-11-20 20:21:29
@@ -7615,7 +7721,7 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
  }
 diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 --- a/values/generics/length.rs	2026-11-11 19:55:57
-+++ b/values/generics/length.rs	2026-11-20 20:06:02
++++ b/values/generics/length.rs	2026-11-20 22:47:50
 @@ -138,7 +138,6 @@
  /// Note that it only accepts non-negative values.
  #[allow(missing_docs)]
@@ -7624,15 +7730,16 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
      ComputeSquaredDistance,
      Clone,
      Debug,
-@@ -147,7 +146,6 @@
+@@ -146,8 +145,6 @@
+     PartialEq,
      ToAnimatedValue,
      ToAnimatedZero,
-     ToComputedValue,
+-    ToComputedValue,
 -    ToCss,
      ToResolvedValue,
      ToShmem,
      ToTyped,
-@@ -174,6 +172,68 @@
+@@ -174,6 +171,95 @@
      FitContentFunction(LengthPercent),
      AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
      AnchorContainingCalcFunction(LengthPercent),
@@ -7659,6 +7766,22 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +    #[animation(error)]
 +    #[css(function = "calc-size")]
 +    CalcSizeAny(LengthPercent),
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    #[typed(skip)]
++    CalcSizePercentage(LengthPercent),
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    #[typed(skip)]
++    CalcSizeBasis(Box<GenericSizeBasis<LengthPercent>>),
++}
++
++#[allow(missing_docs)]
++#[derive(Clone, Debug, PartialEq, MallocSizeOf, ToShmem, ToAnimatedValue, ToResolvedValue)]
++pub struct GenericSizeBasis<L> {
++    pub basis: GenericSize<L>,
++    pub calculation: L,
++    pub prepared: Option<GenericSize<L>>,
 +}
 +
 +pub(crate) trait SizeCalculationCss: ToCss {
@@ -7668,11 +7791,22 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
 +    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result {
 +        let (basis, calculation) = match self {
++            Self::CalcSizeBasis(value) => {
++                dest.write_str("calc-size(")?;
++                match &value.basis {
++                    Self::LengthPercentage(value) => value.calculation_css::<false, _>(dest)?,
++                    other => other.to_css(dest)?,
++                }
++                dest.write_str(", ")?;
++                value.calculation.calculation_css::<true, _>(dest)?;
++                return dest.write_char(')');
++            },
 +            Self::CalcSizeAuto(value) => ("auto", value),
 +            Self::CalcSizeFitContent(value) => ("fit-content", value),
 +            Self::CalcSizeMinContent(value) => ("min-content", value),
 +            Self::CalcSizeMaxContent(value) => ("max-content", value),
 +            Self::CalcSizeStretch(value) => ("stretch", value),
++            Self::CalcSizePercentage(value) => ("100%", value),
 +            Self::CalcSizeAny(value) => {
 +                dest.write_str("calc-size(any, ")?;
 +                value.calculation_css::<false, _>(dest)?;
@@ -7701,7 +7835,7 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
  }
  
  impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
-@@ -367,6 +427,32 @@
+@@ -367,6 +453,32 @@
  }
  
  pub use self::GenericLengthPercentageOrNormal as LengthPercentageOrNormal;
@@ -9689,7 +9823,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-20 20:06:02
++++ b/values/specified/length.rs	2026-11-20 22:47:50
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -9739,32 +9873,52 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
                                 "auto" => Auto);
          parse_fit_content_function!(Size, input, context, allow_quirks);
 +        // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
-+        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input)) {
++        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input, 0, &mut 0)) {
 +            return Ok(size);
 +        }
  
          let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
              && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
-@@ -1943,6 +1959,31 @@
+@@ -1943,8 +1959,87 @@
      pub fn zero_percent() -> Self {
          GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
      }
 +    /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
-+    fn parse_calc_size(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize) -> Result<Self, ParseError> {
++        if depth >= 32 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
 +        input.expect_function_matching("calc-size")?;
 +        input.parse_nested_block(|input| {
-+            let basis = try_match_ident_ignore_ascii_case! { input,
++            let keyword = input.try_parse(|input| Ok::<_, ParseError>(try_match_ident_ignore_ascii_case! { input,
 +                "auto" => 0u8,
 +                "fit-content" => 1u8,
 +                "min-content" => 2u8,
 +                "max-content" => 3u8,
 +                "stretch" => 4u8,
 +                "any" => 5u8,
-+            };
++            }));
++            let basis = if keyword.is_err() {
++                Some(input.parse_until_before(cssparser::Delimiter::Comma, |input| {
++                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded)) { return Ok(nested); }
++                    let mut calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::All, false)?;
++                    calc.0.node.visit_depth_first(|_| *expanded += 1);
++                    Ok(Self::LengthPercentage(NonNegative(LengthPercentage::Calc(Box::new(calc)))))
++                })?)
++            } else { None };
 +            input.expect_comma()?;
-+            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative, basis != 5)?;
++            let range = if depth == 0 && basis.is_none() { AllowedNumericType::NonNegative } else { AllowedNumericType::All };
++            let mut calc = CalcNode::parse_calc_size_calculation(context, input, range, !matches!(keyword, Ok(5)))?;
++            let inner_cost = *expanded;
++            let mut cost = 0usize;
++            calc.0.node.visit_depth_first(|node| {
++                cost = cost.saturating_add(if matches!(node, CalcNode::Leaf(super::calc::Leaf::Percentage(_))) {
++                    inner_cost.saturating_add(3)
++                } else { 1 });
++            });
++            if cost > 16384 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
++            *expanded = cost;
 +            let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
-+            Ok(match basis {
++            if let Some(basis) = basis { return Ok(Self::CalcSizeBasis(Box::new(generics::GenericSizeBasis { basis, calculation: length, prepared: None }))); }
++            Ok(match keyword? {
 +                0 => GenericSize::CalcSizeAuto(length),
 +                1 => GenericSize::CalcSizeFitContent(length),
 +                2 => GenericSize::CalcSizeMinContent(length),
@@ -9776,7 +9930,43 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 +    }
  }
  
++macro_rules! convert_size {
++    ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr; $($unit:ident),*; $($value:ident),*) => { match $source {
++                $($from::$unit => $to::$unit,)*
++                #[cfg(feature = "gecko")]
++                $from::MozAvailable => $to::MozAvailable,
++                $($from::$value(value) => $to::$value($convert(value)),)*
++                $from::CalcSizeBasis(value) => $pair(&value.basis, &value.calculation),
++            } };
++    ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr) => {
++        convert_size!($source, $from, $to, $convert, $pair; Auto, MaxContent, MinContent, FitContent, Stretch, WebkitFillAvailable;
++            LengthPercentage, FitContentFunction, AnchorSizeFunction, AnchorContainingCalcFunction,
++            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeAny, CalcSizePercentage)
++    };
++}
++
++impl ToComputedValue for Size {
++    type ComputedValue = computed::Size;
++    fn to_computed_value(&self, context: &Context) -> computed::Size {
++        use computed::Size as Output;
++        convert_size!(self, Self, Output, |value| ToComputedValue::to_computed_value(value, context), |basis: &Size, calc: &NonNegativeLengthPercentage| {
++            let basis = basis.to_computed_value(context);
++            let calculation = calc.to_computed_value(context);
++            let prepared = Some(basis.prepared_size().compose_size(&calculation));
++            Output::CalcSizeBasis(Box::new(generics::GenericSizeBasis { basis, calculation, prepared }))
++        })
++    }
++    fn from_computed_value(value: &computed::Size) -> Self {
++        use computed::Size as Input;
++        convert_size!(value, Input, Self, ToComputedValue::from_computed_value, |basis, calculation| Self::CalcSizeBasis(Box::new(generics::GenericSizeBasis {
++            basis: Self::from_computed_value(basis), calculation: ToComputedValue::from_computed_value(calculation), prepared: None,
++        })))
++    }
++}
++
  /// A specified value for `max-width` or `max-height` property.
+ pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
+ 
 diff -ruN a/values/specified/list.rs b/values/specified/list.rs
 --- a/values/specified/list.rs	2026-11-11 19:55:57
 +++ b/values/specified/list.rs	2026-11-19 19:52:43
