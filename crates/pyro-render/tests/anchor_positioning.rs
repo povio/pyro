@@ -219,6 +219,32 @@ fn fallback_trials_stop_at_first_fit() {
 }
 
 #[test]
+fn clipped_scroll_axis_and_removed_scrollport_ignore_stale_offsets() {
+    let html = "<!doctype html><style>main{position:relative}section{overflow:clip scroll;width:50px;height:50px}i{display:block;anchor-name:--a;width:120px;height:120px}b{position:absolute;position-anchor:--a;left:anchor(left);top:anchor(top)}</style><main><section><i></i></section><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let scroller = doc.query_selector("section").unwrap().unwrap();
+    let target = doc.query_selector("b").unwrap().unwrap();
+    let sample = |doc: &blitz_dom::BaseDocument| {
+        let reads = std::cell::Cell::new(0);
+        let delta = doc.get_node(target).unwrap().anchor_scroll_offset_with(|id| {
+            assert_eq!(id, Some(scroller));
+            reads.set(reads.get() + 1);
+            blitz_dom::Point { x: 11.0, y: 7.0 }
+        });
+        (delta.x, delta.y, reads.get())
+    };
+    assert_eq!(sample(&doc), (0.0, -7.0, 1));
+    let visits = doc.anchor_candidate_visits();
+    for _ in 0..64 { assert_eq!(sample(&doc), (0.0, -7.0, 1)); }
+    assert_eq!(visits, doc.anchor_candidate_visits());
+    doc.set_style_property(scroller, "overflow", "visible");
+    doc.resolve(0.0);
+    assert_eq!(sample(&doc), (0.0, 0.0, 0));
+}
+
+#[test]
 fn scroll_compensation_does_not_repeat_name_lookup() {
     let html = "<!doctype html><style>main{position:relative}section{height:50px;overflow:auto}i{display:block;height:200px;anchor-name:--ref}b{position:absolute;position-anchor:--ref;top:anchor(bottom)}</style><main><section><i></i></section><b></b></main>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

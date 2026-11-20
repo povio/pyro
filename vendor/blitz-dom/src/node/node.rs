@@ -663,6 +663,25 @@ impl Node {
         self.anchor_scroll_offset_in(self.containing_block(), scroll)
     }
 
+    fn anchor_scrollable_axes(&self) -> (bool, bool) {
+        self.primary_styles().map_or((false, false), |style| {
+            let box_style = style.get_box();
+            (box_style.overflow_x.is_scrollable(), box_style.overflow_y.is_scrollable())
+        })
+    }
+
+    pub(crate) fn nearest_anchor_scrollport(&self, horizontal: bool) -> Option<NodeId> {
+        let tree = self.tree();
+        let mut cursor = self.containing_block();
+        for _ in 0..tree.len() {
+            let node = tree.get(cursor?)?;
+            let (x, y) = node.anchor_scrollable_axes();
+            if if horizontal { x } else { y } { return Some(node.id); }
+            cursor = node.containing_block();
+        }
+        None
+    }
+
     pub(crate) fn anchor_scroll_offset_in(&self, container: Option<NodeId>, mut scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
         let (anchor_x, anchor_y) = self.anchor_scroll_axes.get();
         if anchor_x.is_none() && anchor_y.is_none() { return crate::Point::ZERO; }
@@ -681,9 +700,12 @@ impl Node {
                     break;
                 }
                 if node.id != id {
-                    let actual = scroll(Some(node.id));
-                    offset.x -= actual.x;
-                    offset.y -= actual.y;
+                    let (x, y) = node.anchor_scrollable_axes();
+                    if x || y {
+                        let actual = scroll(Some(node.id));
+                        if x { offset.x -= actual.x; }
+                        if y { offset.y -= actual.y; }
+                    }
                 }
                 if node.taffy_position() == taffy::Position::Fixed && node.containing_block().and_then(|cb| tree.get(cb)).is_some_and(|cb| cb.is_root_element() && !cb.root_contains_fixed()) { break; }
                 cursor = node.containing_block();

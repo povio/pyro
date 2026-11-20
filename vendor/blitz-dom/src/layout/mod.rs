@@ -2554,6 +2554,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let item = self.get_oof_item_style(taffy_node_id(node.id));
         let style = &item.style;
         let pos = style.get_position();
+        let default_anchor = std::cell::OnceCell::new();
         let coordinate = |target: &style::values::generics::position::TreeScoped<style::values::DashedIdent>, anchor_side: &style::values::computed::position::AnchorSide, side: PhysicalSide| {
             if !anchor_side.valid_for(side) { return None; }
             let (name, level) = if target.value.0.is_empty() {
@@ -2562,7 +2563,13 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             } else { (&target.value,target.scope) };
             let (anchor,point, extent) = self.anchor_rect(node,container,name,level)?;
             let horizontal = side.parallel_to(PhysicalSide::Left);
-            if matches!(&pos.position_anchor.value, PositionAnchorKeyword::Ident(default) if default == name) {
+            let adjustment_anchor = if target.value.0.is_empty() {
+                Some(anchor)
+            } else if let PositionAnchorKeyword::Ident(default) = &pos.position_anchor.value {
+                let default = *default_anchor.get_or_init(|| self.anchor_rect(node, container, default, pos.position_anchor.scope).map(|(id, _, _)| id));
+                default.filter(|&id| id == anchor || self.nodes[id].nearest_anchor_scrollport(horizontal) == self.nodes[anchor].nearest_anchor_scrollport(horizontal))
+            } else { None };
+            if let Some(anchor) = adjustment_anchor {
                 let (old_x,old_y) = node.anchor_scroll_axes.get();
                 node.anchor_scroll_axes.set(if horizontal {(Some(anchor),old_y)} else {(old_x,Some(anchor))});
             }
