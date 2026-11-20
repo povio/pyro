@@ -74,6 +74,13 @@ fn nested_columns_use_balanced_outer_tail_slots() {
         (65.0, 71.0, BLUE), (65.0, 72.0, GREEN), (155.0, 95.0, GREEN), (155.0, 96.0, WHITE)], "auto and definite nested heights");
 }
 
+#[test]
+fn nested_monolith_uses_inline_space_beside_float() {
+    let image = render(include_str!("fixtures/nested-float-inline-room.html"), 1.0);
+    check(&image, 1.0, &[(1.0, 41.0, WHITE), (81.0, 99.0, GREEN), (97.0, 1.0, BLUE), (97.0, 79.0, BLUE),
+        (97.0, 81.0, WHITE), (121.0, 5.0, WHITE)], "float and monolith share inline space");
+}
+
 fn check(img: &RgbaImage, scale: f64, points: &[(f64, f64, [u8; 3])], what: &str) {
     let wrong: Vec<String> = points
         .iter()

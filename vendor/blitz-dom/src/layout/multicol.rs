@@ -934,23 +934,46 @@ impl LayoutPassState<'_> {
             {
                 let room = outer - offset;
                 let row_end = content_top + room * count as f32;
-                let children = self.nodes[dom_id].layout_children.borrow().clone().unwrap_or_default();
-                let mut float_end = content_top;
+                let mut pending = Vec::new();
+                let mut floats: Vec<(f32, f32, f32, f32)> = Vec::new();
+                pending.extend(self.nodes[dom_id].layout_children.borrow().iter().flatten().rev().take(MAX_FRAGMENTS).map(|&id| (id, 0.0, 0.0)));
+                let mut work = MAX_FRAGMENTS;
                 let mut changed = false;
-                for id in children {
+                while let Some((id, parent_x, parent_y)) = pending.pop() {
+                    if work == 0 { break; }
+                    work -= 1;
                     let child = &self.nodes[id];
+                    if child.is_out_of_flow() { continue; }
                     let Some(style) = child.primary_styles() else { continue };
                     let layout = child.unrounded_layout();
+                    let x = parent_x + layout.location.x;
+                    let y = parent_y + layout.location.y;
                     if style.clone_float() != Float::None {
-                        float_end = float_end.max((layout.location.y + layout.size.height).min(row_end));
-                    } else if !child.is_out_of_flow() && !fragmentable(child, &style)
+                        floats.push((x - layout.margin.left, x + layout.size.width + layout.margin.right,
+                            y - layout.margin.top, (y + layout.size.height + layout.margin.bottom).min(row_end)));
+                    } else if fragmentable(child, &style) && style.clone_display().inside() == DisplayInside::Flow {
+                        let left = work.saturating_sub(pending.len());
+                        pending.extend(child.layout_children.borrow().iter().flatten().rev().take(left).map(|&id| (id, x, y)));
+                    } else if !fragmentable(child, &style)
                         && layout.size.height > room + EPSILON && layout.size.height <= outer + EPSILON
-                        && layout.location.y < float_end - EPSILON
                     {
-                        drop(style);
-                        self.spanner_floors.insert(id, float_end);
-                        changed = true;
-                        break;
+                        if floats.len() > work { break; }
+                        work -= floats.len();
+                        let floor = floats.iter().filter(|&&(left, right, top, bottom)| {
+                            x < right - EPSILON && x + layout.size.width > left + EPSILON && y < bottom - EPSILON && y + layout.size.height > top + EPSILON
+                        }).map(|rect| rect.3).fold(y, f32::max);
+                        if floor > y + EPSILON {
+                            drop(style);
+                            self.spanner_floors.insert(id, floor - parent_y);
+                            use taffy::CacheTree as _;
+                            let mut at = Some(id);
+                            while let Some(node) = at.filter(|&n| n != dom_id) {
+                                self.cache_clear(crate::taffy_node_id(node));
+                                at = self.nodes[node].layout_parent.get();
+                            }
+                            changed = true;
+                            break;
+                        }
                     }
                 }
                 if changed {
@@ -1265,11 +1288,7 @@ impl LayoutPassState<'_> {
                     }
                 }
                 if run.columns.len() <= count || last_box_row {
-                    // (`column-fill: auto` without a definite height balances too, a row that is
-                    // the container's only one; after rows before it, it fills its columns in
-                    // turn and is as tall as they hold: Chromium, WPT css-multicol
-                    // `multicol-nested-026`.)
-                    let sequential = matches!(multicol.fill, ColumnFill::Auto) && !fill_auto && !placed.is_empty();
+                    let sequential = matches!(multicol.fill, ColumnFill::Auto) && !fill_auto;
                     let height = if (matches!(multicol.fill, ColumnFill::Balance) || !fill_auto) && !sequential {
                         breaks.balance_range(start, end, count, Some(row_height)).min(row_height)
                     } else {
