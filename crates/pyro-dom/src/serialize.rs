@@ -81,6 +81,149 @@ fn xml_escape(out: &mut String, s: &str, attr: bool) {
     }
 }
 
+/// Namespace bindings in declaration order, shared by the iterative tree walk.
+/// Each element restores the parent's bindings on exit. The generated prefix
+/// counter belongs to the serialization as a whole, including sibling subtrees.
+struct XmlNamespaces {
+    bindings: Vec<(String, String)>,
+    next_prefix: usize,
+}
+
+impl XmlNamespaces {
+    fn new() -> Self {
+        Self { bindings: vec![("xml".into(), ns!(xml).to_string())], next_prefix: 1 }
+    }
+
+    fn bound(&self, prefix: &str) -> Option<&str> {
+        self.bindings.iter().rev().find(|(p, _)| p == prefix).map(|(_, uri)| uri.as_str())
+    }
+
+    fn preferred(&self, uri: &str, prefix: &str) -> Option<String> {
+        if uri.is_empty() {
+            return None;
+        }
+        if !prefix.is_empty() && self.bound(prefix) == Some(uri) {
+            return Some(prefix.to_owned());
+        }
+        self.bindings
+            .iter()
+            .rev()
+            .find(|(p, ns)| ns == uri && !p.is_empty() && self.bound(p) == Some(uri))
+            .map(|(p, _)| p.clone())
+    }
+
+    fn generate(&mut self) -> String {
+        loop {
+            let prefix = format!("ns{}", self.next_prefix);
+            self.next_prefix += 1;
+            if self.bound(&prefix).is_none() {
+                return prefix;
+            }
+        }
+    }
+
+    fn bind(&mut self, prefix: &str, uri: &str) {
+        self.bindings.push((prefix.to_owned(), uri.to_owned()));
+    }
+
+    fn declare(&mut self, out: &mut String, prefix: &str, uri: &str) {
+        out.push_str(" xmlns");
+        if !prefix.is_empty() {
+            out.push(':');
+            out.push_str(prefix);
+        }
+        out.push_str("=\"");
+        xml_escape(out, uri, true);
+        out.push('"');
+        self.bind(prefix, uri);
+    }
+
+    fn start_tag(&mut self, out: &mut String, element: &ElementData) -> String {
+        let uri = &*element.name.ns;
+        let inherits_namespace = self.bound("").unwrap_or("") == uri;
+        let scope_start = self.bindings.len();
+        let mut local_default = None;
+        for attr in &element.attrs {
+            if attr.name.ns != ns!(xmlns) || &*attr.value == &*ns!(xml) {
+                continue;
+            }
+            if attr.name.prefix.is_none() {
+                local_default = Some(attr.value.as_ref());
+            } else {
+                self.bind(&attr.name.local, &attr.value);
+            }
+        }
+
+        let original = element.name.prefix.as_ref().map_or("", |p| &**p);
+        let mut declare_prefix = false;
+        let prefix = if inherits_namespace || (original.is_empty() && local_default == Some(uri)) {
+            String::new()
+        } else if let Some(prefix) = self.preferred(uri, original) {
+            prefix
+        } else if original.is_empty() {
+            String::new()
+        } else {
+            declare_prefix = true;
+            if self.bindings[scope_start..].iter().any(|(p, _)| p == original) {
+                self.generate()
+            } else {
+                original.to_owned()
+            }
+        };
+
+        let tag =
+            if prefix.is_empty() { element.name.local.to_string() } else { format!("{prefix}:{}", element.name.local) };
+        out.push('<');
+        out.push_str(&tag);
+        // An unprefixed element determines its own default namespace. Emit a
+        // correction only when the inherited default does not already match.
+        let skip_default = prefix.is_empty() && local_default.is_some_and(|local| local != uri);
+        if prefix.is_empty() && !inherits_namespace && local_default != Some(uri) {
+            self.declare(out, "", uri);
+        } else if let Some(local) = local_default.filter(|_| !skip_default) {
+            self.bind("", local);
+        }
+        if declare_prefix {
+            self.declare(out, &prefix, uri);
+        }
+
+        for attr in &element.attrs {
+            let name = &attr.name;
+            let prefix = if name.ns == ns!() {
+                String::new()
+            } else if name.ns == ns!(xmlns) {
+                if &*attr.value == &*ns!(xml) || (name.prefix.is_none() && skip_default) {
+                    continue;
+                }
+                name.prefix.as_ref().map_or_else(String::new, ToString::to_string)
+            } else {
+                let original = name.prefix.as_ref().map_or("", |p| &**p);
+                if let Some(prefix) = self.preferred(&name.ns, original) {
+                    prefix
+                } else {
+                    let prefix = if !original.is_empty() && self.bound(original).is_none() {
+                        original.to_owned()
+                    } else {
+                        self.generate()
+                    };
+                    self.declare(out, &prefix, &name.ns);
+                    prefix
+                }
+            };
+            out.push(' ');
+            if !prefix.is_empty() {
+                out.push_str(&prefix);
+                out.push(':');
+            }
+            out.push_str(&name.local);
+            out.push_str("=\"");
+            xml_escape(out, &attr.value, true);
+            out.push('"');
+        }
+        tag
+    }
+}
+
 impl Dom {
     /// `innerHTML` getter: serializes the children (template: contents).
     pub fn inner_html(&self, id: NodeId) -> DomResult<String> {
@@ -107,9 +250,7 @@ impl Dom {
         Ok(out)
     }
 
-    /// `XMLSerializer.serializeToString`. Prefixes are kept as written and
-    /// a namespace declaration is added where the in-scope ones do not cover
-    /// a name; generated prefixes (`ns1`) are not implemented.
+    /// `XMLSerializer.serializeToString` with scoped namespace fixup.
     pub fn xml_serialize(&self, id: NodeId) -> DomResult<String> {
         enum Step {
             Enter(u32),
@@ -119,8 +260,7 @@ impl Dom {
         let root = self.check(id)?;
         let mut out = String::new();
         let xhtml = ns!(html);
-        // In-scope (prefix, namespace) pairs, innermost last; "" is the default.
-        let mut scope: Vec<(String, String)> = Vec::new();
+        let mut namespaces = XmlNamespaces::new();
         let mut stack = vec![Step::Enter(root)];
         while let Some(step) = stack.pop() {
             match step {
@@ -129,91 +269,25 @@ impl Dom {
                     out.push_str(&tag);
                     out.push('>');
                 }
-                Step::PopScope(len) => scope.truncate(len),
+                Step::PopScope(len) => namespaces.bindings.truncate(len),
                 Step::Enter(n) => match &self.n(n).kind {
                     NodeKind::Element(e) => {
-                        let scope_len = scope.len();
-                        let prefix = e.name.prefix.as_ref().map_or("", |p| &**p);
-                        let tag = if prefix.is_empty() {
-                            e.name.local.to_string()
-                        } else {
-                            format!("{prefix}:{}", e.name.local)
-                        };
-                        out.push('<');
-                        out.push_str(&tag);
-                        // Declarations written on this element come first into scope.
-                        for a in &e.attrs {
-                            if a.name.ns == ns!(xmlns) {
-                                let declared = if a.name.local == local_name!("xmlns") { "" } else { &*a.name.local };
-                                scope.push((declared.to_owned(), a.value.to_string()));
-                            }
-                        }
-                        let declare = |out: &mut String, scope: &mut Vec<(String, String)>, prefix: &str, ns: &str| {
-                            if scope.iter().rev().find(|(p, _)| p == prefix).map(|(_, n)| n.as_str()).unwrap_or("")
-                                != ns
-                            {
-                                out.push_str(if prefix.is_empty() { " xmlns" } else { " xmlns:" });
-                                out.push_str(prefix);
-                                out.push_str("=\"");
-                                xml_escape(out, ns, true);
-                                out.push('"');
-                                scope.push((prefix.to_owned(), ns.to_owned()));
-                            }
-                        };
-                        declare(&mut out, &mut scope, prefix, &e.name.ns);
-                        for a in &e.attrs {
-                            out.push(' ');
-                            let ans = &a.name.ns;
-                            if *ans == ns!() {
-                                out.push_str(&a.name.local);
-                            } else if *ans == ns!(xmlns) {
-                                if a.name.local != local_name!("xmlns") {
-                                    out.push_str("xmlns:");
-                                }
-                                out.push_str(&a.name.local);
-                            } else if *ans == ns!(xml) {
-                                out.push_str("xml:");
-                                out.push_str(&a.name.local);
-                            } else {
-                                let aprefix = match &a.name.prefix {
-                                    Some(p) if !p.is_empty() => p.to_string(),
-                                    _ if *ans == ns!(xlink) => "xlink".to_owned(),
-                                    _ => String::new(),
-                                };
-                                if aprefix.is_empty() {
-                                    out.push_str(&a.name.local);
-                                } else {
-                                    // Written before this attribute: a declaration
-                                    // is an attribute of the same element.
-                                    let mut decl = String::new();
-                                    declare(&mut decl, &mut scope, &aprefix, ans);
-                                    if !decl.is_empty() {
-                                        out.push_str(decl.trim_start());
-                                        out.push(' ');
-                                    }
-                                    out.push_str(&aprefix);
-                                    out.push(':');
-                                    out.push_str(&a.name.local);
-                                }
-                            }
-                            out.push_str("=\"");
-                            xml_escape(&mut out, &a.value, true);
-                            out.push('"');
-                        }
+                        let scope_len = namespaces.bindings.len();
+                        let tag = namespaces.start_tag(&mut out, e);
                         let src = if e.template_contents != NIL { e.template_contents } else { n };
                         if self.n(src).first_child == NIL {
                             // HTML-namespace elements keep an explicit end tag unless void.
                             if e.name.ns != xhtml {
                                 out.push_str("/>");
-                                scope.truncate(scope_len);
+                                namespaces.bindings.truncate(scope_len);
                             } else if is_void(&e.name.local) {
                                 out.push_str(" />");
-                                scope.truncate(scope_len);
+                                namespaces.bindings.truncate(scope_len);
                             } else {
                                 out.push_str("></");
                                 out.push_str(&tag);
                                 out.push('>');
-                                scope.truncate(scope_len);
+                                namespaces.bindings.truncate(scope_len);
                             }
                             continue;
                         }
