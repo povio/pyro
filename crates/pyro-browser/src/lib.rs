@@ -776,6 +776,10 @@ pub struct Browser {
     observer: ObserverCell,
     next_id: Rc<Cell<u64>>,
     started: Instant,
+    /// pyro: the layout body stores of this browser's network identities (`layout_bodies_for`):
+    /// this browser's own, never shared with another browser of the process, whose document ids
+    /// (frame and loader counters) may be the same.
+    layout_stores: Vec<((Option<pyro_net::ProxyConfig>, String), std::sync::Arc<pyro_dom::layout::SubresourceBodies>)>,
     /// Finalized-wrapper payloads released at checkpoints (diagnostics).
     pub released_payloads: RefCell<u64>,
     /// Cross-thread handle to this browser's own loop (network completions).
@@ -987,6 +991,7 @@ impl BrowserThread {
             observer: Rc::new(RefCell::new(None)),
             next_id: Rc::new(Cell::new(1)),
             started: Instant::now(),
+            layout_stores: Vec::new(),
             released_payloads: RefCell::new(0),
             handle: event_loop.handle(),
             loader: None,
@@ -1216,7 +1221,7 @@ impl Browser {
             // with what other identities fetched, through their proxies.
             config.shared_asset_cache = None;
         }
-        let layout_bodies = Self::layout_bodies_for(own_identity, &config);
+        let layout_bodies = self.layout_bodies_for(own_identity, &config);
         let client = pyro_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
@@ -1237,22 +1242,22 @@ impl Browser {
     /// connection or fork lays out with them at once, as before contexts had
     /// identities of their own.
     fn layout_bodies_for(
+        &mut self,
         own_identity: bool,
         config: &pyro_net::NetConfig,
     ) -> std::sync::Arc<pyro_dom::layout::SubresourceBodies> {
-        type Shared =
-            Vec<((Option<pyro_net::ProxyConfig>, String), std::sync::Arc<pyro_dom::layout::SubresourceBodies>)>;
-        static SHARED: std::sync::Mutex<Shared> = std::sync::Mutex::new(Vec::new());
+        // pyro: this browser's stores only: a process-wide store let another browser's documents,
+        // whose ids come from their own counters and may equal these, write, fail or forget this
+        // browser's entries (security review cycle 5).
         if own_identity {
             return Default::default();
         }
         let identity = (config.proxy.clone(), config.user_agent.clone());
-        let mut shared = SHARED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((_, bodies)) = shared.iter().find(|(i, _)| *i == identity) {
+        if let Some((_, bodies)) = self.layout_stores.iter().find(|(i, _)| *i == identity) {
             return bodies.clone();
         }
         let bodies = std::sync::Arc::<pyro_dom::layout::SubresourceBodies>::default();
-        shared.push((identity, bodies.clone()));
+        self.layout_stores.push((identity, bodies.clone()));
         bodies
     }
 

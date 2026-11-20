@@ -317,6 +317,7 @@ impl PageFetcher {
             client,
             key,
             until: Instant::now() + std::time::Duration::from_secs(10),
+            waited: false,
         };
         let _ = self.handle.post(move |b| serve_capture(b, request, done));
     }
@@ -333,6 +334,8 @@ struct CaptureRequest {
     key: pyro_dom::layout::LayoutBodyKey,
     /// How long it waits for the document's own fetch of it to end.
     until: Instant,
+    /// It waited for the document's own fetch of it: that fetch's outcome is its answer.
+    waited: bool,
 }
 
 /// pyro: serves a capture's request: the client is checked before anything, then the document's
@@ -340,7 +343,7 @@ struct CaptureRequest {
 /// is in flight the capture waits for it (it never sends the same request again beside it); only
 /// a request the document never made goes out.
 fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>) {
-    let CaptureRequest { page, url, kind, cors, options, client, key, until } = request;
+    let CaptureRequest { page, url, kind, cors, options, client, key, until, waited } = request;
     // pyro: a document that is no longer its frame's has nothing served and nothing sent.
     if !b.is_live_client(page, &client) {
         done(Err("the document is no longer its frame's".into()));
@@ -351,7 +354,7 @@ fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(
     // bounded), then serve that.
     if bodies.as_ref().is_some_and(|bodies| bodies.pending(&key)) && Instant::now() < until {
         let retry = std::rc::Rc::new(std::cell::RefCell::new(Some((
-            CaptureRequest { page, url, kind, cors, options, client, key, until },
+            CaptureRequest { page, url, kind, cors, options, client, key, until, waited: true },
             done,
         ))));
         b.scheduler().set_timer(std::time::Duration::from_millis(5), false, true, move |b| {
@@ -377,6 +380,12 @@ fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(
             opaque,
             referrer_policy: body.referrer_policy.clone(),
         }));
+        return;
+    }
+    // pyro: the document's own fetch it waited for ended with no body kept: that is its answer
+    // (never the same request again beside it).
+    if waited {
+        done(Err("the document's own fetch of it ended without a body".into()));
         return;
     }
     // An imported sheet without a charset of its own decodes as the document.
