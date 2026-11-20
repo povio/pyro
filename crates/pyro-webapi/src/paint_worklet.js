@@ -3,8 +3,10 @@
 // registerPaint() validates and records paint definitions. pyro does not draw paint() images: a
 // registered painter is never invoked. natives:
 //   active() -> whether the document is fully active
-//   moduleState(url) -> 'loaded' | 'fetching' | 'none': the URL in the worklet global's module map,
-//     which records every module its graphs fetched (imports included)
+//   moduleState(url) -> 'fetched' | 'fetching' | 'none': the URL in the worklet global's module map,
+//     which records every module its graphs fetched (imports included); 'fetched' is its source only
+//   awaitGraph(url) -> promise of such a module's graph (it and its imports fetched and evaluated, or
+//     failed), or null when the engine cannot wait for one
 //   evaluate(source, url, credentials) -> promise of the module's evaluation in the worklet global,
 //     its imports fetched with `credentials`; one graph at a time (see `graphs`)
 (function (native) {
@@ -51,12 +53,13 @@
         const map = moduleMaps.get(this);
         const known = map.get(url);
         if (known) return known.then(() => undefined);
-        // A module another graph imported: loaded, or being fetched by a graph that is running (graphs
-        // run one at a time), whose end tells whether it loaded; a failed one is fetched as an entry.
-        const imported = native.moduleState(url);
-        if (imported === 'loaded') return PromiseC.resolve();
-        if (imported === 'fetching') {
-          const later = graphs.then(() => (native.moduleState(url) === 'loaded' ? undefined : fetchEntry()));
+        // A module another graph imported (fetched, or being fetched): no new fetch; it settles as its
+        // own graph completes (it and its imports fetched and evaluated, or one failed), not when its
+        // source arrived. A module whose fetch failed left the map and is fetched as an entry.
+        if (native.moduleState(url) !== 'none') {
+          const graph = native.awaitGraph(url);
+          // An engine that cannot wait for a graph: the end of the running graphs, which contain it.
+          const later = graph === null ? graphs.then(() => undefined) : graph;
           map.set(url, later);
           later.then(undefined, () => { if (map.get(url) === later) map.delete(url); });
           return later;

@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use pyro_js::{JsError, JsResult, Object, Persistent, RealmOptions, Scope, Value};
+use pyro_js::{JsResult, Object, Persistent, RealmOptions, Scope, Value};
 
 use crate::lazy_module::LazyModule;
 use crate::page::PageDom;
@@ -79,18 +79,26 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         evaluate(s, &page, &source, &url, &credentials)
     })?;
     native.set_atom("evaluate", evaluate.value())?;
-    // moduleState(url) -> 'loaded' | 'fetching' | 'none': the URL in the worklet's module map.
+    // moduleState(url) -> 'fetched' | 'fetching' | 'none': the URL in the worklet's module map.
     let state = s.function("moduleState", |s, _, a| {
         let page = crate::target::page_of(s)?;
         let url = a.get(0).to_string()?;
         let state = match page.paint_worklet_modules.borrow().get(&url) {
-            Some(true) => "loaded",
+            Some(true) => "fetched",
             Some(false) => "fetching",
             None => "none",
         };
         Ok(s.string(state))
     })?;
     native.set_atom("moduleState", state.value())?;
+    // awaitGraph(url) -> promise of the graph of a module in the worklet's module map, or null when
+    // this engine cannot wait for one.
+    let await_graph_fn = s.function("awaitGraph", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let url = a.get(0).to_string()?;
+        await_graph(s, &page, &url)
+    })?;
+    native.set_atom("awaitGraph", await_graph_fn.value())?;
     Ok(native)
 }
 
@@ -123,46 +131,120 @@ fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str, cred
         s.realm().module_fetcher().and_then(|f| f.for_worklet_graph(credentials, page.paint_worklet_modules.clone())),
     );
     let ws = realm.scope()?;
-    let caller = s.realm().downgrade();
-    let deferred = Rc::new(RefCell::new(Some(deferred)));
-    // Settles the caller's promise with `value` (fulfilled or rejected), in the caller's realm.
-    let settle = move |deferred: &Rc<RefCell<Option<pyro_js::Deferred>>>, value: Persistent, ok: bool| {
-        let Some(d) = deferred.borrow_mut().take() else { return };
-        let Some(realm) = caller.upgrade() else { return };
+    let settle = Settle::new(s, deferred);
+    match ws.eval_module(source, url) {
+        Ok(evaluation) => settle.when(s, &ws, evaluation, |_, _| None)?,
+        // A module that does not parse (or a failed import): the error, in the caller's realm.
+        Err(e) => settle.now(s, Err(e.to_value(s)))?,
+    }
+    Ok(promise)
+}
+
+/// The graph of `url`, a module of the worklet's module map (another graph's import, fetched or
+/// being fetched): a promise of the calling realm that settles once the module and every module it
+/// imports are fetched and evaluated (fulfilled), or one of them failed (rejected with the failure),
+/// as "fetch a worklet script graph" ends; not when the module's own source arrived. `null` without
+/// a worklet realm or an engine that loads graphs in phases (`Scope::load_registered_module_graph`).
+fn await_graph<'s>(s: &Scope<'s>, page: &Rc<PageDom>, url: &str) -> JsResult<Value<'s>> {
+    let Some(realm) = page.paint_worklet.borrow().clone() else { return Ok(s.null()) };
+    let ws = realm.scope()?;
+    let Some(loading) = ws.load_registered_module_graph(url)? else { return Ok(s.null()) };
+    let deferred = s.deferred()?;
+    let promise = deferred.promise.get(s);
+    let settle = Settle::new(s, deferred);
+    // Loaded: link and evaluate it (a no-op for a module that already ran), whose promise ends it.
+    let url = url.to_owned();
+    settle.when(s, &ws, loading, move |ws, _| Some(ws.link_and_evaluate_module(&url)))?;
+    Ok(promise)
+}
+
+/// The calling realm's promise for a worklet operation, settled from the worklet realm's promises.
+#[derive(Clone)]
+struct Settle {
+    deferred: Rc<RefCell<Option<pyro_js::Deferred>>>,
+    caller: pyro_js::WeakRealm,
+}
+
+impl Settle {
+    fn new(s: &Scope<'_>, deferred: pyro_js::Deferred) -> Settle {
+        Settle { deferred: Rc::new(RefCell::new(Some(deferred))), caller: s.realm().downgrade() }
+    }
+
+    /// Settles it now, in `s` (the caller's realm): fulfilled with undefined, or rejected with the error.
+    fn now(&self, s: &Scope<'_>, result: Result<(), Value<'_>>) -> JsResult<()> {
+        let Some(d) = self.deferred.borrow_mut().take() else { return Ok(()) };
+        match result {
+            Ok(()) => d.resolve(s, s.undefined()),
+            Err(e) => d.reject(s, e),
+        }
+    }
+
+    /// Settles it from a value of the worklet realm (`Persistent`), in the caller's realm.
+    fn from_worklet(&self, value: Persistent, ok: bool) {
+        let Some(d) = self.deferred.borrow_mut().take() else { return };
+        let Some(realm) = self.caller.upgrade() else { return };
         let Ok(cs) = realm.scope() else { return };
         let v = value.get(&cs);
         let _ = if ok { d.resolve(&cs, cs.undefined()) } else { d.reject(&cs, v) };
-    };
-    match ws.eval_module(source, url) {
-        Ok(evaluation) => {
-            let (d1, d2) = (deferred.clone(), deferred.clone());
-            let (s1, s2) = (settle.clone(), settle);
-            let on_ok = ws.function("fulfilled", move |ws, _, a| {
-                s1(&d1, Persistent::new(ws, a.get(0)), true);
-                Ok(ws.undefined())
-            })?;
-            let on_err = ws.function("rejected", move |ws, _, a| {
-                s2(&d2, Persistent::new(ws, a.get(0)), false);
-                Ok(ws.undefined())
-            })?;
-            let then = evaluation.as_object().map(|p| p.get_atom("then")).transpose()?.and_then(|t| t.as_object());
-            match (then, evaluation.as_object()) {
-                (Some(then), Some(p)) => {
-                    then.call(Some(p), &[on_ok.value(), on_err.value()])?;
-                }
-                _ => {
-                    let d = deferred.borrow_mut().take().ok_or_else(|| JsError::type_error("worklet"))?;
-                    d.resolve(s, s.undefined())?;
+    }
+
+    /// Settles it as `promise` (of the worklet realm `ws`) settles; when it fulfills, `next` may give
+    /// the step after it (a value or promise it then settles as, or the error that rejects it).
+    fn when<'s>(
+        &self,
+        s: &Scope<'s>,
+        ws: &Scope<'_>,
+        promise: Value<'_>,
+        next: impl for<'w> Fn(&Scope<'w>, Value<'w>) -> Option<JsResult<Value<'w>>> + 'static,
+    ) -> JsResult<()> {
+        let (ok, err) = (self.clone(), self.clone());
+        let next = Rc::new(next);
+        let on_ok = ws.function("fulfilled", move |ws, _, a| {
+            match next(ws, a.get(0)) {
+                None => ok.from_worklet(Persistent::new(ws, a.get(0)), true),
+                Some(Err(e)) => ok.from_worklet(Persistent::new(ws, e.to_value(ws)), false),
+                Some(Ok(after)) => {
+                    if let Err(e) = ok.when_worklet(ws, after) {
+                        ok.from_worklet(Persistent::new(ws, e.to_value(ws)), false);
+                    }
                 }
             }
-        }
-        Err(e) => {
-            // A module that does not parse (or a failed import): the error, in the caller's realm.
-            let d = deferred.borrow_mut().take().ok_or_else(|| JsError::type_error("worklet"))?;
-            d.reject(s, e.to_value(s))?;
+            Ok(ws.undefined())
+        })?;
+        let on_err = ws.function("rejected", move |ws, _, a| {
+            err.from_worklet(Persistent::new(ws, a.get(0)), false);
+            Ok(ws.undefined())
+        })?;
+        let then = promise.as_object().map(|p| p.get_atom("then")).transpose()?.and_then(|t| t.as_object());
+        match (then, promise.as_object()) {
+            (Some(then), Some(p)) => {
+                then.call(Some(p), &[on_ok.value(), on_err.value()])?;
+                Ok(())
+            }
+            // Not a promise: done.
+            _ => self.now(s, Ok(())),
         }
     }
-    Ok(promise)
+
+    /// Settles it as the worklet realm's `value` (a promise or not) settles.
+    fn when_worklet(&self, ws: &Scope<'_>, value: Value<'_>) -> JsResult<()> {
+        let then = value.as_object().map(|p| p.get_atom("then")).transpose()?.and_then(|t| t.as_object());
+        let Some((then, p)) = then.zip(value.as_object()) else {
+            self.from_worklet(Persistent::new(ws, ws.undefined()), true);
+            return Ok(());
+        };
+        let (ok, err) = (self.clone(), self.clone());
+        let on_ok = ws.function("fulfilled", move |ws, _, _| {
+            ok.from_worklet(Persistent::new(ws, ws.undefined()), true);
+            Ok(ws.undefined())
+        })?;
+        let on_err = ws.function("rejected", move |ws, _, a| {
+            err.from_worklet(Persistent::new(ws, a.get(0)), false);
+            Ok(ws.undefined())
+        })?;
+        then.call(Some(p), &[on_ok.value(), on_err.value()])?;
+        Ok(())
+    }
 }
 
 /// `CSS.paintWorklet`: the realm's paint `Worklet` in a secure context, else none.

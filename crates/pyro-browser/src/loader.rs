@@ -894,10 +894,11 @@ struct PageModuleFetcher {
     worklet_modules: Option<pyro_js::WorkletModuleMap>,
 }
 
-/// A worklet module's entry in its worklet's module map while it is fetched. It is marked loaded
+/// A worklet module's entry in its worklet's module map while it is fetched. It is marked fetched
 /// before its source goes to the engine (which may run the rest of the graph, and script waiting on
 /// it, before returning) and unmarked if the engine rejects it; dropped with a fetch that never
-/// loaded, it takes the module out of the map.
+/// completed, it takes the module out of the map. "Fetched" says nothing of the module's imports:
+/// `addModule()` of it waits for its graph (paint_worklet.rs `await_graph`).
 struct WorkletEntry {
     modules: pyro_js::WorkletModuleMap,
     url: String,

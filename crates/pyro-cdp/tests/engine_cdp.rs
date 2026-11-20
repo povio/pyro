@@ -11493,6 +11493,99 @@ fn paint_worklet_add_module_of_a_loaded_import_does_not_fetch_again() {
     assert_eq!(fetched.load(Ordering::SeqCst), 1);
 }
 
+/// Serves a worklet graph a.js -> b.js -> c.js where each request for c.js waits for the test's word
+/// (true: serve it, false: fail it with a 500).
+fn serve_gated_worklet_graph() -> (std::net::SocketAddr, std::sync::mpsc::Sender<bool>) {
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
+    let rx = Arc::new(Mutex::new(rx));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let rx = rx.clone();
+            std::thread::spawn(move || {
+                stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                        _ => break,
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).into_owned();
+                let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+                let (status, ty, body) = match path.as_str() {
+                    "/s/a.js" => ("200 OK", "text/javascript", "import './b.js';"),
+                    "/s/b.js" => ("200 OK", "text/javascript", "import './c.js';"),
+                    "/s/c.js" => match rx.lock().unwrap().recv_timeout(Duration::from_secs(10)) {
+                        Ok(true) => ("200 OK", "text/javascript", "registerPaint('c', class { paint() {} });"),
+                        _ => ("500 Internal Server Error", "text/plain", "failed"),
+                    },
+                    _ => ("200 OK", "text/html", "<!doctype html><p>page</p>"),
+                };
+                let head = format!("HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+            });
+        }
+    });
+    (addr, tx)
+}
+
+/// addModule(B), where B is an import of a graph already loading or loaded (A -> B -> C), settles as
+/// B's own graph completes (B and its imports fetched and evaluated, or failed), as HTML's "fetch a
+/// worklet script graph" does, not when B's source alone has been fetched: added while C is still
+/// loading it waits for C; when C fails (during A's load or before) it rejects.
+#[test]
+fn paint_worklet_add_module_of_an_import_settles_with_its_graph() {
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    let open = |addr: std::net::SocketAddr| {
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+        if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+            h.until_event(|m| m["method"] == "Page.loadEventFired");
+        }
+        value(&mut h, "globalThis.st = {}; globalThis.add = (name, u) => { st[name] = 'pending'; CSS.paintWorklet.addModule(u).then(() => st[name] = 'loaded', (e) => st[name] = 'rejected'); }; 1");
+        h
+    };
+    // Added while A's graph waits for C, which then loads: B waits for C.
+    for c_loads in [true, false] {
+        let (addr, c) = serve_gated_worklet_graph();
+        let mut h = open(addr);
+        value(&mut h, "add('a', '/s/a.js'); 1");
+        h.run_for(300);
+        value(&mut h, "add('b', '/s/b.js'); 1");
+        h.run_for(300);
+        assert_eq!(value(&mut h, "[st.a, st.b].join()"), json!("pending,pending"), "C not served yet (c_loads {c_loads})");
+        for _ in 0..3 {
+            c.send(c_loads).unwrap();
+        }
+        h.run_for(500);
+        let want = if c_loads { "loaded,loaded" } else { "rejected,rejected" };
+        assert_eq!(value(&mut h, "[st.a, st.b].join()"), json!(want), "c_loads {c_loads}");
+    }
+    // Added after A's graph failed on C: B's graph failed too.
+    let (addr, c) = serve_gated_worklet_graph();
+    let mut h = open(addr);
+    for _ in 0..3 {
+        c.send(false).unwrap();
+    }
+    value(&mut h, "add('a', '/s/a.js'); 1");
+    h.run_for(500);
+    assert_eq!(value(&mut h, "st.a"), json!("rejected"));
+    value(&mut h, "add('b', '/s/b.js'); 1");
+    h.run_for(500);
+    assert_eq!(value(&mut h, "st.b"), json!("rejected"));
+}
+
 /// The opener's WindowProxy for a popup targets the browsing context, not a document: once the popup
 /// navigated (here to a document of another origin), the opener's postMessage reaches the popup's
 /// current document.

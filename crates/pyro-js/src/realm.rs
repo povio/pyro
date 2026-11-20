@@ -95,8 +95,9 @@ pub struct RealmOptions {
     pub origin: Option<String>,
 }
 
-/// A worklet's module map, by module URL: `false` while the module is being fetched, `true` once it
-/// loaded into the worklet's realm (a failed one leaves the map). Shared by every graph of the worklet.
+/// A worklet's module map, by module URL: `false` while the module is being fetched, `true` once its
+/// source was handed to the worklet's realm (its own imports may still be loading; a failed one
+/// leaves the map). Shared by every graph of the worklet.
 pub type WorkletModuleMap = Rc<RefCell<std::collections::HashMap<String, bool>>>;
 
 /// Receives ES module fetch requests from a realm (`import`, `import()`).
@@ -1631,6 +1632,30 @@ impl<'s> Scope<'s> {
             return Ok(None);
         }
         self.realm.inline_modules.borrow_mut().insert(url.to_string(), source.to_string());
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
+        let mut err: sys::JSStringRef = ptr::null();
+        let v = unsafe {
+            sys::modules::pyro_jsc_module_load(self.realm.global_ctx()?, url.as_ptr().cast(), url.len(), &mut err)
+        };
+        if v.is_null() {
+            let msg = if err.is_null() {
+                "module loading failed".to_string()
+            } else {
+                unsafe { JsString::from_raw_owned(err) }.to_string()
+            };
+            return Err(JsError::Type(msg.into()));
+        }
+        Ok(Some(unsafe { Value::from_raw(self.ctx, v) }))
+    }
+
+    /// [`Scope::load_module_graph`] for a module already in the registry (requested as another
+    /// graph's import): the promise of its graph, shared with the load in progress, which fulfills
+    /// once the module and its imports are fetched and parsed and rejects with the failure. `None`
+    /// without [`Scope::has_module_phases`].
+    pub fn load_registered_module_graph(&self, url: &str) -> JsResult<Option<Value<'s>>> {
+        if !self.realm.engine.caps.modules || !Self::has_module_phases() {
+            return Ok(None);
+        }
         let _entry = crate::engine::EntryGuard::enter(self.ctx);
         let mut err: sys::JSStringRef = ptr::null();
         let v = unsafe {
