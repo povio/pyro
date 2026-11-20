@@ -1163,8 +1163,13 @@
       if (end === Infinity) throw invalidState('Cannot play reversed Animation with infinite target effect end.');
       seek = end;
     } else if (rate === 0 && ct === null) seek = 0;
-    if (seek !== null) a.holdTime = seek;
-    if (a.holdTime !== null) a.startTime = null;
+    // (An auto-aligned start time leaves the start and hold times unresolved until the pending
+    // play aligns it with an active timeline: on an inactive one the animation shows nothing,
+    // Web Animations 2 "play an animation"; WPT scroll-animations view-timelines/
+    // view-timeline-on-display-none-element.)
+    const aligning = progressBased(a) && a.autoAlign && seek !== null;
+    if (seek !== null) a.holdTime = aligning ? null : seek;
+    if (a.holdTime !== null || aligning) a.startTime = null;
     if (a.pending !== null) {
       cancelPending(a);
       hasPendingReady = true;
