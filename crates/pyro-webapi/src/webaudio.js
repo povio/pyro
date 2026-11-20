@@ -33,7 +33,7 @@
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const queueMicrotaskC = queueMicrotask;
   const reportErrorC = typeof reportError === 'function' ? reportError : () => {};
-  const { sin, cos, asin, acos, exp, pow, floor, ceil, min, max, PI, abs } = Math;
+  const { sin, cos, asin, acos, fround, exp, pow, floor, ceil, min, max, PI, abs } = Math;
   // Captured now: page fake timers installed later do not stall audio.
   const setTimer = setTimeout;
   const perf = performance;
@@ -684,21 +684,29 @@
   function writeEqualPower(bus, left, right, i, pan, gain) {
     if (bus.length === 1) {
       const angle = (pan + 1) * PI / 4;
-      left[i] = gain * (bus[0][i] * cos(angle));
-      right[i] = gain * (bus[0][i] * sin(angle));
+      left[i] = bus[0][i] * cos(angle);
+      right[i] = bus[0][i] * sin(angle);
     } else if (pan <= 0) {
       const angle = (pan + 1) * PI / 2;
-      left[i] = gain * (bus[0][i] + bus[1][i] * cos(angle));
-      right[i] = gain * (bus[1][i] * sin(angle));
+      left[i] = bus[0][i] + bus[1][i] * cos(angle);
+      right[i] = bus[1][i] * sin(angle);
     } else {
       const angle = pan * PI / 2;
-      left[i] = gain * (bus[0][i] * cos(angle));
-      right[i] = gain * (bus[1][i] + bus[0][i] * sin(angle));
+      left[i] = bus[0][i] * cos(angle);
+      right[i] = bus[1][i] + bus[0][i] * sin(angle);
+    }
+    // Distance and cone attenuation act on the stereo PCM produced by the panner.
+    if (gain !== 1) {
+      left[i] *= gain;
+      right[i] *= gain;
     }
   }
 
   function pannerChannels(count) {
-    if (count < 1 || count > 2) throw new DE('A panner accepts one or two input channels.', 'NotSupportedError');
+    if (count < 1 || count > 2) {
+      const kind = this.spatial ? 'spatial' : 'stereo';
+      throw new DE(`A ${kind} panner accepts one or two input channels.`, 'NotSupportedError');
+    }
     this.channelCount = count;
   }
 
@@ -841,7 +849,7 @@
         const horizontal = hypot(side, front);
         if (horizontal) pan = asin(max(-1, min(1, side / horizontal))) * 2 / PI;
       }
-      const gain = distanceAttenuation(n, d) * coneAttenuation(n, dx, dy, dz, d, ox[i], oy[i], oz[i]);
+      const gain = fround(distanceAttenuation(n, d) * coneAttenuation(n, dx, dy, dz, d, ox[i], oy[i], oz[i]));
       for (let j = i; j < i + stride; j++) writeEqualPower(bus, left, right, j, pan, gain);
     }
     return [left, right];
