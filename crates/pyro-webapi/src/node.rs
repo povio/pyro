@@ -2220,19 +2220,19 @@ impl JsClass for Document {
         def.method("execCommand", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.execCommand")?;
             let value = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
-            Ok(s.boolean(crate::edit_commands::exec_command(n.page(), &command, &value)))
+            Ok(s.boolean(crate::edit_commands::exec_command(n.page(), n.id, &command, &value)))
         });
-        def.method("queryCommandSupported", 1, |s, _n, a| {
+        def.method("queryCommandSupported", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandSupported")?;
-            Ok(s.boolean(crate::edit_commands::query_supported(&command)))
+            Ok(s.boolean(n.id == n.page().document() && crate::edit_commands::query_supported(&command)))
         });
         def.method("queryCommandEnabled", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandEnabled")?;
-            Ok(s.boolean(crate::edit_commands::query_enabled(n.page(), &command)))
+            Ok(s.boolean(crate::edit_commands::query_enabled(n.page(), n.id, &command)))
         });
         def.method("queryCommandState", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandState")?;
-            Ok(s.boolean(crate::edit_commands::query_state(n.page(), &command)))
+            Ok(s.boolean(crate::edit_commands::query_state(n.page(), n.id, &command)))
         });
         def.method("queryCommandIndeterm", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandIndeterm")?;
@@ -2240,7 +2240,7 @@ impl JsClass for Document {
         });
         def.method("queryCommandValue", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandValue")?;
-            Ok(s.string(&crate::edit_commands::query_value(n.page(), &command)))
+            Ok(s.string(&crate::edit_commands::query_value(n.page(), n.id, &command)))
         });
         def.method("caretRangeFromPoint", 0, crate::editing_globals::caret_range_from_point);
         def.method("caretPositionFromPoint", 2, crate::editing_globals::caret_position_from_point);

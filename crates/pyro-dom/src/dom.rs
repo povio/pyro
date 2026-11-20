@@ -935,6 +935,8 @@ impl Dom {
             activated: NIL,
             focus_visible: false,
             design_mode: false,
+            style_with_css: false,
+            default_paragraph_separator: "div",
             document_element: NIL,
             head: NIL,
             body: NIL,
@@ -956,6 +958,27 @@ impl Dom {
     /// HTML `document.designMode` of `doc`: whether the whole document is editable.
     pub fn design_mode(&self, doc: NodeId) -> bool {
         self.check(doc).ok().is_some_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.design_mode))
+    }
+
+    pub fn set_style_with_css(&mut self, doc: NodeId, css: bool) -> DomResult<()> {
+        let i = self.check(doc)?;
+        let NodeKind::Document(d) = &mut self.n_mut(i).kind else { return Err(DomError::Type("not a document")) };
+        d.style_with_css = css;
+        Ok(())
+    }
+
+    pub fn set_paragraph_separator(&mut self, doc: NodeId, value: &str) -> DomResult<bool> {
+        let tag = if value.eq_ignore_ascii_case("div") {
+            "div"
+        } else if value.eq_ignore_ascii_case("p") {
+            "p"
+        } else {
+            return Ok(false);
+        };
+        let i = self.check(doc)?;
+        let NodeKind::Document(d) = &mut self.n_mut(i).kind else { return Err(DomError::Type("not a document")) };
+        d.default_paragraph_separator = tag;
+        Ok(true)
     }
 
     /// Sets `doc`'s `designMode` (`on`).
