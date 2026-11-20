@@ -510,13 +510,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let thickness = bars.thickness as f64 * s;
         let Some(root) = self.root_element_id.and_then(|id| self.dom.get_node(id)) else { return };
         let colors = ClassicScrollbarColors::of(root);
-        // The document's extent (CSS px): the root's margin box and its scrollable overflow.
+        // The document's extent (CSS px): the root's margin box and its scrollable overflow as
+        // resolved (with transforms: css-transforms transform-translate-001, a translated box
+        // overflowing the viewport), as the document's scrollWidth/scrollHeight.
+        let doc_scale = self.dom.as_ref().viewport().scale_f64();
         let (doc_width, doc_height) = self.root_element_id.and_then(|id| self.dom.get_node(id)).map_or((0.0, 0.0), |root| {
             let l = root.final_layout();
-            let overflow = l.scrollable_overflow_rect.rect();
+            let overflow = root.scrollable_overflow().scale_from_origin(1.0 / doc_scale);
             (
-                (l.location.x + l.size.width + l.margin.right).max(l.location.x + overflow.right) as f64,
-                (l.location.y + l.size.height + l.margin.bottom).max(l.location.y + overflow.bottom) as f64,
+                ((l.location.x + l.size.width + l.margin.right) as f64).max(l.location.x as f64 + overflow.x1),
+                ((l.location.y + l.size.height + l.margin.bottom) as f64).max(l.location.y as f64 + overflow.y1),
             )
         });
         let origin = Vec2::new(self.initial_x, self.initial_y);
