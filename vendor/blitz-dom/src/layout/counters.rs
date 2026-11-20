@@ -448,9 +448,11 @@ impl BaseDocument {
         };
         self.pending_images.insert(url.to_string(), vec![(node_id, ImageType::Image)]);
         let doc_id = self.id();
+        let mut request = self.build_request(parsed);
+        request.options.destination = blitz_traits::net::Destination::Image;
         self.net_provider.fetch(
             doc_id,
-            self.build_request(parsed),
+            request,
             ResourceHandler::boxed(
                 self.tx.clone(),
                 doc_id,

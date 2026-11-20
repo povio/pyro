@@ -269,6 +269,38 @@ fn the_style_sheet_is_the_referrer_of_its_url_requests() {
     assert_eq!(of("d.png"), Some(None), "inline style: the document: {referrers:?}");
 }
 
+/// An external sheet at the document's own URL is an external sheet: its `url()`s have it as
+/// their referrer. Inline CSS is told by the sheet's identity, never by comparing its URL with
+/// the document's (which made this sheet's requests the document's: security review cycle 3, B2).
+#[test]
+fn an_external_sheet_at_the_documents_url_is_still_the_referrer() {
+    let recorder = Arc::new(Recorder::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let mut sheets = std::collections::HashMap::new();
+    sheets.insert(
+        "http://test/doc.html".to_owned(),
+        "#e { width: 10px; height: 10px; background-image: url(\"e.png\") }".to_owned(),
+    );
+    let snapshot = Snapshot {
+        html: "<!doctype html><link rel=stylesheet href='http://test/doc.html'>\
+               <style>#d { width: 10px; height: 10px; background-image: url(\"d.png\" referrer-policy(unsafe-url)) }</style>\
+               <div id=e></div><div id=d></div><div id=s style='width:10px;height:10px;background-image:url(s.png)'></div>"
+            .into(),
+        base_url: "http://test/doc.html".into(),
+        sheets,
+        width: 100,
+        height: 50,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let referrers = recorder.2.lock().unwrap().clone();
+    let of = |name: &str| referrers.iter().find(|(url, _)| url.ends_with(name)).map(|(_, r)| r.clone());
+    assert_eq!(of("e.png"), Some(Some("http://test/doc.html".to_owned())), "the external sheet: {referrers:?}");
+    assert_eq!(of("d.png"), Some(None), "inline style: the document: {referrers:?}");
+    assert_eq!(of("s.png"), None, "a style attribute's plain url() is a default request: {referrers:?}");
+}
+
 /// Serves `a.css` as redirected to `http://elsewhere.test/dir/a.css`, whose body imports
 /// `b.css`; records every URL asked for.
 #[derive(Default)]

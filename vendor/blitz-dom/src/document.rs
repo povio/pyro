@@ -1842,9 +1842,11 @@ impl BaseDocument {
                     if href == href_to_reload
                         && let Some(resolved_href) = self.resolve_url(href)
                     {
+                        let mut request = self.build_request(resolved_href.clone());
+                        request.options.destination = blitz_traits::net::Destination::Style;
                         self.net_provider.fetch(
                             self.id(),
-                            self.build_request(resolved_href.clone()),
+                            request,
                             ResourceHandler::boxed(
                                 self.tx.clone(),
                                 self.id,
@@ -1981,11 +1983,8 @@ impl BaseDocument {
         &self,
         mut options: blitz_traits::net::FetchOptions,
     ) -> blitz_traits::net::FetchOptions {
-        // pyro: an inline sheet's `url()` (its sheet is at the document's base URL) has the
-        // document as its referrer, the fetch's default (Blink: the document's outgoing referrer).
-        if options.referrer.as_ref().is_some_and(|referrer| *referrer == *self.base_url()) {
-            options.referrer = None;
-        }
+        // pyro: (an inline sheet's `url()` has the document as its referrer already:
+        // `net::url_fetch_options`, by the sheet's identity, never by comparing URLs.)
         if !options.is_default() {
             options.client = self.request_client();
         }
@@ -2087,6 +2086,7 @@ impl BaseDocument {
                 abort_signal: self.abort_signal.clone(),
                 import_depth: 0,
                 client: self.request_client(),
+                inline: Some(self.url.inline_url_data().clone()),
             }),
             None,
             QuirksMode::NoQuirks,

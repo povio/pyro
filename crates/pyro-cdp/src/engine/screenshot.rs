@@ -227,7 +227,7 @@ impl Fetcher for PageFetcher {
     /// document's, a child frame's too, never the top document's or another document's.
     fn defers(&self, url: &str, options: &pyro_render::FetchOptions) -> bool {
         let client = self.client_of(options);
-        let image = pyro_render::is_plain_cors(options) || kind_of(url) == ResourceKind::Image;
+        let image = kind_of(options) == ResourceKind::Image;
         let Some(document) = self.documents.get(client) else { return false };
         image
             && (url.starts_with("http://") || url.starts_with("https://"))
@@ -288,8 +288,7 @@ impl PageFetcher {
     ) {
         let page = self.page;
         let source = options.clone();
-        // A CORS fetch without other options is an image's (`shape-outside`, `mask-image`).
-        let kind = if pyro_render::is_plain_cors(options) { ResourceKind::Image } else { kind_of(&url) };
+        let kind = kind_of(options);
         let cors = options.cors.is_some();
         let mut options = subresource_options(options);
         options.client.get_or_insert_with(|| self.client.clone());
@@ -351,14 +350,14 @@ pub(super) fn subresource_options(options: &pyro_render::FetchOptions) -> pyro_b
     }
 }
 
-fn kind_of(url: &str) -> ResourceKind {
-    let path = url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
-    if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
-        ResourceKind::Font
-    } else if path.ends_with(".css") {
-        ResourceKind::Stylesheet
-    } else {
-        ResourceKind::Image
+/// pyro: what a renderer request's response is used as: its destination, from where it was made
+/// (never its URL: an image at `image.css` is an image, with an image's credentials and load
+/// gate). One that says none is an image (a CSS image or reference).
+fn kind_of(options: &pyro_render::FetchOptions) -> ResourceKind {
+    match options.destination {
+        pyro_render::Destination::Font => ResourceKind::Font,
+        pyro_render::Destination::Style => ResourceKind::Stylesheet,
+        _ => ResourceKind::Image,
     }
 }
 

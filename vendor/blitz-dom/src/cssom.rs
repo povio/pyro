@@ -338,6 +338,7 @@ impl BaseDocument {
             abort_signal: self.abort_signal.clone(),
             import_depth: 0,
             client: self.request_client(),
+            inline: Some(self.url.inline_url_data().clone()),
         }
     }
 

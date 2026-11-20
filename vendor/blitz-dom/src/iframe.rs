@@ -177,7 +177,11 @@ impl BaseDocument {
         let signal = self.new_iframe_generation(node_id, Some(handler.request_id()));
         self.net_provider.fetch(
             self.id(),
-            stamped_request(url, Some(&signal)),
+            {
+                let mut request = stamped_request(url, Some(&signal));
+                request.options.destination = blitz_traits::net::Destination::Document;
+                request
+            },
             Box::new(handler),
         );
     }

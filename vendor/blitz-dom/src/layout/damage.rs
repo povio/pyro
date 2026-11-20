@@ -1048,7 +1048,7 @@ impl BaseDocument {
             .into_iter()
             .map(|candidate| match candidate {
                 ReferenceCandidate::Url(url, modifiers) => {
-                    Some((url.clone(), crate::net::url_fetch_options(modifiers)))
+                    Some((url.clone(), crate::net::url_fetch_options(modifiers, Some(self.url.inline_url_data()))))
                 }
                 ReferenceCandidate::Attr(raw) => {
                     self.resolve_url(raw).map(|url| (ServoArc::new(url), Default::default()))
@@ -1095,7 +1095,7 @@ impl BaseDocument {
             } else {
                 self.pending_images.insert(url_str.to_string(), vec![(node_id, kind)]);
                 let mut request = crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref());
-                request.options = options.clone();
+                request.options = options.clone().for_destination(blitz_traits::net::Destination::Image);
                 self.net_provider.fetch(
                     doc_id,
                     request,
@@ -1137,7 +1137,6 @@ impl BaseDocument {
             ..Default::default()
         });
         let document_url: url::Url = (*self.url).clone();
-        let document_base: url::Url = self.base_url().clone();
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
         // borrow of `node` (held by the stylo element data guard) is released
@@ -1198,11 +1197,9 @@ impl BaseDocument {
                     //
                     // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5
                     // § 4.5.4), its response kept apart from the same URL fetched otherwise.
-                    let mut options = crate::net::url_fetch_options(modifiers.as_deref());
-                    // (An inline sheet's referrer is the document: `BaseDocument::request_options`.)
-                    if options.referrer.as_ref() == Some(&document_base) {
-                        options.referrer = None;
-                    }
+                    // (An inline sheet's referrer is the document: by its identity, `url_fetch_options`.)
+                    let mut options =
+                        crate::net::url_fetch_options(modifiers.as_deref(), Some(self.url.inline_url_data()));
                     if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask)
                         && options.cors.is_none()
                         && new_url.scheme() != "data"
@@ -1244,7 +1241,7 @@ impl BaseDocument {
 
                         let mut request =
                             crate::net::stamped_request((**new_url).clone(), self.abort_signal.as_ref());
-                        request.options = options.clone();
+                        request.options = options.clone().for_destination(blitz_traits::net::Destination::Image);
                         self.net_provider.fetch(
                             doc_id,
                             request,

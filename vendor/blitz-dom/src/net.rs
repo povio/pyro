@@ -52,11 +52,14 @@ pub fn is_cors_request(request: &Request) -> bool {
 /// pyro: what a `url()`'s request URL modifiers ask of its request (CSS Values 5 § 4.5.4):
 /// `cross-origin()` its mode and credentials, `integrity()` its integrity metadata,
 /// `referrer-policy()` its referrer policy. The style sheet the `url()` was written in is its
-/// referrer whatever the mode, as Blink sends it (`CSSImageValue::PrepareFetch`); a sheet at the
-/// document's base URL (inline style) is left to the document ([`BaseDocument::css_options`]).
-///
-/// [`BaseDocument::css_options`]: crate::BaseDocument
-pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) -> blitz_traits::net::FetchOptions {
+/// referrer whatever the mode, as Blink sends it (`CSSImageValue::PrepareFetch`); a `url()` of the
+/// document's own CSS (its referrer is `inline`, the document's URL data, by identity:
+/// `DocumentUrl::inline_url_data`) leaves it to the document. Never decided by comparing URLs:
+/// an external sheet at the document's URL is an external sheet.
+pub fn url_fetch_options(
+    modifiers: Option<&style::url::RequestUrlModifiers>,
+    inline: Option<&style::servo_arc::Arc<url::Url>>,
+) -> blitz_traits::net::FetchOptions {
     use blitz_traits::net::{CorsCredentials, FetchOptions};
     use style::url::CrossOriginModifier;
     let Some(modifiers) = modifiers else { return FetchOptions::default() };
@@ -68,8 +71,13 @@ pub fn url_fetch_options(modifiers: Option<&style::url::RequestUrlModifiers>) ->
         cors,
         integrity: modifiers.integrity.clone(),
         referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
-        referrer: modifiers.referrer.as_ref().map(|url| (**url).clone()),
+        referrer: modifiers
+            .referrer
+            .as_ref()
+            .filter(|url| !inline.is_some_and(|inline| style::servo_arc::Arc::ptr_eq(url, inline)))
+            .map(|url| (**url).clone()),
         client: None,
+        destination: Default::default(),
     }
 }
 
@@ -81,7 +89,7 @@ pub fn asks_same_request(
     modifiers: Option<&style::url::RequestUrlModifiers>,
 ) -> bool {
     // (The referrer is the sheet's, which an inline sheet's request leaves to the document.)
-    let wanted = url_fetch_options(modifiers);
+    let wanted = url_fetch_options(modifiers, None);
     stored.integrity == wanted.integrity
         && stored.referrer_policy == wanted.referrer_policy
         && (wanted.cors.is_none() || stored.cors == wanted.cors)
@@ -258,6 +266,7 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
                 abort_signal: self.data.abort_signal.clone(),
                 import_depth: 0,
                 client: self.data.client.clone(),
+                inline: None,
             }),
             None, // error_reporter
             QuirksMode::NoQuirks,
@@ -300,6 +309,9 @@ pub(crate) struct StylesheetLoader {
     /// pyro: the client of the document's requests made with other than the defaults
     /// (`BaseDocument::request_options`): `Some` in a frame's document (`""`: one without an id).
     pub(crate) client: Option<String>,
+    /// pyro: the document's own URL data (`DocumentUrl::inline_url_data`) for a loader of the
+    /// document's own CSS: an `@import` written there has the document as its referrer.
+    pub(crate) inline: Option<style::servo_arc::Arc<url::Url>>,
 }
 impl ServoStylesheetLoader for StylesheetLoader {
     fn request_stylesheet(
@@ -337,7 +349,7 @@ impl ServoStylesheetLoader for StylesheetLoader {
         let modifiers = import.url.modifiers().map(|m| &**m).filter(|m| {
             m.cross_origin.is_some() || m.integrity.is_some() || m.referrer_policy.is_some()
         });
-        request.options = url_fetch_options(modifiers);
+        request.options = url_fetch_options(modifiers, self.inline.as_ref()).for_destination(blitz_traits::net::Destination::Style);
         // pyro: a frame document's import (nested ones too) is its frame's request.
         if !request.options.is_default() {
             request.options.client = self.client.clone();
@@ -667,9 +679,11 @@ pub(crate) fn fetch_font_face_rules<'a>(
         })
         .for_each(|(source_list, overrides)| {
             if let Some((url, format)) = preferred_font_source(source_list) {
+                let mut request = stamped_request(url, abort_signal);
+                request.options.destination = blitz_traits::net::Destination::Font;
                 network_provider.fetch(
                     doc_id,
-                    stamped_request(url, abort_signal),
+                    request,
                     ResourceHandler::boxed(
                         tx.clone(),
                         doc_id,

@@ -827,6 +827,9 @@ pub struct StyleEngine {
     doc: NodeId,
     viewport: Viewport,
     sheets: Vec<Sheet>,
+    /// pyro: the URL of the response each `<link>`'s sheet text came from (after redirects):
+    /// its URLs resolve against it, in the renderer too ([`StyleEngine::sheet_url`]).
+    sheet_urls: rustc_hash::FxHashMap<NodeId, String>,
     popover_open: FxHashSet<NodeId>,
     generation: u64,
     /// Generation bumps by [`StyleEngine::invalidate`] (anything but a sheet
@@ -934,6 +937,7 @@ impl StyleEngine {
             viewport,
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
+            sheet_urls: rustc_hash::FxHashMap::default(),
             generation: 0,
             invalidations: 0,
             memo: RefCell::default(),
@@ -1523,6 +1527,21 @@ impl StyleEngine {
     /// Replaces the text of a loader-supplied sheet (or adds it).
     pub fn set_sheet_text(&mut self, owner: NodeId, text: &str) {
         self.add_sheet(owner, SheetSource::Text(text.to_owned()));
+    }
+
+    /// pyro: `owner`'s sheet text is the response at `url` (its URL after redirects); `None`: not
+    /// a response's (a reserved slot, CSSOM text).
+    pub fn set_sheet_url(&mut self, owner: NodeId, url: Option<&str>) {
+        match url {
+            Some(url) => self.sheet_urls.insert(owner, url.to_owned()),
+            None => self.sheet_urls.remove(&owner),
+        };
+    }
+
+    /// pyro: the URL of the response `owner`'s sheet text came from ([`Self::set_sheet_url`]):
+    /// the sheet's location, which its relative URLs resolve against.
+    pub fn sheet_url(&self, owner: NodeId) -> Option<&str> {
+        self.sheet_urls.get(&owner).map(String::as_str)
     }
 
     pub fn remove_sheet(&mut self, owner: NodeId) -> bool {

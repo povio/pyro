@@ -1929,7 +1929,12 @@ fn import_url(r: &RuleData) -> Option<(Rc<PageDom>, String)> {
     let href = import_href(r);
     match &r.owner {
         SheetOwner::Node(h, _) => {
-            let url = crate::html::resolve_url(&h.page.dom.borrow(), h.id, &href);
+            // pyro: a linked sheet's own URL (after redirects) is its imports' base.
+            let own = h.page.layout().style().sheet_url(h.id).and_then(|u| url::Url::parse(u).ok());
+            let url = match own.and_then(|base| base.join(&href).ok()) {
+                Some(url) => url.to_string(),
+                None => crate::html::resolve_url(&h.page.dom.borrow(), h.id, &href),
+            };
             Some((h.page.clone(), url))
         }
         SheetOwner::Constructed(c) => {

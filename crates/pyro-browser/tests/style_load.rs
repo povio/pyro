@@ -372,3 +372,25 @@ fn a_repointed_link_gets_a_new_sheet_and_retained_rule_lists_see_none_of_it() {
     );
     assert_eq!(adopted, "SecurityError|NotAllowedError|NotAllowedError|0");
 }
+
+/// A linked sheet redirected to another directory is at its URL after redirects: the render
+/// snapshot names it there (so the renderer resolves its `url()`s against it, as layout does) and
+/// its `@import`s resolve against it in CSSOM too. Layout took the requested href as the sheet's
+/// URL (security review cycle 3, B1).
+#[test]
+fn a_redirected_link_sheet_is_at_its_final_url() {
+    let (mut thread, page, loader) = setup("<link id=l rel=stylesheet href=a.css>");
+    loader.insert("http://site.test/a.css", "text/css", "@import \"b.css\"; p { background: url(icon.png) }", Duration::ZERO);
+    loader.insert("http://site.test/dir/b.css", "text/css", "q { }", Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Redirected(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    let snapshot = page_dom.render_snapshot("http://site.test/", None);
+    assert!(snapshot.html.contains("href=\"http://site.test/dir/a.css\""), "{}", snapshot.html);
+    assert!(snapshot.sheets.contains_key("http://site.test/dir/a.css"), "{:?}", snapshot.sheets.keys());
+    assert_eq!(
+        eval(&thread, page, "document.getElementById('l').sheet.cssRules[0].styleSheet?.href ?? 'none'"),
+        "http://site.test/dir/b.css"
+    );
+}

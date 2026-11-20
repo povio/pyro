@@ -92,7 +92,12 @@ impl LocalFiles {
     /// The document's network body of `url` fetched as `options` say. A miss starts the fetch in
     /// the background (into the document's bodies) and answers `None` now: a layout never waits
     /// for the network (a request held by interception needs this thread).
-    fn network(&self, url: &pyro_net::Url, options: &SubresourceOptions) -> Option<Arc<LayoutBody>> {
+    fn network(
+        &self,
+        url: &pyro_net::Url,
+        options: &SubresourceOptions,
+        destination: pyro_render::Destination,
+    ) -> Option<Arc<LayoutBody>> {
         // No network of its own: nothing goes out, never through another
         // context's client.
         let loader = self.loader.as_ref()?;
@@ -107,20 +112,17 @@ impl LocalFiles {
         if let Some(body) = bodies.get(&key) {
             return Some(body);
         }
-        let path = url.path().to_ascii_lowercase();
-        let font = [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e));
+        // pyro: what the response is used as comes from where the request was made (its
+        // destination), never from its URL: an image at `image.css` is an image.
         let plain_cors = options.crossorigin.as_deref() == Some("anonymous")
             && options.integrity.is_none()
             && options.referrer.is_none()
             && options.referrer_policy.is_none();
-        let kind = if plain_cors {
-            SubresourceKind::CorsImage
-        } else if font {
-            SubresourceKind::Font
-        } else if path.ends_with(".css") || url.host_str() == Some("fonts.googleapis.com") {
-            SubresourceKind::Style
-        } else {
-            SubresourceKind::Image
+        let kind = match destination {
+            pyro_render::Destination::Font => SubresourceKind::Font,
+            pyro_render::Destination::Style => SubresourceKind::Style,
+            _ if plain_cors => SubresourceKind::CorsImage,
+            _ => SubresourceKind::Image,
         };
         match kind {
             SubresourceKind::Font => loader.font_asked(&key),
@@ -156,7 +158,13 @@ impl LocalFiles {
 
     /// `url` as `options` say: a local body, or the document's network body (with its final URL
     /// and tainting from the stored value).
-    fn load(&self, url: String, options: &SubresourceOptions, done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>) {
+    fn load(
+        &self,
+        url: String,
+        options: &SubresourceOptions,
+        destination: pyro_render::Destination,
+        done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
+    ) {
         let body = (|| {
             // A data: URL (as serialized by the url crate) holds its body.
             if url.starts_with("data:") {
@@ -171,7 +179,7 @@ impl LocalFiles {
                     None => match self.statics.resolve(&u, false) {
                         Some(hit) => std::fs::read(hit.path).ok(),
                         // The loader checks a network response's integrity.
-                        None if matches!(u.scheme(), "http" | "https") => return self.network(&u, options),
+                        None if matches!(u.scheme(), "http" | "https") => return self.network(&u, options, destination),
                         None => None,
                     },
                 },
@@ -202,7 +210,7 @@ impl Fetcher for LocalFiles {
     }
 
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        self.load(url, &SubresourceOptions::default(), body_only(done))
+        self.load(url, &SubresourceOptions::default(), Default::default(), body_only(done))
     }
 
     /// pyro: as the screenshot's fetcher does, so layout queries and screenshots agree.
@@ -212,14 +220,14 @@ impl Fetcher for LocalFiles {
         options: &pyro_render::FetchOptions,
         done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
     ) {
-        self.load(url, &layout_options(options), body_only(done))
+        self.load(url, &layout_options(options), options.destination, body_only(done))
     }
 
     /// `data:` and `file:` URLs and `serve --static` roots are this process's own; the network's
     /// responses pass the CORS check or fail.
     fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let options = SubresourceOptions { crossorigin: Some("anonymous".to_owned()), ..Default::default() };
-        self.load(url, &options, body_only(done))
+        self.load(url, &options, pyro_render::Destination::Image, body_only(done))
     }
 
     /// pyro: with the response's URL after redirects and its tainting, from the stored body, so a
@@ -230,7 +238,7 @@ impl Fetcher for LocalFiles {
         options: &pyro_render::FetchOptions,
         done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
     ) {
-        self.load(url, &layout_options(options), done)
+        self.load(url, &layout_options(options), options.destination, done)
     }
 }
 
@@ -298,15 +306,18 @@ mod document_bodies_tests {
         log: Arc<Mutex<Vec<(&'static str, String)>>>,
         final_url: Option<&'static str>,
         opaque: bool,
+        kinds: Arc<Mutex<Vec<SubresourceKind>>>,
+        asked_images: Arc<Mutex<Vec<String>>>,
     }
     impl SubresourceLoader for Loader {
         fn load(
             &self,
             url: String,
-            _kind: SubresourceKind,
+            kind: SubresourceKind,
             _options: &SubresourceOptions,
             done: Box<dyn FnOnce(Result<LayoutBody, String>) + Send>,
         ) {
+            self.kinds.lock().unwrap().push(kind);
             self.log.lock().unwrap().push((self.document, url.clone()));
             let final_url = self.final_url.map_or(url, str::to_owned);
             done(Ok(LayoutBody { bytes: Arc::new(b"ok".to_vec()), final_url, opaque: self.opaque, status: 200 }));
@@ -317,6 +328,9 @@ mod document_bodies_tests {
         fn document(&self) -> String {
             self.document.to_owned()
         }
+        fn image_asked(&self, key: &LayoutBodyKey) {
+            self.asked_images.lock().unwrap().push(key.url().to_owned());
+        }
     }
 
     fn files(
@@ -326,7 +340,15 @@ mod document_bodies_tests {
         final_url: Option<&'static str>,
         opaque: bool,
     ) -> LocalFiles {
-        let loader = Loader { document, bodies: bodies.clone(), log: log.clone(), final_url, opaque };
+        let loader = Loader {
+            document,
+            bodies: bodies.clone(),
+            log: log.clone(),
+            final_url,
+            opaque,
+            kinds: Arc::default(),
+            asked_images: Arc::default(),
+        };
         LocalFiles {
             statics: pyro_net::StaticFiles::default(),
             loader: Some(Arc::new(loader) as Arc<dyn SubresourceLoader>),
@@ -351,10 +373,10 @@ mod document_bodies_tests {
             (files(&bodies, &log, "F1#L1", None, false), files(&bodies, &log, "F2#L2", None, false), files(&bodies, &log, "F1#L3", None, false));
         let url = pyro_net::Url::parse("http://img.test/shape.png").unwrap();
         for options in [SubresourceOptions::default(), SubresourceOptions { crossorigin: Some("anonymous".into()), ..Default::default() }] {
-            assert_eq!(a.network(&url, &options), None, "the first load starts");
-            assert_eq!(a.network(&url, &options).map(|b| b.bytes.to_vec()), Some(b"ok".to_vec()), "A reuses its own");
-            assert_eq!(sibling.network(&url, &options), None, "a same-origin sibling asks for itself");
-            assert_eq!(next.network(&url, &options), None, "the frame's next document asks for itself");
+            assert_eq!(a.network(&url, &options, pyro_render::Destination::Image), None, "the first load starts");
+            assert_eq!(a.network(&url, &options, pyro_render::Destination::Image).map(|b| b.bytes.to_vec()), Some(b"ok".to_vec()), "A reuses its own");
+            assert_eq!(sibling.network(&url, &options, pyro_render::Destination::Image), None, "a same-origin sibling asks for itself");
+            assert_eq!(next.network(&url, &options, pyro_render::Destination::Image), None, "the frame's next document asks for itself");
         }
         assert_eq!((loads(&log, "F1#L1"), loads(&log, "F2#L2"), loads(&log, "F1#L3")), (2, 2, 2));
     }
@@ -397,5 +419,37 @@ mod document_bodies_tests {
         assert!(bodies.start(&pending));
         bodies.forget_document("F1#L1");
         assert!(bodies.get(&key).is_none() && !bodies.pending(&pending));
+    }
+
+    /// A request's destination is where it was made, never its URL: a CSS image at `image.css`
+    /// goes out as an image (an image's credentials) and its document's load waits for it; a
+    /// style sheet at `sheet.png` goes out as a style sheet (security review cycle 3, B3).
+    #[test]
+    fn the_destination_is_the_requests_use_not_its_url() {
+        let kinds = Arc::new(Mutex::new(Vec::new()));
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let loader = Loader {
+            document: "F#L",
+            bodies: Arc::default(),
+            log: Arc::default(),
+            final_url: None,
+            opaque: false,
+            kinds: kinds.clone(),
+            asked_images: asked.clone(),
+        };
+        let files = LocalFiles {
+            statics: pyro_net::StaticFiles::default(),
+            loader: Some(Arc::new(loader) as Arc<dyn SubresourceLoader>),
+            failed: Arc::default(),
+        };
+        let image = pyro_net::Url::parse("http://img.test/image.css").unwrap();
+        let sheet = pyro_net::Url::parse("http://img.test/sheet.png").unwrap();
+        let font = pyro_net::Url::parse("http://img.test/font.css").unwrap();
+        files.network(&image, &SubresourceOptions::default(), pyro_render::Destination::Image);
+        files.network(&sheet, &SubresourceOptions::default(), pyro_render::Destination::Style);
+        files.network(&font, &SubresourceOptions::default(), pyro_render::Destination::Font);
+        let kinds: Vec<String> = kinds.lock().unwrap().iter().map(|k| format!("{k:?}")).collect();
+        assert_eq!(kinds, ["Image", "Style", "Font"]);
+        assert_eq!(*asked.lock().unwrap(), ["http://img.test/image.css"], "the load gate waits for the image");
     }
 }

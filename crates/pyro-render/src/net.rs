@@ -94,7 +94,8 @@ pub struct Fetched {
 /// pyro: whether `options` ask only for a CORS fetch with credentials to the same origin
 /// ([`Fetcher::fetch_cors`]).
 pub fn is_plain_cors(options: &blitz_traits::net::FetchOptions) -> bool {
-    *options
+    // (Whatever its destination.)
+    blitz_traits::net::FetchOptions { destination: Default::default(), ..options.clone() }
         == blitz_traits::net::FetchOptions {
             cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
             ..Default::default()

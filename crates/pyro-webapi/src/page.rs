@@ -1800,6 +1800,19 @@ impl PageDom {
     pub fn set_stylesheet_text(&self, link: NodeId, text: &str) {
         self.layout.borrow_mut().style_mut().set_sheet_text(link, text);
     }
+    /// pyro: reserves `link`'s cascade slot for the response it now loads (empty, of no URL yet).
+    pub fn reserve_stylesheet(&self, link: NodeId) {
+        let mut layout = self.layout.borrow_mut();
+        layout.style_mut().set_sheet_url(link, None);
+        layout.style_mut().set_sheet_text(link, "");
+    }
+    /// pyro: [`Self::set_stylesheet_text`] of the response at `url` (after redirects), which the
+    /// sheet's URLs resolve against, in layout and in the renderer.
+    pub fn set_stylesheet_response(&self, link: NodeId, url: &str, text: &str) {
+        let mut layout = self.layout.borrow_mut();
+        layout.style_mut().set_sheet_url(link, Some(url));
+        layout.style_mut().set_sheet_text(link, text);
+    }
     pub fn current_script(&self) -> Option<NodeId> {
         self.current_script.get()
     }

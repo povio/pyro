@@ -230,7 +230,7 @@ impl Browser {
             bindings.block_rendering(node, blocker);
         }
         // Reserve a cascade slot now; completion order must not reorder sheets.
-        bindings.set_stylesheet_text(node, "");
+        bindings.reserve_stylesheet(node);
         let weak = Rc::downgrade(&bindings);
         let cors = crossorigin.is_some();
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
@@ -329,7 +329,8 @@ impl Browser {
             sheet.bytes = text.len();
             sheets.bytes += text.len();
             bindings.set_sheet_response(node, !opaque);
-            bindings.set_stylesheet_text(node, &text);
+            // pyro: at its URL after redirects, which its URLs resolve against.
+            bindings.set_stylesheet_response(node, &sheet_url, &text);
         } else {
             bindings.set_sheet_response(node, !opaque);
             remove_sheet(bindings, node);

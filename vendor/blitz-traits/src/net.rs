@@ -121,12 +121,38 @@ pub struct FetchOptions {
     /// the request is that frame's, with its origin (opaque in a sandboxed frame), which a CORS
     /// check compares the response with. Never a URL, which several frames can share.
     pub client: Option<String>,
+    /// pyro: what the response is used as (Fetch's destination), from where the request is made,
+    /// never from its URL: its `Accept`, `Sec-Fetch-Dest` and credentials follow it. Not part
+    /// of [`Self::is_default`] (it says what the request is for, not how it is made).
+    pub destination: Destination,
+}
+
+/// pyro: a request's destination (Fetch § 2.2.5), as the code that makes it knows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Destination {
+    /// Not said (an embedder's own request).
+    #[default]
+    Unknown,
+    /// A CSS image, an `<img>`, an SVG reference (`image`).
+    Image,
+    /// A web font (`font`).
+    Font,
+    /// A style sheet, an `@import`ed one included (`style`).
+    Style,
+    /// A frame's document (`iframe`).
+    Document,
 }
 
 impl FetchOptions {
-    /// Whether these are a sub-resource's defaults.
+    /// Whether these are a sub-resource's defaults (the destination aside).
     pub fn is_default(&self) -> bool {
-        *self == Self::default()
+        Self { destination: Destination::Unknown, ..self.clone() } == Self::default()
+    }
+
+    /// pyro: these, for a request whose response is used as `destination`.
+    pub fn for_destination(mut self, destination: Destination) -> Self {
+        self.destination = destination;
+        self
     }
 
     /// The key a response to `url` fetched with these options is cached by: one fetched with
@@ -134,6 +160,15 @@ impl FetchOptions {
     /// checked against other integrity metadata, or one sent another referrer). A space is
     /// never in a serialized URL.
     pub fn cache_key(&self, url: &str) -> String {
+        // pyro: a response used as one destination (fetched with its `Accept`, credentials)
+        // never stands in for another's.
+        match self.destination {
+            Destination::Unknown => self.request_key(url),
+            destination => format!("dest={destination:?} {}", self.request_key(url)),
+        }
+    }
+
+    fn request_key(&self, url: &str) -> String {
         if self.is_default() {
             return url.to_owned();
         }

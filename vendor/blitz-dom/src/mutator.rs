@@ -1874,11 +1874,10 @@ impl<'doc> DocumentMutator<'doc> {
                 .insert(handler.request_id());
         }
 
-        self.doc.net_provider.fetch(
-            self.doc.id(),
-            self.doc.build_request(url),
-            Box::new(handler),
-        );
+        // pyro: a style sheet's request (its destination says so, never its URL).
+        let mut request = self.doc.build_request(url);
+        request.options.destination = blitz_traits::net::Destination::Style;
+        self.doc.net_provider.fetch(self.doc.id(), request, Box::new(handler));
     }
 
     fn unload_stylesheet(&mut self, node_id: NodeId) {
@@ -2039,7 +2038,7 @@ impl<'doc> DocumentMutator<'doc> {
                     .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
 
                 let mut request = self.doc.build_request(src);
-                request.options = options.clone();
+                request.options = options.clone().for_destination(blitz_traits::net::Destination::Image);
                 let handler = ImageHandler::new(ImageType::Image).options(options).document(&self.doc.url);
                 self.doc.net_provider.fetch(
                     self.doc.id(),
@@ -2065,11 +2064,6 @@ impl<'doc> DocumentMutator<'doc> {
             );
             return;
         }
-
-        let node = &self.doc.nodes[target_id];
-        let Some(element) = node.element_data() else {
-            return;
-        };
 
         // pyro: a frame element of the render snapshot shows its frame table entry's document, or
         // none when the table has no such entry; its own attributes never give it one.
