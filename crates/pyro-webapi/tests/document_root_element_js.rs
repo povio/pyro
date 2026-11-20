@@ -179,6 +179,15 @@ fn view_transition_selector_class_budget() {
     })()"#), "true,true,true,false,true,false");
 }
 
+#[test]
+fn view_transition_keyframe_effect_named_pseudo() {
+    let environment = env("<!doctype html><body>");
+    assert_eq!(eval(&environment.main, r#"(() => {
+        const effect = new KeyframeEffect(document.body, [], {pseudoElement:'::view-transition-old(fruit)'});
+        try { effect.pseudoElement = '::view-transition-old(a b)'; return 'accepted'; } catch (error) { return effect.pseudoElement + ':' + error.name; }
+    })()"#), "::view-transition-old(fruit):SyntaxError");
+}
+
 struct Child(Rc<PageDom>);
 impl PageHooks for Child {
     fn container(&self) -> FrameContainer { FrameContainer::Frame(self.0.clone(), self.0.document()) }

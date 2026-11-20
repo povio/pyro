@@ -333,6 +333,7 @@
       forwards = d === Infinity || d % 2 === 0;
     }
     const directed = forwards ? simple : 1 - simple;
+    out.directed = directed;
     const before = (out.phase === 'before' && !backwards) || (out.phase === 'after' && backwards);
     out.progress = t.easing.fn(directed, before);
     return out;
@@ -950,6 +951,7 @@
   }
   function pseudoElement(value) {
     const s = String(value);
+    if (/^::view-transition(?:$|-)/i.test(s) && native.validViewPseudo(s)) return s;
     if (/^::?(before|after|marker|first-line|first-letter|placeholder|selection|backdrop)$/i.test(s)) {
       return s.startsWith('::') ? s.toLowerCase() : ':' + s.toLowerCase();
     }
@@ -1249,6 +1251,7 @@
   // samples its keyframes into the cascade; `null` once it has no effect and
   // none to come without script.
   function report(a) {
+    if (a.viewRun) return;
     if (a.css !== undefined && !a.scripted) return;
     const e = a.effect;
     if (a.key === undefined) {
@@ -1968,6 +1971,50 @@
       if (gone) triggered.delete(gone);
     }
   }
+
+  function viewRuns(target, entries) {
+    const objects = new Map();
+    function sync(entries) {
+      const seen = new Set();
+      for (const [box, index, pseudo, name, delay, duration, iterations, direction, fill, easing, paused] of entries) {
+        const key = `${box}:${index}:${name}`;
+        seen.add(key);
+        const existing = objects.get(key);
+        const state = existing && animations.get(existing);
+        const time = now();
+        const held = paused ? (state && currentTimeOf(state)) ?? 0 : null;
+        const start = state ? state.startTime ?? (time - (state.holdTime ?? 0)) : time;
+        const run = [null, target, false, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, null, null];
+        if (existing) {
+          if (playStateOf(state) !== 'idle') cssFollow(existing, run);
+        } else {
+          const object = cssRun(run);
+          animations.get(object).viewRun = true;
+          animations.get(object).viewSlot = [box, index];
+          objects.set(key, object);
+        }
+      }
+      for (const [key, object] of objects) {
+        if (!seen.has(key)) { cancel(animations.get(object)); objects.delete(key); }
+      }
+    }
+    sync(entries);
+    return {
+      sync,
+      sample() {
+        const values = [];
+        for (const object of objects.values()) {
+          const a = animations.get(object);
+          if (!a.effect || playStateOf(a) === 'idle') continue;
+          const progress = computedTimingOf(a.effect).directed;
+          if (progress !== undefined) values.push(a.viewSlot[0], a.viewSlot[1], progress);
+        }
+        return values;
+      },
+      active() { for (const object of objects.values()) { const state = playStateOf(animations.get(object)); if (state !== 'finished' && state !== 'idle') return true; } return false; },
+      release() { for (const object of objects.values()) cancel(animations.get(object)); objects.clear(); },
+    };
+  }
   // An object script does not control follows its run's play state
   // (`animation-play-state` paused or running again).
   // pyro: and the CSS properties script did not override follow their CSS values, script
@@ -2160,6 +2207,6 @@
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
     ScrollTimeline, ViewTimeline,
     CSSAnimation, CSSTransition,
-    animate, elementAnimations, rootAnimations, cssSync, timeline: () => documentTimeline,
+    animate, elementAnimations, rootAnimations, cssSync, viewRuns, timeline: () => documentTimeline,
   };
 })

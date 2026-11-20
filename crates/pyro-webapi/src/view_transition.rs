@@ -61,7 +61,7 @@ pub(crate) static MODULE: crate::lazy_module::LazyModule = crate::lazy_module::L
 };
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
-    s.function("captureValid", |s, _, args| {
+    let capture = s.function("captureValid", |s, _, args| {
         let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.boolean(false)) };
         let page = root.page();
         let key = pyro_dom::snapshot::render_key(root.id);
@@ -109,7 +109,43 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             record.new = boxes;
         }
         Ok(s.boolean(true))
-    })
+    })?;
+    let animations = s.function("transitionAnimations", |s, _, args| {
+        let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.null()); };
+        let page = root.page();
+        let key = pyro_dom::snapshot::render_key(root.id);
+        let styles = {
+            let dom = page.dom.borrow();
+            let layout = page.layout();
+            layout.synced_geometry_source(&dom).map(|source| source.transition_animation_styles(key)).unwrap_or(Some(Vec::new()))
+        };
+        let Some(styles) = styles else { return Ok(s.null()); };
+        let mut runs = Vec::new();
+        for (index,pseudo, style) in styles {
+            for run in pyro_dom::timing::AnimationTiming::from_transition_box(&style) {
+                runs.push(s.array(&[s.number(index as f64),s.number(run.index as f64),s.string(&pseudo), s.string(&run.name), s.number(run.delay_ms), s.number(run.duration_ms), s.number(run.iterations), s.string(&run.style.direction), s.string(&run.style.fill), s.string(run.style.easing.as_deref().unwrap_or("ease")), s.boolean(run.style.paused)])?.value());
+            }
+        }
+        let entries = s.array(&runs)?.value();
+        if args.get(1).to_bool() { Ok(entries) } else { crate::animations::view_runs(s, &page, args.get(0), entries) }
+    })?;
+    let out = s.object();
+    out.set_atom("captureValid", capture.value())?;
+    out.set_atom("transitionAnimations", animations.value())?;
+    let sample = s.function("sample",|s,_,args| {
+        let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.boolean(false)); };
+        let Some(list) = args.get(1).as_object() else { return Ok(s.boolean(false)); };
+        let len = list.get("length")?.to_number()? as u32;
+        if len > 3072 || len % 3 != 0 { return Ok(s.boolean(false)); }
+        let mut values = Vec::with_capacity((len/3) as usize);
+        for offset in (0..len).step_by(3) { values.push((list.get_index(offset)?.to_number()? as usize,list.get_index(offset+1)?.to_number()? as usize,list.get_index(offset+2)?.to_number()?)); }
+        let page = root.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        Ok(s.boolean(layout.synced_geometry_source(&dom).is_none_or(|source|source.set_transition_samples(pyro_dom::snapshot::render_key(root.id),&values))))
+    })?;
+    out.set_atom("sample",sample.value())?;
+    Ok(out)
 }
 
 fn unavailable() -> JsError {

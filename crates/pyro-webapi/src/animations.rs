@@ -76,6 +76,10 @@ fn unavailable() -> JsError {
     JsError::Type("Web Animations are unavailable".into())
 }
 
+pub(crate) fn view_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Value<'s>, runs: Value<'s>) -> JsResult<Value<'s>> {
+    call(module(s, page)?, "viewRuns", &[target, runs])
+}
+
 /// This realm's module, made on first use.
 fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     if let Some(module) = existing(s, page)? {
@@ -146,6 +150,11 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(if pyro_dom::stylo::is_property(&name) { s.string(&name) } else { s.null() })
     })?;
     natives.set_atom("cssName", css_name.value())?;
+    let valid_pseudo = s.function("validViewPseudo", |s, _, args| {
+        let text = args.get(0).to_string()?;
+        Ok(s.boolean(text.len() <= 4096 && matches!(pyro_dom::stylo::parse_pseudo_arg(&text), pyro_dom::stylo::PseudoArg::Pseudo(_))))
+    })?;
+    natives.set_atom("validViewPseudo", valid_pseudo.value())?;
     // `report(key, state)`: an Animation object's state after a change, for
     // the values sampled into the cascade (animation_frame.rs); `state` null
     // once it has no effect.

@@ -1833,6 +1833,15 @@ impl Renderer {
         mirror.doc.create_transition_tree(origin, &groups)
     }
 
+    pub fn set_transition_samples(&mut self, page: u64, root: u64, values: &[(usize,usize,f64)]) -> bool {
+        self.mirrors.get_mut(&page).and_then(|mirror| Some(mirror.doc.set_transition_samples(mirror.node(root)?,values))).unwrap_or(false)
+    }
+
+    pub fn transition_animation_styles(&self, page: u64, root: u64) -> Option<Vec<(usize,String, style::servo_arc::Arc<style::properties::ComputedValues>)>> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.transition_animation_styles(mirror.node(root)?)
+    }
+
     pub fn clear_transition_boxes(&mut self, page: u64, root: u64) {
         if let Some(mirror) = self.mirrors.get_mut(&page) { if let Some(origin) = mirror.node(root) { mirror.doc.clear_transition_tree(origin); } }
     }

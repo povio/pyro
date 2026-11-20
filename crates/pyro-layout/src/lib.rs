@@ -1091,6 +1091,14 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|renderer| renderer.try_borrow_mut().ok()?.as_mut()?.set_transition_boxes(self.page, root, &convert(old), &convert(new))).is_some()
     }
 
+    fn set_transition_samples(&self, root:u64, values:&[(usize,usize,f64)]) -> bool {
+        RENDERER.with(|renderer| Some(renderer.try_borrow_mut().ok()?.as_mut()?.set_transition_samples(self.page,root,values))).unwrap_or(false)
+    }
+
+    fn transition_animation_styles(&self, root: u64) -> Option<Vec<(usize,String, style::servo_arc::Arc<style::properties::ComputedValues>)>> {
+        RENDERER.with(|renderer| renderer.try_borrow().ok()?.as_ref()?.transition_animation_styles(self.page, root))
+    }
+
     fn clear_transition_boxes(&self, root: u64) {
         RENDERER.with(|renderer| { if let Ok(mut renderer) = renderer.try_borrow_mut() { if let Some(renderer) = renderer.as_mut() { renderer.clear_transition_boxes(self.page, root); } } });
     }

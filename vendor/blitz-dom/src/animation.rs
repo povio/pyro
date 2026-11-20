@@ -350,6 +350,57 @@ struct ResolvedFrame {
 }
 
 impl BaseDocument {
+    pub(crate) fn sample_transition_style(&self, origin: NodeId, parent: NodeId, pseudo: style::selector_parser::PseudoElement, style: ServoArc<ComputedValues>, samples: &[(usize,f64)], generated: Option<&(Atom,String)>, budget: &mut usize) -> Option<ServoArc<ComputedValues>> {
+        if samples.is_empty() { return Some(style); }
+        use style_traits::ToCss;
+        let node = self.nodes.get(origin)?;
+        let primary = self.nodes[parent].primary_styles()?.clone();
+        let _thread = crate::stylo::LayoutThreadScope::enter();
+        let guard = self.guard.read();
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(), stylist: &self.stylist, options: GLOBAL_STYLE_DATA.options.clone(),
+            guards: StylesheetGuards::same(&guard), visited_styles_enabled: true, animations: self.animations.clone(), current_time_for_animations: 0.0,
+            snapshot_map: &self.snapshots, registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
+        };
+        let mut thread = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
+        let base = BaseKey { rules: style.rules().clone(), parent: 0, base_style: style.clone(), pseudo: Some((pseudo, primary.clone())) };
+        let ui = style.get_ui();
+        let mut state = ElementState::default();
+        let mut easings = FxHashMap::default();
+        for &(index,progress) in samples {
+            let item = ui.animation_name_mod(index);
+            let Some(name) = item.as_atom() else { continue; };
+            let easing = ui.animation_timing_function_mod(index).to_css_string();
+            let animation = match animation_name_scope(self, node) {
+                Some(scope) => self.stylist.lookup_keyframes_scoped(name, scope, node),
+                None => self.stylist.lookup_keyframes(name, node),
+            };
+            let keyframes = if let Some(animation) = animation {
+                *budget = budget.checked_sub(animation.steps.len())?;
+                let mut declarations = 0usize;
+                for step in &animation.steps {
+                    if let KeyframesStepValue::Declarations { block } = &step.value {
+                        declarations = declarations.checked_add(block.read_with(&guard).len())?;
+                    }
+                }
+                *budget = budget.checked_sub(declarations.checked_mul(declarations.max(animation.steps.len()))?)?;
+                Keyframes::Css { name:name.clone(),easing:Some(easing.into()),composite:Composite::Replace }
+            } else if let Some((_,css)) = generated.filter(|(id,_)| id == name) {
+                *budget = budget.checked_sub(2)?;
+                Keyframes::Text(Arc::new(TextKeyframes { frames:vec![TextKeyframe { offset:0.0,easing:Some(easing),composite:None,declarations:css.clone() },TextKeyframe {offset:1.0,easing:None,composite:None,declarations:String::new()}] }))
+            } else { continue; };
+            state.resolved.push((keyframes.clone(),resolve(self,node,&base,&keyframes,&mut context,&mut easings)));
+            state.effects.animations.push(Effect {keyframes,progress,before:false,easing:None,composite:Composite::Replace,timeline:None});
+        }
+        if let Some(values) = sample(&state,&mut easings).animations {
+            let block = ServoArc::new(self.guard.wrap(PropertyDeclarationBlock::from_animation_value_map(&values)));
+            if let Some(rules) = self.stylist.rule_tree().update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations),LayerOrder::root(),Some(block.borrow_arc()),style.rules(),&shared.guards,&mut false) {
+                return Some(cascade_pseudo(node,&mut context,rules,&style,&pseudo,&primary));
+            }
+        }
+        Some(style)
+    }
     /// Replaces the document's sampled animations: the effects of each element
     /// in effect now (an element left out has none). Elements whose sampled
     /// values change are marked for restyle; the next `resolve` cascades them.

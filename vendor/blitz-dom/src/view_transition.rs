@@ -35,6 +35,8 @@ impl Geometry {
 }
 
 struct BoxNode {
+    samples: Vec<(usize,f64)>,
+    public_pseudo: String,
     id: NodeId,
     pseudo: PseudoElement,
     declarations: Option<Arc<Locked<PropertyDeclarationBlock>>>,
@@ -42,10 +44,53 @@ struct BoxNode {
 
 pub(crate) struct Tree {
     nodes: Vec<BoxNode>,
+    live_participants: Vec<NodeId>,
     group_frames: style::FxHashMap<NodeId, (style::Atom, String)>,
 }
 
 impl BaseDocument {
+    pub fn transition_animation_styles(&self, origin: NodeId) -> Option<Vec<(usize, String, Arc<ComputedValues>)>> {
+        let tree = self.transition_trees.as_ref()?.get(&origin)?;
+        let mut result = Vec::new();
+        let mut remaining = 1024usize;
+        let mut ancestry = 16384usize;
+        for &target in &tree.live_participants {
+            let mut node = self.nodes.get(target)?;
+            let mut top = 0.0;
+            let height = node.final_layout().size.height;
+            while let Some(parent) = node.layout_parent.get() {
+                ancestry = ancestry.checked_sub(1)?;
+                top += node.final_layout().location.y;
+                node = self.nodes.get(parent)?;
+                if let Some(columns) = self.column_fragments(parent) {
+                    let first = columns.fragments.partition_point(|fragment| fragment.end <= top);
+                    let last = columns.fragments.partition_point(|fragment| fragment.start < top + height);
+                    if last > first + 1 { return None; }
+                }
+            }
+        }
+        for (index,item) in tree.nodes.iter().enumerate() {
+            let style = self.nodes.get(item.id)?.primary_styles()?;
+            let mut animated = false;
+            for name in style.get_ui().animation_name_iter() {
+                remaining = remaining.checked_sub(1)?;
+                animated |= name.as_atom().is_some();
+            }
+            if animated { result.push((index,item.public_pseudo.clone(), style.clone())); }
+        }
+        Some(result)
+    }
+    pub fn set_transition_samples(&mut self, origin: NodeId, values: &[(usize,usize,f64)]) -> bool {
+        let Some(tree) = self.transition_trees.as_mut().and_then(|trees|trees.get_mut(&origin)) else { return false; };
+        if values.len()>1024 { return false; }
+        for item in &mut tree.nodes { item.samples.clear(); }
+        for &(index,animation,progress) in values {
+            let Some(node) = tree.nodes.get_mut(index) else { return false; };
+            if !progress.is_finite() || animation >=1024 { return false; }
+            node.samples.push((animation,progress));
+        }
+        self.refresh_transition_scope(Some(origin))
+    }
     pub fn clear_transition_tree(&mut self, origin: NodeId) {
         let Some(trees) = self.transition_trees.as_mut() else {
             return;
@@ -69,7 +114,7 @@ impl BaseDocument {
             return None;
         }
         let scale = self.viewport().scale_f64();
-        let mut descriptors = vec![(ViewTransition, 0, String::new())];
+        let mut descriptors = vec![(ViewTransition, 0, String::new(), String::from("::view-transition"))];
         let mut generated = Vec::new();
         for part in participants {
             let classes = part
@@ -101,11 +146,14 @@ impl BaseDocument {
                 ));
             }
             let group = descriptors.len();
-            descriptors.push((ViewTransitionGroup(arg), 0, css));
+            let mut ident = String::new();
+            cssparser::serialize_identifier(&part.name, &mut ident).ok()?;
+            descriptors.push((ViewTransitionGroup(arg), 0, css, format!("::view-transition-group({ident})")));
             descriptors.push((
                 ViewTransitionPair(arg),
                 group,
                 if both { "isolation:isolate".into() } else { String::new() },
+                format!("::view-transition-image-pair({ident})"),
             ));
             for (exists, pseudo, fade) in [
                 (part.old.is_some(), ViewTransitionOld(arg), "out"),
@@ -119,12 +167,13 @@ impl BaseDocument {
                             "animation-name:-ua-view-transition-fade-{fade}{}",
                             if both { ",-ua-mix-blend-mode-plus-lighter" } else { "" }
                         ),
+                        format!("::view-transition-{}({ident})", if fade == "out" {"old"} else {"new"}),
                     ));
                 }
             }
         }
         let mut nodes = Vec::<BoxNode>::with_capacity(descriptors.len());
-        for (pseudo, parent, css) in descriptors {
+        for (pseudo, parent, css, public_pseudo) in descriptors {
             let parent = nodes.get(parent).map_or(origin, |node| node.id);
             let declarations = (!css.is_empty()).then(|| {
                 Arc::new(self.guard.wrap(style::properties::declaration_block::parse_style_attribute(
@@ -152,12 +201,13 @@ impl BaseDocument {
             }
             self.nodes[id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);
             self.nodes[id].update_layout_styles();
-            nodes.push(BoxNode { id, pseudo, declarations });
+            nodes.push(BoxNode { id, pseudo, declarations, samples:Vec::new(), public_pseudo });
         }
         let count = nodes.len();
         let group_frames = generated.into_iter().map(|(index, name, css)| (nodes[index].id, (name, css))).collect();
         self.layout_transition_tree(origin, nodes[0].id);
-        self.transition_trees.get_or_insert_with(Default::default).insert(origin, Tree { nodes, group_frames });
+        let live_participants = participants.iter().filter(|part| part.new.is_some()).filter_map(|part| part.target).collect();
+        self.transition_trees.get_or_insert_with(Default::default).insert(origin, Tree { nodes, group_frames, live_participants });
         Some(count)
     }
 
@@ -230,15 +280,23 @@ impl BaseDocument {
     }
 
     pub(crate) fn refresh_transition_trees(&mut self) {
+        self.refresh_transition_scope(None);
+    }
+
+    fn refresh_transition_scope(&mut self, selected: Option<NodeId>) -> bool {
         let Some(trees) = self.transition_trees.take() else {
-            return;
+            return false;
         };
+        let mut complete = true;
         for (origin, tree) in trees.iter() {
+            if selected.is_some_and(|scope| scope != *origin) { continue; }
+            let mut budget = 4096;
             for item in &tree.nodes {
                 if let Some(parent) = self.nodes.get(item.id).and_then(|node| node.parent)
                     && let Some(style) =
                         self.transition_cascade(*origin, parent, item.pseudo, item.declarations.as_ref())
                 {
+                    let Some(style) = self.sample_transition_style(*origin,parent,item.pseudo,style,&item.samples,tree.group_frames.get(&item.id),&mut budget) else { complete = false; break; };
                     self.nodes[item.id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);
                     self.nodes[item.id].update_layout_styles();
                     self.nodes[item.id].clear_layout_cache();
@@ -247,5 +305,6 @@ impl BaseDocument {
             self.layout_transition_tree(*origin, tree.nodes[0].id);
         }
         self.transition_trees = Some(trees);
+        complete
     }
 }

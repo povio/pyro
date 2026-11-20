@@ -488,6 +488,8 @@ pub struct TransitionBox {
 
 /// The engine laying the document out (Blitz in `render` builds).
 pub trait GeometrySource {
+    fn set_transition_samples(&self, _root: u64, _values: &[(usize,usize,f64)]) -> bool { true }
+    fn transition_animation_styles(&self, _root: u64) -> Option<Vec<(usize,String, style::servo_arc::Arc<style::properties::ComputedValues>)>> { Some(Vec::new()) }
     fn set_transition_boxes(&self, _root: u64, _old: &[TransitionBox], _new: &[TransitionBox]) -> bool { true }
     fn clear_transition_boxes(&self, _root: u64) {}
     /// Whether the painted subtree can participate in a named view transition.

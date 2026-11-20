@@ -621,7 +621,7 @@ diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/animation.rs
-@@ -0,0 +1,1452 @@
+@@ -0,0 +1,1503 @@
 +//! pyro: animated values the embedder samples into the cascade.
 +//!
 +//! pyro keeps the timing of every animation (CSS animations, CSS transitions
@@ -974,6 +974,57 @@ new file mode 100644
 +}
 +
 +impl BaseDocument {
++    pub(crate) fn sample_transition_style(&self, origin: NodeId, parent: NodeId, pseudo: style::selector_parser::PseudoElement, style: ServoArc<ComputedValues>, samples: &[(usize,f64)], generated: Option<&(Atom,String)>, budget: &mut usize) -> Option<ServoArc<ComputedValues>> {
++        if samples.is_empty() { return Some(style); }
++        use style_traits::ToCss;
++        let node = self.nodes.get(origin)?;
++        let primary = self.nodes[parent].primary_styles()?.clone();
++        let _thread = crate::stylo::LayoutThreadScope::enter();
++        let guard = self.guard.read();
++        let shared = SharedStyleContext {
++            traversal_flags: TraversalFlags::empty(), stylist: &self.stylist, options: GLOBAL_STYLE_DATA.options.clone(),
++            guards: StylesheetGuards::same(&guard), visited_styles_enabled: true, animations: self.animations.clone(), current_time_for_animations: 0.0,
++            snapshot_map: &self.snapshots, registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
++        };
++        let mut thread = ThreadLocalStyleContext::new();
++        let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
++        let base = BaseKey { rules: style.rules().clone(), parent: 0, base_style: style.clone(), pseudo: Some((pseudo, primary.clone())) };
++        let ui = style.get_ui();
++        let mut state = ElementState::default();
++        let mut easings = FxHashMap::default();
++        for &(index,progress) in samples {
++            let item = ui.animation_name_mod(index);
++            let Some(name) = item.as_atom() else { continue; };
++            let easing = ui.animation_timing_function_mod(index).to_css_string();
++            let animation = match animation_name_scope(self, node) {
++                Some(scope) => self.stylist.lookup_keyframes_scoped(name, scope, node),
++                None => self.stylist.lookup_keyframes(name, node),
++            };
++            let keyframes = if let Some(animation) = animation {
++                *budget = budget.checked_sub(animation.steps.len())?;
++                let mut declarations = 0usize;
++                for step in &animation.steps {
++                    if let KeyframesStepValue::Declarations { block } = &step.value {
++                        declarations = declarations.checked_add(block.read_with(&guard).len())?;
++                    }
++                }
++                *budget = budget.checked_sub(declarations.checked_mul(declarations.max(animation.steps.len()))?)?;
++                Keyframes::Css { name:name.clone(),easing:Some(easing.into()),composite:Composite::Replace }
++            } else if let Some((_,css)) = generated.filter(|(id,_)| id == name) {
++                *budget = budget.checked_sub(2)?;
++                Keyframes::Text(Arc::new(TextKeyframes { frames:vec![TextKeyframe { offset:0.0,easing:Some(easing),composite:None,declarations:css.clone() },TextKeyframe {offset:1.0,easing:None,composite:None,declarations:String::new()}] }))
++            } else { continue; };
++            state.resolved.push((keyframes.clone(),resolve(self,node,&base,&keyframes,&mut context,&mut easings)));
++            state.effects.animations.push(Effect {keyframes,progress,before:false,easing:None,composite:Composite::Replace,timeline:None});
++        }
++        if let Some(values) = sample(&state,&mut easings).animations {
++            let block = ServoArc::new(self.guard.wrap(PropertyDeclarationBlock::from_animation_value_map(&values)));
++            if let Some(rules) = self.stylist.rule_tree().update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations),LayerOrder::root(),Some(block.borrow_arc()),style.rules(),&shared.guards,&mut false) {
++                return Some(cascade_pseudo(node,&mut context,rules,&style,&pseudo,&primary));
++            }
++        }
++        Some(style)
++    }
 +    /// Replaces the document's sampled animations: the effects of each element
 +    /// in effect now (an element left out has none). Elements whose sampled
 +    /// values change are marked for restyle; the next `resolve` cascades them.
@@ -59374,7 +59425,7 @@ diff --git a/packages/blitz-dom/src/view_transition.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/view_transition.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,310 @@
 +use crate::{BaseDocument, ElementData, NodeData, NodeId};
 +use markup5ever::{QualName, local_name, ns};
 +use style::context::CascadeInputs;
@@ -59412,6 +59463,8 @@ new file mode 100644
 +}
 +
 +struct BoxNode {
++    samples: Vec<(usize,f64)>,
++    public_pseudo: String,
 +    id: NodeId,
 +    pseudo: PseudoElement,
 +    declarations: Option<Arc<Locked<PropertyDeclarationBlock>>>,
@@ -59419,10 +59472,53 @@ new file mode 100644
 +
 +pub(crate) struct Tree {
 +    nodes: Vec<BoxNode>,
++    live_participants: Vec<NodeId>,
 +    group_frames: style::FxHashMap<NodeId, (style::Atom, String)>,
 +}
 +
 +impl BaseDocument {
++    pub fn transition_animation_styles(&self, origin: NodeId) -> Option<Vec<(usize, String, Arc<ComputedValues>)>> {
++        let tree = self.transition_trees.as_ref()?.get(&origin)?;
++        let mut result = Vec::new();
++        let mut remaining = 1024usize;
++        let mut ancestry = 16384usize;
++        for &target in &tree.live_participants {
++            let mut node = self.nodes.get(target)?;
++            let mut top = 0.0;
++            let height = node.final_layout().size.height;
++            while let Some(parent) = node.layout_parent.get() {
++                ancestry = ancestry.checked_sub(1)?;
++                top += node.final_layout().location.y;
++                node = self.nodes.get(parent)?;
++                if let Some(columns) = self.column_fragments(parent) {
++                    let first = columns.fragments.partition_point(|fragment| fragment.end <= top);
++                    let last = columns.fragments.partition_point(|fragment| fragment.start < top + height);
++                    if last > first + 1 { return None; }
++                }
++            }
++        }
++        for (index,item) in tree.nodes.iter().enumerate() {
++            let style = self.nodes.get(item.id)?.primary_styles()?;
++            let mut animated = false;
++            for name in style.get_ui().animation_name_iter() {
++                remaining = remaining.checked_sub(1)?;
++                animated |= name.as_atom().is_some();
++            }
++            if animated { result.push((index,item.public_pseudo.clone(), style.clone())); }
++        }
++        Some(result)
++    }
++    pub fn set_transition_samples(&mut self, origin: NodeId, values: &[(usize,usize,f64)]) -> bool {
++        let Some(tree) = self.transition_trees.as_mut().and_then(|trees|trees.get_mut(&origin)) else { return false; };
++        if values.len()>1024 { return false; }
++        for item in &mut tree.nodes { item.samples.clear(); }
++        for &(index,animation,progress) in values {
++            let Some(node) = tree.nodes.get_mut(index) else { return false; };
++            if !progress.is_finite() || animation >=1024 { return false; }
++            node.samples.push((animation,progress));
++        }
++        self.refresh_transition_scope(Some(origin))
++    }
 +    pub fn clear_transition_tree(&mut self, origin: NodeId) {
 +        let Some(trees) = self.transition_trees.as_mut() else {
 +            return;
@@ -59446,7 +59542,7 @@ new file mode 100644
 +            return None;
 +        }
 +        let scale = self.viewport().scale_f64();
-+        let mut descriptors = vec![(ViewTransition, 0, String::new())];
++        let mut descriptors = vec![(ViewTransition, 0, String::new(), String::from("::view-transition"))];
 +        let mut generated = Vec::new();
 +        for part in participants {
 +            let classes = part
@@ -59478,11 +59574,14 @@ new file mode 100644
 +                ));
 +            }
 +            let group = descriptors.len();
-+            descriptors.push((ViewTransitionGroup(arg), 0, css));
++            let mut ident = String::new();
++            cssparser::serialize_identifier(&part.name, &mut ident).ok()?;
++            descriptors.push((ViewTransitionGroup(arg), 0, css, format!("::view-transition-group({ident})")));
 +            descriptors.push((
 +                ViewTransitionPair(arg),
 +                group,
 +                if both { "isolation:isolate".into() } else { String::new() },
++                format!("::view-transition-image-pair({ident})"),
 +            ));
 +            for (exists, pseudo, fade) in [
 +                (part.old.is_some(), ViewTransitionOld(arg), "out"),
@@ -59496,12 +59595,13 @@ new file mode 100644
 +                            "animation-name:-ua-view-transition-fade-{fade}{}",
 +                            if both { ",-ua-mix-blend-mode-plus-lighter" } else { "" }
 +                        ),
++                        format!("::view-transition-{}({ident})", if fade == "out" {"old"} else {"new"}),
 +                    ));
 +                }
 +            }
 +        }
 +        let mut nodes = Vec::<BoxNode>::with_capacity(descriptors.len());
-+        for (pseudo, parent, css) in descriptors {
++        for (pseudo, parent, css, public_pseudo) in descriptors {
 +            let parent = nodes.get(parent).map_or(origin, |node| node.id);
 +            let declarations = (!css.is_empty()).then(|| {
 +                Arc::new(self.guard.wrap(style::properties::declaration_block::parse_style_attribute(
@@ -59529,12 +59629,13 @@ new file mode 100644
 +            }
 +            self.nodes[id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);
 +            self.nodes[id].update_layout_styles();
-+            nodes.push(BoxNode { id, pseudo, declarations });
++            nodes.push(BoxNode { id, pseudo, declarations, samples:Vec::new(), public_pseudo });
 +        }
 +        let count = nodes.len();
 +        let group_frames = generated.into_iter().map(|(index, name, css)| (nodes[index].id, (name, css))).collect();
 +        self.layout_transition_tree(origin, nodes[0].id);
-+        self.transition_trees.get_or_insert_with(Default::default).insert(origin, Tree { nodes, group_frames });
++        let live_participants = participants.iter().filter(|part| part.new.is_some()).filter_map(|part| part.target).collect();
++        self.transition_trees.get_or_insert_with(Default::default).insert(origin, Tree { nodes, group_frames, live_participants });
 +        Some(count)
 +    }
 +
@@ -59607,15 +59708,23 @@ new file mode 100644
 +    }
 +
 +    pub(crate) fn refresh_transition_trees(&mut self) {
++        self.refresh_transition_scope(None);
++    }
++
++    fn refresh_transition_scope(&mut self, selected: Option<NodeId>) -> bool {
 +        let Some(trees) = self.transition_trees.take() else {
-+            return;
++            return false;
 +        };
++        let mut complete = true;
 +        for (origin, tree) in trees.iter() {
++            if selected.is_some_and(|scope| scope != *origin) { continue; }
++            let mut budget = 4096;
 +            for item in &tree.nodes {
 +                if let Some(parent) = self.nodes.get(item.id).and_then(|node| node.parent)
 +                    && let Some(style) =
 +                        self.transition_cascade(*origin, parent, item.pseudo, item.declarations.as_ref())
 +                {
++                    let Some(style) = self.sample_transition_style(*origin,parent,item.pseudo,style,&item.samples,tree.group_frames.get(&item.id),&mut budget) else { complete = false; break; };
 +                    self.nodes[item.id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);
 +                    self.nodes[item.id].update_layout_styles();
 +                    self.nodes[item.id].clear_layout_cache();
@@ -59624,5 +59733,6 @@ new file mode 100644
 +            self.layout_transition_tree(*origin, tree.nodes[0].id);
 +        }
 +        self.transition_trees = Some(trees);
++        complete
 +    }
 +}

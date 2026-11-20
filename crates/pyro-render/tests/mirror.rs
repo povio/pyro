@@ -118,11 +118,32 @@ fn view_transition_boxes_cascade_and_charge_created_nodes() {
     assert_eq!(value(ViewTransitionNew(arg),LonghandId::AnimationDuration),"8s");
     assert_eq!(value(ViewTransitionOld(arg),LonghandId::AnimationName),"none");
     assert_eq!(value(ViewTransitionOld(arg),LonghandId::Opacity),"0.25");
+    let runs = renderer.transition_animation_styles(1,root).unwrap();
+    let index = runs.iter().find(|(_,pseudo,_)| pseudo == "::view-transition-new(target)").unwrap().0;
+    assert!(!renderer.set_transition_samples(1,root,&vec![(index,0,0.5);1025]));
+    assert!(renderer.set_transition_samples(1,root,&[(index,0,0.0),(index,1,0.0)]));
+    let style = renderer.element_pseudo_style(1,root,&ViewTransitionNew(arg),true).unwrap();
+    assert_eq!(style.computed_value_to_string(PropertyDeclarationId::Longhand(LonghandId::Opacity)),"0");
+    assert_eq!(style.computed_value_to_string(PropertyDeclarationId::Longhand(LonghandId::MixBlendMode)),"plus-lighter");
     renderer.clear_transition_boxes(1,root);
     assert!(renderer.element_pseudo_style(1,root,&ViewTransitionGroup(arg),true).is_none());
     assert_eq!(renderer.set_transition_boxes(1,root,&[],&boxes),Some(4));
     renderer.clear_transition_boxes(1,root);
     assert_eq!(renderer.set_transition_boxes(1,root,&vec![boxes[0].clone();257],&[]),None);
+}
+
+#[test]
+fn view_transition_rejects_excess_keyframe_work_before_sampling() {
+    let frames = "50%{opacity:0}".repeat(4097);
+    let page = Page::new(&format!("<!doctype html><style>@keyframes crowded{{{frames}}}#scope::view-transition-new(target){{animation:crowded 1s both}}</style><div id=scope><div style='view-transition-name:target;width:10px;height:10px'></div></div>"));
+    let root = pyro_dom::snapshot::render_key(page.find("#scope"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1, root, false, 0).unwrap();
+    assert_eq!(renderer.set_transition_boxes(1, root, &[], &boxes), Some(4));
+    let runs = renderer.transition_animation_styles(1, root).unwrap();
+    let index = runs.iter().find(|(_, pseudo, _)| pseudo == "::view-transition-new(target)").unwrap().0;
+    assert!(!renderer.set_transition_samples(1, root, &[(index, 0, 0.5)]));
 }
 
 #[test]
@@ -135,12 +156,12 @@ fn view_transition_capture_charges_frame_tree_before_recording() {
     for node in &mut Arc::make_mut(&mut tree).nodes {
         if node.key != frame { continue; }
         if let TreeKind::Element { attrs, .. } = &mut node.kind {
-            attrs.push((QualName::new(None, ns!(), "data-pyro-frame".into()), "N:1:0000000000000001".into()));
+            attrs.push((QualName::new(None, ns!(), "data-pyro-n-frame".into()), "n:1:0000000000000001".into()));
         }
     }
     let child = FrameContent { html: "<div></div>".repeat(256), url: "http://test/child".into(), client: "F#L".into(), version: 1, ..Default::default() };
     let mut snapshot = page.snapshot(1, tree);
-    snapshot.frames = Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".into(), child)].into_iter().collect() });
+    snapshot.frames = Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".into(), child)].into_iter().collect() });
     let mut renderer = Renderer::new();
     renderer.sync_layout(&snapshot, &fetcher()).unwrap();
     let mut recordings = 0;

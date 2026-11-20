@@ -1,7 +1,8 @@
 // CSS View Transitions 1 and 2 (`document.startViewTransition`, element-scoped
 // `Element.startViewTransition`): per-scope lifecycle and native capture.
-(function (captureValid) {
+(function (native) {
   'use strict';
+  const {captureValid, transitionAnimations} = native;
   const global = globalThis;
   const rafFn = global.requestAnimationFrame, setTimeoutFn = global.setTimeout;
   const clearTimeoutFn = global.clearTimeout;
@@ -30,6 +31,7 @@
   const abortError = (message) => new DOMException(message, 'AbortError');
   function finish(st) {
     if (st.phase !== 'animating' || !st.animationDone || st.waiting) return;
+    if (st.runs) { st.runs.release(); st.runs = null; }
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
     st.phase = 'done';
     if (active.get(st.scope) === st.self) active.delete(st.scope);
@@ -81,6 +83,7 @@
   function skip(st, reason) {
     if (st.phase === 'done') return;
     const before = st.phase === 'pending-capture';
+    if (st.runs) { st.runs.release(); st.runs = null; }
     if (before) pending.delete(st.scope);
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
     st.phase = 'done';
@@ -105,10 +108,20 @@
       if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
       st.updateCallbackDone.resolve();
       if (st.phase === 'done' || !capture(st)) return;
+      try { st.runs = transitionAnimations(st.root); } catch (_) { st.runs = null; }
+      if (!st.runs) { skip(st, new DOMException('Cannot animate transition boxes', 'InvalidStateError')); return; }
+      if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes')); return; }
       st.phase = 'animating';
       st.readySettled = true;
       st.ready.resolve();
-      later(() => {
+      let frames = 0;
+      later(function checkAnimations() {
+        if (st.phase !== 'animating') return;
+        const entries = transitionAnimations(st.root, true);
+        if (entries === null || ++frames > 4096) { skip(st, abortError('Transition animation limit reached')); return; }
+        st.runs.sync(entries);
+        if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes')); return; }
+        if (st.runs.active()) { later(checkAnimations); return; }
         st.animationDone = true;
         finish(st);
       });

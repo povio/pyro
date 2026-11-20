@@ -247,6 +247,18 @@ pub struct AnimationTiming {
 }
 
 impl AnimationTiming {
+    pub fn from_transition_box(style: &style::properties::ComputedValues) -> impl Iterator<Item = Self> + '_ {
+        use style_traits::ToCss;
+        use style::values::generics::animation::AnimationDuration;
+        let ui = style.get_ui();
+        ui.animation_name_iter().enumerate().filter_map(move |(index, name)| {
+            let name = name.as_atom()?.to_string();
+            let duration = ui.animation_duration_mod(index);
+            Some(Self { name, index, duration_auto: duration.is_auto(), duration_ms: match duration { AnimationDuration::Time(t) => t.seconds() as f64 * 1000.0, _ => 0.0 }, delay_ms: ui.animation_delay_mod(index).seconds() as f64 * 1000.0, iterations: ui.animation_iteration_count_mod(index).0 as f64, style: AnimationStyle {
+                direction: ui.animation_direction_mod(index).to_css_string(), fill: ui.animation_fill_mode_mod(index).to_css_string(), paused: ui.animation_play_state_mod(index).to_css_string() == "paused", composition: ui.animation_composition_mod(index).to_css_string(), easing: Some(ui.animation_timing_function_mod(index).to_css_string()),
+            }, trigger: None })
+        })
+    }
     /// Whether `other` is the same run: only a change of its name starts the animation again;
     /// its other `animation-*` values change the running animation (CSS Animations 1 § 3:
     /// "changes to the values of animation properties while the animation is running apply as if
