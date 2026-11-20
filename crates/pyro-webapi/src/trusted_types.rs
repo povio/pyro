@@ -209,6 +209,39 @@ pub(crate) fn attribute_value(
     }
 }
 
+/// Converted (TrustedHTML or DOMString) argument, before a positional HTML
+/// method reads its following options dictionary or invokes the default policy.
+pub(crate) enum HtmlInput {
+    Trusted(String),
+    String(String),
+}
+
+impl HtmlInput {
+    pub(crate) fn convert(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsResult<Self> {
+        if value.is_object() {
+            if let Some(module) = MODULE.existing(s, page)? {
+                let data = module.get("trustedData")?.as_object()
+                    .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?
+                    .call(None, &[s.string("html"), value])?;
+                if !data.is_null() {
+                    return Ok(Self::Trusted(crate::util::dom_string(data)?));
+                }
+            }
+        }
+        Ok(Self::String(crate::util::dom_string(value)?))
+    }
+
+    pub(crate) fn compliant(self, s: &Scope<'_>, page: &Rc<PageDom>, sink: &str) -> JsResult<String> {
+        match self {
+            Self::Trusted(html) => Ok(html),
+            Self::String(html) if requires_for_script(page) => {
+                compliant_string(s, page, Kind::Html, s.string(&html), sink, false)
+            }
+            Self::String(html) => Ok(html),
+        }
+    }
+}
+
 /// The Trusted Types a sink takes.
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
@@ -266,11 +299,19 @@ pub(crate) fn compliant_string_in(
     if result.is_null() || result.is_undefined() {
         // A violation, reported to every policy that requires Trusted Types; blocked when one
         // of them is enforced (report-only ones let the string through).
-        let enforced = call("sinkViolation", &[s.string(sink), s.string(&input)])?.to_bool();
+        let enforced = sink_violation(s, page, sink, &input)?;
         if enforced {
             return Err(JsError::Type(format!("Failed to set '{sink}': This document requires '{name}' assignment.").into()));
         }
         return Ok(input);
     }
     crate::util::dom_string(result)
+}
+
+/// Report an unvetted value to applicable CSP policies and return whether any blocks it.
+pub(crate) fn sink_violation(s: &Scope<'_>, page: &Rc<PageDom>, sink: &str, input: &str) -> JsResult<bool> {
+    let module = MODULE.module(s, page)?;
+    let report = module.get("sinkViolation")?.as_object()
+        .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
+    Ok(report.call(None, &[s.string(sink), s.string(input)])?.to_bool())
 }

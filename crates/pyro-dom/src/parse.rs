@@ -57,8 +57,6 @@ struct Sink<A: DomAccess> {
     /// `pending_custom` is not empty: what each insertion tests.
     has_pending_custom: Cell<bool>,
     quirks: Cell<Option<QuirksMode>>,
-    /// First element created (the fragment parser's context element).
-    first_created: Cell<u32>,
     // html5ever keeps raw handles across script pauses, including detached elements.
     pins: RefCell<Vec<NodeId>>,
     /// Open `<template shadowrootmode>` elements and the shadow roots their
@@ -82,7 +80,6 @@ impl<A: DomAccess> Sink<A> {
             pending_custom: RefCell::new(Vec::new()),
             has_pending_custom: Cell::new(false),
             quirks: Cell::new(None),
-            first_created: Cell::new(NIL),
             pins: RefCell::new(vec![id]),
             declarative: RefCell::new(Vec::new()),
         }
@@ -221,14 +218,10 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             }
             Ok(self.new_element(d, name, attrs, template))
         });
-        let created = match created {
+        match created {
             Ok(created) => created,
             Err((name, attrs)) => self.new_custom_element(name, attrs, template),
-        };
-        if self.first_created.get() == NIL {
-            self.first_created.set(created);
         }
-        created
     }
     fn create_comment(&self, text: StrTendril) -> u32 {
         // `<?target data>` in HTML (vendor/html5ever `pi`): the tokenizer marks the bogus comment
@@ -1213,7 +1206,7 @@ pub fn parse_contextual_fragment(dom: &mut Dom, context: NodeId, html: &str) -> 
 enum FragmentMode {
     Element,
     Insertion,
-    DeclarativeShadowRoots,
+    Modern { run_scripts: bool },
 }
 
 fn parse_fragment_with(
@@ -1228,43 +1221,70 @@ fn parse_fragment_with(
     let body_context = mode == FragmentMode::Insertion && dom.n(ctx).element().is_none_or(|el| {
         el.is_html() && el.name.local == local_name!("html") && !dom.is_xml_document(owner_id)
     });
-    let (ctx_name, ctx_attrs) = match &dom.n(ctx).kind {
-        // html5ever creates the context element from its qualified name.
-        _ if body_context => (QualName::new(None, ns!(html), local_name!("body")), Vec::new()),
-        // The tree builder reads one attribute of the context element: a
-        // MathML `annotation-xml`'s `encoding` (HTML integration point).
-        // Others' copies would only be parsed (id, classes) and dropped.
-        NodeKind::Element(e) if e.name.ns == ns!(mathml) && e.name.local == local_name!("annotation-xml") => (
-            e.name.clone(),
-            e.attrs
-                .iter()
-                .map(|a| Attribute { name: a.name.clone(), value: StrTendril::from_slice(&a.value) })
-                .collect::<Vec<_>>(),
-        ),
-        NodeKind::Element(e) => (e.name.clone(), Vec::new()),
-        _ => return Err(DomError::Type("fragment context must be an element")),
+    if !matches!(mode, FragmentMode::Modern { .. }) && dom.is_xml_document(owner_id) {
+        return crate::xml::parse_fragment(dom, context, html, body_context);
+    }
+    if !body_context && dom.n(ctx).element().is_none() {
+        return Err(DomError::Type("fragment context must be an element"));
+    }
+    let quirks_mode = match dom.document_data(owner_id)?.quirks {
+        QuirksMode::Quirks => H5Quirks::Quirks,
+        QuirksMode::LimitedQuirks => H5Quirks::LimitedQuirks,
+        QuirksMode::NoQuirks => H5Quirks::NoQuirks,
     };
-    // HTML fragment parsing: the scripting flag is that of the context
-    // element's node document (`noscript` content is text only with it).
     let scripting_enabled = dom.scripting_of(owner);
     // Temporary document for the parser; nodes are adopted into `owner`.
     let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
-    dom.set_allow_declarative_shadow_roots(tmp_id, mode == FragmentMode::DeclarativeShadowRoots)?;
+    dom.set_allow_declarative_shadow_roots(tmp_id, matches!(mode, FragmentMode::Modern { .. }))?;
     let tmp = tmp_id.idx;
     dom.make_fragment_parse_host(tmp);
     let flags = element_flags::FRAGMENT_PARSED | element_flags::SCRIPT_ALREADY_STARTED;
 
-    let context_copy;
+    // The fragment context is inspected by the tree builder but is never on
+    // the stack of open elements. Its namespace, integration-point attributes
+    // and nearest inclusive ancestor form all come from the caller's tree.
+    let context = if body_context {
+        dom.create_element_raw(tmp_id, QualName::new(None, ns!(html), local_name!("body")))?.idx
+    } else {
+        ctx
+    };
+    let mut ancestor = context;
+    let mut form = None;
+    while ancestor != NIL {
+        let node = dom.n(ancestor);
+        if node.element().is_some_and(|e| e.is_html() && e.name.local == local_name!("form")) {
+            form = Some(ancestor);
+            break;
+        }
+        ancestor = node.parent;
+    }
     {
         let sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
         let opts = html5ever::driver::ParseOpts {
-            tree_builder: TreeBuilderOpts { scripting_enabled, ..Default::default() },
+            tree_builder: TreeBuilderOpts { scripting_enabled, quirks_mode, ..Default::default() },
             ..Default::default()
         };
-        let parser = html5ever::driver::parse_fragment(sink, opts, ctx_name, ctx_attrs, true);
-        context_copy = parser.tokenizer.sink.sink.first_created.get();
+        let parser = html5ever::driver::parse_fragment_for_element(sink, opts, context, scripting_enabled, form);
         use html5ever::tendril::TendrilSink;
-        parser.one(StrTendril::from_slice(html));
+        if matches!(mode, FragmentMode::Modern { run_scripts: true }) {
+            // A script end tag yields its node. Keep the EOF parser flag on
+            // unclosed scripts, which must stay inert after insertion.
+            parser.input_buffer.push_back(StrTendril::from_slice(html));
+            loop {
+                match parser.tokenizer.feed(&parser.input_buffer) {
+                    TokenizerResult::Script(script) => parser.tokenizer.sink.sink.dom.with(|d| {
+                        if let Some(e) = d.n_mut(script).element_mut() {
+                            e.flags &= !(element_flags::SCRIPT_ALREADY_STARTED | element_flags::FRAGMENT_PARSED);
+                        }
+                    }),
+                    TokenizerResult::EncodingIndicator(_) => continue,
+                    TokenizerResult::Done => break,
+                }
+            }
+            parser.finish();
+        } else {
+            parser.one(StrTendril::from_slice(html));
+        }
     }
     let root_html = dom.n(tmp).first_child;
     let frag = dom.create_fragment(owner_id)?;
@@ -1276,11 +1296,10 @@ fn parse_fragment_with(
             dom.link_raw(k, frag.idx, NIL);
         }
     }
-    // The temp document, its html root and the stray context element
-    // created by html5ever are now unreferenced.
+    // Only the synthetic fallback context belongs to this parse.
     dom.release_candidate(tmp);
-    if context_copy != NIL {
-        dom.release_candidate(context_copy);
+    if body_context {
+        dom.release_candidate(context);
     }
     Ok(frag)
 }
@@ -1295,7 +1314,7 @@ pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<(
     };
     let ctx = match &dom.n(i).kind {
         NodeKind::Element(e) => {
-            if parses_as_text(e, html) {
+            if !dom.is_xml_document(dom.id_of(dom.n(i).owner_doc)) && parses_as_text(e, html) {
                 // What the fragment parser would build: one text node with
                 // the string (none for ""), replacing all children.
                 let text = if html.is_empty() {
@@ -1360,6 +1379,11 @@ fn parses_as_text(ctx: &ElementData, html: &str) -> bool {
     )
 }
 
+/// Parse modern HTML insertion methods in the target or host element's context.
+pub fn parse_modern_html_fragment(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, html, FragmentMode::Modern { run_scripts })
+}
+
 /// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with
 /// declarative shadow roots. `target` is the context element, or a shadow
 /// root (parsed in its host's context).
@@ -1371,6 +1395,6 @@ pub fn set_html_unsafe(dom: &mut Dom, target: NodeId, html: &str) -> DomResult<(
         NodeKind::Element(_) => (target, target),
         _ => return Err(DomError::Type("setHTMLUnsafe context must be an element")),
     };
-    let frag = parse_fragment_with(dom, ctx, html, FragmentMode::DeclarativeShadowRoots)?;
+    let frag = parse_modern_html_fragment(dom, ctx, html, false)?;
     dom.replace_all(into, Some(frag))
 }

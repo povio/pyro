@@ -774,6 +774,7 @@ fn sibling_element(n: &NodeData, forward: bool) -> JsResult<Option<NodeId>> {
 }
 
 fn define_non_doctype_child<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    crate::positional_html::define_sibling_methods(def);
     def.pure_getter_typed("previousElementSibling", pyro_js::GetterResult::ObjectOrNull, |s, n| {
         node_value(s, n.page(), sibling_element(n, false)?)
     });
@@ -1232,6 +1233,7 @@ impl JsClass for ShadowRoot {
     type Data = NodeData;
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
+        crate::positional_html::define_parent_methods(def);
         // Fullscreen API: the document's fullscreen element, retargeted against this shadow root.
         def.accessor("fullscreenElement", |s, n| crate::fullscreen::element_for(s, n.page(), n.id), |_s, _n, _v| Ok(()));
         def.getter("host", |s, n| {
@@ -1311,6 +1313,7 @@ impl JsClass for Element {
     type Data = NodeData;
     type Parent = Node;
     fn define(def: &mut ClassDef<Self>) {
+        crate::positional_html::define_parent_methods(def);
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
