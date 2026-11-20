@@ -116,6 +116,10 @@ where
     generation: Generation,
     /// pyro: the buffer as it is displayed (`text-transform`), see [`Self::set_display_text`].
     display: Option<DisplayText<T>>,
+    /// pyro: the last selection in the displayed text a movement left, with the buffer selection
+    /// it maps to (anchor and focus offsets): reused while the selection is that one, so a
+    /// vertical movement keeps its remembered x and an extension its word or line granularity.
+    shown_selection: Option<(usize, usize, Selection)>,
 }
 
 /// pyro: the editor's text as displayed: its buffer when it was made, the displayed text, the
@@ -123,6 +127,8 @@ where
 #[derive(Clone, Debug)]
 struct DisplayText<T: Brush> {
     source: String,
+    /// The displayed text.
+    layout_text: String,
     map: Vec<(usize, usize)>,
     layout: Layout<T>,
 }
@@ -174,6 +180,7 @@ where
             // to redraw if they haven't already.
             generation: Generation(1),
             display: None,
+            shown_selection: None,
         }
     }
 }
@@ -816,10 +823,15 @@ where
     /// one buffer character displays as goes to that character's nearer edge, and a movement that
     /// maps back to where it started moves on), else on the buffer's.
     fn move_selection(&mut self, mut f: impl FnMut(&Selection, &Layout<T>) -> Selection) {
+        let mut remembered = None;
         let selection = match self.current_display() {
             Some(display) => {
                 let start = self.selection.focus().index();
-                let mut shown = self.display_selection(display);
+                let current = (self.selection.anchor().index(), self.selection.focus().index());
+                let mut shown = match self.shown_selection {
+                    Some((anchor, focus, shown)) if (anchor, focus) == current => shown,
+                    _ => self.display_selection(display),
+                };
                 let mut moved = self.source_selection(display, &shown);
                 for _ in 0..8 {
                     let next = f(&shown, &display.layout);
@@ -831,11 +843,13 @@ where
                         break;
                     }
                 }
+                remembered = Some((moved.anchor().index(), moved.focus().index(), shown));
                 moved
             }
             None => f(&self.selection, &self.layout),
         };
         self.set_selection(selection);
+        self.shown_selection = remembered;
     }
 
     /// pyro: a selection in the displayed text, in the buffer (see [`Self::move_selection`]).
@@ -1118,6 +1132,11 @@ where
         font_cx: &mut FontContext,
         layout_cx: &mut LayoutContext<T>,
     ) {
+        // (A selection remembered in another displayed text is no position in this one.)
+        let same = |old: &DisplayText<T>, text: &str| old.source == self.buffer && old.layout_text == text;
+        if !matches!((&self.display, &display), (Some(old), Some((text, _))) if same(old, text)) {
+            self.shown_selection = None;
+        }
         self.display = display.map(|(text, map)| {
             let mut builder = layout_cx.ranged_builder(font_cx, &text, self.scale, self.quantize);
             builder.set_base_direction(self.base_direction);
@@ -1127,7 +1146,7 @@ where
             let mut layout = builder.build(&text);
             layout.break_all_lines(self.width);
             layout.align(self.alignment, AlignmentOptions::default());
-            DisplayText { source: self.buffer.clone(), map, layout }
+            DisplayText { source: self.buffer.clone(), map, layout, layout_text: text }
         });
     }
 

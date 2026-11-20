@@ -112,6 +112,7 @@ mod shadow_scoping;
 mod size_containment;
 mod sizing_keywords;
 mod soft_hyphens;
+mod text_control_case_mapping;
 mod text_inline_round4;
 mod split_inline_containing_block;
 mod static_position;

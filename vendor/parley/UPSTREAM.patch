@@ -603,15 +603,19 @@ index 9aa2c89..3b4bcf3 100644
              fcx,
          }
 diff --git a/src/editing/editor.rs b/src/editing/editor.rs
-index d024fee..350aa2a 100644
+index d024fee..5c4ce14 100644
 --- a/src/editing/editor.rs
 +++ b/src/editing/editor.rs
-@@ -114,6 +114,39 @@ where
+@@ -114,6 +114,45 @@ where
      alignment: Alignment,
      base_direction: BaseDirection,
      generation: Generation,
 +    /// pyro: the buffer as it is displayed (`text-transform`), see [`Self::set_display_text`].
 +    display: Option<DisplayText<T>>,
++    /// pyro: the last selection in the displayed text a movement left, with the buffer selection
++    /// it maps to (anchor and focus offsets): reused while the selection is that one, so a
++    /// vertical movement keeps its remembered x and an extension its word or line granularity.
++    shown_selection: Option<(usize, usize, Selection)>,
 +}
 +
 +/// pyro: the editor's text as displayed: its buffer when it was made, the displayed text, the
@@ -619,6 +623,8 @@ index d024fee..350aa2a 100644
 +#[derive(Clone, Debug)]
 +struct DisplayText<T: Brush> {
 +    source: String,
++    /// The displayed text.
++    layout_text: String,
 +    map: Vec<(usize, usize)>,
 +    layout: Layout<T>,
 +}
@@ -646,15 +652,16 @@ index d024fee..350aa2a 100644
  }
  
  impl<T> PlainEditor<T>
-@@ -140,6 +173,7 @@ where
+@@ -140,6 +179,8 @@ where
              // will choose to use that as their initial value, but will probably need
              // to redraw if they haven't already.
              generation: Generation(1),
 +            display: None,
++            shown_selection: None,
          }
      }
  }
-@@ -424,8 +458,7 @@ where
+@@ -424,8 +465,7 @@ where
      /// Move the cursor to the cluster boundary nearest this point in the layout.
      pub fn move_to_point(&mut self, x: f32, y: f32) {
          self.refresh_layout();
@@ -664,7 +671,7 @@ index d024fee..350aa2a 100644
      }
  
      /// Move the cursor to a byte index.
-@@ -442,8 +475,8 @@ where
+@@ -442,8 +482,8 @@ where
      /// Move the cursor to the start of the buffer.
      pub fn move_to_text_start(&mut self) {
          self.refresh_layout();
@@ -675,7 +682,7 @@ index d024fee..350aa2a 100644
              isize::MIN,
              false,
          ));
-@@ -452,25 +485,21 @@ where
+@@ -452,25 +492,21 @@ where
      /// Move the cursor to just after the previous hard line break (such as `\n`).
      pub fn move_to_hard_line_start(&mut self) {
          self.refresh_layout();
@@ -706,7 +713,7 @@ index d024fee..350aa2a 100644
              isize::MAX,
              false,
          ));
-@@ -479,84 +508,62 @@ where
+@@ -479,84 +515,62 @@ where
      /// Move the cursor to just before the next hard line break (such as `\n`).
      pub fn move_to_hard_line_end(&mut self) {
          self.refresh_layout();
@@ -807,7 +814,7 @@ index d024fee..350aa2a 100644
      }
  
      /// Collapse selection into caret.
-@@ -567,8 +574,8 @@ where
+@@ -567,8 +581,8 @@ where
      /// Move the selection focus point to the start of the buffer.
      pub fn select_to_text_start(&mut self) {
          self.refresh_layout();
@@ -818,7 +825,7 @@ index d024fee..350aa2a 100644
              isize::MIN,
              true,
          ));
-@@ -577,25 +584,21 @@ where
+@@ -577,25 +591,21 @@ where
      /// Move the selection focus point to just after the previous hard line break (such as `\n`).
      pub fn select_to_hard_line_start(&mut self) {
          self.refresh_layout();
@@ -849,7 +856,7 @@ index d024fee..350aa2a 100644
              isize::MAX,
              true,
          ));
-@@ -604,79 +607,60 @@ where
+@@ -604,79 +614,60 @@ where
      /// Move the selection focus point to just before the next hard line break (such as `\n`).
      pub fn select_to_hard_line_end(&mut self) {
          self.refresh_layout();
@@ -943,7 +950,7 @@ index d024fee..350aa2a 100644
      }
  
      /// Select the physical line at the point.
-@@ -686,8 +670,7 @@ where
+@@ -686,8 +677,7 @@ where
      /// In most text editing cases, this is the preferred behaviour.
      pub fn select_line_at_point(&mut self, x: f32, y: f32) {
          self.refresh_layout();
@@ -953,7 +960,7 @@ index d024fee..350aa2a 100644
      }
  
      /// Select the "logical" line at the point.
-@@ -695,8 +678,7 @@ where
+@@ -695,8 +685,7 @@ where
      /// The logical line is defined by line break characters, such as `\n`, rather than due to soft-wrapping.
      pub fn select_hard_line_at_point(&mut self, x: f32, y: f32) {
          self.refresh_layout();
@@ -963,7 +970,7 @@ index d024fee..350aa2a 100644
      }
  
      /// Move the selection focus point to the cluster boundary closest to point.
-@@ -706,22 +688,15 @@ where
+@@ -706,22 +695,15 @@ where
      pub fn extend_selection_to_point(&mut self, x: f32, y: f32) {
          self.refresh_layout();
          // FIXME: This is usually the wrong way to handle selection extension for mouse moves, but not a regression.
@@ -990,7 +997,7 @@ index d024fee..350aa2a 100644
      }
  
      /// Move the selection focus point to a byte index.
-@@ -830,9 +805,56 @@ where
+@@ -830,9 +812,63 @@ where
      pub fn selection_geometry(&self) -> Vec<(BoundingBox, usize)> {
          // We do not check `self.show_cursor` here, as the IME handling code collapses the
          // selection to a caret in that case.
@@ -1005,10 +1012,15 @@ index d024fee..350aa2a 100644
 +    /// one buffer character displays as goes to that character's nearer edge, and a movement that
 +    /// maps back to where it started moves on), else on the buffer's.
 +    fn move_selection(&mut self, mut f: impl FnMut(&Selection, &Layout<T>) -> Selection) {
++        let mut remembered = None;
 +        let selection = match self.current_display() {
 +            Some(display) => {
 +                let start = self.selection.focus().index();
-+                let mut shown = self.display_selection(display);
++                let current = (self.selection.anchor().index(), self.selection.focus().index());
++                let mut shown = match self.shown_selection {
++                    Some((anchor, focus, shown)) if (anchor, focus) == current => shown,
++                    _ => self.display_selection(display),
++                };
 +                let mut moved = self.source_selection(display, &shown);
 +                for _ in 0..8 {
 +                    let next = f(&shown, &display.layout);
@@ -1020,11 +1032,13 @@ index d024fee..350aa2a 100644
 +                        break;
 +                    }
 +                }
++                remembered = Some((moved.anchor().index(), moved.focus().index(), shown));
 +                moved
 +            }
 +            None => f(&self.selection, &self.layout),
 +        };
 +        self.set_selection(selection);
++        self.shown_selection = remembered;
 +    }
 +
 +    /// pyro: a selection in the displayed text, in the buffer (see [`Self::move_selection`]).
@@ -1047,7 +1061,7 @@ index d024fee..350aa2a 100644
      /// Invoke a callback with each rectangle representing the selected portions of text, and the
      /// indices of the lines to which they belong.
      pub fn selection_geometry_with(&self, f: impl FnMut(BoundingBox, usize)) {
-@@ -855,6 +877,11 @@ where
+@@ -855,6 +891,11 @@ where
      /// There is not always a caret. For example, the IME may have indicated the caret should be
      /// hidden.
      pub fn cursor_geometry(&self, size: f32) -> Option<BoundingBox> {
@@ -1059,7 +1073,7 @@ index d024fee..350aa2a 100644
          self.show_cursor
              .then(|| self.selection.focus().geometry(&self.layout, size))
      }
-@@ -1073,11 +1100,42 @@ where
+@@ -1073,11 +1114,47 @@ where
      pub fn try_layout(&self) -> Option<&Layout<T>> {
          if self.layout_dirty {
              None
@@ -1081,6 +1095,11 @@ index d024fee..350aa2a 100644
 +        font_cx: &mut FontContext,
 +        layout_cx: &mut LayoutContext<T>,
 +    ) {
++        // (A selection remembered in another displayed text is no position in this one.)
++        let same = |old: &DisplayText<T>, text: &str| old.source == self.buffer && old.layout_text == text;
++        if !matches!((&self.display, &display), (Some(old), Some((text, _))) if same(old, text)) {
++            self.shown_selection = None;
++        }
 +        self.display = display.map(|(text, map)| {
 +            let mut builder = layout_cx.ranged_builder(font_cx, &text, self.scale, self.quantize);
 +            builder.set_base_direction(self.base_direction);
@@ -1090,7 +1109,7 @@ index d024fee..350aa2a 100644
 +            let mut layout = builder.build(&text);
 +            layout.break_all_lines(self.width);
 +            layout.align(self.alignment, AlignmentOptions::default());
-+            DisplayText { source: self.buffer.clone(), map, layout }
++            DisplayText { source: self.buffer.clone(), map, layout, layout_text: text }
 +        });
 +    }
 +

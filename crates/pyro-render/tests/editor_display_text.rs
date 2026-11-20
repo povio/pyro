@@ -87,3 +87,80 @@ fn vertical_movement_follows_the_displayed_lines() {
     let expected = map.iter().find(|&&(_, at)| at == second_line).map(|&(value, _)| value).unwrap();
     assert_eq!(editor.raw_selection().focus().index(), expected);
 }
+
+#[test]
+fn vertical_movement_keeps_its_column_across_a_short_line() {
+    // A long line, a short one, a long one: Down twice from the end of the first keeps the first
+    // line's end as its column (parley's remembered x), not the short line's end.
+    let text = "ßßßßßß\nß\nßßßßßß";
+    let (mut editor, mut font_cx, mut layout_cx) = editor(text, None);
+    let mut driver = editor.driver(&mut font_cx, &mut layout_cx);
+    driver.move_to_text_start();
+    driver.move_to_line_end();
+    driver.move_down();
+    assert_eq!(editor.raw_selection().focus().index(), "ßßßßßß\nß".len(), "the short line's end");
+    editor.driver(&mut font_cx, &mut layout_cx).move_down();
+    assert_eq!(editor.raw_selection().focus().index(), text.len(), "the third line's end, as the first's");
+}
+
+#[test]
+fn a_selection_ending_inside_what_one_character_shows_as_ends_at_its_nearer_edge() {
+    let (mut editor, mut font_cx, mut layout_cx) = editor("ßx", None);
+    let (end, y) = point(&editor, 3);
+    let (start, _) = point(&editor, 0);
+    let (after, _) = point(&editor, 2);
+    let mut driver = editor.driver(&mut font_cx, &mut layout_cx);
+    driver.move_to_point(end + 0.5, y);
+    // Near the end of `SS`: the end of `ß`.
+    driver.extend_selection_to_point(start + (after - start) * 0.9, y);
+    let selection = editor.raw_selection();
+    assert_eq!((selection.anchor().index(), selection.focus().index()), (3, 2));
+    // Near its start: the start of `ß`.
+    editor.driver(&mut font_cx, &mut layout_cx).extend_selection_to_point(start + (after - start) * 0.1, y);
+    let selection = editor.raw_selection();
+    assert_eq!((selection.anchor().index(), selection.focus().index()), (3, 0));
+    // Between the two `S` (displayed offset 1), equally far from both edges: the start.
+    let (between, _) = point(&editor, 1);
+    editor.driver(&mut font_cx, &mut layout_cx).extend_selection_to_point(between, y);
+    let selection = editor.raw_selection();
+    assert_eq!((selection.anchor().index(), selection.focus().index()), (3, 0));
+}
+
+#[test]
+fn characters_outside_the_bmp_map_by_their_four_bytes() {
+    // Deseret: `𐐨` upper-cases to `𐐀`, four UTF-8 bytes (two UTF-16 units) each.
+    let text = "𐐨𐐨x";
+    let (mut editor, mut font_cx, mut layout_cx) = editor(text, None);
+    assert_eq!(editor.try_layout().unwrap().lines().next().unwrap().text_range(), 0..9, "`𐐀𐐀X` shown");
+    let mut driver = editor.driver(&mut font_cx, &mut layout_cx);
+    driver.move_to_text_start();
+    driver.move_right();
+    assert_eq!(editor.raw_selection().focus().index(), 4);
+    let (x, y) = point(&editor, 8);
+    editor.driver(&mut font_cx, &mut layout_cx).move_to_point(x + 0.5, y);
+    assert_eq!(editor.raw_selection().focus().index(), 8);
+}
+
+#[test]
+fn typing_and_undoing_in_a_transformed_editor_never_uses_a_stale_map() {
+    let (mut editor, mut font_cx, mut layout_cx) = editor("ßx", None);
+    let mut driver = editor.driver(&mut font_cx, &mut layout_cx);
+    driver.move_to_text_end();
+    driver.insert_or_replace_selection("ß");
+    assert_eq!(editor.raw_text(), "ßxß");
+    // Until the display text is made again, the value's own layout is shown (the map is stale).
+    assert_eq!(editor.try_layout().unwrap().lines().next().unwrap().text_range(), 0.."ßxß".len());
+    editor.set_display_text(Some(uppercase("ßxß")), &mut font_cx, &mut layout_cx);
+    assert_eq!(editor.try_layout().unwrap().lines().next().unwrap().text_range(), 0..5, "`SSXSS` shown");
+    let caret = editor.cursor_geometry(1.0).unwrap();
+    let (end, _) = point(&editor, 5);
+    assert!((caret.x0 as f32 - end).abs() < 1.0, "the caret after the displayed `SS`: {} vs {end}", caret.x0);
+    // Undo puts the value back (the page's history sets it): the old map is not used for it.
+    editor.set_text("ßx");
+    assert_eq!(editor.try_layout().map(|layout| layout.lines().next().unwrap().text_range()), None, "laid out again first");
+    editor.refresh_layout(&mut font_cx, &mut layout_cx);
+    assert_eq!(editor.try_layout().unwrap().lines().next().unwrap().text_range(), 0.."ßx".len());
+    editor.set_display_text(Some(uppercase("ßx")), &mut font_cx, &mut layout_cx);
+    editor.driver(&mut font_cx, &mut layout_cx).move_to_text_end();
+    assert_eq!(editor.raw_selection().focus().index(), "ßx".len());
+}

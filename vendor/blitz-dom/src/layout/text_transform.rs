@@ -224,37 +224,49 @@ impl TextTransformer {
 }
 
 /// pyro: a text control's value as `text-transform` displays it, with the byte offsets of each
-/// character's start (and the end) in the value and in the displayed text
-/// (`PlainEditor::set_display_text`); `None` when it displays the value as it is. Each character is
-/// mapped on its own (`ß` -> `SS`), but `capitalize`, which needs its word: that is mapped as a
-/// whole, and only when it keeps the character count.
+/// grapheme cluster's start (and the end) in the value and in the displayed text
+/// (`PlainEditor::set_display_text`); `None` when it displays the value as it is.
+///
+/// The value is transformed as a whole, as inline text is, with full context-aware case mapping
+/// in the element's language (Unicode SpecialCasing: `ΟΣ` lowercases to `ος`, Turkic and
+/// Lithuanian `i`), so the map is built from the result, cluster by cluster: from each cluster's
+/// own transform when those add up to the whole, else from the transforms of the value's prefixes
+/// (`capitalize`, whose clusters depend on the word before them), for values up to
+/// `MAX_PREFIX_MAPPED` bytes.
 pub(crate) fn display_text(value: &str, style: &ComputedValues) -> Option<(String, Vec<(usize, usize)>)> {
+    /// The longest value whose map is built from its prefixes (quadratic).
+    const MAX_PREFIX_MAPPED: usize = 4096;
     let transform = CaseTransform::from_style(style);
     if transform.text_transform.is_empty() {
         return None;
     }
     let mut transformer = TextTransformer::default();
-    let mut map = Vec::with_capacity(value.len() + 1);
-    let display = if transform.text_transform.case() == TextTransformCase::Capitalize {
-        let whole = transformer.transform_alone(value, &transform);
-        if whole.chars().count() != value.chars().count() {
+    let display = transformer.transform_alone(value, &transform);
+    if display == value {
+        return None;
+    }
+    let boundaries: Vec<usize> = icu_segmenter::GraphemeClusterSegmenter::new().segment_str(value).collect();
+    let mut map = Vec::with_capacity(boundaries.len());
+    // Each cluster on its own.
+    let mut shown = 0;
+    for pair in boundaries.windows(2) {
+        map.push((pair[0], shown));
+        shown += transformer.transform_alone(&value[pair[0]..pair[1]], &transform).len();
+    }
+    if shown != display.len() {
+        // The prefixes (a prefix's transform starts the whole's for what precedes its end).
+        if value.len() > MAX_PREFIX_MAPPED {
             return None;
         }
-        for ((buffer, _), (shown, _)) in value.char_indices().zip(whole.char_indices()) {
-            map.push((buffer, shown));
+        map.clear();
+        for &boundary in &boundaries[..boundaries.len().saturating_sub(1)] {
+            let at = transformer.transform_alone(&value[..boundary], &transform).len().min(display.len());
+            let at = (0..=at).rev().find(|&at| display.is_char_boundary(at)).unwrap_or(0);
+            map.push((boundary, at.max(map.last().map_or(0, |&(_, last)| last))));
         }
-        whole
-    } else {
-        let mut display = String::with_capacity(value.len());
-        let mut piece = [0u8; 4];
-        for (buffer, c) in value.char_indices() {
-            map.push((buffer, display.len()));
-            display.push_str(&transformer.transform_alone(c.encode_utf8(&mut piece), &transform));
-        }
-        display
-    };
+    }
     map.push((value.len(), display.len()));
-    (display != value).then_some((display, map))
+    Some((display, map))
 }
 
 /// Maps single-character text nodes to mathematical italic characters.
