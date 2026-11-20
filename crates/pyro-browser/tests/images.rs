@@ -524,3 +524,34 @@ fn an_svg_image_draws_to_a_canvas() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "read.join('|')"), "p:255|d:SecurityError");
 }
+
+/// What the page fetched itself and hands its layout (an `<object>`'s image) is stored for the
+/// requesting document alone, with its URL after redirects, tainting and status written together:
+/// no other document's key finds it; a CORS SVG `<image>`'s response and a failed one are never
+/// stored; a navigation leaves nothing of the old document. `<object>` bytes went to a bare-URL
+/// slot every document of the identity read, with tainting and final URL kept apart (security
+/// review cycles 2-3, layout body cache).
+#[test]
+fn the_page_hands_its_layout_bodies_for_its_document_alone() {
+    let (mut thread, page, loader) = setup(
+        "<object id=o data=/detour.png></object><object id=missing data=/missing.png></object>\
+         <svg><image id=s crossorigin=anonymous href=/cors.png width=1 height=1></image></svg>",
+    );
+    loader.insert_bytes("http://site.test/detour.png", "image/png", &png(3, 2), Duration::ZERO);
+    loader.insert_bytes("http://site.test/cors.png", "image/png", &png(1, 1), Duration::ZERO);
+    loader.insert("http://site.test/next", "text/html", "<p>next</p>", Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Opaquing(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
+    let bodies = thread.browser.layout_bodies(page).unwrap();
+    let key = |document: &str, url: &str| pyro_dom::layout::LayoutBodyKey::new(document, url, &Default::default());
+    let object = bodies.get(&key(&client, "http://site.test/detour.png")).expect("the object's body, for its document");
+    assert_eq!((object.final_url.as_str(), object.opaque, object.status), ("http://site.test/detour.png", true, 200));
+    assert!(bodies.get(&key("OTHER#doc", "http://site.test/detour.png")).is_none());
+    assert!(bodies.get(&key(&client, "http://site.test/missing.png")).is_none(), "a failed response is not stored");
+    assert!(bodies.get(&key(&client, "http://site.test/cors.png")).is_none(), "a CORS response is not a no-cors body");
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/next")).unwrap();
+    settle(&mut thread);
+    assert!(bodies.get(&key(&client, "http://site.test/detour.png")).is_none(), "gone with its document");
+}

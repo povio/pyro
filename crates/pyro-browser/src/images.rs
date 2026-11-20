@@ -64,11 +64,11 @@ struct Image {
     outcome: Option<bool>,
 }
 
-impl Browser {
-    /// pyro: the URLs the elements of `page`'s document requested as images themselves
-    /// (`<img>`, SVG `<image>`, `<object>`), loaded or failed or in flight.
-    pub fn element_image_urls(&self, page: crate::PageId) -> Vec<String> {
-        self.doc(page.into()).map(|d| d.images.entries.values().map(|i| i.url.clone()).collect()).unwrap_or_default()
+impl Images {
+    /// pyro: the URLs the document's elements requested as images themselves (`<img>`, SVG
+    /// `<image>`, `<object>`), loaded or failed or in flight.
+    pub(crate) fn urls(&self) -> Vec<String> {
+        self.entries.values().map(|i| i.url.clone()).collect()
     }
 }
 
@@ -975,10 +975,20 @@ impl Browser {
         // The page's layout engine lays the element out from the same body
         // (an `<object>` image's size), which it would otherwise fetch on its
         // own and might not have when `load` fires and scripts measure.
-        if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
-            if let Some(p) = self.page(page.page) {
-                p.frames.layout_bodies.provide(&url, &r.body);
-            }
+        // pyro: the document's own no-cors response only, with its URL after redirects, tainting
+        // and status (`provide_layout_body`); a CORS one (an SVG `<image crossorigin>`'s) is another
+        // request, which layout makes itself.
+        if let Some(r) = result
+            .as_ref()
+            .ok()
+            .filter(|r| cors == 0 && (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES)
+        {
+            self.provide_layout_body(page, &url, pyro_dom::layout::LayoutBody {
+                bytes: std::sync::Arc::new(r.body.clone()),
+                final_url: r.url.clone(),
+                opaque: r.opaque,
+                status: r.status,
+            });
         }
         // HTML "the object element": the response's Content-Type decides what the object shows.
         // A document gets a child navigable (which loads it and fires the element's `load`), as

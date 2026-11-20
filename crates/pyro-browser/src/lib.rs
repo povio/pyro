@@ -87,16 +87,15 @@ pub fn document_client(frame: &Frame) -> String {
     format!("{}#{}", frame.id.0, frame.loader_id.0)
 }
 
-/// pyro: the requester a layout body fetched with request options of its own is kept for
-/// (`SubresourceOptions::body_key`): the frame document's origin, an opaque one by its identity.
-/// Documents of one origin (in one network identity) share those bodies, as an HTTP cache keyed
-/// by the request's origin does; a sandboxed or cross-origin document never gets another's.
-pub fn layout_document(frame: &Frame) -> String {
-    if frame.origin == "null" {
-        format!("opaque:{}", frame.opaque_origin)
-    } else {
-        frame.origin.clone()
-    }
+/// pyro: what a capture knows of one document's images ([`Browser::document_images`]).
+#[derive(Clone, Debug, Default)]
+pub struct DocumentImages {
+    /// The URLs of its list of available images.
+    pub available: std::collections::HashSet<String>,
+    /// The URLs its elements requested as images (`<img>`, SVG `<image>`, `<object>`).
+    pub requested: std::collections::HashSet<String>,
+    /// It had fired `load`.
+    pub loaded: bool,
 }
 
 /// pyro: what a renderer's sub-resource request carries beyond its URL, as a CSS `url()`'s
@@ -1374,7 +1373,7 @@ impl Browser {
         url: String,
         kind: ResourceKind,
         mut options: SubresourceOptions,
-        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+        done: Box<dyn FnOnce(Result<pyro_dom::layout::LayoutBody, String>) + Send>,
     ) {
         if options.referrer_policy.is_none() {
             if let Some(referrer) = options.referrer.as_deref() {
@@ -1393,7 +1392,6 @@ impl Browser {
         };
         let cors = options.crossorigin.is_some();
         let integrity = options.integrity;
-        let asked = request.url.clone();
         let Some(resource_loader) = self.loader_for(frame) else {
             done(Err("no resource loader".into()));
             return;
@@ -1402,19 +1400,20 @@ impl Browser {
         resource_loader.fetch(
             self,
             request,
-            Box::new(move |b, result| {
-                // pyro: the layouts resolve a sheet's URLs against its URL after redirects.
-                if let (Ok(r), Some(p)) = (result.as_ref(), b.page(frame.page)) {
-                    p.frames.layout_bodies.set_final_url(&asked, &r.url);
-                    p.frames.layout_bodies.set_opaque(&asked, r.opaque);
-                }
+            Box::new(move |_, result| {
                 done(result.and_then(|r| {
                     // pyro: a response that fails its integrity check (`integrity()`) is an error.
                     if let Some(message) = loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
                         return Err(message);
                     }
                     match r.status {
-                        200..=299 => Ok(r.render_body(environment.as_slice())),
+                        // pyro: the body with its URL after redirects (a sheet resolves its URLs
+                        // against it), its tainting and its status, together, after the checks.
+                        200..=299 => {
+                            let (final_url, opaque, status) = (r.url.clone(), loader::is_opaque(&r, cors, &origin), r.status);
+                            let bytes = std::sync::Arc::new(r.render_body(environment.as_slice()));
+                            Ok(pyro_dom::layout::LayoutBody { bytes, final_url, opaque, status })
+                        }
                         status => Err(format!("HTTP {status}")),
                     }
                 }))
@@ -1428,13 +1427,40 @@ impl Browser {
         self.page(page).map(|p| p.frames.layout_bodies.clone())
     }
 
-    /// pyro: [`layout_document`] of each document of `page`, by its [`document_client`].
-    pub fn layout_documents(&self, page: PageId) -> std::collections::HashMap<String, String> {
+    /// pyro: whether `client` ([`document_client`]) names a document that is still its frame's
+    /// in `page`.
+    pub fn is_live_client(&self, page: PageId, client: &str) -> bool {
+        let Some((frame_id, loader)) = client.split_once('#') else { return false };
+        let Some(p) = self.page(page) else { return false };
+        p.frames.key_of(frame_id).and_then(|key| p.frames.with_frame(key, |f| f.loader_id.0 == loader)).unwrap_or(false)
+    }
+
+    /// pyro: a body `frame`'s document fetched itself for `url` (a no-cors request with the
+    /// defaults: an imported sheet, an `<object>`'s image) that its layout would otherwise fetch
+    /// again: that document's alone ([`pyro_dom::layout::LayoutBodyKey`]), written with its URL
+    /// after redirects, tainting and status once its checks passed.
+    pub(crate) fn provide_layout_body(&self, frame: FrameKey, url: &str, body: pyro_dom::layout::LayoutBody) {
+        let Some(document) = self.doc(frame).map(|d| document_client(&d.main_frame)) else { return };
+        let Some(p) = self.page(frame.page) else { return };
+        let key = pyro_dom::layout::LayoutBodyKey::new(&document, url, &Default::default());
+        p.frames.layout_bodies.finish(key, body);
+    }
+
+    /// pyro: each document of `page` by its client: its list of available images and the URLs its
+    /// elements requested as images (a capture asks about the document a request is for, a
+    /// child frame's included, never the top document's).
+    pub fn document_images(&self, page: PageId) -> std::collections::HashMap<String, DocumentImages> {
         let Some(p) = self.page(page) else { return Default::default() };
         p.frames
             .keys()
             .into_iter()
-            .filter_map(|key| p.frames.with_frame(key, |f| (document_client(f), layout_document(f))))
+            .filter_map(|key| {
+                let client = p.frames.with_frame(key, document_client)?;
+                let available = p.frames.page_dom(key).map(|d| d.available_image_urls().into_iter().collect()).unwrap_or_default();
+                let requested = self.doc(key).map(|d| d.images.urls().into_iter().collect()).unwrap_or_default();
+                let loaded = p.frames.with_frame(key, |f| f.loaded).unwrap_or(false);
+                Some((client, DocumentImages { available, requested, loaded }))
+            })
             .collect()
     }
 
@@ -2077,6 +2103,13 @@ impl Browser {
         page_dom.set_base_url(&base_url);
         if let Some(previous) = self.doc(page).map(|p| p.main_frame.loader_id.clone()) {
             self.forget_network_activity(page, &previous);
+        }
+        // pyro: what the previous document's layout loaded, or still waits for, is its alone: gone
+        // with it (`SubresourceBodies::forget_document`).
+        if let (Some(previous), Some(p)) = (self.doc(page).map(|d| document_client(&d.main_frame)), self.page(page.page)) {
+            if !previous.ends_with(&format!("#{}", loader_id.0)) {
+                p.frames.layout_bodies.forget_document(&previous);
+            }
         }
         let scripts = self.page(page.page).ok_or(JsError::ContextDestroyed)?.init_scripts.clone();
         let (frame_id, mut old, scripts, nav, old_dom, initial_same_origin) = {

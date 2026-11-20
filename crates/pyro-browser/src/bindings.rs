@@ -18,44 +18,24 @@ struct LayoutLoader {
     handle: LoopHandle<Browser>,
     frame: FrameKey,
     loader: LoaderId,
-    /// pyro: the document's [`crate::layout_document`], which its bodies of own options are kept for.
+    /// pyro: the document's client (`crate::document_client`), which every key of its bodies names.
     document: String,
     bodies: Arc<pyro_dom::layout::SubresourceBodies>,
     /// The fonts this document's layout asked for (`document.fonts`, the load event).
-    asked_fonts: std::sync::Mutex<std::collections::HashSet<String>>,
-    /// pyro: the CSS images this document's layout asked for, by body key (the load event).
-    asked_images: std::sync::Mutex<std::collections::HashSet<String>>,
+    asked_fonts: std::sync::Mutex<std::collections::HashSet<pyro_dom::layout::LayoutBodyKey>>,
+    /// pyro: the CSS images this document's layout asked for (the load event).
+    asked_images: std::sync::Mutex<std::collections::HashSet<pyro_dom::layout::LayoutBodyKey>>,
 }
 
 impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
+    /// pyro: as the screenshot's requests are made (a CSS `url()`'s request URL modifiers), so
+    /// layout queries and screenshots agree; the response's checks are the browser's.
     fn load(
         &self,
         url: String,
         kind: pyro_dom::layout::SubresourceKind,
-        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
-    ) {
-        let cors = kind == pyro_dom::layout::SubresourceKind::CorsImage;
-        let kind = match kind {
-            pyro_dom::layout::SubresourceKind::Image | pyro_dom::layout::SubresourceKind::CorsImage => {
-                crate::ResourceKind::Image
-            }
-            pyro_dom::layout::SubresourceKind::Font => crate::ResourceKind::Font,
-            pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
-        };
-        let options = crate::SubresourceOptions { crossorigin: cors.then(|| "anonymous".to_owned()), ..Default::default() };
-        let (frame, loader) = (self.frame, self.loader.clone());
-        // A closed loop drops `done`: its document is gone with the browser.
-        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, options, done));
-    }
-
-    /// pyro: as the screenshot's requests are made (a CSS `url()`'s request URL modifiers), so
-    /// layout queries and screenshots agree.
-    fn load_with(
-        &self,
-        url: String,
-        kind: pyro_dom::layout::SubresourceKind,
         options: &pyro_dom::layout::SubresourceOptions,
-        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+        done: Box<dyn FnOnce(Result<pyro_dom::layout::LayoutBody, String>) + Send>,
     ) {
         let kind = match kind {
             pyro_dom::layout::SubresourceKind::Image | pyro_dom::layout::SubresourceKind::CorsImage => {
@@ -72,6 +52,7 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
             client: None,
         };
         let (frame, loader) = (self.frame, self.loader.clone());
+        // A closed loop drops `done`: its document is gone with the browser.
         let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, options, done));
     }
 
@@ -79,33 +60,27 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
         &self.bodies
     }
 
-    /// pyro: the document's origin (an opaque one by its identity): `crate::layout_document`.
-    fn document(&self) -> Option<String> {
-        Some(self.document.clone())
+    fn document(&self) -> String {
+        self.document.clone()
     }
 
-    /// pyro: the document's loader id, as the page's clients name it (`document_client`).
-    fn timeline_document(&self) -> Option<String> {
-        Some(self.loader.0.clone())
-    }
-
-    fn font_asked(&self, url: &str) {
+    fn font_asked(&self, key: &pyro_dom::layout::LayoutBodyKey) {
         if let Ok(mut asked) = self.asked_fonts.lock() {
-            asked.insert(url.to_owned());
+            asked.insert(key.clone());
         }
     }
 
-    fn asked_fonts(&self) -> Option<Vec<String>> {
+    fn asked_fonts(&self) -> Option<Vec<pyro_dom::layout::LayoutBodyKey>> {
         self.asked_fonts.lock().ok().map(|asked| asked.iter().cloned().collect())
     }
 
-    fn image_asked(&self, key: &str) {
+    fn image_asked(&self, key: &pyro_dom::layout::LayoutBodyKey) {
         if let Ok(mut asked) = self.asked_images.lock() {
-            asked.insert(key.to_owned());
+            asked.insert(key.clone());
         }
     }
 
-    fn asked_images(&self) -> Option<Vec<String>> {
+    fn asked_images(&self) -> Option<Vec<pyro_dom::layout::LayoutBodyKey>> {
         self.asked_images.lock().ok().map(|asked| asked.iter().cloned().collect())
     }
 }
@@ -1019,7 +994,8 @@ pub(crate) fn create(
         handle: host.handle.clone(),
         frame: page,
         loader: loader.clone(),
-        document: crate::layout_document(&frame),
+        // (The new document's loader: the frame still names the previous one here.)
+        document: format!("{}#{}", frame.id.0, loader.0),
         bodies: host.layout_bodies.clone(),
         asked_fonts: Default::default(),
         asked_images: Default::default(),

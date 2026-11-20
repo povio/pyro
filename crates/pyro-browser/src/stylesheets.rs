@@ -674,9 +674,13 @@ impl Browser {
             // again (they read `file:` and `data:` URLs themselves), decoded
             // (they cannot know its environment encoding).
             // (Not a modified import's: the layouts key its request apart, by its modifiers.)
-            if let Some(p) = self.page(page.page).filter(|_| url.starts_with("http") && !modified) {
-                p.frames.layout_bodies.provide(url, &pyro_dom::cssom::stylesheet_utf8_bytes(&text));
-                p.frames.layout_bodies.set_final_url(url, &r.url);
+            if url.starts_with("http") && !modified {
+                self.provide_layout_body(page, url, pyro_dom::layout::LayoutBody {
+                    bytes: std::sync::Arc::new(pyro_dom::cssom::stylesheet_utf8_bytes(&text)),
+                    final_url: r.url.clone(),
+                    opaque: r.opaque,
+                    status: r.status,
+                });
             }
             if depth < MAX_IMPORT_DEPTH {
                 let base = url::Url::parse(&r.url).ok();

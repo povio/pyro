@@ -204,11 +204,12 @@ fn layout_and_render_loads_go_through_the_context_proxy_with_its_user_agent() {
     assert_eq!(paths(&direct, "/id/"), vec![], "nothing of the page reached the origin directly");
 }
 
-/// The bodies layout loaded serve the pages of one network identity: a page
+/// The bodies layout loaded serve only the document that loaded them: a page
 /// in a context with its own proxy and agent loads everything through them
 /// although a default context's page loaded the same URLs straight from the
-/// origin before, which it still does; another page of that context reuses
-/// what the first one loaded.
+/// origin before, which it still does; another page of that context loads its
+/// own, through the same proxy (bodies are per document: security review
+/// cycle 3, layout body cache).
 #[test]
 fn layout_bodies_serve_only_their_network_identity() {
     let (origin, direct) = server();
@@ -236,18 +237,17 @@ fn layout_bodies_serve_only_their_network_identity() {
     let seen = paths(&proxied, "/shared/");
     assert!(seen.iter().all(|(_, agent)| agent == IDENTITY), "{seen:?}");
 
-    // Another page of the same context lays out with what the first loaded.
+    // Another page of the same context loads its own, through the same proxy.
     let loads: Vec<usize> = want.iter().map(|path| count(&proxied, path)).collect();
     let second = open(&mut h, Some(&ctx), &url);
-    lay_out(&mut h, &second);
-    h.run_for(300);
-    lay_out(&mut h, &second);
-    assert_eq!(
-        want.iter().map(|path| count(&proxied, path)).collect::<Vec<_>>(),
-        loads,
-        "{:?}",
-        paths(&proxied, "/shared/")
-    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while want.iter().zip(&loads).any(|(path, before)| count(&proxied, path) <= *before) {
+        assert!(Instant::now() < deadline, "the second page's own loads: {:?}", paths(&proxied, "/shared/"));
+        lay_out(&mut h, &second);
+        h.run_for(30);
+    }
+    assert_eq!(paths(&direct, "/shared/").len(), direct_before, "{:?}", paths(&direct, "/shared/"));
+    assert!(paths(&proxied, "/shared/").iter().all(|(_, agent)| agent == IDENTITY));
 }
 
 /// A page's Fetch interception pauses its layout's loads too; one it fails

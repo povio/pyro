@@ -20,7 +20,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use pyro_dom::layout::{SubresourceBodies, SubresourceKind, SubresourceLoader, SubresourceOptions};
+use pyro_dom::layout::{LayoutBody, LayoutBodyKey, SubresourceBodies, SubresourceKind, SubresourceLoader, SubresourceOptions};
 use pyro_render::Fetcher;
 
 pub(crate) use pyro_layout::{set_fork_template, take_stats};
@@ -43,43 +43,31 @@ pub(crate) fn install(statics: pyro_net::StaticFiles) {
     }));
 }
 
-/// URLs whose network load failed for one document.
-type Failed = Arc<std::sync::Mutex<std::collections::HashSet<String>>>;
+/// The requests whose network load failed for one document.
+type Failed = Arc<std::sync::Mutex<std::collections::HashSet<LayoutBodyKey>>>;
 
 /// Loads one document's sub-resources synchronously: `data:` and `file:`
 /// URLs and `serve --static` roots from disk, the rest through the
-/// document's network (cached per identity).
+/// document's network (its bodies kept for it alone, `LayoutBodyKey`).
 struct LocalFiles {
     statics: pyro_net::StaticFiles,
     /// The document's network (`None`: it has none, and loads nothing from
     /// the network).
     loader: Option<Arc<dyn SubresourceLoader>>,
-    /// What failed for this document, which does not ask for it again. Only
-    /// bodies are shared with the identity: a failure may be this page's
-    /// own (its interception aborted the request, its cookies got a 401),
-    /// and the identity's other documents ask again.
+    /// What failed for this document, which does not ask for it again.
     failed: Failed,
 }
 
 /// A layout fetch in flight, counted until the loader drops its callback.
 struct InFlight {
     bodies: Arc<SubresourceBodies>,
-    failed: Failed,
-    key: String,
-    /// The document (by its loader id) whose layout asked for the body.
-    document: Option<String>,
+    key: LayoutBodyKey,
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        // No body (a failure, or no answer because the document went first):
-        // the identity's next document asks again.
-        {
-            let mut bodies = self.bodies.lock();
-            if bodies.get(&self.key).is_some_and(|b| b.is_empty()) {
-                bodies.remove(&self.key);
-            }
-        }
+        // No answer (the document went first): not in flight. (A failure is recorded below.)
+        self.bodies.abandon(&self.key);
         let last = IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1;
         if last && PDF_WAITING.load(std::sync::atomic::Ordering::Acquire) {
             wake_pdf();
@@ -87,179 +75,95 @@ impl Drop for InFlight {
     }
 }
 
+/// pyro: a renderer's request options as layout's loader takes them.
+fn layout_options(options: &pyro_render::FetchOptions) -> SubresourceOptions {
+    SubresourceOptions {
+        crossorigin: options.cors.map(|credentials| match credentials {
+            pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
+            pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
+        }),
+        integrity: options.integrity.clone(),
+        referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
+        referrer_policy: options.referrer_policy.clone(),
+    }
+}
+
 impl LocalFiles {
-    /// A network body from the identity's cache. A miss starts the fetch in
-    /// the background (into the cache) and answers `None` now: a layout
-    /// never waits for the network (a request held by interception needs
-    /// this thread), and the identity's next documents get the body at once.
-    /// With `options` other than the defaults (CORS mode, integrity, referrer: a CSS `url()`'s
-    /// request URL modifiers), fetched as they say and cached apart.
-    fn network(&self, url: &pyro_net::Url, options: &SubresourceOptions) -> Option<Vec<u8>> {
+    /// The document's network body of `url` fetched as `options` say. A miss starts the fetch in
+    /// the background (into the document's bodies) and answers `None` now: a layout never waits
+    /// for the network (a request held by interception needs this thread).
+    fn network(&self, url: &pyro_net::Url, options: &SubresourceOptions) -> Option<Arc<LayoutBody>> {
         // No network of its own: nothing goes out, never through another
         // context's client.
         let loader = self.loader.as_ref()?;
         let bodies = loader.bodies().clone();
-        let cors = options.crossorigin.is_some();
-        let plain_cors = cors
-            && options.crossorigin.as_deref() == Some("anonymous")
-            && options.integrity.is_none()
-            && options.referrer.is_none()
-            && options.referrer_policy.is_none();
-        // pyro: a body loaded with other than the defaults (a CORS response passed for this
-        // document's origin) is this document's alone: the frames sharing the bodies do not reuse
-        // it without their own check (`SubresourceOptions::body_key`).
-        let key = options.body_key(url.as_str(), loader.document().as_deref());
+        // pyro: the document's own request: its client and the whole request (`LayoutBodyKey`).
+        let key = LayoutBodyKey::new(&loader.document(), url.as_str(), options);
         if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
             return None;
         }
-        // pyro: when this document first needed it (`SubresourceBodies::late_for`).
-        if let Some(document) = loader.timeline_document() {
-            bodies.needed(&document, &key);
+        // pyro: when this document first needed it (`SubresourceBodies::late`).
+        bodies.needed(&key);
+        if let Some(body) = bodies.get(&key) {
+            return Some(body);
         }
-        {
-            let mut cache = bodies.lock();
-            match cache.get(&key) {
-                Some(b) if !b.is_empty() => return Some(b.to_vec()),
-                Some(_) => {
-                    // pyro: in flight for another document of the identity: this one waits on it too.
-                    let path = url.path().to_ascii_lowercase();
-                    if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
-                        loader.font_asked(url.as_str());
-                    } else if !path.ends_with(".css") {
-                        loader.image_asked(&key);
-                    }
-                    return None;
-                }
-                // An empty entry marks the fetch in flight.
-                None => cache.insert(key.clone(), Arc::new(Vec::new())),
-            };
-        }
-        IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let fetch = InFlight { bodies, failed: self.failed.clone(), key, document: loader.timeline_document() };
         let path = url.path().to_ascii_lowercase();
+        let font = [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e));
+        let plain_cors = options.crossorigin.as_deref() == Some("anonymous")
+            && options.integrity.is_none()
+            && options.referrer.is_none()
+            && options.referrer_policy.is_none();
         let kind = if plain_cors {
             SubresourceKind::CorsImage
-        } else if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
-            loader.font_asked(url.as_str());
+        } else if font {
             SubresourceKind::Font
         } else if path.ends_with(".css") || url.host_str() == Some("fonts.googleapis.com") {
             SubresourceKind::Style
         } else {
             SubresourceKind::Image
         };
-        // pyro: a CSS image this document's layout asked for: its `load` waits for it.
-        if matches!(kind, SubresourceKind::Image | SubresourceKind::CorsImage) {
-            loader.image_asked(&fetch.key);
+        match kind {
+            SubresourceKind::Font => loader.font_asked(&key),
+            // pyro: a CSS image this document's layout asked for: its `load` waits for it.
+            SubresourceKind::Image | SubresourceKind::CorsImage => loader.image_asked(&key),
+            SubresourceKind::Style => {}
         }
-        loader.load_with(
+        if !bodies.start(&key) {
+            // In flight already (this document asked before).
+            return None;
+        }
+        IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let fetch = InFlight { bodies, key };
+        let failed = self.failed.clone();
+        loader.load(
             url.as_str().to_owned(),
             kind,
             options,
             Box::new(move |result| match result {
-                Ok(body) if !body.is_empty() => {
-                    fetch.bodies.lock().insert(fetch.key.clone(), Arc::new(body));
-                    fetch.bodies.came(&fetch.key);
-                    fetch.bodies.arrived();
-                }
+                // The body with its final URL, tainting and status, written together.
+                Ok(body) if !body.bytes.is_empty() => fetch.bodies.finish(fetch.key.clone(), body),
                 // An empty body counts as a failure (nothing to lay out with).
                 _ => {
-                    if let Ok(mut failed) = fetch.failed.lock() {
+                    if let Ok(mut failed) = failed.lock() {
                         failed.insert(fetch.key.clone());
                     }
-                    if let Some(document) = &fetch.document {
-                        fetch.bodies.fail(document, &fetch.key);
-                    }
-                    // pyro: no longer in flight (`document.fonts` waits on empty entries).
-                    let mut bodies = fetch.bodies.lock();
-                    if bodies.get(&fetch.key).is_some_and(|b| b.is_empty()) {
-                        bodies.remove(&fetch.key);
-                    }
+                    fetch.bodies.fail(&fetch.key);
                 }
             }),
         );
         None
     }
-}
 
-impl Fetcher for LocalFiles {
-    /// pyro: by the document's timeline in its identity's bodies.
-    fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
-        let loader = self.loader.as_ref()?;
-        let document = loader.timeline_document()?;
-        let options = SubresourceOptions {
-            crossorigin: options.cors.map(|credentials| match credentials {
-                pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
-                pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
-            }),
-            integrity: options.integrity.clone(),
-            referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
-            referrer_policy: options.referrer_policy.clone(),
-        };
-        let key = options.body_key(url, loader.document().as_deref());
-        loader.bodies().late_for(&document, &key, period)
-    }
-
-    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        self.load(url, &SubresourceOptions::default(), done)
-    }
-
-    /// pyro: as the screenshot's fetcher does, so layout queries and screenshots agree.
-    fn fetch_with(
-        &self,
-        url: String,
-        options: &pyro_render::FetchOptions,
-        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
-    ) {
-        let options = SubresourceOptions {
-            crossorigin: options.cors.map(|credentials| match credentials {
-                pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
-                pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
-            }),
-            integrity: options.integrity.clone(),
-            referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
-            referrer_policy: options.referrer_policy.clone(),
-        };
-        self.load(url, &options, done)
-    }
-
-    /// `data:` and `file:` URLs and `serve --static` roots are this process's own; the network's
-    /// responses pass the CORS check or fail.
-    fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        let options = SubresourceOptions { crossorigin: Some("anonymous".to_owned()), ..Default::default() };
-        self.load(url, &options, done)
-    }
-
-    /// pyro: with the response's URL after redirects as the document's network recorded it, so a
-    /// redirected sheet resolves its URLs as in screenshots.
-    fn fetch_final(
-        &self,
-        url: String,
-        options: &pyro_render::FetchOptions,
-        done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
-    ) {
-        let bodies = self.loader.as_ref().map(|l| l.bodies().clone());
-        let asked = url.clone();
-        let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> = Box::new(move |result| {
-            let url = bodies.as_ref().map_or_else(|| asked.clone(), |b| b.final_url(&asked));
-            done(result.map(|body| pyro_render::Fetched { body, url, opaque: false }))
-        });
-        if options.is_default() {
-            self.fetch(url, done)
-        } else {
-            self.fetch_with(url, options, done)
-        }
-    }
-}
-
-impl LocalFiles {
-    fn load(&self, url: String, options: &SubresourceOptions, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+    /// `url` as `options` say: a local body, or the document's network body (with its final URL
+    /// and tainting from the stored value).
+    fn load(&self, url: String, options: &SubresourceOptions, done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>) {
         let body = (|| {
             // A data: URL (as serialized by the url crate) holds its body.
             if url.starts_with("data:") {
-                return pyro_net::data_url::parse_str(&url).map(|(_, b)| b.to_vec());
+                return pyro_net::data_url::parse_str(&url).map(|(_, b)| Arc::new(LayoutBody::local(&url, b.to_vec())));
             }
             let u = pyro_net::Url::parse(&url).ok()?;
-            match u.scheme() {
+            let local = match u.scheme() {
                 "data" => pyro_net::data_url::parse(&u).map(|(_, b)| b.to_vec()),
                 "file" => std::fs::read(u.to_file_path().ok()?).ok(),
                 _ => match self.statics.lookup(&u, false) {
@@ -271,12 +175,70 @@ impl LocalFiles {
                         None => None,
                     },
                 },
-            }
+            };
+            // pyro: a local body with integrity metadata (`integrity()`) is used only when it matches.
+            local
+                .filter(|body| options.integrity.as_deref().is_none_or(|i| pyro_webapi::sri::matches(i, body)))
+                .map(|body| Arc::new(LayoutBody::local(&url, body)))
         })();
-        // pyro: a local body with integrity metadata (`integrity()`) is used only when it matches.
-        let body = body.filter(|body| options.integrity.as_deref().is_none_or(|i| pyro_webapi::sri::matches(i, body)));
-        done(body.ok_or_else(|| format!("{url}: not a local resource")));
+        let cors = options.crossorigin.is_some();
+        done(
+            body.map(|body| pyro_render::Fetched {
+                body: body.bytes.to_vec(),
+                url: body.final_url.clone(),
+                opaque: !cors && body.opaque,
+            })
+            .ok_or_else(|| format!("{url}: not a local resource")),
+        );
     }
+}
+
+impl Fetcher for LocalFiles {
+    /// pyro: by the document's timeline in its bodies.
+    fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
+        let loader = self.loader.as_ref()?;
+        let key = LayoutBodyKey::new(&loader.document(), url, &layout_options(options));
+        loader.bodies().late(&key, period)
+    }
+
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.load(url, &SubresourceOptions::default(), body_only(done))
+    }
+
+    /// pyro: as the screenshot's fetcher does, so layout queries and screenshots agree.
+    fn fetch_with(
+        &self,
+        url: String,
+        options: &pyro_render::FetchOptions,
+        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+    ) {
+        self.load(url, &layout_options(options), body_only(done))
+    }
+
+    /// `data:` and `file:` URLs and `serve --static` roots are this process's own; the network's
+    /// responses pass the CORS check or fail.
+    fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let options = SubresourceOptions { crossorigin: Some("anonymous".to_owned()), ..Default::default() };
+        self.load(url, &options, body_only(done))
+    }
+
+    /// pyro: with the response's URL after redirects and its tainting, from the stored body, so a
+    /// redirected sheet resolves its URLs as in screenshots.
+    fn fetch_final(
+        &self,
+        url: String,
+        options: &pyro_render::FetchOptions,
+        done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
+    ) {
+        self.load(url, &layout_options(options), done)
+    }
+}
+
+/// `done` for the body alone.
+fn body_only(
+    done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+) -> Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send> {
+    Box::new(move |result| done(result.map(|fetched| fetched.body)))
 }
 
 fn wake_pdf() {
@@ -328,48 +290,112 @@ mod document_bodies_tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// One document's network over shared bodies: answers every load at once with "ok",
-    /// recording (document, URL).
+    /// One document's network: answers every load at once with "ok" (from `final_url`, with
+    /// `opaque`), recording (document, URL).
     struct Loader {
         document: &'static str,
         bodies: Arc<SubresourceBodies>,
         log: Arc<Mutex<Vec<(&'static str, String)>>>,
+        final_url: Option<&'static str>,
+        opaque: bool,
     }
     impl SubresourceLoader for Loader {
-        fn load(&self, url: String, _kind: SubresourceKind, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-            self.log.lock().unwrap().push((self.document, url));
-            done(Ok(b"ok".to_vec()));
+        fn load(
+            &self,
+            url: String,
+            _kind: SubresourceKind,
+            _options: &SubresourceOptions,
+            done: Box<dyn FnOnce(Result<LayoutBody, String>) + Send>,
+        ) {
+            self.log.lock().unwrap().push((self.document, url.clone()));
+            let final_url = self.final_url.map_or(url, str::to_owned);
+            done(Ok(LayoutBody { bytes: Arc::new(b"ok".to_vec()), final_url, opaque: self.opaque, status: 200 }));
         }
         fn bodies(&self) -> &Arc<SubresourceBodies> {
             &self.bodies
         }
-        fn document(&self) -> Option<String> {
-            Some(self.document.to_owned())
+        fn document(&self) -> String {
+            self.document.to_owned()
         }
     }
 
-    /// A body loaded in CORS mode for one document (whose origin the server allowed) is not
-    /// served to another document sharing the bodies (a sandboxed or cross-origin sibling frame),
-    /// which makes its own request and check; a plain body is shared. The bodies were keyed by
-    /// URL and modifiers alone (security review cycle 1, HIGH 2).
+    fn files(
+        bodies: &Arc<SubresourceBodies>,
+        log: &Arc<Mutex<Vec<(&'static str, String)>>>,
+        document: &'static str,
+        final_url: Option<&'static str>,
+        opaque: bool,
+    ) -> LocalFiles {
+        let loader = Loader { document, bodies: bodies.clone(), log: log.clone(), final_url, opaque };
+        LocalFiles {
+            statics: pyro_net::StaticFiles::default(),
+            loader: Some(Arc::new(loader) as Arc<dyn SubresourceLoader>),
+            failed: Arc::default(),
+        }
+    }
+
+    fn loads(log: &Arc<Mutex<Vec<(&'static str, String)>>>, document: &str) -> usize {
+        log.lock().unwrap().iter().filter(|(d, _)| *d == document).count()
+    }
+
+    /// Every body is its requesting document's alone, whatever the request (plain or CORS): another
+    /// document sharing the store, a same-origin one with other cookies included (frame F2 of the
+    /// same origin, another loader of the same frame), makes its own request. Plain bodies were
+    /// kept under the bare URL, modified ones per origin (security review cycles 1-3, layout body
+    /// cache).
     #[test]
-    fn a_cors_body_is_its_documents_alone() {
+    fn a_body_is_its_documents_alone() {
         let bodies = Arc::new(SubresourceBodies::default());
         let log = Arc::new(Mutex::new(Vec::new()));
-        let files = |document: &'static str| LocalFiles {
-            statics: pyro_net::StaticFiles::default(),
-            loader: Some(Arc::new(Loader { document, bodies: bodies.clone(), log: log.clone() }) as Arc<dyn SubresourceLoader>),
-            failed: Arc::default(),
-        };
-        let (a, b) = (files("A"), files("B"));
-        let cors = SubresourceOptions { crossorigin: Some("anonymous".into()), ..Default::default() };
+        let (a, sibling, next) =
+            (files(&bodies, &log, "F1#L1", None, false), files(&bodies, &log, "F2#L2", None, false), files(&bodies, &log, "F1#L3", None, false));
         let url = pyro_net::Url::parse("http://img.test/shape.png").unwrap();
-        assert_eq!(a.network(&url, &cors), None, "the first load starts");
-        assert_eq!(a.network(&url, &cors), Some(b"ok".to_vec()), "A reuses its own");
-        assert_eq!(b.network(&url, &cors), None, "B asks for itself");
-        assert_eq!(log.lock().unwrap().iter().filter(|(d, _)| *d == "B").count(), 1);
-        let plain = SubresourceOptions::default();
-        assert_eq!(a.network(&url, &plain), None);
-        assert_eq!(b.network(&url, &plain), Some(b"ok".to_vec()), "a plain body is shared");
+        for options in [SubresourceOptions::default(), SubresourceOptions { crossorigin: Some("anonymous".into()), ..Default::default() }] {
+            assert_eq!(a.network(&url, &options), None, "the first load starts");
+            assert_eq!(a.network(&url, &options).map(|b| b.bytes.to_vec()), Some(b"ok".to_vec()), "A reuses its own");
+            assert_eq!(sibling.network(&url, &options), None, "a same-origin sibling asks for itself");
+            assert_eq!(next.network(&url, &options), None, "the frame's next document asks for itself");
+        }
+        assert_eq!((loads(&log, "F1#L1"), loads(&log, "F2#L2"), loads(&log, "F1#L3")), (2, 2, 2));
+    }
+
+    /// A body's URL after redirects and its tainting are stored with it, under its own request's
+    /// key, and geometry reports them as stored (it said `opaque: false` for every body and took
+    /// the final URL from a bare-URL table).
+    #[test]
+    fn final_url_and_tainting_are_the_stored_bodys() {
+        let bodies = Arc::new(SubresourceBodies::default());
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let hop = files(&bodies, &log, "F1#L1", Some("http://elsewhere.test/hop.png"), true);
+        let plain = files(&bodies, &log, "F2#L2", None, false);
+        let url = "http://img.test/hop.png";
+        let fetched = |files: &LocalFiles| {
+            let got = Arc::new(Mutex::new(None));
+            let sink = got.clone();
+            files.fetch_final(url.to_owned(), &pyro_render::FetchOptions::default(), Box::new(move |r| *sink.lock().unwrap() = Some(r)));
+            let r = got.lock().unwrap().take().expect("answered");
+            r.map(|r| (r.url, r.opaque))
+        };
+        // The first ask starts the load (answered at once here); the next takes the stored body.
+        let _ = fetched(&hop);
+        let _ = fetched(&plain);
+        assert_eq!(fetched(&hop), Ok(("http://elsewhere.test/hop.png".to_owned(), true)));
+        assert_eq!(fetched(&plain), Ok((url.to_owned(), false)));
+        let key = LayoutBodyKey::new("F1#L1", url, &SubresourceOptions::default());
+        let stored = bodies.get(&key).expect("stored");
+        assert_eq!((stored.final_url.as_str(), stored.opaque, stored.status), ("http://elsewhere.test/hop.png", true, 200));
+    }
+
+    /// What a document loaded, or still waits for, goes with it (a navigation): nothing of it
+    /// serves the frame's next document, and no load of it is still waited for.
+    #[test]
+    fn a_forgotten_document_leaves_nothing() {
+        let bodies = Arc::new(SubresourceBodies::default());
+        let key = LayoutBodyKey::new("F1#L1", "http://img.test/a.png", &SubresourceOptions::default());
+        let pending = LayoutBodyKey::new("F1#L1", "http://img.test/b.png", &SubresourceOptions::default());
+        bodies.finish(key.clone(), LayoutBody::local("http://img.test/a.png", b"a".to_vec()));
+        assert!(bodies.start(&pending));
+        bodies.forget_document("F1#L1");
+        assert!(bodies.get(&key).is_none() && !bodies.pending(&pending));
     }
 }

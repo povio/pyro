@@ -165,7 +165,7 @@ pub enum SubresourceKind {
 
 /// pyro: what a sub-resource request of a geometry source carries beyond its URL, as a CSS
 /// `url()`'s request URL modifiers ask (CSS Values 5 § 4.5.4); the defaults are a sub-resource's.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SubresourceOptions {
     /// `anonymous` or `use-credentials`: the request's mode is "cors", with those credentials.
     pub crossorigin: Option<String>,
@@ -177,31 +177,49 @@ pub struct SubresourceOptions {
     pub referrer_policy: Option<String>,
 }
 
-impl SubresourceOptions {
-    /// pyro: the key of the body of `url` fetched with these options for `document` (a loader
-    /// id) in [`SubresourceBodies`]: the URL for a request with the defaults (shared by the
-    /// documents of an identity), else the options too, and the document (a CORS response passed
-    /// for one document's origin is not another's).
-    pub fn body_key(&self, url: &str, document: Option<&str>) -> String {
-        if *self == SubresourceOptions::default() {
-            return url.to_owned();
-        }
-        let plain_cors = self.crossorigin.as_deref() == Some("anonymous")
-            && self.integrity.is_none()
-            && self.referrer.is_none()
-            && self.referrer_policy.is_none();
-        let key = if plain_cors {
-            format!("cors-anonymous {url}")
-        } else {
-            format!(
-                "cors={:?} integrity={:?} referrer-policy={:?} referrer={:?} {url}",
-                self.crossorigin, self.integrity, self.referrer_policy, self.referrer
-            )
-        };
-        match document {
-            Some(document) => format!("document={document} {key}"),
-            None => key,
-        }
+/// pyro: the one key of a layout body ([`SubresourceBodies`]): the requesting DOCUMENT (its
+/// client: frame id and loader id, so per document, which subsumes its origin, cookie state and
+/// sandboxing) and the whole request (URL, mode and credentials, integrity metadata, referrer,
+/// referrer policy). Nothing is stored or looked up by a bare URL; documents share nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LayoutBodyKey {
+    document: String,
+    url: String,
+    options: SubresourceOptions,
+}
+
+impl LayoutBodyKey {
+    /// `url` fetched with `options` for the document `document` (its client).
+    pub fn new(document: &str, url: &str, options: &SubresourceOptions) -> Self {
+        LayoutBodyKey { document: document.to_owned(), url: url.to_owned(), options: options.clone() }
+    }
+    pub fn document(&self) -> &str {
+        &self.document
+    }
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+    pub fn options(&self) -> &SubresourceOptions {
+        &self.options
+    }
+}
+
+/// pyro: a layout body: the response's bytes, its URL after redirects, its tainting and its
+/// status, written together once its checks (status, CORS, integrity) passed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LayoutBody {
+    pub bytes: std::sync::Arc<Vec<u8>>,
+    pub final_url: String,
+    /// The response's tainting is "opaque" (a no-cors response of another origin, or one whose
+    /// redirect chain went through one).
+    pub opaque: bool,
+    pub status: u16,
+}
+
+impl LayoutBody {
+    /// A body of a response that is not the network's (a `data:` URL, a local file) at `url`.
+    pub fn local(url: &str, bytes: Vec<u8>) -> Self {
+        LayoutBody { bytes: std::sync::Arc::new(bytes), final_url: url.to_owned(), opaque: false, status: 200 }
     }
 }
 
@@ -213,133 +231,153 @@ impl SubresourceOptions {
 /// state, interception). A geometry source without one loads nothing from the
 /// network.
 pub trait SubresourceLoader: Send + Sync {
-    /// Starts loading `url`. `done` gets the body of a successful response,
-    /// or why there is none, on any thread. A loader that can no longer send
-    /// the request (its document is gone) drops `done` without calling it.
-    fn load(&self, url: String, kind: SubresourceKind, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>);
-    /// pyro: [`Self::load`] made as `options` say (a CSS `url()`'s request URL modifiers): a
-    /// response that fails the CORS check or the integrity check is an error. A loader that
-    /// cannot honour them makes a CORS fetch when the mode is "cors" and fails one with
-    /// integrity metadata (the default).
-    fn load_with(
+    /// Starts loading `url` as `options` say (a CSS `url()`'s request URL modifiers) for what
+    /// `kind` says it is used as. `done` gets the response (bytes, final URL, tainting, status)
+    /// once it passed its checks (a 2xx status, CORS, integrity), or why there is none, on any
+    /// thread. A loader that can no longer send the request (its document is gone) drops `done`
+    /// without calling it.
+    fn load(
         &self,
         url: String,
         kind: SubresourceKind,
         options: &SubresourceOptions,
-        done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
-    ) {
-        if options.integrity.is_some() {
-            done(Err(format!("{url}: no integrity check")));
-        } else if options.crossorigin.is_some() {
-            self.load(url, SubresourceKind::CorsImage, done);
-        } else {
-            self.load(url, kind, done);
-        }
-    }
-    /// The bodies loaded for the documents that go out with this one's
-    /// network identity, which they reuse ([`SubresourceBodies`]).
+        done: Box<dyn FnOnce(Result<LayoutBody, String>) + Send>,
+    );
+    /// The store this document's bodies are kept in ([`SubresourceBodies`]).
     fn bodies(&self) -> &std::sync::Arc<SubresourceBodies>;
-    /// pyro: this document's identity among those sharing [`Self::bodies`]: a body loaded with
-    /// other than the defaults (a CORS response checked against this document's origin, a
-    /// referrer) is kept under it, never served to another document (`None`: no others).
-    fn document(&self) -> Option<String> {
-        None
-    }
-    /// pyro: this document itself (its loader id, unique per document), for the timeline of
-    /// what it needed and when (`SubresourceBodies::late_for`). `None`: not tracked.
-    fn timeline_document(&self) -> Option<String> {
-        None
-    }
-    /// pyro: this document's layout asked for the font at `url` (its fetch may be shared with the
-    /// identity's other documents).
-    fn font_asked(&self, _url: &str) {}
+    /// pyro: this document (its client), which every key of its bodies names ([`LayoutBodyKey`]).
+    fn document(&self) -> String;
+    /// pyro: this document's layout asked for the font of `key`.
+    fn font_asked(&self, _key: &LayoutBodyKey) {}
     /// pyro: the fonts this document's layout asked for ([`Self::font_asked`]), `None` when the
-    /// loader does not keep track (then every font in flight for the identity counts as this
-    /// document's).
-    fn asked_fonts(&self) -> Option<Vec<String>> {
+    /// loader does not keep track (then every font in flight for the document counts).
+    fn asked_fonts(&self) -> Option<Vec<LayoutBodyKey>> {
         None
     }
-    /// pyro: this document's layout asked for the CSS image kept under `key` in [`Self::bodies`].
-    fn image_asked(&self, _key: &str) {}
+    /// pyro: this document's layout asked for the CSS image of `key`.
+    fn image_asked(&self, _key: &LayoutBodyKey) {}
     /// pyro: the CSS images this document's layout asked for ([`Self::image_asked`]), `None` when
     /// the loader does not keep track.
-    fn asked_images(&self) -> Option<Vec<String>> {
+    fn asked_images(&self) -> Option<Vec<LayoutBodyKey>> {
         None
     }
 }
 
-/// Sub-resource bodies loaded from the network for the layouts of the
-/// documents of one network identity: the pages of a browser context with a
-/// proxy or user agent of its own, or of every context that goes out as the
-/// browser does. A body serves its identity only: one loaded through one
-/// proxy, or as one user agent, never stands in for a request another
-/// identity's document would send.
+/// pyro: a slot of the store: a load in flight, its body, or its failure (the document's layout
+/// did fetch it: a capture waits for it as for one with a body, and it is not asked again).
+#[derive(Clone)]
+enum Slot {
+    Pending,
+    Ready(std::sync::Arc<LayoutBody>),
+    Failed,
+}
+
+/// Sub-resource bodies loaded for documents' layouts (and the screenshots of them), each the
+/// requesting document's alone ([`LayoutBodyKey`]). The only API: [`Self::get`],
+/// [`Self::start`], [`Self::finish`], [`Self::fail`], [`Self::pending`].
 #[derive(Default)]
 pub struct SubresourceBodies {
-    bodies: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>>,
+    slots: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, Slot>>,
     arrivals: std::sync::atomic::AtomicU64,
-    /// pyro: the URL after redirects of a body's response, by the URL asked for, where they
-    /// differ (a sheet resolves its URLs against it).
-    finals: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    /// pyro: the URLs whose no-cors response's tainting was opaque (a redirect chain through
-    /// another origin), so a body reused from here keeps it.
-    opaque: std::sync::Mutex<std::collections::HashSet<String>>,
-    /// pyro: when each body arrived, by key, and when each document (by its loader id) first
-    /// needed it: one timeline for a document's layout and its screenshots
-    /// ([`Self::late_for`], `font-display: optional`).
-    came: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
-    needed: std::sync::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
-    /// pyro: the keys whose fetch failed (a screenshot waits for them: they were fetched).
-    failed: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
+    /// pyro: when each body arrived and when its document first needed it: one timeline for a
+    /// document's layout and its screenshots ([`Self::late`], `font-display: optional`).
+    came: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, std::time::Instant>>,
+    needed: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, std::time::Instant>>,
+}
+
+fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl SubresourceBodies {
-    /// pyro: the document `document` needs the body `key` (now, unless it did before).
-    pub fn needed(&self, document: &str, key: &str) {
-        let mut needed = self.needed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        needed.entry((document.to_owned(), key.to_owned())).or_insert_with(std::time::Instant::now);
+    /// The body of `key`, once loaded.
+    pub fn get(&self, key: &LayoutBodyKey) -> Option<std::sync::Arc<LayoutBody>> {
+        match locked(&self.slots).get(key) {
+            Some(Slot::Ready(body)) => Some(body.clone()),
+            _ => None,
+        }
     }
 
-    /// pyro: the fetch of the body `key` that the document `document` (by its loader id) asked
-    /// for failed (it has no body).
-    pub fn fail(&self, document: &str, key: &str) {
-        let mut failed = self.failed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        failed.insert((document.to_owned(), key.to_owned()));
+    /// Whether a load of `key` is in flight.
+    pub fn pending(&self, key: &LayoutBodyKey) -> bool {
+        matches!(locked(&self.slots).get(key), Some(Slot::Pending))
     }
 
-    /// pyro: whether the fetch of the body `key` that `document` asked for failed ([`Self::fail`]).
-    pub fn has_failed(&self, document: &str, key: &str) -> bool {
-        let failed = self.failed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        failed.contains(&(document.to_owned(), key.to_owned()))
+    /// Whether `key` has a body, a load in flight or a failed load (its document fetched it).
+    pub fn known(&self, key: &LayoutBodyKey) -> bool {
+        locked(&self.slots).contains_key(key)
     }
 
-    /// pyro: the body `key` arrived (now, unless it did before).
-    pub fn came(&self, key: &str) {
-        let mut came = self.came.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        came.entry(key.to_owned()).or_insert_with(std::time::Instant::now);
+    /// Marks a load of `key` in flight: `false` when one is, or its body or failure is here,
+    /// already.
+    pub fn start(&self, key: &LayoutBodyKey) -> bool {
+        let mut slots = locked(&self.slots);
+        if slots.contains_key(key) {
+            return false;
+        }
+        slots.insert(key.clone(), Slot::Pending);
+        true
     }
 
-    /// pyro: whether the body `key` came more than `period` after the document `document` first
-    /// needed it (or has not come and that long has passed): a `font-display: optional` font it
-    /// does not swap in. `None` when the document never asked for it here.
-    pub fn late_for(&self, document: &str, key: &str, period: std::time::Duration) -> Option<bool> {
-        let needed = *self
-            .needed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&(document.to_owned(), key.to_owned()))?;
-        let came = self.came.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(key).copied();
-        Some(came.unwrap_or_else(std::time::Instant::now).saturating_duration_since(needed) > period)
+    /// `key`'s response arrived and passed its checks: its body, final URL, tainting and status,
+    /// written together. The document's layout lays out again.
+    pub fn finish(&self, key: LayoutBodyKey, body: LayoutBody) {
+        if body.bytes.is_empty() {
+            return self.fail(&key);
+        }
+        locked(&self.came).entry(key.clone()).or_insert_with(std::time::Instant::now);
+        let previous = locked(&self.slots).insert(key, Slot::Ready(std::sync::Arc::new(body.clone())));
+        if !matches!(previous, Some(Slot::Ready(old)) if *old == body) {
+            self.arrived();
+        }
     }
 
-    /// The bodies by URL (what a load in flight or failed leaves is the
-    /// embedder's loading policy).
-    pub fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>> {
-        self.bodies.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// `key`'s load failed: recorded as such (not asked again; a capture waits for it); a body
+    /// stays.
+    pub fn fail(&self, key: &LayoutBodyKey) {
+        let mut slots = locked(&self.slots);
+        if matches!(slots.get(key), Some(Slot::Pending)) {
+            slots.insert(key.clone(), Slot::Failed);
+        }
     }
 
-    /// A body arrived: the documents of this identity laid out without it
-    /// lay out again.
+    /// `key`'s load got no answer (its document went first): no longer in flight, nothing kept.
+    pub fn abandon(&self, key: &LayoutBodyKey) {
+        let mut slots = locked(&self.slots);
+        if matches!(slots.get(key), Some(Slot::Pending)) {
+            slots.remove(key);
+        }
+    }
+
+    /// pyro: whether `key`'s load failed ([`Self::fail`]).
+    pub fn has_failed(&self, key: &LayoutBodyKey) -> bool {
+        matches!(locked(&self.slots).get(key), Some(Slot::Failed))
+    }
+
+    /// pyro: whether any load in flight for `document` is one `matches` picks.
+    pub fn any_pending(&self, document: &str, matches: impl Fn(&LayoutBodyKey) -> bool) -> bool {
+        locked(&self.slots).iter().any(|(k, slot)| matches!(slot, Slot::Pending) && k.document == document && matches(k))
+    }
+
+    /// pyro: the state of `document`'s requests for `url` (any options): `Some(true)` when one has
+    /// its body, `Some(false)` when one is only in flight.
+    pub fn url_state(&self, document: &str, url: &str) -> Option<bool> {
+        locked(&self.slots)
+            .iter()
+            .filter(|(k, slot)| k.document == document && k.url == url && !matches!(slot, Slot::Failed))
+            .map(|(_, slot)| matches!(slot, Slot::Ready(_)))
+            .reduce(|a, b| a || b)
+    }
+
+    /// pyro: drops what `document` loaded (it is gone: navigated away from, closed); a load still
+    /// in flight for it is no longer waited for, and nothing of it serves another document.
+    pub fn forget_document(&self, document: &str) {
+        locked(&self.slots).retain(|k, _| k.document != document);
+        locked(&self.came).retain(|k, _| k.document != document);
+        locked(&self.needed).retain(|k, _| k.document != document);
+    }
+
+    /// A body arrived: the documents laid out without it lay out again.
     pub fn arrived(&self) {
         self.arrivals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -349,50 +387,18 @@ impl SubresourceBodies {
         self.arrivals.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// A body the documents' own loader fetched (a `<style>`'s `@import`ed
-    /// sheet) that their layouts would otherwise fetch again, behind the
-    /// page's back: they take it from here. The documents laid out without
-    /// it (an empty entry, the embedder's load in flight) or with another
-    /// body lay out again.
-    /// pyro: the response for `url` came from `final_url` after redirects.
-    pub fn set_final_url(&self, url: &str, final_url: &str) {
-        let mut finals = self.finals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if url == final_url {
-            finals.remove(url);
-        } else {
-            finals.insert(url.to_owned(), final_url.to_owned());
-        }
+    /// pyro: `key`'s document needs its body (now, unless it did before).
+    pub fn needed(&self, key: &LayoutBodyKey) {
+        locked(&self.needed).entry(key.clone()).or_insert_with(std::time::Instant::now);
     }
 
-    /// pyro: the no-cors response for `url` was opaque (or not).
-    pub fn set_opaque(&self, url: &str, opaque: bool) {
-        let mut set = self.opaque.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if opaque {
-            set.insert(url.to_owned());
-        } else {
-            set.remove(url);
-        }
-    }
-
-    /// pyro: whether the no-cors response for `url` was opaque.
-    pub fn is_opaque(&self, url: &str) -> bool {
-        self.opaque.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains(url)
-    }
-
-    /// pyro: the URL after redirects of the response for `url` (`url` itself unless redirected).
-    pub fn final_url(&self, url: &str) -> String {
-        let finals = self.finals.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        finals.get(url).cloned().unwrap_or_else(|| url.to_owned())
-    }
-
-    pub fn provide(&self, url: &str, body: &[u8]) {
-        if body.is_empty() {
-            return;
-        }
-        let previous = self.lock().insert(url.to_owned(), std::sync::Arc::new(body.to_vec()));
-        if previous.is_some_and(|b| b.is_empty() || **b != *body) {
-            self.arrived();
-        }
+    /// pyro: whether `key`'s body came more than `period` after its document first needed it
+    /// (or has not come and that long has passed): a `font-display: optional` font it does not
+    /// swap in. `None` when the document never asked for it.
+    pub fn late(&self, key: &LayoutBodyKey, period: std::time::Duration) -> Option<bool> {
+        let needed = *locked(&self.needed).get(key)?;
+        let came = locked(&self.came).get(key).copied();
+        Some(came.unwrap_or_else(std::time::Instant::now).saturating_duration_since(needed) > period)
     }
 }
 

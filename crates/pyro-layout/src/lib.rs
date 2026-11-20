@@ -428,7 +428,7 @@ impl BlitzGeometry {
     /// pyro: the document the geometry renderer's responses are kept for (its loader's
     /// timeline document, else the page's).
     fn resource_document(&self) -> String {
-        self.loader.borrow().as_ref().and_then(|l| l.timeline_document()).unwrap_or_default()
+        self.loader.borrow().as_ref().map(|l| l.document()).unwrap_or_default()
     }
 
     /// The document as a keyed node list for this page's Blitz document.
@@ -818,19 +818,14 @@ impl GeometrySource for BlitzGeometry {
     fn fonts_pending(&self) -> bool {
         let loader = self.loader.borrow();
         let Some(loader) = loader.as_ref() else { return false };
-        let asked = loader.asked_fonts();
-        let bodies = loader.bodies().lock();
-        // pyro: only the fonts this document asked for (another page of the identity may have one
-        // in flight that this document does not use).
-        if let Some(asked) = asked {
-            return asked.iter().any(|url| bodies.get(url).is_some_and(|body| body.is_empty()));
+        let bodies = loader.bodies();
+        // pyro: only the fonts this document asked for, by their keys (its own).
+        if let Some(asked) = loader.asked_fonts() {
+            return asked.iter().any(|key| bodies.pending(key));
         }
-        // An empty entry is a load in flight (`LocalFiles::network`); a failed one is removed.
-        bodies.iter().any(|(url, body)| {
-            body.is_empty() && {
-                let path = url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
-                [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e))
-            }
+        bodies.any_pending(&loader.document(), |key| {
+            let path = key.url().split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
+            [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e))
         })
     }
 
@@ -838,15 +833,13 @@ impl GeometrySource for BlitzGeometry {
         let loader = self.loader.borrow();
         let Some(loader) = loader.as_ref() else { return false };
         let Some(asked) = loader.asked_images() else { return false };
-        let bodies = loader.bodies().lock();
-        // An empty entry is a load in flight (`LocalFiles::network`); a failed one is removed.
-        asked.iter().any(|key| bodies.get(key).is_some_and(|body| body.is_empty()))
+        asked.iter().any(|key| loader.bodies().pending(key))
     }
 
     fn font_url_state(&self, url: &str) -> Option<bool> {
         let loader = self.loader.borrow();
-        let bodies = loader.as_ref()?.bodies().lock();
-        bodies.get(url).map(|body| !body.is_empty())
+        let loader = loader.as_ref()?;
+        loader.bodies().url_state(&loader.document(), url)
     }
 
     fn sync(&self, dom: &Dom, layout: &Layout) {
@@ -1232,14 +1225,24 @@ mod tests {
     /// one network identity lays out again only the documents of that one.
     #[test]
     fn documents_load_through_their_own_network() {
-        use pyro_dom::layout::{SubresourceBodies, SubresourceKind, SubresourceLoader};
+        use pyro_dom::layout::{LayoutBody, SubresourceBodies, SubresourceKind, SubresourceLoader, SubresourceOptions};
         use std::sync::{Arc, Mutex};
 
         struct Network(Arc<SubresourceBodies>);
         impl SubresourceLoader for Network {
-            fn load(&self, _: String, _: SubresourceKind, _: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {}
+            fn load(
+                &self,
+                _: String,
+                _: SubresourceKind,
+                _: &SubresourceOptions,
+                _: Box<dyn FnOnce(Result<LayoutBody, String>) + Send>,
+            ) {
+            }
             fn bodies(&self) -> &Arc<SubresourceBodies> {
                 &self.0
+            }
+            fn document(&self) -> String {
+                "D#L".into()
             }
         }
         type Seen = Arc<Mutex<Vec<(Option<usize>, String)>>>;

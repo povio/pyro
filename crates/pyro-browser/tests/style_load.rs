@@ -11,10 +11,14 @@ use std::time::{Duration, Instant};
 /// A layout fetcher with only the bodies of its document's network identity,
 /// where the page's loader puts imported sheets (the binary's fetcher reads
 /// them there before going to the network).
-struct Provided(Option<Arc<SubresourceBodies>>);
+/// pyro: the document's own body of the request (`LayoutBodyKey`).
+struct Provided(Option<(Arc<SubresourceBodies>, String)>);
 impl pyro_render::Fetcher for Provided {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        let body = self.0.as_ref().and_then(|b| b.lock().get(&url).filter(|b| !b.is_empty()).map(|b| b.to_vec()));
+        let body = self.0.as_ref().and_then(|(b, document)| {
+            let key = pyro_dom::layout::LayoutBodyKey::new(document, &url, &Default::default());
+            b.get(&key).map(|body| body.bytes.to_vec())
+        });
         done(body.ok_or_else(|| format!("{url}: not provided")));
     }
 }
@@ -36,7 +40,7 @@ fn events(thread: &BrowserThread, page: PageId) -> String {
 /// A page whose `events` records `<style>` loads and errors (by id), DOMContentLoaded and the window's load.
 fn setup(html: &str) -> (BrowserThread, PageId, Rc<StaticLoader>) {
     pyro_layout::install_with(Rc::new(|loader: Option<&Arc<dyn SubresourceLoader>>| {
-        Arc::new(Provided(loader.map(|l| l.bodies().clone()))) as Arc<dyn pyro_render::Fetcher>
+        Arc::new(Provided(loader.map(|l| (l.bodies().clone(), l.document())))) as Arc<dyn pyro_render::Fetcher>
     }));
     let mut thread = BrowserThread::new().unwrap();
     let page = thread.browser.create_page().unwrap();
