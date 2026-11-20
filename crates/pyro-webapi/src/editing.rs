@@ -447,6 +447,17 @@ pub(crate) fn placeholder_if_empty(dom: &mut Dom, block: NodeId) -> Option<Point
 /// block, and returns the caret. With `placeholder`, a block left empty gets
 /// `<br>`; text replacing the selection skips it and reuses the text node.
 pub(crate) fn delete_range(dom: &mut Dom, host: NodeId, start: Point, end: Point, placeholder: bool) -> Point {
+    delete_range_with_merging(dom, host, start, end, placeholder, true)
+}
+
+fn delete_range_with_merging(
+    dom: &mut Dom,
+    host: NodeId,
+    start: Point,
+    end: Point,
+    placeholder: bool,
+    merge_blocks: bool,
+) -> Point {
     let start = deep_forward(dom, start);
     let end = deep_backward(dom, end);
     if crate::range::compare_boundary_points_dom(dom, start, end) >= 0 {
@@ -484,7 +495,7 @@ pub(crate) fn delete_range(dom: &mut Dom, host: NodeId, start: Point, end: Point
                 }
             }
         }
-        if start_block != end_block && dom.is_connected(end_block).unwrap_or(false) {
+        if merge_blocks && start_block != end_block && dom.is_connected(end_block).unwrap_or(false) {
             let kids: Vec<NodeId> = dom.children(end_block).map(|c| c.collect()).unwrap_or_default();
             for k in kids {
                 let _ = dom.append_child(start_block, k);
@@ -967,6 +978,150 @@ fn insert_fragment(dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId, sani
     } else {
         deep_backward(dom, (parent, dom.index_in_parent(last).unwrap_or(0) + 1))
     }
+}
+
+/// Split containers which cannot contain an hr, keeping both sides and their
+/// attributes. An id stays with the original element when it splits in two.
+fn lift_horizontal_rule(dom: &mut Dom, host: NodeId, rule: NodeId) {
+    let mut highest = None;
+    let mut cur = dom.parent_element(rule).ok().flatten();
+    while let Some(el) = cur {
+        if el == host {
+            break;
+        }
+        if matches!(
+            local(dom, el).as_str(),
+            "a" | "abbr"
+                | "acronym"
+                | "b"
+                | "bdi"
+                | "bdo"
+                | "big"
+                | "blink"
+                | "cite"
+                | "code"
+                | "dfn"
+                | "em"
+                | "font"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "i"
+                | "kbd"
+                | "listing"
+                | "mark"
+                | "marquee"
+                | "nobr"
+                | "p"
+                | "pre"
+                | "q"
+                | "rp"
+                | "rt"
+                | "ruby"
+                | "s"
+                | "samp"
+                | "small"
+                | "span"
+                | "strike"
+                | "strong"
+                | "sub"
+                | "sup"
+                | "tt"
+                | "u"
+                | "var"
+                | "xmp"
+        ) {
+            highest = Some(el);
+        }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    let Some(last) = highest else { return };
+    while let Ok(Some(parent)) = dom.parent(rule) {
+        let Ok(Some(grandparent)) = dom.parent(parent) else { return };
+        let next = dom.next_sibling(parent).ok().flatten();
+        if dom.prev_sibling(rule).ok().flatten().is_none() {
+            if dom.insert_before(grandparent, rule, Some(parent)).is_err() {
+                return;
+            }
+            if dom.child_count(parent).ok() == Some(0) {
+                let _ = dom.remove_child(grandparent, parent);
+            }
+        } else {
+            if dom.next_sibling(rule).ok().flatten().is_some() {
+                let Ok(right) = dom.clone_node(parent, false, None) else { return };
+                let _ = dom.remove_attribute(right, "id");
+                while let Ok(Some(child)) = dom.next_sibling(rule) {
+                    if dom.append_child(right, child).is_err() {
+                        return;
+                    }
+                }
+                let _ = dom.insert_before(grandparent, right, next);
+            }
+            let before = dom.next_sibling(parent).ok().flatten();
+            if dom.insert_before(grandparent, rule, before).is_err() {
+                return;
+            }
+        }
+        if parent == last {
+            break;
+        }
+    }
+}
+
+/// Insert an image or horizontal rule directly into the selected range
+/// without reparsing the supplied URL as markup.
+pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_src: Option<&str>) {
+    let input_type = if image_src.is_some() { "" } else { "insertHorizontalRule" };
+    // Script-driven editing fires input after the operation, without beforeinput.
+    crate::edit_commands::record_host_edit(page, host, input_type);
+    let (start, end) = host_range(page, host);
+    let mut dom = page.dom.borrow_mut();
+    let (node, offset) = if start == end {
+        start
+    } else {
+        delete_range_with_merging(&mut dom, host, start, end, false, image_src.is_some())
+    };
+    let (parent, before) = if is_text(&dom, node) {
+        let Ok(Some(p)) = dom.parent(node) else { return };
+        let before = if offset == 0 {
+            Some(node)
+        } else if offset == len(&dom, node) {
+            dom.next_sibling(node).ok().flatten()
+        } else {
+            let Ok(right) = dom.split_text(node, offset) else { return };
+            Some(right)
+        };
+        (p, before)
+    } else {
+        (node, dom.child_at(node, offset).ok().flatten())
+    };
+    let Ok(doc) = dom.node_document(host) else { return };
+    let tag = if image_src.is_some() { "img" } else { "hr" };
+    let Ok(el) = dom.create_element(doc, tag) else { return };
+    if let Some(src) = image_src {
+        let _ = dom.set_attribute(el, "src", src);
+    }
+    if dom.insert_before(parent, el, before).is_err() {
+        return;
+    }
+    if let Some(br) = before {
+        if dom.child_count(parent).ok() == Some(2) && is_block(&dom, parent) && local(&dom, br) == "br" {
+            let _ = dom.remove_child(parent, br);
+        }
+    }
+    if image_src.is_none() {
+        lift_horizontal_rule(&mut dom, host, el);
+    }
+    let Ok(Some(p)) = dom.parent(el) else { return };
+    let caret = (p, 1 + dom.index_in_parent(el).unwrap_or(0));
+    drop(dom);
+    set_selection(page, caret, caret);
+    crate::edit_commands::note_host_edited(page, host);
+    input_event(page, host, "input", input_type, None, false);
+
 }
 
 /// `insertHTML` (and rich paste): `html` parsed in the host's context

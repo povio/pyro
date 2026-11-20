@@ -1016,6 +1016,8 @@ const SUPPORTED: &[&str] = &[
     "insertparagraph",
     "insertlinebreak",
     "inserthtml",
+    "insertimage",
+    "inserthorizontalrule",
     "bold",
     "italic",
     "underline",
@@ -1130,6 +1132,12 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, command: &str, value: &str) -> bo
         "insertparagraph" => editing::insert_paragraph(page, host),
         "insertlinebreak" => editing::insert_line_break(page, host),
         "inserthtml" => editing::insert_html(page, host, value, "insertHTML"),
+        "insertimage" | "inserthorizontalrule" => {
+            if !rich_selection(page, host) || (cmd == "insertimage" && value.is_empty()) {
+                return false;
+            }
+            editing::insert_replaced_element(page, host, (cmd == "insertimage").then_some(value));
+        }
         "createlink" => {
             if value.is_empty() {
                 return false;
@@ -1573,6 +1581,34 @@ pub(crate) fn query_value(page: &PageDom, command: &str) -> String {
     }
 }
 
+/// Rich editing commands require a range in this host. Plaintext-only can
+/// be inherited or overridden within the same editable tree.
+fn rich_selection(page: &PageDom, host: NodeId) -> bool {
+    let Some((start, end)) = editing::selection_range(page) else { return false };
+    let dom = page.dom.borrow();
+    [start.0, end.0].into_iter().all(|node| {
+        if editing::editing_host(&dom, node) != Some(host) {
+            return false;
+        }
+        let mut cur = Some(node);
+        while let Some(n) = cur {
+            if let Ok(Some(v)) = dom.get_attribute(n, "contenteditable") {
+                if v.eq_ignore_ascii_case("plaintext-only") {
+                    return false;
+                }
+                if v.is_empty() || v.eq_ignore_ascii_case("true") {
+                    return true;
+                }
+            }
+            if n == host {
+                break;
+            }
+            cur = dom.parent_element(n).ok().flatten();
+        }
+        true
+    })
+}
+
 /// `document.queryCommandEnabled(command)`.
 pub(crate) fn query_enabled(page: &PageDom, command: &str) -> bool {
     let cmd = command.to_ascii_lowercase();
@@ -1585,6 +1621,9 @@ pub(crate) fn query_enabled(page: &PageDom, command: &str) -> bool {
     };
     match cmd.as_str() {
         "selectall" => true,
+        "insertimage" | "inserthorizontalrule" => {
+            matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h))
+        }
         "copy" => has_range(),
         "cut" => command_target(page).is_some() && has_range(),
         "undo" => !page.undo.borrow().undo.is_empty(),
