@@ -2,6 +2,19 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn anchored_query_samples_once_per_observed_container() {
+    for count in [16, 64] {
+        let html = format!("<!doctype html><style>main{{position:relative;height:80px}}i{{display:block;anchor-name:--a;width:20px;height:12px}}section{{position:absolute;position-anchor:--a;position-area:top;height:20px;width:20px;position-try-fallbacks:flip-block;container-type:anchored}}b{{display:block;width:1px}}@container anchored(fallback: flip-block){{b{{width:7px}}}}</style><main><i></i>{}</main>", "<section><b></b></section>".repeat(count));
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, Default::default());
+        doc.viewport_mut().window_size = (400, 300);
+        doc.resolve(0.);
+        let child = doc.query_selector("b").unwrap().unwrap();
+        assert_eq!(doc.get_node(child).unwrap().final_layout().size.width, 7.);
+        assert_eq!(doc.anchor_query_samples(), count as u64);
+    }
+}
+
+#[test]
 fn anchored_container_type_is_independent_of_size_containment() {
     for (input, expected) in [("anchored", "anchored"), ("anchored size", "size anchored"), ("anchored inline-size", "inline-size anchored"), ("normal anchored", ""), ("anchored anchored", "")] {
         assert_eq!(DeclarationBlock::parse(&format!("container-type:{input}")).value("container-type"), expected);

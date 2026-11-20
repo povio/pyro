@@ -458,6 +458,19 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  SystemColor::Buttontext => srgb(0, 0, 0),
                  SystemColor::Canvas
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
+diff -ruN a/dom.rs b/dom.rs
+--- a/dom.rs	2026-11-11 19:55:57
++++ b/dom.rs	2026-11-20 13:27:27
+@@ -952,6 +952,9 @@
+         display: &Display,
+     ) -> euclid::default::Size2D<Option<app_units::Au>>;
+ 
++    /// Last layout's selected fallback, if any.
++    fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
++
+     /// Returns true if the element has all of specified selector flags.
+     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
+ 
 diff -ruN a/font_face.rs b/font_face.rs
 --- a/font_face.rs	2026-11-11 19:55:57
 +++ b/font_face.rs	2026-11-17 11:03:29
@@ -2863,6 +2876,111 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND ALLOWS_DISABLED_SUBPROPERTIES"
  sub_properties = ["line-clamp"]
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
+diff -ruN a/queries/condition.rs b/queries/condition.rs
+--- a/queries/condition.rs	2026-11-11 19:55:57
++++ b/queries/condition.rs	2026-11-20 13:27:27
+@@ -25,6 +25,7 @@
+ use crate::substitution;
+ use crate::substitution::AttrTaint;
+ use crate::values::{AtomString, DashedIdent, computed};
++use crate::values::specified::position::PositionTryFallbacksItem;
+ use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
+ use cssparser::{
+     Parser, SourceLocation, SourcePosition, Token, match_ignore_ascii_case, parse_important,
+@@ -675,6 +676,8 @@
+     InParens(Box<QueryCondition>),
+     /// A <style> query.
+     Style(StyleQuery),
++    /// A fallback query, optionally comparing against none or a descriptor.
++    Anchored(Option<Option<PositionTryFallbacksItem>>),
+     /// A -moz-pref() query.
+     MozPref(MozPrefFeature),
+     /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
+@@ -709,6 +712,17 @@
+                 c.to_css(dest)?;
+                 dest.write_char(')')
+             },
++            Self::Anchored(ref query) => {
++                dest.write_str("anchored(fallback")?;
++                if let Some(value) = query {
++                    dest.write_str(": ")?;
++                    match value {
++                        Some(item) => item.to_css(dest)?,
++                        None => dest.write_str("none")?,
++                    }
++                }
++                dest.write_char(')')
++            },
+             Self::MozPref(ref c) => {
+                 dest.write_str("-moz-pref(")?;
+                 c.to_css(dest)?;
+@@ -755,6 +769,7 @@
+             | Self::Feature(..)
+             | Self::GeneralEnclosed(..)
+             | Self::Style(..)
++            | Self::Anchored(..)
+             | Self::MozPref(..) => {},
+             Self::Not(ref cond) => cond.visit(visitor),
+             Self::Operation(ref conds, _op) => {
+@@ -772,6 +787,7 @@
+         let mut result = FeatureFlags::empty();
+         self.visit(&mut |condition| match condition {
+             Self::Style(..) => result.insert(FeatureFlags::STYLE),
++            Self::Anchored(..) => result.insert(FeatureFlags::ANCHORED),
+             Self::Feature(f) => result.insert(f.feature_flags()),
+             Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
+             _ => {},
+@@ -834,6 +850,9 @@
+             Self::InParens(ref c) => c.matches(context, custom, attribute_tracker),
+             Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
+             Self::Style(ref c) => c.matches(context, attribute_tracker),
++            Self::Anchored(ref query) => context.container_info.as_ref().map_or(KleeneValue::Unknown, |info| {
++                query.as_ref().map_or_else(|| info.fallback.is_some(), |value| value == &info.fallback).into()
++            }),
+             Self::MozPref(ref c) => c.matches(context),
+             Self::Operation(ref conditions, op) => {
+                 debug_assert!(!conditions.is_empty(), "We never create an empty op");
+@@ -962,6 +981,16 @@
+             },
+             Token::Function(ref name) => {
+                 match_ignore_ascii_case! { name,
++                    "anchored" if feature_type == FeatureType::Container => {
++                        if let Some(query) = try_parse_block(context, input, start, start_location, |input| {
++                            input.expect_ident_matching("fallback")?;
++                            if input.is_exhausted() { return Ok(None); }
++                            input.expect_colon()?;
++                            if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() { return Ok(Some(None)); }
++                            PositionTryFallbacksItem::parse(context, input).map(|item| Some(Some(item)))
++                        }) { return Ok(Self::Anchored(query)); }
++                        flags.insert(FeatureFlags::ANCHORED);
++                    },
+                     "style" if StyleQuery::enabled(feature_type) => {
+                         let query = try_parse_block(context, input, start, start_location, |input| {
+                             StyleQuery::parse(context, input, feature_type)
+diff -ruN a/queries/feature.rs b/queries/feature.rs
+--- a/queries/feature.rs	2026-11-11 19:55:57
++++ b/queries/feature.rs	2026-11-20 13:27:27
+@@ -105,9 +105,9 @@
+ /// Different flags or toggles that change how a expression is parsed or
+ /// evaluated.
+ #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, ToShmem)]
+-pub struct FeatureFlags(u8);
++pub struct FeatureFlags(u16);
+ bitflags! {
+-    impl FeatureFlags : u8 {
++    impl FeatureFlags : u16 {
+         /// The feature should only be parsed in chrome and ua sheets.
+         const CHROME_AND_UA_ONLY = 1 << 0;
+         /// The feature requires a -webkit- prefix.
+@@ -124,6 +124,8 @@
+         const VIEWPORT_DEPENDENT = 1 << 6;
+         /// The feature evaluation depends on style queries.
+         const STYLE = 1 << 7;
++        /// Requires an anchored query container.
++        const ANCHORED = 1 << 8;
+     }
+ }
+ 
 diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
 --- a/queries/feature_expression.rs	2026-11-11 19:55:57
 +++ b/queries/feature_expression.rs	2026-11-17 11:00:31
@@ -4513,6 +4631,34 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          // NB: We handle animation rules for ::before and ::after when
          // traversing them.
          stylist.push_applicable_declarations(
+diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
+--- a/stylesheets/container_rule.rs	2026-11-11 19:55:57
++++ b/stylesheets/container_rule.rs	2026-11-20 13:27:27
+@@ -273,6 +273,8 @@
+         // Filter by container-type.
+         let container_type = *box_style.get_container_type();
+         let available_axes = container_type_axes(container_type, wm);
++        let anchored = self.flags.contains(FeatureFlags::ANCHORED);
++        if anchored && !container_type.contains(ContainerType::ANCHORED) { return TraversalResult::InProgress; }
+         if !available_axes.contains(self.flags.container_axes()) {
+             return TraversalResult::InProgress;
+         }
+@@ -290,6 +292,7 @@
+         TraversalResult::Done(ContainerLookupResult {
+             element: potential_container,
+             info: ContainerInfo {
++                fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
+                 size,
+                 wm,
+                 inherited_style: {
+@@ -442,6 +445,7 @@
+ /// Information needed to evaluate an individual container query.
+ #[derive(Clone)]
+ pub struct ContainerInfo {
++    pub(crate) fallback: Option<crate::values::specified::position::PositionTryFallbacksItem>,
+     size: Size2D<Option<Au>>,
+     wm: WritingMode,
+     inherited_style: Option<Arc<ComputedValues>>,
 diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_values_rule.rs
 --- a/stylesheets/font_palette_values_rule.rs	2026-11-11 19:55:57
 +++ b/stylesheets/font_palette_values_rule.rs	2026-11-16 15:05:29

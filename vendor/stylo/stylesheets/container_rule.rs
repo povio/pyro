@@ -273,6 +273,8 @@ impl ContainerCondition {
         // Filter by container-type.
         let container_type = *box_style.get_container_type();
         let available_axes = container_type_axes(container_type, wm);
+        let anchored = self.flags.contains(FeatureFlags::ANCHORED);
+        if anchored && !container_type.contains(ContainerType::ANCHORED) { return TraversalResult::InProgress; }
         if !available_axes.contains(self.flags.container_axes()) {
             return TraversalResult::InProgress;
         }
@@ -290,6 +292,7 @@ impl ContainerCondition {
         TraversalResult::Done(ContainerLookupResult {
             element: potential_container,
             info: ContainerInfo {
+                fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
                 size,
                 wm,
                 inherited_style: {
@@ -442,6 +445,7 @@ impl ContainerCondition {
 /// Information needed to evaluate an individual container query.
 #[derive(Clone)]
 pub struct ContainerInfo {
+    pub(crate) fallback: Option<crate::values::specified::position::PositionTryFallbacksItem>,
     size: Size2D<Option<Au>>,
     wm: WritingMode,
     inherited_style: Option<Arc<ComputedValues>>,

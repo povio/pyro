@@ -1498,6 +1498,10 @@ impl<'a> TElement for BlitzNode<'a> {
         &self.element_data().expect("Not an element").name.ns
     }
 
+    fn query_anchored_fallback(&self) -> Option<style::values::specified::position::PositionTryFallbacksItem> {
+        self.tree().anchor_query_choices.lock().unwrap().entry(self.id).or_default().clone()
+    }
+
     fn query_container_size(
         &self,
         display: &style::values::specified::Display,

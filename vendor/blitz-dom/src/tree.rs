@@ -44,6 +44,8 @@ pub struct NodeTree {
     // Sparse: only containers actually queried by Stylo occupy an entry. Style
     // workers can ask about the same container concurrently.
     pub(crate) container_query_sizes: Mutex<HashMap<NodeId, ContainerQuerySize>>,
+    pub(crate) anchor_query_choices: Mutex<HashMap<NodeId, Option<style::values::specified::position::PositionTryFallbacksItem>>>,
+    pub(crate) anchor_query_samples: AtomicU64,
     /// Bumped whenever box geometry may have moved (layout ran or a scroll
     /// offset changed). Values derived from `final_layout()` (e.g. hoisted
     /// paint child offsets) are memoised against it. Starts at 1 so that a
@@ -81,6 +83,8 @@ impl NodeTree {
         Self {
             map: SlotMap::with_key(),
             container_query_sizes: Mutex::new(HashMap::new()),
+            anchor_query_choices: Default::default(),
+            anchor_query_samples: Default::default(),
             geometry_generation: AtomicU64::new(1),
             anchor_clip_steps: AtomicU64::new(0),
             anchor_visibility: Default::default(),
@@ -149,6 +153,7 @@ impl NodeTree {
     /// Remove the node with the given id, returning it if it was still live.
     pub(crate) fn remove(&mut self, id: NodeId) -> Option<Node> {
         self.container_query_sizes.get_mut().unwrap().remove(&id);
+        self.anchor_query_choices.get_mut().unwrap().remove(&id);
         self.map.remove(to_key(id))
     }
 

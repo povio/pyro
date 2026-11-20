@@ -92,11 +92,12 @@ impl BaseDocument {
             // New registrations need their first content-box sample. Known
             // hidden containers have enabled axes with None sizes, so clean
             // reads of them must not keep requesting layout.
-            if needs_layout {
+            if needs_layout || (geometry_dirty && !self.nodes.anchor_query_choices.lock().unwrap().is_empty()) {
                 self.resolve(current_time_for_animations);
             }
         } else {
             self.nodes.container_query_sizes.lock().unwrap().clear();
+            self.nodes.anchor_query_choices.lock().unwrap().clear();
         }
     }
 
@@ -234,6 +235,7 @@ impl BaseDocument {
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
             let changed_containers = self.refresh_container_query_sizes();
+            let choices_changed = pass == 0 && self.refresh_anchored_query_choices();
             let container_sizes_changed = !changed_containers.is_empty();
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
@@ -246,7 +248,7 @@ impl BaseDocument {
             // pyro: `content-visibility: auto` elements skip or render their contents as they are
             // relevant to the user at this layout; a change lays out again.
             let visibility_changed = !container_sizes_changed && pass < 8 && self.update_content_visibility();
-            if (!container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed && !visibility_changed)
+            if (!choices_changed && !container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed && !visibility_changed)
                 || pass == 31
             {
                 break;
@@ -865,6 +867,28 @@ impl BaseDocument {
 
     /// The query containers whose queried size changed since the last call, and the ones that
     /// stopped being size containers.
+    fn refresh_anchored_query_choices(&mut self) -> bool {
+        let mut choices = self.nodes.anchor_query_choices.lock().unwrap();
+        if choices.is_empty() { return false; }
+        self.nodes.anchor_query_samples.fetch_add(choices.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let mut changed = Vec::new();
+        choices.retain(|id, previous| {
+            let Some(node) = self.nodes.get(*id) else { return false; };
+            let Some(style) = node.primary_styles() else { return false; };
+            if !node.flags.is_in_document() || !style.get_box().slow_clone_container_type().contains(style::values::specified::ContainerType::ANCHORED) { return false; }
+            let selected = self.anchor_last_option.get(id).and_then(|(index, _)| {
+                let display = style.get_box().get_display();
+                if display.is_none() || display.is_contents() || !style.clone_position().is_absolutely_positioned() { return None; }
+                style.get_position().position_try_fallbacks.value.0.get(*index).cloned()
+            });
+            if selected != *previous { *previous = selected; changed.push(*id); }
+            true
+        });
+        drop(choices);
+        for id in &changed { self.nodes[*id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree()); }
+        !changed.is_empty()
+    }
+
     fn refresh_container_query_sizes(&self) -> Vec<NodeId> {
         use style::values::specified::ContainerType;
         let mut changed_ids = Vec::new();

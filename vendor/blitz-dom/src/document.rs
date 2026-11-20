@@ -1531,6 +1531,8 @@ impl BaseDocument {
     }
 
     pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
+
+    pub fn anchor_query_samples(&self) -> u64 { self.nodes.anchor_query_samples.load(std::sync::atomic::Ordering::Relaxed) }
     pub fn anchor_geometry_steps(&self) -> u64 { self.anchor_geometry_steps.get() }
 
     pub(crate) fn clear_anchor_transform_sources(&mut self, block: NodeId) {
