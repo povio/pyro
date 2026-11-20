@@ -890,6 +890,44 @@ struct PageModuleFetcher {
     /// For a worklet's module graph (`ModuleFetcher::for_worklet_graph`): the graph's credentials
     /// mode, with which every module is fetched, outside the document's module map (`preloads`).
     worklet_credentials: Option<pyro_net::Credentials>,
+    /// That worklet's module map, where each module this fetcher loads is recorded.
+    worklet_modules: Option<pyro_js::WorkletModuleMap>,
+}
+
+/// A worklet module's entry in its worklet's module map while it is fetched. It is marked loaded
+/// before its source goes to the engine (which may run the rest of the graph, and script waiting on
+/// it, before returning) and unmarked if the engine rejects it; dropped with a fetch that never
+/// loaded, it takes the module out of the map.
+struct WorkletEntry {
+    modules: pyro_js::WorkletModuleMap,
+    url: String,
+    loaded: std::cell::Cell<bool>,
+}
+
+impl WorkletEntry {
+    fn new(modules: pyro_js::WorkletModuleMap, url: &str) -> WorkletEntry {
+        modules.borrow_mut().insert(url.to_owned(), false);
+        WorkletEntry { modules, url: url.to_owned(), loaded: std::cell::Cell::new(false) }
+    }
+
+    fn set_loaded(&self, loaded: bool) {
+        self.loaded.set(loaded);
+        let mut modules = self.modules.borrow_mut();
+        if loaded {
+            modules.insert(self.url.clone(), true);
+        } else {
+            modules.remove(&self.url);
+        }
+    }
+}
+
+impl Drop for WorkletEntry {
+    fn drop(&mut self) {
+        let mut modules = self.modules.borrow_mut();
+        if !self.loaded.get() && modules.get(&self.url) == Some(&false) {
+            modules.remove(&self.url);
+        }
+    }
 }
 
 /// The module fetches of a realm in flight, and who waits for there to be
@@ -943,7 +981,7 @@ impl ModuleFetcher for PageModuleFetcher {
         self.fetches.in_flight.get() > 0
     }
 
-    fn for_worklet_graph(&self, credentials: &str) -> Option<Rc<dyn ModuleFetcher>> {
+    fn for_worklet_graph(&self, credentials: &str, modules: pyro_js::WorkletModuleMap) -> Option<Rc<dyn ModuleFetcher>> {
         let credentials = match credentials {
             "omit" => pyro_net::Credentials::Omit,
             "include" => pyro_net::Credentials::Include,
@@ -954,6 +992,7 @@ impl ModuleFetcher for PageModuleFetcher {
             sched: self.sched.clone(),
             fetches: Rc::default(),
             worklet_credentials: Some(credentials),
+            worklet_modules: Some(modules),
         }))
     }
 
@@ -972,6 +1011,8 @@ impl ModuleFetcher for PageModuleFetcher {
         let realm = realm.downgrade();
         let page = self.page;
         let worklet_credentials = self.worklet_credentials;
+        // Recorded in the worklet's module map as being fetched from now on.
+        let worklet_entry = self.worklet_modules.clone().map(|modules| WorkletEntry::new(modules, &url));
         module_trace!("requested {url}");
         let request = RefCell::new(Some(request));
         let in_flight = InFlight::new(&self.fetches);
@@ -989,6 +1030,7 @@ impl ModuleFetcher for PageModuleFetcher {
             let complete = move |_b: &mut Browser, res: Result<String, String>| {
                 // Dropped when this returns, the result handed to the engine.
                 let _in_flight = in_flight;
+                let fetched = res.is_ok();
                 match &res {
                     Ok(text) => module_trace!("loaded {traced} ({} bytes)", text.len()),
                     Err(e) => module_trace!("failed {traced}: {e}"),
@@ -1001,6 +1043,9 @@ impl ModuleFetcher for PageModuleFetcher {
                     module_trace!("dropped {traced}: no scope");
                     return;
                 };
+                if let Some(entry) = worklet_entry.as_ref().filter(|_| fetched) {
+                    entry.set_loaded(true);
+                }
                 let r = match res {
                     Ok(text) => pyro_webapi::module_script::complete(&scope, request, &text),
                     Err(e) => request.reject(
@@ -1008,6 +1053,9 @@ impl ModuleFetcher for PageModuleFetcher {
                         &JsError::type_error(format!("Failed to fetch dynamically imported module: {traced} ({e})")),
                     ),
                 };
+                if let Some(entry) = worklet_entry.as_ref().filter(|_| fetched && r.is_err()) {
+                    entry.set_loaded(false);
+                }
                 match &r {
                     Ok(()) => module_trace!("handed to engine {traced}"),
                     Err(e) => module_trace!("engine rejected {traced}: {e}"),
@@ -2821,7 +2869,7 @@ fn dynamic_inline_module_url(base: &str) -> String {
 }
 
 pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
-    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default(), worklet_credentials: None })));
+    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default(), worklet_credentials: None, worklet_modules: None })));
 }
 
 /// The download's file name: the `download` attribute without path

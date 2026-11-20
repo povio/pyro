@@ -11329,6 +11329,70 @@ fn paint_worklet_add_module_of_a_loaded_url_does_not_fetch_again() {
     assert_eq!(fetched.load(Ordering::SeqCst), 1);
 }
 
+/// The paint worklet's module map holds every module of its graphs, imports included: after a graph
+/// whose entry imports B loaded, addModule(B) resolves without fetching B again (here the server fails
+/// every later request for it); an import that failed is fetched again when added on its own.
+#[test]
+fn paint_worklet_add_module_of_a_loaded_import_does_not_fetch_again() {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let fetched = Arc::new(AtomicUsize::new(0));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = fetched.clone();
+    let failed_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+            let (status, ty, body) = match path.as_str() {
+                "/g/a.js" => ("200 OK", "text/javascript", "import './b.js';"),
+                "/g/c-entry.js" => ("200 OK", "text/javascript", "import './c.js';"),
+                // Fails the first time (in c-entry's graph), loads when added on its own.
+                "/g/c.js" if !failed_once.swap(true, Ordering::SeqCst) => ("500 Internal Server Error", "text/plain", "busy"),
+                "/g/c.js" => ("200 OK", "text/javascript", "registerPaint('c', class { paint() {} });"),
+                "/g/b.js" if count.fetch_add(1, Ordering::SeqCst) == 0 => ("200 OK", "text/javascript", "registerPaint('b', class { paint() {} });"),
+                "/g/b.js" => ("500 Internal Server Error", "text/plain", "gone"),
+                _ => ("200 OK", "text/html", "<!doctype html><p>page</p>"),
+            };
+            let head = format!("HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"(async () => {
+            const add = (u) => CSS.paintWorklet.addModule(u).then(() => 'loaded', (e) => e.name);
+            const a = await add('/g/a.js');
+            const b = await add('/g/b.js');
+            const entry = await add('/g/c-entry.js');
+            const c = await add('/g/c.js');
+            return [a, b, entry === 'loaded' ? 'loaded' : 'rejected', c].join();
+          })()"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    // A module whose fetch failed in another graph leaves the map: added on its own, it is fetched.
+    assert_eq!(r["result"]["result"]["value"], json!("loaded,loaded,rejected,loaded"), "{r}");
+    assert_eq!(fetched.load(Ordering::SeqCst), 1);
+}
+
 /// The opener's WindowProxy for a popup targets the browsing context, not a document: once the popup
 /// navigated (here to a document of another origin), the opener's postMessage reaches the popup's
 /// current document.

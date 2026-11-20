@@ -95,6 +95,10 @@ pub struct RealmOptions {
     pub origin: Option<String>,
 }
 
+/// A worklet's module map, by module URL: `false` while the module is being fetched, `true` once it
+/// loaded into the worklet's realm (a failed one leaves the map). Shared by every graph of the worklet.
+pub type WorkletModuleMap = Rc<RefCell<std::collections::HashMap<String, bool>>>;
+
 /// Receives ES module fetch requests from a realm (`import`, `import()`).
 pub trait ModuleFetcher {
     /// Fetch `url` (absolute) and complete `request`, now or later on the loop.
@@ -120,8 +124,9 @@ pub trait ModuleFetcher {
 
     /// A fetcher for a worklet's module graph ("fetch a worklet script graph"): every module of the
     /// graph is fetched with `credentials` ("omit", "same-origin" or "include"), outside the
-    /// document's module map. `None`: this fetcher cannot make one.
-    fn for_worklet_graph(&self, _credentials: &str) -> Option<Rc<dyn ModuleFetcher>> {
+    /// document's module map, and recorded in the worklet's module map `modules`. `None`: this
+    /// fetcher cannot make one.
+    fn for_worklet_graph(&self, _credentials: &str, _modules: WorkletModuleMap) -> Option<Rc<dyn ModuleFetcher>> {
         None
     }
 }

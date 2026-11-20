@@ -3,6 +3,8 @@
 // registerPaint() validates and records paint definitions. pyro does not draw paint() images: a
 // registered painter is never invoked. natives:
 //   active() -> whether the document is fully active
+//   moduleState(url) -> 'loaded' | 'fetching' | 'none': the URL in the worklet global's module map,
+//     which records every module its graphs fetched (imports included)
 //   evaluate(source, url, credentials) -> promise of the module's evaluation in the worklet global,
 //     its imports fetched with `credentials`; one graph at a time (see `graphs`)
 (function (native) {
@@ -49,24 +51,37 @@
         const map = moduleMaps.get(this);
         const known = map.get(url);
         if (known) return known.then(() => undefined);
-        // "fetch a worklet script graph": a failed fetch (network error, not ok) rejects with AbortError.
-        const aborted = () => new DOMExceptionC('Unable to load a worklet\'s module.', 'AbortError');
-        // Evaluated under the response's URL (after redirects), which import.meta.url and the module's
-        // relative imports use.
-        const loading = fetchC(url, { credentials, mode: 'cors' }).then(
-          (response) => {
-            if (!response.ok) throw aborted();
-            return response.text().then((source) => [source, response.url || url]);
-          },
-          () => { throw aborted(); },
-        ).then(([source, finalUrl]) => {
-          const run = graphs.then(() => native.evaluate(source, finalUrl, credentials));
-          graphs = run.then(() => {}, () => {});
-          return run;
-        });
-        map.set(url, loading);
-        loading.then(undefined, () => { if (map.get(url) === loading) map.delete(url); });
-        return loading;
+        // A module another graph imported: loaded, or being fetched by a graph that is running (graphs
+        // run one at a time), whose end tells whether it loaded; a failed one is fetched as an entry.
+        const imported = native.moduleState(url);
+        if (imported === 'loaded') return PromiseC.resolve();
+        if (imported === 'fetching') {
+          const later = graphs.then(() => (native.moduleState(url) === 'loaded' ? undefined : fetchEntry()));
+          map.set(url, later);
+          later.then(undefined, () => { if (map.get(url) === later) map.delete(url); });
+          return later;
+        }
+        return fetchEntry();
+        function fetchEntry() {
+          // "fetch a worklet script graph": a failed fetch (network error, not ok) rejects with AbortError.
+          const aborted = () => new DOMExceptionC('Unable to load a worklet\'s module.', 'AbortError');
+          // Evaluated under the response's URL (after redirects), which import.meta.url and the module's
+          // relative imports use.
+          const loading = fetchC(url, { credentials, mode: 'cors' }).then(
+            (response) => {
+              if (!response.ok) throw aborted();
+              return response.text().then((source) => [source, response.url || url]);
+            },
+            () => { throw aborted(); },
+          ).then(([source, finalUrl]) => {
+            const run = graphs.then(() => native.evaluate(source, finalUrl, credentials));
+            graphs = run.then(() => {}, () => {});
+            return run;
+          });
+          map.set(url, loading);
+          loading.then(undefined, () => { if (map.get(url) === loading) map.delete(url); });
+          return loading;
+        }
       } catch (e) {
         return reject(e);
       }

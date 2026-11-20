@@ -382,6 +382,8 @@ pub struct PageDom {
     fullscreen_allowed: Cell<bool>,
     /// The paint worklet global (`crate::paint_worklet`), made on the first `addModule()`.
     pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
+    /// That worklet's module map (every module of its graphs: entries and imports).
+    pub(crate) paint_worklet_modules: pyro_js::WorkletModuleMap,
     /// A range slider being dragged (`crate::input`): the element and its value at the press.
     pub(crate) range_drag: RefCell<Option<(NodeId, String)>>,
     /// The window's `load` event is being dispatched (`lifecycle::load`).
@@ -948,6 +950,7 @@ impl PageDom {
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
+            paint_worklet_modules: Default::default(),
             range_drag: RefCell::new(None),
             dispatching_load: Cell::new(false),
             opaque_origin_token: Cell::new(None),

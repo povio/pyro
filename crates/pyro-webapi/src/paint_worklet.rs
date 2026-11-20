@@ -79,6 +79,18 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         evaluate(s, &page, &source, &url, &credentials)
     })?;
     native.set_atom("evaluate", evaluate.value())?;
+    // moduleState(url) -> 'loaded' | 'fetching' | 'none': the URL in the worklet's module map.
+    let state = s.function("moduleState", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let url = a.get(0).to_string()?;
+        let state = match page.paint_worklet_modules.borrow().get(&url) {
+            Some(true) => "loaded",
+            Some(false) => "fetching",
+            None => "none",
+        };
+        Ok(s.string(state))
+    })?;
+    native.set_atom("moduleState", state.value())?;
     Ok(native)
 }
 
@@ -107,7 +119,9 @@ fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str, cred
     };
     // "Fetch a worklet script graph" with the document's fetch client: every module of the graph is
     // fetched with the graph's credentials mode, in the worklet's own module map (not the document's).
-    realm.set_module_fetcher(s.realm().module_fetcher().and_then(|f| f.for_worklet_graph(credentials)));
+    realm.set_module_fetcher(
+        s.realm().module_fetcher().and_then(|f| f.for_worklet_graph(credentials, page.paint_worklet_modules.clone())),
+    );
     let ws = realm.scope()?;
     let caller = s.realm().downgrade();
     let deferred = Rc::new(RefCell::new(Some(deferred)));
