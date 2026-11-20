@@ -1838,7 +1838,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 scene.fill(Fill::NonZero, cx.transform, color, None, &own_clip);
             }
         }
-        {
+        'content: {
                 // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
                 let content_position = Point {
                     x: content_position.x - node.scroll_offset().x,
@@ -1913,7 +1913,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                             child_clip_rect,
                             content_position,
                         );
-                        return;
+                        break 'content;
                     }
                     // pyro: the stacking contexts with a negative z-index go under the box's own
                     // inline content (CSS 2.1 Appendix E, step 3 before step 7).

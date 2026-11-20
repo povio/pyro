@@ -81,6 +81,22 @@ const WHITE: [u8; 3] = [255, 255, 255];
 const GREEN: [u8; 3] = [0, 128, 0];
 const BLUE: [u8; 3] = [0, 0, 255];
 
+#[test]
+fn scrolled_inline_scrollers_do_not_clip_following_siblings() {
+    let html = "<!doctype html><style>body{margin:0}</style>\
+        <div id=scroller style='display:inline-block;width:80px;height:60px;overflow:auto'>\
+        <div style='height:40px'></div>\
+        <div id=sticky style='position:sticky;top:0;height:20px;background:green'>\
+        <div style='float:left;width:4px;height:4px'></div></div>\
+        <div style='float:left;height:200px;width:8px'></div></div>\
+        <div style='display:inline-block;width:80px;height:60px;overflow:auto;background:blue'></div>";
+    let mut page = LivePage::new(html, &["scroller", "sticky"]);
+    let (scroller, sticky) = (page.keys[0], page.keys[1]);
+    let img = page.render(vec![(scroller, (0.0, 60.0))], vec![(sticky, (0.0, 20.0))]);
+    assert_eq!(pixel(&img, 20, 10), GREEN);
+    assert_eq!(pixel(&img, 100, 30), BLUE);
+}
+
 /// A sticky box in a scrolled container is painted at its offset, with its descendants, and goes
 /// back when the offset is no longer given.
 #[test]
