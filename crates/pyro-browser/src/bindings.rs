@@ -32,6 +32,7 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
     /// layout queries and screenshots agree; the response's checks are the browser's.
     fn load(
         &self,
+        document: &str,
         url: String,
         kind: pyro_dom::layout::SubresourceKind,
         options: &pyro_dom::layout::SubresourceOptions,
@@ -52,8 +53,17 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
             client: None,
         };
         let (frame, loader) = (self.frame, self.loader.clone());
+        // pyro: a frame document's request (one this geometry renders) is that document's, sent
+        // as its frame's, only while it is that frame's document; never this document's.
+        let other = (document != self.document).then(|| document.to_owned());
         // A closed loop drops `done`: its document is gone with the browser.
-        let _ = self.handle.post(move |b| b.fetch_layout_subresource(frame, &loader, url, kind, options, done));
+        let _ = self.handle.post(move |b| match other {
+            None => b.fetch_layout_subresource(frame, &loader, url, kind, options, done),
+            Some(client) => match b.live_client_frame(frame.page, &client) {
+                Some((key, loader)) => b.fetch_layout_subresource(key, &loader, url, kind, options, done),
+                None => done(Err(format!("{client}: no live document of the page"))),
+            },
+        });
     }
 
     fn bodies(&self) -> &Arc<pyro_dom::layout::SubresourceBodies> {

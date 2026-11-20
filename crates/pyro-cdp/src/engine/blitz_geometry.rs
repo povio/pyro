@@ -97,13 +97,16 @@ impl LocalFiles {
         url: &pyro_net::Url,
         options: &SubresourceOptions,
         destination: pyro_render::Destination,
+        client: Option<&str>,
     ) -> Option<Arc<LayoutBody>> {
         // No network of its own: nothing goes out, never through another
         // context's client.
         let loader = self.loader.as_ref()?;
         let bodies = loader.bodies().clone();
-        // pyro: the document's own request: its client and the whole request (`LayoutBodyKey`).
-        let key = LayoutBodyKey::new(&loader.document(), url.as_str(), options);
+        // pyro: the request's own client (a frame document this geometry renders names its own),
+        // else this document's; and the whole request (`LayoutBodyKey`).
+        let document = client.map_or_else(|| loader.document(), str::to_owned);
+        let key = LayoutBodyKey::new(&document, url.as_str(), options);
         if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
             return None;
         }
@@ -138,6 +141,7 @@ impl LocalFiles {
         let fetch = InFlight { bodies, key };
         let failed = self.failed.clone();
         loader.load(
+            &document,
             url.as_str().to_owned(),
             kind,
             options,
@@ -163,6 +167,7 @@ impl LocalFiles {
         url: String,
         options: &SubresourceOptions,
         destination: pyro_render::Destination,
+        client: Option<&str>,
         done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
     ) {
         let body = (|| {
@@ -179,7 +184,7 @@ impl LocalFiles {
                     None => match self.statics.resolve(&u, false) {
                         Some(hit) => std::fs::read(hit.path).ok(),
                         // The loader checks a network response's integrity.
-                        None if matches!(u.scheme(), "http" | "https") => return self.network(&u, options, destination),
+                        None if matches!(u.scheme(), "http" | "https") => return self.network(&u, options, destination, client),
                         None => None,
                     },
                 },
@@ -205,12 +210,13 @@ impl Fetcher for LocalFiles {
     /// pyro: by the document's timeline in its bodies.
     fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
         let loader = self.loader.as_ref()?;
-        let key = LayoutBodyKey::new(&loader.document(), url, &layout_options(options));
+        let document = options.client.clone().unwrap_or_else(|| loader.document());
+        let key = LayoutBodyKey::new(&document, url, &layout_options(options));
         loader.bodies().late(&key, period)
     }
 
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        self.load(url, &SubresourceOptions::default(), Default::default(), body_only(done))
+        self.load(url, &SubresourceOptions::default(), Default::default(), None, body_only(done))
     }
 
     /// pyro: as the screenshot's fetcher does, so layout queries and screenshots agree.
@@ -220,14 +226,14 @@ impl Fetcher for LocalFiles {
         options: &pyro_render::FetchOptions,
         done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
     ) {
-        self.load(url, &layout_options(options), options.destination, body_only(done))
+        self.load(url, &layout_options(options), options.destination, options.client.as_deref(), body_only(done))
     }
 
     /// `data:` and `file:` URLs and `serve --static` roots are this process's own; the network's
     /// responses pass the CORS check or fail.
     fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let options = SubresourceOptions { crossorigin: Some("anonymous".to_owned()), ..Default::default() };
-        self.load(url, &options, pyro_render::Destination::Image, body_only(done))
+        self.load(url, &options, pyro_render::Destination::Image, None, body_only(done))
     }
 
     /// pyro: with the response's URL after redirects and its tainting, from the stored body, so a
@@ -238,7 +244,7 @@ impl Fetcher for LocalFiles {
         options: &pyro_render::FetchOptions,
         done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>,
     ) {
-        self.load(url, &layout_options(options), options.destination, done)
+        self.load(url, &layout_options(options), options.destination, options.client.as_deref(), done)
     }
 }
 
@@ -303,7 +309,7 @@ mod document_bodies_tests {
     struct Loader {
         document: &'static str,
         bodies: Arc<SubresourceBodies>,
-        log: Arc<Mutex<Vec<(&'static str, String)>>>,
+        log: Arc<Mutex<Vec<(String, String)>>>,
         final_url: Option<&'static str>,
         opaque: bool,
         kinds: Arc<Mutex<Vec<SubresourceKind>>>,
@@ -312,13 +318,14 @@ mod document_bodies_tests {
     impl SubresourceLoader for Loader {
         fn load(
             &self,
+            document: &str,
             url: String,
             kind: SubresourceKind,
             _options: &SubresourceOptions,
             done: Box<dyn FnOnce(Result<LayoutBody, String>) + Send>,
         ) {
             self.kinds.lock().unwrap().push(kind);
-            self.log.lock().unwrap().push((self.document, url.clone()));
+            self.log.lock().unwrap().push((document.to_owned(), url.clone()));
             let final_url = self.final_url.map_or(url, str::to_owned);
             done(Ok(LayoutBody { bytes: Arc::new(b"ok".to_vec()), final_url, opaque: self.opaque, status: 200 }));
         }
@@ -335,7 +342,7 @@ mod document_bodies_tests {
 
     fn files(
         bodies: &Arc<SubresourceBodies>,
-        log: &Arc<Mutex<Vec<(&'static str, String)>>>,
+        log: &Arc<Mutex<Vec<(String, String)>>>,
         document: &'static str,
         final_url: Option<&'static str>,
         opaque: bool,
@@ -356,8 +363,8 @@ mod document_bodies_tests {
         }
     }
 
-    fn loads(log: &Arc<Mutex<Vec<(&'static str, String)>>>, document: &str) -> usize {
-        log.lock().unwrap().iter().filter(|(d, _)| *d == document).count()
+    fn loads(log: &Arc<Mutex<Vec<(String, String)>>>, document: &str) -> usize {
+        log.lock().unwrap().iter().filter(|(d, _)| d == document).count()
     }
 
     /// Every body is its requesting document's alone, whatever the request (plain or CORS): another
@@ -373,10 +380,10 @@ mod document_bodies_tests {
             (files(&bodies, &log, "F1#L1", None, false), files(&bodies, &log, "F2#L2", None, false), files(&bodies, &log, "F1#L3", None, false));
         let url = pyro_net::Url::parse("http://img.test/shape.png").unwrap();
         for options in [SubresourceOptions::default(), SubresourceOptions { crossorigin: Some("anonymous".into()), ..Default::default() }] {
-            assert_eq!(a.network(&url, &options, pyro_render::Destination::Image), None, "the first load starts");
-            assert_eq!(a.network(&url, &options, pyro_render::Destination::Image).map(|b| b.bytes.to_vec()), Some(b"ok".to_vec()), "A reuses its own");
-            assert_eq!(sibling.network(&url, &options, pyro_render::Destination::Image), None, "a same-origin sibling asks for itself");
-            assert_eq!(next.network(&url, &options, pyro_render::Destination::Image), None, "the frame's next document asks for itself");
+            assert_eq!(a.network(&url, &options, pyro_render::Destination::Image, None), None, "the first load starts");
+            assert_eq!(a.network(&url, &options, pyro_render::Destination::Image, None).map(|b| b.bytes.to_vec()), Some(b"ok".to_vec()), "A reuses its own");
+            assert_eq!(sibling.network(&url, &options, pyro_render::Destination::Image, None), None, "a same-origin sibling asks for itself");
+            assert_eq!(next.network(&url, &options, pyro_render::Destination::Image, None), None, "the frame's next document asks for itself");
         }
         assert_eq!((loads(&log, "F1#L1"), loads(&log, "F2#L2"), loads(&log, "F1#L3")), (2, 2, 2));
     }
@@ -449,11 +456,28 @@ mod document_bodies_tests {
         let image = pyro_net::Url::parse("http://img.test/image.css").unwrap();
         let sheet = pyro_net::Url::parse("http://img.test/sheet.png").unwrap();
         let font = pyro_net::Url::parse("http://img.test/font.css").unwrap();
-        files.network(&image, &SubresourceOptions::default(), pyro_render::Destination::Image);
-        files.network(&sheet, &SubresourceOptions::default(), pyro_render::Destination::Style);
-        files.network(&font, &SubresourceOptions::default(), pyro_render::Destination::Font);
+        files.network(&image, &SubresourceOptions::default(), pyro_render::Destination::Image, None);
+        files.network(&sheet, &SubresourceOptions::default(), pyro_render::Destination::Style, None);
+        files.network(&font, &SubresourceOptions::default(), pyro_render::Destination::Font, None);
         let kinds: Vec<String> = kinds.lock().unwrap().iter().map(|k| format!("{k:?}")).collect();
         assert_eq!(kinds, ["Image", "Style", "Font"]);
         assert_eq!(*asked.lock().unwrap(), ["http://img.test/image.css"], "the load gate waits for the image");
+    }
+
+    /// A frame document this geometry renders makes its requests as itself: the request's client
+    /// is the document it is sent for and kept under, never the geometry's own document (whose
+    /// identity and bodies a child's request took: security review cycle 4, 1b).
+    #[test]
+    fn a_frame_documents_request_is_its_own() {
+        let bodies = Arc::new(SubresourceBodies::default());
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let top = files(&bodies, &log, "TOP#L", None, false);
+        let options = pyro_render::FetchOptions { client: Some("CHILD#L".into()), ..Default::default() }
+            .for_destination(pyro_render::Destination::Image);
+        top.fetch_with("http://img.test/child.png".into(), &options, Box::new(|_| {}));
+        assert_eq!(*log.lock().unwrap(), [("CHILD#L".to_owned(), "http://img.test/child.png".to_owned())]);
+        let child = LayoutBodyKey::new("CHILD#L", "http://img.test/child.png", &SubresourceOptions::default());
+        let own = LayoutBodyKey::new("TOP#L", "http://img.test/child.png", &SubresourceOptions::default());
+        assert!(bodies.get(&child).is_some() && bodies.get(&own).is_none());
     }
 }

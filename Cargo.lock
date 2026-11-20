@@ -2835,6 +2835,7 @@ dependencies = [
  "cssparser",
  "encoding_rs",
  "euclid",
+ "getrandom 0.3.4",
  "html5ever",
  "markup5ever",
  "precomputed-hash",

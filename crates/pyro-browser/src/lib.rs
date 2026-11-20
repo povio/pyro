@@ -707,7 +707,7 @@ impl Page {
             sheets.extend(snapshot.sheets);
             let base = if base_url.is_empty() { url } else { base_url };
             // pyro: with its own frames' table (set before, deeper first), which its markup names.
-            let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table()).unwrap_or_default();
+            let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
             let document = pyro_dom::FrameDocument {
                 html: snapshot.html,
                 url: base,
@@ -1425,6 +1425,15 @@ impl Browser {
     /// CSS images, imported sheets and fonts), which a renderer of the page uses as they are.
     pub fn layout_bodies(&self, page: PageId) -> Option<std::sync::Arc<pyro_dom::layout::SubresourceBodies>> {
         self.page(page).map(|p| p.frames.layout_bodies.clone())
+    }
+
+    /// pyro: the frame and loader `client` ([`document_client`]) names in `page`, while that document
+    /// is still its frame's.
+    pub(crate) fn live_client_frame(&self, page: PageId, client: &str) -> Option<(FrameKey, LoaderId)> {
+        let (frame_id, loader) = client.split_once('#')?;
+        let p = self.page(page)?;
+        let key = p.frames.key_of(frame_id)?;
+        p.frames.with_frame(key, |f| (f.loader_id.0 == loader).then(|| (key, f.loader_id.clone()))).flatten()
     }
 
     /// pyro: whether `client` ([`document_client`]) names a document that is still its frame's

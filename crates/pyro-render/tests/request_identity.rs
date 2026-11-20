@@ -196,24 +196,32 @@ fn a_frame_shows_only_its_table_entry_for_its_client() {
         scroll: (0.0, 0.0),
         client: "NEST#L".into(),
         frames: Default::default(),
+        version: 7,
     };
     let first = FrameContent {
-        html: format!("{}<iframe data-pyro-frame='2:0' srcdoc='{}'></iframe>", mask("a/green.png"), attr(&mask("evil/nested.png"))),
+        html: format!(
+            "{}<iframe data-pyro-frame='N2:2:0000000000000007' srcdoc='{}'></iframe><iframe data-pyro-frame='WRONG:2:0000000000000007'></iframe>",
+            mask("a/green.png"),
+            attr(&mask("evil/nested.png"))
+        ),
         url: "http://test/".into(),
         scroll: (0.0, 0.0),
         client: "F00D#L".into(),
-        frames: Arc::new([("2".to_owned(), nested)].into_iter().collect()),
+        frames: Arc::new(FrameTableData { nonce: "N2".into(), entries: [("2".to_owned(), nested)].into_iter().collect() }),
+        version: 1,
     };
     let snapshot = Snapshot {
         html: format!(
             "<!doctype html><body style='margin:0'>\
-             <iframe data-pyro-frame='1:0' style='border:0;width:50px;height:20px'></iframe>\
-             <iframe data-pyro-frame='9:0' data-pyro-frame-client='OTHER#L' srcdoc='{0}' SRCDOC='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-frame='N1:1:0000000000000001' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-frame='N1:9:0000000000000001' data-pyro-frame-client='OTHER#L' srcdoc='{0}' SRCDOC='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-frame='N1:1:0000000000000002' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-frame='1:0000000000000001' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
              <iframe srcdoc='{1}' style='border:0;width:50px;height:20px'></iframe>",
             attr(&mask("evil/unknown.png")),
             attr(&mask("b/green.png")),
         ),
-        frames: Arc::new([("1".to_owned(), first)].into_iter().collect()),
+        frames: Arc::new(FrameTableData { nonce: "N1".into(), entries: [("1".to_owned(), first)].into_iter().collect() }),
         base_url: "http://test/".into(),
         width: 200,
         height: 100,

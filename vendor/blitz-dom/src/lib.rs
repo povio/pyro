@@ -122,7 +122,7 @@ pub use crate::node::Widget;
 pub use blitz_traits::node_id::NodeId;
 // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
 // `Node::final_layout`)
-pub use config::{DocumentConfig, FRAME_ATTRIBUTE, FrameContent, FrameTable, StyleThreading};
+pub use config::{DocumentConfig, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, StyleThreading};
 pub use document::{SvgImageDocument, 
     StyleChange,
     BaseDocument, BoundingRect, DocGuard, DocGuardMut, Document, PlainDocument, UserAgentStylesheet,

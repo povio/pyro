@@ -135,8 +135,7 @@ impl BaseDocument {
     /// pyro: the frame table entry the frame element `node_id` names (`data-pyro-frame`), if any.
     pub(crate) fn frame_entry(&self, node_id: NodeId) -> Option<crate::FrameContent> {
         let value = self.get_node(node_id)?.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))?;
-        let index = value.split(':').next()?;
-        self.frames.get(index).cloned()
+        self.frames.lookup(value).cloned()
     }
 
     /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that

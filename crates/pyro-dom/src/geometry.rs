@@ -236,8 +236,12 @@ pub trait SubresourceLoader: Send + Sync {
     /// once it passed its checks (a 2xx status, CORS, integrity), or why there is none, on any
     /// thread. A loader that can no longer send the request (its document is gone) drops `done`
     /// without calling it.
+    /// pyro: `document` is the client the request is for (this document's, or a frame document's
+    /// of the same page that this geometry renders): the loader sends it as that document's
+    /// request, or not at all when that is no live document of the page.
     fn load(
         &self,
+        document: &str,
         url: String,
         kind: SubresourceKind,
         options: &SubresourceOptions,

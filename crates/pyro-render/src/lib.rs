@@ -299,7 +299,7 @@ pub struct TextSelection {
 }
 
 pub use blitz_dom::animation;
-pub use blitz_dom::{FrameContent, FrameTable};
+pub use blitz_dom::{FrameContent, FrameTable, FrameTableData};
 
 /// The animated values of a persistent document's elements at one moment,
 /// by element key (`blitz_dom::animation`): elements left out have none.

@@ -184,22 +184,24 @@ type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool, pyro_render::InputCapabil
 /// resolve against the parsed form on every sync, while the snapshot keeps
 /// the original text (`Url` normalizes it).
 /// pyro: a DOM's frame table ([`pyro_dom::Dom::frame_table`]) as the renderer takes it.
-pub fn frame_table(entries: Vec<(String, pyro_dom::FrameDocument)>) -> pyro_render::FrameTable {
-    Arc::new(
-        entries
-            .into_iter()
-            .map(|(index, frame)| {
-                let content = pyro_render::FrameContent {
-                    html: frame.html,
-                    url: frame.url,
-                    scroll: frame.scroll,
-                    client: frame.client,
-                    frames: frame_table(frame.frames),
-                };
-                (index, content)
-            })
-            .collect(),
-    )
+pub fn frame_table(table: pyro_dom::FrameTable) -> pyro_render::FrameTable {
+    let entries = table
+        .entries
+        .into_iter()
+        .map(|(index, frame)| {
+            let version = frame.version();
+            let content = pyro_render::FrameContent {
+                html: frame.html,
+                url: frame.url,
+                scroll: frame.scroll,
+                client: frame.client,
+                frames: frame_table(frame.frames),
+                version,
+            };
+            (index, content)
+        })
+        .collect();
+    std::sync::Arc::new(pyro_render::FrameTableData { nonce: table.nonce, entries })
 }
 
 struct BaseUrl {
@@ -457,7 +459,7 @@ impl BlitzGeometry {
         };
         let v = style.viewport();
         let snap = Snapshot {
-            frames: frame_table(dom.frame_table()),
+            frames: frame_table(dom.frame_table(style.document())),
             html: String::new(),
             base_url: base.text.clone(),
             sheets: sheets.into_inner(),
@@ -589,7 +591,7 @@ impl BlitzGeometry {
                 }
                 if let Some(delta) = delta {
                     let ops = convert_delta(delta);
-                    let frames = frame_table(dom.frame_table());
+                    let frames = frame_table(dom.frame_table(style.document()));
                     let dpr = v.device_scale_factor;
                     let timings = RENDERER.with(|r| {
                         let mut r = r.try_borrow_mut().ok()?;
@@ -1255,6 +1257,7 @@ mod tests {
         impl SubresourceLoader for Network {
             fn load(
                 &self,
+                _: &str,
                 _: String,
                 _: SubresourceKind,
                 _: &SubresourceOptions,

@@ -429,7 +429,7 @@ fn render_tree_keeps_event_handler_attributes_markup_drops() {
 }
 
 fn frame(html: &str, client: &str) -> FrameDocument {
-    FrameDocument { html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Vec::new() }
+    FrameDocument { html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Default::default() }
 }
 
 /// Every attribute the renderer reads from the engine is the engine's: a page attribute whose
@@ -461,8 +461,10 @@ fn page_attributes_never_stand_in_for_the_engines() {
     for leaked in ["OTHER", "evil.test", "EVIL", "GENUINE", "F#L", "srcdoc", "data-pyro-key", "DATA-PYRO", "9:0"] {
         assert!(!html.contains(leaked), "{leaked}: {html}");
     }
-    let version = dom.borrow().frame_table()[0].1.version();
-    assert!(html.contains(&format!("<iframe id=\"f\" data-pyro-frame=\"{}:{version:016x}\"", key(f))) || html.contains(&format!("data-pyro-frame=\"{}:{version:016x}\"", key(f))), "{html}");
+    let table = dom.borrow().frame_table(d);
+    let version = table.entries[0].1.version();
+    assert_eq!(table.nonce.len(), 32, "128 bits");
+    assert!(html.contains(&format!("data-pyro-frame=\"{}:{}:{version:016x}\"", table.nonce, key(f))), "{html}");
     assert_eq!(html.matches("data-pyro-frame=").count(), 1, "only the engine's, on the frame with a document: {html}");
     // The keyed tree: the same attributes, the engine's first.
     let tree = dom
@@ -481,9 +483,10 @@ fn page_attributes_never_stand_in_for_the_engines() {
         }
     }
     // The table holds the document under that index.
-    let table = dom.borrow().frame_table();
-    assert_eq!(table.len(), 1);
-    assert_eq!((table[0].0.as_str(), table[0].1.client.as_str(), table[0].1.html.as_str()), (key(f).as_str(), "F#L", "<p>GENUINE</p>"));
+    let table = dom.borrow().frame_table(d);
+    assert_eq!(table.entries.len(), 1);
+    let entry = &table.entries[0];
+    assert_eq!((entry.0.as_str(), entry.1.client.as_str(), entry.1.html.as_str()), (key(f).as_str(), "F#L", "<p>GENUINE</p>"));
 }
 
 /// The frame documents a page sets cover its own documents only: a store shared by pages (a popup
@@ -495,7 +498,7 @@ fn frame_documents_are_replaced_per_page() {
     let popup = parse_document(&dom, "http://test/popup", "<p>popup</p>");
     let f = find(&dom.borrow(), opener, "#f");
     let document = frame("<p>inner</p>", "F#L");
-    let has = |dom: &Dom| dom.frame_table().iter().any(|(_, d)| d.html.contains("inner"));
+    let has = |dom: &Dom| dom.frame_table(opener).entries.iter().any(|(_, d)| d.html.contains("inner"));
     dom.borrow_mut().set_frame_documents(&[opener], vec![(f, document)]);
     assert!(has(&dom.borrow()));
     // The popup refreshes its own frames (it has none).
@@ -505,4 +508,59 @@ fn frame_documents_are_replaced_per_page() {
     // The opener refreshing its own set without the frame does drop it.
     dom.borrow_mut().set_frame_documents(&[opener], Vec::new());
     assert!(!has(&dom.borrow()));
+}
+
+
+/// Raw text cannot change the tree when the markup is parsed again: a `<style>`'s text (set by
+/// script, CSSOM, or a text node) holding its own end tag in any form is written so that the
+/// reparse gives the same elements, never an element the attribute filter did not see (a frame
+/// marker forged in style text: security review cycle 4, 1a).
+#[test]
+fn raw_text_survives_a_reparse_unchanged() {
+    let hostile = [
+        "</style><iframe data-pyro-frame=\"x:1:0\"></iframe>",
+        "</STYLE ><iframe></iframe>",
+        "</style\t><p>x</p>",
+        "</style/><p>x</p>",
+        "a { content: \"</style><b>\" } /* </style><i> */",
+        "<!-- </style> --><iframe></iframe>",
+        "</styles><p>y</p>",
+    ];
+    for text in hostile {
+        let (dom, d) = doc("<style id=s></style><p id=after>after</p>");
+        let s = find(&dom.borrow(), d, "#s");
+        {
+            let mut dom = dom.borrow_mut();
+            let t = dom.create_text(d, text).unwrap();
+            dom.append_child(s, t).unwrap();
+        }
+        let elements = |dom: &Dom, doc: NodeId| -> Vec<String> {
+            dom.query_selector_all(doc, &parse_selectors("*").unwrap())
+                .unwrap()
+                .into_iter()
+                .map(|e| dom.tag_name(e).unwrap())
+                .collect()
+        };
+        let before = elements(&dom.borrow(), d);
+        let html = render(&dom.borrow(), d);
+        let (again, d2) = doc(&html);
+        assert_eq!(elements(&again.borrow(), d2), before, "{text:?} -> {html}");
+    }
+}
+
+/// A frame marker is accepted only with this document's nonce: the nonce is 128 random bits per
+/// document, absent from everything page content can reach, so a marker the page made up (even
+/// one naming a real index and version) names nothing (cycle 4, 1a).
+#[test]
+fn frame_markers_carry_a_per_document_nonce() {
+    let (dom, d) = doc("<iframe id=f></iframe>");
+    let (other, d2) = doc("<iframe id=g></iframe>");
+    let f = find(&dom.borrow(), d, "#f");
+    dom.borrow_mut().set_frame_document(f, Some(frame("<p>x</p>", "F#L")));
+    let html = render(&dom.borrow(), d);
+    let nonce = dom.borrow().frame_table(d).nonce;
+    assert_eq!(nonce.len(), 32);
+    assert!(nonce.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(render(&dom.borrow(), d), html, "the nonce stays for the document's life");
+    assert_ne!(other.borrow().frame_table(d2).nonce, nonce, "each document its own");
 }

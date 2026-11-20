@@ -40,7 +40,30 @@ pub const ENGINE_ATTRIBUTES: &[&str] = &["srcdoc", FRAME_ATTRIBUTE];
 /// frame URL and content height, the clip mark): page attributes with it are never written.
 pub const ENGINE_ATTRIBUTE_PREFIX: &str = "data-pyro-";
 
-/// pyro: the attribute a frame element carries its frame document in: `"<index>:<version>"`,
+/// pyro: raw text (a `<style>`'s sheet) as markup can hold it so that parsing it back gives the
+/// same tree: an end tag of its element (`</style`, any case, which would end it early and let
+/// the rest of the text become elements, frames included) is written `<\/style`, which CSS reads
+/// the same inside strings and comments and as nothing valid elsewhere. Other raw-text and RCDATA
+/// elements' text is written escaped (entities), which no markup can come out of.
+pub fn raw_text_safe<'a>(text: &'a str, tag: &str) -> std::borrow::Cow<'a, str> {
+    let lower = text.to_ascii_lowercase();
+    let end = format!("</{tag}");
+    if !lower.contains(&end) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut at = 0;
+    while let Some(found) = lower[at..].find(&end) {
+        let i = at + found;
+        out.push_str(&text[at..i]);
+        out.push_str("<\\/");
+        at = i + 2;
+    }
+    out.push_str(&text[at..]);
+    std::borrow::Cow::Owned(out)
+}
+
+/// pyro: the attribute a frame element carries its frame document in: `"<nonce>:<index>:<version>"`,
 /// the index naming the entry of the snapshot's frame table ([`Dom::frame_table`]: the
 /// document's markup, URL, scroll position, client and its own frames), the version changing
 /// with the entry's content. The document and its client never travel in markup.
@@ -300,7 +323,7 @@ impl Sink for HtmlSink<'_> {
     fn text(&mut self, _key: u64, text: &str, kind: TextKind) {
         match kind {
             TextKind::Node => escape(&mut self.out, text, false),
-            TextKind::Style => self.out.push_str(text),
+            TextKind::Style => self.out.push_str(&raw_text_safe(text, "style")),
             TextKind::Textarea => {
                 // A leading newline right after <textarea> is dropped by parsers.
                 self.out.push('\n');
@@ -610,7 +633,12 @@ impl Dom {
                             // entry's version, so a new document loads again).
                             attrs.push(RAttr {
                                 name: plain(FRAME_ATTRIBUTE),
-                                value: Cow::Owned(format!("{}:{:016x}", render_key(id), frame.version())),
+                                value: Cow::Owned(format!(
+                                    "{}:{}:{:016x}",
+                                    self.snapshot_nonce(self.n(n).owner_doc),
+                                    render_key(id),
+                                    frame.version()
+                                )),
                                 valueless: false,
                             });
                         }

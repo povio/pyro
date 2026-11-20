@@ -247,6 +247,8 @@ pub struct Dom {
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
+    /// pyro: each document's snapshot nonce (`Dom::snapshot_nonce`), by its slot.
+    snapshot_nonces: std::cell::RefCell<rustc_hash::FxHashMap<u32, String>>,
     /// pyro: each frame document's animations now, by its client (`FrameDocument::client`): the
     /// renderer samples them into the frame's document (`data-pyro-key` elements).
     pub frame_animations: rustc_hash::FxHashMap<String, std::sync::Arc<crate::animation::AnimationFrame>>,
@@ -343,6 +345,7 @@ impl Dom {
             frame_content_heights: Default::default(),
             svg_pans: Default::default(),
             frame_documents: Default::default(),
+            snapshot_nonces: Default::default(),
             frame_animations: Default::default(),
             journal_floor: 0,
             style_snapshots: Default::default(),
@@ -1195,12 +1198,31 @@ impl Dom {
     /// pyro: the frame table of the render snapshot: each frame element's document by the index
     /// its [`crate::snapshot::FRAME_ATTRIBUTE`] names (the renderer looks the document up here;
     /// markup holds no frame content or client).
-    pub fn frame_table(&self) -> Vec<(String, FrameDocument)> {
-        self.frame_documents
+    pub fn frame_table(&self, doc: NodeId) -> FrameTable {
+        let nonce = self.check(doc).map(|d| self.snapshot_nonce(d)).unwrap_or_default();
+        let entries = self
+            .frame_documents
             .iter()
-            .filter(|(i, _)| self.slot_live(**i))
+            .filter(|(i, _)| self.slot_live(**i) && self.check(doc).is_ok_and(|d| self.n(**i).owner_doc == d))
             .map(|(i, d)| (crate::snapshot::render_key(self.id_of(*i)).to_string(), d.clone()))
-            .collect()
+            .collect();
+        FrameTable { nonce, entries }
+    }
+
+    /// pyro: the nonce the frame markers of document slot `doc`'s render snapshots carry
+    /// (`snapshot::FRAME_ATTRIBUTE`): 128 bits from the OS CSPRNG, drawn when the document is
+    /// first serialised and kept for its life (a delta's markers match the table too). Held here
+    /// only: page script never sees a snapshot, and the text it wrote existed before the nonce.
+    pub(crate) fn snapshot_nonce(&self, doc: u32) -> String {
+        self.snapshot_nonces
+            .borrow_mut()
+            .entry(doc)
+            .or_insert_with(|| {
+                let mut bits = [0u8; 16];
+                getrandom::fill(&mut bits).expect("the OS CSPRNG");
+                bits.iter().map(|b| format!("{b:02x}")).collect()
+            })
+            .clone()
     }
 
     /// [`Dom::set_frame_documents`] for one iframe (`None`: it paints none).
@@ -4523,7 +4545,15 @@ pub struct FrameDocument {
     pub client: String,
     /// pyro: the frame table of this document's own frames ([`Dom::frame_table`] of its DOM), by
     /// the index its markup names them with.
-    pub frames: Vec<(String, FrameDocument)>,
+    pub frames: FrameTable,
+}
+
+/// pyro: a document's frame table: its frame elements' documents by index, and the nonce its
+/// markers carry ([`Dom::frame_table`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameTable {
+    pub nonce: String,
+    pub entries: Vec<(String, FrameDocument)>,
 }
 
 impl FrameDocument {
@@ -4534,7 +4564,7 @@ impl FrameDocument {
         self.html.hash(&mut h);
         self.url.hash(&mut h);
         self.client.hash(&mut h);
-        for (index, frame) in &self.frames {
+        for (index, frame) in &self.frames.entries {
             index.hash(&mut h);
             frame.version().hash(&mut h);
         }

@@ -341,8 +341,7 @@ impl BaseDocument {
             let frames = self.frames.clone();
             let entry = node
                 .attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))
-                .and_then(|value| value.split(':').next())
-                .and_then(|index| frames.get(index));
+                .and_then(|value| frames.lookup(value));
             let frame_effects = entry.and_then(|frame| frame_animations.get(&frame.client).cloned());
             let frame_scroll = entry
                 .map(|frame| frame.scroll)

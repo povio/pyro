@@ -41,12 +41,37 @@ pub struct FrameContent {
     pub client: String,
     /// Its own frames' documents.
     pub frames: FrameTable,
+    /// The entry's version (its content), which its frame element's marker names.
+    pub version: u64,
 }
 
-/// pyro: frame documents by the index a frame element's `data-pyro-frame` names.
-pub type FrameTable = Arc<std::collections::HashMap<String, FrameContent>>;
+/// pyro: a document's frame documents by the index its frame elements' markers name, and the
+/// nonce they carry ([`FrameTableData::lookup`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameTableData {
+    /// 128 random bits (hex) the document's markup was serialised with.
+    pub nonce: String,
+    pub entries: std::collections::HashMap<String, FrameContent>,
+}
 
-/// pyro: the attribute a frame element names its frame table entry in: `"<index>:<version>"`.
+impl FrameTableData {
+    /// pyro: the ONE check of a frame element's marker: its whole value is
+    /// `<nonce>:<index>:<version>` of this table (the nonce this document's markup was serialised
+    /// with, an index it holds, that entry's version), or the element shows no document.
+    pub fn lookup(&self, marker: &str) -> Option<&FrameContent> {
+        let mut parts = marker.split(':');
+        let (nonce, index, version) = (parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some() || self.nonce.is_empty() || nonce != self.nonce {
+            return None;
+        }
+        self.entries.get(index).filter(|entry| format!("{:016x}", entry.version) == version)
+    }
+}
+
+/// pyro: see [`FrameTableData`].
+pub type FrameTable = Arc<FrameTableData>;
+
+/// pyro: the attribute a frame element names its frame table entry in: `"<nonce>:<index>:<version>"`.
 pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
 
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
