@@ -87,6 +87,15 @@ fn eval(realm: &Realm, src: &str) -> String {
 }
 
 #[test]
+fn transform_readback_separates_computed_and_resolved_values() {
+    let env = env("<style>#target { width: 80px; transform: translateX(25%); zoom: 2 }</style><div id=target></div>");
+    assert_eq!(eval(&env.main, r#"(() => {
+        const target = document.querySelector('#target');
+        return [getComputedStyle(target).transform, target.computedStyleMap().get('transform').toString()].join('|');
+    })()"#), "matrix(1, 0, 0, 1, 20, 0)|translate(25%, 0px)");
+}
+
+#[test]
 fn math_auto_preserves_dom_range_and_partial_node_text() {
     let env = env("<style>#outer { text-transform: math-auto }</style><div id=outer><span id=target>h</span></div>");
     let read = |source: &str, end: u32| eval(&env.main, &format!(r#"(() => {{

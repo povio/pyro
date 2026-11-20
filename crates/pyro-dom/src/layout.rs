@@ -4166,6 +4166,19 @@ impl Layout {
         value
     }
 
+    pub fn typed_computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        if !self.style.style_overridden() {
+            match self.style.transition_value(el, name) {
+                Some(crate::animation::TransitionValue::Text(value)) => return Some(value),
+                Some(crate::animation::TransitionValue::Style(sample)) => {
+                    return self.style.with_style_override(el, sample, || self.style.computed_value(dom, el, name)).flatten();
+                }
+                None => {}
+            }
+        }
+        self.style.computed_value(dom, el, name)
+    }
+
     /// `getComputedStyle(el).getPropertyValue(name)`
     /// (CSSStyleDeclaration.zig:76-151): display / visibility /
     /// pointer-events / text-transform from the cascade, custom properties,
@@ -4243,9 +4256,7 @@ impl Layout {
         // Resolve percentages against the renderer's actual reference box, also
         // for a sampled transition. Keep the sampled style read-only: the live
         // document must not be restyled to an intermediate animation value.
-        // Only percentages need the reference box; everything else keeps the declared-value serialization, whose
-        // rounding the WPT transform-composition expectations depend on.
-        if matches!(name, "transform-origin" | "perspective-origin") || (name == "transform" && declared.as_deref().is_some_and(|value| value.contains('%'))) {
+        if matches!(name, "transform-origin" | "perspective-origin") || (name == "transform" && declared.as_deref().is_some_and(|value| value != "none")) {
             if let Some(value) = self.synced_geometry_source(dom).and_then(|source| {
                 let style = self.style.stylo_style(dom, el)?;
                 source.resolved_transform_value(crate::snapshot::render_key(el), name, &style)

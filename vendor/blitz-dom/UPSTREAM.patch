@@ -53036,7 +53036,30 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/resolved_style.rs
 --- a/packages/blitz-dom/src/resolved_style.rs
 +++ b/packages/blitz-dom/src/resolved_style.rs
-@@ -342,6 +342,40 @@
+@@ -50,13 +50,16 @@
+     }
+ }
+ 
+-/// Serialize a transform matrix component rounded to 6 decimal places (as
+-/// browsers do when serializing resolved transform matrices)
++/// Serialize a transform matrix component with six significant digits.
+ fn format_matrix_component(v: f64) -> String {
+-    let rounded = (v * 1e6).round() / 1e6;
+-    // Avoid "-0"
+-    let rounded = if rounded == 0.0 { 0.0 } else { rounded };
+-    format!("{rounded}")
++    if v == 0.0 { return "0".into(); }
++    let rounded = format!("{v:.5e}");
++    let (mantissa, exponent) = rounded.split_once('e').unwrap_or((&rounded, "0"));
++    let exponent = exponent.parse::<i32>().unwrap_or(0);
++    if !(-6..21).contains(&exponent) {
++        return format!("{}e{exponent}", mantissa.trim_end_matches('0').trim_end_matches('.'));
++    }
++    rounded.parse::<f64>().unwrap_or(v).to_string()
+ }
+ 
+ /// Serialize a used transform matrix the way `getComputedStyle()` does
+@@ -342,6 +345,40 @@
      /// `transform-origin`, `grid-template-rows`/`columns`) resolve to *used* values, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
      pub fn resolved_style_value(&self, node_id: NodeId, property_name: &str) -> String {
@@ -53077,7 +53100,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let Some(node) = self.get_node(node_id) else {
              return String::new();
          };
-@@ -364,6 +398,7 @@
+@@ -364,6 +401,7 @@
              },
          };
  
@@ -53085,7 +53108,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          let display = styles.clone_display();
          // Non-atomic inline elements are laid out as style spans within their
          // inline root's text layout rather than as boxes of their own, so their
-@@ -398,6 +433,36 @@
+@@ -398,6 +436,36 @@
          let format_used_px = |px: f32| format_px(px / zoom);
  
          // Layout-dependent "used value" special cases
@@ -53122,6 +53145,26 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          match property_name {
              // Shorthands of longhands that resolve to used values
              "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"
+@@ -682,10 +750,17 @@
+                     let reference_box = euclid::Rect::new(
+                         euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
+                         euclid::Size2D::new(
+-                            CSSPixelLength::new(layout.size.width),
+-                            CSSPixelLength::new(layout.size.height),
++                            CSSPixelLength::new(layout.size.width / zoom),
++                            CSSPixelLength::new(layout.size.height / zoom),
+                         ),
+                     );
++                    use resolved::ToResolvedValue;
++                    let longhand = style::properties::LonghandId::Transform;
++                    let transform = transform.clone().to_resolved_value(&resolved::Context {
++                        style: styles,
++                        for_property: PropertyId::NonCustom(longhand.into()),
++                        current_longhand: Some(longhand),
++                    });
+                     if let Ok((matrix, is_3d)) =
+                         transform.to_transform_3d_matrix_f64(Some(&reference_box))
+                     {
 diff --git a/packages/blitz-dom/src/scroll_timeline.rs b/packages/blitz-dom/src/scroll_timeline.rs
 new file mode 100644
 --- /dev/null

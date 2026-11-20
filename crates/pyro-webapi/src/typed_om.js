@@ -1315,7 +1315,7 @@
   };
   const attributeStyleMap = (el) => declarationMap(declOf(el));
   // `element.computedStyleMap()`: the element's computed values (`getComputedStyle`).
-  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left)$/;
+  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left|transform)$/;
   const computedStyleMap = (el, computedValue) => {
     const cs = () => getComputedStyle(el);
     return new StylePropertyMapReadOnly(ILLEGAL, {

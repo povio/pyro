@@ -50,13 +50,16 @@ fn resolve_inset<P>(val: &GenericInset<P, LengthPercentage>, basis: f32) -> Opti
     }
 }
 
-/// Serialize a transform matrix component rounded to 6 decimal places (as
-/// browsers do when serializing resolved transform matrices)
+/// Serialize a transform matrix component with six significant digits.
 fn format_matrix_component(v: f64) -> String {
-    let rounded = (v * 1e6).round() / 1e6;
-    // Avoid "-0"
-    let rounded = if rounded == 0.0 { 0.0 } else { rounded };
-    format!("{rounded}")
+    if v == 0.0 { return "0".into(); }
+    let rounded = format!("{v:.5e}");
+    let (mantissa, exponent) = rounded.split_once('e').unwrap_or((&rounded, "0"));
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    if !(-6..21).contains(&exponent) {
+        return format!("{}e{exponent}", mantissa.trim_end_matches('0').trim_end_matches('.'));
+    }
+    rounded.parse::<f64>().unwrap_or(v).to_string()
 }
 
 /// Serialize a used transform matrix the way `getComputedStyle()` does
@@ -747,10 +750,17 @@ impl BaseDocument {
                     let reference_box = euclid::Rect::new(
                         euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                         euclid::Size2D::new(
-                            CSSPixelLength::new(layout.size.width),
-                            CSSPixelLength::new(layout.size.height),
+                            CSSPixelLength::new(layout.size.width / zoom),
+                            CSSPixelLength::new(layout.size.height / zoom),
                         ),
                     );
+                    use resolved::ToResolvedValue;
+                    let longhand = style::properties::LonghandId::Transform;
+                    let transform = transform.clone().to_resolved_value(&resolved::Context {
+                        style: styles,
+                        for_property: PropertyId::NonCustom(longhand.into()),
+                        current_longhand: Some(longhand),
+                    });
                     if let Ok((matrix, is_3d)) =
                         transform.to_transform_3d_matrix_f64(Some(&reference_box))
                     {

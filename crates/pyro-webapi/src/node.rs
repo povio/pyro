@@ -1324,8 +1324,9 @@ impl JsClass for Element {
             let (page, id) = (n.page().clone(), n.id);
             let get = s.function("computedValue", move |s, _this, a| {
                 let name = crate::util::dom_string(a.get(0))?;
+                crate::animation_events::observe(&page, id);
                 let (Ok(layout), Ok(dom)) = (page.layout.try_borrow(), page.dom.try_borrow()) else { return Ok(s.null()) };
-                Ok(match layout.style().computed_value(&dom, id, &name) {
+                Ok(match layout.typed_computed_value(&dom, id, &name) {
                     Some(v) if !v.is_empty() => s.string(&v),
                     _ => s.null(),
                 })
