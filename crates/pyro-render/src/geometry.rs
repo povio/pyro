@@ -1324,8 +1324,13 @@ impl Geometry {
                 return;
             }
             let Some((t, fixed)) = self.transform(doc, id) else { return };
-            let origin = t * line_box_origin(doc, id, text);
+            let line_origin = line_box_origin(doc, id, text);
+            let origin = t * line_origin;
             let scale = text.layout.scale() as f64;
+            // pyro: lines in a multi-column container's columns, as their boxes are
+            // (`Geometry::line_rects`): words are where their columns show them (Range rects,
+            // caret positions).
+            let columns = line_column_shift(doc, id);
             // Per text node: the UTF-16 offset of each byte of its laid-out text.
             let offsets: Vec<Vec<u32>> = text
                 .text_nodes
@@ -1341,7 +1346,11 @@ impl Geometry {
             };
             for line in text.layout.lines() {
                 let m = line.metrics();
-                let origin = origin * line_slot(doc, id, m, scale);
+                let mut origin = origin * line_slot(doc, id, m, scale);
+                if let Some(shift) = &columns {
+                    let top = line_origin * kurbo::Point::new(0.0, m.block_min_coord as f64 / scale);
+                    origin = shift(top.y) * origin;
+                }
                 let (line_top, line_height) =
                     (m.block_min_coord as f64 / scale, (m.block_max_coord - m.block_min_coord) as f64 / scale);
                 for item in line.items() {

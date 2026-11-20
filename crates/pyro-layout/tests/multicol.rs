@@ -244,3 +244,18 @@ fn parts_between_spanners_share_the_fragment_cap() {
     let total = p.layout.client_rects(&p.dom, p.id("all")).len();
     assert!(total > 1000 && total <= 10_000, "{total} fragments");
 }
+
+/// pyro: a text node's words are where its columns show them (Range rects, caret positions): its
+/// rect spans both columns of a two-column container, as Chromium unites its line boxes, not the
+/// strip's one column twice as tall.
+#[test]
+fn a_text_nodes_words_are_in_their_columns() {
+    let p = page(
+        "<!doctype html><body style='margin:0'>\
+         <div id=t style='columns:2;column-fill:auto;column-gap:0;height:40px;width:200px;font:16px/20px monospace'>aaa bbb ccc ddd eee fff</div>",
+    );
+    let text = p.dom.first_child(p.id("t")).unwrap().unwrap();
+    let r = p.layout.text_rect(&p.dom, text).unwrap();
+    assert!(r.x + r.width > 100.0, "into the second column: {r:?}");
+    assert!(r.height <= 40.0 + 0.5, "no taller than a column: {r:?}");
+}
