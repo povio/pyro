@@ -180,7 +180,7 @@ pub struct ColumnFragments {
     /// pyro: the outer fragmentation this container was laid out in, as a multi-column container
     /// nested in another's columns (`LayoutPassState::nested_fragmentation`): the outer column
     /// height and how far down its column the box starts.
-    pub nested: Option<(f32, f32)>,
+    pub nested: Option<(f32, f32, usize, usize)>,
     /// pyro: so nested, its first row (not at the top of its outer column) cannot hold its first
     /// column's content without breaking what is kept together or overflowing it: the outer
     /// container breaks before it instead.
@@ -880,8 +880,7 @@ impl LayoutPassState<'_> {
         // container nested in them is fragmented by (`nested_fragmentation`).
         let fragmentainer = (spanning.is_none() && !vertical)
             .then(|| match multicol.height {
-                Some(height) if !multicol.wrap => Some(height),
-                Some(_) => None,
+                Some(height) => Some(height),
                 None => definite_height.filter(|_| fill_auto),
             })
             .flatten()
@@ -944,8 +943,10 @@ impl LayoutPassState<'_> {
             let mut changed = false;
             for &(id, y) in &breaks.nested {
                 let wanted = fragmentainer.zip(columns.as_ref()).map(|(height, columns)| {
-                    let start = columns.iter().rev().find(|c| c.0 <= y + EPSILON).map_or(breaks.start, |c| c.0);
-                    (height, (y - start).clamp(0.0, height))
+                    let index = columns.partition_point(|c| c.0 <= y + EPSILON).saturating_sub(1);
+                    let start = columns.get(index).map_or(breaks.start, |c| c.0);
+                    let across = if multicol.wrap && matches!(multicol.fill, ColumnFill::Balance) { count } else { 1 };
+                    (height, (y - start).clamp(0.0, height), across, index % across)
                 });
                 let laid_out = self.nodes[id].element_data().and_then(|e| e.layout_data.as_deref()).and_then(|l| l.columns.as_deref());
                 let used = laid_out.and_then(|c| c.nested);
@@ -970,7 +971,7 @@ impl LayoutPassState<'_> {
                 };
                 let same = match (used, wanted) {
                     (None, None) => true,
-                    (Some(a), Some(b)) => (a.0 - b.0).abs() <= EPSILON && (a.1 - b.1).abs() <= EPSILON,
+                    (Some(a), Some(b)) => (a.0 - b.0).abs() <= EPSILON && (a.1 - b.1).abs() <= EPSILON && a.2 == b.2 && a.3 == b.3,
                     _ => false,
                 };
                 if !same {
@@ -1071,7 +1072,7 @@ impl LayoutPassState<'_> {
         // each with its borders and padding repeated (`nested_ctx` below; its height grows by them).
         let mut clone_rows = 0usize;
         let mut clone_insets = 0.0f32;
-        if let Some((outer_height, offset)) = nested_ctx {
+        if let Some((outer_height, offset, across, mut outer_index)) = nested_ctx {
             let box_end_of_content = definite_height.map(|height| content_top + height);
             // pyro: of `box-decoration-break: clone`, each row (each outer fragment of the box)
             // ends with the box's block-end border and padding, and each after the first starts
@@ -1100,11 +1101,20 @@ impl LayoutPassState<'_> {
             let end = breaks.end;
             let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
             let mut last_row_extended = (f32::NAN, 0.0f32);
+            let mut tail_height = None;
             loop {
                 let box_end = box_end_of_content.map(|end| if clone { top + (end - content_top - consumed) } else { end });
                 // (What the row may hold: its outer column's room less the repeated decorations.)
                 let room = (available - clone_bottom - if !placed.is_empty() { clone_top } else { 0.0 }).max(1.0);
-                let row_height = box_end.map_or(room, |end| room.min(end - top).max(1.0));
+                let mut row_height = box_end.map_or(room, |end| room.min(end - top).max(1.0));
+                if across > 1 && outer_index == 0 && box_end.is_none() && available == outer_height {
+                    let fits = count.saturating_mul(across).min(MAX_COLUMNS);
+                    if end - start <= fits as f32 * room && breaks.fill_range(start, end, room, fits + 1).columns.len() <= fits {
+                        tail_height = Some(breaks.balance_range(start, end, fits, Some(room)).max(1.0));
+                    }
+                }
+                outer_index = (outer_index + 1) % across;
+                row_height = row_height.min(tail_height.unwrap_or(row_height));
                 // (Past the fragment cap, what is left goes to one last column.)
                 if placed.len() + count + 1 >= sink.room() {
                     placed.push((start, end, top, row_height));
@@ -1193,7 +1203,7 @@ impl LayoutPassState<'_> {
         // (`nested_rows_ctx`): rows that height, `row-gap` apart, each filled in turn; a row that
         // does not fit what is left of its outer column starts the next one, the gap before it
         // truncated (Chromium; WPT css-multicol `column-height-027`, `-028`).
-        if let (Some((outer_height, offset)), Some(row_height)) = (nested_rows_ctx, multicol.height) {
+        if let (Some((outer_height, offset, _, _)), Some(row_height)) = (nested_rows_ctx, multicol.height) {
             let row_height = row_height.max(1.0);
             let row_gap = multicol.row_gap(definite_height);
             let end = breaks.end;
@@ -1261,7 +1271,7 @@ impl LayoutPassState<'_> {
         // parts in turn from the top, each run of columns in rows that end where the outer
         // columns do (the run's last row balanced), each spanner after the run before it, cut
         // where the outer columns end (Chromium; WPT css-multicol `spanner-fragmentation-*`).
-        if let Some((outer_height, offset)) = nested_span_ctx {
+        if let Some((outer_height, offset, _, _)) = nested_span_ctx {
             let boundary = |y: f32| ((offset + y) / outer_height + 1e-4).floor() * outer_height + outer_height - offset;
             // (Where `y` is not at the top of an outer column, the next one's top.)
             let next_column = |y: f32| {
@@ -1532,7 +1542,7 @@ impl LayoutPassState<'_> {
                 let last_row = (rows - 1).saturating_mul(per_row.min(columns.len().max(1)));
                 let mut last_height = column_height;
                 if fixed_height.is_some()
-                    && multicol.height.is_none()
+                    && (multicol.height.is_none() || !breaks.nested.is_empty())
                     && matches!(multicol.fill, ColumnFill::Balance)
                     && columns.len() - last_row.min(columns.len()) <= count
                     && let Some(&(tail_start, _)) = columns.get(last_row)
