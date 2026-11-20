@@ -846,10 +846,12 @@ impl Browser {
     ) {
         let bindings = bindings.clone();
         let Some(state) = self.doc(page) else { return };
-        let current = state.images.entries.get(&node).map(|i| i.url.clone());
+        // pyro: the request it has: its URL and its CORS mode (a change of either is a new request,
+        // with its own tainting, never the old image).
+        let current = state.images.entries.get(&node).map(|i| (i.url.clone(), i.request_state.0));
         drop(state);
         let url = match source {
-            Source::Url(url) if current.as_deref() == Some(url.as_str()) => return,
+            Source::Url(url) if current.as_ref() == Some(&(url.clone(), cors)) => return,
             Source::Url(url) => url,
             Source::None => {
                 self.doc_mut(page).expect("page").images.entries.remove(&node);

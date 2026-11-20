@@ -555,3 +555,33 @@ fn the_page_hands_its_layout_bodies_for_its_document_alone() {
     settle(&mut thread);
     assert!(bodies.get(&key(&client, "http://site.test/detour.png")).is_none(), "gone with its document");
 }
+
+/// Changing only `crossorigin` on an SVG `<image>` is a new request (its mode, its tainting): it
+/// is fetched again in CORS mode and drawn from that response, not kept with the old image and
+/// its taint (a URL-only check returned early; the attribute was no relevant mutation of an SVG
+/// `<image>`: security review cycles 2-3, 2d).
+#[test]
+fn an_svg_images_crossorigin_change_is_a_new_request() {
+    let (mut thread, page, loader) = setup(
+        "<canvas id=c width=4 height=4></canvas><svg><image id=d href=/detour.png width=2 height=2 /></svg><script>\
+           globalThis.draw = () => { const c = document.createElement('canvas'); c.width = c.height = 4; const x = c.getContext('2d');\
+             x.drawImage(document.getElementById('d'), 0, 0);\
+             try { return String(x.getImageData(0, 0, 1, 1).data[3]); } catch (e) { return e.name; } };\
+         </script>",
+    );
+    const RED: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182, 13,
+        36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132, 25, 96, 12, 0, 71, 202, 7, 249, 103,
+        89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    loader.insert_bytes("http://site.test/detour.png", "image/png", RED, Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Opaquing(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "draw()"), "SecurityError", "the no-cors detour taints");
+    eval(&thread, page, "document.getElementById('d').setAttribute('crossorigin', 'anonymous'); 1");
+    settle(&mut thread);
+    let fetches = loader.log.borrow().iter().filter(|u| u.ends_with("/detour.png")).count();
+    assert_eq!(fetches, 2, "fetched again for the new mode");
+    assert_eq!(eval(&thread, page, "draw()"), "255", "drawn from the CORS response");
+}

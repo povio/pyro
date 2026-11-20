@@ -357,7 +357,11 @@ impl Dom {
         // the image data" restarts with them).
         let relevant = matches!(local, "src" | "href" | "rel" | "media" | "srcset" | "type" | "disabled" | "data")
             || (matches!(local, "crossorigin" | "referrerpolicy" | "loading")
-                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img")));
+                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img")))
+            // pyro: an SVG `<image>`'s CORS settings are its request's mode too (a change is a new
+            // request, with its own tainting).
+            || (local == "crossorigin"
+                && self.n(idx).element().is_some_and(|e| e.name.ns == ns!(svg) && &*e.name.local == "image"));
         if !relevant {
             return;
         }
