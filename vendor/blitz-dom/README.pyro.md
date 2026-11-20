@@ -2326,6 +2326,8 @@ inline layout for its atomic inlines), Chromium's `UseParentPercentageResolution
 `crates/pyro-render/tests/intrinsic_percentages.rs`.
 
 Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`:
+- `src/stylo.rs`: the HTML `align` presentational hint on divs, table row groups, rows, and cells
+  accepts ASCII case-insensitive `left`, `right`, `center`, `middle`, and `justify`.
 - `src/stylo.rs`: the `<br clear>` presentational hint (`left`, `right`, `all`/`both` → `clear`), WPT
   `css/CSS2/floats-clear/floats-clear-multicol-*`.
 - `src/layout/inline/layout.rs`: an atomic inline's percentage margins resolve against the line root's content

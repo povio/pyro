@@ -14,6 +14,8 @@
 //! modifiers take the existing paths, and the undo history is touched only
 //! by edits the user (or execCommand) makes.
 
+mod alignment;
+
 use std::rc::Rc;
 
 use pyro_dom::{Dom, NodeId, NodeType};
@@ -1006,6 +1008,10 @@ fn format_of(command: &str) -> Option<(&'static str, &'static [&'static str], &'
 
 const SUPPORTED: &[&str] = &[
     "inserttext",
+    "justifycenter",
+    "justifyfull",
+    "justifyleft",
+    "justifyright",
     "stylewithcss",
     "usecss",
     "defaultparagraphseparator",
@@ -1139,6 +1145,11 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         };
     }
     let Some(Target::Host(host)) = target else { return false };
+    if let Some(target) = alignment::value_for(&cmd) {
+        if !rich_selection(page, host) { return false; }
+        alignment::apply(page, host, target);
+        return true;
+    }
     match cmd.as_str() {
         "delete" => editing::delete(page, host, true),
         "forwarddelete" => editing::delete(page, host, false),
@@ -1596,6 +1607,10 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
     if doc != page.document() {
         return false;
     }
+    if let Some(target) = alignment::value_for(&cmd) {
+        let values = alignment::selected_values(page);
+        return !values.is_empty() && values.iter().all(|&v| v == target);
+    }
     match cmd.as_str() {
         "stylewithcss" => page.dom.borrow().document_data(doc).is_ok_and(|d| d.style_with_css),
         "insertorderedlist" | "insertunorderedlist" => {
@@ -1617,6 +1632,10 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
 /// `document.queryCommandIndeterm(command)`: part of the selection only.
 pub(crate) fn query_indeterm(page: &PageDom, command: &str) -> bool {
     let cmd = command.to_ascii_lowercase();
+    if let Some(target) = alignment::value_for(&cmd) {
+        let values = alignment::selected_values(page);
+        return values.iter().any(|&v| v == target) && values.iter().any(|&v| v != target);
+    }
     if format_of(&cmd).is_none() {
         return false;
     }
@@ -1631,6 +1650,10 @@ pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String 
         return String::new();
     }
     match cmd.as_str() {
+        cmd if alignment::value_for(cmd).is_some() => {
+            if editing::selection_range(page).is_none() { return String::new(); }
+            alignment::selected_values(page).first().copied().unwrap_or("left").to_owned()
+        }
         "formatblock" => {
             let Some((start, _)) = editing::selection_range(page) else {
                 return String::new();
@@ -1709,7 +1732,7 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
     };
     match cmd.as_str() {
         "selectall" | "stylewithcss" | "usecss" | "defaultparagraphseparator" => true,
-        "insertimage" | "inserthorizontalrule" => {
+        "insertimage" | "inserthorizontalrule" | "justifycenter" | "justifyfull" | "justifyleft" | "justifyright" => {
             matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h))
         }
         "copy" => has_range(),
