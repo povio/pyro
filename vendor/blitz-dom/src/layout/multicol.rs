@@ -192,6 +192,7 @@ pub struct ColumnFragments {
     pub first_after_spanner: std::collections::BTreeMap<crate::NodeId, usize>,
     pub run_wrappers: std::collections::BTreeSet<crate::NodeId>,
     continuation_ends: std::collections::HashMap<crate::NodeId, f32>,
+    consumed_by_owner: std::collections::HashMap<crate::NodeId, f32>,
 }
 
 /// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -228,6 +229,10 @@ impl ColumnFragment {
 }
 
 impl ColumnFragments {
+    pub fn owner_spends_slot(&self, owner: crate::NodeId, end: f32) -> bool {
+        self.consumed_by_owner.get(&owner).is_some_and(|start| end > *start)
+    }
+
     pub fn continuation_end(&self, owner: crate::NodeId) -> Option<f32> {
         self.continuation_ends.get(&owner).copied()
     }
@@ -375,7 +380,7 @@ struct Breaks {
     /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
     forced: Vec<f32>,
     overflow_breaks: Vec<FlowContinuation>,
-    overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
+    overflow_parents: Vec<FlowContinuation>,
     parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
     /// pyro: the multi-column containers in the strip's flow (no other break context between
     /// them and the container) and their tops.
@@ -1032,11 +1037,18 @@ impl LayoutPassState<'_> {
                         changed = true;
                     }
                 }
-                for &(id, top, bottom, parallel_start) in &breaks.overflow_parents {
+                let mut parents = std::collections::BTreeMap::new();
+                for token in &breaks.overflow_parents {
+                    let start = token.origin + token.consumed;
+                    let entry = parents.entry(token.owner).or_insert((token.origin, start));
+                    entry.1 = entry.1.min(start);
+                }
+                for (id, (origin, parallel_start)) in parents {
+                    let bottom = origin + self.nodes[id].unrounded_layout().size.height;
                     let prior = self.column_space_used.get(&id).copied().unwrap_or(0.0);
                     let mut used = 0.0;
                     let short = &run.columns[..run.columns.len().saturating_sub(1)];
-                    let first = short.partition_point(|&(_, end)| end <= top.max(parallel_start));
+                    let first = short.partition_point(|&(_, end)| end <= parallel_start);
                     for &(start, end) in &short[first..] {
                         let left = bottom + prior - used - end;
                         if left <= EPSILON { break; }
@@ -1955,7 +1967,19 @@ impl LayoutPassState<'_> {
             let entry = continuation_ends.entry(token.owner).or_insert(end);
             *entry = entry.max(end);
         }
-        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, continuation_ends, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
+        let mut consumed_by_owner = std::collections::HashMap::<_, f32>::new();
+        if fragmentainer.is_some() {
+            for token in &breaks.overflow_parents {
+                let start = token.origin + token.consumed;
+                let earliest = consumed_by_owner.entry(token.owner).or_insert(start);
+                *earliest = earliest.min(start);
+                let layout = self.nodes[token.resume].unrounded_layout();
+                let end = token.origin + layout.location.y + layout.scrollable_overflow_rect.bottom();
+                let entry = continuation_ends.entry(token.resume).or_insert(end);
+                *entry = entry.max(end);
+            }
+        }
+        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -3014,14 +3038,6 @@ impl BaseDocument {
         let mut avoid_after = false;
         let mut next_parallel_break = false;
         let mut previous_unit_top: f32 = 0.0;
-        let last_in_flow = children.iter().rposition(|&id| {
-            let child = &self.nodes[id];
-            !child.is_out_of_flow() && child.primary_styles().is_some_and(|style| !style.get_box().display.is_none())
-                && !(child.is_anonymous() && child.unrounded_layout().size.height <= EPSILON && child.children.iter().all(|&id| {
-                    let inner = &self.nodes[id];
-                    inner.is_out_of_flow() || inner.is_collapsible_whitespace_node()
-                }))
-        });
         let mut parallel_ends = Vec::new();
         if children.iter().any(|&id| {
             let layout = self.nodes[id].unrounded_layout();
@@ -3080,11 +3096,11 @@ impl BaseDocument {
             let child_top = top + layout.location.y - relative;
             let child_bottom = child_top + layout.size.height;
             let parent_bottom = top + node.unrounded_layout().size.height;
-            let parallel_tail = found.container != Some(parent) && last_in_flow == Some(child_index)
+            let parallel_tail = found.container != Some(parent)
                 && layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
                 && parent_bottom > child_bottom + EPSILON;
             if parallel_tail {
-                found.overflow_parents.push((parent, top, parent_bottom, child_bottom));
+                found.overflow_parents.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: child_bottom - top });
             }
             found.bottom = found.bottom.max(child_bottom);
             if container_content_top.is_some() {
@@ -3368,7 +3384,7 @@ struct Found {
     forced_after: Vec<f32>,
     parallel_break_after: bool,
     overflow_breaks: Vec<FlowContinuation>,
-    overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
+    overflow_parents: Vec<FlowContinuation>,
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::baselines`].
@@ -3912,6 +3928,7 @@ mod tests {
     #[test]
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
+            consumed_by_owner: Default::default(),
             continuation_ends: Default::default(),
             run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
@@ -3939,6 +3956,7 @@ mod tests {
         // The first column ends at 100 where a margin starts, the second starts past it at 120;
         // a third follows.
         let columns = ColumnFragments {
+            consumed_by_owner: Default::default(),
             continuation_ends: Default::default(),
             run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
@@ -3976,6 +3994,7 @@ mod tests {
         };
         let columns = ColumnFragments {
             continuation_ends: Default::default(),
+            consumed_by_owner: Default::default(),
             run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,

@@ -391,7 +391,7 @@ impl Geometry {
         // A strip rectangle cut at the container's breaks, each piece where its column shows it
         // (the container's coordinates), with its height in the strip.
         let mut restricted = false;
-        let mut cut = |columns: &blitz_dom::ColumnFragments, chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, f64)>| {
+        let mut cut = |columns: &blitz_dom::ColumnFragments, chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, Option<f64>)>| {
             let child = chain.iter().find(|node| columns.first_after_spanner.contains_key(&node.id)).unwrap_or(&chain[0]).id;
             let through_continuation = for_hit && columns.first_after_spanner.contains_key(&child) && chain.iter()
                     .find(|node| columns.run_wrappers.contains(&node.id) || box_position(node) != BoxPosition::Static || node.is_stacking_context_root(false))
@@ -406,24 +406,27 @@ impl Geometry {
                 let shows =
                     if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= start as f64 && strip.y0 < f.end as f64 };
                 if shows {
-                    let piece = Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64);
-                    out.push((piece, y1 - y0));
+                    let mut piece = Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64);
+                    if y1 == f64::from(f.end) && columns.owner_spends_slot(chain[0].id, f.end) {
+                        piece.y1 = piece.y1.max(f64::from(f.top + f.height));
+                    }
+                    out.push((piece, (strip.height() > 0.0).then_some(y1 - y0)));
                 } else if !for_hit && f.start as f64 >= strip.y1 && columns.continuation_end(chain[0].id).is_some_and(|end| f.start < end) {
                     let top = f64::from(f.top);
                     let dx = f64::from(f.offset.x);
-                    out.push((Rect::new(strip.x0 + dx, top, strip.x1 + dx, top), f64::INFINITY));
+                    out.push((Rect::new(strip.x0 + dx, top, strip.x1 + dx, top), None));
                 }
             }
         };
         let l = doc.physical_unrounded_layout(id);
         let strip = to_strip(&chain).transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
-        let mut out: Vec<(Rect, f64)> = Vec::new();
+        let mut out = Vec::new();
         cut(container.column_fragments()?, &chain, strip, &mut out);
         // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
         // position against the rounded break) is no fragment of it: a monolithic box a column
         // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
-        if out.iter().any(|&(_, height)| height >= 1.0) {
-            out.retain(|&(_, height)| height >= 1.0);
+        if out.iter().any(|&(_, height)| height.is_some_and(|height| height >= 1.0)) {
+            out.retain(|&(_, height)| height.is_none_or(|height| height >= 1.0));
         }
         // pyro: a container nested in another's columns has its rows there too: the pieces are cut
         // again at the outer container's breaks, out to the outermost one (as paint shows them).

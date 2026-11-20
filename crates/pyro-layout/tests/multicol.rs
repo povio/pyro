@@ -131,6 +131,17 @@ fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
 }
 
 #[test]
+fn parallel_children_spend_the_parent_slot_independently_of_later_siblings() {
+    for (count, tail) in [(4, "static"), (5, "static"), (4, "absolute")] {
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{gap:0;columns:{count};width:200px;height:50px;column-fill:auto}}section{{min-height:190px;border-inline:4px solid}}header{{height:10px}}aside{{height:0}}article{{height:29px;break-inside:avoid}}i{{display:block;height:1px;position:{tail}}}footer{{height:4px}}</style><main><section id=p><header></header><aside id=a><article></article><article></article><article></article></aside><i></i></section><footer id=f></footer></main>"));
+        let width = 200.0 / f64::from(count);
+        assert_eq!(rects(&p, "p"), [[0.0, 0.0, width, 50.0], [width, 0.0, width, 50.0], [2.0*width, 0.0, width, 50.0], [3.0*width, 0.0, width, 40.0]]);
+        assert_eq!(rect(&p, "f"), [3.0*width, 40.0, width, 4.0]);
+        assert_eq!(rects(&p, "a"), [[4.0, 10.0, width-8.0, 0.0], [width+4.0, 0.0, width-8.0, 0.0], [2.0*width+4.0, 0.0, width-8.0, 0.0]]);
+    }
+}
+
+#[test]
 fn a_parallel_break_allocates_its_own_continuation() {
     for (count, header, after) in [(3, 20, false), (4, 20, false), (3, 10, false), (3, 20, true)] {
         let before_style = if after { "" } else { "break-before:column" };
