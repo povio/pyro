@@ -176,6 +176,7 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: column spanners pushed below the content that overflows the boxes before them, and
     /// the least top of each in its parent (`layout::multicol`, `block_child_min_top`).
     pub(crate) spanner_floors: std::collections::HashMap<crate::NodeId, f32>,
+    spanner_border_heights: std::collections::HashMap<NodeId, (f32, f32)>,
     /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
     pub(crate) multicol_strip_depth: u32,
     /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
@@ -255,6 +256,7 @@ impl<'doc> LayoutPassState<'doc> {
             multicol_percent_height: None,
             nested_fragmentation: std::collections::HashMap::new(),
             spanner_floors: std::collections::HashMap::new(),
+            spanner_border_heights: std::collections::HashMap::new(),
             multicol_strip_depth: 0,
             column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
             column_measure_budget: multicol::MEASURE_FRAGMENT_BUDGET,
@@ -374,11 +376,18 @@ impl LayoutPassState<'_> {
         // its height (`layout::multicol`, Chromium; WPT css-multicol
         // `multicol-span-all-children-height-004a`).
         if line_clamp.is_none()
-            && let Some(extra) = self.spanner_extent_in(dom_node_id(node_id), inputs.known_dimensions.height)
+            && let Some((flow_height, border_height)) = self.spanner_extent_in(dom_node_id(node_id), inputs.known_dimensions.height)
         {
             let mut taller = inputs;
-            taller.known_dimensions.height = inputs.known_dimensions.height.map(|height| height + extra);
+            taller.known_dimensions.height = Some(flow_height);
             output = self.dispatch_child_layout(node_id, taller, block_ctx.as_deref_mut());
+            if inputs.run_mode == RunMode::PerformLayout {
+                if flow_height > border_height {
+                    self.spanner_border_heights.insert(node_id, (flow_height, border_height));
+                } else {
+                    self.spanner_border_heights.remove(&node_id);
+                }
+            }
         }
         match line_clamp {
             Some(max_lines) => self.clamp_lines(dom_node_id(node_id), max_lines, inputs, &mut output),
@@ -2356,11 +2365,16 @@ impl LayoutPartialTree for LayoutPassState<'_> {
     }
 
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
+        let border_height = self.column_spanners.and_then(|_| self.spanner_border_heights.get(&node_id))
+            .filter(|(flow, _)| layout.size.height == *flow).map(|(_, border)| *border);
         // A parent's resize can relayout an otherwise style-clean child: this marks the existing
         // damage traversal flags (no restyle/reconstruction damage), so unchanged layouts continue to
         // reuse their cached overflow and rounding.
         self.node_from_id_mut(node_id)
-            .update_unrounded_layout(|unrounded| *unrounded = *layout);
+            .update_unrounded_layout(|unrounded| {
+                *unrounded = *layout;
+                if let Some(height) = border_height { unrounded.size.height = height; }
+            });
     }
 
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {

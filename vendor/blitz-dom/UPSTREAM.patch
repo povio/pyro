@@ -19299,7 +19299,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
      let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
      let result = calc.resolve(CSSPixelLength::new(parent_size));
-@@ -101,9 +155,64 @@
+@@ -101,9 +155,65 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
@@ -19324,6 +19324,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// pyro: column spanners pushed below the content that overflows the boxes before them, and
 +    /// the least top of each in its parent (`layout::multicol`, `block_child_min_top`).
 +    pub(crate) spanner_floors: std::collections::HashMap<crate::NodeId, f32>,
++    spanner_border_heights: std::collections::HashMap<NodeId, (f32, f32)>,
 +    /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
 +    pub(crate) multicol_strip_depth: u32,
 +    /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
@@ -19364,7 +19365,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
      /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
      #[inline]
-@@ -138,6 +247,21 @@
+@@ -138,6 +248,22 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
@@ -19376,6 +19377,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            multicol_percent_height: None,
 +            nested_fragmentation: std::collections::HashMap::new(),
 +            spanner_floors: std::collections::HashMap::new(),
++            spanner_border_heights: std::collections::HashMap::new(),
 +            multicol_strip_depth: 0,
 +            column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
 +            column_measure_budget: multicol::MEASURE_FRAGMENT_BUDGET,
@@ -19386,7 +19388,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +298,25 @@
+@@ -174,14 +300,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -19420,7 +19422,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +326,548 @@
+@@ -191,13 +328,555 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -19473,11 +19475,18 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        // its height (`layout::multicol`, Chromium; WPT css-multicol
 +        // `multicol-span-all-children-height-004a`).
 +        if line_clamp.is_none()
-+            && let Some(extra) = self.spanner_extent_in(dom_node_id(node_id), inputs.known_dimensions.height)
++            && let Some((flow_height, border_height)) = self.spanner_extent_in(dom_node_id(node_id), inputs.known_dimensions.height)
 +        {
 +            let mut taller = inputs;
-+            taller.known_dimensions.height = inputs.known_dimensions.height.map(|height| height + extra);
++            taller.known_dimensions.height = Some(flow_height);
 +            output = self.dispatch_child_layout(node_id, taller, block_ctx.as_deref_mut());
++            if inputs.run_mode == RunMode::PerformLayout {
++                if flow_height > border_height {
++                    self.spanner_border_heights.insert(node_id, (flow_height, border_height));
++                } else {
++                    self.spanner_border_heights.remove(&node_id);
++                }
++            }
 +        }
 +        match line_clamp {
 +            Some(max_lines) => self.clamp_lines(dom_node_id(node_id), max_lines, inputs, &mut output),
@@ -19971,7 +19980,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +887,190 @@
+@@ -217,13 +896,190 @@
          }
      }
  
@@ -20162,7 +20171,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1086,43 @@
+@@ -239,8 +1095,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -20207,7 +20216,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1137,7 @@
+@@ -255,7 +1146,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -20216,7 +20225,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -283,19 +1165,71 @@
+@@ -283,19 +1174,71 @@
                          .and_then(|val| val.parse::<f32>().ok())
                          .unwrap_or(2.0);
  
@@ -20296,7 +20305,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,87 +1242,278 @@
+@@ -308,87 +1251,278 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -20618,7 +20627,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1532,65 @@
+@@ -407,39 +1541,65 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -20705,7 +20714,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1623,91 @@
+@@ -472,6 +1632,91 @@
                          _ => unreachable!(),
                      };
  
@@ -20797,7 +20806,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,124 +1724,577 @@
+@@ -488,124 +1733,577 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -21461,20 +21470,25 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl TraversePartialTree for LayoutPassState<'_> {
-@@ -667,7 +2356,11 @@
+@@ -667,7 +2365,16 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
 -        *self.node_from_id_mut(node_id).unrounded_layout_mut() = *layout;
++        let border_height = self.column_spanners.and_then(|_| self.spanner_border_heights.get(&node_id))
++            .filter(|(flow, _)| layout.size.height == *flow).map(|(_, border)| *border);
 +        // A parent's resize can relayout an otherwise style-clean child: this marks the existing
 +        // damage traversal flags (no restyle/reconstruction damage), so unchanged layouts continue to
 +        // reuse their cached overflow and rounding.
 +        self.node_from_id_mut(node_id)
-+            .update_unrounded_layout(|unrounded| *unrounded = *layout);
++            .update_unrounded_layout(|unrounded| {
++                *unrounded = *layout;
++                if let Some(height) = border_height { unrounded.size.height = height; }
++            });
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2368,32 @@
+@@ -675,11 +2382,32 @@
      }
  
      #[inline(always)]
@@ -21507,7 +21521,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -698,17 +2412,54 @@
+@@ -698,17 +2426,54 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -21564,7 +21578,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2472,7 @@
+@@ -721,6 +2486,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -21572,7 +21586,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2484,148 @@
+@@ -732,6 +2498,148 @@
      }
  }
  
@@ -21721,7 +21735,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2633,12 @@
+@@ -739,10 +2647,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -21738,7 +21752,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2648,11 @@
+@@ -752,9 +2662,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -21753,7 +21767,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2680,236 @@
+@@ -782,16 +2694,236 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -21994,7 +22008,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2962,30 @@
+@@ -844,6 +2976,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -22025,7 +22039,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2994,19 @@
+@@ -852,7 +3008,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -22046,7 +22060,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3022,30 @@
+@@ -868,6 +3036,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -22077,7 +22091,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3150,213 @@
+@@ -972,3 +3164,213 @@
          })
      }
  }
@@ -22295,7 +22309,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3700 @@
+@@ -0,0 +1,3705 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -24238,7 +24252,7 @@ new file mode 100644
 +    /// pyro: the margin-box heights of the column spanners inside box `node_id` of the strip being
 +    /// laid out (`column_spanners`), when it has a `known_height` (its own: spanners take none of
 +    /// it) and carries spanners. `None` when there are none.
-+    pub(crate) fn spanner_extent_in(&self, node_id: crate::NodeId, known_height: Option<f32>) -> Option<f32> {
++    pub(crate) fn spanner_extent_in(&self, node_id: crate::NodeId, known_height: Option<f32>) -> Option<(f32, f32)> {
 +        let (container, width) = self.column_spanners?;
 +        let height = known_height?;
 +        if width < 0.0 || node_id == container || !self.doc.carries_spanners(node_id) {
@@ -24267,7 +24281,12 @@ new file mode 100644
 +        // spanner lower: Chromium; WPT css-multicol `multicol-span-all-children-height-012`).
 +        let before = (last_start - (total - (last_end - last_start))).max(0.0);
 +        let needed = (height + total).max(last_end + (height - before.min(height)));
-+        (needed - height > EPSILON).then_some(needed - height)
++        let mut border_end = height;
++        for (start, end) in spans {
++            if start >= border_end { break; }
++            border_end += end - start;
++        }
++        (needed - height > EPSILON).then_some((needed, border_end))
 +    }
 +
 +

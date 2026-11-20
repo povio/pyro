@@ -1940,7 +1940,7 @@ impl LayoutPassState<'_> {
     /// pyro: the margin-box heights of the column spanners inside box `node_id` of the strip being
     /// laid out (`column_spanners`), when it has a `known_height` (its own: spanners take none of
     /// it) and carries spanners. `None` when there are none.
-    pub(crate) fn spanner_extent_in(&self, node_id: crate::NodeId, known_height: Option<f32>) -> Option<f32> {
+    pub(crate) fn spanner_extent_in(&self, node_id: crate::NodeId, known_height: Option<f32>) -> Option<(f32, f32)> {
         let (container, width) = self.column_spanners?;
         let height = known_height?;
         if width < 0.0 || node_id == container || !self.doc.carries_spanners(node_id) {
@@ -1969,7 +1969,12 @@ impl LayoutPassState<'_> {
         // spanner lower: Chromium; WPT css-multicol `multicol-span-all-children-height-012`).
         let before = (last_start - (total - (last_end - last_start))).max(0.0);
         let needed = (height + total).max(last_end + (height - before.min(height)));
-        (needed - height > EPSILON).then_some(needed - height)
+        let mut border_end = height;
+        for (start, end) in spans {
+            if start >= border_end { break; }
+            border_end += end - start;
+        }
+        (needed - height > EPSILON).then_some((needed, border_end))
     }
 
 
