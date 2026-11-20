@@ -49,7 +49,6 @@
   if (typeof Float16Array !== 'undefined') typedCtors.Float16Array = Float16Array;
   const transferBuffer = ArrayBuffer.prototype.transfer;
   const parseJSON = JSON.parse;
-  const BlobC = Blob;
   const TextDecoderC = TextDecoder;
   const TextEncoderC = TextEncoder;
   const decode = TextDecoder.prototype.decode;
@@ -2019,7 +2018,7 @@
       }, () => resolved());
     },
     // Response consumption for a body that is a script's stream.
-    consume(stream, kind, mime) {
+    consume(stream, kind, packageBody) {
       const st = rsOf(stream);
       if (rsLocked(st) || st.disturbed) return rejected(new TypeErrorC('Response body has already been consumed'));
       return then(collect(st), (bytes) => {
@@ -2028,7 +2027,7 @@
           case 'json': return parseJSON(apply(decode, new TextDecoderC(), [bytes]));
           case 'arrayBuffer': return bytes.buffer;
           case 'bytes': return bytes;
-          default: return new BlobC([bytes], { type: mime });
+          case 'package': return packageBody(bytes);
         }
       });
     },

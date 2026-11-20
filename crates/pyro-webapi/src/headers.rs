@@ -78,6 +78,14 @@ impl HeadersData {
     pub(crate) fn pairs(&self) -> Vec<(String, String)> {
         self.0.borrow().values.iter().map(|(n, values)| (n.clone(), values.join(", "))).collect()
     }
+    pub(crate) fn mime_type(&self) -> Option<data_url::mime::Mime> {
+        let list = self.0.borrow();
+        let values = list.values.get("content-type")?;
+        match values.as_slice() {
+            [value] => crate::fetch::extract_mime(value),
+            _ => crate::fetch::extract_mime(&values.join(", ")),
+        }
+    }
     /// Whether a (lowercase) header name is present.
     pub(crate) fn contains(&self, name: &str) -> bool {
         self.0.borrow().values.contains_key(name)
