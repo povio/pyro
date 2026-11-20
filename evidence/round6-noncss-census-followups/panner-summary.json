@@ -1,0 +1,77 @@
+{
+  "urls": 348,
+  "columns": [
+    "stereo-guard-control",
+    "stereo-guard-final",
+    "Chrome WPT 157.0.8103.80"
+  ],
+  "counts": [
+    {
+      "namedPass": 2987,
+      "full": 101,
+      "complete": 313,
+      "timeout": 19,
+      "error": 16
+    },
+    {
+      "namedPass": 3118,
+      "full": 107,
+      "complete": 313,
+      "timeout": 19,
+      "error": 16
+    },
+    {
+      "namedPass": 5725,
+      "full": 316,
+      "complete": 336,
+      "timeout": 8,
+      "hang": 2,
+      "error": 2
+    }
+  ],
+  "delta": {
+    "missing": 8,
+    "added": 87,
+    "gained": 134,
+    "lost": 3
+  },
+  "losses": [
+    [
+      "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html",
+      "  new StereoPannerNode() threw TypeError: \"undefined is not a constructor (evaluating 'new window[name]()')\".",
+      1,
+      "Pass",
+      null,
+      null
+    ],
+    [
+      "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html",
+      "  new StereoPannerNode(1) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](1)')\".",
+      1,
+      "Pass",
+      null,
+      null
+    ],
+    [
+      "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html",
+      "  new StereoPannerNode(context, 42) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](context, 42)')\".",
+      1,
+      "Pass",
+      null,
+      null
+    ]
+  ],
+  "netByUrl": {
+    "webaudio/idlharness.https.window.html": 36,
+    "webaudio/the-audio-api/rendersizehint-smoke-tests.https.html": 4,
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-nominal-range.html": 7,
+    "webaudio/the-audio-api/the-audioparam-interface/automation-rate.html": 1,
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-connections.html": 1,
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-stereo-panner.html": 10,
+    "webaudio/the-audio-api/the-audioparam-interface/nan-param.html": 1,
+    "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html": 36,
+    "webaudio/the-audio-api/the-stereopanner-interface/no-dezippering.html": 12,
+    "webaudio/the-audio-api/the-stereopanner-interface/stereopannernode-basic.html": 11,
+    "webaudio/the-audio-api/the-stereopanner-interface/stereopannernode-panning.html": 12
+  }
+}
