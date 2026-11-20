@@ -55644,7 +55644,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,6 +1890,24 @@
+@@ -1125,12 +1890,42 @@
                  }
              }
  
@@ -55668,8 +55668,26 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +
              if *name == local_name!("align") {
                  use style::values::specified::TextAlign;
++                // The HTML rendering rules for divs, table row groups, rows and
++                // cells also accept "middle" and "justify", case-insensitively.
++                let html_alignment = elem.name.ns == ns!(html)
++                    && matches!(*tag, local_name!("div") | local_name!("thead")
++                        | local_name!("tbody") | local_name!("tfoot") | local_name!("tr")
++                        | local_name!("td") | local_name!("th"));
                  let keyword = match value {
-@@ -1164,7 +1947,7 @@
+                     "left" => Some(StyloTextAlign::MozLeft),
+                     "right" => Some(StyloTextAlign::MozRight),
+                     "center" => Some(StyloTextAlign::MozCenter),
++                    s if html_alignment && s.eq_ignore_ascii_case("left") => Some(StyloTextAlign::MozLeft),
++                    s if html_alignment && s.eq_ignore_ascii_case("right") => Some(StyloTextAlign::MozRight),
++                    s if html_alignment && (s.eq_ignore_ascii_case("center") || s.eq_ignore_ascii_case("middle")) => {
++                        Some(StyloTextAlign::MozCenter)
++                    }
++                    s if html_alignment && s.eq_ignore_ascii_case("justify") => Some(StyloTextAlign::Justify),
+                     _ => None,
+                 };
+ 
+@@ -1164,7 +1959,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -55678,7 +55696,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2053,9 @@
+@@ -1270,7 +2065,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -55689,7 +55707,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2143,15 @@
+@@ -1358,6 +2155,15 @@
                  }
              }
  
@@ -55705,7 +55723,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2167,59 @@
+@@ -1373,148 +2179,59 @@
              }
          }
  
@@ -55893,7 +55911,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2232,41 @@
+@@ -1527,6 +2244,41 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -55935,7 +55953,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2274,206 @@
+@@ -1534,11 +2286,206 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -56142,7 +56160,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2481,259 @@
+@@ -1546,14 +2493,259 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -56402,7 +56420,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2777,12 @@
+@@ -1597,6 +2789,12 @@
      }
  }
  
@@ -56415,7 +56433,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2855,41 @@
+@@ -1669,12 +2867,41 @@
                      .push(pe_node_id);
              }
          }
@@ -56457,7 +56475,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +2904,46 @@
+@@ -1689,24 +2916,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -56512,7 +56530,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2974,745 @@
+@@ -1737,3 +2986,745 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
