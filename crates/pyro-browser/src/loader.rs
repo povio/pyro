@@ -18,14 +18,16 @@
 //! fetch their graph and run when ready. External and module script elements
 //! get `load`/`error` events.
 //!
-//! Deviations: a deferred module's evaluation promise (including top-level
-//! await) is awaited before the next deferred script/`DOMContentLoaded`,
-//! because JSC fetches the module graph during evaluation, not before it. A
-//! script-inserted script is prepared when the inserting script returns (a
+//! Deviations: JSC fetches the module graph during evaluation, not before
+//! it, so a module counts as run (for the next deferred script,
+//! `DOMContentLoaded` and `load`) when its evaluation promise settles or,
+//! pending on a top-level await, once the realm has no module fetch in flight
+//! after a task (`Browser::execute_module`). A script-inserted script is prepared when the inserting script returns (a
 //! parser-run script) or at the end of the inserting task (a handler or a
 //! timer), instead of inside the DOM call that inserted it. A module
-//! element's `load` fires when its evaluation promise fulfills, `error` when
-//! it rejects (also for an evaluation error).
+//! element's `load` fires when it counts as run and its evaluation promise
+//! has not rejected by then, `error` when it rejected (also for an
+//! evaluation error).
 //!
 //! DOM lifecycle and currentScript are wired through pyro-webapi. Iframe/image
 //! resources are separate loader work; linked stylesheets are handled by
@@ -64,7 +66,7 @@ fn trace_epoch() -> std::time::Instant {
     *T0.get_or_init(std::time::Instant::now)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResourceKind {
     Document,
     Script,
@@ -86,6 +88,7 @@ pub enum ResourceKind {
 
 #[derive(Debug, Clone)]
 pub struct FetchRequest {
+    pub parser_priority: bool,
     /// Body and content type of a form POST (`None`: GET).
     pub post: Option<(Vec<u8>, String)>,
     pub url: String,
@@ -100,6 +103,9 @@ pub struct FetchRequest {
     pub loader_id: Option<String>,
     /// HTML crossorigin attribute (absent uses the resource default).
     pub crossorigin: Option<String>,
+    /// The request's credentials mode when set by its initiator rather than an attribute (a
+    /// worklet's module graph); wins over the one `crossorigin` implies.
+    pub credentials: Option<pyro_net::Credentials>,
     /// Resource Timing: the `initiatorType` of the requesting document's
     /// entry for this fetch (`None`: no entry, as for a document's own
     /// navigation or a renderer's fetch). An iframe's navigation reports to
@@ -112,6 +118,13 @@ pub struct FetchRequest {
     /// Only part of the body is needed (a media element's headers):
     /// `Resource::partial` says when the body was cut.
     pub part: Option<pyro_webapi::BodyPart>,
+}
+
+impl FetchRequest {
+    pub(crate) fn effective_credentials(&self) -> pyro_net::Credentials {
+        if self.kind == ResourceKind::Stylesheet && self.crossorigin.is_none() { return pyro_net::Credentials::Include; }
+        self.credentials.unwrap_or_else(|| if self.crossorigin.as_deref().is_some_and(|value| value.eq_ignore_ascii_case("use-credentials")) { pyro_net::Credentials::Include } else { pyro_net::Credentials::SameOrigin })
+    }
 }
 
 /// Where a `BodyPart` fetch cuts `body` (a prefix of the response body of
@@ -138,7 +151,8 @@ pub struct Resource {
     /// Lowercased MIME essence (e.g. `text/html`).
     pub mime: String,
     pub charset: Option<String>,
-    pub body: Vec<u8>,
+    pub body: std::sync::Arc<Vec<u8>>,
+    pub immutable_local: bool,
     /// The `Content-Disposition` response header, if any.
     pub content_disposition: Option<String>,
     /// The response carried a `Content-Security-Policy` header (the policy
@@ -167,6 +181,9 @@ pub struct Resource {
     pub partial: Option<pyro_webapi::Partial>,
     /// The response said `X-Content-Type-Options: nosniff`: a style sheet must be `text/css`.
     pub nosniff: bool,
+    /// pyro: the response's tainting is "opaque" (Fetch): a no-cors request that reached another
+    /// origin at any hop of its redirect chain, even one that ended back at its own origin.
+    pub opaque: bool,
 }
 
 impl Resource {
@@ -183,7 +200,7 @@ impl Resource {
     /// any other body as it came.
     pub fn render_body(self, environment: &[impl AsRef<str>]) -> Vec<u8> {
         if !self.mime.eq_ignore_ascii_case("text/css") {
-            return self.body;
+            return std::sync::Arc::unwrap_or_clone(self.body);
         }
         let environment: Vec<&str> = environment.iter().map(AsRef::as_ref).collect();
         let (text, _) = pyro_dom::cssom::decode_stylesheet(&self.body, self.charset.as_deref(), &environment);
@@ -267,6 +284,37 @@ pub struct NetLoader {
     client: pyro_net::NetClient,
 }
 
+#[derive(Default)]
+pub(crate) struct ReadyResponses(std::collections::HashMap<String, std::collections::BTreeMap<(bool, u64), Result<Resource, String>>>);
+
+impl ReadyResponses {
+    fn push(&mut self, document: &str, blocking: bool, id: u64, result: Result<Resource, String>) {
+        self.0.entry(document.to_owned()).or_default().insert((!blocking, id), result);
+    }
+
+    fn take(&mut self, document: &str) -> Option<(u64, Result<Resource, String>)> {
+        let queue = self.0.get_mut(document)?;
+        let ((_, id), result) = queue.pop_first()?;
+        if queue.is_empty() { self.0.remove(document); }
+        Some((id, result))
+    }
+}
+
+#[cfg(test)]
+mod ready_tests {
+    #[test]
+    fn document_responses_deliver_by_priority_then_issue_order() {
+        let mut ready = super::ReadyResponses::default();
+        for (document, blocking, id) in [("first", false, 5), ("other", true, 9), ("first", true, 3), ("first", true, 2)] {
+            ready.push(document, blocking, id, Err(String::new()));
+        }
+        let ids: Vec<_> = std::iter::from_fn(|| ready.take("first")).map(|entry| entry.0).collect();
+        assert_eq!(ids, [2, 3, 5]);
+        assert_eq!(ready.take("other").unwrap().0, 9);
+        assert!(ready.0.is_empty());
+    }
+}
+
 impl NetLoader {
     pub fn new(client: pyro_net::NetClient) -> NetLoader {
         NetLoader { client }
@@ -274,6 +322,18 @@ impl NetLoader {
 
     pub fn client(&self) -> &pyro_net::NetClient {
         &self.client
+    }
+}
+
+impl Browser {
+    fn fetch_ready(&mut self, priority: Option<(String, bool)>, id: u64, result: Result<Resource, String>) {
+        let Some((document, blocking)) = priority else { return self.complete_fetch(id, result) };
+        self.ready_responses.push(&document, blocking, id, result);
+        self.scheduler().post(TaskSource::Networking, move |browser| {
+            if let Some((id, result)) = browser.ready_responses.take(&document) {
+                browser.complete_fetch(id, result);
+            }
+        });
     }
 }
 
@@ -319,16 +379,17 @@ impl ResourceLoader for NetLoader {
         // Resource Timing: the document that gets this fetch's entry.
         let timed = request.initiator.and_then(|i| Some((i, requesting_document(browser, &request)?)));
         let render_blocking = request.kind == ResourceKind::Stylesheet;
+        let priority = request.loader_id.as_ref().filter(|_| request.parser_priority || request.kind == ResourceKind::Image)
+            .map(|document| (document.clone(), request.parser_priority));
         let mut req = pyro_net::Request::get(url, destination);
+        req.parser_priority = request.parser_priority;
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
         }
         if request.kind == ResourceKind::ModuleScript || request.crossorigin.is_some() {
             req.mode = pyro_net::RequestMode::Cors;
         }
-        if request.crossorigin.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("use-credentials")) {
-            req.credentials = pyro_net::Credentials::Include;
-        }
+        req.credentials = request.effective_credentials();
         if req.url.scheme() == "blob" {
             req.blob = blob_body(browser, request.page, req.url.as_str());
         }
@@ -342,9 +403,6 @@ impl ResourceLoader for NetLoader {
             );
         }
         if request.kind == ResourceKind::Stylesheet {
-            if request.crossorigin.is_none() {
-                req.credentials = pyro_net::Credentials::Include;
-            }
             req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
         }
         let referrer = request_referrer(browser, &request);
@@ -428,10 +486,12 @@ impl ResourceLoader for NetLoader {
                         .header(&req.url)
                         .unwrap_or_default()
                 }),
-                body: hit.file.body.to_vec(),
+                body: hit.file.body.to_vec().into(),
+                immutable_local: false,
                 timing: report.filter(|_| document).map(Box::new),
                 partial: None,
                 nosniff: false,
+                opaque: false,
             };
             browser.scheduler().post(TaskSource::Networking, move |b| {
                 b.report_resource_delivery(
@@ -440,7 +500,7 @@ impl ResourceLoader for NetLoader {
                     network_id,
                     pyro_net::NetworkDelivery { response: true, data_bytes: delivery_bytes, terminal: true },
                 );
-                b.complete_fetch(id, Ok(resource));
+                b.fetch_ready(priority, id, Ok(resource));
             });
             return None;
         }
@@ -495,7 +555,8 @@ impl ResourceLoader for NetLoader {
                     status: h.status.as_u16(),
                     mime: h.mime,
                     charset: h.charset,
-                    body: std::mem::take(&mut body),
+                    body: std::mem::take(&mut body).into(),
+                    immutable_local: false,
                     content_disposition: None,
                     header_csp: None,
                     refresh: None,
@@ -505,8 +566,10 @@ impl ResourceLoader for NetLoader {
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
                     nosniff: false,
+                    opaque: h.kind == pyro_net::ResponseKind::Opaque,
                 };
-                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Ok(resource)));
+                let priority = priority.clone();
+                let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, Ok(resource)));
                 // Stop the transfer: a live stream never ends.
                 net.cancel(native_id);
             }
@@ -532,6 +595,7 @@ impl ResourceLoader for NetLoader {
                     Some(h) => Ok(Resource {
                         timing: timing(&h),
                         partial: None,
+                        opaque: h.kind == pyro_net::ResponseKind::Opaque,
                         nosniff: h
                             .headers
                             .get("x-content-type-options")
@@ -567,16 +631,19 @@ impl ResourceLoader for NetLoader {
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
                         sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
-                        body: std::mem::take(&mut body),
+                        body: std::mem::take(&mut body).into(),
+                        immutable_local: false,
                     }),
                     None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
                 };
                 // Err: the browser thread has exited; nothing to deliver.
-                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, result));
+                let priority = priority.clone();
+                let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, result));
             }
             pyro_net::ResponseEvent::Failed(e) => {
                 let msg = e.to_string();
-                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Err(msg)));
+                let priority = priority.clone();
+                let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, Err(msg)));
             }
         });
         let sink = match &timed {
@@ -788,7 +855,8 @@ impl ResourceLoader for StaticLoader {
                         status,
                         mime,
                         charset: None,
-                        body,
+                        body: body.into(),
+                        immutable_local: true,
                         content_disposition: None,
                         header_csp: csp.clone(),
                         refresh: None,
@@ -798,6 +866,7 @@ impl ResourceLoader for StaticLoader {
                         timing: None,
                         partial,
                         nosniff: false,
+                        opaque: false,
                     })
                 }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
@@ -830,6 +899,8 @@ struct PendingScript {
     url: String,
     /// `None` until fetched (inline scripts start as `Some`).
     source: Option<Result<String, String>>,
+    /// From an external file (a `src`): only such a script gets `load`.
+    external: bool,
 }
 
 enum ParsePhase {
@@ -869,6 +940,82 @@ pub(crate) struct DocumentLoad {
 struct PageModuleFetcher {
     page: FrameKey,
     sched: pyro_runtime::Scheduler<Browser>,
+    fetches: Rc<ModuleFetches>,
+    /// For a worklet's module graph (`ModuleFetcher::for_worklet_graph`): the graph's credentials
+    /// mode, with which every module is fetched, outside the document's module map (`preloads`).
+    worklet_credentials: Option<pyro_net::Credentials>,
+    /// That worklet's module map, where each module this fetcher loads is recorded.
+    worklet_modules: Option<(pyro_js::WorkletModuleMap, u64)>,
+}
+
+/// A worklet module's entry in its worklet's module map while it is fetched. It is marked fetched
+/// before its source goes to the engine (which may run the rest of the graph, and script waiting on
+/// it, before returning) and unmarked if the engine rejects it; dropped with a fetch that never
+/// completed, it takes the module out of the map. "Fetched" says nothing of the module's imports:
+/// `addModule()` of it waits for its graph (paint_worklet.rs `await_graph`).
+struct WorkletEntry {
+    modules: pyro_js::WorkletModuleMap,
+    url: String,
+    graph: u64,
+    loaded: std::cell::Cell<bool>,
+}
+
+impl WorkletEntry {
+    fn new(modules: pyro_js::WorkletModuleMap, url: &str, graph: u64) -> WorkletEntry {
+        modules.borrow_mut().insert(url.to_owned(), pyro_js::WorkletModule { fetched: false, graph });
+        WorkletEntry { modules, url: url.to_owned(), graph, loaded: std::cell::Cell::new(false) }
+    }
+
+    fn set_loaded(&self, loaded: bool) {
+        self.loaded.set(loaded);
+        let mut modules = self.modules.borrow_mut();
+        if loaded {
+            modules.insert(self.url.clone(), pyro_js::WorkletModule { fetched: true, graph: self.graph });
+        } else {
+            modules.remove(&self.url);
+        }
+    }
+}
+
+impl Drop for WorkletEntry {
+    fn drop(&mut self) {
+        let mut modules = self.modules.borrow_mut();
+        if !self.loaded.get() && modules.get(&self.url).is_some_and(|m| !m.fetched) {
+            modules.remove(&self.url);
+        }
+    }
+}
+
+/// The module fetches of a realm in flight, and who waits for there to be
+/// none ([`ModuleFetcher::when_idle`]).
+#[derive(Default)]
+struct ModuleFetches {
+    in_flight: std::cell::Cell<usize>,
+    idle: RefCell<Vec<Box<dyn FnOnce()>>>,
+}
+
+/// One fetch in flight: from the request until its result is handed to the
+/// engine, or the request is dropped.
+struct InFlight(Rc<ModuleFetches>);
+
+impl InFlight {
+    fn new(fetches: &Rc<ModuleFetches>) -> InFlight {
+        fetches.in_flight.set(fetches.in_flight.get() + 1);
+        InFlight(fetches.clone())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let left = self.0.in_flight.get() - 1;
+        self.0.in_flight.set(left);
+        if left == 0 {
+            let waiters = std::mem::take(&mut *self.0.idle.borrow_mut());
+            for then in waiters {
+                then();
+            }
+        }
+    }
 }
 
 impl ModuleFetcher for PageModuleFetcher {
@@ -876,6 +1023,33 @@ impl ModuleFetcher for PageModuleFetcher {
         let page = pyro_webapi::target::page_of(&realm.scope().ok()?).ok()?;
         let dom = page.dom.try_borrow().ok()?;
         dom.document_base_url(page.document()).ok().map(str::to_owned)
+    }
+
+    fn when_idle(&self, then: Box<dyn FnOnce()>) {
+        if self.fetches.in_flight.get() == 0 {
+            then();
+        } else {
+            self.fetches.idle.borrow_mut().push(then);
+        }
+    }
+
+    fn busy(&self) -> bool {
+        self.fetches.in_flight.get() > 0
+    }
+
+    fn for_worklet_graph(&self, credentials: &str, modules: pyro_js::WorkletModuleMap, graph: u64) -> Option<Rc<dyn ModuleFetcher>> {
+        let credentials = match credentials {
+            "omit" => pyro_net::Credentials::Omit,
+            "include" => pyro_net::Credentials::Include,
+            _ => pyro_net::Credentials::SameOrigin,
+        };
+        Some(Rc::new(PageModuleFetcher {
+            page: self.page,
+            sched: self.sched.clone(),
+            fetches: Rc::default(),
+            worklet_credentials: Some(credentials),
+            worklet_modules: Some((modules, graph)),
+        }))
     }
 
     fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
@@ -892,8 +1066,12 @@ impl ModuleFetcher for PageModuleFetcher {
         // `&mut Browser` is available.
         let realm = realm.downgrade();
         let page = self.page;
+        let worklet_credentials = self.worklet_credentials;
+        // Recorded in the worklet's module map as being fetched from now on.
+        let worklet_entry = self.worklet_modules.clone().map(|(modules, graph)| WorkletEntry::new(modules, &url, graph));
         module_trace!("requested {url}");
         let request = RefCell::new(Some(request));
+        let in_flight = InFlight::new(&self.fetches);
         self.sched.post(TaskSource::Networking, move |b| {
             let Some(request) = request.borrow_mut().take() else {
                 module_trace!("task found no request {url}");
@@ -906,6 +1084,9 @@ impl ModuleFetcher for PageModuleFetcher {
             module_trace!("fetching {url} (document {})", b.doc(page).is_some());
             let traced = url.clone();
             let complete = move |_b: &mut Browser, res: Result<String, String>| {
+                // Dropped when this returns, the result handed to the engine.
+                let _in_flight = in_flight;
+                let fetched = res.is_ok();
                 match &res {
                     Ok(text) => module_trace!("loaded {traced} ({} bytes)", text.len()),
                     Err(e) => module_trace!("failed {traced}: {e}"),
@@ -918,6 +1099,9 @@ impl ModuleFetcher for PageModuleFetcher {
                     module_trace!("dropped {traced}: no scope");
                     return;
                 };
+                if let Some(entry) = worklet_entry.as_ref().filter(|_| fetched) {
+                    entry.set_loaded(true);
+                }
                 let r = match res {
                     Ok(text) => pyro_webapi::module_script::complete(&scope, request, &text),
                     Err(e) => request.reject(
@@ -925,6 +1109,9 @@ impl ModuleFetcher for PageModuleFetcher {
                         &JsError::type_error(format!("Failed to fetch dynamically imported module: {traced} ({e})")),
                     ),
                 };
+                if let Some(entry) = worklet_entry.as_ref().filter(|_| fetched && r.is_err()) {
+                    entry.set_loaded(false);
+                }
                 match &r {
                     Ok(()) => module_trace!("handed to engine {traced}"),
                     Err(e) => module_trace!("engine rejected {traced}: {e}"),
@@ -935,7 +1122,11 @@ impl ModuleFetcher for PageModuleFetcher {
             };
             // A modulepreload of this URL already fetched (or is fetching) it
             // as a JavaScript module.
-            if ty != ModuleType::JavaScript {
+            if let Some(credentials) = worklet_credentials {
+                // A worklet graph's module: its own credentials mode and module map.
+                let opts = ScriptFetch { module: Some(ty), credentials: Some(credentials), ..ScriptFetch::default() };
+                b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
+            } else if ty != ModuleType::JavaScript {
                 let opts = ScriptFetch { module: Some(ty), ..ScriptFetch::default() };
                 b.fetch_script(page, url, ResourceKind::ModuleScript, opts, complete);
             } else {
@@ -989,6 +1180,7 @@ fn node_base_str(dom: &pyro_dom::Dom, node: NodeId) -> Option<&str> {
 /// The `integrity` and `crossorigin` attributes a script fetch honours.
 #[derive(Clone, Default)]
 pub(crate) struct ScriptFetch {
+    parser_priority: bool,
     pub integrity: Option<String>,
     pub crossorigin: Option<String>,
     /// The module type of a [`ResourceKind::ModuleScript`] fetch, whose
@@ -996,17 +1188,32 @@ pub(crate) struct ScriptFetch {
     pub module: Option<ModuleType>,
     /// The element's `referrerpolicy` state (`None`: the document's policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The fetch's credentials mode, set by its initiator (a worklet's module graph).
+    pub credentials: Option<pyro_net::Credentials>,
 }
 
 impl ScriptFetch {
     fn of(info: &pyro_dom::script::ScriptInfo) -> ScriptFetch {
         ScriptFetch {
+            parser_priority: false,
             integrity: info.integrity.clone().filter(|v| !pyro_webapi::sri::is_empty(v)),
             crossorigin: info.crossorigin.clone(),
             module: None,
             referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
+            credentials: None,
         }
     }
+}
+
+/// pyro: whether `resource` is CORS-cross-origin (its tainting "opaque", Fetch): the response's
+/// own tainting (a no-cors redirect chain through another origin is opaque though it ends at this
+/// one), else the final URL's origin for a loader that does not report it.
+pub(crate) fn is_opaque(resource: &Resource, cors: bool, document_origin: &str) -> bool {
+    resource.opaque
+        || (!cors && {
+            let origin = origin_of(&resource.url);
+            origin != "null" && origin != document_origin
+        })
 }
 
 /// SRI for a fetched response: `None` when it may be used, else the
@@ -1019,11 +1226,7 @@ pub(crate) fn integrity_error(
     document_origin: &str,
 ) -> Option<String> {
     let integrity = integrity.filter(|v| !pyro_webapi::sri::is_empty(v))?;
-    let opaque = !cors && {
-        let origin = origin_of(&resource.url);
-        origin != "null" && origin != document_origin
-    };
-    if opaque {
+    if is_opaque(resource, cors, document_origin) {
         return Some(format!(
             "Subresource Integrity: The resource '{}' has an integrity attribute, but the resource requires the \
              request to be CORS enabled to check the integrity, and it is not. The resource has been blocked \
@@ -1136,6 +1339,8 @@ impl Browser {
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
         let req = FetchRequest {
+            parser_priority: false,
+            credentials: None,
             post: opts.post.clone(),
             url: opts.url.clone(),
             kind: if page.child.is_some() { ResourceKind::Iframe } else { ResourceKind::Document },
@@ -1195,7 +1400,7 @@ impl Browser {
                                     frame_id,
                                     url: resource.url,
                                     suggested_filename: suggested,
-                                    body: Ok(bytes::Bytes::from(resource.body)),
+                                    body: Ok(bytes::Bytes::from(std::sync::Arc::unwrap_or_clone(resource.body))),
                                 },
                             );
                         }
@@ -1286,7 +1491,8 @@ impl Browser {
             status: 200,
             mime: "text/html".into(),
             charset: None,
-            body: Vec::new(),
+            body: Default::default(),
+            immutable_local: false,
             content_disposition: None,
             header_csp: None,
             refresh: None,
@@ -1296,6 +1502,7 @@ impl Browser {
             timing: None,
             partial: None,
                 nosniff: false,
+            opaque: false,
         };
         if let Err(e) =
             self.begin_document_with(page, &document, loader_id.clone(), resource, history, Some(unreachable))
@@ -1444,7 +1651,7 @@ impl Browser {
             format!("<html><head><meta name=\"viewport\" content=\"width=device-width, minimum-scale=0.1\"></head><body style=\"{body}\"><img style=\"{img}\" src=\"{src}\"></body></html>")
                 .into_bytes()
         } else {
-            resource.body
+            std::sync::Arc::unwrap_or_clone(resource.body)
         };
         let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
@@ -1658,7 +1865,8 @@ impl Browser {
                     l.blocked = true;
                 }
                 let u = url.clone();
-                self.fetch_script(page, url, ResourceKind::Script, ScriptFetch::of(&info), move |b, res| {
+                let opts = ScriptFetch { parser_priority: true, ..ScriptFetch::of(&info) };
+                self.fetch_script(page, url, ResourceKind::Script, opts, move |b, res| {
                     if b.current_loader(page) != loader_id {
                         return;
                     }
@@ -1691,9 +1899,9 @@ impl Browser {
                     format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), l.inline_module_seq)
                 };
                 if info.async_ {
-                    self.execute_module(page, &info.inline_text, &url, false, Some(element));
+                    self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
                 } else {
-                    let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)) };
+                    let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)), external: false };
                     self.load_mut(page).expect("load").deferred.push_back(Rc::new(RefCell::new(ps)));
                 }
             }
@@ -1729,11 +1937,12 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin, module, referrer_policy } = opts;
+        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials, parser_priority } = opts;
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
         let req = FetchRequest {
+            parser_priority,
             post: None,
             url,
             kind,
@@ -1743,6 +1952,7 @@ impl Browser {
             frame_id,
             loader_id,
             crossorigin,
+            credentials,
             initiator,
             module,
             part: None,
@@ -1790,7 +2000,7 @@ impl Browser {
         element: Rc<ResourceNode>,
         opts: ScriptFetch,
     ) {
-        let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None }));
+        let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None, external: true }));
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let loader_id = self.current_loader(page);
@@ -1839,7 +2049,7 @@ impl Browser {
                     b.script_loaded(page, &element, true);
                 }
                 Ok(text) => {
-                    b.execute_module(page, &text, &u, false, Some(element));
+                    b.execute_module(page, &text, &u, false, Some(element), true);
                 }
                 Err(e) => {
                     b.report_load_error(page, &e);
@@ -1988,7 +2198,7 @@ impl Browser {
             }
             (ScriptType::Module, None) => {
                 let url = dynamic_inline_module_url(&base);
-                self.execute_module(page, &info.inline_text, &url, false, Some(element));
+                self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
                 self.drain_dom_resources(page);
             }
         }
@@ -2012,9 +2222,9 @@ impl Browser {
             let Some(source) = source else { return }; // still fetching
             load.deferred.pop_front();
             drop(load);
-            let (ty, url, element) = {
+            let (ty, url, element, external) = {
                 let n = next.borrow();
-                (n.ty, n.url.clone(), n.element.clone())
+                (n.ty, n.url.clone(), n.element.clone(), n.external)
             };
             match source {
                 Ok(text) if ty == ScriptType::Classic => {
@@ -2022,7 +2232,7 @@ impl Browser {
                     self.script_loaded(page, &element, true);
                 }
                 Ok(text) => {
-                    if self.execute_module(page, &text, &url, true, Some(element)) {
+                    if self.execute_module(page, &text, &url, true, Some(element), external) {
                         return; // resumes when the module's promise settles
                     }
                 }
@@ -2061,6 +2271,8 @@ impl Browser {
                 let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
+                    parser_priority: false,
+                    credentials: None,
                     post: None,
                     url: url.clone(),
                     kind: ResourceKind::Download,
@@ -2088,7 +2300,7 @@ impl Browser {
                                 } else if attribute.is_empty() {
                                     suggested = suggested_filename("", &r.url);
                                 }
-                                Ok(bytes::Bytes::from(r.body))
+                                Ok(bytes::Bytes::from(std::sync::Arc::unwrap_or_clone(r.body)))
                             }
                             Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
                             Err(e) => Err(e),
@@ -2190,6 +2402,23 @@ impl Browser {
             || state.main_frame.page_dom.as_ref().is_some_and(|d| d.fonts_delay_load())
         {
             return;
+        }
+        // pyro: the document's CSS images, once everything else is in (Chrome's style resolution
+        // starts them before `load`, which waits for them).
+        if let Some(page_dom) = state.main_frame.page_dom.clone() {
+            if state.load.as_ref().is_none_or(|load| load.async_pending == 0 && load.dcl_fired) {
+                drop(state);
+                if page_dom.css_images_delay_load() {
+                    return;
+                }
+                // pyro: the gate's layout pass may have made a pending face applicable for the
+                // first time (a style change before load): fonts are checked again after it.
+                if page_dom.fonts_delay_load() {
+                    return;
+                }
+                let Some(new_state) = self.doc_mut(page) else { return };
+                state = new_state;
+            }
         }
         if let Some(load) = &mut state.load {
             if load.async_pending > 0 || !load.dcl_fired {
@@ -2361,7 +2590,7 @@ impl Browser {
                 let url = dynamic_inline_module_url(&base);
                 let element =
                     dom.borrow_mut().add_ref(node).ok().map(|_| Rc::new(ResourceNode { dom: dom.clone(), node }));
-                self.execute_module(page, &info.inline_text, &url, false, element);
+                self.execute_module(page, &info.inline_text, &url, false, element, false);
             }
             return;
         };
@@ -2387,7 +2616,7 @@ impl Browser {
             }
             match res {
                 Ok(text) if module => {
-                    b.execute_module(page, &text, &u, false, Some(element));
+                    b.execute_module(page, &text, &u, false, Some(element), true);
                 }
                 Ok(text) => {
                     b.execute_external(page, &text, &u, &element);
@@ -2401,10 +2630,19 @@ impl Browser {
         });
     }
 
-    /// Starts a module; with `deferred`, parsing-completion work waits for its
-    /// evaluation promise, otherwise the `load` event does. Returns whether
-    /// such a wait was set up. `element` gets `load` when the promise
-    /// fulfills and `error` when evaluation cannot start or rejects.
+    /// Starts a module script; with `deferred`, parsing-completion work waits
+    /// for it to run, otherwise the `load` event does. Returns whether such a
+    /// wait was set up.
+    ///
+    /// HTML fetches the script's module graph, then runs it without awaiting
+    /// its evaluation: a top-level await holds up neither the scripts after
+    /// it nor DOMContentLoaded and load. With the engine's two steps
+    /// ([`pyro_js::Scope::has_module_phases`]) the graph is fetched
+    /// ([`pyro_js::Scope::load_module_graph`]), then linked and evaluated as
+    /// soon as it is ready, after which the script has run. A fetch failure of the graph
+    /// (the script's result is null) fires `error` at the element; anything
+    /// else (a parse, link or evaluation error is reported) fires `load` at
+    /// an `external` one and no event at an inline one.
     fn execute_module(
         &mut self,
         page: FrameKey,
@@ -2412,6 +2650,117 @@ impl Browser {
         url: &str,
         deferred: bool,
         element: Option<Rc<ResourceNode>>,
+        external: bool,
+    ) -> bool {
+        let Some(realm) = self.main_realm(page) else { return false };
+        let Ok(scope) = realm.scope() else { return false };
+        let loader_id = self.frame_loader(page);
+        let sched = self.scheduler();
+        let counted = self.load_mut(page).is_some();
+        // Ends the script in a task, after it ran: the element's event
+        // (`Some(true)` load, `Some(false)` error), then what waits for it.
+        let finish = {
+            let element = element.clone();
+            Rc::new(move |event: Option<bool>| {
+                let loader_id = loader_id.clone();
+                let element = element.clone();
+                sched.post(TaskSource::Networking, move |b| {
+                    if b.frame_loader(page) != loader_id {
+                        return;
+                    }
+                    if let Some(element) = &element {
+                        b.script_ran(page, element, event);
+                    }
+                    // The handler may have replaced the document.
+                    if b.frame_loader(page) != loader_id {
+                        return;
+                    }
+                    if counted {
+                        if let Some(mut l) = b.load_mut(page) {
+                            if deferred {
+                                l.awaiting_module = false;
+                            } else {
+                                l.async_pending -= 1;
+                            }
+                        }
+                    }
+                    if deferred {
+                        b.run_deferred(page);
+                    } else {
+                        b.maybe_fire_load(page);
+                    }
+                });
+            })
+        };
+        let ran = external.then_some(true);
+        let started = match scope.load_module_graph(text, url) {
+            Ok(Some(loaded)) => {
+                let (fetched, failed) = (finish.clone(), finish.clone());
+                let url = url.to_owned();
+                let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+                // The script runs as soon as its graph is ready, with no task
+                // in between (one could deliver an event, an <object>'s load,
+                // before the script's listener for it exists).
+                scope.then(
+                    loaded,
+                    move |s, _v| {
+                        run_module_graph(s, bindings.as_ref(), &url);
+                        fetched(ran)
+                    },
+                    move |s, e| {
+                        // A graph that does not parse still runs: running it
+                        // reports the error; one a fetch failed has no result.
+                        let parse_error = e
+                            .as_object()
+                            .and_then(|o| o.get_atom("name").ok())
+                            .and_then(|n| n.as_string())
+                            .is_some_and(|n| n == "SyntaxError");
+                        if parse_error {
+                            s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+                            failed(ran);
+                        } else {
+                            failed(Some(false));
+                        }
+                    },
+                )
+            }
+            Ok(None) => return self.execute_module_whole(page, text, url, deferred, element, ran, finish),
+            Err(e) => Err(e),
+        };
+        if let Err(e) = started {
+            scope.report_exception(&e);
+            if let Some(element) = &element {
+                self.script_ran(page, element, Some(false));
+            }
+            return false;
+        }
+        if let Some(mut l) = self.load_mut(page) {
+            if deferred {
+                l.awaiting_module = true;
+            } else {
+                l.async_pending += 1;
+            }
+        }
+        true
+    }
+
+    /// `execute_module` without the engine's two steps (an older patched
+    /// JavaScriptCore, the system framework): the graph's fetch and the
+    /// evaluation are one promise. The script counts as run once the
+    /// promise settles or, still pending, when no module fetch of the realm
+    /// is in flight after a task (the engine requests imports from promise
+    /// jobs, so then every import was loaded and the module evaluated up to
+    /// its top-level await; an unrelated `import()` in flight delays it).
+    /// The element gets `ran` on fulfillment and `error` on rejection.
+    fn execute_module_whole(
+        &mut self,
+        page: FrameKey,
+        text: &str,
+        url: &str,
+        deferred: bool,
+        element: Option<Rc<ResourceNode>>,
+        ran: Option<bool>,
+        finish: Rc<dyn Fn(Option<bool>)>,
     ) -> bool {
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
@@ -2425,46 +2774,21 @@ impl Browser {
             Err(e) => {
                 scope.report_exception(&e);
                 if let Some(element) = &element {
-                    self.script_loaded(page, element, false);
+                    self.script_ran(page, element, Some(false));
                 }
                 return false;
             }
         };
-        let loader_id = self.frame_loader(page);
-        let sched = self.scheduler();
-        let counted = self.load_mut(page).is_some();
-        let resume = move |ok: bool| {
-            let loader_id = loader_id.clone();
-            let element = element.clone();
-            sched.post(TaskSource::Networking, move |b| {
-                if b.frame_loader(page) != loader_id {
-                    return;
+        let done = Rc::new(std::cell::Cell::new(false));
+        let resume = {
+            let done = done.clone();
+            Rc::new(move |ok: bool| {
+                if !done.replace(true) {
+                    finish(if ok { ran } else { Some(false) });
                 }
-                if let Some(element) = &element {
-                    b.script_loaded(page, element, ok);
-                }
-                // The handler may have replaced the document.
-                if b.frame_loader(page) != loader_id {
-                    return;
-                }
-                if counted {
-                    if let Some(mut l) = b.load_mut(page) {
-                        if deferred {
-                            l.awaiting_module = false;
-                        } else {
-                            l.async_pending -= 1;
-                        }
-                    }
-                }
-                if deferred {
-                    b.run_deferred(page);
-                } else {
-                    b.maybe_fire_load(page);
-                }
-            });
+            })
         };
-        let resume = Rc::new(resume);
-        let (ok, err) = (resume.clone(), resume);
+        let (ok, err) = (resume.clone(), resume.clone());
         let r = scope.then(
             promise,
             move |_s, _v| ok(true),
@@ -2477,6 +2801,9 @@ impl Browser {
             scope.report_exception(&e);
             return false;
         }
+        if let Some(fetcher) = realm.module_fetcher() {
+            graph_loaded(self.scheduler(), Rc::downgrade(&fetcher), done, Box::new(move || resume(true)));
+        }
         if let Some(mut l) = self.load_mut(page) {
             if deferred {
                 l.awaiting_module = true;
@@ -2485,6 +2812,17 @@ impl Browser {
             }
         }
         true
+    }
+
+    /// A script element has run (or failed): rendering is unblocked on it
+    /// and it gets `event` (`Some(true)` load, `Some(false)` error).
+    fn script_ran(&self, page: FrameKey, element: &ResourceNode, event: Option<bool>) {
+        if let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            bindings.unblock_rendering(element.node);
+            if let Some(ok) = event {
+                pyro_webapi::lifecycle::resource_loaded(&bindings, element.node, ok);
+            }
+        }
     }
 
     fn report_load_error(&mut self, page: FrameKey, error: &str) {
@@ -2502,6 +2840,53 @@ impl Browser {
         let Ok(scope) = realm.scope() else { return };
         pyro_webapi::lifecycle::report_diagnostic(&scope, &JsError::type_error(error.to_owned()));
     }
+}
+
+/// HTML "run a module script" for the graph `Browser::execute_module`
+/// fetched for `url`: links and evaluates it (destructive writes ignored);
+/// a link error and an evaluation error are reported upon the evaluation
+/// promise's rejection, so after the microtasks the evaluation queued (it
+/// runs inside a microtask, where they do not drain on return).
+fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi::PageDom>>, url: &str) {
+    let evaluated = match bindings {
+        Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
+        None => scope.link_and_evaluate_module(url),
+    };
+    let report = |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+    let reported = match evaluated {
+        Ok(promise) => scope.then(promise, |_s, _v| {}, report),
+        Err(JsError::Thrown(error)) => {
+            // A microtask later, as a rejection would be reported.
+            scope.then(scope.undefined(), move |s, _v| s.report_exception(&JsError::Thrown(error)), |_s, _v| {})
+        }
+        Err(e) => Err(e),
+    };
+    if let Err(e) = reported {
+        scope.report_exception(&e);
+    }
+}
+
+/// Calls `then` in a later task in which `fetcher` has no fetch in flight,
+/// unless `done` is set by then (see `Browser::execute_module`).
+fn graph_loaded(
+    sched: pyro_runtime::Scheduler<Browser>,
+    fetcher: std::rc::Weak<dyn ModuleFetcher>,
+    done: Rc<std::cell::Cell<bool>>,
+    then: Box<dyn FnOnce()>,
+) {
+    let again = sched.clone();
+    sched.post(TaskSource::Networking, move |_b| {
+        let Some(f) = fetcher.upgrade() else { return };
+        if done.get() {
+            return;
+        }
+        if !f.busy() {
+            then();
+            return;
+        }
+        let weak = fetcher.clone();
+        f.when_idle(Box::new(move || graph_loaded(again, weak, done, then)));
+    });
 }
 
 /// The synchronous part of "prepare the script element" for a script the
@@ -2553,7 +2938,7 @@ fn dynamic_inline_module_url(base: &str) -> String {
 }
 
 pub(crate) fn install_module_fetcher(sched: pyro_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
-    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched })));
+    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched, fetches: Rc::default(), worklet_credentials: None, worklet_modules: None })));
 }
 
 /// The download's file name: the `download` attribute without path
@@ -2644,6 +3029,36 @@ fn disposition_filename(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod disposition_tests {
+    /// Subresource Integrity refuses an opaque response (a no-cors request whose redirect chain
+    /// went through another origin) though it ends at the document's own origin and its digest
+    /// matches: opacity was read off the final URL.
+    #[test]
+    fn integrity_refuses_an_opaque_response_that_ends_at_the_documents_origin() {
+        let body = b"body".to_vec();
+        let integrity = pyro_webapi::sri::sha256_expression(&body);
+        use super::{integrity_error, Resource};
+        let resource = |opaque| Resource {
+            url: "http://site.test/a.js".into(),
+            status: 200,
+            mime: "text/javascript".into(),
+            charset: None,
+            body: body.clone().into(),
+            immutable_local: false,
+            content_disposition: None,
+            header_csp: None,
+            refresh: None,
+            content_language: None,
+            referrer_policy: None,
+            sent_referrer: None,
+            timing: None,
+            partial: None,
+            nosniff: false,
+            opaque,
+        };
+        assert!(integrity_error(&resource(false), Some(&integrity), false, "http://site.test").is_none());
+        assert!(integrity_error(&resource(true), Some(&integrity), false, "http://site.test").is_some());
+    }
+
     use super::{disposition_filename, is_attachment, suggested_filename};
 
     #[test]

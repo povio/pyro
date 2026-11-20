@@ -26,7 +26,10 @@ pub use projective::{Homography, projective_marker};
 
 pub use image_cache::ImageCacheConfig;
 pub use image_renderer::VelloCpuImageRenderer;
-pub use scene::VelloCpuScenePainter;
+pub use scene::{VelloCpuScenePainter, fine_segments};
+
+pub static TEXT_OUTLINE_GROUP: std::sync::LazyLock<std::sync::Arc<anyrender::Filter>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(anyrender::Filter::empty()));
 
 #[cfg(any(
     feature = "pixels_window_renderer",

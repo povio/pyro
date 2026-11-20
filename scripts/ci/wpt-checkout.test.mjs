@@ -35,7 +35,8 @@ function fixture(t) {
   const pin = path.join(scripts, 'wpt-revision.txt');
   const paths = path.join(scripts, 'wpt-paths.txt');
   writeFileSync(pin, `${rev}\n`);
-  writeFileSync(paths, 'first\n');
+  // As bench/wpt/wpt-paths.txt does: WPT's tools/serve, from which every checkout makes wptserve's venv.
+  writeFileSync(paths, 'first\ntools/serve\n');
   for (const name of ['fetch-wpt.sh', 'prepare-ci-wpt.sh']) {
     writeFileSync(path.join(scripts, name), readFileSync(new URL(`../../bench/wpt/${name}`, import.meta.url)), { mode: 0o755 });
   }
@@ -76,6 +77,9 @@ test('cold checkout is pinned and warm reuse works offline on the same registrat
   assert.equal(git(cold.dir, 'rev-parse', 'HEAD'), rev);
   assert.ok(existsSync(path.join(cold.dir, 'first/page.html')));
   assert.ok(!existsSync(path.join(cold.dir, 'second/page.html')));
+  // The subset checkout carries wptserve's venv too (the reftests and crashtests are served by wptserve).
+  const pip = spawnSync(path.join(cold.dir, '.git/pyro-venv/bin/pip'), ['--version'], { encoding: 'utf8' });
+  assert.equal(pip.status, 0, pip.stderr);
   mkdirSync(path.join(cold.dir, 'leftovers'));
   const warm = prepare({ source: offline });
   assert.match(warm.log, /Reusing/);
@@ -89,7 +93,7 @@ test('cold checkout is pinned and warm reuse works offline on the same registrat
 test('changes to sparse paths, fetch script, or revision invalidate reuse', (t) => {
   const { prepare, pin, paths, scripts, upstream } = fixture(t);
   const cold = prepare();
-  writeFileSync(paths, 'second\n');
+  writeFileSync(paths, 'second\ntools/serve\n');
   const changed = prepare();
   assert.match(changed.log, /Populating/);
   assert.equal(changed.dir, cold.dir);

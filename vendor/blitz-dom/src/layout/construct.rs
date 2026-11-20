@@ -87,7 +87,7 @@ impl LayoutChildren {
         fn block_is_only_whitespace(doc: &BaseDocument, node_id: NodeId) -> bool {
             for child_id in doc.nodes[node_id].children.iter().copied() {
                 let child = &doc.nodes[child_id];
-                if !child.is_collapsible_whitespace_node() {
+                if !child.is_collapsible_whitespace_node() || is_empty_generated_text(doc, child_id) {
                     return false;
                 }
             }
@@ -243,7 +243,7 @@ fn push_children_and_pseudos(layout_children: &mut ThinVec<NodeId>, node: &Node)
     // pyro: with the scroll pseudo-element boxes around each child (`scroll_markers`).
     let children = node.children.iter().copied().filter(|child_id| {
         let child_node = node.with(*child_id);
-        child_node.data.kind() != NodeKind::Comment
+        child_node.data.kind() != NodeKind::Comment && !child_node.flags.contains(NodeFlags::RUNS_IN)
     });
     layout_children.extend(scroll_markers::with_box_siblings(node.tree(), node.id, children));
     if let Some(after) = node.after() {
@@ -358,7 +358,9 @@ fn push_non_whitespace_children_and_pseudos(layout_children: &mut ThinVec<NodeId
     // pyro: with the scroll pseudo-element boxes around each child (`scroll_markers`).
     let children = node.children.iter().copied().filter(|child_id| {
         let child_node = node.with(*child_id);
-        !child_node.is_whitespace_node() && child_node.data.kind() != NodeKind::Comment
+        !child_node.is_whitespace_node()
+            && child_node.data.kind() != NodeKind::Comment
+            && !child_node.flags.contains(NodeFlags::RUNS_IN)
     });
     layout_children.extend(scroll_markers::with_box_siblings(node.tree(), node.id, children));
     if let Some(after) = node.after() {
@@ -450,7 +452,8 @@ fn classify_flow_children(
         // formatting context on the container, swallowing element
         // siblings into the inline layout (zero-sizing any
         // out-of-flow ones).
-        if child.data.kind() == NodeKind::Comment {
+        // pyro: nor does a run-in that runs in (`resolve_run_ins`): the next block lays it out.
+        if child.data.kind() == NodeKind::Comment || child.flags.contains(NodeFlags::RUNS_IN) {
             continue;
         }
 
@@ -533,6 +536,7 @@ pub(crate) fn collect_layout_children(
 ) {
     collect_layout_children_with_wrap(doc, container_node_id, out, None);
     place_inside_marker(doc, container_node_id, out);
+    place_rendered_legend(doc, container_node_id, out);
     // pyro: table parts among a block container's children are wrapped in anonymous tables
     // (CSS 2.1 §17.2.1, `table_fixup`). A table fixes up its own children; an inline root's
     // layout children are its atomic inlines.
@@ -541,6 +545,202 @@ pub(crate) fn collect_layout_children(
     if !is_table && !node.flags.is_inline_root() {
         let LayoutChildren { children, anonymous_blocks, .. } = out;
         super::table_fixup::wrap_misparented_table_parts(doc, container_node_id, children, anonymous_blocks);
+    }
+}
+
+/// pyro: `display: run-in` (CSS 2.1 § 9.2.3) among the children of the block container
+/// `container`: a run-in box that contains no block box and is followed by a block box (floats,
+/// absolutely positioned boxes and boxes not generated in between) runs in: it becomes the first
+/// inline box of that block (`run_in_into`), with an `inline` style and no box of its own here
+/// (`NodeFlags::RUNS_IN`). Any other run-in box is the block box its style says.
+fn resolve_run_ins(doc: &mut BaseDocument, container: NodeId) {
+    use style::values::specified::box_::Display as StyloDisplay;
+    // (An anonymous block holds other boxes' children: the run-in it may hold is decided by its
+    // own parent.)
+    if doc.nodes[container].is_anonymous() {
+        return;
+    }
+    let children: Vec<NodeId> = doc.nodes[container].children.to_vec();
+    for (index, &id) in children.iter().enumerate() {
+        let node = &doc.nodes[id];
+        let Some(style) = node.primary_styles() else { continue };
+        let box_style = style.get_box();
+        let original = box_style.original_display;
+        let display = box_style.display;
+        let was = node.flags.contains(NodeFlags::RUNS_IN);
+        // (No longer a run-in at all, or blockified: it runs into nothing, and the block it ran
+        // into lets it go.)
+        let candidate = original.is_run_in() && (display.is_run_in() || was);
+        let target = (candidate
+            && !box_style.float.is_floating()
+            && !crate::node::style_is_out_of_flow(&style)
+            && !contains_block_box(doc, id))
+        .then(|| run_in_target(doc, &children[index + 1..]))
+        .flatten();
+        let runs = target.is_some();
+        drop(style);
+        let old_target = doc.run_in_targets.iter().find(|&(_, &run_in)| run_in == id).map(|(&target, _)| target);
+        if runs != was {
+            doc.nodes[id].flags.set(NodeFlags::RUNS_IN, runs);
+        }
+        doc.run_in_targets.retain(|_, run_in| *run_in != id);
+        if let Some(target) = target {
+            doc.run_in_targets.insert(target, id);
+        }
+        // The blocks it leaves or joins build their boxes again (their content changed).
+        if old_target != target {
+            for block in old_target.into_iter().chain(target) {
+                if doc.nodes.get(block).is_some() {
+                    doc.nodes[block].insert_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+                    doc.nodes[block].mark_damaged();
+                }
+            }
+        }
+        if !candidate {
+            continue;
+        }
+        let wanted = if runs { StyloDisplay::Inline } else { original };
+        let current = doc.nodes[id].primary_styles().map(|style| style.get_box().display);
+        if current != Some(wanted) {
+            let node = &mut doc.nodes[id];
+            if let Some(mut data) = node.stylo_element_data_mut().get_mut()
+                && let Some(primary) = data.styles.primary.as_mut()
+            {
+                let mut values = (**primary).clone();
+                values.mutate_box().set_adjusted_display(wanted, false);
+                *primary = style::servo_arc::Arc::new(values);
+            }
+            node.update_layout_styles();
+        }
+    }
+}
+
+/// pyro: whether the element `id` holds a block box (in flow; a run-in counts), among its
+/// children or in its inline (and `display: contents`) children.
+fn contains_block_box(doc: &BaseDocument, id: NodeId) -> bool {
+    let node = &doc.nodes[id];
+    node.children.iter().copied().chain(node.before()).chain(node.after()).any(|child| {
+        let Some(style) = doc.nodes[child].primary_styles() else { return false };
+        let display = style.get_box().display;
+        if style.get_box().float.is_floating() || crate::node::style_is_out_of_flow(&style) {
+            return false;
+        }
+        if display.outside() == DisplayOutside::Block {
+            return true;
+        }
+        let inline = display.is_inline_flow() || display.is_contents();
+        drop(style);
+        inline && contains_block_box(doc, child)
+    })
+}
+
+/// pyro: the block box a run-in box followed by the siblings `after` runs into, if any: the first
+/// of them that generates an in-flow box, when that is a block container (`block`, `list-item`)
+/// that is not a run-in itself (floats, absolutely positioned boxes, comments, white space and
+/// `display: none` are passed over).
+fn run_in_target(doc: &BaseDocument, after: &[NodeId]) -> Option<NodeId> {
+    for &id in after {
+        let node = &doc.nodes[id];
+        match node.data.kind() {
+            NodeKind::Comment => continue,
+            // (Preserved white space is text: WPT css-display `run-in-basic-014`.)
+            NodeKind::Text if node.is_collapsible_whitespace_node() => continue,
+            NodeKind::Element => {}
+            _ => return None,
+        }
+        let style = node.primary_styles()?;
+        let box_style = style.get_box();
+        let display = box_style.display;
+        if display.inside() == DisplayInside::None
+            || box_style.float.is_floating()
+            || crate::node::style_is_out_of_flow(&style)
+        {
+            continue;
+        }
+        let block = display.outside() == DisplayOutside::Block
+            && display.inside() == DisplayInside::Flow
+            && !display.is_run_in()
+            && !box_style.original_display.is_run_in()
+            // (Nor a block that starts with a run-in of its own: CSS Display 3 § 2.6.)
+            && !starts_with_run_in(doc, id);
+        return block.then_some(id);
+    }
+    None
+}
+
+/// pyro: whether the first box the element `id` generates in flow among its children is a
+/// run-in box that runs in (floats, absolutely positioned boxes, comments, collapsible white space and boxes
+/// not generated passed over).
+fn starts_with_run_in(doc: &BaseDocument, id: NodeId) -> bool {
+    let children = &doc.nodes[id].children;
+    for (index, &child) in children.iter().enumerate() {
+        let node = &doc.nodes[child];
+        match node.data.kind() {
+            NodeKind::Comment => continue,
+            NodeKind::Text if node.is_collapsible_whitespace_node() => continue,
+            NodeKind::Element => {}
+            _ => return false,
+        }
+        let Some(style) = node.primary_styles() else { return false };
+        let box_style = style.get_box();
+        if box_style.display.inside() == DisplayInside::None
+            || box_style.float.is_floating()
+            || crate::node::style_is_out_of_flow(&style)
+        {
+            continue;
+        }
+        // (A run-in that runs in itself; one that becomes a block is the block's first box like
+        // any other: WPT css-display `run-in-basic-005`.)
+        return box_style.original_display.is_run_in()
+            && box_style.display.is_run_in()
+            && !contains_block_box(doc, child)
+            && run_in_target(doc, &children[index + 1..]).is_some();
+    }
+    false
+}
+
+/// pyro: the run-in box that runs into the block `target` (`resolve_run_ins`), if one does.
+fn run_in_into(doc: &BaseDocument, target: NodeId) -> Option<NodeId> {
+    if doc.nodes[target].is_anonymous() {
+        return None;
+    }
+    let run_in = *doc.run_in_targets.get(&target)?;
+    let node = doc.nodes.get(run_in)?;
+    let parent = node.parent?;
+    if !node.flags.contains(NodeFlags::RUNS_IN) || doc.nodes[target].parent != Some(parent) {
+        return None;
+    }
+    let siblings = &doc.nodes[parent].children;
+    let from = siblings.iter().position(|&id| id == run_in)?;
+    (run_in_target(doc, &siblings[from + 1..]) == Some(target)).then_some(run_in)
+}
+
+/// pyro: a fieldset's rendered legend is laid out first, before content that precedes it (the
+/// text of a `display: contents` legend before it, say). As in Chromium, that is its first child
+/// box that is a `legend` (looking through `display: contents`), unless that is floated or
+/// absolutely positioned (HTML § 15.3.13). WPT css-display
+/// `display-contents-dynamic-fieldset-legend-001`.
+fn place_rendered_legend(doc: &BaseDocument, container: NodeId, out: &mut LayoutChildren) {
+    let node = &doc.nodes[container];
+    if !node.is_fieldset() || node.flags.is_inline_root() {
+        return;
+    }
+    let Some(index) = out.children.iter().position(|&id| {
+        let child = &doc.nodes[id];
+        child.data.downcast_element().is_some_and(|el| el.name.local == local_name!("legend"))
+            && child.primary_styles().is_some_and(|style| {
+                // (A `display: none` legend generates no box: the next one is rendered; WPT
+                // container-queries `fieldset-legend-change`.)
+                !style.get_box().float.is_floating()
+                    && !crate::node::style_is_out_of_flow(&style)
+                    && !style.get_box().display.is_none()
+            })
+    }) else {
+        return;
+    };
+    if index > 0 {
+        let id = out.children.remove(index);
+        out.children.insert(0, id);
     }
 }
 
@@ -622,14 +822,47 @@ fn collect_layout_children_with_wrap(
     let skips_contents = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
         !matches!(el.name.local.as_ref(), "input" | "textarea" | "select")
     }) && doc.nodes[container_node_id].display_style().is_some_and(|display| {
+        // pyro: nor a table or an internal table box, to which size containment does not apply
+        // (CSS Contain 2 § 3.1; WPT css-contain `content-visibility-094`).
         !display.is_contents()
             && !display.is_none()
             && !(display.outside() == style::values::specified::box_::DisplayOutside::Inline
                 && display.inside() == DisplayInside::Flow)
-    }) && doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
-        style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
-    });
+            && display.inside() != DisplayInside::Table
+            && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
+    }) && (doc.nodes[container_node_id].flags.contains(crate::node::NodeFlags::CV_SKIPPED)
+        || doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
+            style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
+        }));
     if skips_contents {
+        return;
+    }
+
+    if super::multicol::has_multicol_content_box(&doc.nodes[container_node_id]) {
+        out.create_anonymous_block(container_node_id, doc);
+        let wrapper = out.anonymous_block_id.take().unwrap();
+        let mut children = ThinVec::new();
+        push_children_and_pseudos(&mut children, &doc.nodes[container_node_id]);
+        doc.nodes[wrapper].children = children;
+        let mut values = (**doc.nodes[wrapper].primary_styles().unwrap()).clone();
+        values.mutate_box().set_adjusted_display(Display::Block, false);
+        {
+            let host = doc.nodes[container_node_id].primary_styles().unwrap();
+            *values.mutate_column() = host.get_column().clone();
+            let position = values.mutate_position();
+            position.column_gap = host.get_position().column_gap.clone();
+            position.row_gap = host.get_position().row_gap.clone();
+            let available = style::values::computed::MaxSize::LengthPercentage(style::values::generics::NonNegative(
+                style::values::computed::LengthPercentage::hundred_percent(),
+            ));
+            if host.writing_mode.is_vertical() {
+                position.max_width = available;
+            } else {
+                position.max_height = available;
+            }
+        }
+        doc.nodes[wrapper].stylo_element_data_mut().get_mut().unwrap().styles.primary = Some(style::servo_arc::Arc::new(values));
+        doc.nodes[wrapper].update_layout_styles();
         return;
     }
 
@@ -661,7 +894,10 @@ fn collect_layout_children_with_wrap(
                 return;
             } else if matches!(
                 type_attr,
-                None | Some("text" | "password" | "email" | "number" | "search" | "tel" | "url" | "time")
+                None | Some(
+                    "text" | "password" | "email" | "number" | "search" | "tel" | "url" | "time" | "date"
+                        | "month" | "week" | "datetime-local"
+                )
             ) {
                 create_text_editor(doc, container_node_id, false);
                 return;
@@ -687,6 +923,30 @@ fn collect_layout_children_with_wrap(
                 });
                 return;
             }
+            // pyro: a list box lays out its options, groups and separators only: text and other
+            // children of the select have no box (Chromium's `LayoutListBox`; WPT css-display
+            // `select-4-option-optgroup-display-none`).
+            // (A `display: contents` one is replaced by its own children, kept as these are, and a
+            // `display: none` one has none: its text is never a layout child, which nothing lays
+            // out or rounds; WPT selection/crashtests `selection-modify-extend-forward-on-option`.)
+            let mut stack: Vec<NodeId> = doc.nodes[container_node_id].children.iter().rev().copied().collect();
+            while let Some(child) = stack.pop() {
+                let keep = doc.nodes[child].data.downcast_element().is_some_and(|el| {
+                    matches!(el.name.local, local_name!("option") | local_name!("optgroup") | local_name!("hr"))
+                });
+                let display = doc.nodes[child].display_style();
+                if keep && display.is_some_and(|d| d.is_contents()) {
+                    doc.nodes[child].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+                    stack.extend(doc.nodes[child].children.iter().rev().copied());
+                } else if keep && !display.is_some_and(|d| d.is_none()) {
+                    out.children.push(child);
+                } else {
+                    doc.iter_subtree_mut(child, |id: NodeId, doc: &mut BaseDocument| {
+                        doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
+                    });
+                }
+            }
+            return;
 
         }
 
@@ -712,7 +972,7 @@ fn collect_layout_children_with_wrap(
             // (`SvgImageData::viewport_dependent`)
             let (source, viewport_dependent) = doc.get_node(container_node_id).unwrap().svg_source_for_viewport(None);
             doc.viewport_svgs.borrow_mut().remove(&container_node_id);
-            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source, container_node_id));
+            let outer_html = doc.with_svg_sprites(source);
             // pyro: with the resources it references in the page's other `<svg>`s.
             let outer_html = doc.with_cross_svg_references(outer_html);
 
@@ -731,12 +991,12 @@ fn collect_layout_children_with_wrap(
                 doc.svg_foreign_objects.insert(container_node_id, foreign_objects);
             }
 
-            match crate::util::parse_svg_image(outer_html.as_bytes()) {
+            match crate::util::parse_svg_resources(outer_html.as_bytes(), Some(&doc.svg_images), &doc.raster_budget) {
                 Ok(mut svg) => {
                     // pyro: without a `viewBox` its content is laid out in its CSS box
                     // (`SvgImageData::sized`, at paint).
                     if svg.intrinsic_dimensions.view_box.is_none() {
-                        svg.inline_source = Some(outer_html.as_str().into());
+                        svg.inline_source = crate::util::SvgSource::copy(&outer_html, &doc.raster_budget);
                     }
                     svg.viewport_dependent = viewport_dependent;
                     doc.get_node_mut(container_node_id)
@@ -802,7 +1062,13 @@ fn collect_layout_children_with_wrap(
     // Skip further construction if the node has no children or psuedo-children
     {
         let node = &doc.nodes[container_node_id];
-        if node.children.is_empty() && node.before().is_none() && node.after().is_none() && !inside_marker {
+        if node.children.is_empty()
+            && node.before().is_none()
+            && node.after().is_none()
+            && !inside_marker
+            // pyro: a block a run-in runs into has it (`resolve_run_ins`).
+            && run_in_into(doc, container_node_id).is_none()
+        {
             return;
         }
     }
@@ -892,6 +1158,15 @@ fn collect_layout_children_with_wrap(
             // container's content too: made before they are classified (they were not, on the
             // first build, and an empty contents element's generated text made blocks).
             flush_contents_pseudos(doc, container_node_id);
+            // pyro: `display: run-in` (CSS 2.1 § 9.2.3): which of its children run in, and the
+            // one that runs into it.
+            resolve_run_ins(doc, container_node_id);
+            if let Some(run_in) = run_in_into(doc, container_node_id) {
+                out.create_anonymous_block(container_node_id, doc);
+                doc.nodes[out.anonymous_block_id.unwrap()].children.push(run_in);
+                collect_complex_layout_children(doc, container_node_id, out, false, block_item_needs_wrap);
+                return;
+            }
             let mut classification = FlowClassification::default();
             classify_flow_children(doc, container_node_id, &mut classification);
 
@@ -951,6 +1226,11 @@ fn collect_layout_children_with_wrap(
                 let content_changed = doc.nodes[container_node_id]
                     .damage()
                     .is_none_or(|damage| damage.contains(INLINE_CONTENT));
+                // pyro: table parts in its inline boxes are wrapped in anonymous inline tables made
+                // anew (`table_fixup::wrap_inline_table_parts`): a kept layout would name the old ones.
+                let made_inline_tables =
+                    super::table_fixup::wrap_inline_table_parts(doc, container_node_id, &mut out.anonymous_blocks);
+                let content_changed = content_changed || made_inline_tables;
                 match previous_inline_layout {
                     Some(layout) if !content_changed => {
                         #[cfg(debug_assertions)]
@@ -1507,6 +1787,18 @@ fn collect_complex_layout_children_in(
     out.maybe_push_anon_block(doc);
 }
 
+/// pyro: whether `id` is the empty text a pseudo-element's `content` generated (`content: ""`).
+fn is_empty_generated_text(doc: &BaseDocument, id: NodeId) -> bool {
+    let node = &doc.nodes[id];
+    node.text_data().is_some_and(|text| text.content.is_empty())
+        && node.parent.is_some_and(|pseudo| {
+            doc.nodes[pseudo].parent.is_some_and(|host| {
+                let host = &doc.nodes[host];
+                host.before() == Some(pseudo) || host.after() == Some(pseudo)
+            })
+        })
+}
+
 /// pyro: places one child (or a scroll pseudo-element box beside one) of a container whose
 /// children need anonymous blocks (`collect_complex_layout_children_in`).
 #[allow(clippy::too_many_arguments)]
@@ -1520,6 +1812,10 @@ fn place_complex_child(
     at_middle_start: bool,
     at_middle_end: bool,
 ) {
+        // pyro: a run-in that runs in is the next block's (`resolve_run_ins`).
+        if doc.nodes[child_id].flags.contains(NodeFlags::RUNS_IN) && doc.nodes[child_id].parent == Some(container_node_id) {
+            return;
+        }
         // Get node kind (text, element, comment, etc). A `<br>` is a piece of text.
         let child_node_kind = if doc.nodes[child_id].is_line_break() {
             NodeKind::Text
@@ -1539,7 +1835,10 @@ fn place_complex_child(
             child_display.outside()
         };
 
-        let is_whitespace_node = doc.nodes[child_id].is_whitespace_node();
+        // pyro: the empty text of a pseudo-element's `content: ""` is no white space: in a flex or
+        // grid container it makes an (empty) anonymous item, as in Chromium (WPT scroll-animations
+        // `responsive/repaint-after-finished`: a `::after` grid's item stretches over its track).
+        let is_whitespace_node = doc.nodes[child_id].is_whitespace_node() && !is_empty_generated_text(doc, child_id);
 
         // Skip comment nodes. Note that we do *not* skip `Display::None` nodes as they may need to be hidden.
         // Taffy knows how to deal with `Display::None` children.
@@ -1989,7 +2288,16 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                     }
                     // Inline box
                     (_, _) => {
-                        layout_children.push(node_id);
+                        // pyro: a table part in an inline box is in an anonymous inline table, a box
+                        // of the inline content once, at its first part (`table_fixup`).
+                        match (display.outside() == DisplayOutside::InternalTable)
+                            .then(|| super::table_fixup::inline_table_of(nodes, node_id))
+                            .flatten()
+                        {
+                            Some((table, true)) => layout_children.push(table),
+                            Some((_, false)) => {}
+                            None => layout_children.push(node_id),
+                        }
                         // pyro: a table part in an inline box (`table_fixup`).
                         if display.outside() == DisplayOutside::InternalTable {
                             if let Some(parent) = nodes[node_id].parent {

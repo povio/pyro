@@ -29,6 +29,26 @@ pub(crate) struct Page {
     pub(crate) layout: Layout,
 }
 
+#[test]
+fn hit_each_child_fragment_through_its_spanner_continuation() {
+    for (wrapped, layer, under_overlap) in [(true, "", false), (false, "", true), (true, "position:relative", true)] {
+        let (open, close) = if wrapped { ("<div>", "</div>") } else { ("", "") };
+        let page = page(&format!("<!doctype html><style>body{{margin:0}}section{{width:100px;columns:2;column-gap:0}}header{{height:60px}}aside{{column-span:all;height:40px}}article{{width:120px;height:100px;margin-top:-70px;{layer}}}</style><section>{open}<header id=h></header><aside id=s></aside><article id=a></article>{close}</section>"));
+        for (x, y, target) in [
+            (10., 10., if under_overlap { "a" } else { "h" }),
+            (60., 10., if under_overlap { "a" } else { "h" }),
+            (10., 40., if under_overlap { "a" } else { "s" }),
+            (10., 77., "a"),
+            (155., 77., "a"),
+        ] {
+            let expected = Some(page.id(target));
+            assert_eq!(page.layout.element_from_point(&page.dom, x, y), expected, "wrapped={wrapped} {layer} ({x},{y})");
+            assert_eq!(page.layout.element_from_point_scan(&page.dom, x, y), expected);
+            assert_eq!(page.layout.element_from_point_descent(&page.dom, x, y), expected);
+        }
+    }
+}
+
 /// Fills shadow root `root` with `html` (parsed in a scratch element).
 pub(crate) fn fill_shadow(p: &mut Page, root: NodeId, html: &str) {
     let scratch = p.dom.create_element(p.doc, "div").unwrap();
@@ -370,4 +390,37 @@ fn a_mutation_between_hit_tests_is_seen() {
     assert_eq!(p.layout.element_from_point(&p.dom, x, y), p.layout.element_from_point_scan(&p.dom, x, y));
     assert_ne!(p.layout.element_from_point(&p.dom, x, y), Some(first_cell));
     assert!(p.compare("table after mutation") > 5);
+}
+
+/// A static flex item overflowing its container downward paints over the next empty block's
+/// background (it paints with the inline content: blitz-dom `Node::items_in_phases`), so it takes
+/// the hit there too; the block keeps it beside the item. The block took it (siblings were hit in
+/// reverse list order, not in their paint phases). Review cycle 2, finding 2 (8fcda743).
+#[test]
+fn an_overflowing_flex_item_is_hit_over_the_next_blocks_background() {
+    let p = page(
+        "<!doctype html><body style='margin:0'><div>\
+         <div style='display:flex;height:50px;border:1px solid blue'><div id=item style='width:100px;height:120px;background:green;align-self:flex-start'></div></div>\
+         <div id=next style='height:100px;background:yellow;border:1px solid red'></div></div>",
+    );
+    let (item, next) = (p.id("item"), p.id("next"));
+    assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 90.0), Some(item), "over the next block's background");
+    assert_eq!(p.layout.element_from_point(&p.dom, 150.0, 90.0), Some(next), "beside the item");
+    assert!(p.compare("overflowing flex item") > 2);
+}
+
+/// A positioned sibling after a flex container paints over the container's overflowing item (the
+/// positioned level comes after the inline content the item paints with): it takes the hit there.
+/// The item pre-pass returned before it. Review cycle 3, finding 4.
+#[test]
+fn a_positioned_sibling_over_an_overflowing_flex_item_is_hit() {
+    let p = page(
+        "<!doctype html><body style='margin:0'><div style='overflow:hidden'>\
+         <div style='display:flex;height:50px;border:1px solid blue'><div id=item style='width:100px;height:120px;background:green;align-self:flex-start'></div></div>\
+         <div id=next style='position:relative;height:100px;background:yellow;border:1px solid red'></div></div>",
+    );
+    let (item, next) = (p.id("item"), p.id("next"));
+    assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 90.0), Some(next), "the positioned sibling over the item");
+    assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 30.0), Some(item), "the item above the sibling");
+    assert!(p.compare("positioned sibling over a flex item") > 1);
 }

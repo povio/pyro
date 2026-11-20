@@ -79,7 +79,14 @@ impl ElementCx<'_, '_> {
     /// to be drawn into. Returns whether a layer was pushed, which should later be
     /// passed to [`maybe_pop_css_mask_layer`](Self::maybe_pop_css_mask_layer).
     pub(super) fn maybe_push_css_mask_layer(&self, scene: &mut impl PaintScene) -> bool {
+        if self.capture_budget.is_some_and(|budget| !budget.take(self.style.get_svg().mask_image.0.len())) { return false; }
         if !self.has_css_mask() && !self.has_mask_border() {
+            return false;
+        }
+        if let Some(budget) = self.capture_budget && (self.has_mask_border()
+            || self.style.get_svg().mask_image.0.iter().any(|image| !matches!(image, GenericImage::None | GenericImage::Gradient(_)))
+            || self.style.get_svg().mask_mode.0.contains(&StyloMaskMode::Luminance)) {
+            budget.exhausted.set(true);
             return false;
         }
 
@@ -162,6 +169,22 @@ impl ElementCx<'_, '_> {
         let svg_styles = self.style.get_svg();
         let image_data = &self.element.mask_images;
         let layer_count = svg_styles.mask_image.0.len();
+        // pyro: while one of its images is loading the mask lets nothing through: the element
+        // stays hidden, all of its layers waiting (as Chromium shows it; WPT css-masking
+        // `mask-image-multi-layer-while-loading`). A `url(#mask)` of this document is drawn from
+        // its `<mask>`, never waited for; a mask that failed is not loading.
+        let this_document = |url: &str| {
+            let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
+            let url = document(url);
+            url == document(self.context.dom.url().as_str()) || url == document(self.context.dom.base_url().as_str())
+        };
+        if image_data
+            .iter()
+            .flatten()
+            .any(|image| image.status == blitz_dom::node::Status::Loading && !this_document(image.url.as_str()))
+        {
+            return;
+        }
 
         for idx in (0..layer_count).rev() {
             let layer = ImageLayerStyles::from_svg(svg_styles, image_data, idx);
@@ -260,10 +283,15 @@ impl ElementCx<'_, '_> {
         let dom = self.context.dom;
         // pyro: a `<mask>` of this document, or of the document loaded as the layer's image
         // (`mask-image: url(masks.svg#mask)`: the image is the mask, not the document's drawing).
-        let mut external: Option<std::sync::Arc<[u8]>> = None;
+        let mut external: Option<std::sync::Arc<blitz_dom::util::SvgSource<[u8]>>> = None;
         let (target, id, user_space) = match local_reference(dom, url) {
             Some(target) => {
-                let Some(node) = dom.get_node(target).filter(|node| is_svg_element(node, "mask")) else {
+                // (One in contents `content-visibility: hidden` skips is no mask: not rendered, CSS
+                // Contain 2 § 4.1; the layer is then transparent black.)
+                let Some(node) = dom
+                    .get_node(target)
+                    .filter(|node| is_svg_element(node, "mask") && !dom.skipped_by_content_visibility(target))
+                else {
                     return false;
                 };
                 if reference_cycle(dom, target) {
@@ -319,7 +347,7 @@ impl ElementCx<'_, '_> {
         let (width, height) = ((painter.width as f64 * to_user) as f32, (painter.height as f64 * to_user) as f32);
         let svg = match target {
             Some(target) => dom.svg_reference_document(target, &content, width, height),
-            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref().unwrap_or_default(), &content, width, height),
+            None => external.as_deref().and_then(|source| blitz_dom::node::SvgImageData::reference_document_from_source(source, &content, width, height, &dom.raster_budget)),
         };
         let Some(svg) = svg else {
             return true;

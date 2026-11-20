@@ -62,6 +62,7 @@
 //!             spacing_trim: Default::default(),
 //!             isolated_before: false,
 //!             isolated_after: false,
+//!             preserved_breaks: false,
 //!         },
 //!      }],
 //!      select_font, // Selects fonts covering each cluster.
@@ -125,9 +126,42 @@ pub mod shape;
 pub use linebender_resource_handle::FontData;
 pub use parlance::{BaseDirection, NormalizedCoord};
 
-pub use analysis::{Analysis, AnalysisDataSources, CharInfo};
+pub use analysis::{Analysis, AnalysisDataSources, CharInfo, hangs_at_edge, removes_segment_break};
 pub use analyzer::{AnalysisOptions, Analyzer, LineBreakConfig};
 pub use glyph::Glyph;
 pub use shape::atom::{Atom, Atoms, Grapheme, Graphemes, ShapedClusterGlyphs, ShapedSlice};
 pub use shape::shaped_text::{ClusterGlyphs, FontMetrics, IdeographicBaselines, ShapedRun, ShapedText};
 pub use shape::shaper::{FontInstance, FontInstanceRef, FontSelector, ShapeOptions, Shaper};
+
+/// pyro: whether the font at `index` in `data` draws colour glyphs (a `COLR`, `CBDT`, `sbix` or
+/// `SVG ` table): an emoji font for emoji presentation.
+pub fn is_color_font(data: &[u8], index: u32) -> bool {
+    let Ok(font_ref) = skrifa::FontRef::from_index(data, index) else { return false };
+    [*b"COLR", *b"CBDT", *b"sbix", *b"SVG "]
+        .iter()
+        .any(|tag| font_ref.table_data(skrifa::raw::types::Tag::new(tag)).is_some())
+}
+
+/// pyro: whether `ch` is an emoji (Unicode `Emoji`) other than an ASCII character (digits, `#`
+/// and `*` are `Emoji` too, but have no presentation to choose by themselves).
+pub fn is_emoji_char(ch: char) -> bool {
+    !ch.is_ascii() && icu_properties::CodePointSetData::new::<icu_properties::props::Emoji>().contains(ch)
+}
+
+/// pyro: whether `ch` has emoji presentation by default (Unicode `Emoji_Presentation`).
+pub fn is_emoji_presentation_char(ch: char) -> bool {
+    icu_properties::CodePointSetData::new::<icu_properties::props::EmojiPresentation>().contains(ch)
+}
+
+/// pyro: whether the font at `index` in `data` maps the variation sequence `base` + `selector`
+/// (its `cmap` format 14 subtable lists it, with a glyph of its own or the default one).
+pub fn maps_variation_sequence(data: &[u8], index: u32, base: char, selector: char) -> bool {
+    use skrifa::MetadataProvider;
+    let Ok(font_ref) = skrifa::FontRef::from_index(data, index) else { return false };
+    font_ref.charmap().map_variant(base, selector).is_some()
+}
+
+/// pyro: whether `ch` is a variation selector (VS1-VS16, VS17-VS256).
+pub fn is_variation_selector(ch: char) -> bool {
+    matches!(ch as u32, 0xFE00..=0xFE0F | 0xE0100..=0xE01EF)
+}

@@ -33,6 +33,14 @@ struct Capture {
     limited_quirks_mode: bool,
     #[serde(default)]
     content_language: Option<String>,
+    /// `CSS.registerProperty()` registrations ([`Snapshot::registered_properties`]); absent in
+    /// captures written before they were recorded.
+    #[serde(default)]
+    registered_properties: Vec<(String, String, bool, Option<String>)>,
+    /// pyro: the nonce the markup's engine attributes are named with (absent in older captures:
+    /// then they take none, unless written under canonical names).
+    #[serde(default)]
+    nonce: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +101,9 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
     };
     let s = request.snapshot;
     let snapshot = Snapshot {
+        raster_budget: Default::default(),
         html: s.html,
+        frames: std::sync::Arc::new(pyro_render::FrameTableData { nonce: s.nonce, entries: Default::default() }),
         base_url: s.base_url,
         sheets: s.sheets,
         width: s.width,
@@ -101,6 +111,9 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
         device_scale_factor: s.device_scale_factor,
         dark: s.dark,
         input: Default::default(),
+        frame_animations: Vec::new(),
+        transition_frames: Vec::new(),
+        content_visibility: None,
         print: false,
         scroll_x: s.scroll_x,
         scroll_y: s.scroll_y,
@@ -109,6 +122,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
         element_scroll: None,
         sticky_offsets: None,
         scroll_targets: None,
+        popover_anchors: Vec::new(),
         background: None,
         canvases: Vec::new(),
         animations: None,
@@ -116,10 +130,13 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
         quirks_mode: s.quirks_mode,
         limited_quirks_mode: s.limited_quirks_mode,
         content_language: s.content_language,
+        registered_properties: s.registered_properties,
         selection: None,
         highlights: Vec::new(),
         control_selection: None,
         selected_replaced: Vec::new(),
+        caret: None,
+        url_target: None,
     };
     let errors = Arc::new(Mutex::new(Vec::new()));
     let fetcher = Arc::new(Assets { root: request.asset_root, origin: request.asset_origin, errors: errors.clone() });

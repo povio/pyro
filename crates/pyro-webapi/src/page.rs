@@ -25,19 +25,39 @@ pub const MAX_IMAGE_BYTES_KEPT: usize = 64 * 1024 * 1024;
 /// decoded past it are decoded again on each use.
 pub const MAX_IMAGE_DECODED_KEPT: usize = 256 * 1024 * 1024;
 
+/// pyro: most entries of a document's list of available images ([`PageDom::remember_available_image`]).
+const MAX_AVAILABLE_IMAGES: usize = 64;
+/// pyro: most encoded bytes the list of available images keeps for canvas use.
+const MAX_AVAILABLE_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// pyro: what a completed image request gave (HTML "list of available images"): an `<img>` that
+/// asks for the same URL in the same CORS mode has it at once.
+#[derive(Clone)]
+pub struct AvailableImage {
+    pub request_referrer: Option<(pyro_net::ReferrerPolicy, Option<pyro_net::Url>, Option<String>)>,
+    /// The natural size (a raster image's, or an SVG's with natural dimensions).
+    pub natural: Option<(f64, f64)>,
+    /// The size an SVG reports when it has no natural size of its own.
+    pub reported: Option<(f64, f64)>,
+    /// A raster image's encoded bytes and whether its pixels may be read back.
+    pub bytes: Option<(std::sync::Arc<pyro_raster::SourceLease>, bool)>,
+}
+
 /// A loaded `<img>`'s encoded bytes ([`PageDom::set_image_bytes`]).
 struct ImageBytes {
-    bytes: Vec<u8>,
+    bytes: std::sync::Arc<pyro_raster::SourceLease>,
     clean: bool,
     /// The decoded pixels once a canvas used them (`Some(None)`: they do
     /// not decode).
     decoded: Option<Option<pyro_canvas::Bitmap>>,
+    /// pyro: `decoded` was turned as the image's EXIF orientation says.
+    decoded_oriented: bool,
 }
 
 impl ImageBytes {
     /// The bytes this entry counts: (encoded, decoded and cached).
     fn counted(&self) -> (usize, usize) {
-        (self.bytes.len(), self.decoded.as_ref().and_then(Option::as_ref).map_or(0, |b| b.byte_len()))
+        (self.bytes.bytes().len(), self.decoded.as_ref().and_then(Option::as_ref).map_or(0, |b| b.byte_len()))
     }
 }
 
@@ -220,6 +240,12 @@ pub struct PageDom {
     /// HTML "visibility state" of the document is "hidden": set as it is
     /// unloaded (`lifecycle::unload`).
     hidden: Cell<bool>,
+    pub(crate) transition_captures: RefCell<Option<Box<crate::view_transition::Captures>>>,
+    pub(crate) transition_quota: RefCell<Option<std::sync::Arc<crate::view_transition::Quota>>>,
+    /// The document's unload events (`pagehide` ...) have started: set before the first is
+    /// dispatched, so a listener whose actions unload it again (removing an ancestor frame) does
+    /// not run them twice.
+    unloading: Cell<bool>,
     /// Navigation Timing of the document, recorded as the lifecycle steps
     /// run (`lifecycle`).
     timing: Cell<DocumentTiming>,
@@ -238,6 +264,9 @@ pub struct PageDom {
     /// current load is for, whether it is still loading, and whether the
     /// finished load is decodable (`decode()` resolves).
     pub(crate) images: RefCell<FxHashMap<NodeId, (String, bool, bool)>>,
+    /// pyro: HTML's list of available images, by (absolute URL, CORS state: 0 none, 1 anonymous,
+    /// 2 use-credentials), oldest first.
+    available_images: RefCell<Vec<((String, u8), AvailableImage)>>,
     /// `images` size at which entries of collected elements are dropped.
     images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
@@ -327,9 +356,20 @@ pub struct PageDom {
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
+    /// pyro: the `disabled` flag of each node's CURRENT sheet object (its association): one entry
+    /// per node, the cell every wrapper of that sheet object shares (`css::sheet_flag`). A detached
+    /// sheet object's flag lives only in its wrappers and goes with them.
+    pub(crate) sheet_flags: RefCell<FxHashMap<NodeId, (crate::css::SheetGeneration, Rc<Cell<bool>>)>>,
     /// The text of each sheet a `<style>` imported, by its absolute URL (for
     /// `CSSImportRule.styleSheet`); the embedder provides it as it loads.
-    pub(crate) imported_sheets: RefCell<FxHashMap<String, String>>,
+    /// pyro: by the import's request key (`pyro_dom::cssom::import_key`: its URL and modifiers),
+    /// the sheet's URL after redirects and its text.
+    /// pyro: and whether the response was CORS-cross-origin (not origin-clean, CSSOM).
+    pub(crate) imported_sheets: RefCell<FxHashMap<String, (String, String, bool)>>,
+    /// pyro: the response each `<link>`'s style sheet is of: a generation (each response
+    /// applied is a new sheet object, CSSOM) and whether it is origin-clean (not
+    /// CORS-cross-origin, Fetch tainting "basic"/"cors"). `SheetOwner::rules` checks both.
+    pub(crate) sheet_responses: RefCell<FxHashMap<NodeId, SheetResponse>>,
     /// The constructed sheets each document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
@@ -343,6 +383,21 @@ pub struct PageDom {
     completely_loaded: Cell<bool>,
     /// When trusted input last reached the document (transient activation).
     input_activation: Cell<Option<std::time::Instant>>,
+    /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
+    pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
+    /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
+    fullscreen_allowed: Cell<bool>,
+    /// The paint worklet global (`crate::paint_worklet`), made on the first `addModule()`.
+    pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
+    /// That worklet's module map (every module of its graphs: entries and imports).
+    pub(crate) paint_worklet_modules: pyro_js::WorkletModuleMap,
+    /// A range slider being dragged (`crate::input`): the element and its value at the press.
+    pub(crate) range_drag: RefCell<Option<(NodeId, String)>>,
+    /// The window's `load` event is being dispatched (`lifecycle::load`).
+    pub(crate) dispatching_load: Cell<bool>,
+    /// The identity of the document's origin when it is opaque (the embedder's token, which an
+    /// about:blank document shares with its creator); `None`: this document's own.
+    opaque_origin_token: Cell<Option<u64>>,
     /// HTML "planned navigation" of each form with one: the number of its
     /// latest submission, whose queued task is the one that navigates.
     planned_navigations: RefCell<Vec<(NodeId, u64)>>,
@@ -352,9 +407,15 @@ pub struct PageDom {
     /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
     /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
     pub(crate) rejection_batch: RefCell<Option<(pyro_js::RealmId, u64, Rc<RefCell<Vec<u64>>>)>>,
-    /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
+    /// `FontFace` loads in flight (font_loading.js).
     pub(crate) font_loads: Cell<u32>,
-    font_delay_since: Cell<Option<std::time::Instant>>,
+    /// pyro: when the load gate laid the document out (`css_images_delay_load`), once per load.
+    load_layout_since: Cell<Option<std::time::Instant>>,
+    /// pyro: the DOM version and style generation the load gate last laid the document out at.
+    load_layout_version: Cell<(u64, u64)>,
+    /// pyro: when the document was made (its navigation committed): the load gate's safety cap
+    /// counts from here.
+    created: std::time::Instant,
     /// The font families elements name, as of a DOM version (`used_face_loading`).
     used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
@@ -581,6 +642,21 @@ pub trait PageHooks {
     fn frame_detached(&self) -> bool {
         false
     }
+    /// HTML "activation notification": the documents an activation of this one activates too,
+    /// besides itself: its ancestors' and its same-origin descendants' (in the frame tree).
+    fn activation_peers(&self) -> Vec<Rc<PageDom>> {
+        Vec::new()
+    }
+    /// HTML "consume user activation": every other document of this document's top-level frame
+    /// tree, whose transient activation is consumed with this one's.
+    fn frame_tree(&self) -> Vec<Rc<PageDom>> {
+        Vec::new()
+    }
+    /// HTML "secure context" for this document, ancestors included (the embedder knows the frame
+    /// chain); `None` when it cannot tell (the document's own URL decides then).
+    fn is_secure_context(&self) -> Option<bool> {
+        None
+    }
     /// Observation-only (no JS): this document still belongs to a live owner
     /// frame/loader. Unlike is_focused, unselected frames also return true.
     /// Checked before a request can cancel a shared transition token.
@@ -734,6 +810,18 @@ pub trait PageHooks {
     fn frame_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _iframe: NodeId) -> Option<pyro_js::Value<'s>> {
         None
     }
+    /// A child window of this top-level page by index (`"0"`) or by
+    /// document-tree child navigable target name, as the window running in
+    /// `scope`, of another page (a popup's opener), sees it: the child's
+    /// global when the two are same origin, else a cross-origin window.
+    /// `None` when there is no such child.
+    fn foreign_child_window<'s>(
+        &self,
+        _scope: &pyro_js::Scope<'s>,
+        _key: &str,
+    ) -> pyro_js::JsResult<Option<pyro_js::Value<'s>>> {
+        Ok(None)
+    }
 }
 
 impl PageDom {
@@ -825,6 +913,9 @@ impl PageDom {
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             hidden: Cell::new(false),
+            transition_captures: RefCell::new(None),
+            transition_quota: RefCell::new(None),
+            unloading: Cell::new(false),
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -835,6 +926,7 @@ impl PageDom {
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
+            available_images: RefCell::new(Vec::new()),
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
             image_bytes: RefCell::new(FxHashMap::default()),
@@ -874,18 +966,29 @@ impl PageDom {
             popover: Default::default(),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
+            sheet_flags: RefCell::new(FxHashMap::default()),
             imported_sheets: RefCell::new(FxHashMap::default()),
+            sheet_responses: RefCell::default(),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
             posted_tasks: Cell::new(0),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
+            fullscreen_stack: RefCell::new(Vec::new()),
+            fullscreen_allowed: Cell::new(true),
+            paint_worklet: RefCell::new(None),
+            paint_worklet_modules: Default::default(),
+            range_drag: RefCell::new(None),
+            dispatching_load: Cell::new(false),
+            opaque_origin_token: Cell::new(None),
             planned_navigations: RefCell::new(Vec::new()),
             navigation_started: Cell::new(0),
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
-            font_delay_since: Cell::new(None),
+            load_layout_since: Cell::new(None),
+            load_layout_version: Cell::new((0, 0)),
+            created: std::time::Instant::now(),
             used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
@@ -925,6 +1028,34 @@ impl PageDom {
     }
     pub(crate) fn is_nested_frame(&self) -> bool {
         self.nested_frame.get()
+    }
+    /// Whether the document's permissions policy allows `fullscreen`: true for a top-level
+    /// document; the browser sets a child frame's ([`crate::fullscreen::allowed_in_frame`]).
+    pub fn set_fullscreen_allowed(&self, allowed: bool) {
+        self.fullscreen_allowed.set(allowed);
+    }
+    /// The embedder's identity for the document's origin, used when that origin is opaque.
+    pub fn set_opaque_origin_token(&self, token: u64) {
+        self.opaque_origin_token.set(Some(token));
+    }
+    /// A key that is equal for two documents exactly when their origins are the same: the tuple
+    /// origin's serialization, or for an opaque origin `opaque:<identity>` (an opaque origin is equal
+    /// only to itself, though every one serializes as "null").
+    pub fn origin_key(&self) -> String {
+        match crate::storage::document_origin(self) {
+            Some(origin) => origin,
+            None => match self.opaque_origin_token.get() {
+                Some(token) => format!("opaque:{token}"),
+                None => format!("opaque-document:{}", self.id()),
+            },
+        }
+    }
+    /// Whether the window's `load` event is being dispatched right now.
+    pub fn is_dispatching_load(&self) -> bool {
+        self.dispatching_load.get()
+    }
+    pub fn fullscreen_allowed(&self) -> bool {
+        self.fullscreen_allowed.get()
     }
     pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
         self.context_services.borrow().clone()
@@ -1033,6 +1164,7 @@ impl PageDom {
     }
 
     fn release_activity(&self) {
+        self.transition_captures.borrow_mut().take();
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
         self.dom.borrow_mut().unwatch_iframes(self.document());
@@ -1048,6 +1180,8 @@ impl PageDom {
         crate::resize_observer::dispose(self);
         crate::worker::dispose(self);
         crate::message_channel::dispose(self);
+        crate::web_locks::dispose(self);
+        drop(self.paint_worklet.take());
         crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         crate::media::dispose(self);
@@ -1137,7 +1271,7 @@ impl PageDom {
     pub fn set_opaque_origin(&self, opaque: bool) {
         self.opaque_origin.set(opaque);
     }
-    pub(crate) fn has_opaque_origin(&self) -> bool {
+    pub fn has_opaque_origin(&self) -> bool {
         self.opaque_origin.get()
     }
 
@@ -1146,6 +1280,9 @@ impl PageDom {
     /// play unmuted.
     pub fn notify_user_activation(&self) {
         self.sticky_activation.set(true);
+        for peer in self.hooks().map(|h| h.activation_peers()).unwrap_or_default() {
+            peer.sticky_activation.set(true);
+        }
     }
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
@@ -1167,13 +1304,29 @@ impl PageDom {
     /// press): sticky activation, and transient activation for the next
     /// five seconds (Chrome's duration). A CDP evaluation's `userGesture`
     /// is sticky only: automation clients poll with it while a page loads.
+    /// The activation reaches the document's ancestors and same-origin descendants too
+    /// ([`PageHooks::activation_peers`]): a parent may use the activation of an input in its child.
     pub(crate) fn notify_input_activation(&self) {
+        let now = Some(std::time::Instant::now());
         self.sticky_activation.set(true);
-        self.input_activation.set(Some(std::time::Instant::now()));
+        self.input_activation.set(now);
+        for peer in self.hooks().map(|h| h.activation_peers()).unwrap_or_default() {
+            peer.sticky_activation.set(true);
+            peer.input_activation.set(now);
+        }
     }
     /// HTML "transient activation": trusted input within the last five seconds.
     pub fn has_transient_activation(&self) -> bool {
         self.input_activation.get().is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5))
+    }
+    /// HTML "consume user activation": the transient activation ends (sticky activation stays), in
+    /// every document of the top-level frame tree ([`PageHooks::frame_tree`]), so that another
+    /// frame cannot spend the same activation again.
+    pub(crate) fn consume_transient_activation(&self) {
+        self.input_activation.set(None);
+        for other in self.hooks().map(|h| h.frame_tree()).unwrap_or_default() {
+            other.input_activation.set(None);
+        }
     }
 
     /// The number of the latest navigation of the document's own frame that
@@ -1368,9 +1521,14 @@ impl PageDom {
         }
     }
 
-    /// pyro: the layout engine's state of the font at `url` (`FontFace.status`).
+    /// pyro: the layout engine's state of the document's request for the font at `url`
+    /// (`FontFace.status`): `Some(true)` loaded, `Some(false)` loading (asked for, answer not in).
     pub fn font_url_state(&self, url: &str) -> Option<bool> {
-        self.try_layout()?.font_url_state(url)
+        match self.try_layout()?.font_load(url)? {
+            pyro_dom::geometry::FontLoad::Loaded => Some(true),
+            pyro_dom::geometry::FontLoad::Loading => Some(false),
+            pyro_dom::geometry::FontLoad::NotAsked | pyro_dom::geometry::FontLoad::Failed => None,
+        }
     }
 
     /// The `@font-face` rules of the document's sheets: its CSS-connected `FontFace`s, in order
@@ -1393,12 +1551,8 @@ impl PageDom {
             if dom.root_node(owner, false).is_ok_and(|root| root != doc) {
                 return;
             }
-            let link = dom.element(owner).is_ok_and(|e| &*e.name.local == "link");
-            let sheet_base = link
-                .then(|| dom.get_attribute(owner, "href").ok().flatten())
-                .flatten()
-                .and_then(|href| url::Url::parse(&base).ok()?.join(href.trim()).ok())
-                .map_or_else(|| base.clone(), |u| u.to_string());
+            // pyro: the sheet's own base (a redirected link's final URL): `StyleEngine::sheet_base_url`.
+            let sheet_base = style.sheet_base_url(&dom, owner, &base).unwrap_or_else(|| base.clone());
             pyro_dom::font_face::css_faces(text, &sheet_base, &mut faces);
         });
         let faces = Rc::new(faces);
@@ -1413,7 +1567,10 @@ impl PageDom {
 
     /// Whether web fonts delay the document's load event, as font loads do in Chromium: a
     /// `FontFace` load in flight or a face the layout engine is fetching for the document's
-    /// styles. At most 10 s, so a font that never answers cannot hold `load` back for good.
+    /// styles (by the document's request for it, asked for and not answered: a request its
+    /// layout made is recorded as loading before any check reads it). At most 10 s from the
+    /// document's navigation (its creation), as for CSS images, so a font that never answers
+    /// cannot hold `load` back for good.
     pub fn fonts_delay_load(&self) -> bool {
         // A face of the document's sheets delays the load event only once text uses its family:
         // Chromium starts a face's load when layout first needs it, while the layout engine here
@@ -1424,9 +1581,40 @@ impl PageDom {
         if !pending {
             return false;
         }
-        let since = *self.font_delay_since.get().get_or_insert_with(std::time::Instant::now);
-        self.font_delay_since.set(Some(since));
-        since.elapsed() < std::time::Duration::from_secs(10)
+        self.created.elapsed() < std::time::Duration::from_secs(10)
+    }
+
+    /// pyro: whether the document's CSS images (backgrounds, masks, border and list images,
+    /// shapes) still delay its `load` event, as in Chrome, whose style resolution starts their
+    /// fetches before `load`. Called once every other blocker of `load` is clear: the first call
+    /// lays the document out once (which starts those fetches through the document's network);
+    /// then `load` waits while one is in flight, at most 10 s from that layout.
+    /// pyro: Chrome has no cap: a CSS image delays load until it finishes or fails. The 10 s,
+    /// counted from the document's navigation (its creation), are pyro's own safety limit, so an
+    /// image that never answers cannot hold `load` back for good.
+    pub fn css_images_delay_load(&self) -> bool {
+        if self.load_layout_since.get().is_none() {
+            self.load_layout_since.set(Some(std::time::Instant::now()));
+            // (Style changes the scripts made start their transitions: tracked first.)
+            crate::animation_events::track_before_layout(self);
+        }
+        // pyro: laid out again whenever the document or its style changed since the gate's last
+        // pass (a rule or element using a stalled image removed, a `replaceSync()` on an adopted
+        // sheet): what it still references, by request, is what load waits for.
+        self.sync_frame_resources();
+        let pending = self.try_layout().is_some_and(|layout| layout.images_pending_as_laid_out());
+        pending && self.created.elapsed() < std::time::Duration::from_secs(10)
+    }
+
+    /// Starts layout-dependent resource requests when a rendering opportunity observes changed styles.
+    pub fn sync_frame_resources(&self) {
+        if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
+            let stamp = { let s = layout.style().observation_stamp(&dom); (s.0, s.1) };
+            if stamp != self.load_layout_version.get() || self.load_layout_version.get() == (0, 0) {
+                layout.synced_geometry_source(&dom);
+                self.load_layout_version.set(stamp);
+            }
+        }
     }
 
     /// Whether a face of the document's sheets that the layout engine is still fetching has a
@@ -1705,6 +1893,25 @@ impl PageDom {
     /// Text of a fetched `<link rel=stylesheet>`.
     pub fn set_stylesheet_text(&self, link: NodeId, text: &str) {
         self.layout.borrow_mut().style_mut().set_sheet_text(link, text);
+    }
+    /// pyro: reserves `link`'s cascade slot for the response it now loads (empty, of no URL yet).
+    pub fn reserve_stylesheet(&self, link: NodeId) {
+        let mut layout = self.layout.borrow_mut();
+        layout.style_mut().set_sheet_url(link, None);
+        layout.style_mut().set_sheet_text(link, "");
+    }
+    /// pyro: [`Self::set_stylesheet_text`] of the response at `url` (after redirects), which the
+    /// sheet's URLs resolve against, in layout and in the renderer.
+    /// pyro: `policy`, its `Referrer-Policy`, goes on the link in render snapshots (an engine
+    /// attribute), where the renderer takes it for the sheet's own requests.
+    pub fn set_stylesheet_response(&self, link: NodeId, url: &str, text: &str, policy: Option<&str>) {
+        self.dom.borrow_mut().set_sheet_policy(link, policy);
+        // (Its tainting goes with its text to the renderer, `Dom::sheet_key`.)
+        let opaque = !self.sheet_response(link).origin_clean;
+        self.dom.borrow_mut().set_sheet_tainting(link, opaque);
+        let mut layout = self.layout.borrow_mut();
+        layout.style_mut().set_sheet_url(link, Some(url));
+        layout.style_mut().set_sheet_text(link, text);
     }
     pub fn current_script(&self) -> Option<NodeId> {
         self.current_script.get()
@@ -2043,6 +2250,9 @@ impl PageDom {
             self.connected_iframes.borrow_mut().clear();
         }
     }
+    pub fn hooks_secure_context(&self) -> Option<bool> {
+        self.hooks().and_then(|h| h.is_secure_context())
+    }
     pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()
     }
@@ -2295,6 +2505,10 @@ impl PageDom {
     pub(crate) fn set_hidden(&self, hidden: bool) {
         self.hidden.set(hidden);
     }
+    /// Marks the document as unloading; false when it already was.
+    pub(crate) fn start_unloading(&self) -> bool {
+        !self.unloading.replace(true)
+    }
 
     /// The document's Navigation Timing marks so far.
     pub fn timing(&self) -> DocumentTiming {
@@ -2367,6 +2581,95 @@ impl PageDom {
         }
     }
 
+    /// pyro: adds what the completed request for `url` in CORS state `cors` gave to the list of
+    /// available images (HTML "update the image data": a successful load), replacing an older
+    /// entry for it. The bytes are kept within a budget of their own.
+    pub fn remember_available_image(&self, url: &str, cors: u8, image: AvailableImage) {
+        let mut list = self.available_images.borrow_mut();
+        list.retain(|(key, existing)| {
+            key.0 != url || key.1 != cors || existing.request_referrer.is_some() != image.request_referrer.is_some()
+        });
+        list.push(((url.to_owned(), cors), image));
+        if list.len() > MAX_AVAILABLE_IMAGES {
+            list.remove(0);
+        }
+        // Over the byte budget: the oldest entries keep their sizes, not their bytes.
+        let mut total = 0;
+        for (_, entry) in list.iter_mut().rev() {
+            if let Some((bytes, _)) = &entry.bytes {
+                total += bytes.bytes().len();
+                if total > MAX_AVAILABLE_IMAGE_BYTES {
+                    entry.bytes = None;
+                }
+            }
+        }
+    }
+
+    /// pyro: the URLs in the list of available images (any CORS state).
+    pub fn available_image_urls(&self) -> Vec<String> {
+        self.available_images.borrow().iter().map(|((url, _), _)| url.clone()).collect()
+    }
+
+    /// pyro: the list of available images' entry for `url` in CORS state `cors`.
+    pub fn available_image(&self, url: &str, cors: u8) -> Option<AvailableImage> {
+        let list = self.available_images.borrow();
+        list.iter().rev().find(|(key, _)| key.0 == url && key.1 == cors).map(|(_, image)| image.clone())
+    }
+
+    pub fn available_html_image(&self, url: &str, cors: u8, policy: pyro_net::ReferrerPolicy, source: Option<pyro_net::Url>) -> Option<AvailableImage> {
+        let chain = pyro_net::referrer::ReferrerChain::new(source, policy);
+        let referer = chain.header(&pyro_net::Url::parse(url).ok()?);
+        let identity = (policy, chain.referrer, referer);
+        self.available_images.borrow().iter().rev()
+            .find(|(key, image)| key.0 == url && key.1 == cors && image.request_referrer.as_ref() == Some(&identity))
+            .map(|(_, image)| image.clone())
+    }
+
+    /// pyro: HTML "update the image data" step 7, done when the image's state is asked for before
+    /// the embedder saw its new source: an `<img>` whose `src` (no `srcset`, not in a `<picture>`)
+    /// is in the list of available images is completely available at once, with its natural
+    /// size and (for a canvas) its bytes. Whether it was.
+    pub(crate) fn adopt_available_image(&self, el: NodeId) -> bool {
+        let (src, url, cors) = {
+            let dom = self.dom.borrow();
+            let Ok(Some(src)) = dom.get_attribute(el, "src") else { return false };
+            if src.trim().is_empty() || dom.get_attribute(el, "srcset").ok().flatten().is_some() {
+                return false;
+            }
+            let in_picture = dom
+                .parent(el)
+                .ok()
+                .flatten()
+                .and_then(|p| dom.element(p).ok().map(|e| e.is_html() && &*e.name.local == "picture"))
+                .unwrap_or(false);
+            if in_picture {
+                return false;
+            }
+            let cors = match dom.get_attribute(el, "crossorigin").ok().flatten() {
+                None => 0,
+                Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+                Some(_) => 1,
+            };
+            (src.to_owned(), crate::html::resolve_url(&dom, el, src.trim()), cors)
+        };
+        if self.images.borrow().get(&el).is_some_and(|(loading, _, _)| *loading == src) {
+            return false;
+        }
+        let policy = pyro_net::ReferrerPolicy::from_attribute(self.dom.borrow().get_attribute(el, "referrerpolicy").ok().flatten())
+            .unwrap_or_else(|| self.referrer_policy());
+        let Some(image) = self.available_html_image(&url, cors, policy, self.document_url_parsed()) else { return false };
+        self.set_image_state(el, Some(&src), false);
+        {
+            let mut dom = self.dom.borrow_mut();
+            dom.set_natural_size(el, image.natural);
+            dom.set_reported_natural_size(el, image.reported);
+        }
+        if let Some((bytes, clean)) = image.bytes {
+            self.set_image_bytes(el, bytes.bytes().clone(), clean);
+        }
+        true
+    }
+
     /// Whether loaded images' bytes should be kept for canvas use
     /// ([`PageDom::set_image_bytes`]): the document has a `<canvas>`, or a
     /// canvas API was used. A flag test for pages without canvases.
@@ -2379,7 +2682,8 @@ impl PageDom {
     /// first use). `clean`: the response was same-origin (or CORS), so its
     /// pixels may be read back. At most [`MAX_IMAGE_BYTES_KEPT`] are kept
     /// per document; images past that draw nothing.
-    pub fn set_image_bytes(&self, el: NodeId, bytes: Vec<u8>, clean: bool) {
+    pub fn set_image_bytes(&self, el: NodeId, bytes: impl Into<std::sync::Arc<Vec<u8>>>, clean: bool) {
+        let bytes = bytes.into();
         self.forget_image_bytes(el);
         let mut map = self.image_bytes.borrow_mut();
         if self.image_bytes_kept.get().0 + bytes.len() > MAX_IMAGE_BYTES_KEPT {
@@ -2404,9 +2708,10 @@ impl PageDom {
                 return;
             }
         }
+        let Some(bytes) = self.retain_image_source(bytes) else { return };
         let (encoded, decoded) = self.image_bytes_kept.get();
-        self.image_bytes_kept.set((encoded + bytes.len(), decoded));
-        if let Some(old) = map.insert(el, ImageBytes { bytes, clean, decoded: None }) {
+        self.image_bytes_kept.set((encoded + bytes.bytes().len(), decoded));
+        if let Some(old) = map.insert(el, ImageBytes { bytes, clean, decoded: None, decoded_oriented: false }) {
             self.uncount_image_bytes(&old);
         }
     }
@@ -2419,6 +2724,14 @@ impl PageDom {
                 }
             }
         }
+    }
+
+    pub fn retain_image_source(&self, bytes: std::sync::Arc<Vec<u8>>) -> Option<std::sync::Arc<pyro_raster::SourceLease>> {
+        self.raster_budget()?.retain_source(bytes).ok()
+    }
+
+    pub(crate) fn raster_budget(&self) -> Option<pyro_raster::PageRasters> {
+        Some(self.dom.try_borrow().ok()?.document_data(self.document()).ok()?.raster_budget.clone())
     }
 
     fn uncount_image_bytes(&self, entry: &ImageBytes) {
@@ -2438,18 +2751,32 @@ impl PageDom {
     /// decoded images fit [`MAX_IMAGE_DECODED_KEPT`]. `None`: no bytes were
     /// kept, they do not decode (SVG included), or the process has no room
     /// for the pixels.
-    pub(crate) fn image_pixmap(&self, el: NodeId) -> Option<(pyro_canvas::Bitmap, bool)> {
+    /// pyro: with `from_image`, or for an opaque (not clean) image, the pixels turned as its EXIF
+    /// orientation says (CSS Images 3 § 5.1: `image-orientation: none` is ignored for an opaque
+    /// image).
+    /// pyro: whether the loaded `<img>` `el` shows an SVG image (its canvas bitmap may be smaller
+    /// than its natural size: `pyro_canvas::codec::is_svg`).
+    pub(crate) fn image_is_svg(&self, el: NodeId) -> bool {
+        self.image_bytes.borrow().get(&el).is_some_and(|entry| pyro_canvas::codec::is_svg(entry.bytes.bytes()))
+    }
+
+    pub(crate) fn image_pixmap(&self, el: NodeId, from_image: bool) -> Option<(pyro_canvas::Bitmap, bool)> {
         let mut map = self.image_bytes.borrow_mut();
         let entry = map.get_mut(&el)?;
+        let oriented = from_image || !entry.clean;
         if let Some(decoded) = &entry.decoded {
-            return decoded.clone().map(|b| (b, entry.clean));
+            if entry.decoded_oriented == oriented {
+                return decoded.clone().map(|b| (b, entry.clean));
+            }
+            // The other orientation: decoded again in place of it.
+            let (encoded, kept) = self.image_bytes_kept.get();
+            let old = decoded.as_ref().map_or(0, |b| b.byte_len());
+            self.image_bytes_kept.set((encoded, kept.saturating_sub(old)));
+            entry.decoded = None;
         }
-        let Some(pixmap) = pyro_canvas::codec::decode(&entry.bytes) else {
-            entry.decoded = Some(None);
-            return None;
-        };
-        // Over the process's bitmap budget: nothing drawn now, not cached.
-        let bitmap = pyro_canvas::Bitmap::new(pixmap)?;
+        entry.decoded_oriented = oriented;
+        let budget = self.raster_budget()?;
+        let bitmap = pyro_canvas::codec::decode_bitmap(entry.bytes.bytes(), oriented, &budget)?;
         let (encoded, decoded) = self.image_bytes_kept.get();
         if decoded + bitmap.byte_len() <= MAX_IMAGE_DECODED_KEPT {
             self.image_bytes_kept.set((encoded, decoded + bitmap.byte_len()));
@@ -2463,12 +2790,14 @@ impl PageDom {
     pub(crate) fn image_complete(&self, el: NodeId) -> bool {
         let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
         let Some(src) = src else { return true };
-        match self.images.borrow().get(&el) {
-            Some((loading, pending, _)) if *loading == src => !pending,
-
+        let complete = match self.images.borrow().get(&el) {
+            Some((loading, pending, _)) if *loading == src => Some(!pending),
             // Empty or unresolvable sources are complete (broken).
-            _ => src.trim().is_empty(),
-        }
+            _ if src.trim().is_empty() => Some(true),
+            _ => None,
+        };
+        // pyro: a source the embedder has not seen yet: complete when it is an available image.
+        complete.unwrap_or_else(|| self.adopt_available_image(el))
     }
     pub(crate) fn hovered(&self) -> Option<NodeId> {
         self.hovered.get().filter(|&h| self.dom.borrow().is_alive(h))
@@ -2710,6 +3039,7 @@ impl PageDom {
     /// (`pyro_dom::layout::SubresourceLoader`): set by the embedder before
     /// anything lays the document out.
     pub fn set_subresource_loader(&self, loader: std::sync::Arc<dyn pyro_dom::layout::SubresourceLoader>) {
+        self.dom.borrow_mut().set_layout_client(self.document(), loader.document(), loader.bodies());
         self.layout.borrow().set_subresource_loader(loader);
     }
 
@@ -2719,11 +3049,38 @@ impl PageDom {
     }
 }
 
+/// pyro: see [`PageDom::set_sheet_response`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SheetResponse {
+    pub(crate) generation: u64,
+    pub(crate) origin_clean: bool,
+}
+
 impl PageDom {
     /// A sheet a `<style>` imported loaded: `CSSImportRule.styleSheet` lists
-    /// its rules. `url` is the absolute URL the rule names (and, after a
-    /// redirect, the final one too).
-    pub fn provide_imported_sheet(&self, url: &str, text: &str) {
-        self.imported_sheets.borrow_mut().insert(url.to_owned(), text.to_owned());
+    /// its rules. pyro: `key` is the import's request (`pyro_dom::cssom::import_key`: the absolute
+    /// URL the rule names and its request URL modifiers; a request with other modifiers, which may
+    /// have failed its CORS or integrity check, is another), `final_url` the sheet's URL after
+    /// redirects, which its own URLs resolve against.
+    /// `opaque`: the response was CORS-cross-origin, so the sheet is not origin-clean.
+    pub fn provide_imported_sheet(&self, key: &str, final_url: &str, text: &str, opaque: bool) {
+        self.imported_sheets.borrow_mut().insert(key.to_owned(), (final_url.to_owned(), text.to_owned(), opaque));
+    }
+
+    /// pyro: the style sheet of `node` (a `<link>`) is now a new response's (CSSOM: a new sheet
+    /// object; the old one's rule lists are detached), origin-clean or not (its response was
+    /// CORS-cross-origin, or a network error's).
+    pub fn set_sheet_response(&self, node: NodeId, origin_clean: bool) {
+        let mut responses = self.sheet_responses.borrow_mut();
+        let generation = responses.get(&node).map_or(1, |r| r.generation + 1);
+        responses.insert(node, SheetResponse { generation, origin_clean });
+        drop(responses);
+        // pyro: the link's new sheet object starts enabled (CSSOM; Chrome).
+        crate::css::new_link_sheet(self, node);
+    }
+
+    /// pyro: the response `node`'s sheet is of now (a `<style>`'s: generation 0, origin-clean).
+    pub(crate) fn sheet_response(&self, node: NodeId) -> SheetResponse {
+        self.sheet_responses.borrow().get(&node).copied().unwrap_or(SheetResponse { generation: 0, origin_clean: true })
     }
 }

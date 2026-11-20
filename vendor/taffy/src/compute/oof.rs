@@ -355,6 +355,7 @@ impl OofAxis {
 /// claimed by the final root positioning pass in [`compute_root_layout`](crate::compute_root_layout).
 pub fn compute_oof_layout(tree: &mut impl LayoutContainingBlock, node_id: NodeId, output: &mut LayoutOutput) {
     let Some(area) = output.oof_positioning_area else { return };
+    tree.clear_anchor_geometry_dependencies(node_id);
     if output.oof_candidates.is_empty() {
         tree.clear_hoisted_children(node_id);
         return;
@@ -463,6 +464,7 @@ fn compute_oof_layout_for_area_with_origin(
         reversed,
         &mut hoisted,
         &mut unclaimed,
+        false,
     );
 
     #[cfg(feature = "content_size")]
@@ -507,6 +509,7 @@ pub(crate) struct OofBoxLayout {
 pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     tree: &mut Tree,
     candidate: OofCandidate,
+    anchor_container: Option<NodeId>,
     area_size: Size<f32>,
     area_offset: Point<f32>,
     direction: Direction,
@@ -514,6 +517,45 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     #[cfg(feature = "grid")] grid_owner: Option<NodeId>,
     before_layout: impl FnOnce(&mut Tree, &LayoutInput),
 ) -> OofBoxLayout {
+    let (indices, count, order) = tree.position_try_options(candidate.node);
+    let mut best = None;
+    let selected = (count != 0).then(|| tree.selected_option_this_flush(candidate.node)).flatten();
+    if let Some(selected) = selected {
+        tree.set_position_try_option(candidate.node, selected);
+    } else if count != 0 {
+        const MAX_VALID_FALLBACKS: usize = 5;
+        let mut trials = 0;
+        let options = &indices[..count];
+        let preferred = anchor_container.and_then(|container| tree.preferred_scroll_option(candidate.node, container)).filter(|index| options.contains(index) && order.is_none());
+        for option in preferred.map(Some).into_iter().chain(core::iter::once(None)).chain(options.iter().copied().filter(|index| Some(*index) != preferred).map(Some)) {
+            if option.is_some() && trials == MAX_VALID_FALLBACKS { break; }
+            if (option.is_some() || preferred.is_some()) && !tree.set_position_try_option(candidate.node, option) { continue; }
+            trials += usize::from(option.is_some());
+            let Err((fits, space)) = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
+                #[cfg(feature = "grid")] grid_owner, true, |_,_| {}) else { unreachable!() };
+            let score = if order == Some(true) { space.width } else { space.height };
+            if fits && best.is_none_or(|(_, old)| score > old) {
+                best = Some((option,score));
+                if order.is_none() { break; }
+            }
+        }
+        let chosen = best.map_or(preferred, |(option,_)| option);
+        if order.is_some() || best.is_none() { tree.set_position_try_option(candidate.node, chosen); }
+        tree.record_fitting_option(candidate.node, chosen);
+    }
+    let result = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
+        #[cfg(feature = "grid")] grid_owner, false, before_layout).ok().unwrap();
+    if count != 0 { tree.set_position_try_option(candidate.node, None); }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn solve_oof_box<Tree: LayoutContainingBlock>(
+    tree: &mut Tree, candidate: OofCandidate, anchor_container: Option<NodeId>, area_size: Size<f32>, area_offset: Point<f32>,
+    direction: Direction, container_overflow: Point<Overflow>, #[cfg(feature = "grid")] grid_owner: Option<NodeId>,
+    trial: bool, before_layout: impl FnOnce(&mut Tree, &LayoutInput),
+) -> Result<OofBoxLayout, (bool, Size<f32>)> {
+    let anchor_container = anchor_container.filter(|_| tree.uses_anchor_queries(candidate.node));
     let child_style = tree.get_oof_item_style(candidate.node);
 
     // If the current node is a grid container then the box is positioned relative to the
@@ -541,12 +583,22 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
         }
         _ => (area_size, area_offset),
     };
+    let anchor_area = anchor_container.and_then(|container| tree.oof_anchor_area(candidate.node, container, area_size, area_offset, trial));
+    let anchor_center = anchor_container.map(|container| tree.oof_anchor_center(candidate.node, container));
+    let (area_size, area_offset) = anchor_area.map_or((area_size, area_offset), |(size, offset, _)| (size, offset));
     let area_width = area_size.width;
     let area_height = area_size.height;
 
     let aspect_ratio = child_style.aspect_ratio();
-    let margin =
+    let sizes = anchor_container.and_then(|container| tree.oof_anchor_sizes(candidate.node, container, area_size));
+    let mut margin =
         child_style.margin().map(|margin| margin.resolve_to_option(area_width, |val, basis| tree.calc(val, basis)));
+    if let Some((_, anchors)) = sizes {
+        margin.left = anchors.left.or(margin.left);
+        margin.right = anchors.right.or(margin.right);
+        margin.top = anchors.top.or(margin.top);
+        margin.bottom = anchors.bottom.or(margin.bottom);
+    }
     let padding = child_style.padding().resolve_or_zero(Some(area_width), |val, basis| tree.calc(val, basis));
     let border = child_style.border().resolve_or_zero(Some(area_width), |val, basis| tree.calc(val, basis));
     let padding_border_sum = (padding + border).sum_axes();
@@ -558,24 +610,37 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     let right = child_style.inset().right.maybe_resolve(area_width, |val, basis| tree.calc(val, basis));
     let top = child_style.inset().top.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
     let bottom = child_style.inset().bottom.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
+    let insets = anchor_container.map(|container| tree.oof_anchor_insets(candidate.node, container, area_size, area_offset));
+    let left = insets.and_then(|rect| rect.left).or(left);
+    let right = insets.and_then(|rect| rect.right).or(right);
+    let top = insets.and_then(|rect| rect.top).or(top);
+    let bottom = insets.and_then(|rect| rect.bottom).or(bottom);
 
     // Compute known dimensions from min/max/inherent size styles
-    let size_style = child_style.size();
+    let mut size_style = child_style.size();
+    let mut minimum = child_style.min_size();
+    let mut maximum = child_style.max_size();
+    if let Some(([preferred, min, max], _)) = sizes {
+        if let Some(value) = preferred.width { size_style.width = crate::Dimension::length(value); }
+        if let Some(value) = preferred.height { size_style.height = crate::Dimension::length(value); }
+        if let Some(value) = min.width { minimum.width = crate::LengthPercentageAuto::length(value); }
+        if let Some(value) = min.height { minimum.height = crate::LengthPercentageAuto::length(value); }
+        if let Some(value) = max.width { maximum.width = crate::LengthPercentageAuto::length(value); }
+        if let Some(value) = max.height { maximum.height = crate::LengthPercentageAuto::length(value); }
+    }
     let style_size = size_style
         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
     // pyro: `min-width`/`min-height` are `auto` (the automatic minimum of a box with a preferred aspect ratio)
-    let min_is_auto = child_style.min_size().map(|min| min.is_auto());
-    let mut min_size = child_style
-        .min_size()
+    let min_is_auto = minimum.map(|min| min.is_auto());
+    let mut min_size = minimum
         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment)
         .or(padding_border_sum.map(Some))
         .maybe_max(padding_border_sum);
-    let mut max_size = child_style
-        .max_size()
+    let mut max_size = maximum
         .maybe_resolve(area_size, |val, basis| tree.calc(val, basis))
         .maybe_apply_aspect_ratio(aspect_ratio)
         .maybe_add(box_sizing_adjustment);
@@ -593,8 +658,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
         child_style.justify_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, true);
     let align_self =
         child_style.align_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, false);
+    let justify_self = anchor_area.filter(|_| justify_self == AlignSelf::NORMAL).map_or(justify_self, |area| area.2.x);
+    let align_self = anchor_area.filter(|_| align_self == AlignSelf::NORMAL).map_or(align_self, |area| area.2.y);
     let overflow = child_style.overflow();
-    let scrollbar_width = child_style.scrollbar_width();
+    let scrollbar_gutter_size = child_style.scrollbar_gutter_size();
     #[cfg(feature = "content_size")]
     let contain = child_style.contain();
 
@@ -602,7 +669,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
 
     // Static positions are relative to the containing block's border box: make them relative to
     // the inset-resolution area
-    let static_position = if tree.static_position_is_containing_block(candidate.node) {
+    let static_position = if anchor_area.is_some() || tree.static_position_is_containing_block(candidate.node) {
         // pyro: the whole area (a box in the top layer)
         Point {
             x: AxisStaticPosition::from_alignment(justify_self, Line { start: 0.0, end: area_width }, direction.is_rtl()),
@@ -864,6 +931,24 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     }
     .maybe_clamp(min_size, max_size);
 
+    if trial || tree.checks_position_overflow(candidate.node) {
+        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(candidate.node, container));
+        let visual_axis = |mut axis: OofAxis, delta: f32, anchored_start: bool, anchored_end: bool| {
+            if anchored_start { axis.inset.start = axis.inset.start.map(|start| start - delta); }
+            if anchored_end { axis.inset.end = axis.inset.end.map(|end| end + delta); }
+            axis
+        };
+        let horizontal = visual_axis(horizontal, shift.x, insets.is_some_and(|r| r.left.is_some()), insets.is_some_and(|r| r.right.is_some()));
+        let vertical = visual_axis(vertical, shift.y, insets.is_some_and(|r| r.top.is_some()), insets.is_some_and(|r| r.bottom.is_some()));
+        let fits_axis = |axis: OofAxis, extent| extent <= axis.stretch_fit_size()
+            && axis.inset.start.unwrap_or_default() + axis.inset.end.unwrap_or_default() <= axis.cb_size;
+        let fits = fits_axis(horizontal, final_size.width) && fits_axis(vertical, final_size.height);
+        if trial {
+            let space = Size { width: horizontal.inset_modified_containing_block_size(), height: vertical.inset_modified_containing_block_size() };
+            return Err((fits, space));
+        }
+        tree.set_position_overflow(candidate.node, !fits);
+    }
     let layout_input = LayoutInput {
         known_dimensions: final_size.map(Some),
         known_dimensions_are_definite: Size { width: true, height: height_is_definite },
@@ -888,17 +973,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     };
 
     // Align the margin box within the IMCB <https://www.w3.org/TR/css-position-3/#abspos-alignment>
-    let location = Point {
+    let mut location = Point {
         x: horizontal.position(final_size.width, horizontal_margin) + area_offset.x,
         y: vertical.position(final_size.height, vertical_margin) + area_offset.y,
     };
+    let centered = |center: f32, extent: f32, axis: &OofAxis, offset: f32, margin: Line<f32>| {
+        let low = offset + axis.inset.start.unwrap_or(0.) + margin.start;
+        let high = offset + axis.cb_size - axis.inset.end.unwrap_or(0.) - margin.end - extent;
+        let value = center - (extent + margin.end - margin.start) * 0.5;
+        if axis.safety == AlignmentSafety::Unsafe { value }
+        else if high < low && axis.safety == AlignmentSafety::Default {
+            axis.position(extent,margin) + offset
+        } else { value.min(high).max(low) }
+    };
+    if let Some(center) = anchor_center {
+        if let Some(x) = center.x { location.x = centered(x,final_size.width,&horizontal,area_offset.x,horizontal_margin); }
+        if let Some(y) = center.y { location.y = centered(y,final_size.height,&vertical,area_offset.y,vertical_margin); }
+    }
 
     // Note: axis intentionally switched here as scrollbars take up space in the opposite axis
     // to the axis in which scrolling is enabled.
-    let scrollbar_size = Size {
-        width: if overflow.y == Overflow::Scroll { scrollbar_width } else { 0.0 },
-        height: if overflow.x == Overflow::Scroll { scrollbar_width } else { 0.0 },
-    };
+    let scrollbar_size = scrollbar_gutter_size;
 
     let layout = Layout {
         order: candidate.order,
@@ -913,14 +1008,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     };
     tree.set_unrounded_layout(candidate.node, &layout);
 
-    OofBoxLayout {
+    Ok(OofBoxLayout {
         layout,
         surfaced: layout_output.oof_candidates.take(),
         #[cfg(feature = "content_size")]
         overflow,
         #[cfg(feature = "content_size")]
         contain,
-    }
+    })
 }
 
 /// Perform final layout on the out-of-flow candidates for which the current node is the
@@ -958,7 +1053,24 @@ pub(crate) fn perform_oof_layout(
     #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
     hoisted: &mut Vec<NodeId>,
     unclaimed: &mut OofCandidates,
+    initial_containing_block: bool,
 ) -> Rect<f32> {
+    // pyro: a fixed box in the top layer has the initial containing block, whatever its
+    // ancestors claim (css-position-4 § 3.2): only the root pass lays it out.
+    fn claimed(
+        tree: &impl LayoutContainingBlock,
+        node_id: NodeId,
+        claims: ContainingBlockClaims,
+        initial_containing_block: bool,
+        candidate: &OofCandidate,
+    ) -> bool {
+        candidate.containing_block.is_some()
+            || (claims.for_position(candidate.position)
+                && (initial_containing_block || !tree.containing_block_passes_over(node_id, candidate.node))
+                && (initial_containing_block
+                    || candidate.position != crate::Position::Fixed
+                    || !tree.static_position_is_containing_block(candidate.node)))
+    }
     #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
     let mut absolute_overflow_rect = Rect::ZERO;
     #[cfg(feature = "content_size")]
@@ -986,7 +1098,7 @@ pub(crate) fn perform_oof_layout(
     let mut worklist: Vec<OofCandidate> = Vec::new();
     for candidate in candidates {
         // pyro: a candidate with a containing block of its own is laid out here.
-        if candidate.containing_block.is_some() || claims.for_position(candidate.position) {
+        if claimed(&*tree, node_id, claims, initial_containing_block, candidate) {
             worklist.push(*candidate);
         } else {
             unclaimed.push(*candidate);
@@ -1015,6 +1127,7 @@ pub(crate) fn perform_oof_layout(
             layout_oof_box(
                 tree,
                 candidate,
+                Some(node_id),
                 box_area_size,
                 box_area_offset,
                 direction,
@@ -1033,7 +1146,7 @@ pub(crate) fn perform_oof_layout(
         if !surfaced.is_empty() {
             surfaced.translate(location);
             for surfaced_candidate in surfaced.iter() {
-                if surfaced_candidate.containing_block.is_some() || claims.for_position(surfaced_candidate.position) {
+                if claimed(&*tree, node_id, claims, initial_containing_block, surfaced_candidate) {
                     worklist.push(*surfaced_candidate);
                 } else {
                     unclaimed.push(*surfaced_candidate);

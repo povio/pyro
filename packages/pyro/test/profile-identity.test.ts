@@ -188,10 +188,11 @@ test("what layout, screenshots and PDFs load for a profile's pages goes through 
       await lp.profile('assets', { url: `http://site.test${dir}assets-page`, userAgent: agent, proxyServer: `http://127.0.0.1:${proxyPort}` });
       await using page = await lp.page({ as: 'assets' });
       await layOutUntil(page, ['bg.png', 'imported.css', 'imported-bg.png', 'font.ttf', 'img.png'].map((name) => dir + name));
-      // A screenshot loads what it paints again (nothing is stored).
+      // A screenshot paints the images the document's layout loaded, without loading them again (as Chrome:
+      // Chrome 158 makes no second request for a page's CSS background when Page.captureScreenshot paints it).
       const before = requests(`${dir}bg.png `).length;
       expect((await page.send('Page.captureScreenshot', {})).data.length).toBeGreaterThan(0);
-      expect(requests(`${dir}bg.png `).length).toBeGreaterThan(before);
+      expect(requests(`${dir}bg.png `).length).toBe(before);
       // A PDF of a document nothing laid out yet: its layout loads what it prints first.
       await page.run([goto(`http://site.test${dir}pdf-assets-page`)]);
       expect((await page.send('Page.printToPDF', {})).data.length).toBeGreaterThan(0);

@@ -186,6 +186,27 @@ impl Itemizer<'_> {
                 // both be marked as being `Latin`). At that point, `Itemizer` would probably like
                 // to have reusable scratch for the bracket stack.
                 script = self.current_script;
+                // pyro: a segment (a new bidi level) that starts with characters of no script
+                // of their own takes the script their `Script_Extensions` name when they cannot
+                // be of the inherited one: a no-break space with Arabic marks after Latin text
+                // shapes as Arabic, as in ICU-based browsers, so the font's Arabic mark
+                // positioning places them (WPT css-text `shaping-arabic-diacritics-002`).
+                if item_char_len == 0 {
+                    let extensions = icu_properties::script::ScriptWithExtensions::new();
+                    let ahead = self.char_indices.clone().map(|(_, ch)| ch).zip(self.char_info.iter());
+                    for (ch, info) in ahead {
+                        if real_script(kana(info.script)) {
+                            break;
+                        }
+                        if extensions.has_script(ch, self.current_script) {
+                            break;
+                        }
+                        if let Some(named) = extensions.get_script_extensions_val(ch).iter().find(|&s| real_script(s)) {
+                            script = kana(named);
+                            break;
+                        }
+                    }
+                }
             }
 
             // First iteration of the loop, initialize item properties.

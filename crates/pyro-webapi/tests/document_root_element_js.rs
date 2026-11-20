@@ -37,7 +37,7 @@ impl JsClass for TestWindow {
 
 struct Env {
     #[allow(dead_code)]
-    engine: Engine,
+    engine: Rc<Engine>,
     #[allow(dead_code)]
     page: Rc<PageDom>,
     main: Realm,
@@ -53,8 +53,12 @@ impl pyro_render::Fetcher for NoFetch {
 
 fn env(html: &str) -> Env {
     pyro_layout::install(std::sync::Arc::new(NoFetch));
-    let engine = Engine::new().expect("engine");
+    let engine = Rc::new(Engine::new().expect("engine"));
     register(&engine);
+    realm_env(engine, html)
+}
+
+fn realm_env(engine: Rc<Engine>, html: &str) -> Env {
     let window_class = engine.register::<TestWindow>();
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
     dom.borrow_mut().set_resource_tracking(true);
@@ -163,4 +167,151 @@ fn xhtml_template_contents_are_reachable_through_content() {
             "{ns:?}"
         );
     }
+}
+
+#[test]
+fn view_transition_selector_class_budget() {
+    let environment = env("<!doctype html><body>");
+    assert_eq!(eval(&environment.main, r#"(() => {
+        const accepts = arg => CSS.supports(`selector(::view-transition-group(${arg}))`);
+        return [accepts('*'), accepts('\\*'), accepts('*.tile'), accepts('*. tile'),
+                accepts('*' + '.tile'.repeat(32)), accepts('*' + '.tile'.repeat(33))].join();
+    })()"#), "true,true,true,false,true,false");
+}
+
+#[test]
+fn view_transition_keyframe_effect_named_pseudo() {
+    let environment = env("<!doctype html><body>");
+    assert_eq!(eval(&environment.main, r#"(() => {
+        const effect = new KeyframeEffect(document.body, [], {pseudoElement:'::view-transition-old(fruit)'});
+        try { effect.pseudoElement = '::view-transition-old(a b)'; return 'accepted'; } catch (error) { return effect.pseudoElement + ':' + error.name; }
+    })()"#), "::view-transition-old(fruit):SyntaxError");
+}
+
+struct Child(Rc<PageDom>);
+impl PageHooks for Child {
+    fn container(&self) -> FrameContainer { FrameContainer::Frame(self.0.clone(), self.0.document()) }
+    fn navigate(&self, _: NavigationRequest) {}
+    fn post_task(&self, _: Box<dyn FnOnce()>) {}
+}
+
+#[test]
+fn view_transition_capture_bytes_and_recording_work_shared_across_frame_realms() {
+    use pyro_dom::{geometry::TransitionBox, layout::{GeometrySource, ExternalBox, ExternalGeometry, Layout}};
+    struct Probe(RefCell<Vec<(u64, u64)>>);
+    impl GeometrySource for Probe {
+        fn sync(&self, _: &Dom, _: &Layout) {}
+        fn element_box(&self, _: u64) -> Option<ExternalBox> { None }
+        fn geometry(&self) -> Option<ExternalGeometry> { None }
+        fn document_size(&self) -> Option<(f64, f64)> { None }
+        fn has_sticky(&self) -> bool { false }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+        fn capture_transition(&self, key: u64, old: bool, pixels: u64, work: &mut u64) -> Option<Vec<TransitionBox>> {
+            assert!(old);
+            self.0.borrow_mut().push((pixels, *work));
+            *work -= 137;
+            Some(vec![TransitionBox { key, name: "root".into(), size: (3., 1.), transform: [0.; 6], ink: [0.; 4], rgba: Some(std::sync::Arc::new(vec![0; 12])) }])
+        }
+    }
+    let parent = env("<!doctype html><body></body>");
+    let child = realm_env(parent.engine.clone(), "<!doctype html><body></body>");
+    child.page.set_hooks(Some(Rc::new(Child(parent.page.clone()))));
+    let probe = Rc::new(Probe(RefCell::new(Vec::new())));
+    for frame in [&child, &parent] {
+        frame.page.layout.borrow_mut().set_geometry_source(Some(probe.clone()));
+        assert_eq!(eval(&frame.main, "let frame; globalThis.requestAnimationFrame = fn => {frame = fn}; globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {}; const start = () => {document.startViewTransition(() => new Promise(() => {})); frame()}; start(); 'ok'"), "ok");
+    }
+    let parent_prep = u64::from(parent.page.dom.borrow().slot_count()) + 1;
+    let child_prep = u64::from(child.page.dom.borrow().slot_count()) + 1;
+    assert_eq!(*probe.0.borrow(), vec![(3 << 22, (3 << 16) - child_prep), ((1 << 24) - 3, (1 << 18) - 137 - child_prep - parent_prep)]);
+    child.page.detach();
+    assert_eq!(eval(&parent.main, "start(); 'ok'"), "ok");
+    assert_eq!(probe.0.borrow()[2..], [(1 << 24, (1 << 18) - parent_prep)]);
+}
+
+#[test]
+fn view_transition_failed_capture_debit_precedes_viewport_sync() {
+    use pyro_dom::layout::{GeometrySource, ExternalBox, ExternalGeometry, Layout};
+    struct Failure(std::cell::Cell<u32>);
+    impl GeometrySource for Failure {
+        fn sync(&self, _: &Dom, _: &Layout) {}
+        fn element_box(&self, _: u64) -> Option<ExternalBox> { None }
+        fn geometry(&self) -> Option<ExternalGeometry> { None }
+        fn document_size(&self) -> Option<(f64, f64)> { None }
+        fn has_sticky(&self) -> bool { false }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+        fn capture_transition(&self, _: u64, _: bool, _: u64, work: &mut u64) -> Option<Vec<pyro_dom::geometry::TransitionBox>> {
+            self.0.update(|count| count + 1);
+            *work = 0;
+            None
+        }
+    }
+    let environment = env("<!doctype html><body></body>");
+    let probe = Rc::new(Failure(0.into()));
+    environment.page.layout.borrow_mut().set_geometry_source(Some(probe.clone()));
+    let layouts = Rc::new(std::cell::Cell::new(0));
+    environment.page.set_frame_viewport_source(Some(Rc::new({
+        let layouts = layouts.clone();
+        move || { layouts.update(|count| count + 1); None }
+    })));
+    assert_eq!(eval(&environment.main, "let pump; globalThis.requestAnimationFrame = fn => pump = fn; globalThis.setTimeout = () => 1; function start(){document.startViewTransition().ready.catch(()=>{}); pump()} start(); 'ok'"), "ok");
+    let baseline = layouts.get();
+    assert!(baseline > 0);
+    assert_eq!(eval(&environment.main, "for(let i=0;i<32;i++)start(); 'ok'"), "ok");
+    assert_eq!((probe.0.get(), layouts.get()), (1, baseline));
+}
+
+#[test]
+fn view_transition_wait_until_keeps_promise_not_frame_slots() {
+    let parent = env("<!doctype html><body></body>");
+    let child = realm_env(parent.engine.clone(), "<!doctype html><style>*::view-transition-group(*),*::view-transition-old(*),*::view-transition-new(*){animation:none}</style><body></body>");
+    child.page.set_hooks(Some(Rc::new(Child(parent.page.clone()))));
+    assert_eq!(eval(&child.main, r#"let frames=[],done=0,ready=0,held=[]; globalThis.requestAnimationFrame=fn=>frames.push(fn); globalThis.setTimeout=()=>1; globalThis.clearTimeout=()=>{};
+        function start(){let el=document.createElement('div');document.body.append(el);let t=el.startViewTransition();t.waitUntil(new Promise(()=>{}));t.ready.then(()=>++ready,()=>{});t.finished.then(()=>++done);held.push(t);return el.activeViewTransition===t}
+        Array.from({length:4},start).every(Boolean)"#), "true");
+    for _ in 0..4 { eval(&child.main, "frames.splice(0).forEach(fn=>fn())"); }
+    assert_eq!(eval(&child.main, "[ready,done,start()].join()"), "4,0,true");
+}
+
+#[test]
+fn view_transition_capture_slots_shared_across_frame_realms() {
+    let parent = env("<!doctype html><body></body>");
+    let child = realm_env(parent.engine.clone(), "<!doctype html><body></body>");
+    child.page.set_hooks(Some(Rc::new(Child(parent.page.clone()))));
+    for realm in [&parent.main, &child.main] {
+        eval(realm, "let pumps = 0; globalThis.requestAnimationFrame = () => ++pumps; globalThis.setTimeout = () => 1;");
+    }
+    assert_eq!(eval(&child.main, "let admitted = 0; for(let i=0;i<16;i++){let el=document.createElement('div'); document.body.appendChild(el); el.startViewTransition(); if(el.activeViewTransition) ++admitted;} [pumps,admitted].join()"), "1,4");
+    assert_eq!(eval(&parent.main, "document.startViewTransition(); [pumps, document.activeViewTransition !== null].join()"), "1,true");
+    child.page.detach();
+    assert_eq!(eval(&parent.main, "document.startViewTransition(); [pumps, document.activeViewTransition !== null].join()"), "1,true");
+}
+
+#[test]
+fn view_transition_capture_pump_coalesces_rapid_starts() {
+    let environment = env("<!doctype html><html><body></body></html>");
+    assert_eq!(eval(&environment.main, r#"let pumps = [], updates = 0; globalThis.requestAnimationFrame = fn => pumps.push(fn); globalThis.setTimeout = () => 1;
+        for (let index = 0; index < 1000; ++index) document.startViewTransition(() => ++updates);
+        const queued = pumps.length; pumps.shift()(); [queued, updates].join()"#), "1,1");
+}
+
+#[test]
+fn view_transition_document_element_shares_document_scope() {
+    let environment = env("<!doctype html><body></body>");
+    assert_eq!(eval(&environment.main, r#"globalThis.requestAnimationFrame = globalThis.setTimeout = () => 1;
+        let error; const first = document.startViewTransition(() => new Promise(() => {}));
+        first.ready.catch(reason => error = reason.name);
+        const root = document.documentElement, second = root.startViewTransition();
+        [document.activeViewTransition === second, root.activeViewTransition === second, second.transitionRoot === root].join()"#), "true,true,true");
+    assert_eq!(eval(&environment.main, "error"), "AbortError");
+}
+
+#[test]
+fn view_transition_active_scope_and_interface_identity() {
+    let environment = env("<!doctype html><html><body></body></html>");
+    eval(&environment.main, "globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = () => 1;");
+    assert_eq!(eval(&environment.main, "document.activeViewTransition === null && document.body.activeViewTransition === null"), "true");
+    assert_eq!(eval(&environment.main, "const transition = document.startViewTransition(); [transition instanceof ViewTransition, document.activeViewTransition === transition, document.body.activeViewTransition === null].join()"), "true,true,true");
+    assert_eq!(eval(&environment.main, "const pending = new Promise(() => {}); let accepted = 0; try { for (; accepted < 1025; ++accepted) transition.waitUntil(pending); } catch (error) { if (error.name !== 'QuotaExceededError') throw error; } accepted"), "1024");
+    assert_eq!(eval(&environment.main, "transition.skipTransition(); document.activeViewTransition === null"), "true");
 }

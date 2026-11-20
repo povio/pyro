@@ -236,6 +236,23 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "position-try" {
+        let mut parser = Parser::new(&prelude);
+        let ident = parser.expect_ident().ok()?.clone();
+        if !ident.starts_with("--") || parser.expect_exhausted().is_err() {
+            return None;
+        }
+        let mut text = String::from("@position-try ");
+        cssparser::serialize_identifier(&ident, &mut text).ok()?;
+        text.push_str(" { ");
+        let descriptors = crate::stylo::declarations::DeclarationBlock::position_try(&block?).css_text();
+        if !descriptors.is_empty() {
+            text.push_str(&descriptors);
+            text.push(' ');
+        }
+        text.push('}');
+        return Some(ParsedRule::Other { rule_type: 0, text });
+    }
     let rule_type = match lower.as_str() {
         "import" => 3,
         "font-face" => 5,
@@ -244,12 +261,24 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "namespace" => 10,
         "counter-style" => 11,
         "font-feature-values" => 14,
-        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope" | "position-try"
+        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope"
         | "view-transition" => 0,
         _ => return None,
     };
     if lower == "namespace" {
-        namespaces.push(parse_namespace(&prelude)?);
+        let (prefix, url) = parse_namespace(&prelude)?;
+        // CSSOM "serialize a CSS rule": `@namespace`, the prefix, `url()` with the URL as a
+        // string (an unterminated string keeps its closing quote: WPT css-namespaces `syntax-013`).
+        let mut text = String::from("@namespace ");
+        if !prefix.is_empty() {
+            cssparser::serialize_identifier(&prefix, &mut text).ok()?;
+            text.push(' ');
+        }
+        text.push_str("url(");
+        cssparser::serialize_string(&url, &mut text).ok()?;
+        text.push_str(");");
+        namespaces.push((prefix, url));
+        return Some(ParsedRule::Other { rule_type: 10, text });
     }
     // `@name prelude {block}`, without a second space when the prelude is empty.
     let prelude = collapse(&prelude);
@@ -330,6 +359,61 @@ pub fn stylesheet_utf8_bytes(text: &str) -> Vec<u8> {
 /// matter (the sheet is fetched whatever they say). Reads no further than
 /// the first other rule, so a sheet without imports costs a token or two.
 pub fn leading_imports(text: &str) -> Vec<String> {
+    leading_import_requests(text).into_iter().map(|import| import.url).collect()
+}
+
+/// pyro: an `@import`'s URL (as written) and the request URL modifiers of its `url()` (CSS
+/// Values 5 § 4.5.4), which its fetch honours.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportRequest {
+    pub url: String,
+    /// `cross-origin()`: `anonymous` or `use-credentials`.
+    pub cross_origin: Option<String>,
+    /// `integrity()`: the integrity metadata.
+    pub integrity: Option<String>,
+    /// `referrer-policy()`: the policy keyword.
+    pub referrer_policy: Option<String>,
+}
+
+impl ImportRequest {
+    /// Whether the import's request is made with other than the defaults.
+    pub fn is_modified(&self) -> bool {
+        self.cross_origin.is_some() || self.integrity.is_some() || self.referrer_policy.is_some()
+    }
+}
+
+/// pyro: the key of an import's request (its absolute URL and its modifiers): the sheet a request
+/// with other modifiers loaded (or failed to) is not this one's.
+/// pyro: the key of an imported sheet: its request (`import_key`) under the sheet object that
+/// imports it (`parent`: its owner node's identity for a top-level sheet, the parent import's own
+/// key for an imported one): two sheets importing the same request (whose responses may differ,
+/// their referrers do) have their own.
+pub fn imported_sheet_key(parent: &str, request: &str) -> String {
+    format!("{parent}\u{1}{request}")
+}
+
+/// pyro: the parent identity of a top-level sheet owned by `node` ([`imported_sheet_key`]).
+pub fn sheet_owner_identity(node: crate::NodeId) -> String {
+    format!("{node:?}")
+}
+
+pub fn import_key(url: &str, import: &ImportRequest) -> String {
+    if !import.is_modified() {
+        return url.to_owned();
+    }
+    format!(
+        "{url} cross-origin={:?} integrity={:?} referrer-policy={:?}",
+        import.cross_origin, import.integrity, import.referrer_policy
+    )
+}
+
+/// pyro: the request of an `@import` rule whose prelude (what follows `@import`) is `prelude`.
+pub fn import_request(prelude: &str) -> Option<ImportRequest> {
+    leading_import_requests(&format!("@import {prelude};")).into_iter().next()
+}
+
+/// [`leading_imports`] with each import's request URL modifiers.
+pub fn leading_import_requests(text: &str) -> Vec<ImportRequest> {
     let mut p = Parser::new(text);
     let mut urls = Vec::new();
     loop {
@@ -355,13 +439,39 @@ pub fn leading_imports(text: &str) -> Vec<String> {
 
 /// The rest of an `@import` rule: its URL, unless the rule is invalid (no
 /// URL, or a block) or its `supports()` condition fails.
-fn import_prelude(p: &mut Parser<'_>) -> Option<String> {
+fn import_prelude(p: &mut Parser<'_>) -> Option<ImportRequest> {
     let url = match p.next().cloned() {
         // The rule's end (its block is skipped by the next read).
         Err(_) | Ok(Token::Semicolon | Token::CurlyBracketBlock) => return None,
-        Ok(Token::UnquotedUrl(url) | Token::QuotedString(url)) => Some(url.to_string()),
+        Ok(Token::UnquotedUrl(url) | Token::QuotedString(url)) => Some(ImportRequest { url: url.to_string(), ..Default::default() }),
+        // pyro: `url(<string> <request-url-modifier>*)`; an invalid modifier makes the rule invalid.
         Ok(Token::Function(name)) if name.eq_ignore_ascii_case("url") => {
-            let url: Result<String, ParseError<()>> = p.parse_nested_block(|n| Ok(n.expect_string()?.to_string()));
+            let url: Result<ImportRequest, ParseError<()>> = p.parse_nested_block(|n| {
+                let mut import = ImportRequest { url: n.expect_string()?.to_string(), ..Default::default() };
+                while !n.is_exhausted() {
+                    let name = n.expect_function()?.clone();
+                    let value: String = n.parse_nested_block(|v| {
+                        let value = match v.next()?.clone() {
+                            Token::Ident(i) | Token::QuotedString(i) => i.to_string(),
+                            _ => return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(()) }),
+                        };
+                        Ok(value)
+                    })?;
+                    let slot = if name.eq_ignore_ascii_case("cross-origin") {
+                        &mut import.cross_origin
+                    } else if name.eq_ignore_ascii_case("integrity") {
+                        &mut import.integrity
+                    } else if name.eq_ignore_ascii_case("referrer-policy") {
+                        &mut import.referrer_policy
+                    } else {
+                        return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(()) });
+                    };
+                    if slot.replace(value).is_some() {
+                        return Err(ParseError { kind: cssparser::ParseErrorKind::Custom(()) });
+                    }
+                }
+                Ok(import)
+            });
             url.ok()
         }
         _ => None,
@@ -396,6 +506,32 @@ fn statement_ends(p: &mut Parser<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An `@import` whose `url()` has request URL modifiers is an import (CSS Values 5 § 4.5.4),
+    /// with them: the scanner dropped it, so CSSOM never had its sheet. An unknown or repeated
+    /// modifier makes the rule invalid.
+    #[test]
+    fn imports_keep_their_request_url_modifiers() {
+        let imports = leading_import_requests(
+            "@import url(\"a.css\" cross-origin(anonymous) integrity(\"sha256-x\") referrer-policy(no-referrer));\
+             @import url(\"b.css\" bogus(x));\
+             @import url(\"c.css\" integrity(\"x\") integrity(\"y\"));\
+             @import \"d.css\";",
+        );
+        assert_eq!(
+            imports,
+            vec![
+                ImportRequest {
+                    url: "a.css".into(),
+                    cross_origin: Some("anonymous".into()),
+                    integrity: Some("sha256-x".into()),
+                    referrer_policy: Some("no-referrer".into()),
+                },
+                ImportRequest { url: "d.css".into(), ..Default::default() },
+            ]
+        );
+        assert_eq!(leading_imports("@import url(\"a.css\" cross-origin(anonymous));"), vec!["a.css".to_owned()]);
+    }
 
     fn style(selector: &str, block: &str) -> ParsedRule {
         ParsedRule::Style { selector: selector.into(), block: block.into() }
@@ -517,7 +653,7 @@ mod tests {
         assert_eq!(ns, [("x".to_owned(), "a".to_owned())]);
         assert_eq!(
             rules,
-            [ParsedRule::Other { rule_type: 10, text: "@namespace x 'a';".into() }, style("[x|foo=\"\" i]", "")]
+            [ParsedRule::Other { rule_type: 10, text: "@namespace x url(\"a\");".into() }, style("[x|foo=\"\" i]", "")]
         );
     }
 }

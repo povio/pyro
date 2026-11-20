@@ -60,14 +60,14 @@ pub use self::background::{
 pub use self::basic_shape::FillRule;
 pub use self::border::{
     BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
-    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, BorderSpacing,
+    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, OutlineOffset, BorderSpacing,
     BoxDecorationBreak, FloatEdge, LineWidth,
 };
 pub use self::box_::{
     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
+    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
     PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
@@ -129,7 +129,7 @@ pub use self::text::{
 pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextIndent};
 pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
 pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
-pub use self::text::{TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
+pub use self::text::{TextAutospace, TextFit, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextSpacingTrim, TextUnderlinePosition};
 pub use self::text::{TextBoxEdge, TextBoxTrim};
 pub use self::text::{
     TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
@@ -141,7 +141,7 @@ pub use self::tree_counting::TreeCountingResult;
 #[cfg(feature = "gecko")]
 pub use self::ui::CursorImage;
 pub use self::ui::{
-    BoolInteger, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
+    BoolInteger, CaretShape, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
     ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
 };
 pub use super::specified::TextTransform;

@@ -51,6 +51,11 @@ impl ShapedClusterFlags {
     /// [`Whitespace`] class of the cluster's first character (3 bits).
     const WHITESPACE_SHIFT: u16 = 12;
     const WHITESPACE_MASK: u16 = 0b111 << Self::WHITESPACE_SHIFT;
+    const DISCRETIONARY_CONTINUATION: u16 = 1 << 15;
+
+    pub(crate) fn discretionary_continuation(self) -> Self {
+        Self(self.0 | Self::DISCRETIONARY_CONTINUATION)
+    }
 
     #[inline(always)]
     pub(crate) const fn new(glyph_len: u8) -> Self {
@@ -191,6 +196,11 @@ pub struct ShapedCluster {
 }
 
 impl ShapedCluster {
+    /// Whether this part follows a discretionary break inside the original shaping cluster.
+    pub fn is_discretionary_continuation(self) -> bool {
+        self.flags.0 & ShapedClusterFlags::DISCRETIONARY_CONTINUATION != 0
+    }
+
     /// The characters of this cluster, as a range into [`ShapedText::characters`](crate::ShapedText::characters).
     ///
     /// This is also the range of character positions in the source text (in the Unicode scalar
@@ -304,6 +314,9 @@ impl CharacterFlags {
     const PHRASE_FALLBACK: u16 = 1 << 12;
     /// pyro: the source character is U+2061, the strut parley commits for an empty inline box.
     const EMPTY_BOX_STRUT: u16 = 1 << 13;
+    /// pyro: the character is a virama that links consonants into a conjunct (`Indic_Conjunct_Break
+    /// = Linker`).
+    const LINKER: u16 = 1 << 14;
 
     #[inline(always)]
     pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
@@ -336,8 +349,20 @@ impl CharacterFlags {
                     Self::EMPTY_BOX_STRUT
                 } else {
                     0
+                }
+                | if matches!(source_char, '\u{94d}' | '\u{9cd}' | '\u{acd}' | '\u{b4d}' | '\u{c4d}' | '\u{d4d}') {
+                    Self::LINKER
+                } else {
+                    0
                 },
         )
+    }
+
+    /// pyro: whether the character is a virama that links consonants into a conjunct (Devanagari,
+    /// Bengali, Gujarati, Oriya, Telugu, Malayalam: `Indic_Conjunct_Break = Linker`).
+    #[inline(always)]
+    pub fn is_linker(self) -> bool {
+        self.0 & Self::LINKER != 0
     }
 
     /// pyro: these flags with [`Self::is_phrase_fallback`] set to `value`.

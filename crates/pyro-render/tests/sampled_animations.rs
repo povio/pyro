@@ -25,6 +25,8 @@ fn page(html: &str) -> (Snapshot, u64) {
     let tree = d
         .render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
         .unwrap();
+    // (The document's nonce, which its engine state is named with, as the frame table carries it.)
+    let nonce = d.frame_table(doc).nonce;
     let tree = Tree {
         nodes: tree
             .nodes
@@ -45,6 +47,7 @@ fn page(html: &str) -> (Snapshot, u64) {
         height: 100,
         device_scale_factor: 1.0,
         live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
+        frames: Arc::new(pyro_render::FrameTableData { nonce: nonce.clone(), entries: Default::default() }),
         ..Default::default()
     };
     (snap, key)
@@ -273,4 +276,118 @@ fn pseudo_element_effects_animate_the_pseudo_element() {
     assert_near(pixel(&img, 25, 25), [200, 0, 0], "::before at the end");
     let img = render(&mut r, &snap, Vec::new());
     assert_near(pixel(&img, 25, 25), [0, 200, 0], "no animation: the base value");
+}
+
+/// A CSS animation's `@keyframes` come from the tree scope of the declaration of `animation-name`
+/// that won the cascade: the document's `::part()` rule beats the shadow tree's own normal rule, so
+/// the document's `pulse` runs, though the shadow rule also declares something `!important` (its
+/// node in the important tier holds no important `animation-name`).
+#[test]
+fn keyframes_come_from_the_scope_of_the_winning_animation_name() {
+    let html = "<!doctype html><style>body{margin:0;background:#fff}\
+        @keyframes pulse{from,to{background-color:rgb(0,200,0)}}\
+        #host::part(target){width:100px;height:100px;animation-name:pulse;background-color:rgb(255,255,255)}</style>\
+        <div id=host><template shadowrootmode=open><style>\
+        @keyframes pulse{from,to{background-color:rgb(0,0,200)}}\
+        div{animation-name:pulse;color:red !important}</style><div part=target></div></template></div>";
+    // Declarative shadow roots (`<template shadowrootmode>`), as `Document.parseHTMLUnsafe`.
+    let dom: DomRef = Rc::new(RefCell::new(pyro_dom::Dom::new()));
+    let doc = pyro_dom::parse::parse_html_unsafe(&dom, html);
+    let d = dom.borrow();
+    let host = d.get_element_by_id(doc, "host").unwrap().unwrap();
+    let root = d.shadow_root(host).unwrap().expect("a shadow root");
+    let mut part = d.first_child(root).unwrap();
+    while let Some(n) = part.filter(|&n| d.get_attribute(n, "part").ok().flatten().is_none()) {
+        part = d.next_sibling(n).unwrap();
+    }
+    let key = render_key(part.expect("the shadow tree's part"));
+    let tree = d
+        .render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
+    // (The document's nonce, which its engine state is named with, as the frame table carries it.)
+    let nonce = d.frame_table(doc).nonce;
+    let tree = Tree {
+        nodes: tree
+            .nodes
+            .into_iter()
+            .map(|node| TreeNode {
+                key: node.key,
+                parent: node.parent,
+                kind: match node.kind {
+                    RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+                    RenderNodeKind::Text(text) => TreeKind::Text(text),
+                },
+            })
+            .collect(),
+    };
+    let snap = Snapshot {
+        base_url: "http://test/".into(),
+        width: 200,
+        height: 100,
+        device_scale_factor: 1.0,
+        live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
+        frames: Arc::new(pyro_render::FrameTableData { nonce: nonce.clone(), entries: Default::default() }),
+        ..Default::default()
+    };
+    let mut r = Renderer::new();
+    let img = render(&mut r, &snap, frame(key, vec![], vec![css("pulse", Some("linear"), 0.5)]));
+    assert_near(pixel(&img, 50, 50), [0, 200, 0], "the document's @keyframes pulse");
+}
+
+/// pyro: a frame scrolled past what it can reach places its scroll timelines at the offset it
+/// reaches, and a layout property they animate lays out there: scrolled to 1000px in a frame that
+/// reaches 200px, the view timeline of a box at 260..300px is part way through, not past its end:
+/// the box is as wide as when scrolled to 200px, not 200px (it was styled at the reachable offset
+/// but laid out at the other).
+#[test]
+fn a_frame_scrolled_past_its_reach_lays_out_its_timelines_at_the_reachable_offset() {
+    use blitz_dom::{ns, QualName};
+    use pyro_render::animation::TimelineDriven;
+    let frame_doc = FrameContent {
+        html: "<!doctype html><style>body{margin:0;background:#fff}\
+               @keyframes grow{from{width:0}to{width:200px}}\
+               #s{height:40px;width:200px;background:rgb(0,200,0);animation:grow linear both;animation-timeline:view()}</style>\
+               <div style='height:260px'></div><div id=s data-pyro-key=7></div>"
+            .into(),
+        url: "http://test/".into(),
+        scroll: (0.0, 0.0),
+        client: "F#L".into(),
+        frames: Default::default(),
+        version: 1,
+        sheets: Default::default(),
+    };
+    let mut grow = css("grow", None, 0.0);
+    grow.timeline =
+        Some(TimelineDriven { index: 0, iterations: 1.0, direction: 0, fill: 3, delay_ms: 0.0, duration_ms: None, pseudo: 0 });
+    let effects: AnimationFrame = frame(7, vec![], vec![grow]);
+    let (mut live, key) = page(
+        "<!doctype html><style>body{margin:0;background:#fff}</style>\
+         <iframe id=target style='border:0;width:200px;height:100px'></iframe>",
+    );
+    // (The frame's marker, as pyro-dom writes it for a frame document, `Dom::set_frame_document`.)
+    let mut tree = (*live.live.as_ref().unwrap().tree).clone();
+    for node in &mut tree.nodes {
+        if let TreeKind::Element { attrs, .. } = &mut node.kind {
+            if node.key == key {
+                attrs.push((QualName::new(None, ns!(), "data-pyro-n-frame".into()), "n:1:0000000000000001".into()));
+            }
+        }
+    }
+    live.live.as_mut().unwrap().tree = Arc::new(tree);
+    let snap = Snapshot {
+        frames: Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() }),
+        frame_animations: vec![("F#L".to_owned(), Arc::new(effects))],
+        ..live
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    let width_at = |scroll_y: f64| {
+        let mut frame_doc = snap.frames.entries["1"].clone();
+        frame_doc.scroll = (0.0, scroll_y);
+        let frames = Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() });
+        let img = Renderer::new().render(&Snapshot { frames, ..snap.clone() }, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+        (0..200).filter(|&x| pixel(&img, x, 80) == [0, 200, 0]).count()
+    };
+    let reachable = width_at(200.0);
+    assert!(reachable > 0 && reachable < 200, "part way through the view timeline: {reachable}px");
+    assert_eq!(width_at(1000.0), reachable, "scrolled past the reach: laid out as at the reachable offset");
 }

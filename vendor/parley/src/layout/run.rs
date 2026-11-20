@@ -27,6 +27,7 @@ pub struct Run<'a, B: Brush> {
     pub(crate) shaped: &'a ShapedRun,
     pub(crate) data: &'a RunData,
     pub(crate) line_data: Option<&'a LineItemData>,
+    pub(crate) replacement_source: Option<(usize, usize, f32)>,
 }
 
 // `Run` is `Copy` and `Clone` regardless of `B`.
@@ -54,6 +55,7 @@ impl<'a, B: Brush> Run<'a, B> {
             shaped: &layout.data.shaped_text.runs()[run_index],
             data: &layout.data.runs[run_index],
             line_data,
+            replacement_source: None,
         }
     }
 
@@ -103,6 +105,9 @@ impl<'a, B: Brush> Run<'a, B> {
     /// font size, metrics, advances and glyphs are at that scale.
     #[inline]
     pub fn text_fit_scale(&self) -> f32 {
+        if let Some((_, _, scale)) = self.replacement_source {
+            return scale;
+        }
         match self.line_data {
             Some(_) => self
                 .layout
@@ -176,10 +181,10 @@ impl<'a, B: Brush> Run<'a, B> {
 
     /// Returns the original text range for the run.
     pub fn text_range(&self) -> Range<usize> {
-        self.line_data
-            .map(|d| &d.text_range)
-            .unwrap_or(&self.shaped.range.byte_range)
-            .clone()
+        if let Some((start, end, _)) = self.replacement_source {
+            return start..end;
+        }
+        self.line_data.map(|d| &d.text_range).unwrap_or(&self.shaped.range.byte_range).clone()
     }
 
     /// Returns `true` if the run has right-to-left directionality.

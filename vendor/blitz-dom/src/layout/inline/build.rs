@@ -12,6 +12,7 @@ use style::{
 };
 use stylo_taffy::CopyStyleGetters;
 
+use style::values::computed::WhiteSpaceTrim;
 use crate::{
     NodeData,
     layout::list::BULLET_FONT_FAMILY,
@@ -232,6 +233,58 @@ fn reopen_bidi_controls(builder: &mut TreeBuilder<TextBrush>, bidi_scan: &BidiSc
 /// pyro: the split inlines (`NodeFlags::IS_SPLIT_INLINE`) whose box holds the anonymous block
 /// `root_id` (inline content between two of their block-level boxes), innermost first: its
 /// content is inside their spans, with neither their start nor their end.
+/// pyro: the `unicode-bidi` an inline root's lines take: an anonymous block's is its parent's
+/// (the block's immediate inline content, which a block's `bidi-override` or `plaintext` governs;
+/// `unicode-bidi` is not inherited), not that of its `::before` or `::after`.
+fn root_unicode_bidi(
+    nodes: &crate::NodeTree,
+    node_id: NodeId,
+    style: &style::properties::ComputedValues,
+) -> style::computed_values::unicode_bidi::T {
+    let node = &nodes[node_id];
+    if node.is_anonymous()
+        && let Some(parent_id) = node.layout_parent.get().or(node.parent)
+        && nodes[parent_id].before() != Some(node_id)
+        && nodes[parent_id].after() != Some(node_id)
+        && let Some(parent_style) = nodes[parent_id].primary_styles()
+        && parent_style.clone_display().outside() != style::values::specified::box_::DisplayOutside::Inline
+    {
+        return parent_style.clone_unicode_bidi();
+    }
+    style.clone_unicode_bidi()
+}
+
+/// pyro: the direction of an anonymous box of the root element (its own text, a run of its
+/// inline children): the root's used direction, that of its `<body>` child (css-writing-modes-3 §8,
+/// unless either has containment). `None` for other boxes.
+pub(crate) fn principal_direction(
+    nodes: &crate::NodeTree,
+    node_id: NodeId,
+) -> Option<style::computed_values::direction::T> {
+    let node = &nodes[node_id];
+    if !node.is_anonymous() {
+        return None;
+    }
+    let root_id = node.layout_parent.get().or(node.parent)?;
+    let root = &nodes[root_id];
+    // (Not its `::before` or `::after`, which have computed values of their own.)
+    if root.before() == Some(node_id) || root.after() == Some(node_id) {
+        return None;
+    }
+    let is_root = root.data.downcast_element().is_some_and(|el| *el.name.local == *"html")
+        && root.parent.is_some_and(|parent| matches!(nodes[parent].data, crate::node::NodeData::Document(_)));
+    if !is_root || root.primary_styles().is_none_or(|style| !style.clone_contain().is_empty()) {
+        return None;
+    }
+    let body = root
+        .children
+        .iter()
+        .map(|&child| &nodes[child])
+        .find(|child| child.data.downcast_element().is_some_and(|el| *el.name.local == *"body"))?;
+    let style = body.primary_styles()?;
+    style.clone_contain().is_empty().then(|| style.clone_direction())
+}
+
 fn split_pieces(nodes: &crate::NodeTree, root_id: NodeId) -> Vec<(NodeId, bool, bool)> {
     let mut pieces = Vec::new();
     let root = &nodes[root_id];
@@ -298,7 +351,8 @@ fn open_span(
     parley_style.text_box_trim = crate::layout::text_box::span_trim(style);
     builder.push_style_span(parley_style);
     // (A sticky one is painted moved too: `BaseDocument::inline_span_relative_offset`.)
-    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky);
+    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
+        || crate::layout::inline::relative::effect_entry(style);
     let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
     let controls = bidi_controls(style);
     if let Some((start_controls, _)) = controls {
@@ -324,6 +378,7 @@ fn open_span(
         vertical_align: Default::default(),
         rtl,
         central: false,
+        glue: false,
     };
     // pyro: a right-to-left span with one edge has the other too, empty (see
     // `build_inline_layout_recursive`).
@@ -376,10 +431,58 @@ pub(crate) fn build_inline_layout_into(
     // under it (WPT css-sizing `intrinsic-percent-replaced-006`).
     let marker = outside_marker(&nodes[inline_context_root_node_id]);
     if (marker || (text_layout.layout.inline_boxes().len() > 0 && !nodes.line_height_quirk))
-        && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c))
+        // (The zero-width span an outside image marker adds to the first line is no text.)
+        && text_layout.text.chars().all(|c| (c.is_whitespace() && c != '\n') || is_bidi_control(c) || c == '\u{2060}')
     {
         build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true, &[], bidi);
     }
+}
+
+/// pyro: the word separator CSS Text 4 `word-space-transform` turns zero width spaces and
+/// `<wbr>` into in `style`, if any.
+fn word_space_char(style: &style::properties::ComputedValues) -> Option<char> {
+    use style::values::computed::WordSpaceTransform as W;
+    let value = style.get_inherited_text().word_space_transform;
+    if value.contains(W::SPACE) {
+        Some(' ')
+    } else if value.contains(W::IDEOGRAPHIC_SPACE) {
+        Some('\u{3000}')
+    } else {
+        None
+    }
+}
+
+/// pyro: pushes `text` with each U+200B ZERO WIDTH SPACE as `word_space` (`word-space-transform`);
+/// a space collapses with the spaces next to it (WPT css-text `word-space-transform-007`). One next
+/// to a forced line break stays (a preserved
+/// newline when `newlines`, a `<br>` after the text when `before_break`, or one before it).
+fn push_word_spaces(builder: &mut TreeBuilder<TextBrush>, text: &str, word_space: Option<char>, newlines: bool, before_break: bool) {
+    let Some(word_space) = word_space else {
+        builder.push_text(text);
+        return;
+    };
+    // The zero width spaces that end the text (before a `<br>` when `before_break`), found once.
+    let trailing = text.trim_end_matches('\u{200B}').len();
+    let mut rest = text;
+    while let Some(at) = rest.find('\u{200B}') {
+        let (head, tail) = rest.split_at(at);
+        let offset = text.len() - tail.len();
+        builder.push_text(head);
+        let after = &tail['\u{200B}'.len_utf8()..];
+        let previous = builder.text().chars().rev().find(|&c| !is_bidi_control(c));
+        let next = after.chars().next();
+        let at_break = previous.is_some_and(|c| c == '\n' && (newlines || head.is_empty()))
+            || (newlines && next == Some('\n'))
+            || (before_break && offset >= trailing);
+        if at_break {
+            builder.push_text("\u{200B}");
+        } else {
+            let mut buf = [0u8; 4];
+            builder.push_text(word_space.encode_utf8(&mut buf));
+        }
+        rest = after;
+    }
+    builder.push_text(rest);
 }
 
 /// pyro: whether the inline root is a list item with an outside marker (`layout::list`).
@@ -427,6 +530,31 @@ fn build_inline_layout_with(
             ..Default::default()
         });
 
+    // pyro: combined text (`text-combine-upright: all`, a horizontal box in a vertical line) of
+    // two, three or four characters takes the font's half-, third- or quarter-width forms
+    // (`hwid`, `twid`, `qwid`), as Blink does before it compresses it (css-writing-modes-4 §9.1.1).
+    if let Some(style) = root_node_style.as_deref()
+        && style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED)
+    {
+        let count = root_node.text_content().trim().chars().count();
+        let tag: Option<&[u8; 4]> = match count {
+            2 => Some(b"hwid"),
+            3 => Some(b"twid"),
+            4 => Some(b"qwid"),
+            _ => None,
+        };
+        if let Some(tag) = tag {
+            let mut features = match &parley_style.font_features {
+                parley::FontFeatures::List(list) => list.to_vec(),
+                _ => Vec::new(),
+            };
+            if !features.iter().any(|f| f.tag == crate::stylo_to_parley::parley::Tag::from_bytes(*tag)) {
+                features.push(parley::FontFeature { tag: crate::stylo_to_parley::parley::Tag::from_bytes(*tag), value: 1 });
+            }
+            parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(features));
+        }
+    }
+
     // The formatting-context root's vertical alignment positions its box in
     // its parent's context (for example a middle-aligned table cell). It does
     // not shift that box's own line strut or inherited direct text. Descendant
@@ -437,9 +565,10 @@ fn build_inline_layout_with(
     // Create a parley tree builder
     let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
     if let Some(style) = root_node_style.as_deref() {
+        let direction = principal_direction(nodes, inline_context_root_node_id).unwrap_or_else(|| style.clone_direction());
         builder.set_base_direction(stylo_to_parley::base_direction(
-            style.clone_direction(),
-            style.clone_unicode_bidi(),
+            direction,
+            root_unicode_bidi(nodes, inline_context_root_node_id, style),
         ));
     }
 
@@ -453,9 +582,14 @@ fn build_inline_layout_with(
     if let Some(style) = root_node_style.as_deref() {
         use style::computed_values::direction::T as Direction;
         use style::computed_values::unicode_bidi::T as UnicodeBidi;
-        let rtl = style.clone_direction() == Direction::Rtl;
+        // (The root's anonymous text takes `<body>`'s direction, `principal_direction`.)
+        let direction = principal_direction(nodes, inline_context_root_node_id).unwrap_or_else(|| style.clone_direction());
+        let rtl = direction == Direction::Rtl;
         bidi_scan.rtl = rtl;
-        if matches!(style.clone_unicode_bidi(), UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride) {
+        if matches!(
+            root_unicode_bidi(nodes, inline_context_root_node_id, style),
+            UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride
+        ) {
             bidi_scan.controls = true;
             if bidi {
                 let control: &'static [char] = if rtl { &['\u{202E}'] } else { &['\u{202D}'] };
@@ -472,6 +606,7 @@ fn build_inline_layout_with(
         position: ListItemLayoutPosition::Inside,
         tabular_nums,
         isolate,
+        image_gap,
         ..
     }) = root_node
         .element_data()
@@ -507,7 +642,29 @@ fn build_inline_layout_with(
                 bidi_scan.rtl |= rtl;
             }
         }
+        // pyro: combined in a vertical line: its box (`layout::combined_text`), placed as one
+        // letter.
+        let combined = root_node
+            .element_data()
+            .and_then(|element| element.marker_combined_box)
+            .filter(|&id| nodes.get(id).is_some());
+        if let Some(box_id) = combined {
+            bidi_scan.atomic_boxes += 1;
+            builder.push_inline_box(InlineBox {
+                id: box_id.as_u64(),
+                kind: InlineBoxKind::InFlow,
+                index: 0,
+                width: 0.0,
+                height: 0.0,
+                baseline: None,
+                vertical_align: Default::default(),
+                rtl: false,
+                central: false,
+                glue: true,
+            });
+        }
         match marker {
+            _ if combined.is_some() => {}
             // Bullet glyphs live in the bundled bullet font. The position-outside
             // path already asks for it; without the same span here a marker like
             // disclosure-closed (U+25B8) falls back to the element's own font and
@@ -539,9 +696,9 @@ fn build_inline_layout_with(
             // the image there, `draw_inside_marker_image`).
             Marker::Image { width, height } => {
                 let mut marker_style = parley_style.clone();
-                marker_style.font_size = 0.01;
+                marker_style.font_size = 0.0;
                 marker_style.line_height = parley::LineHeight::Absolute(*height);
-                marker_style.letter_spacing = *width + 7.0;
+                marker_style.letter_spacing = *width + *image_gap;
                 marker_style.vertical_align = parley::VerticalAlign {
                     alignment: parley::AlignmentBaseline::Baseline,
                     shift: parley::BaselineShift::Length(*height / 2.0),
@@ -593,11 +750,15 @@ fn build_inline_layout_with(
         && text_layout.layout.inline_boxes().all(|inline_box| inline_box.kind != InlineBoxKind::InFlow);
     if marker_line {
         builder.push_text("\u{2060}");
-        // pyro: an image marker is an inline replaced box on that line, its bottom on the
-        // baseline: the line is as tall as it above the baseline (WPT css-lists
-        // `outside-marker-taller-than-content`).
-        if let Some(Marker::Image { height, .. }) =
+    }
+    // pyro: an outside image marker is an inline replaced box on the item's first line, its
+    // bottom on the baseline: the line is as tall as it above the baseline (WPT css-lists
+    // `outside-marker-taller-than-content`), also where the line has text (WPT css-pseudo
+    // `marker-content-012`).
+    if (marker_line || (outside_marker(root_node) && !strut_build))
+        && let Some(Marker::Image { height, .. }) =
             root_node.element_data().and_then(|el| el.list_item_data.as_deref()).map(|item| &item.marker)
+    {
         {
             let mut marker_style = parley_style.clone();
             marker_style.font_size = 0.01;
@@ -907,7 +1068,14 @@ fn build_inline_layout_with(
                         &mut BidiScan::default(),
                     );
                 }
-                let under = matches!(itext.ruby_position, RubyPosition::Under | RubyPosition::AlternateUnder);
+                // pyro: `ruby-position` applies to the annotation container, which inherits it from
+                // the `<ruby>` (or is the `<rtc>`): an `<rt>`'s own value does not move it, as in
+                // Chromium (WPT css-inline `text-box-trim-ruby-start-001`).
+                let position = node
+                    .parent
+                    .and_then(|parent| nodes[parent].primary_styles())
+                    .map_or(itext.ruby_position, |parent| parent.get_inherited_text().ruby_position);
+                let under = matches!(position, RubyPosition::Under | RubyPosition::AlternateUnder);
                 (builder.build().0, under)
             }
             TextAnnotationKind::Emphasis => emphasis_layout(layout_ctx, font_ctx, scale, &style, parley_style)?,
@@ -1037,7 +1205,9 @@ fn build_inline_layout_with(
                         .display_style()
                         .is_some_and(|d| matches!(d.inside(), DisplayInside::None))
                 {
-                    builder.push_text("\u{200B}");
+                    let wst = node.primary_styles().and_then(|style| word_space_char(&style));
+                    let before_break = node.forward(1).is_some_and(|next| next.is_line_break());
+                    push_word_spaces(builder, "\u{200B}", wst, false, before_break);
                     return;
                 }
 
@@ -1144,11 +1314,46 @@ fn build_inline_layout_with(
                                     .unwrap_or_default(),
                                 rtl: false,
                                 central: false,
+                                glue: false,
                             });
                         } else if annotations.is_ruby_annotation(tag_name) {
                             // pyro: a ruby annotation of the text since its base started, drawn
                             // over that text rather than in the line (`TextAnnotation`).
                             annotations.annotate_ruby_base(node_id, builder.text().len());
+                            // pyro: its absolutely positioned descendants (its `::before` and
+                            // `::after` too) are no annotation text: they are positioned as out of
+                            // flow boxes of this line, at the annotation's place (WPT css-contain
+                            // `contain-layout-004`, `-005`: containment does not apply to ruby
+                            // annotations, so they are positioned against the box around).
+                            let mut stack: Vec<NodeId> =
+                                node.before().into_iter().chain(node.children.iter().copied()).chain(node.after()).collect();
+                            stack.reverse();
+                            while let Some(id) = stack.pop() {
+                                let child = &nodes[id];
+                                let Some(cs) = child.primary_styles() else { continue };
+                                if cs.clone_display().is_none() {
+                                    continue;
+                                }
+                                if cs.clone_position().is_absolutely_positioned() {
+                                    builder.push_inline_box(InlineBox {
+                                        id: id.as_u64(),
+                                        kind: InlineBoxKind::OutOfFlow,
+                                        index: 0,
+                                        width: 0.0,
+                                        height: 0.0,
+                                        baseline: None,
+                                        vertical_align: Default::default(),
+                                        rtl: false,
+                                        central: false,
+                                        glue: false,
+                                    });
+                                    continue;
+                                }
+                                let mut kids: Vec<NodeId> =
+                                    child.before().into_iter().chain(child.children.iter().copied()).chain(child.after()).collect();
+                                kids.reverse();
+                                stack.extend(kids);
+                            }
                         } else {
                             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                             let mut style = node
@@ -1161,9 +1366,43 @@ fn build_inline_layout_with(
                             style.annotation_space = space_of(&annotations.space, node_id);
                             if let Some(computed) = node.primary_styles() {
                                 style.text_box_trim = crate::layout::text_box::span_trim(&computed);
+                                // pyro: an inline bidi isolate breaks shaping at its edges (CSS
+                                // Text 3 § 7.3). A `<ruby>` (an inline box here, which the UA
+                                // sheet isolates) lays its bases out as one text.
+                                use style::computed_values::unicode_bidi::T as UnicodeBidi;
+                                // pyro: CSS Text 4 `wrap-inside: avoid` on it and the inline boxes around
+                                // it in this inline formatting context.
+                                style.wrap_avoid_depth = {
+                                    let mut depth = 0u8;
+                                    let mut id = Some(node_id);
+                                    while let Some(ancestor) = id.map(|id| &nodes[id]) {
+                                        let Some(s) = ancestor.primary_styles() else { break };
+                                        if s.clone_display() != style::values::computed::Display::Inline {
+                                            break;
+                                        }
+                                        if s.get_text().wrap_inside == style::values::computed::WrapInside::Avoid {
+                                            depth = depth.saturating_add(1);
+                                        }
+                                        id = ancestor.parent;
+                                    }
+                                    depth
+                                };
+                                style.isolates = !matches!(*tag_name, local_name!("ruby") | local_name!("rb") | local_name!("rtc"))
+                                    && matches!(
+                                        computed.clone_unicode_bidi(),
+                                        UnicodeBidi::Isolate | UnicodeBidi::IsolateOverride | UnicodeBidi::Plaintext
+                                    );
                             }
 
+                            // pyro: CSS Text 4 `white-space-trim`.
+                            let trim = node.primary_styles().map_or(WhiteSpaceTrim::NONE, |s| s.get_text().white_space_trim);
+                            if trim.contains(WhiteSpaceTrim::DISCARD_BEFORE) {
+                                builder.discard_pending_whitespace();
+                            }
                             builder.push_style_span(style);
+                            if trim.contains(WhiteSpaceTrim::DISCARD_INNER) {
+                                builder.discard_next_whitespace();
+                            }
                             // pyro: emphasis marks over the span's own text; a `<ruby>`'s first
                             // base starts here.
                             if let Some(style) = node.primary_styles() {
@@ -1178,6 +1417,7 @@ fn build_inline_layout_with(
 
                             bidi_scan.relative |= node.primary_styles().is_some_and(|style| {
                                 matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
+                                    || crate::layout::inline::relative::effect_entry(&style)
                             });
                             bidi_scan.block_edges |= node.primary_styles().is_some_and(|style| has_block_edges(&style));
                             // pyro: the bidi formatting characters its `unicode-bidi` stands for,
@@ -1218,6 +1458,7 @@ fn build_inline_layout_with(
                                 vertical_align: Default::default(),
                                 rtl,
                                 central: false,
+                                glue: false,
                             };
                             // pyro: a right-to-left span's edges trade sides on the line (its end
                             // edge goes left of its content): the line needs the span's content
@@ -1285,6 +1526,9 @@ fn build_inline_layout_with(
                             }
                             // pyro: a span that holds nothing still has its strut in the line (CSS
                             // 2.1 § 10.8: its font and line height count in the line's height).
+                            if trim.contains(WhiteSpaceTrim::DISCARD_INNER) {
+                                builder.discard_pending_whitespace();
+                            }
                             if held == (builder.text().len(), bidi_scan.atomic_boxes) {
                                 builder.push_empty_box_strut();
                                 bidi_scan.empty_box_struts = true;
@@ -1297,10 +1541,28 @@ fn build_inline_layout_with(
                                 bidi_scan.open_controls.pop();
                             }
                             builder.pop_style_span();
+                            if trim.contains(WhiteSpaceTrim::DISCARD_AFTER) {
+                                builder.discard_next_whitespace();
+                            }
                         }
                     }
                     // Inline box
                     (_, _) => {
+                        // pyro: a table part in an inline box is in an anonymous inline table: the
+                        // table is the box, at its first part (`table_fixup::wrap_inline_table_parts`).
+                        let (node_id, node) = match (display.outside() == style::values::specified::box_::DisplayOutside::InternalTable)
+                            .then(|| crate::layout::table_fixup::inline_table_of(nodes, node_id))
+                            .flatten()
+                        {
+                            Some((table, true)) => (table, &nodes[table]),
+                            Some((_, false)) => return,
+                            None => (node_id, node),
+                        };
+                        // pyro: CSS Text 4 `white-space-trim` around an atomic inline.
+                        let trim = node.primary_styles().map_or(WhiteSpaceTrim::NONE, |s| s.get_text().white_space_trim);
+                        if box_kind == InlineBoxKind::InFlow && trim.contains(WhiteSpaceTrim::DISCARD_BEFORE) {
+                            builder.discard_pending_whitespace();
+                        }
                         if box_kind == InlineBoxKind::InFlow {
                             bidi_scan.atomic_boxes += 1;
                             text_transformer.word_break(builder);
@@ -1323,11 +1585,37 @@ fn build_inline_layout_with(
                                 .unwrap_or_default(),
                             rtl: false,
                             central: false,
+                            // pyro: `text-combine-upright` text (Stylo makes it a horizontal inline-block in
+                            // the vertical line) breaks lines as one letter (`InlineBox::glue`).
+                            glue: box_kind == InlineBoxKind::InFlow
+                                && node.primary_styles().is_some_and(|style| style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED)),
                         });
+                        if box_kind == InlineBoxKind::InFlow && trim.contains(WhiteSpaceTrim::DISCARD_AFTER) {
+                            builder.discard_next_whitespace();
+                        }
                     }
                 };
             }
             NodeData::Text(data) => {
+                // pyro: combined text no inline element holds is a box of its own, placed as one
+                // letter (`layout::combined_text`, `InlineBox::glue`).
+                if let Some(box_id) = data.combined_box.filter(|&id| nodes.get(id).is_some()) {
+                    bidi_scan.atomic_boxes += 1;
+                    text_transformer.word_break(builder);
+                    builder.push_inline_box(InlineBox {
+                        id: box_id.as_u64(),
+                        kind: InlineBoxKind::InFlow,
+                        index: 0,
+                        width: 0.0,
+                        height: 0.0,
+                        baseline: None,
+                        vertical_align: Default::default(),
+                        rtl: false,
+                        central: false,
+                        glue: true,
+                    });
+                    return;
+                }
                 // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 // dbg!(&data.content);
                 // pyro: white space between two table parts generates no box (`table_fixup`).
@@ -1373,6 +1661,7 @@ fn build_inline_layout_with(
                             vertical_align: Default::default(),
                             rtl: false,
                             central: false,
+                            glue: false,
                         });
                         let tail = &content[split.range.end..];
                         let text = text_transformer.transform(tail, parent_text_transform, builder);
@@ -1405,6 +1694,8 @@ fn build_inline_layout_with(
                                 use style::computed_values::white_space_collapse::T as Collapse;
                                 !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
                             });
+                        // pyro: CSS Text 4 `word-space-transform`.
+                        let wst = parent_style.as_ref().and_then(|style| word_space_char(style));
                         if preserves_newlines && text.contains('\n') {
                             for piece in text.split_inclusive('\n') {
                                 builder.push_text(piece);
@@ -1412,6 +1703,13 @@ fn build_inline_layout_with(
                                     reopen_bidi_controls(builder, bidi_scan);
                                 }
                             }
+                        } else if wst.is_some() && text.contains('\u{200B}') {
+                            let newlines = parent_style.as_ref().is_some_and(|style| {
+                                use style::computed_values::white_space_collapse::T as Collapse;
+                                !matches!(style.get_inherited_text().white_space_collapse, Collapse::Collapse | Collapse::PreserveSpaces)
+                            });
+                            let before_break = node.forward(1).is_some_and(|next| next.is_line_break());
+                            push_word_spaces(builder, &text, wst, newlines, before_break);
                         } else {
                             builder.push_text(&text);
                         }

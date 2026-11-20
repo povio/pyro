@@ -228,9 +228,10 @@ advance. Covered by `crates/pyro-render/tests/tab_stops.rs`; WPT css-text `tab-s
 
 Soft hyphens (CSS Text 3 § 5.4). A line that wraps right after U+00AD shows a hyphen there: the breaker keeps the
 last atom appended when it ends with a soft hyphen (`LineState::shy`, a `Shy` with the glyphs and advance to show), and
-`start_new_line` gives its shaped cluster those glyphs (`ShapedText::show_hyphen`, round 4: up to four glyphs, a
-`SoftHyphen::Chars` `hyphenate-character` string; after the cluster's own glyphs when HarfRust merged the soft hyphen
-into the cluster before it, which it does in a font without a space glyph) and the line its advance. The
+`start_new_line` reserves the replacement's advance in its shaped cluster (`ShapedText::show_hyphen`); an explicit
+`hyphenate-character` is painted from the entire shaped string, after the cluster's own glyphs when HarfRust merged the soft hyphen
+into the cluster before it. When an opportunity divides a ligature, the broken lines use separately shaped fragments
+with their own fonts and source offsets, leaving the unbroken ligature intact. The
 glyph is the font's hyphen (`ShapedRun::hyphen`: U+2010, else U+002D) or what the style's `SoftHyphen`
 (`style/mod.rs`, `StyleProperty::SoftHyphen`) names: a character of the run's font (`ShapedText::glyph_of`), nothing
 (`Hidden`), or no break at all (`NoBreak`: the opportunity after the soft hyphen is not marked). The opportunity is
@@ -433,7 +434,8 @@ enabled: under `white-space: pre` the text after it stays on its line (WPT css-o
 Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs`.
 - `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded
   up to a layout unit (1/64 CSS px), as Blink's snapped text item widths: such a line starts where a shrink-to-fit box
-  of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`).
+  of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`). Fallback font runs share a snapped
+  width within their source style and shaping segment; script or bidi segment boundaries start a new width.
 - `layout/layout.rs` `Layout::set_central_baseline`, `layout/style_metrics.rs` `inline_box_placement`, `layout/line.rs`
   `inline_box_top` (round 4 lane F): lines of vertical writing modes whose text is not sideways align on the central
   baseline (Blink's `kCentralBaseline`). An in-flow box marked `InlineBox::central` (a new field) has its central baseline

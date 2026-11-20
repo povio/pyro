@@ -7,7 +7,7 @@ use peniko::color::{self, DynamicColor};
 use peniko::{Color, Fill, Mix};
 
 #[cfg(feature = "image")]
-use peniko::{Blob, ImageBrush};
+use peniko::ImageBrush;
 
 pub(crate) fn to_affine(ts: &usvg::Transform) -> Affine {
     let usvg::Transform {
@@ -116,7 +116,7 @@ pub(crate) fn to_bez_path(path: &usvg::Path) -> BezPath {
 
 #[cfg(feature = "image")]
 pub(crate) fn into_image(
-    image: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    image: pyro_raster::Raster,
     rendering_mode: usvg::ImageRendering,
 ) -> ImageBrush {
     use peniko::ImageData;
@@ -131,14 +131,12 @@ pub(crate) fn into_image(
         | usvg::ImageRendering::Pixelated => peniko::ImageQuality::Low,
     };
 
-    let (width, height) = (image.width(), image.height());
-    let image_data: Vec<u8> = image.into_vec();
     ImageBrush::new(ImageData {
-        data: Blob::new(std::sync::Arc::new(image_data)),
+        data: image.blob,
         format: peniko::ImageFormat::Rgba8,
         alpha_type: peniko::ImageAlphaType::Alpha,
-        width,
-        height,
+        width: image.width,
+        height: image.height,
     })
     .with_quality(quality)
 }
@@ -262,18 +260,51 @@ pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::N
 #[cfg(feature = "image")]
 pub(crate) fn decode_raw_raster_image(
     img: &usvg::ImageKind,
-) -> Result<image::RgbaImage, image::ImageError> {
-    // All `image::ImageFormat` variants exist even if the feature in the image crate is disabled,
-    // but `image::load_from_memory_with_format` will fail with an Unsupported error if the
-    // image crate feature flag is disabled. So we don't need any of our own feature handling here.
-    let (data, format) = match img {
-        usvg::ImageKind::JPEG(data) => (data, image::ImageFormat::Jpeg),
-        usvg::ImageKind::PNG(data) => (data, image::ImageFormat::Png),
-        usvg::ImageKind::GIF(data) => (data, image::ImageFormat::Gif),
-        usvg::ImageKind::WEBP(data) => (data, image::ImageFormat::WebP),
+) -> Result<pyro_raster::Raster, image::ImageError> {
+    let data = match img {
+        usvg::ImageKind::JPEG(data) | usvg::ImageKind::PNG(data) |
+        usvg::ImageKind::GIF(data) | usvg::ImageKind::WEBP(data) => data,
         usvg::ImageKind::SVG(_) => unreachable!(),
     };
 
-    let dyn_image = image::load_from_memory_with_format(data, format)?;
-    Ok(dyn_image.into_rgba8())
+    RASTERS.with_borrow_mut(|scope| scope.as_mut().expect("SVG render scope").decode(data))
+}
+
+#[cfg(feature = "image")]
+thread_local! { static RASTERS: std::cell::RefCell<Option<pyro_raster::PageRasters>> = const { std::cell::RefCell::new(None) }; }
+
+#[cfg(feature = "image")]
+pub(crate) struct RasterScope(bool);
+
+#[cfg(feature = "image")]
+pub struct PageRasterScope(Option<pyro_raster::PageRasters>, std::marker::PhantomData<std::rc::Rc<()>>);
+
+#[cfg(feature = "image")]
+impl PageRasterScope {
+    pub fn enter(page: &pyro_raster::PageRasters) -> Self {
+        Self(RASTERS.with_borrow_mut(|current| current.replace(page.clone())), Default::default())
+    }
+}
+
+#[cfg(feature = "image")]
+impl Drop for PageRasterScope {
+    fn drop(&mut self) { RASTERS.with_borrow_mut(|current| *current = self.0.take()); }
+}
+
+#[cfg(feature = "image")]
+impl RasterScope {
+    pub(crate) fn enter() -> Self {
+        Self(RASTERS.with_borrow_mut(|current| {
+            if current.is_some() { return false; }
+            *current = Some(Default::default());
+            true
+        }))
+    }
+}
+
+#[cfg(feature = "image")]
+impl Drop for RasterScope {
+    fn drop(&mut self) {
+        if self.0 { RASTERS.with_borrow_mut(|current| { current.take(); }); }
+    }
 }

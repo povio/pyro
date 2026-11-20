@@ -26,8 +26,15 @@ pub struct PresentationalHints {
     pub cells: Box<[ServoArc<Locked<PropertyDeclarationBlock>>]>,
 }
 
+
 pub struct Attributes {
     inner: ThinVec<Attribute>,
+    /// pyro: the engine's attributes (by canonical name, `data-pyro-sheet`, ...): those the markup
+    /// or tree carried under this document's nonce name (`crate::engine_field`), kept apart from
+    /// the element's own: no selector, `attr()`, serialisation or iteration sees them, and the
+    /// page's own `data-pyro-*` attributes are ordinary attributes. Only the engine's readers
+    /// ([`Attributes::reserved`]) see them.
+    reserved: ThinVec<Attribute>,
     /// pyro: the hints these attributes map to, built at the
     /// first cascade that asks and dropped by every write (`set`, `remove`,
     /// `DerefMut`). They depend on the attributes and the element's name
@@ -40,6 +47,7 @@ impl Clone for Attributes {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            reserved: self.reserved.clone(),
             presentational_hints: OnceLock::new(),
         }
     }
@@ -55,8 +63,80 @@ impl Attributes {
     pub fn new(inner: Vec<Attribute>) -> Self {
         Self {
             inner: inner.into_iter().collect(),
+            reserved: ThinVec::new(),
             presentational_hints: OnceLock::new(),
         }
+    }
+
+    /// pyro: the engine's attribute `canonical` (`data-pyro-sheet`, ...), for engine readers only.
+    pub fn reserved(&self, canonical: &str) -> Option<&str> {
+        self.reserved.iter().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == canonical).map(|a| a.value.as_str())
+    }
+
+    /// pyro: every attribute as the document's markup or tree carried it, for an embedder that
+    /// diffs a tree against the element: its own, then the engine's under the names a document
+    /// serialised with `nonce` gives them (`data-pyro-<nonce>-<field>`, `urn:x-pyro:state:<nonce>`;
+    /// canonical without a nonce). Never for author-facing paths.
+    pub fn wire(&self, nonce: &str) -> Vec<(QualName, String)> {
+        let mut out: Vec<(QualName, String)> = self.inner.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
+        for a in &self.reserved {
+            let name = if &*a.name.ns == crate::PYRO_STATE_NS {
+                let ns = if nonce.is_empty() { crate::PYRO_STATE_NS.to_owned() } else { format!("{}:{nonce}", crate::PYRO_STATE_NS) };
+                QualName::new(None, ns.into(), a.name.local.clone())
+            } else {
+                let local = match a.name.local.strip_prefix("data-pyro-") {
+                    Some(field) if !nonce.is_empty() => format!("data-pyro-{nonce}-{field}"),
+                    _ => a.name.local.to_string(),
+                };
+                QualName::new(None, markup5ever::ns!(), local.into())
+            };
+            out.push((name, a.value.clone()));
+        }
+        out
+    }
+
+    /// pyro: the engine's state attribute `local` (`urn:x-pyro:state`: pseudo-class state, the top
+    /// layer, shadow markers), kept in the engine's store: no selector (`[*|state]`), `attr()` or
+    /// iteration sees it; only the engine's readers and the pseudo-classes it maps to.
+    pub fn state(&self, local: &str) -> Option<&str> {
+        self.reserved
+            .iter()
+            .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == local)
+            .map(|a| a.value.as_str())
+    }
+
+    /// pyro: sets the engine's state attribute `local`.
+    pub fn set_state(&mut self, local: &str, value: &str) {
+        match self.reserved.iter_mut().find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == local) {
+            Some(a) => value.clone_into(&mut a.value),
+            None => self.reserved.push(Attribute {
+                name: QualName::new(None, crate::PYRO_STATE_NS.into(), local.into()),
+                value: value.to_owned(),
+            }),
+        }
+    }
+
+    /// pyro: removes the engine's state attribute `local`.
+    pub fn remove_state(&mut self, local: &str) -> Option<Attribute> {
+        let idx = self.reserved.iter().position(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == local)?;
+        Some(self.reserved.remove(idx))
+    }
+
+    /// pyro: sets the engine's attribute `canonical` (never one of the element's own).
+    pub fn set_reserved(&mut self, canonical: &str, value: &str) {
+        match self.reserved.iter_mut().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == canonical) {
+            Some(a) => value.clone_into(&mut a.value),
+            None => self.reserved.push(Attribute {
+                name: QualName::new(None, markup5ever::ns!(), canonical.into()),
+                value: value.to_owned(),
+            }),
+        }
+    }
+
+    /// pyro: removes the engine's attribute `canonical`.
+    pub fn remove_reserved(&mut self, canonical: &str) -> Option<Attribute> {
+        let idx = self.reserved.iter().position(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == canonical)?;
+        Some(self.reserved.remove(idx))
     }
 
     pub fn get(&mut self, name: &QualName) -> Option<&Attribute> {
@@ -100,5 +180,31 @@ impl DerefMut for Attributes {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.presentational_hints.take();
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod reserved_tests {
+    use super::*;
+
+    fn name(local: &str) -> QualName {
+        QualName::new(None, markup5ever::ns!(), local.into())
+    }
+
+    /// The engine's attributes are never among an element's own (iteration, lookup), and the
+    /// element's own `data-pyro-*` attributes are ordinary ones (security review cycles 7 and 8).
+    #[test]
+    fn reserved_attributes_are_kept_apart() {
+        let mut attrs = Attributes::new(vec![
+            Attribute { name: name("id"), value: "a".into() },
+            Attribute { name: name("data-pyro-theme"), value: "dark".into() },
+        ]);
+        attrs.set_reserved("data-pyro-sheet", "k");
+        attrs.set(name("data-pyro-n"), "forged");
+        let visible: Vec<&str> = attrs.iter().map(|a| &*a.name.local).collect();
+        assert_eq!(visible, ["id", "data-pyro-theme", "data-pyro-n"]);
+        assert_eq!((attrs.reserved("data-pyro-sheet"), attrs.reserved("data-pyro-n")), (Some("k"), None));
+        assert_eq!(attrs.remove_reserved("data-pyro-sheet").map(|a| a.value), Some("k".into()));
+        assert_eq!(attrs.reserved("data-pyro-sheet"), None);
     }
 }

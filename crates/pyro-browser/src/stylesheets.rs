@@ -68,6 +68,7 @@ pub(crate) struct Stylesheets {
     /// yet: like the imports, they delay the document's load event.
     style_events: usize,
 }
+
 impl Stylesheets {
     pub(crate) fn pending(&self) -> usize {
         self.entries.values().filter(|s| s.pending).count()
@@ -226,14 +227,16 @@ impl Browser {
             bindings.block_rendering(node, blocker);
         }
         // Reserve a cascade slot now; completion order must not reorder sheets.
-        bindings.set_stylesheet_text(node, "");
+        bindings.reserve_stylesheet(node);
         let weak = Rc::downgrade(&bindings);
         let cors = crossorigin.is_some();
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
             let Some(bindings) = weak.upgrade() else { return };
             // SRI: a mismatching (or opaque) response is a network error.
-            let result = result.and_then(|r| {
+            let result = result.and_then(|mut r| {
                 let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                // pyro: its tainting, which the sheet's origin-clean flag follows (CSSOM).
+                r.opaque = crate::loader::is_opaque(&r, cors, &origin);
                 match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
                     Some(e) => {
                         b.report_console_error(page, &e);
@@ -250,6 +253,8 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            parser_priority: blocker.is_some(),
+            credentials: None,
             post: None,
             url,
             kind: ResourceKind::Stylesheet,
@@ -293,6 +298,12 @@ impl Browser {
         let environment = link_environment(bindings, node);
         let quirks = bindings.dom.borrow().is_quirks_mode(bindings.document());
         let sheet_url = result.as_ref().map(|r| r.url.clone()).unwrap_or_default();
+        // pyro: a CORS-cross-origin response's sheet is not origin-clean (CSSOM), nor (as
+        // Chrome) a network error's, which is no CORS-same-origin response either.
+        let opaque = result.as_ref().map_or(true, |r| r.opaque);
+        // pyro: its response's `Referrer-Policy`, which the sheet's own requests follow (carried
+        // to its imports and, on the link in the snapshot, to its `url()`s; never by URL).
+        let sheet_policy = result.as_ref().ok().and_then(|r| r.referrer_policy);
         let text = result
             .ok()
             .filter(|r| {
@@ -308,15 +319,18 @@ impl Browser {
         let ok = text.is_some();
         // The `@import`s the sheet starts with: its event waits for them (HTML: a sheet's
         // critical subresources).
-        let imports: Vec<String> = text.as_deref().map_or_else(Vec::new, |text| {
+        let imports: Vec<pyro_dom::cssom::ImportRequest> = text.as_deref().map_or_else(Vec::new, |text| {
             let base = url::Url::parse(&sheet_url).ok();
-            pyro_dom::cssom::leading_imports(text).iter().filter_map(|href| Some(base.as_ref()?.join(href).ok()?.to_string())).collect()
+            resolve_imports(pyro_dom::cssom::leading_import_requests(text), base.as_ref())
         });
         if let Some(text) = text {
             sheet.bytes = text.len();
             sheets.bytes += text.len();
-            bindings.set_stylesheet_text(node, &text);
+            bindings.set_sheet_response(node, !opaque);
+            // pyro: at its URL after redirects, which its URLs resolve against.
+            bindings.set_stylesheet_response(node, &sheet_url, &text, sheet_policy.map(|p| p.as_str()));
         } else {
+            bindings.set_sheet_response(node, !opaque);
             remove_sheet(bindings, node);
         }
         drop(state);
@@ -344,8 +358,10 @@ impl Browser {
                 generation
             };
             let environment = document_encoding(bindings).unwrap_or_default();
-            for url in imports {
-                self.fetch_style_import(page, loader, node, generation, url, 1, &sheet_url, &environment);
+            for import in imports {
+                // pyro: under this sheet object (its node and generations), not the node alone.
+                let parent = pyro_webapi::css::current_sheet_parent_identity(bindings, node);
+                self.fetch_style_import(page, loader, node, generation, import, 1, &sheet_url, sheet_policy, &parent, &environment);
             }
             self.style_imports_settled(page, loader, node);
             self.stylesheets_changed(page);
@@ -358,6 +374,9 @@ impl Browser {
     }
 
     fn stylesheet_error_task(&self, page: FrameKey, loader: LoaderId, bindings: Rc<PageDom>, node: NodeId) {
+        // pyro: a rejected link (at the sheet limit) has a new, failed response too: a sheet object
+        // got before is detached (`PageDom::set_sheet_response`, the one place generations advance).
+        bindings.set_sheet_response(node, false);
         if bindings.dom.borrow_mut().add_ref(node).is_err() {
             return;
         }
@@ -430,10 +449,10 @@ impl Browser {
             } else {
                 let base = crate::loader::node_base_url(&dom, node).unwrap_or_default();
                 let base = url::Url::parse(&base).ok();
-                let urls: Vec<String> = pyro_dom::cssom::leading_imports(&dom.child_text_content(node))
-                    .iter()
-                    .filter_map(|href| Some(base.as_ref()?.join(href).ok()?.to_string()))
-                    .collect();
+                let urls = resolve_imports(
+                    pyro_dom::cssom::leading_import_requests(&dom.child_text_content(node)),
+                    base.as_ref(),
+                );
                 let media = attr("media").unwrap_or("");
                 let media_matches = media.is_empty() || pyro_dom::media::matches(media, &bindings.viewport());
                 let parser_inserted = flags & pyro_dom::node::element_flags::PARSER_INSERTED != 0;
@@ -497,8 +516,10 @@ impl Browser {
         }
         let referrer = self.doc(page).map(|p| p.main_frame.url.clone()).unwrap_or_default();
         let environment = document_encoding(&bindings).unwrap_or_default();
-        for url in urls {
-            self.fetch_style_import(page, &loader, node, generation, url, 1, &referrer, &environment);
+        for import in urls {
+            // (A `<style>`'s imports: the document's policy.)
+            let parent = pyro_webapi::css::current_sheet_parent_identity(&bindings, node);
+            self.fetch_style_import(page, &loader, node, generation, import, 1, &referrer, None, &parent, &environment);
         }
         self.style_imports_settled(page, &loader, node);
         true
@@ -513,11 +534,16 @@ impl Browser {
         loader: &LoaderId,
         node: NodeId,
         generation: u64,
-        url: String,
+        import: pyro_dom::cssom::ImportRequest,
         depth: usize,
         referrer: &str,
+        // pyro: the importing sheet's own response policy (from that sheet, never by URL).
+        parent_policy: Option<pyro_net::ReferrerPolicy>,
+        // pyro: the importing sheet object's identity (`cssom::imported_sheet_key`).
+        parent: &str,
         environment: &str,
     ) {
+        let url = import.url.clone();
         let index = {
             let Some(mut doc) = self.doc_mut(page) else { return };
             let Some(entry) = doc.stylesheets.style_imports.get_mut(&node).filter(|e| e.generation == generation)
@@ -535,7 +561,26 @@ impl Browser {
         let finish_loader = loader.clone();
         let finish_url = url.clone();
         let environment = environment.to_owned();
+        // pyro: a modified import's request URL modifiers (CSS Values 5 § 4.5.4): its mode, its
+        // integrity check (a response failing it is a failed import) and its referrer policy.
+        let cors = import.cross_origin.is_some();
+        let integrity = import.integrity.clone();
+        // pyro: under the sheet that imports it (its own request key is unique per parent).
+        let request_key = pyro_dom::cssom::imported_sheet_key(parent, &pyro_dom::cssom::import_key(&url, &import));
+        let document_origin = self.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
+        // pyro: the layout body key of the request as sent (set below, once it is built).
+        let layout_key: Rc<std::cell::RefCell<Option<pyro_dom::layout::LayoutBodyKey>>> = Rc::default();
+        let finish_layout_key = layout_key.clone();
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
+            let layout_key = finish_layout_key.borrow_mut().take();
+            let result = result.and_then(|mut r| {
+                // pyro: its tainting, which the sheet's origin-clean flag follows (CSSOM).
+                r.opaque = crate::loader::is_opaque(&r, cors, &document_origin);
+                match crate::loader::integrity_error(&r, integrity.as_deref(), cors, &document_origin) {
+                    Some(message) => Err(message),
+                    None => Ok(r),
+                }
+            });
             b.style_import_done(
                 page,
                 &finish_loader,
@@ -546,6 +591,8 @@ impl Browser {
                 &finish_url,
                 &environment,
                 result,
+                &request_key,
+                layout_key,
             );
         };
         let Some(resource_loader) = self.loader_for(page) else {
@@ -553,20 +600,32 @@ impl Browser {
             return;
         };
         let Some(frame) = self.doc(page).map(|p| p.main_frame.clone()) else { return };
+        // The parent sheet is the import's referrer, whatever its mode (as Blink sends a style
+        // sheet's requests).
+        let referrer = referrer.to_owned();
+
         let request = FetchRequest {
+            parser_priority: self.stylesheets_block_scripts(page),
+            credentials: None,
             post: None,
             url,
             kind: ResourceKind::Stylesheet,
             page: page.page,
-            referrer: Some(referrer.to_owned()),
-            referrer_policy: None,
+            referrer: Some(referrer),
+            // (Else the parent sheet's `Referrer-Policy`, as Chrome sends a sheet's requests.)
+            referrer_policy: import
+                .referrer_policy
+                .as_deref()
+                .and_then(pyro_net::ReferrerPolicy::parse)
+                .or(parent_policy),
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
-            crossorigin: None,
+            crossorigin: import.cross_origin.clone(),
             initiator: Some(pyro_webapi::resource_timing::Initiator::Css),
             module: None,
             part: None,
         };
+        *layout_key.borrow_mut() = Some(crate::layout_key_of(&frame, &request, import.integrity.as_deref()));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
         if let Some(mut doc) = self.doc_mut(page) {
             if let Some(slot) = doc
@@ -596,6 +655,9 @@ impl Browser {
         url: &str,
         environment: &str,
         result: Result<Resource, String>,
+        request_key: &str,
+        // pyro: the layout body key of the request as sent (`layout_key_of`).
+        layout_key: Option<pyro_dom::layout::LayoutBodyKey>,
     ) {
         let ok = result.as_ref().is_ok_and(|r| (200..300).contains(&r.status));
         {
@@ -620,25 +682,28 @@ impl Browser {
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
             // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
             if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
-                bindings.provide_imported_sheet(url, &text);
-                if r.url != url {
-                    bindings.provide_imported_sheet(&r.url, &text);
-                }
+                // pyro: under its request (URL and modifiers), at its URL after redirects.
+                bindings.provide_imported_sheet(request_key, &r.url, &text, r.opaque);
             }
             // The page's layouts take this sheet rather than fetching it
             // again (they read `file:` and `data:` URLs themselves), decoded
             // (they cannot know its environment encoding).
-            if let Some(p) = self.page(page.page).filter(|_| url.starts_with("http")) {
-                p.frames.layout_bodies.provide(url, &pyro_dom::cssom::stylesheet_utf8_bytes(&text));
+            // (Not a modified import's: the layouts key its request apart, by its modifiers.)
+            if let Some(layout_key) = layout_key.filter(|_| url.starts_with("http")) {
+                self.provide_layout_body(page, layout_key, pyro_dom::layout::LayoutBody {
+                    image_lease: None,
+                    bytes: std::sync::Arc::new(pyro_dom::cssom::stylesheet_utf8_bytes(&text)),
+                    final_url: r.url.clone(),
+                    opaque: r.opaque,
+                    status: r.status,
+                    referrer_policy: r.referrer_policy.map(|p| p.as_str().to_owned()),
+                });
             }
             if depth < MAX_IMPORT_DEPTH {
                 let base = url::Url::parse(&r.url).ok();
-                let nested: Vec<String> = pyro_dom::cssom::leading_imports(&text)
-                    .iter()
-                    .filter_map(|href| Some(base.as_ref()?.join(href).ok()?.to_string()))
-                    .collect();
+                let nested = resolve_imports(pyro_dom::cssom::leading_import_requests(&text), base.as_ref());
                 for nested in nested {
-                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url, encoding);
+                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url, r.referrer_policy, request_key, encoding);
                 }
             }
         }
@@ -709,4 +774,18 @@ fn stylesheet_mime_ok(r: &Resource, quirks: bool, document_url: &str) -> bool {
     }
     let origin = |u: &str| url::Url::parse(u).ok().map(|u| u.origin());
     quirks && origin(&r.url).is_some_and(|o| Some(o) == origin(document_url))
+}
+
+/// pyro: `imports` with their URLs resolved against `base` (those that do not resolve dropped).
+fn resolve_imports(
+    imports: Vec<pyro_dom::cssom::ImportRequest>,
+    base: Option<&url::Url>,
+) -> Vec<pyro_dom::cssom::ImportRequest> {
+    imports
+        .into_iter()
+        .filter_map(|mut import| {
+            import.url = base?.join(&import.url).ok()?.to_string();
+            Some(import)
+        })
+        .collect()
 }

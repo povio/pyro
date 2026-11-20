@@ -74,11 +74,19 @@ pub struct ShapeOptions<'a> {
     pub language_override: Option<[u8; 4]>,
     /// pyro: how the item's fullwidth punctuation is trimmed (CSS `text-spacing-trim`).
     pub spacing_trim: SpacingTrim,
-    /// pyro: whether an atomic inline sits right before the item: its first character has no
-    /// punctuation before it to be trimmed against.
+    /// pyro: whether an atomic inline (or an inline box edge with width) sits right before the
+    /// item: its first character has no punctuation before it to be trimmed against, and no text
+    /// before it to join with.
     pub isolated_before: bool,
     /// pyro: whether an atomic inline sits right after the item.
     pub isolated_after: bool,
+    /// pyro: the item stands upright in a vertical line: in a font with vertical metrics its
+    /// advances and offsets along the line are the ones shaping it top to bottom gives
+    /// (`vmtx`, with `vhal`/`vchw`/`vpal`/`vkrn` for `halt`/`chws`/`palt`/`kern`).
+    pub vertical_upright: bool,
+    /// pyro: the item's `white-space` preserves segment breaks: a line or paragraph separator
+    /// (U+2028, U+2029) breaks the line there, where elsewhere it is shown as a space.
+    pub preserved_breaks: bool,
 }
 
 /// The font instance to shape an item with.
@@ -93,6 +101,16 @@ pub struct FontInstance {
 }
 
 impl FontInstance {
+    /// Horizontal advance of the face's space at the specified CSS size and variations.
+    pub fn space_advance(&self, size: f32, variations: &[FontVariation]) -> Option<f32> {
+        use skrifa::MetadataProvider as _;
+        let face = skrifa::FontRef::from_index(self.font.data.as_ref(), self.font.index).ok()?;
+        let location = face.axes().location(variations_iter(&self.synthesis, variations).map(|setting| (setting.tag, setting.value)));
+        let glyph = face.charmap().map(' ')?;
+        face.glyph_metrics(skrifa::instance::Size::new(size * self.synthesis.size_adjust()), &location)
+            .advance_width(glyph)
+    }
+
     /// Borrow this font instance.
     #[inline]
     pub fn as_ref(&self) -> FontInstanceRef<'_> {
@@ -395,6 +413,8 @@ fn shape_segment(
                 spacing_trim: options.spacing_trim,
                 isolated_before: options.isolated_before,
                 isolated_after: options.isolated_after,
+                vertical_upright: options.vertical_upright,
+                preserved_breaks: options.preserved_breaks,
             };
             &adjusted
         } else {
@@ -442,8 +462,16 @@ fn shape_segment(
 
         // Use the entire run text including newlines.
         let run_text = &text[range.byte_range.clone()];
-        let pre_context = context_before(&text[..range.byte_range.start]);
-        let post_context = context_after(&text[range.byte_range.end..]);
+        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
+            ""
+        } else {
+            &text[..range.byte_range.start]
+        };
+        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
+            ""
+        } else {
+            &text[range.byte_range.end..]
+        };
 
         // pyro: fullwidth punctuation next to punctuation is shaped with the font's `halt`
         // (CSS `text-spacing-trim`); the plan takes the feature without its ranges.
@@ -496,6 +524,18 @@ fn shape_segment(
             _ => (features, features),
         };
 
+        // pyro: an upright item in a font with vertical metrics, shaped top to bottom too.
+        let vertical = (options.vertical_upright && !segment.bidi_level.is_rtl())
+            .then(|| {
+                use skrifa::raw::TableProvider as _;
+                let font_ref = font_ref();
+                font_ref.vmtx().ok()?;
+                let data = harfrust::ShaperData::new(&font_ref);
+                let shaper = data.shaper(&font_ref).instance(Some(instance)).build();
+                vertical_positions(&shaper, run_text, pre, post, hb_script, language.as_ref(), run_features, options.point_size)
+            })
+            .flatten();
+
         let glyph_key = cache::GlyphKey {
             font_blob_id: font.font.data.id(),
             font_index: font.font.index,
@@ -508,8 +548,8 @@ fn shape_segment(
             font_size: options.font_size,
             point_size: options.point_size,
             text: run_text,
-            pre_context,
-            post_context,
+            pre_context: context_before(pre),
+            post_context: context_after(post),
         };
         let cached = with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| {
             let (glyphs, metrics) = cache.get(&glyph_key)?;
@@ -525,6 +565,7 @@ fn shape_segment(
                 instance.coords(),
                 Some(metrics),
                 trim.as_ref(),
+                vertical.as_deref(),
             );
             Some(())
         });
@@ -566,6 +607,10 @@ fn shape_segment(
         buffer.reserve(run_text.len());
         #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
         for (i, ch) in run_text.chars().enumerate() {
+            if ch == '\u{ad}' && i != 0 && segment.bidi_level.is_rtl()
+                && font_ref.table_data(skrifa::Tag::new(b"morx")).is_some() {
+                continue;
+            }
             // Ensure that each cluster's index matches the index into `infos`. This is required
             // for efficient cluster lookup within `data.rs`.
             //
@@ -582,15 +627,17 @@ fn shape_segment(
             // pyro: a no-break space is shaped as a space, as Blink normalizes it before shaping:
             // it kerns as the space does (macOS Times kerns space-T, not no-break-space-T).
             let ch = match ch {
-                '\t' | '\u{a0}' => ' ',
+                // pyro: and so are the line and paragraph separators, which CSS displays as a
+                // space (WPT css-fonts `separators`): in the space's font, not a fallback's.
+                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
                 '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
                 ch => ch,
             };
             buffer.add(ch, i as u32);
         }
 
-        buffer.set_pre_context(&text[..range.byte_range.start]);
-        buffer.set_post_context(&text[range.byte_range.end..]);
+        buffer.set_pre_context(pre);
+        buffer.set_post_context(post);
         buffer.set_direction(direction);
         buffer.set_script(hb_script);
 
@@ -618,6 +665,7 @@ fn shape_segment(
             harf_shaper.coords(),
             None,
             trim.as_ref(),
+            vertical.as_deref(),
         );
 
         // The glyphs stay in the cache; the next run gets a new buffer.
@@ -653,11 +701,20 @@ fn shape_segment(
     // pyro: per font of the segment, whether it shapes word by word (`shapes_word_by_word`).
     let mut word_fonts: Vec<(u64, u32, bool)> = Vec::new();
 
+    // pyro: a grapheme of joiners alone (U+200D, U+200C: at the start of the text, after a space)
+    // and its font, held to be shaped with the grapheme after it: a joiner is no glyph of its own
+    // but tells the letter after it how to join, which a font shaping with `morx` (macOS's Geeza
+    // Pro) reads only from its own buffer, not the context (WPT css-text `word-break-break-all-004`).
+    // A soft hyphen too (a grapheme of its own, in a word): in the run of the letters around it
+    // when they share a font, so it does not cut the word's shaping in two (WPT css-text
+    // `hyphenate-character-005`).
+    let mut pending_joiner: Option<(FontInstance, TextRange)> = None;
+
     for grapheme_length in grapheme_lengths {
         let (byte_start, char_start) = (byte_end, char_end);
         char_cluster.fill(chars.by_ref().take(grapheme_length), &mut byte_end);
         char_end += grapheme_length;
-        let grapheme = TextRange {
+        let mut grapheme = TextRange {
             byte_range: byte_start..byte_end,
             char_range: char_start..char_end,
         };
@@ -665,6 +722,22 @@ fn shape_segment(
         let font = select_font
             .select_font(segment, options, char_cluster)
             .ok_or(())?;
+
+        if text[grapheme.byte_range.clone()].chars().all(|c| matches!(c, '\u{ad}' | '\u{200c}' | '\u{200d}')) {
+            if let Some((held_font, held)) = pending_joiner.take() {
+                grapheme.byte_range.start = held.byte_range.start;
+                grapheme.char_range.start = held.char_range.start;
+                pending_joiner = Some((held_font, grapheme));
+            } else {
+                pending_joiner = Some((font.into(), grapheme));
+            }
+            continue;
+        }
+        let joined = pending_joiner.take();
+        if let Some((_, held)) = &joined {
+            grapheme.byte_range.start = held.byte_range.start;
+            grapheme.char_range.start = held.char_range.start;
+        }
 
         // pyro: Blink shapes word by word (a space or no-break space alone, each word between
         // them alone) when the font's OpenType lookups never involve the space glyph, so a font
@@ -694,6 +767,16 @@ fn shape_segment(
                 before_font = Some(run_font);
             }
             run = Some((font.into(), grapheme));
+        }
+    }
+    // Joiners at the end of the segment go with the run before them.
+    if let Some((held_font, held)) = pending_joiner.take() {
+        match &mut run {
+            Some((_, run_range)) => {
+                run_range.byte_range.end = held.byte_range.end;
+                run_range.char_range.end = held.char_range.end;
+            }
+            None => run = Some((held_font, held)),
         }
     }
     if let Some((run_font, run_range)) = run {
@@ -798,6 +881,77 @@ fn han_font_data(
         buffer = Some(glyphs.clear());
         found
     })
+}
+
+/// pyro: the positions of `run_text`'s glyphs shaped top to bottom: each advance the vertical
+/// one, each offset along the line the one the positioning features give it (the difference to
+/// shaping without them, which leaves the glyph's vertical origin). `features` take their
+/// vertical counterparts (`halt` `vhal`, `chws` `vchw`, `palt` `vpal`, `kern` `vkrn`), so the
+/// metrics and the features that change advances combine (CSS Text 4 `text-spacing-trim` in
+/// vertical lines).
+fn vertical_positions(
+    shaper: &harfrust::Shaper<'_>,
+    run_text: &str,
+    pre: &str,
+    post: &str,
+    script: harfrust::Script,
+    language: Option<&harfrust::Language>,
+    features: &[harfrust::Feature],
+    point_size: f32,
+) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
+    use alloc::vec::Vec;
+    const POSITIONING: [&[u8; 4]; 4] = [b"vhal", b"vchw", b"vpal", b"vkrn"];
+    let vertical_tag = |tag: harfrust::Tag| match &tag.to_be_bytes() {
+        b"halt" => harfrust::Tag::new(b"vhal"),
+        b"chws" => harfrust::Tag::new(b"vchw"),
+        b"palt" => harfrust::Tag::new(b"vpal"),
+        b"kern" => harfrust::Tag::new(b"vkrn"),
+        _ => tag,
+    };
+    let with: Vec<harfrust::Feature> =
+        features.iter().map(|f| harfrust::Feature { tag: vertical_tag(f.tag), ..*f }).collect();
+    let mut without = with.clone();
+    without.retain(|f| !POSITIONING.iter().any(|t| f.tag == harfrust::Tag::new(t)));
+    without.extend(POSITIONING.iter().map(|t| harfrust::Feature::new(harfrust::Tag::new(t), 0, ..)));
+    let shape = |features: &[harfrust::Feature]| {
+        let mut buffer = harfrust::UnicodeBuffer::new();
+        buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
+        #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
+        for (i, ch) in run_text.chars().enumerate() {
+            let ch = match ch {
+                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
+                ch => ch,
+            };
+            buffer.add(ch, i as u32);
+        }
+        buffer.set_pre_context(pre);
+        buffer.set_post_context(post);
+        buffer.set_direction(harfrust::Direction::TopToBottom);
+        buffer.set_script(script);
+        if let Some(language) = language {
+            buffer.set_language(language.clone());
+        }
+        shaper.shape(buffer, HarfShapeOptions::new().features(features).point_size(Some(point_size)))
+    };
+    let (with, without) = (shape(&with), shape(&without));
+    let (positions, base) = (with.glyph_positions(), without.glyph_positions());
+    if positions.len() != base.len() {
+        return None;
+    }
+    Some(
+        positions
+            .iter()
+            .zip(base)
+            .map(|(p, b)| {
+                let mut out = *p;
+                out.x_advance = -p.y_advance;
+                out.y_advance = 0;
+                out.x_offset = -(p.y_offset - b.y_offset);
+                out.y_offset = 0;
+                out
+            })
+            .collect(),
+    )
 }
 
 /// Up to harfrust's context length (5 characters) of `text`'s end.

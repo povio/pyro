@@ -61,6 +61,7 @@ impl Server {
                     "/child" => ("text/html", "<script>globalThis.done=false;fetch('/data').then(r=>r.text()).then(t=>done=t==='ok')</script><p>remote</p>"),
                     "/relative.js" => ("text/javascript", "globalThis.relative=42;globalThis.styleAtScript=getComputedStyle(document.documentElement).display"),
                     "/theme.css" => ("text/css", "html { display: none }"),
+                    "/frames" => ("text/html", "<iframe id=sandboxed sandbox srcdoc='<p>s</p>'></iframe><iframe id=plain srcdoc='<p>p</p>'></iframe>"),
                     _ => ("text/plain", "ok"),
                 };
                 log.lock().unwrap().push(Seen { path, headers });
@@ -226,4 +227,65 @@ fn detaching_uncommitted_http_child_forgets_pending_loader_activity() {
     t.browser.checkpoint();
     assert!(net.activity(&pending).is_none());
     assert_eq!(t.browser.frames(page).len(), 1);
+}
+
+/// A renderer's sub-resource request for a frame document (a CSS `url()` with request URL
+/// modifiers) is that frame's, named by its id: a sandboxed frame's goes out with its opaque
+/// origin (`Origin: null`), never the top document's, though both frames' documents have the URL
+/// `about:srcdoc`; one naming no frame of the page is not sent. The frame was looked up by its
+/// document's URL (the first frame at it, or the top document when the URL was the top's).
+#[test]
+fn a_renderer_request_is_the_frame_its_client_names() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let server = Server::new();
+    let mut t = crate::browser_thread().unwrap();
+    t.enable_network(Default::default()).unwrap();
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar(format!("{}/frames", server.origin))).unwrap();
+    let outcome = t.run_until(Some(Instant::now() + Duration::from_secs(5)), |b| {
+        let frames = b.frames(page);
+        frames.len() == 3 && frames.iter().all(|f| f.loaded)
+    });
+    assert_eq!(outcome, pyro_runtime::RunOutcome::Done);
+    let frames = t.browser.frames(page);
+    let children: Vec<_> = frames.iter().filter(|f| f.parent.is_some()).collect();
+    let sandboxed = children.iter().find(|f| f.origin == "null").expect("a sandboxed frame with an opaque origin");
+    let plain = children.iter().find(|f| f.origin != "null").expect("a frame of the page's origin");
+    assert_eq!((sandboxed.url.as_str(), plain.url.as_str()), ("about:srcdoc", "about:srcdoc"));
+    server.take();
+    let fetch = |t: &mut BrowserThread, path: &str, client: Option<String>| -> Result<(), String> {
+        let result: Rc<RefCell<Option<Result<(), String>>>> = Rc::default();
+        let slot = result.clone();
+        let options = pyro_browser::SubresourceOptions {
+            crossorigin: Some("anonymous".into()),
+            client,
+            ..Default::default()
+        };
+        t.browser.fetch_subresource_options(
+            page,
+            format!("{}{path}", server.origin),
+            pyro_browser::ResourceKind::Image,
+            options,
+            Box::new(move |_, r| *slot.borrow_mut() = Some(r.map(|_| ()))),
+        );
+        let done = result.clone();
+        t.run_until(Some(Instant::now() + Duration::from_secs(5)), move |_| done.borrow().is_some());
+        let r = result.borrow_mut().take().expect("the fetch completes");
+        r
+    };
+    let client = |f: &&&pyro_browser::FrameInfo| format!("{}#{}", f.id.0, f.loader_id.0);
+    let _ = fetch(&mut t, "/img?sandboxed", Some(client(&sandboxed)));
+    let _ = fetch(&mut t, "/img?plain", Some(client(&plain)));
+    let unknown = fetch(&mut t, "/img?unknown", Some("not-a-frame#x".into()));
+    assert!(unknown.is_err(), "a client naming no frame sends nothing");
+    // A document the frame has since navigated away from (another loader id) sends nothing.
+    let stale = fetch(&mut t, "/img?stale", Some(format!("{}#not-its-document", plain.id.0)));
+    assert!(stale.is_err(), "a client of a replaced document sends nothing");
+    let seen = server.take();
+    let origin_of = |query: &str| seen.iter().find(|r| r.path.ends_with(query)).map(|r| r.get("origin").map(str::to_owned));
+    assert_eq!(origin_of("?sandboxed"), Some(Some("null".to_owned())), "{seen:?}");
+    assert_ne!(origin_of("?plain"), Some(Some("null".to_owned())), "{seen:?}");
+    assert_eq!(origin_of("?unknown"), None, "{seen:?}");
+    assert_eq!(origin_of("?stale"), None, "{seen:?}");
 }

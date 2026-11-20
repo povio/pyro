@@ -10,7 +10,7 @@ use crate::values::computed::image::Image;
 use crate::values::generics::ui as generics;
 
 pub use crate::values::specified::ui::{
-    BoolInteger, CursorKind, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
+    BoolInteger, CaretShape, CursorKind, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
     ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
 };
 

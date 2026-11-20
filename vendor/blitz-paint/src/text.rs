@@ -34,6 +34,9 @@ pub(crate) struct VerticalLine {
     all_upright: bool,
     /// pyro: the line is turned a quarter counterclockwise (`sideways-lr`).
     counterclockwise: bool,
+    /// pyro: the line's text is sideways (`sideways-*`, `text-orientation: sideways`): it keeps
+    /// the alphabetic baseline, but for runs of an upright span, which stand on the central one.
+    sideways: bool,
 }
 
 impl VerticalLine {
@@ -41,27 +44,23 @@ impl VerticalLine {
         // A fragment's box is its whole-pixel ascent and descent, around the middle of which the
         // tallest fragment in the line (the one that sets its height) has the central baseline.
         let mut central_x_height = 0.0;
-        let central = (!sideways)
-            .then(|| {
-                line.items()
-                    .filter_map(|item| match item {
-                        // pyro: a run aligned by its box's edge keeps its own place
-                        // (`VerticalLine::central_for`).
-                        PositionedLayoutItem::GlyphRun(run) if !run.edge_aligned() => Some(run),
-                        _ => None,
-                    })
-                    .max_by_key(|run| {
-                        let metrics = run.run().font_metrics();
-                        (metrics.ascent.round() + metrics.descent.round()) as i64
-                    })
-                    .map(|run| {
-                        let metrics = run.run().font_metrics();
-                        central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
-                        run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0
-                    })
+        let central = line.items()
+            .filter_map(|item| match item {
+                // pyro: a run aligned by its box's edge keeps its own place
+                // (`VerticalLine::central_for`).
+                PositionedLayoutItem::GlyphRun(run) if !run.edge_aligned() => Some(run),
+                _ => None,
             })
-            .flatten();
-        Self { central, central_x_height, all_upright, counterclockwise: false }
+            .max_by_key(|run| {
+                let metrics = run.run().font_metrics();
+                (metrics.ascent.round() + metrics.descent.round()) as i64
+            })
+            .map(|run| {
+                let metrics = run.run().font_metrics();
+                central_x_height = metrics.x_height.unwrap_or(run.run().font_size() / 2.0);
+                run.baseline() - run.central_height()
+            });
+        Self { central, central_x_height, all_upright, counterclockwise: false, sideways }
     }
 
     /// pyro: for a line turned a quarter counterclockwise (`sideways-lr`).
@@ -103,6 +102,9 @@ impl VerticalLine {
         scale: f64,
     ) -> Option<CentralMetrics> {
         self.central?;
+        if self.sideways && !run.style().upright {
+            return None;
+        }
         let metrics = run.run().font_metrics();
         // The fragment's box, as `fragment_shift` centres it: its whole-CSS-pixel ascent above the
         // baseline (Chrome's geometry at a device scale is its geometry at 1, scaled).
@@ -126,6 +128,15 @@ impl VerticalLine {
     /// fragment box, so that it stays where the line put it.
     fn central_for(self, run: &parley::GlyphRun<'_, TextBrush>) -> Option<f32> {
         let central = self.central?;
+        // A sideways line's runs keep the alphabetic baseline, but an upright span's.
+        if self.sideways && !run.style().upright {
+            return None;
+        }
+        // pyro: a run aligned by a named baseline of its own keeps the place the line gave it
+        // against its parent's baseline of that name (the line's tallest run, which stays put).
+        if !run.edge_aligned() && run.named_aligned() {
+            return Some(run.baseline() - run.central_height());
+        }
         if !run.edge_aligned() {
             // `middle`: the box's middle goes half the parent's x-height over the central
             // baseline (as Blink, which aligns on the central baseline in vertical lines).
@@ -134,8 +145,7 @@ impl VerticalLine {
             }
             return Some(central);
         }
-        let metrics = run.run().font_metrics();
-        Some(run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0)
+        Some(run.baseline() - run.central_height())
     }
 
     /// Moves a run's fragment box from the alphabetic baseline to the central one.
@@ -143,8 +153,7 @@ impl VerticalLine {
         let Some(central) = self.central_for(run) else {
             return Affine::IDENTITY;
         };
-        let metrics = run.run().font_metrics();
-        let at = run.baseline() - (metrics.ascent.round() - metrics.descent.round()) / 2.0;
+        let at = run.baseline() - run.central_height();
         Affine::translate((0.0, (central - at) as f64))
     }
 
@@ -162,8 +171,11 @@ impl VerticalLine {
         let metrics = run.run().font_metrics();
         // pyro: by the run's first visible character: an empty inline box's strut (U+2061) or a
         // bidi control before it decides nothing.
-        let upright = self.all_upright
-            || source
+        // pyro: by the run's own `text-orientation` (a `mixed` span in an `upright` block).
+        let run_upright = run.style().upright;
+        // (In a sideways line only an upright span's glyphs stand up.)
+        let upright = run_upright
+            || !self.sideways && source
                 .and_then(|text| {
                     text.get(run.run().text_range())?.chars().find(|&c| {
                         !matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
@@ -177,7 +189,7 @@ impl VerticalLine {
         let height = (metrics.ascent + metrics.descent).max(1.0);
         // pyro: a glyph advancing by the font's height (`text-orientation: upright` in a font
         // without vertical metrics, parley's `shape::upright`) hangs from its ascent.
-        let tall = self.all_upright.then(|| {
+        let tall = run_upright.then(|| {
             use skrifa::raw::TableProvider;
             let font = run.run().font();
             let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
@@ -205,17 +217,7 @@ impl VerticalLine {
 /// Whether `text-orientation: mixed` stands a character upright (UTR #50's `Vertical_Orientation`
 /// other than R, by block).
 fn is_upright_char(c: char) -> bool {
-    matches!(c as u32,
-        0x1100..=0x11FF
-        | 0x2E80..=0x4DBF
-        | 0x4E00..=0xA4CF
-        | 0xAC00..=0xD7FF
-        | 0xF900..=0xFAFF
-        | 0xFE30..=0xFE4F
-        | 0xFF00..=0xFF60
-        | 0xFFE0..=0xFFE6
-        | 0x1F000..=0x1FAFF
-        | 0x20000..=0x3FFFF)
+    parley::upright_in_vertical(c)
 }
 
 /// pyro: a glyph run's font on a central baseline (the `mixed` and `upright` text of
@@ -251,8 +253,29 @@ fn snap_turned_band(transform: Affine, top: f64, size: f64) -> (f64, f64) {
 /// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
 /// rounds (text in two table cells against the same text in one line), where half-unit advances
 /// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
-fn quarter_pixel(x: f64) -> f64 {
-    (layout_unit(x) * 4.0).round() / 4.0
+thread_local! {
+    static DEVICE_GRID: std::cell::Cell<(Affine, bool)> = const { std::cell::Cell::new((Affine::IDENTITY, true)) };
+}
+
+pub fn with_glyph_grid<R>(device: Affine, subpixel: bool, paint: impl FnOnce() -> R) -> R {
+    struct Restore((Affine, bool));
+    impl Drop for Restore {
+        fn drop(&mut self) { DEVICE_GRID.set(self.0); }
+    }
+    let _restore = Restore(DEVICE_GRID.replace((device, subpixel)));
+    paint()
+}
+
+fn glyph_grid(transform: Affine, horizontal: bool) -> impl Fn(f32) -> f32 {
+    let (device, subpixel) = DEVICE_GRID.get();
+    let [xx, xy, yx, yy, origin, _] = (device * transform).as_coeffs();
+    let enabled = horizontal && [xx, xy, yx, yy] == [1.0, 0.0, 0.0, 1.0] && (!subpixel || CORE_TEXT_GLYPHS);
+    move |x| {
+        if !enabled { return x; }
+        let absolute = layout_unit(origin + f64::from(x));
+        let phase = if CORE_TEXT_GLYPHS { (absolute * 4.0).round() / 4.0 } else { absolute };
+        ((if subpixel { phase } else { phase.round() }) - origin) as f32
+    }
 }
 
 /// pyro: Blink's `LayoutUnit::FromFloatRound`: to the nearest 1/64 px.
@@ -1336,6 +1359,7 @@ fn flush_line_decorations<S: PaintScene>(
                     (top + 0.5 * scale, top + size - 0.5 * scale),
                     t.min(13.0) * scale,
                     vertical,
+                    transform,
                 ),
                 _ => SmallVec::new(),
             };
@@ -1811,6 +1835,23 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 _ => None,
             })
             .collect();
+        let baseline = line.metrics().baseline - line.metrics().block_min_coord;
+        let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
+            matches!(item, PositionedLayoutItem::InlineBox(atom) if !atom.kind.is_span_edge()
+                && !atom.vertical_align.is_line_relative()
+                && !matches!(atom.vertical_align.alignment, parley::AlignmentBaseline::TextTop | parley::AlignmentBaseline::TextBottom)
+                && atom.baseline.is_some_and(|offset| (atom.y + offset - line.metrics().baseline).abs() < 1.0 / 64.0))
+        })).map_or(0.0, |tops| {
+            let top = line.metrics().unquantized_block_min_coord;
+            (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
+        });
+        if atomic_baseline_shift != 0.0 {
+            for run in &mut glyph_runs {
+                if !run.edge_aligned() && (run.baseline() - line.metrics().baseline).abs() < 1.0 / 64.0 {
+                    run.translate_baseline(atomic_baseline_shift as f32);
+                }
+            }
+        }
         // pyro: white space hanging at the end of a left-to-right line is not decorated (Chromium
         // removes it), nor counted in a box's decoration line: the line's content ends that much
         // before its last run does (its runs are where alignment and justification put them).
@@ -1860,7 +1901,11 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let style = glyph_run.style();
             // pyro: a face's `size-adjust` scales the run's size; decoration thickness and offset
             // percentages are of the element's font size.
+            // pyro: to a 1/4096 px, which drops the float error of a size CSS `text-fit` scaled
+            // (40.00004 for twice 20px), so that decorations whose thickness or offset is rounded
+            // up are those of the size the text has (WPT css-text `text-fit/text-decoration-skip-ink`).
             let css_font_size = font_size as f64 / scale / f64::from(run.synthesis().size_adjust());
+            let css_font_size = (css_font_size * 4096.0).round() / 4096.0;
             // pyro: under `font-size-adjust` the run's size is the used one; decoration
             // thickness and offset percentages are of the computed font size.
             let css_font_size = doc
@@ -1911,8 +1956,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             }
 
             let fill_color = if shadows_only { Some(Color::TRANSPARENT) } else { brush_override };
+            // pyro: the `::first-line` box's `opacity` (Gecko applies it; WPT css-pseudo
+            // `first-line-opacity-001`), on its text's colour.
+            let first_line_opacity = on_first_line
+                .and_then(|id| doc.get_node(id))
+                .and_then(|node| node.primary_styles())
+                .map_or(1.0, |style| style.get_effects().opacity);
             let fill_color = fill_color.unwrap_or_else(|| {
                 let own = stack.last().map(|e| e.fill_color).unwrap_or(Color::BLACK);
+                let own = if first_line_opacity < 1.0 { own.multiply_alpha(first_line_opacity) } else { own };
                 // pyro: selected text in its highlight's colour.
                 match highlighting {
                     true => crate::highlight::highlight_of(doc, style.brush.id, highlights)
@@ -2023,8 +2075,8 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let geometry = DecorationRunGeometry {
                 // pyro: in a vertical line, where the run's fragment is drawn (`VerticalLine`).
                 baseline: glyph_run.baseline() + vertical.map_or(0.0, |vertical| vertical.fragment_shift_y(glyph_run)),
-                content_ascent: glyph_run.baseline() - content_top,
-                content_descent: content_bottom - glyph_run.baseline(),
+                content_ascent: line.style_baseline(glyph_run.style_index()) - content_top,
+                content_descent: content_bottom - line.style_baseline(glyph_run.style_index()),
                 underline_offset: metrics.underline_offset,
                 underline_size: metrics.underline_size,
                 strikethrough_size: metrics.strikethrough_size,
@@ -2102,14 +2154,22 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         // WPT css-pseudo `selection-originating-decoration-color`); an underline or overline of
         // its own colour keeps it (css-text-decor `text-decoration-inset-marked-text-gap`).
         // pyro: all of them when the highlight has a decoration of its own (WPT css-pseudo
-        // `highlight-painting-004`: an underline of its own colour turns the selection's).
+        // `highlight-painting-004`: an underline of its own colour turns the selection's), or
+        // when the decorating element has a `::selection` style of its own (Blink paints its
+        // decorations in that style's colour; WPT css-text-decor
+        // `selection-pseudo-with-decoration-invalidation-001`).
         if highlighting {
             for acc in deco_boxes.iter_mut().filter(|acc| !acc.selection) {
                 let Some(highlight) = crate::highlight::highlight_of(doc, acc.node_id, highlights) else { continue };
+                let own_style = highlight.owner == Some(acc.node_id);
                 let recolour = acc.deco.current_color
                     || acc.deco.line == TextDecorationLine::LINE_THROUGH
-                    || highlight.decoration.is_some();
-                if let (true, Some(color)) = (recolour, highlight.color) {
+                    || highlight.decoration.is_some()
+                    || own_style;
+                // (A style of its own without a colour of its own, or `currentcolor`: the
+                // element's text colour.)
+                let color = highlight.color.or_else(|| own_style.then(|| text_fill_color(doc, acc.node_id)));
+                if let (true, Some(color)) = (recolour, color) {
                     acc.deco.color = color;
                 }
             }
@@ -2135,7 +2195,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         let (strut_top, strut_bottom) = line.span_content_area(line.root_style());
         let line_baseline = line.metrics().baseline;
         let strut = StrutGeometry {
-            baseline: line_baseline,
+            baseline: line_baseline + atomic_baseline_shift as f32,
             ascent: line_baseline - strut_top,
             descent: strut_bottom - line_baseline,
             css_font_size: root_font_size,
@@ -2216,11 +2276,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             // pyro: on macOS glyph origins snap to quarters of a device pixel along the
             // baseline, as Skia's subpixel positioning does, where the run is drawn untransformed
             // (only translated) into a raster: a recording paint (the PDF's) keeps the exact x.
-            let quarter_x = CORE_TEXT_GLYPHS && runs.is_none() && vertical.is_none() && {
-                let [a, b, c, d, _, _] = transform.as_coeffs();
-                a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
-            };
-            let tx = transform.as_coeffs()[4];
+            let position = glyph_grid(transform, runs.is_none() && vertical.is_none() && glyph_xform.is_none());
             let (kept, kept_extent) = (paint.kept.clone(), paint.kept_extent);
             // Zero-size text is invisible, but hinting can give its glyphs ink. Fully
             // transparent text is skipped too: backends draw color (emoji) glyphs opaque.
@@ -2232,11 +2288,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     .take(kept.len())
                     .map(|glyph| anyrender::Glyph {
                         id: glyph.id as _,
-                        x: if quarter_x {
-                            (quarter_pixel(tx + glyph.x as f64) - tx) as f32
-                        } else {
-                            glyph.x
-                        },
+                        x: position(glyph.x),
                         y: glyph.y,
                     })
             };
@@ -2594,11 +2646,7 @@ fn draw_glyph_run<S: PaintScene>(
         kurbo::Vec2::default()
     };
     let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
-    let quarter_x = CORE_TEXT_GLYPHS && snap && {
-        let [a, b, c, d, _, _] = transform.as_coeffs();
-        a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
-    };
-    let tx = transform.as_coeffs()[4];
+    let position = glyph_grid(transform, snap && glyph_xform.is_none());
     scene.draw_glyphs(
         run.font(),
         font_size,
@@ -2612,11 +2660,7 @@ fn draw_glyph_run<S: PaintScene>(
         glyph_xform,
         glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
             id: glyph.id as _,
-            x: if quarter_x {
-                (quarter_pixel(tx + glyph.x as f64) - tx) as f32
-            } else {
-                glyph.x
-            },
+            x: position(glyph.x),
             y: glyph.y,
         }),
     );
@@ -2737,6 +2781,7 @@ fn ink_gaps(
     band: (f64, f64),
     dilation: f64,
     vertical: Option<VerticalLine>,
+    transform: Affine,
 ) -> SmallVec<[(f64, f64); 8]> {
     let mut gaps: SmallVec<[(f64, f64); 8]> = SmallVec::new();
     // A 1px line's band is its middle: what crosses that line.
@@ -2762,6 +2807,7 @@ fn ink_gaps(
             None => 0.0,
         };
         let run = glyph_run.run();
+        let position = glyph_grid(transform, vertical.is_none() && run.synthesis().skew().is_none());
         let (font, size) = (run.font(), run.font_size());
         let coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
         let reach = f64::from(size) + dilation;
@@ -2770,7 +2816,7 @@ fn ink_gaps(
             // Whether the atom is CJK, looked up only for a glyph that crosses the band.
             let mut atom_is_cjk = None;
             for glyph in glyphs.by_ref().take(count) {
-                let x = f64::from(glyph.x);
+                let x = f64::from(position(glyph.x));
                 // Glyphs far outside the line cannot reach it (their ink is within an em of them);
                 // past its end none can (glyphs come left to right, in either direction).
                 if x - reach > extent.1 {

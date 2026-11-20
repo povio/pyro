@@ -207,6 +207,14 @@ pub(crate) struct LayoutItem {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DiscretionaryFragment<B: Brush> {
+    pub clusters: Range<u32>,
+    pub group_end: u32,
+    pub byte_start: usize,
+    pub layout: crate::Layout<B>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutData<B: Brush> {
     // General settings (directly from the "builder")
     /// The display scale factor
@@ -269,11 +277,19 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) alignment: Option<super::Alignment>,
     /// The text-indent amount in layout units.
     pub(crate) indent_amount: f32,
+    /// pyro: the text index the first line ends at the latest, when set
+    /// ([`Layout::set_first_line_limit`]).
+    pub(crate) first_line_limit: Option<usize>,
     /// Options controlling text-indent behavior (each-line, hanging).
     pub(crate) indent_options: IndentOptions,
     /// pyro: the advance of a space that `tab-size` counts in (the root style's space with its
     /// letter and word spacing), in layout units; negative while tabs keep their shaped advance.
     pub(crate) tab_space: f32,
+    /// pyro: per character, what CSS `hanging-punctuation` may hang of it: 1 opening, 2 closing
+    /// punctuation, 4 a stop or comma (empty where no style hangs punctuation).
+    pub(crate) hang_classes: Vec<u8>,
+    /// pyro: the index of the last shaped cluster that is not white space, with `hang_classes`.
+    pub(crate) last_content_cluster: u32,
     /// pyro: the least advance of a tab (0.5ch of the root style): a tab closer than this to its
     /// stop goes on to the next one.
     pub(crate) tab_min_advance: f32,
@@ -283,7 +299,10 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) central_baseline: bool,
     /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
     /// cluster with the glyphs it was shaped with.
-    pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs)>,
+    pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs, Option<(usize, bool)>)>,
+    pub(crate) replacements: Vec<(u16, bool, crate::Layout<B>)>,
+    pub(crate) broken_forms: Vec<DiscretionaryFragment<B>>,
+    pub(crate) active_forms: Vec<(u32, usize, parley_engine::ClusterGlyphs)>,
     /// pyro: the shaped clusters a line's edge changed (fullwidth punctuation set half-width at
     /// a line's start or end, `text-spacing-trim`; the space after an ideograph that ends a line,
     /// `text-autospace`): each one with its glyph's x offset and its advance as shaped. Each line
@@ -323,12 +342,18 @@ impl<B: Brush> Default for LayoutData<B> {
             alignment: None,
             layout_max_advance: 0.0,
             indent_amount: 0.0,
+            first_line_limit: None,
             indent_options: IndentOptions::default(),
             tab_space: -1.0,
+            hang_classes: Vec::new(),
+            last_content_cluster: 0,
             tab_min_advance: 0.0,
             line_height_quirk: false,
             central_baseline: false,
             shown_hyphens: Vec::new(),
+            replacements: Vec::new(),
+            broken_forms: Vec::new(),
+            active_forms: Vec::new(),
             edge_clusters: Vec::new(),
             autospace: Vec::new(),
         }
@@ -396,10 +421,14 @@ impl<B: Brush> LayoutData<B> {
         self.indent_amount = 0.0;
         self.indent_options = IndentOptions::default();
         self.tab_space = -1.0;
+        self.hang_classes.clear();
         self.tab_min_advance = 0.0;
         self.line_height_quirk = false;
         self.central_baseline = false;
         self.shown_hyphens.clear();
+        self.replacements.clear();
+        self.broken_forms.clear();
+        self.active_forms.clear();
         self.edge_clusters.clear();
         self.autospace.clear();
         self.styles.clear();
@@ -566,8 +595,11 @@ impl<B: Brush> LayoutData<B> {
 
     /// Start measurements and new line breaks from the original shaped clusters.
     pub(crate) fn restore_shown_hyphens(&mut self) {
-        for (cluster, saved) in self.shown_hyphens.drain(..) {
+        for (cluster, saved, _) in self.shown_hyphens.drain(..) {
             self.shaped_text.restore_cluster(cluster, saved);
+        }
+        for (_, index, saved) in self.active_forms.drain(..).rev() {
+            self.shaped_text.restore_cluster(self.broken_forms[index].clusters.start, saved);
         }
     }
 
@@ -657,6 +689,10 @@ struct ContentWidthsMeasurer {
     /// pyro: the last item measured is a span's start edge ([`InlineBoxKind::SpanStart`]): the
     /// soft wrap opportunity before the content that follows was taken before the edge.
     after_span_start: bool,
+
+    /// pyro: the last atom measured has `overflow-wrap: anywhere`: there is an opportunity after
+    /// it (the characters on either side of an opportunity give it, as in Blink).
+    after_anywhere: bool,
 }
 
 /// pyro: whether a line may wrap before the content that `items` starts with: text with a soft
@@ -703,6 +739,7 @@ impl ContentWidthsMeasurer {
             line_indent: first_line_indent,
             line_has_content: false,
             after_span_start: false,
+            after_anywhere: false,
         }
     }
 
@@ -795,10 +832,12 @@ impl ContentWidthsMeasurer {
                                 self.line_has_content = false;
                             }
                             self.after_span_start = true;
+                            self.running_hanging_whitespace = 0.0;
                         } else {
+                            // pyro: white space before an end edge still hangs at the line's end: the
+                            // line breaker puts the edge before it (`reorder_span_ends_before_trailing_space`).
                             self.after_span_start = false;
                         }
-                        self.running_hanging_whitespace = 0.0;
                         self.running_min_width += inline_box.width;
                         self.running_max_width += inline_box.width;
                     }
@@ -879,9 +918,12 @@ impl ContentWidthsMeasurer {
                 // pyro: the opportunity before text after a span's start edge was taken before
                 // the edge.
                 let after_span_start = core::mem::take(&mut self.after_span_start);
+                let after_anywhere =
+                    core::mem::replace(&mut self.after_anywhere, style.overflow_wrap == OverflowWrap::Anywhere);
                 if prev_text_wrap_mode == TextWrapMode::Wrap
                     && !after_span_start
                     && (cluster.is_soft_wrap_opportunity_before()
+                        || after_anywhere
                         || style.overflow_wrap == OverflowWrap::Anywhere)
                 {
                     self.soft_break(i != empty_at);

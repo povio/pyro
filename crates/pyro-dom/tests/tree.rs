@@ -14,6 +14,22 @@ fn doc(html: &str) -> (DomRef, NodeId) {
 }
 
 #[test]
+fn raster_budget_follows_frame_tree_not_arena_or_url() {
+    let mut dom = Dom::new();
+    let top = dom.create_document(DocumentKind::Html, "http://test/");
+    let child = dom.create_document(DocumentKind::Html, "http://test/");
+    let grandchild = dom.create_document(DocumentKind::Html, "http://test/");
+    dom.inherit_raster_budget(child, top).unwrap();
+    dom.inherit_raster_budget(grandchild, child).unwrap();
+    let charge = dom.document_data(grandchild).unwrap().raster_budget.reserve(4096).unwrap();
+    assert_eq!(dom.document_data(top).unwrap().raster_budget.used(), 4096);
+    let next = dom.create_document(DocumentKind::Html, "http://test/");
+    assert_eq!(dom.document_data(next).unwrap().raster_budget.used(), 0);
+    drop(charge);
+    assert_eq!(dom.document_data(child).unwrap().raster_budget.used(), 0);
+}
+
+#[test]
 fn parse_and_serialize_roundtrip() {
     let (dom, d) = doc("<!doctype html><html><head><title>x</title></head><body><p id=a class='b c'>Hi &amp; <b>there</b></p><br><template><i>t</i></template><script>if (a<b) {}</script></body></html>");
     let dom = dom.borrow();

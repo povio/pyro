@@ -486,6 +486,8 @@ impl Shared {
         origin_url: Option<&Url>,
         cors_cross: bool,
         site: FetchSite,
+        // pyro: the hop is same-origin and the response's tainting is "basic" (no hop of a no-cors
+        // request went to another origin): Fetch includes credentials for "same-origin" then only.
         same_origin: bool,
     ) -> HeaderMap {
         // Read under the lock: the settings are a header map and strings a
@@ -540,11 +542,8 @@ impl Shared {
             }
         }
         // Cookies.
-        let send_cookies = match req.credentials {
-            Credentials::Include => true,
-            Credentials::SameOrigin => same_origin,
-            Credentials::Omit => false,
-        };
+        // (`same_origin` is the hop's response tainting being "basic": `includes_credentials`.)
+        let send_cookies = includes_credentials(req.credentials, same_origin);
         if send_cookies && !h.contains_key(header::COOKIE) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
@@ -1404,17 +1403,38 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
+        let priorities = ParserPriorities::default();
         let idle = IDLE_RELEASE.get().map(|release| IdleRelease::start(*release));
         while let Some(cmd) = rx.recv().await {
             if let Some(idle) = &idle {
                 idle.touch();
             }
             match cmd {
-                Cmd::Fetch(id, req, sink, start, staged) => {
+                Cmd::Fetch(id, req, mut sink, start, staged) => {
                     let destination = req.destination;
+                    let mut head_start = None;
+                    if let Some(document) = req.loader_id.as_ref().filter(|_| matches!(req.url.scheme(), "http" | "https")) {
+                        let origin = req.url.origin();
+                        if req.parser_priority {
+                            let mut signal = Some(priorities.start((document.clone(), origin)));
+                            let mut downstream = sink;
+                            sink = Box::new(move |event| {
+                                if matches!(event, ResponseEvent::Response(_) | ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                                    signal.take();
+                                }
+                                downstream(event);
+                            });
+                        } else if destination == Destination::Image {
+                            head_start = priorities.pending(&(document.clone(), origin));
+                        }
+                    }
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
                     let (io2, tasks2, sink2, idle2) = (io.clone(), tasks.clone(), sink.clone(), idle.clone());
                     let handle = tokio::task::spawn_local(async move {
+                        if let Some(mut head) = head_start {
+                            const MAX_HEAD_START: Duration = Duration::from_millis(100);
+                            let _ = tokio::time::timeout_at((start + MAX_HEAD_START).into(), head.changed()).await;
+                        }
                         let dest = req.destination;
                         let timing = crate::timing::NetTiming { start: Some(start), ..Default::default() };
                         let running = io2.run(id, *req, &sink2, staged);
@@ -1481,6 +1501,56 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         }
         flush_deferred_wakes();
     });
+}
+
+type PriorityKey = (String, url::Origin);
+
+#[derive(Default, Clone)]
+struct ParserPriorities(Arc<Mutex<HashMap<PriorityKey, (usize, tokio::sync::watch::Sender<()>)>>>);
+
+impl ParserPriorities {
+    fn start(&self, key: PriorityKey) -> PendingHeaders {
+        let mut table = self.0.lock().unwrap();
+        table.entry(key.clone()).or_insert_with(|| (0, tokio::sync::watch::channel(()).0)).0 += 1;
+        PendingHeaders(self.clone(), key)
+    }
+
+    fn pending(&self, key: &PriorityKey) -> Option<tokio::sync::watch::Receiver<()>> {
+        self.0.lock().unwrap().get(key).map(|(_, signal)| signal.subscribe())
+    }
+}
+
+struct PendingHeaders(ParserPriorities, PriorityKey);
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    #[test]
+    fn image_dispatch_tracks_only_its_documents_origin() {
+        let priorities = ParserPriorities::default();
+        let key = ("document".to_owned(), Url::parse("https://site.test/").unwrap().origin());
+        assert!(priorities.pending(&key).is_none());
+        let stylesheet = priorities.start(key.clone());
+        let script = priorities.start(key.clone());
+        let images: Vec<_> = (0..32).map(|_| priorities.pending(&key).unwrap()).collect();
+        assert!(priorities.pending(&("other".into(), key.1.clone())).is_none());
+        assert!(priorities.pending(&(key.0.clone(), Url::parse("https://other.test/").unwrap().origin())).is_none());
+        drop(stylesheet);
+        assert_eq!(images.iter().filter(|head| head.has_changed().is_err()).count(), 0);
+        drop(script);
+        assert_eq!(images.iter().filter(|head| head.has_changed().is_err()).count(), 32);
+        assert!(priorities.pending(&key).is_none());
+    }
+}
+
+impl Drop for PendingHeaders {
+    fn drop(&mut self) {
+        let mut table = self.0.0.lock().unwrap();
+        let entry = table.get_mut(&self.1).unwrap();
+        entry.0 -= 1;
+        if entry.0 == 0 { table.remove(&self.1); }
+    }
 }
 
 struct Task {
@@ -1858,6 +1928,9 @@ impl Io {
         let mut site = FetchSite::None;
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
+        // pyro: Fetch "response tainting" of a no-cors request: "opaque" from the first hop to
+        // another origin on, a later same-origin hop included (a redirect back does not clear it).
+        let mut no_cors_opaque = false;
         let mut unconditional = false; // a 304 no longer matched its entry: refetch without validators
         let mut pause_response: Option<RequestInfo> = None; // set by `PauseResponse`: the final hop's response is paused
 
@@ -1889,6 +1962,9 @@ impl Io {
             let same_origin = req.origin.is_none()
                 || (!tainted && origin_url.as_ref().is_some_and(|o| cors::same_origin(o, &req.url)));
             let cors_cross = self.shared.config.enforce_cors && req.mode == RequestMode::Cors && !same_origin;
+            no_cors_opaque |= req.mode == RequestMode::NoCors && !same_origin;
+            // Same-origin as far as the response's tainting goes (`no_cors_opaque`).
+            let basic_tainting = same_origin && !no_cors_opaque;
             site = site.max(hop_site(&req, origin_url.as_ref()));
             // The first hop of a request its caller's thread paused comes
             // with its headers built, its start published and its decision.
@@ -1902,7 +1978,7 @@ impl Io {
                         origin_url.as_ref(),
                         cors_cross,
                         site,
-                        same_origin,
+                        basic_tainting,
                     ),
                     None,
                 ),
@@ -2036,14 +2112,19 @@ impl Io {
                 && pause_response.is_none();
             let request_time = wall_time();
             let sent = if cacheable { Some(headers.clone()) } else { None };
+            // pyro: whether this hop carries credentials (as the cookie decision above): the cache
+            // serves a response only to a request of the same kind (`HttpCache::lookup`).
+            let credentialed =
+                includes_credentials(req.credentials, basic_tainting) || headers.contains_key(header::AUTHORIZATION);
             let mut revalidating = None;
             if cacheable {
-                let lookup = self.shared.cache.lock().unwrap().lookup(&url, &headers, cache_mode, request_time);
+                let lookup =
+                    self.shared.cache.lock().unwrap().lookup(&url, &headers, credentialed, cache_mode, request_time);
                 match lookup {
                     crate::cache::Lookup::Hit(cached) => {
                         // A stored response passes the TAO check a network one would.
                         crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
-                        let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                        let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                         return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                     }
                     crate::cache::Lookup::Revalidate(cached) if !unconditional => {
@@ -2064,10 +2145,10 @@ impl Io {
                 .as_ref()
                 .filter(|_| cacheable && crate::cache::shared_request_eligible(&headers));
             if let (Some(store), None) = (shared_assets, revalidating.as_ref()) {
-                let lookup = store.with(|c| c.lookup(&url, &headers, cache_mode, request_time));
+                let lookup = store.with(|c| c.lookup(&url, &headers, credentialed, cache_mode, request_time));
                 if let crate::cache::Lookup::Hit(cached) = lookup {
                     crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
-                    let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                    let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                     return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                 }
             }
@@ -2160,6 +2241,15 @@ impl Io {
                     Err(_) => return Err(NetError::Other("authentication interception dropped".into())),
                 }
             };
+            // pyro: a response to an authentication retry answers the request as last sent, with
+            // its `Authorization`: it is stored (if at all) under those headers and as credentialed,
+            // never as the anonymous request that got the challenge (the shared asset store refuses
+            // a request with credentials).
+            let (sent, credentialed) = if auth_attempts > 0 && headers.contains_key(header::AUTHORIZATION) {
+                (sent.map(|_| headers.clone()), true)
+            } else {
+                (sent, credentialed)
+            };
             let status = resp.status();
             // The server's reason phrase when it is not the standard one (hyper keeps only those): XHR and fetch
             // report it as statusText, as Chromium does (`HTTP/1.1 204 UNICORNSWIN`).
@@ -2185,12 +2275,9 @@ impl Io {
             if protocol == Version::HTTP_2 {
                 self.multiplexing(&url);
             }
-            let cookies_allowed = match req.credentials {
-                Credentials::Include => true,
-                Credentials::SameOrigin => same_origin,
-                Credentials::Omit => false,
-            };
-            self.store_cookies(&url, &resp_headers, cookies_allowed);
+            // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
+            // (a no-cors chain that went through another origin) neither sends nor stores.
+            self.store_cookies(&url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
             let response_time = wall_time();
             if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
                 && (status.is_success() || status.is_redirection())
@@ -2201,16 +2288,18 @@ impl Io {
                 if let Some(cached) = revalidating.take() {
                     drop(resp);
                     drop(permit);
+                    // pyro: into an entry of the same kind as the request as last sent only.
                     let updated = self.shared.cache.lock().unwrap().update_from_304(
                         &url,
                         cached.id,
                         &resp_headers,
                         request_time,
                         response_time,
+                        credentialed,
                     );
                     match updated {
                         Some(updated) => {
-                            let hop = Hop { cors_cross, same_origin, redirected: redirects > 0 };
+                            let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                             return self.serve_cached(id, &req, sink, &url, updated, hop, false, 0);
                         }
                         None => {
@@ -2298,7 +2387,7 @@ impl Io {
                 cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                     .map_err(NetError::Cors)?;
                 ResponseKind::Cors
-            } else if req.mode == RequestMode::NoCors && !same_origin {
+            } else if req.mode == RequestMode::NoCors && !basic_tainting {
                 ResponseKind::Opaque
             } else {
                 ResponseKind::Basic
@@ -2416,10 +2505,10 @@ impl Io {
                     if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
                 if let Some(response) = store {
                     let mut cache = self.shared.cache.lock().unwrap();
-                    cache.insert(&url, sent, status, &response, body.clone(), request_time, response_time, protocol);
+                    cache.insert(&url, sent, credentialed, status, &response, body.clone(), request_time, response_time, protocol);
                 }
                 if let (Some(s), Some(response)) = (shared_store, shared_response) {
-                    s.with(|c| c.insert(&url, sent, status, &response, body, request_time, response_time, protocol));
+                    s.with(|c| c.insert(&url, sent, credentialed, status, &response, body, request_time, response_time, protocol));
                 }
             }
             self.shared.emit(NetEvent::LoadingFinished { id, encoded_len: encoded, timestamp: self.shared.now() });
@@ -3042,5 +3131,17 @@ mod decoder_tests {
         }
         assert_eq!(decode(" GZIP ", &gz, 5).unwrap(), b"abc");
         assert_eq!(decode("x-gzip", &gz, 5).unwrap(), b"abc");
+    }
+}
+
+/// pyro: whether a hop includes credentials (Fetch § 4.4 "includes credentials"): its credentials
+/// mode is "include", or "same-origin" and its response tainting is "basic" (`basic_tainting`:
+/// same-origin, and no no-cors hop before it went to another origin). The ONE decision for the
+/// cookies sent, the `Set-Cookie` stored and the cache entry's kind.
+pub(crate) fn includes_credentials(credentials: Credentials, basic_tainting: bool) -> bool {
+    match credentials {
+        Credentials::Include => true,
+        Credentials::SameOrigin => basic_tainting,
+        Credentials::Omit => false,
     }
 }

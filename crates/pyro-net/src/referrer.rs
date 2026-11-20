@@ -8,7 +8,7 @@ use crate::request::{Destination, RequestMode};
 
 /// A referrer policy. The default is Chrome's (and the spec's)
 /// `strict-origin-when-cross-origin`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ReferrerPolicy {
     NoReferrer,
     NoReferrerWhenDowngrade,

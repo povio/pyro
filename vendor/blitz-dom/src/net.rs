@@ -3,7 +3,6 @@ use selectors::context::QuirksMode;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering as Ao;
 use std::{
-    io::Cursor,
     sync::{Arc, atomic::AtomicUsize, mpsc::Sender},
 };
 use style::{
@@ -36,6 +35,120 @@ pub(crate) fn stamped_request(url: Url, signal: Option<&AbortSignal>) -> Request
     }
     req
 }
+
+/// pyro: marks `request` to be fetched in CORS mode with credentials only to the same origin
+/// ("anonymous", as `shape-outside` images load): a cross-origin response the CORS check does not
+/// pass is a network error. A provider that cannot make such a request must fail it.
+pub fn mark_cors(request: &mut Request) {
+    request.options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
+}
+
+/// pyro: whether `request` is to be fetched in CORS mode ([`mark_cors`], `cross-origin()`).
+pub fn is_cors_request(request: &Request) -> bool {
+    request.options.cors.is_some()
+}
+
+/// pyro: what a `url()`'s request URL modifiers ask of its request (CSS Values 5 § 4.5.4):
+/// `cross-origin()` its mode and credentials, `integrity()` its integrity metadata,
+/// `referrer-policy()` its referrer policy. The style sheet the `url()` was written in is its
+/// referrer whatever the mode, as Blink sends it (`CSSImageValue::PrepareFetch`); a `url()` of the
+/// document's own CSS (its referrer is `inline`, the document's URL data, by identity:
+/// `DocumentUrl::inline_url_data`) leaves it to the document. Never decided by comparing URLs:
+/// an external sheet at the document's URL is an external sheet.
+/// pyro: each parsed style sheet's `Referrer-Policy` (its response's), by the identity of the URL
+/// data it was parsed with (the object, held here, never its URL): a `url()` written in that sheet
+/// names it as its referrer, which finds its policy ([`url_fetch_options`]).
+pub type SheetPolicies = Arc<std::sync::Mutex<std::collections::HashMap<usize, (ServoArc<Url>, String)>>>;
+
+/// pyro: records `policy` as the policy of the sheet parsed with `url_data`.
+pub(crate) fn record_sheet_policy(policies: &SheetPolicies, url_data: &ServoArc<Url>, policy: Option<String>) {
+    let Some(policy) = policy else { return };
+    if let Ok(mut map) = policies.lock() {
+        map.insert((&**url_data as *const Url) as usize, (url_data.clone(), policy));
+    }
+}
+
+/// pyro: the policy of the sheet whose URL data is `url_data` (by identity).
+fn sheet_policy(policies: &SheetPolicies, url_data: &ServoArc<Url>) -> Option<String> {
+    let map = policies.lock().ok()?;
+    map.get(&((&**url_data as *const Url) as usize))
+        .filter(|(held, _)| ServoArc::ptr_eq(held, url_data))
+        .map(|(_, policy)| policy.clone())
+}
+
+/// pyro: the URL data objects of a document's own CSS (inline sheets, style attributes): its
+/// own `DocumentUrl` object, and that of every shared sheet it adopted as its own (a sheet parsed
+/// once per thread for its text and base URL carries the first document's object). Compared by
+/// identity only, never by URL.
+pub type InlineUrls = Arc<std::sync::Mutex<Vec<ServoArc<Url>>>>;
+
+/// pyro: whether `url_data` is one of `inline` (by identity).
+fn is_inline(inline: &InlineUrls, url_data: &ServoArc<Url>) -> bool {
+    inline.lock().is_ok_and(|own| own.iter().any(|o| ServoArc::ptr_eq(o, url_data)))
+}
+
+/// pyro: records `url_data` as one of a document's own (`InlineUrls`).
+pub(crate) fn adopt_inline(inline: &InlineUrls, url_data: &ServoArc<Url>) {
+    if let Ok(mut own) = inline.lock() {
+        if !own.iter().any(|o| ServoArc::ptr_eq(o, url_data)) {
+            own.push(url_data.clone());
+        }
+    }
+}
+
+/// pyro: `policies`: a `url()` without a `referrer-policy()` of its own is sent under the policy
+/// of the sheet it was written in, found by that sheet object (`SheetPolicies`).
+pub fn url_fetch_options(
+    modifiers: Option<&style::url::RequestUrlModifiers>,
+    inline: Option<&InlineUrls>,
+    policies: Option<&SheetPolicies>,
+) -> blitz_traits::net::FetchOptions {
+    use blitz_traits::net::{CorsCredentials, FetchOptions};
+    use style::url::CrossOriginModifier;
+    let Some(modifiers) = modifiers else { return FetchOptions::default() };
+    let cors = modifiers.cross_origin.map(|mode| match mode {
+        CrossOriginModifier::Anonymous => CorsCredentials::SameOrigin,
+        CrossOriginModifier::UseCredentials => CorsCredentials::Include,
+    });
+    FetchOptions {
+        cors,
+        integrity: modifiers.integrity.clone(),
+        referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()).or_else(|| {
+            let sheet = modifiers.referrer.as_ref()?;
+            sheet_policy(policies?, sheet)
+        }),
+        referrer: modifiers
+            .referrer
+            .as_ref()
+            .filter(|url| !inline.is_some_and(|inline| is_inline(inline, url)))
+            .map(|url| (**url).clone()),
+        client: None,
+        destination: Default::default(),
+        sheet: None,
+    }
+}
+
+/// pyro: whether a slot's request (`stored`) is the one a `url()` with `modifiers` asks for, as
+/// far as the modifiers say: a mask's or shape's own CORS mode and the frame client are not
+/// theirs.
+pub fn asks_same_request(
+    stored: &blitz_traits::net::FetchOptions,
+    modifiers: Option<&style::url::RequestUrlModifiers>,
+) -> bool {
+    // (The referrer is the sheet's, which an inline sheet's request leaves to the document.)
+    // (A policy the `url()` does not name is its sheet's, which the stored request holds.)
+    let wanted = url_fetch_options(modifiers, None, None);
+    stored.integrity == wanted.integrity
+        && (wanted.referrer_policy.is_none() || stored.referrer_policy == wanted.referrer_policy)
+        && (wanted.cors.is_none() || stored.cors == wanted.cors)
+}
+
+/// pyro: whether a CORS fetch of `url` from the document at `document` is checked (and so may
+/// differ from a fetch without CORS): a cross-origin URL, not `data:` (whose response is the same).
+pub(crate) fn cors_checked(url: &Url, document: &Url) -> bool {
+    url.scheme() != "data" && url.origin() != document.origin()
+}
+
 
 /// Carries `@font-face` descriptors from CSS parsing through to font
 /// registration so `parley::Collection::register_fonts` can alias the bytes
@@ -81,12 +194,15 @@ pub struct FontFaceOverrides {
     /// composite font, such as the per-subset faces of a Google Fonts family)
     /// last rule first, whichever face finished loading first.
     pub precedence: u64,
+    /// pyro: `font-display: optional`: a font arriving after the face's block period is not
+    /// swapped in (CSS Fonts 4 § 4.10, `NetHandler::block_period`).
+    pub optional: bool,
 }
 
 #[derive(Clone, Debug)]
 pub enum Resource {
     /// pyro: the last field is the EXIF orientation (1 to 8) the pixels were turned by.
-    Image(ImageType, u32, u32, Arc<Vec<u8>>, u8),
+    Image(ImageType, u32, u32, linebender_resource_handle::Blob<u8>, u8),
     #[cfg(feature = "svg")]
     Svg(ImageType, crate::node::SvgImageData),
     /// The sheet, and its text when it has `@page` rules (see `BaseDocument::linked_page_css`).
@@ -169,6 +285,13 @@ pub struct StylesheetHandler {
     pub guard: SharedRwLock,
     pub net_provider: Arc<dyn NetProvider>,
     pub abort_signal: Option<AbortSignal>,
+    /// pyro: the client of the sheet's imports (`StylesheetLoader::client`).
+    pub client: Option<String>,
+    /// pyro: the sheet's `Referrer-Policy` as the snapshot gave it (its link's
+    /// `data-pyro-sheet-referrer-policy`), else the response's.
+    pub policy: Option<String>,
+    /// pyro: the document's sheet policies, which this sheet's goes into.
+    pub policies: SheetPolicies,
 }
 
 impl NetHandler for ResourceHandler<StylesheetHandler> {
@@ -177,12 +300,32 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
     }
 
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        self.parse_sheet(resolved_url, None, None, bytes)
+    }
+
+    fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
+        self.parse_sheet(resolved_url, Some(final_url), None, bytes)
+    }
+
+    fn bytes_meta(self: Box<Self>, resolved_url: String, final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
+        self.parse_sheet(resolved_url, Some(final_url), policy, bytes)
+    }
+}
+
+impl ResourceHandler<StylesheetHandler> {
+    /// pyro: `final_url`: the response's URL after redirects, which the sheet's URLs resolve
+    /// against (the URL the link asked for otherwise).
+    fn parse_sheet(self: Box<Self>, resolved_url: String, final_url: Option<String>, policy: Option<String>, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
+        // pyro: the sheet's policy, by its URL data object (before parsing: its imports use it).
+        let base = final_url.and_then(|u| Url::parse(&u).ok()).unwrap_or_else(|| self.data.source_url.clone());
+        let url_data = ServoArc::new(base);
+        record_sheet_policy(&self.data.policies, &url_data, self.data.policy.clone().or(policy));
 
         let sheet = Stylesheet::from_bytes(
             &bytes,
-            self.data.source_url.clone().into(),
+            UrlExtraData(url_data),
             None,
             None,
             Origin::Author,
@@ -195,6 +338,9 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
                 shell_provider: self.shell_provider.clone(),
                 abort_signal: self.data.abort_signal.clone(),
                 import_depth: 0,
+                client: self.data.client.clone(),
+                inline: None,
+                policies: self.data.policies.clone(),
             }),
             None, // error_reporter
             QuirksMode::NoQuirks,
@@ -234,6 +380,14 @@ pub(crate) struct StylesheetLoader {
     /// Depth of `@import` nesting for the stylesheet this loader is parsing
     /// (0 for a top-level stylesheet)
     pub(crate) import_depth: usize,
+    /// pyro: the client of the document's requests made with other than the defaults
+    /// (`BaseDocument::request_options`): `Some` in a frame's document (`""`: one without an id).
+    pub(crate) client: Option<String>,
+    /// pyro: the document's own URL data (`DocumentUrl::inline_url_data`) for a loader of the
+    /// document's own CSS: an `@import` written there has the document as its referrer.
+    pub(crate) inline: Option<InlineUrls>,
+    /// pyro: the document's sheet policies (`SheetPolicies`).
+    pub(crate) policies: SheetPolicies,
 }
 impl ServoStylesheetLoader for StylesheetLoader {
     fn request_stylesheet(
@@ -264,10 +418,21 @@ impl ServoStylesheetLoader for StylesheetLoader {
         };
 
         let url = import.url.url().unwrap().clone();
+        // pyro: fetched as the `url()`'s request URL modifiers say (CSS Values 5 § 4.5.4).
+        let mut request = stamped_request(url.as_ref().clone(), self.abort_signal.as_ref());
+        // pyro: as the page sends it (its parent sheet as referrer, unless the document's own CSS),
+        // so it is the same request, with the same key, as the page's own fetch of it.
+        let modifiers = import.url.modifiers().map(|m| &**m);
+        request.options = url_fetch_options(modifiers, self.inline.as_ref(), Some(&self.policies))
+            .for_destination(blitz_traits::net::Destination::Style);
+        // pyro: a frame document's import (nested ones too) is its frame's request.
+        if !request.options.is_default() {
+            request.options.client = self.client.clone();
+        }
         let import = ServoArc::new(lock.wrap(import));
         self.net_provider.fetch(
             self.doc_id,
-            stamped_request(url.as_ref().clone(), self.abort_signal.as_ref()),
+            request,
             ResourceHandler::boxed(
                 self.tx.clone(),
                 self.doc_id,
@@ -302,12 +467,34 @@ struct NestedStylesheetHandler {
 
 impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        let base = self.data.url.clone();
+        self.parse_at(resolved_url, base, bytes)
+    }
+
+    /// pyro: an imported sheet's URLs (its own imports and `url()`s, and the referrer they are
+    /// sent with) resolve against its URL after redirects, not the URL the `@import` named.
+    fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
+        let base = Url::parse(&final_url).map(ServoArc::new).unwrap_or_else(|_| self.data.url.clone());
+        self.parse_at(resolved_url, base, bytes)
+    }
+
+    /// pyro: with its response's `Referrer-Policy`, which its own requests follow (by its URL
+    /// data object: `SheetPolicies`).
+    fn bytes_meta(self: Box<Self>, resolved_url: String, final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
+        let base = Url::parse(&final_url).map(ServoArc::new).unwrap_or_else(|_| ServoArc::new((*self.data.url).clone()));
+        record_sheet_policy(&self.data.loader.policies, &base, policy);
+        self.parse_at(resolved_url, base, bytes)
+    }
+}
+
+impl ResourceHandler<NestedStylesheetHandler> {
+    fn parse_at(self: Box<Self>, resolved_url: String, base: ServoArc<Url>, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 
         let sheet = ServoArc::new(Stylesheet::from_bytes(
             &bytes,
-            UrlExtraData(self.data.url.clone()),
+            UrlExtraData(base),
             None,
             None,
             Origin::Author,
@@ -341,6 +528,10 @@ struct FontFaceHandler {
     overrides: FontFaceOverrides,
 }
 impl NetHandler for ResourceHandler<FontFaceHandler> {
+    fn block_period(&self) -> Option<std::time::Duration> {
+        // (100 ms, as Blink's.)
+        self.data.overrides.optional.then(|| std::time::Duration::from_millis(100))
+    }
     fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
         let result = self.data.parse(bytes);
         self.respond(resolved_url, result)
@@ -531,6 +722,7 @@ pub(crate) fn fetch_font_face_rules<'a>(
                     }),
                     unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
                     precedence: RULE_ORDER.fetch_add(1, Ao::Relaxed),
+                    optional: matches!(descriptor.font_display, Some(style::font_face::FontDisplay::Optional)),
                     face_metrics: {
                         // `normal` (no override) computes to -1.
                         let metric = |value: &Option<style::values::specified::font::MetricsOverride>| {
@@ -570,9 +762,11 @@ pub(crate) fn fetch_font_face_rules<'a>(
         })
         .for_each(|(source_list, overrides)| {
             if let Some((url, format)) = preferred_font_source(source_list) {
+                let mut request = stamped_request(url, abort_signal);
+                request.options.destination = blitz_traits::net::Destination::Font;
                 network_provider.fetch(
                     doc_id,
-                    stamped_request(url, abort_signal),
+                    request,
                     ResourceHandler::boxed(
                         tx.clone(),
                         doc_id,
@@ -733,104 +927,81 @@ impl NetHandler for ResourceHandler<DocumentSrcHandler> {
 
 pub struct ImageHandler {
     kind: ImageType,
+    budget: pyro_raster::PageRasters,
+    /// pyro: what the request was made with ([`mark_cors`], [`url_fetch_options`]): an image
+    /// fetched with other than the defaults answers under its [`FetchOptions::cache_key`].
+    ///
+    /// [`FetchOptions::cache_key`]: blitz_traits::net::FetchOptions::cache_key
+    options: blitz_traits::net::FetchOptions,
+    /// pyro: the URL of the document the image is for: a response from another origin fetched
+    /// without CORS is opaque, and shown as its EXIF orientation says whatever
+    /// `image-orientation` says (CSS Images 3 § 5.1).
+    document: Option<Url>,
 }
 impl ImageHandler {
-    pub fn new(kind: ImageType) -> Self {
-        Self { kind }
+    pub fn new(kind: ImageType, budget: &pyro_raster::PageRasters) -> Self {
+        Self { kind, budget: budget.clone(), options: Default::default(), document: None }
+    }
+
+    /// pyro: the image is for the document at `url` ([`Self::document`]).
+    pub fn document(mut self, url: &Url) -> Self {
+        self.document = Some(url.clone());
+        self
+    }
+
+    /// pyro: fetched in CORS mode ([`mark_cors`]) when `cors` is.
+    pub fn cors(mut self, cors: bool) -> Self {
+        self.options.cors = cors.then_some(blitz_traits::net::CorsCredentials::SameOrigin);
+        self
+    }
+
+    /// pyro: fetched with `options` (a `url()`'s request URL modifiers).
+    pub fn options(mut self, options: blitz_traits::net::FetchOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
 impl NetHandler for ResourceHandler<ImageHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        let result = self.data.parse(&resolved_url, bytes);
-        self.respond(resolved_url, result)
+        self.bytes_from(resolved_url.clone(), resolved_url, false, bytes)
+    }
+
+    /// pyro: the response's tainting, as the network saw it, decides an opaque image (a no-cors
+    /// redirect chain through another origin is opaque though it ends at the document's); the
+    /// final URL's origin decides for a provider that does not report it.
+    fn bytes_from(self: Box<Self>, resolved_url: String, final_url: String, tainted: bool, bytes: Bytes) {
+        let mut result = self.data.parse(&resolved_url, bytes);
+        // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
+        // orientation 1, which `image-orientation: none` has nothing to undo of.
+        // pyro: the tainting the provider reports with the response (the stored value's), never
+        // inferred from the final URL.
+        let _ = &final_url;
+        let opaque = self.data.options.cors.is_none() && tainted;
+        if opaque {
+            if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
+                *orientation = 1;
+            }
+        }
+        // pyro: an image fetched with CORS (or other options) answers under its key.
+        let key = self.data.options.cache_key(&resolved_url);
+        self.respond(key, result)
     }
 }
 
-/// pyro: decoded raster images by encoded bytes, for every document
-/// of the process (a template's logo decoded once, not once per document):
-/// (encoded bytes, width, height, RGBA8 pixels). Bounded at 64 images and
-/// 64 MB of pixels.
-type DecodedImage = (Bytes, u32, u32, Arc<Vec<u8>>, u8);
-static DECODED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Vec<DecodedImage>>>> =
-    std::sync::LazyLock::new(Default::default);
-
-fn decoded_key(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::hash::DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
-}
+pub use pyro_raster::decode_jpeg;
 
 impl ImageHandler {
     fn parse(&self, url: &str, bytes: Bytes) -> Result<Resource, String> {
-        let key = decoded_key(&bytes);
-        if let Some((_, w, h, data, orientation)) = DECODED
-            .lock()
-            .unwrap()
-            .get(&key)
-            .and_then(|v| v.iter().find(|e| e.0[..] == bytes[..]).cloned())
-        {
-            return Ok(Resource::Image(self.kind, w, h, data, orientation));
-        }
-        // pyro: `ImageReader::decode`, keeping the image's ICC profile.
-        let decoded = image::ImageReader::new(Cursor::new(&bytes))
-            .with_guessed_format()
-            .expect("IO errors impossible with Cursor")
-            .into_decoder()
-            .and_then(|mut decoder| {
-                image::Limits::default().reserve(image::ImageDecoder::total_bytes(&decoder))?;
-                let icc = image::ImageDecoder::icc_profile(&mut decoder).ok().flatten();
-                // pyro: the image as its EXIF orientation says to show it (`image-orientation:
-                // from-image`, the initial value): a photo taken sideways was drawn sideways.
-                let orientation = image::ImageDecoder::orientation(&mut decoder).ok();
-                image::DynamicImage::from_decoder(decoder).map(|mut image| {
-                    if let Some(orientation) = orientation {
-                        image.apply_orientation(orientation);
-                    }
-                    (image, icc, orientation.map_or(1, |o| o.to_exif()))
-                })
-            });
-        let image_err = match decoded {
-            Ok((image, icc, orientation)) => {
-                let width = image.width();
-                let height = image.height();
-                let mut rgba = image.into_rgba8().into_raw();
-                // pyro: a tagged image's pixels in sRGB.
-                if let Some(icc) = icc {
-                    crate::icc::to_srgb(&icc, &mut rgba);
-                }
-                let raw_rgba8_data = Arc::new(rgba);
-                {
-                    const MAX_IMAGES: usize = 64;
-                    const MAX_BYTES: usize = 64 << 20;
-                    let mut cache = DECODED.lock().unwrap();
-                    let (count, size) = cache
-                        .values()
-                        .flatten()
-                        .fold((0, 0), |(n, b), e| (n + 1, b + e.3.len()));
-                    if count >= MAX_IMAGES || size + raw_rgba8_data.len() > MAX_BYTES {
-                        cache.clear();
-                    }
-                    if raw_rgba8_data.len() <= MAX_BYTES {
-                        cache.entry(key).or_default().push((
-                            bytes.clone(),
-                            width,
-                            height,
-                            raw_rgba8_data.clone(),
-                            orientation,
-                        ));
-                    }
-                }
-                return Ok(Resource::Image(self.kind, width, height, raw_rgba8_data, orientation));
-            }
-            Err(e) => e.to_string(),
+        let image_err = match self.budget.decode(&bytes) {
+            Ok(image) => return Ok(Resource::Image(self.kind, image.width, image.height, image.blob, image.orientation)),
+            Err(error) => error.to_string(),
         };
 
         #[cfg(feature = "svg")]
         let svg_err = {
-            use crate::util::parse_svg_image;
-            match parse_svg_image(&bytes) {
+            let parse = |data: &[u8]| crate::util::parse_svg_resources(data, None, &self.budget);
+            match parse(&bytes) {
                 // pyro: its `<view>` fragment, and its source when it has no size. The source is
                 // also kept for inline SVG that masks with it (`svg_css`), up to a size: an image of
                 // any kind can be a mask image (the cache is by URL), and most never are; a larger
@@ -839,7 +1010,7 @@ impl ImageHandler {
                     let mut svg = svg.for_url(&bytes, url);
                     const MAX_KEPT_SOURCE: usize = 256 << 10;
                     if bytes.len() <= MAX_KEPT_SOURCE {
-                        svg.source = Some(std::sync::Arc::from(&bytes[..]));
+                        svg.source = crate::util::SvgSource::copy(&bytes, &self.budget);
                     }
                     // pyro: one with a `<foreignObject>` is drawn as a document of its own
                     // (`BaseDocument::svg_image_documents`).
@@ -847,7 +1018,7 @@ impl ImageHandler {
                         && memchr_foreign_object(&bytes)
                         && let Ok(text) = std::str::from_utf8(&bytes)
                     {
-                        svg.foreign_source = Some(std::sync::Arc::from(text));
+                        svg.foreign_source = crate::util::SvgSource::copy(text, &self.budget);
                     }
                     return Ok(Resource::Svg(self.kind, svg));
                 }
@@ -857,8 +1028,8 @@ impl ImageHandler {
                 Err(e) => {
                     if let (ImageType::Reference(_), true) = (self.kind, bytes.len() <= 256 << 10) {
                         let sized = crate::node::embeddable_svg(&bytes);
-                        if let Some(mut svg) = sized.and_then(|sized| parse_svg_image(sized.as_bytes()).ok()) {
-                            svg.source = Some(std::sync::Arc::from(&bytes[..]));
+                        if let Some(mut svg) = sized.and_then(|sized| parse(sized.as_bytes()).ok()) {
+                            svg.source = crate::util::SvgSource::copy(&bytes, &self.budget);
                             return Ok(Resource::Svg(self.kind, svg));
                         }
                     }

@@ -1,3 +1,73 @@
+diff --git a/src/backend/coretext.rs b/src/backend/coretext.rs
+index 5ee14db..c4cc6e6 100644
+--- a/src/backend/coretext.rs
++++ b/src/backend/coretext.rs
+@@ -15,7 +15,8 @@ use objc2_core_foundation::{
+     CFArray, CFDictionary, CFRange, CFRetained, CFString, CFType, CFURL, CFURLPathStyle,
+ };
+ use objc2_core_text::{
+-    CTFont, CTFontCollection, CTFontDescriptor, CTFontUIFontType, kCTFontURLAttribute,
++    CTFont, CTFontCollection, CTFontDescriptor, CTFontUIFontType, kCTFontFamilyNameAttribute,
++    kCTFontURLAttribute,
+ };
+ use objc2_foundation::{
+     NSSearchPathDirectory, NSSearchPathDomainMask, NSSearchPathForDirectoriesInDomains,
+@@ -46,13 +47,23 @@ impl SystemFonts {
+         let name_map = scanned.family_names;
+         let mut generic_families = GenericFamilyMap::default();
+         for (family, names) in DEFAULT_GENERIC_FAMILIES {
+-            generic_families.set(
+-                *family,
+-                names
+-                    .iter()
+-                    .filter_map(|name| name_map.get(name))
+-                    .map(|name| name.id()),
+-            );
++            // pyro: `system-ui` is the system UI font with the fonts its own cascade draws the
++            // scripts it lacks with (SF Arabic for Arabic), as macOS renders its UI text
++            // (CSS Fonts 4 `system-ui`; WPT css-fonts `system-ui-ar`, `-ur`).
++            let cascade = match family {
++                GenericFamily::SystemUi => system_ui_cascade(),
++                _ => Vec::new(),
++            };
++            let mut ids: Vec<FamilyId> = Vec::new();
++            for name in names.iter().copied().map(ToString::to_string).chain(cascade) {
++                let found = name_map.get(&name).or_else(|| name.strip_prefix('.').and_then(|name| name_map.get(name)));
++                if let Some(found) = found
++                    && !ids.contains(&found.id())
++                {
++                    ids.push(found.id());
++                }
++            }
++            generic_families.set(*family, ids.into_iter());
+         }
+         Self {
+             name_map: Arc::new(name_map),
+@@ -169,6 +180,24 @@ fn collect_files(dir: &Path, max_depth: u32, depth: u32, out: &mut Vec<PathBuf>)
+     }
+ }
+ 
++/// pyro: the family names of the system UI font's default cascade list (its fallback fonts).
++fn system_ui_cascade() -> Vec<alloc::string::String> {
++    let Some(font) = (unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) }) else {
++        return Vec::new();
++    };
++    let Some(list) = (unsafe { font.default_cascade_list_for_languages(None) }) else { return Vec::new() };
++    let list: CFRetained<CFArray<CTFontDescriptor>> = unsafe { CFRetained::cast_unchecked(list) };
++    let mut out = Vec::new();
++    for index in 0..list.len() {
++        let Some(descriptor) = list.get(index) else { continue };
++        let Some(name) = (unsafe { descriptor.attribute(kCTFontFamilyNameAttribute) }) else { continue };
++        if let Ok(name) = name.downcast::<CFString>() {
++            out.push(name.to_string());
++        }
++    }
++    out
++}
++
+ fn create_base_font(prefer_ui_font: bool) -> CFRetained<CTFont> {
+     if prefer_ui_font
+         && let Some(font) =
 diff --git a/src/charmap.rs b/src/charmap.rs
 index ecf0b24..5d1a9b8 100644
 --- a/src/charmap.rs
@@ -803,7 +873,7 @@ index 9d41c42..c2e5994 100644
  #[cfg(all(feature = "system", target_vendor = "apple"))]
  use objc2 as _;
 diff --git a/src/matching.rs b/src/matching.rs
-index cbcec63..9b5f147 100644
+index cbcec63..afd3ae1 100644
 --- a/src/matching.rs
 +++ b/src/matching.rs
 @@ -16,15 +16,19 @@ pub(crate) fn match_fonts(
@@ -833,9 +903,11 @@ index cbcec63..9b5f147 100644
      })
  }
  
-@@ -49,14 +53,16 @@ pub fn match_font(
+@@ -47,17 +51,17 @@ pub fn match_font(
+         width: i32,
+         style: FontStyle,
          weight: f32,
-         has_slnt: bool,
+-        has_slnt: bool,
      }
 +    // pyro: a face with `@font-face` ranges is a candidate at the values of its ranges nearest
 +    // the ones asked for (CSS Fonts 4 §5.2).
@@ -847,12 +919,113 @@ index cbcec63..9b5f147 100644
 -            width: (font.width().ratio() * 100.0) as i32,
 -            style: font.style(),
 -            weight: font.weight().value(),
+-            has_slnt: font.has_slant_axis(),
 +            width: font.matched_width(width.percentage()) as i32,
 +            style: font.matched_style(style),
 +            weight: font.matched_weight(weight.value()),
-             has_slnt: font.has_slant_axis(),
          })
          .collect();
+     let width = (width.ratio() * 100.0) as i32;
+@@ -118,7 +122,6 @@ pub fn match_font(
+     // the current value of 20deg in the spec.
+     // See: https://github.com/w3c/csswg-drafts/issues/2295
+     let mut use_style = style;
+-    let mut _use_slnt = false;
+     if !set.iter().any(|f| f.style == use_style) {
+         // If the value of font-style is italic:
+         if style == FontStyle::Italic {
+@@ -177,16 +180,12 @@ pub fn match_font(
+                     // value with the specified oblique value; otherwise, a fallback
+                     // match is produced by geometric shearing to the specified
+                     // oblique value.
+-                    if synthesize_style {
+-                        if set.iter().any(|f| f.has_slnt) {
+-                            _use_slnt = true;
+-                        } else {
+-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
+-                                FontStyle::Normal
+-                            } else {
+-                                set[0].style
+-                            };
+-                        }
++                    // pyro: a face to slant or shear is a normal one; without one, the
++                    // fallback order follows as for no synthesis (the style kept here
++                    // matched no face, leaving none; WPT css-fonts
++                    // `stretch-distance-over-weight-distance`, as Blink).
++                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
++                        use_style = FontStyle::Normal;
+                     } else {
+                         // Choose an italic style
+                         if set.iter().any(|f| f.style == FontStyle::Italic) {
+@@ -230,16 +229,12 @@ pub fn match_font(
+                     // value with the specified oblique value; otherwise, a fallback
+                     // match is produced by geometric shearing to the specified
+                     // oblique value.
+-                    if synthesize_style {
+-                        if set.iter().any(|f| f.has_slnt) {
+-                            _use_slnt = true;
+-                        } else {
+-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
+-                                FontStyle::Normal
+-                            } else {
+-                                set[0].style
+-                            };
+-                        }
++                    // pyro: a face to slant or shear is a normal one; without one, the
++                    // fallback order follows as for no synthesis (the style kept here
++                    // matched no face, leaving none; WPT css-fonts
++                    // `stretch-distance-over-weight-distance`, as Blink).
++                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
++                        use_style = FontStyle::Normal;
+                     } else {
+                         // Choose an italic style
+                         if set.iter().any(|f| f.style == FontStyle::Italic) {
+@@ -282,16 +277,12 @@ pub fn match_font(
+                     // value with the specified oblique value; otherwise, a fallback
+                     // match is produced by geometric shearing to the specified
+                     // oblique value.
+-                    if synthesize_style {
+-                        if set.iter().any(|f| f.has_slnt) {
+-                            _use_slnt = true;
+-                        } else {
+-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
+-                                FontStyle::Normal
+-                            } else {
+-                                set[0].style
+-                            };
+-                        }
++                    // pyro: a face to slant or shear is a normal one; without one, the
++                    // fallback order follows as for no synthesis (the style kept here
++                    // matched no face, leaving none; WPT css-fonts
++                    // `stretch-distance-over-weight-distance`, as Blink).
++                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
++                        use_style = FontStyle::Normal;
+                     } else {
+                         // Choose an italic style
+                         if set.iter().any(|f| f.style == FontStyle::Italic) {
+@@ -334,16 +325,12 @@ pub fn match_font(
+                     // value with the specified oblique value; otherwise, a fallback
+                     // match is produced by geometric shearing to the specified
+                     // oblique value.
+-                    if synthesize_style {
+-                        if set.iter().any(|f| f.has_slnt) {
+-                            _use_slnt = true;
+-                        } else {
+-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
+-                                FontStyle::Normal
+-                            } else {
+-                                set[0].style
+-                            };
+-                        }
++                    // pyro: a face to slant or shear is a normal one; without one, the
++                    // fallback order follows as for no synthesis (the style kept here
++                    // matched no face, leaving none; WPT css-fonts
++                    // `stretch-distance-over-weight-distance`, as Blink).
++                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
++                        use_style = FontStyle::Normal;
+                     } else {
+                         // Choose an italic style
+                         if set.iter().any(|f| f.style == FontStyle::Italic) {
 diff --git a/src/scan.rs b/src/scan.rs
 index 4accc7f..ee4651f 100644
 --- a/src/scan.rs

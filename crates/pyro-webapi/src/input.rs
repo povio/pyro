@@ -1265,14 +1265,15 @@ fn editing_host_of(page: &PageDom, target: NodeId) -> Option<NodeId> {
         dom.node_document(target).ok().filter(|&doc| dom.design_mode(doc))
     };
     if let Some(doc) = design {
-        if let Some((start, _)) = crate::editing::selection_range(page) {
-            let dom = page.dom.borrow();
-            if dom.node_document(start.0).ok() == Some(doc) {
-                if let Some(host) = crate::editing::editing_host(&dom, start.0) {
-                    return Some(host);
-                }
-            }
-        }
+        let Some((start, _)) = crate::editing::selection_range(page) else {
+            // pyro: no selection yet (none is made by turning designMode on, as in Blink): typing
+            // inserts nothing, until a click or a script places one.
+            return None;
+        };
+        let dom = page.dom.borrow();
+        return (dom.node_document(start.0).ok() == Some(doc))
+            .then(|| crate::editing::editing_host(&dom, start.0))
+            .flatten();
     }
     crate::editing::editing_host(&page.dom.borrow(), target)
 }
@@ -1460,6 +1461,79 @@ fn step_by_key(page: &Rc<PageDom>, el: NodeId, f: impl FnOnce(&mut Dom) -> pyro_
     let before = dom.value(el).ok();
     let _ = f(&mut dom);
     dom.value(el).ok() != before
+}
+
+/// An enabled `<input type=range>`: `el` itself (pyro's slider has no inner parts to hit).
+fn enabled_range(dom: &Dom, el: NodeId) -> bool {
+    local(dom, el).as_deref() == Some("input")
+        && dom.input_type(el).ok() == Some(InputType::Range)
+        && !dom.is_disabled(el).unwrap_or(true)
+}
+
+/// Moves a range slider's value to the pointer (Chromium's slider: the fraction of the element's
+/// extent along its inline axis, from the inline start, snapped to its step): x and the width in a
+/// horizontal writing mode, y and the height in a vertical one; the start is the left or top edge,
+/// the opposite one for `direction: rtl` (and for `sideways-lr`, whose inline axis runs bottom to
+/// top). True when the value changed.
+fn range_value_at(page: &Rc<PageDom>, el: NodeId, x: f64, y: f64) -> bool {
+    let (rect, writing_mode, direction) = {
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        let style = layout.style();
+        (
+            layout.bounding_client_rect(&dom, el),
+            style.computed_value(&dom, el, "writing-mode").unwrap_or_default(),
+            style.computed_value(&dom, el, "direction").unwrap_or_default(),
+        )
+    };
+    let vertical = writing_mode.starts_with("vertical") || writing_mode.starts_with("sideways");
+    let (pos, start, extent) = if vertical { (y, rect.y, rect.height) } else { (x, rect.x, rect.width) };
+    if !(extent > 0.0) {
+        return false;
+    }
+    let mut fraction = ((pos - start) / extent).clamp(0.0, 1.0);
+    if (direction == "rtl") != (writing_mode == "sideways-lr") {
+        fraction = 1.0 - fraction;
+    }
+    let mut dom = page.dom.borrow_mut();
+    let attr = |dom: &Dom, name: &str| dom.get_attribute(el, name).ok().flatten().and_then(pyro_dom::forms::parse_float);
+    let min = attr(&dom, "min").unwrap_or(0.0);
+    let max = attr(&dom, "max").unwrap_or(100.0).max(min);
+    let before = dom.value(el).ok();
+    let _ = dom.set_value_as_number(el, min + fraction * (max - min));
+    dom.value(el).ok() != before
+}
+
+/// A left press on an enabled range slider whose mousedown was not canceled: the thumb jumps to
+/// the pointer (`input`) and follows it while the button is held (`range_drag_move`); the release
+/// commits (`change` when the value moved since the press), as in Chromium.
+fn range_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    if !enabled_range(&page.dom.borrow(), target) {
+        return;
+    }
+    let start = page.dom.borrow().value(target).unwrap_or_default();
+    *page.range_drag.borrow_mut() = Some((target, start));
+    if range_value_at(page, target, m.x, m.y) {
+        fire_simple(page, target, "input", true, false);
+    }
+}
+
+fn range_drag_move(page: &Rc<PageDom>, m: &MouseInput) {
+    let Some(el) = page.range_drag.borrow().as_ref().map(|(el, _)| *el) else { return };
+    if !enabled_range(&page.dom.borrow(), el) {
+        return;
+    }
+    if range_value_at(page, el, m.x, m.y) {
+        fire_simple(page, el, "input", true, false);
+    }
+}
+
+fn range_release(page: &Rc<PageDom>) {
+    let Some((el, start)) = page.range_drag.borrow_mut().take() else { return };
+    let now = page.dom.borrow().value(el).unwrap_or_default();
+    if now != start && page.dom.borrow().is_connected(el).unwrap_or(false) {
+        fire_simple(page, el, "change", true, false);
+    }
 }
 
 /// A range slider key: one step for an arrow, a tenth of the range (at
@@ -2292,8 +2366,10 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
-    // HTML activation-triggering input: mousedown (and pointerup).
-    if matches!(kind, MouseKind::Pressed | MouseKind::Released) {
+    // HTML activation-triggering input events: for the mouse, mousedown (pointerdown) only; pointerup
+    // triggers activation for other pointer types, and this is the mouse. A release grants none, so one
+    // click whose mousedown handler consumed the activation leaves none for its click handler.
+    if kind == MouseKind::Pressed {
         page.notify_input_activation();
     }
     dispatch_mouse_inner(page, kind, m, intercept_drags, None)
@@ -2341,6 +2417,7 @@ fn dispatch_mouse_inner(
             }
             if m.buttons & 1 != 0 {
                 text_select_move(page, target, m);
+                range_drag_move(page, m);
             }
             if intercept_drags {
                 return Ok(start_drag(page, target, m));
@@ -2410,6 +2487,7 @@ fn dispatch_mouse_inner(
             }
             if place_caret {
                 crate::editing::caret_on_press(page, target);
+                range_press(page, target, m);
             }
             page.text_drag.set(None);
             if place_caret && source.is_none() {
@@ -2422,6 +2500,9 @@ fn dispatch_mouse_inner(
         }
         MouseKind::Released => {
             note_buttons(page, m);
+            if m.button == MouseButton::Left {
+                range_release(page);
+            }
             page.drag_candidate.set(None);
             page.text_drag.set(None);
             if m.button == MouseButton::Left {
@@ -2465,7 +2546,18 @@ fn dispatch_mouse_inner(
                     f.pointer_type = "touch".into();
                     f.is_primary = false;
                 }
-                dispatch_with_activation(page, ct, &ev);
+                let proceed = dispatch_with_activation(page, ct, &ev);
+                // pyro: an uncanceled click on a `::scroll-marker` scrolls to its target.
+                if proceed && name == "click" && !page.is_disposed() {
+                    let moved = page.layout.borrow_mut().activate_scroll_marker_at(&page.dom.borrow(), (m.x, m.y));
+                    for scrolled in moved {
+                        let node = match scrolled {
+                            pyro_dom::layout::ScrollTarget::Viewport => None,
+                            pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
+                        };
+                        crate::layout_api::fire_scroll(page, node);
+                    }
+                }
                 if name == "click" && m.click_count == 2 {
                     if let Some(k) = key_of(page, ct) {
                         fire_mouse(page, k, EventInterface::MouseEvent, "dblclick", m, true);
@@ -2489,7 +2581,8 @@ fn dispatch_mouse_inner(
             {
                 return Ok(None);
             }
-            let moved = page.layout.borrow_mut().wheel_scroll(&page.dom.borrow(), target, m.delta_x, m.delta_y);
+            let moved =
+                page.layout.borrow_mut().wheel_scroll_at(&page.dom.borrow(), target, (m.x, m.y), m.delta_x, m.delta_y);
             for scrolled in moved {
                 let node = match scrolled {
                     pyro_dom::layout::ScrollTarget::Viewport => None,

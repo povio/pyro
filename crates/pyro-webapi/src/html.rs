@@ -521,6 +521,8 @@ fn parsed_attr<T>(n: &NodeData, attr: &str, parse: fn(&str) -> Option<T>) -> JsR
 /// `img.width` (`width`) or `img.height`: see the accessors.
 fn img_dimension(n: &NodeData, width: bool) -> JsResult<f64> {
     let page = n.page();
+    // pyro: a source in the list of available images has its size at once (`image_complete`).
+    page.image_complete(n.id);
     let connected = page.dom.borrow().is_connected(n.id).unwrap_or(false);
     if connected {
         crate::animation_events::layout_flush(page, n.id);
@@ -543,6 +545,16 @@ fn img_dimension(n: &NodeData, width: bool) -> JsResult<f64> {
     }
     let natural = dom.reported_natural_size(n.id);
     Ok(natural.map_or(0.0, |(w, h)| (if width { w } else { h }).trunc()))
+}
+
+/// A canvas dimension attribute's value: HTML's rules for parsing non-negative integers (`100px`
+/// is 100), the reflected `unsigned long`'s range, else `default`. One rule for `canvas.width`, the
+/// bitmap (`canvas::canvas_size`) and layout (blitz-dom `parse_non_negative_integer`).
+pub(crate) fn canvas_dimension(value: Option<&str>, default: u32) -> u32 {
+    value
+        .and_then(parse_html_int)
+        .filter(|v| (0..=MAX_REFLECTED_INT).contains(v))
+        .map_or(default, |v| v as u32)
 }
 
 fn int_attr(n: &NodeData, attr: &str, min: i64, default: impl Into<f64>) -> JsResult<f64> {
@@ -1360,9 +1372,11 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
         crate::animations::element_animations(s, n.page(), el, &a)
     });
+    def.getter("activeViewTransition", crate::view_transition::active);
     def.method("startViewTransition", 0, |s, n, a| {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
-        crate::view_transition::start(s, n.page(), el, el, a.get(0))
+        let scope = crate::node::wrap_node(s, n.page(), crate::view_transition::scope_id(n))?.value();
+        crate::view_transition::start(s, n.page(), scope, el, a.get(0))
     });
     // ARIA reflection (ARIAMixin) for the attributes Playwright/Testing
     // Library read through properties.
@@ -1874,9 +1888,10 @@ simple_class!(HtmlStyleElement, "HTMLStyleElement", HtmlElement, |def| {
     // Not a reflected attribute: its sheet's disabled flag (HTML § 4.2.6; a `<link>`'s is).
     def.accessor(
         "disabled",
-        |s, n| Ok(s.boolean(n.page().layout.borrow().style().sheet_disabled(n.id))),
+        // pyro: the same flag as its sheet object's `disabled` (one flag per sheet object).
+        |s, n| Ok(s.boolean(crate::css::current_sheet_disabled(n.page(), n.id))),
         |_s, n, v| {
-            n.page().layout.borrow_mut().style_mut().set_sheet_disabled(n.id, v.to_bool());
+            crate::css::set_current_sheet_disabled(n.page(), n.id, v.to_bool());
             Ok(())
         },
     );
@@ -2052,8 +2067,9 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     // Natural size from the loaded file's header (no pixel decoding); 0
     // while loading, for broken images and for unparsed formats.
     // `unsigned long`: a density-corrected size below 1 px reads 0.
-    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(w, _)| w.trunc()))));
-    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
+    // pyro: a source in the list of available images is adopted first (`image_complete`).
+    def.getter("naturalWidth", |s, n| Ok(s.number({ n.page().image_complete(n.id); n.page().dom.borrow() }.reported_natural_size(n.id).map_or(0.0, |(w, _)| w.trunc()))));
+    def.getter("naturalHeight", |s, n| Ok(s.number({ n.page().image_complete(n.id); n.page().dom.borrow() }.reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
         let viewport = n.page().viewport();
@@ -3622,6 +3638,25 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
     def.method("createSVGLength", 0, |s, n, _a| {
         Ok(collections::create_svg_length(s, n.id)?.value())
     });
+    // pyro: the user agent's pan and zoom (SVG 2 `currentTranslate`, `currentScale`), which the
+    // renderer applies to the `<svg>`'s content (pyro-dom `SVG_PAN_ATTR`).
+    def.getter("currentTranslate", |s, n| {
+        Ok(s.wrap::<collections::SvgCurrentTranslate>(collections::NodeHold::new(n.page(), n.id)?, None)?.value())
+    });
+    def.accessor(
+        "currentScale",
+        |s, n| Ok(s.number(n.page().dom.borrow().svg_pan(n.id).2 as f32 as f64)),
+        |_s, n, v| {
+            let scale = v.to_number()?;
+            if !scale.is_finite() {
+                return Err(JsError::Type("The provided float value is non-finite.".into()));
+            }
+            let mut dom = n.page().dom.borrow_mut();
+            let (tx, ty, _) = dom.svg_pan(n.id);
+            dom.set_svg_pan(n.id, (tx, ty, scale as f32 as f64));
+            Ok(())
+        },
+    );
 });
 // SVG 2 `<length>` attributes as `SVGAnimatedLength`s (`collections::SvgLengthAttr`: the attribute,
 // its initial value and the direction its percentages resolve in).
@@ -4914,5 +4949,22 @@ mod tests {
             resolve_simple(&base, "http://127.0.0.1:5173/assets/x.js").as_deref(),
             Some("http://127.0.0.1:5173/assets/x.js")
         );
+    }
+}
+
+#[cfg(test)]
+mod canvas_dimension_tests {
+    use super::canvas_dimension;
+
+    #[test]
+    fn canvas_dimensions_follow_the_rules_for_non_negative_integers_and_the_reflected_range() {
+        assert_eq!(canvas_dimension(Some("100px"), 300), 100);
+        assert_eq!(canvas_dimension(Some(" 40"), 150), 40);
+        assert_eq!(canvas_dimension(Some("-0"), 300), 0);
+        assert_eq!(canvas_dimension(Some("-5"), 300), 300);
+        assert_eq!(canvas_dimension(Some("px"), 300), 300);
+        assert_eq!(canvas_dimension(Some("2147483647"), 300), 2147483647);
+        assert_eq!(canvas_dimension(Some("4294967296"), 300), 300);
+        assert_eq!(canvas_dimension(None, 150), 150);
     }
 }

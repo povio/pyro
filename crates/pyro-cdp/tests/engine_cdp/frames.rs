@@ -864,3 +864,217 @@ fn transformed_frame_quads_and_input_share_content_coordinates() {
         assert_eq!(eval_in(&mut h, context, "hits"), json!([[330, 115, true]]), "{transform}");
     }
 }
+
+/// HTML user activation across frames: a click in a child activates its parent too ("activation
+/// notification" reaches ancestors), and one document consuming the activation consumes it in
+/// every document of the frame tree, so the same click cannot gate two requests in two frames.
+#[test]
+fn user_activation_reaches_ancestors_and_is_consumed_across_frames() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let html = "<!doctype html><body style='margin:0;height:100vh'>child";
+    let expression = format!(
+        "(() => {{ document.body.style.margin = '0'; const f = document.createElement('iframe'); f.id = 'act'; f.name = 'act'; \
+           f.allowFullscreen = true; f.style.cssText = 'border:0;width:300px;height:150px'; f.srcdoc = {}; document.body.appendChild(f); }})()",
+        json!(html)
+    );
+    let mut events = h.page_with_events("Runtime.evaluate", json!({"expression":expression}));
+    events.extend(h.run_for(150));
+    let frame = child(&mut h, "act")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    let request = "document.body.requestFullscreen().then(() => document.exitFullscreen().then(() => 'granted'), e => e.name)";
+    let fullscreen = |h: &mut Harness, context: Option<i64>| {
+        let mut params = json!({"expression":request,"awaitPromise":true,"returnByValue":true});
+        if let Some(context) = context {
+            params["contextId"] = json!(context);
+        }
+        h.page("Runtime.evaluate", params)["result"]["result"]["value"].clone()
+    };
+    let click = |h: &mut Harness| {
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            let r = h.page("Input.dispatchMouseEvent", json!({"type":kind,"x":50,"y":50,"button":"left","buttons":buttons,"clickCount":1}));
+            assert_eq!(r["result"], json!({}), "{r}");
+        }
+    };
+    // No activation yet.
+    assert_eq!(fullscreen(&mut h, None), json!("TypeError"));
+    // A click in the child: the parent may use it...
+    click(&mut h);
+    assert_eq!(fullscreen(&mut h, None), json!("granted"));
+    // ...and having consumed it, the child cannot use it again.
+    assert_eq!(fullscreen(&mut h, Some(context)), json!("TypeError"));
+    // The other way round: the child uses a fresh click, then the parent has none left.
+    click(&mut h);
+    assert_eq!(fullscreen(&mut h, Some(context)), json!("granted"));
+    assert_eq!(fullscreen(&mut h, None), json!("TypeError"));
+}
+
+/// Runs `expression` (a promise) in the main frame and returns its value.
+fn eval_await_main(h: &mut Harness, expression: &str) -> Value {
+    let r = h.page("Runtime.evaluate", json!({"expression":expression,"awaitPromise":true,"returnByValue":true}));
+    assert!(r["result"].get("exceptionDetails").is_none() && r.get("error").is_none(), "{expression}: {r}");
+    r["result"]["result"]["value"].clone()
+}
+
+/// Iframe events as Chrome fires them (verified against Chrome 158 on the same pages): a static
+/// iframe's load comes before its parent's; a removed frame's document gets `pagehide`,
+/// `visibilitychange` (hidden) and, when its container's `allow` permits it, `unload`, right after
+/// the removal and before the frame goes; its descendants get `pagehide` and `visibilitychange` only.
+#[test]
+fn iframe_load_order_and_removal_events_follow_chrome() {
+    // An http page: `allow="unload"` ('src') matches the frame's origin, which an opaque data: URL
+    // page's would not.
+    let (addr, server) = serve_html(
+        1,
+        "<!doctype html><script>window.log = []; addEventListener('load', () => log.push('parent load'));</script>\
+         <iframe id=s srcdoc='<p>static' onload=\"log.push('iframe load')\"></iframe>",
+    );
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    server.join().unwrap();
+    assert_eq!(eval_value(&mut h, "log"), json!(["iframe load", "parent load"]));
+    let events = eval_await_main(
+        &mut h,
+        r#"(async () => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          const out = {};
+          const listen = (log, name, w) => { for (const t of ['pagehide', 'visibilitychange', 'unload']) w.addEventListener(t, () => log.push(name + ':' + t + ':' + w.document.visibilityState)); };
+          for (const allow of [false, true]) {
+            const log = [];
+            const f = document.createElement('iframe');
+            if (allow) f.allow = 'unload';
+            f.srcdoc = '<p>x';
+            document.body.appendChild(f);
+            await wait(200);
+            listen(log, 'f', f.contentWindow);
+            f.remove();
+            log.push('after remove');
+            out[allow ? 'allow' : 'plain'] = log;
+          }
+          const log = [];
+          const f = document.createElement('iframe');
+          f.allow = 'unload';
+          f.srcdoc = "<iframe allow=unload srcdoc='<p>in'></iframe>";
+          document.body.appendChild(f);
+          await wait(400);
+          listen(log, 'outer', f.contentWindow);
+          listen(log, 'inner', f.contentWindow.frames[0]);
+          f.remove();
+          out.nested = log;
+          return out;
+        })()"#,
+    );
+    assert_eq!(
+        events,
+        json!({
+            "plain": ["f:pagehide:visible", "f:visibilitychange:hidden", "after remove"],
+            "allow": ["f:pagehide:visible", "f:visibilitychange:hidden", "f:unload:hidden", "after remove"],
+            "nested": ["outer:pagehide:visible", "outer:visibilitychange:hidden", "outer:unload:hidden",
+                       "inner:pagehide:visible", "inner:visibilitychange:hidden"]
+        })
+    );
+}
+
+/// A document's removal events fire once: removing inner frame B from frame A, whose `pagehide`
+/// listener then removes A from the top document, does not give B a second `pagehide` from A's
+/// removal (B's document is already unloading); A gets its own once.
+#[test]
+fn nested_removal_fires_pagehide_once_per_document() {
+    let (addr, server) = serve_html(1, "<!doctype html><body>top");
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    server.join().unwrap();
+    let log = eval_await_main(
+        &mut h,
+        r#"(async () => {
+          const log = [];
+          const a = document.createElement('iframe');
+          a.srcdoc = "<iframe srcdoc='<p>b'></iframe>";
+          document.body.appendChild(a);
+          await new Promise((r) => setTimeout(r, 400));
+          const aw = a.contentWindow, bw = aw.frames[0];
+          aw.addEventListener('pagehide', () => log.push('A:pagehide'));
+          bw.addEventListener('pagehide', () => { log.push('B:pagehide'); a.remove(); log.push('A removed'); });
+          aw.document.querySelector('iframe').remove();
+          log.push('B removed');
+          await new Promise((r) => setTimeout(r, 50));
+          return log;
+        })()"#,
+    );
+    assert_eq!(log, json!(["B:pagehide", "A:pagehide", "A removed", "B removed"]));
+}
+
+/// Moving an iframe reloads it (a new frame navigates), except when it is moved from its own
+/// document's window `load` listener: then, as in Chrome, the new frame stays on its initial
+/// about:blank, fires no `load` and does not hold its parent's load, so a load listener that moves
+/// its iframe does not loop (WPT dom/nodes/crashtests/multiple-append-mutated-in-unload).
+#[test]
+fn moving_an_iframe_reloads_it_unless_moved_from_its_own_load() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<!doctype html><body><div id=a></div><div id=b></div><script>window.calls = 0;\
+         function moveMe() { calls++; if (calls < 20) document.getElementById('b').appendChild(document.getElementById('self')); }\
+         addEventListener('load', () => { window.parentLoadedAfter = calls; });</script>\
+         <iframe id=self srcdoc=\"<script>addEventListener('load', () => parent.moveMe())</script>\"></iframe>",
+    );
+    assert_eq!(
+        eval_await_main(
+            &mut h,
+            r#"(async () => {
+              await new Promise((r) => setTimeout(r, 400));
+              const self = document.getElementById('self');
+              const out = { calls, parentLoadedAfter: window.parentLoadedAfter, selfBody: self.contentDocument.body ? self.contentDocument.body.innerHTML : null };
+              const f = document.createElement('iframe');
+              let loads = 0;
+              f.onload = () => loads++;
+              f.srcdoc = '<p>x';
+              document.getElementById('a').appendChild(f);
+              await new Promise((r) => setTimeout(r, 300));
+              document.getElementById('b').appendChild(f);
+              await new Promise((r) => setTimeout(r, 300));
+              out.plainMoveLoads = loads;
+              return out;
+            })()"#,
+        ),
+        json!({"calls": 1, "parentLoadedAfter": 1, "selfBody": "", "plainMoveLoads": 2})
+    );
+}
+
+/// Fullscreen delegation through a parent that inherited its origin: a nested srcdoc frame with
+/// `allow="fullscreen"` ('src') inside a srcdoc frame of an http page has that page's origin as its
+/// declared origin (its about:srcdoc parent's inherited one), so it may use fullscreen. A plain one
+/// may too: the default allowlist, 'self', admits a same-origin frame (Chrome).
+#[test]
+fn fullscreen_delegates_through_an_inherited_origin_parent() {
+    let (addr, server) = serve_html(1, "<!doctype html><body>top");
+    let mut h = Harness::new();
+    enable(&mut h);
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    server.join().unwrap();
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"new Promise((done) => {
+            const f = document.createElement('iframe');
+            f.allowFullscreen = true;
+            f.srcdoc = "<iframe allow=fullscreen srcdoc='<p>in'></iframe><iframe srcdoc='<p>plain'></iframe>";
+            document.body.appendChild(f);
+            setTimeout(() => {
+              const [a, b] = [f.contentWindow.frames[0], f.contentWindow.frames[1]];
+              done([f.contentDocument.fullscreenEnabled, a.document.fullscreenEnabled, b.document.fullscreenEnabled]);
+            }, 400);
+          })"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!([true, true, true]), "{r}");
+}

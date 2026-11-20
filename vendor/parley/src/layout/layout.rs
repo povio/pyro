@@ -20,7 +20,7 @@ use core::fmt;
 /// The alternate form (`{:#?}`) formats the full underlying data.
 ///
 /// [`Debug`]: core::fmt::Debug
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Layout<B: Brush> {
     pub(crate) data: LayoutData<B>,
 }
@@ -182,6 +182,14 @@ impl<B: Brush> Layout<B> {
         self.data.inline_boxes.iter_mut().map(|b| &mut b.inline_box)
     }
 
+    /// pyro: moves line `index` to start `offset` from its inline start (its alignment offset;
+    /// a line clamp aligns the clamp line with its ellipsis again).
+    pub fn set_line_offset(&mut self, index: usize, offset: f32) {
+        if let Some(line) = self.data.lines.get_mut(index) {
+            line.metrics.offset = offset;
+        }
+    }
+
     /// Returns an iterator over the lines in the layout.
     pub fn lines(
         &self,
@@ -210,6 +218,13 @@ impl<B: Brush> Layout<B> {
         self.data.indent_options = options;
     }
 
+    /// pyro: the text index the first line ends at the latest: content that starts there or after
+    /// it does not fit on it (a `::first-line` style that changes layout ends the line where it
+    /// ends in that style); `None` by default. Like the indent, set before the lines are broken.
+    pub fn set_first_line_limit(&mut self, end: Option<usize>) {
+        self.data.first_line_limit = end;
+    }
+
     /// pyro: makes the layout's preserved tabs go to tab stops, one every `tab-size` of the
     /// tab's style ([`TabSize`](crate::TabSize)) from the start edge of the lines' container.
     /// `space` is the advance that a number of spaces counts in, in layout units; a tab closer
@@ -220,6 +235,36 @@ impl<B: Brush> Layout<B> {
     /// pyro: the `(space, min_advance)` [`Self::set_tab_stops`] set.
     pub fn tab_stops(&self) -> (f32, f32) {
         (self.data.tab_space, self.data.tab_min_advance)
+    }
+
+    /// pyro: the advance of the layout's first cluster, if it starts the content (after nothing
+    /// but zero-width span start edges and out-of-flow boxes) and `hangs` says its first character
+    /// (`text` is the layout's text) may hang (CSS `hanging-punctuation: first`).
+    pub fn first_cluster_hang(&self, text: &str, hangs: impl Fn(char) -> bool) -> Option<f32> {
+        use crate::layout::LayoutItemKind;
+        let data = &self.data;
+        for item in &data.items {
+            match item.kind {
+                LayoutItemKind::InlineBox => {
+                    let inline_box = &data.inline_boxes[item.index].inline_box;
+                    match inline_box.kind {
+                        crate::InlineBoxKind::InFlow => return None,
+                        crate::InlineBoxKind::SpanStart | crate::InlineBoxKind::SpanEnd if inline_box.width > 0.0 => {
+                            return None;
+                        }
+                        _ => {}
+                    }
+                }
+                LayoutItemKind::TextRun => {
+                    let slice = data.shaped_text.run_slice(item.index as u32);
+                    let cluster = slice.shaped_clusters().first()?;
+                    let character = slice.characters_in(cluster.chars_range()).first()?;
+                    let ch = text.get(character.text_byte_start as usize..)?.chars().next()?;
+                    return hangs(ch).then_some(cluster.advance);
+                }
+            }
+        }
+        None
     }
 
     pub fn set_tab_stops(&mut self, space: f32, min_advance: f32) {
@@ -318,6 +363,38 @@ impl<B: Brush> Layout<B> {
     /// struct then each line will be aligned individually within its line box.
     pub fn align(&mut self, alignment: Alignment, options: AlignmentOptions) {
         align(&mut self.data, alignment, options);
+    }
+
+    /// pyro: CSS Text 4 `text-group-align`: aligns the lines (as [`Self::align`]) within a group
+    /// as wide as the widest line's content, then places the group in each line box: `left` of
+    /// the free space goes to the group's left (0 at the left edge, 1 at the right, 0.5 centred).
+    pub fn align_in_group(&mut self, alignment: Alignment, options: AlignmentOptions, left: f32) {
+        let group = self
+            .data
+            .lines
+            .iter()
+            .map(|line| line.metrics.indent + line.metrics.advance - line.metrics.hanging_advance)
+            .fold(0.0f32, f32::max);
+        // As wide as a box of the group's min-content width: whole layout units (1/64 CSS px).
+        let scale = if self.data.scale > 0.0 { self.data.scale } else { 1.0 };
+        let group = (group / scale * 64.0).ceil() / 64.0 * scale;
+        let saved: alloc::vec::Vec<(f32, f32)> = self
+            .data
+            .lines
+            .iter_mut()
+            .map(|line| {
+                let saved = (line.metrics.inline_min_coord, line.metrics.inline_max_coord);
+                line.metrics.inline_max_coord = line.metrics.inline_min_coord + group;
+                saved
+            })
+            .collect();
+        align(&mut self.data, alignment, options);
+        for (line, (min, max)) in self.data.lines.iter_mut().zip(saved) {
+            let free = (max - min - group).max(0.0);
+            line.metrics.inline_min_coord = min;
+            line.metrics.inline_max_coord = max;
+            line.metrics.offset += free * left;
+        }
     }
 
     /// Returns the index and `Line` object for the line containing the

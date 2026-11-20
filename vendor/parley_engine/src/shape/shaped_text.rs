@@ -80,6 +80,12 @@ pub struct IdeographicBaselines {
     pub face_under: Option<f32>,
     /// `icft`: the top of the ideographic character face.
     pub face_over: Option<f32>,
+    /// pyro: `romn`: the alphabetic baseline (most fonts: 0, the glyph origin).
+    pub alphabetic: Option<f32>,
+    /// pyro: `hang`: the hanging baseline.
+    pub hanging: Option<f32>,
+    /// pyro: `math`: the mathematical baseline.
+    pub math: Option<f32>,
 }
 
 impl IdeographicBaselines {
@@ -115,6 +121,9 @@ impl IdeographicBaselines {
                 b"idtp" => out.ideographic_over = value,
                 b"icfb" => out.face_under = value,
                 b"icft" => out.face_over = value,
+                b"romn" => out.alphabetic = value,
+                b"hang" => out.hanging = value,
+                b"math" => out.math = value,
                 _ => {}
             }
         }
@@ -457,6 +466,35 @@ impl ShapedText {
         Some(metrics.ascent - metrics.descent)
     }
 
+    /// pyro: the vertical advance of the shaped cluster at `index` standing upright in the font
+    /// at `font_index` at `font_size`: the sum of its glyphs' advance heights in the font's
+    /// vertical metrics (`vmtx`), as HarfBuzz advances glyphs shaping top to bottom. `None` for a
+    /// font without them.
+    pub fn cluster_vertical_advance(&self, index: u32, font_index: usize, font_size: f32) -> Option<f32> {
+        use skrifa::raw::TableProvider;
+        let cluster = self.shaped_clusters.get(index as usize)?;
+        let font = self.fonts.get(font_index)?;
+        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
+        let vmtx = font_ref.vmtx().ok()?;
+        let units_per_em = f32::from(font_ref.head().ok()?.units_per_em());
+        if units_per_em == 0.0 {
+            return None;
+        }
+        let advance = |glyph: u32| vmtx.advance(skrifa::GlyphId::new(glyph)).map(f32::from);
+        let units = if cluster.has_inline_glyph() {
+            advance(cluster.glyph_offset)?
+        } else {
+            let start = cluster.glyph_offset as usize;
+            let glyphs = self.glyphs.get(start..start + usize::from(cluster.glyph_len()))?;
+            let mut sum = 0.0;
+            for glyph in glyphs {
+                sum += advance(glyph.id)?;
+            }
+            sum
+        };
+        Some(units * font_size / units_per_em)
+    }
+
     /// pyro: makes the run at `run_index` upright with glyphs advancing by `advance`
     /// ([`ShapedRun::upright_advance`]), its hyphen too.
     pub fn set_run_upright_advance(&mut self, run_index: usize, advance: f32) {
@@ -657,6 +695,16 @@ impl ShapedText {
         }
     }
 
+    /// Reserve the width of a separately shaped discretionary fragment.
+    pub fn set_fragment_placeholder(&mut self, index: u32, advance: f32) -> ClusterGlyphs {
+        let cluster = &mut self.shaped_clusters[index as usize];
+        let old = ClusterGlyphs { glyph_offset: cluster.glyph_offset, flags: cluster.flags.bits(), advance: cluster.advance };
+        cluster.flags = cluster.flags.with_inline_glyph(true).with_glyph_len(1);
+        cluster.glyph_offset = 0;
+        cluster.advance = advance;
+        old
+    }
+
     /// pyro: gives the one-glyph shaped cluster at `index` the glyph `id` with `advance`, and
     /// returns what it had (a soft hyphen at the end of a line shows a hyphen; one inside a line
     /// gets its own glyph back).
@@ -734,6 +782,9 @@ impl ShapedText {
         normalized_coords: &[harfrust::NormalizedCoord],
         metrics: Option<RunMetrics>,
         trim: Option<&super::han_kerning::RunTrim>,
+        // pyro: the glyphs' positions shaped top to bottom (`ShapeOptions::vertical_upright`),
+        // in place of `glyph_buffer`'s.
+        vertical: Option<&[harfrust::GlyphPosition]>,
     ) -> RunMetrics {
         debug_assert_eq!(
             range.char_range.len(),
@@ -797,7 +848,9 @@ impl ShapedText {
         // `HarfRust` returns glyphs in visual order, so we need to process them as such while
         // maintaining logical ordering of clusters.
 
-        let glyph_positions = glyph_buffer.glyph_positions();
+        let glyph_positions = vertical
+            .filter(|positions| positions.len() == glyph_buffer.glyph_positions().len())
+            .unwrap_or(glyph_buffer.glyph_positions());
         let scale_factor = options.font_size / units_per_em;
         let shaped_clusters_start = self.shaped_clusters.len();
 
@@ -814,7 +867,13 @@ impl ShapedText {
             self.characters.push(Character {
                 text_byte_start: (range.byte_range.start + byte_offset) as u32,
                 style_index: *style_index,
-                whitespace: Whitespace::from_char(ch),
+                // pyro: a line or paragraph separator breaks the line where `white-space`
+                // preserves segment breaks (WPT CSS2 `bidi-breaking-003`); elsewhere it is a space.
+                whitespace: if options.preserved_breaks && matches!(ch, '\u{2028}' | '\u{2029}') {
+                    Whitespace::Newline
+                } else {
+                    Whitespace::from_char(ch)
+                },
                 // pyro: and how its fullwidth punctuation is trimmed (`han_kerning`).
                 flags: match trim.and_then(|trim| trim.flags.get(index)) {
                     Some(&trim) if trim != 0 => flags.with_trim(trim),
@@ -868,6 +927,7 @@ impl ShapedText {
 
         self.runs.push(ShapedRun {
             range,
+            segment_start: segment.range.byte_range.start,
             font_size: options.font_size,
             font_index,
             characters_range: characters_start as u32..self.characters.len() as u32,
@@ -879,6 +939,7 @@ impl ShapedText {
             font_metrics,
             hyphen: metrics.hyphen,
             upright_advance: None,
+            vertical_shaped: vertical.is_some_and(|positions| positions.len() == glyph_buffer.glyph_positions().len()),
         });
         metrics
     }
@@ -887,6 +948,8 @@ impl ShapedText {
 /// One shaped run, belonging to a [`ShapedText`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShapedRun {
+    /// Source offset of the shaping segment shared by its fallback font runs.
+    pub segment_start: usize,
     /// The range of text this run corresponds to.
     pub range: TextRange,
     /// Font size.
@@ -914,6 +977,8 @@ pub struct ShapedRun {
     /// pyro: the advance of every glyph of an upright run in a font without vertical metrics
     /// (parley's `shape::upright`): the hyphens the line breaker shows advance by it too.
     pub upright_advance: Option<f32>,
+    /// pyro: its advances are the ones shaping it top to bottom gives (`ShapeOptions::vertical_upright`).
+    pub vertical_shaped: bool,
     /// The font metrics of this run.
     pub font_metrics: FontMetrics,
 }
@@ -977,8 +1042,12 @@ fn process_shaped_clusters<'a>(
             )
         };
 
+        let mut breaks = (cluster.characters_start..char_end.saturating_sub(1))
+            .filter(|&index| characters[index].flags.is_soft_hyphen())
+            .map(|index| index + 1);
+        let split = breaks.next();
         shaped_clusters.push(ShapedCluster {
-            chars_range: (cluster.characters_start as u32, char_end as u32),
+            chars_range: (cluster.characters_start as u32, split.unwrap_or(char_end) as u32),
             style_index: first_character.style_index,
             flags: ShapedClusterFlags::new(glyph_len)
                 .with_grapheme_start(first_character.grapheme_start)
@@ -992,6 +1061,21 @@ fn process_shaped_clusters<'a>(
             glyph_offset,
             advance,
         });
+        let mut next = split;
+        while let Some(start) = next {
+            next = breaks.next();
+            let first = characters[start];
+            shaped_clusters.push(ShapedCluster {
+                chars_range: (start as u32, next.unwrap_or(char_end) as u32),
+                style_index: first.style_index,
+                flags: ShapedClusterFlags::new(0)
+                    .discretionary_continuation()
+                    .with_grapheme_start(true)
+                    .with_first_char(first.flags.is_soft_wrap_opportunity(), first.whitespace),
+                glyph_offset: 0,
+                advance: 0.,
+            });
+        }
     }
 
     let mut cluster = Cluster {
@@ -1154,8 +1238,10 @@ mod tests {
                 auto_opsz: false,
                 language_override: None,
                 spacing_trim: Default::default(),
+                vertical_upright: false,
                 isolated_before: false,
                 isolated_after: false,
+                preserved_breaks: false,
             },
         }];
         shaper.shape_text(
@@ -1271,7 +1357,8 @@ mod tests {
 
     #[test]
     fn newlines_removed() {
-        for newline in ["\n", "\r", "\u{2028}", "\u{2029}"] {
+        // pyro: not U+2028 or U+2029, which are shown as a space (`Whitespace::from_char`).
+        for newline in ["\n", "\r"] {
             let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
 
             let index = shaped
@@ -1319,8 +1406,10 @@ mod tests {
                     auto_opsz: false,
                     language_override: None,
                     spacing_trim: Default::default(),
+                    vertical_upright: false,
                     isolated_before: false,
                     isolated_after: false,
+                    preserved_breaks: false,
                 },
             },
             Item {
@@ -1335,8 +1424,10 @@ mod tests {
                     auto_opsz: false,
                     language_override: None,
                     spacing_trim: Default::default(),
+                    vertical_upright: false,
                     isolated_before: false,
                     isolated_after: false,
+                    preserved_breaks: false,
                 },
             },
         ];

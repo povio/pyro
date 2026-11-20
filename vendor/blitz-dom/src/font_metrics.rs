@@ -88,6 +88,17 @@ impl FontMetricsProvider for BlitzFontMetricsProvider {
         };
         style::values::computed::Length::from(Au::from_f32_px(size))
     }
+
+    /// pyro: `line-height: normal` as layout uses it (`layout::first_letter`): the first
+    /// available font's ascent and descent in whole pixels, as Blink's, and its line gap.
+    fn normal_line_height(&self, font_styles: &FontStyles, size: CSSPixelLength) -> Option<CSSPixelLength> {
+        let (ascent, descent, gap, adjusted) = self.line_extents_for(font_styles, size.px(), ' ')?;
+        let height = ascent.round() + descent.round();
+        // (Chromium's taller ascent for Times, Helvetica and Courier, as parley's line boxes have
+        // it: `parley_engine::shape::chromium_ascent_adjustment`.)
+        let adjustment = if adjusted { (height * 0.15 + 0.5).floor() } else { 0.0 };
+        Some(CSSPixelLength::new(height + adjustment + gap.max(0.0).round()))
+    }
 }
 
 impl BlitzFontMetricsProvider {
@@ -100,6 +111,22 @@ impl BlitzFontMetricsProvider {
         font_size: f32,
         text_char: char,
     ) -> Option<(f32, f32, f32, f32)> {
+        self.extents_and_family_for(font_styles, font_size, text_char).map(|(extents, _)| extents)
+    }
+
+    /// pyro: the ascent, descent and line gap of [`Self::extents_for`]'s font, and whether its
+    /// family is Times, Helvetica or Courier (which Chromium gives a taller ascent).
+    fn line_extents_for(&self, font_styles: &FontStyles, font_size: f32, text_char: char) -> Option<(f32, f32, f32, bool)> {
+        self.extents_and_family_for(font_styles, font_size, text_char)
+            .map(|((ascent, descent, gap, _), adjusted)| (ascent, descent, gap, adjusted))
+    }
+
+    fn extents_and_family_for(
+        &self,
+        font_styles: &FontStyles,
+        font_size: f32,
+        text_char: char,
+    ) -> Option<((f32, f32, f32, f32), bool)> {
         use parley::fontique::{QueryFont, QueryStatus};
         use skrifa::instance::{LocationRef, Size};
         use skrifa::metrics::Metrics;
@@ -131,7 +158,11 @@ impl BlitzFontMetricsProvider {
         );
         let metrics = Metrics::new(&font_ref, Size::new(font_size), LocationRef::from(&location));
         let cap_height = metrics.cap_height.unwrap_or(metrics.ascent);
-        Some((metrics.ascent, -metrics.descent, metrics.leading, cap_height))
+        let adjusted = font_ref
+            .localized_strings(skrifa::string::StringId::FAMILY_NAME)
+            .english_or_first()
+            .is_some_and(|family| ["Times", "Helvetica", "Courier"].iter().any(|name| family.chars().eq(name.chars())));
+        Some(((metrics.ascent, -metrics.descent, metrics.leading, cap_height), adjusted))
     }
 
     /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its

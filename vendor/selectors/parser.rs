@@ -1522,26 +1522,26 @@ impl<'a, Impl: 'a + SelectorImpl> SelectorIter<'a, Impl> {
     }
 
     #[inline]
-    pub(crate) fn matches_for_stateless_pseudo_element(&mut self) -> bool {
+    pub(crate) fn matches_for_stateless_pseudo_element(&mut self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
         let first = match self.next() {
             Some(c) => c,
             // Note that this is the common path that we keep inline: the
             // pseudo-element not having anything to its right.
             None => return true,
         };
-        self.matches_for_stateless_pseudo_element_internal(first)
+        self.matches_for_stateless_pseudo_element_internal(first, state)
     }
 
     #[inline(never)]
-    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>) -> bool {
-        if !first.matches_for_stateless_pseudo_element() {
+    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>, state: Option<&Impl::NonTSPseudoClass>) -> bool {
+        if !first.matches_for_stateless_pseudo_element(state) {
             return false;
         }
         for component in self {
             // The only other parser-allowed Components in this sequence are
             // state pseudo-classes, or one of the other things that can contain
             // them.
-            if !component.matches_for_stateless_pseudo_element() {
+            if !component.matches_for_stateless_pseudo_element(state) {
                 return false;
             }
         }
@@ -2211,18 +2211,19 @@ impl<Impl: SelectorImpl> Component<Impl> {
     /// Whether a given selector (to the right of a pseudo-element) should match for stateless
     /// pseudo-elements. Note that generally nothing matches for those, but since we have :not(),
     /// we still need to traverse nested selector lists.
-    fn matches_for_stateless_pseudo_element(&self) -> bool {
+    fn matches_for_stateless_pseudo_element(&self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
         match *self {
-            Component::Negation(ref selectors) => !selectors.slice().iter().all(|selector| {
+            Component::NonTSPseudoClass(ref class) => state == Some(class),
+            Component::Negation(ref selectors) => !selectors.slice().iter().any(|selector| {
                 selector
                     .iter_raw_match_order()
-                    .all(|c| c.matches_for_stateless_pseudo_element())
+                    .all(|c| c.matches_for_stateless_pseudo_element(state))
             }),
             Component::Is(ref selectors) | Component::Where(ref selectors) => {
                 selectors.slice().iter().any(|selector| {
                     selector
                         .iter_raw_match_order()
-                        .all(|c| c.matches_for_stateless_pseudo_element())
+                        .all(|c| c.matches_for_stateless_pseudo_element(state))
                 })
             },
             _ => false,

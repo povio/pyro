@@ -85,9 +85,9 @@ fn sheets_and_images_come_through_the_bridge() {
         }
     }
     let mut s = snap(
-        r#"<!doctype html><head><link rel="stylesheet" href="http://test/a.css"></head><body><img src="red.png" width="50" height="50"></body>"#,
+        r#"<!doctype html><head><link rel="stylesheet" href="http://test/a.css" data-pyro-sheet="a"></head><body><img src="red.png" width="50" height="50"></body>"#,
     );
-    s.sheets.insert("http://test/a.css".into(), "body { margin: 0; background: #00ff00 }".into());
+    s.sheets.insert("a".into(), "body { margin: 0; background: #00ff00 }".into());
     let fetcher: Arc<dyn Fetcher> = Arc::new(One(red));
     let mut r = Renderer::new();
     let (img, _, t) = r.render(&s, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
@@ -723,6 +723,17 @@ fn jpeg_screenshots_decode_close_to_the_render() {
     assert!(mid > 32.0, "q80 PSNR {mid:.1} dB");
     assert!(low < mid && mid < high, "PSNR {low:.1} < {mid:.1} < {high:.1}");
     assert!(low_size < mid_size && mid_size < high_size, "sizes {low_size} < {mid_size} < {high_size}");
+}
+
+#[test]
+fn jpeg_raster_decode_matches_the_reference_integer_transform() {
+    let data = (0..64 * 32).flat_map(|index| {
+        [(index * 37) as u8, (index * 83 + index / 3) as u8, (index * 29) as u8, 255]
+    }).collect();
+    let jpeg = encode_jpeg(&RgbaImage { width: 64, height: 32, data }, 86).unwrap();
+    let reference = turbojpeg::decompress(&jpeg, turbojpeg::PixelFormat::RGBA).unwrap();
+    let (pixels, _) = blitz_dom::net::decode_jpeg(&jpeg).unwrap();
+    assert_eq!(pixels.into_rgba8().into_raw(), reference.pixels);
 }
 
 /// An outset shadow without blur is a solid ring the spread wide around the box, antialiased

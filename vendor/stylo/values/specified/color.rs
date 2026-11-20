@@ -1008,9 +1008,20 @@ pub type ColorOrAuto = GenericColorOrAuto<Color>;
 /// caret-color
 pub type CaretColor = GenericCaretColor<Color>;
 
+/// pyro: outline-color.
+pub type OutlineColor = crate::values::generics::color::GenericOutlineColor<Color>;
+
 impl Parse for CaretColor {
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-        ColorOrAuto::parse(context, input).map(GenericCaretColor)
+        // pyro: and the optional colour of the text under a block caret, after a colour.
+        let caret = ColorOrAuto::parse(context, input)?;
+        let text = match caret {
+            GenericColorOrAuto::Auto => GenericColorOrAuto::Auto,
+            GenericColorOrAuto::Color(_) => {
+                input.try_parse(|input| ColorOrAuto::parse(context, input)).unwrap_or(GenericColorOrAuto::Auto)
+            },
+        };
+        Ok(GenericCaretColor(caret, text))
     }
 }
 

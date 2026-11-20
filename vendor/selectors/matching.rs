@@ -475,7 +475,7 @@ where
             },
         }
 
-        if !iter.matches_for_stateless_pseudo_element() {
+        if !iter.matches_for_stateless_pseudo_element(context.pseudo_element_state.as_ref()) {
             return KleeneValue::False;
         }
 

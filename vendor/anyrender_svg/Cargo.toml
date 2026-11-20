@@ -74,6 +74,9 @@ version = "0.25"
 optional = true
 default-features = false
 
+[dependencies.pyro-raster]
+path = "../../crates/pyro-raster"
+
 [dependencies.kurbo]
 version = "0.13.1"
 

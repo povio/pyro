@@ -10,8 +10,10 @@
 //!   (the style engine holds the live text, CSSOM edits included);
 //! - a `<script>` is written without its text; `<noscript>` (scripting is on), `<template>`, comments and
 //!   processing instructions are left out, and so is an `<iframe>`'s `src`
-//!   (a frame shows the document [`Dom::set_frame_documents`] gave it as its
-//!   `srcdoc`, else nothing); HTML markup leaves out event handler
+//!   (a frame shows the document [`Dom::set_frame_documents`] gave it, which the
+//!   renderer takes from the frame table, [`Dom::frame_table`], by the index the frame's
+//!   [`FRAME_ATTRIBUTE`] names; else nothing); a page attribute that would collide with
+//!   one the engine writes is left out ([`ENGINE_ATTRIBUTES`]); HTML markup leaves out event handler
 //!   (`on*`) attributes, which keyed trees keep (`content: attr(onclick)`);
 //! - the tree is the flat tree: a shadow host is serialized with its shadow
 //!   tree in place of its children (marked with the [`STATE_NS`]
@@ -25,6 +27,114 @@
 //!   [`STATE_NS`] `state` attribute: the renderer derives the others' from
 //!   their `dir` attribute and their parent in the DOM;
 //! - one element can be marked with an attribute (the clip target).
+
+
+/// pyro: the attributes the snapshot itself writes and the renderer reads (beyond the state
+/// namespace and the [`ENGINE_ATTRIBUTE_PREFIX`] family). A page attribute whose serialised name
+/// (`prefix:local`, ASCII case-insensitively, in any namespace) is one of these, or one this
+/// element got from the engine, or starts with the prefix, is not written: page content can
+/// never stand in for an engine attribute, in markup or a keyed tree (security review cycle 3).
+pub const ENGINE_ATTRIBUTES: &[&str] = &["srcdoc", FRAME_ATTRIBUTE, SHEET_POLICY_ATTRIBUTE, SHEET_ATTRIBUTE];
+
+/// pyro: the attribute a sheet link carries the key of its text in the snapshot's sheets in
+/// ([`sheet_key`]): the renderer serves a sheet by its link, never by its URL.
+pub const SHEET_ATTRIBUTE: &str = "data-pyro-sheet";
+
+
+
+/// pyro: the attribute a sheet link carries its response's `Referrer-Policy` in
+/// ([`Dom::set_sheet_policy`]): the renderer records it for that sheet object.
+pub const SHEET_POLICY_ATTRIBUTE: &str = "data-pyro-sheet-referrer-policy";
+
+/// pyro: the attributes a frame element (`iframe`, `frame`, `object`, `embed`) loads a document
+/// from: never written from another namespace, where markup would make them its own.
+pub const FRAME_SOURCE_ATTRIBUTES: &[&str] = &["src", "srcdoc", "data", "type"];
+
+/// pyro: the prefix of the snapshot's own attribute family (`data-pyro-key`, scroll offsets,
+/// frame URL and content height, the clip mark): page attributes with it are never written.
+pub const ENGINE_ATTRIBUTE_PREFIX: &str = "data-pyro-";
+
+/// pyro: raw text (a `<style>`'s sheet) as markup can hold it so that parsing it back gives the
+/// same tree: an end tag of its element (`</style`, any case, which would end it early and let
+/// the rest of the text become elements, frames included) is written `<\/style`, which CSS reads
+/// the same inside strings and comments and as nothing valid elsewhere. Other raw-text and RCDATA
+/// elements' text is written escaped (entities), which no markup can come out of.
+pub fn raw_text_safe<'a>(text: &'a str, tag: &str) -> std::borrow::Cow<'a, str> {
+    let lower = text.to_ascii_lowercase();
+    let end = format!("</{tag}");
+    if !lower.contains(&end) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut at = 0;
+    while let Some(found) = lower[at..].find(&end) {
+        let i = at + found;
+        out.push_str(&text[at..i]);
+        out.push_str("<\\/");
+        at = i + 2;
+    }
+    out.push_str(&text[at..]);
+    std::borrow::Cow::Owned(out)
+}
+
+/// pyro: the attribute a frame element carries its frame document in: `"<nonce>:<index>:<version>"`,
+/// the index naming the entry of the snapshot's frame table ([`Dom::frame_table`]: the
+/// document's markup, URL, scroll position, client and its own frames), the version changing
+/// with the entry's content. The document and its client never travel in markup.
+pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
+
+/// pyro: whether a page attribute may be written next to `engine` (the names, lowercase, of the
+/// attributes the engine gave the element). A page attribute keeps its namespace and name
+/// (`xml:lang`, `xlink:href`, `xmlns:*`, any author namespace); one is left out only if the
+/// renderer could read it as an engine attribute: its local name or its serialised qualified name
+/// (`prefix:local`), ASCII case-insensitively, is in [`ENGINE_ATTRIBUTES`], starts with
+/// [`ENGINE_ATTRIBUTE_PREFIX`], or is one the engine gave this element. (The renderer looks
+/// attributes up by local name, whatever their namespace: a namespaced or prefixed `srcdoc` is
+/// left out too.)
+/// pyro (security review cycle 8): the page's own `data-pyro-*` attributes are written like any
+/// other (CSS matches them in the renderer); the engine's travel under names carrying the
+/// document's nonce ([`engine_name`]), which page content cannot know, so none collides.
+fn page_attribute_allowed(name: &QualName, engine: &[String], nonce: &str) -> bool {
+    let local = name.local.to_string().to_ascii_lowercase();
+    let serialised = match &name.prefix {
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", name.local).to_ascii_lowercase(),
+        _ => local.clone(),
+    };
+    let own = (!nonce.is_empty()).then(|| format!("{ENGINE_ATTRIBUTE_PREFIX}{nonce}-"));
+    let reserved = |n: &str| {
+        n.eq_ignore_ascii_case("srcdoc")
+            || own.as_deref().is_some_and(|own| n.starts_with(own))
+            || engine.iter().any(|e| e == n)
+    };
+    !(reserved(&local) || reserved(&serialised))
+}
+
+/// pyro: the name an engine attribute (`canonical`, of the [`ENGINE_ATTRIBUTE_PREFIX`] family:
+/// `data-pyro-sheet`, `data-pyro-frame`, ...) is written under in a document serialised with
+/// `nonce`: `data-pyro-<nonce>-<field>`. Only the renderer, given the nonce, reads it as the
+/// engine's (blitz-dom `engine_field`); page content can neither write nor match it (CSS has no
+/// attribute-name wildcards), and the page's own `data-pyro-*` attributes stay its own. Without a
+/// nonce (markup written by hand), the canonical name.
+/// pyro: the namespace the engine's state attributes ([`STATE_NS`]: pseudo-class state, the top
+/// layer, shadow and slot markers) travel in, in a keyed tree serialised with `nonce`:
+/// `urn:x-pyro:state:<nonce>`. Only the renderer, given the nonce, takes them as state (blitz-dom
+/// `engine_state`, into its engine store); a page attribute in any namespace, [`STATE_NS`] itself
+/// included, is the page's own. Without a nonce, [`STATE_NS`].
+pub fn state_ns(nonce: &str) -> String {
+    if nonce.is_empty() {
+        STATE_NS.to_owned()
+    } else {
+        format!("{STATE_NS}:{nonce}")
+    }
+}
+
+/// pyro: [`engine_name`] for the attribute name of an engine attribute.
+pub fn engine_name(nonce: &str, canonical: &str) -> String {
+    match canonical.strip_prefix(ENGINE_ATTRIBUTE_PREFIX) {
+        Some(field) if !nonce.is_empty() => format!("{ENGINE_ATTRIBUTE_PREFIX}{nonce}-{field}"),
+        _ => canonical.to_owned(),
+    }
+}
 
 use std::borrow::Cow;
 
@@ -48,6 +158,27 @@ pub const SHADOW_HOST_ATTR: &str = "shadow-host";
 /// render trees when nodes are assigned to it: its render children are those
 /// (light children of its host), not its own.
 pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
+/// Name ([`STATE_NS`]) of the attribute a light child element of a shadow host carries in render
+/// trees: its index among the host's element children. An assigned node's render parent is its
+/// slot, so this is how the renderer finds its light-tree siblings (sibling combinators match in
+/// the node tree, not the flat tree).
+pub const LIGHT_INDEX_ATTR: &str = "light-index";
+/// Name ([`STATE_NS`]) of the attribute an `<svg>` panned or zoomed by script carries in render
+/// trees (`currentTranslate`, `currentScale`): `tx ty scale`.
+pub const SVG_PAN_ATTR: &str = "svg-pan";
+/// pyro: name ([`STATE_NS`]) of the attribute that marks the slot a `<details>` element's content
+/// renders in (the render tree gives a `<details>` the user-agent shadow tree Chromium gives it: a
+/// slot for its first `<summary>`, then this one for the rest), which the renderer styles as its
+/// `::details-content`.
+pub const DETAILS_CONTENT_ATTR: &str = "details-content";
+/// pyro: the bits a `<details>` element's render key carries for its summary slot, and with
+/// [`DETAILS_CONTENT_SLOT_KEY`] for its content slot (which generations never reach).
+pub const DETAILS_SUMMARY_SLOT_KEY: u64 = 1 << 61;
+pub const DETAILS_CONTENT_SLOT_KEY: u64 = 1 << 60;
+/// pyro: the render key flag of the synthetic assigned slot a shadow host's unassigned light
+/// `<style>` children are rendered in (with the host's render key): their sheets apply in the
+/// host's tree scope though no slot takes them (CSS Scoping; WPT css-cascade `scope-part`).
+pub const UNASSIGNED_STYLE_SLOT_KEY: u64 = 1 << 59;
 
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
@@ -122,6 +253,12 @@ pub fn render_key(id: NodeId) -> u64 {
     ((id.generation() as u64) << 32) | id.index() as u64
 }
 
+/// pyro: the render key of `id`'s `::before` (`pseudo` 1) or `::after` (2) box: the element's
+/// with the pseudo-element in its two top bits (which generations never reach).
+pub fn pseudo_render_key(id: NodeId, pseudo: u8) -> u64 {
+    render_key(id) | ((pseudo as u64 & 3) << 62)
+}
+
 /// Tree scope of a node being serialized: index into the shadow hosts
 /// entered so far, `NONE` for the document.
 type Scope = usize;
@@ -134,6 +271,9 @@ enum Step {
     Close,
     /// Text standing for element `.0`'s children.
     Synthetic(u32, String, TextKind),
+    /// pyro: a slot of a `<details>` element's user-agent shadow tree (render key, whether it is
+    /// the content slot, its assigned nodes and their scope).
+    DetailsSlot(u64, bool, Vec<u32>, Scope),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -167,6 +307,47 @@ struct HtmlSink<'a> {
     mark: Option<&'a str>,
     scroll: &'a [(u64, (f64, f64))],
     sticky: &'a [(u64, (f64, f64))],
+    /// pyro: elements written with their render key (`data-pyro-key`): a frame's animated
+    /// elements, whose sampled animations the renderer applies to its document by key.
+    keyed: &'a [u64],
+    /// pyro: the elements open in the markup, as written ([`Written`]).
+    open: Vec<Written>,
+    /// pyro: the document's snapshot nonce, which every element given engine attributes carries
+    /// ([`NONCE_ATTRIBUTE`]).
+    nonce: String,
+}
+
+
+
+/// pyro: how an open element was written, for its text and its end tag.
+#[derive(Clone, Copy, PartialEq)]
+enum Written {
+    Plain,
+    /// An HTML `<xmp>` or `<plaintext>`, written as `<pre>` with its name in [`TAG_ATTRIBUTE`]:
+    /// a reparse would read its content as text up to `</xmp>` (`<plaintext>`: to the end of the
+    /// markup, hiding every later element, frames and engine elements included), not as the DOM
+    /// has it. `<pre>` parses as they do otherwise (it closes an open `<p>`); the renderer gives
+    /// the element its name back (blitz-html `create_element`).
+    AsPre,
+    /// An HTML `<noembed>` or `<noframes>`: raw text in a reparse, so its text is written raw
+    /// (an end tag of it neutralised, [`raw_text_safe`]), not as entities a reparse keeps as such.
+    RawText(&'static str),
+}
+
+/// pyro: the attribute an element written as `<pre>` carries its own name in (see [`Written`]).
+/// Page attributes with the [`ENGINE_ATTRIBUTE_PREFIX`] are never written, so only the engine
+/// writes it.
+pub const TAG_ATTRIBUTE: &str = "data-pyro-tag";
+
+/// pyro: [`escape`], and a carriage return as a character reference: a reparse turns a raw CR
+/// (and CR LF) into LF, a reference it keeps.
+fn escape_render(out: &mut String, s: &str, attr: bool) {
+    if !s.contains('\r') {
+        return escape(out, s, attr);
+    }
+    let mut escaped = String::with_capacity(s.len() + 8);
+    escape(&mut escaped, s, attr);
+    out.push_str(&escaped.replace('\r', "&#13;"));
 }
 
 impl Sink for HtmlSink<'_> {
@@ -175,18 +356,36 @@ impl Sink for HtmlSink<'_> {
         self.out.push_str(name);
         self.out.push('>');
     }
-    fn open(&mut self, key: u64, tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, _void: bool) {
+    fn open(&mut self, key: u64, tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, void: bool) {
+        let written = match (name.ns == ns!(html), &*name.local) {
+            (true, "xmp" | "plaintext") => Written::AsPre,
+            (true, "noembed") => Written::RawText("noembed"),
+            (true, "noframes") => Written::RawText("noframes"),
+            _ => Written::Plain,
+        };
+        if !void {
+            self.open.push(written);
+        }
+        // pyro: the engine's attributes under their nonce names ([`engine_name`]).
+        let nonce = self.nonce.clone();
+        let named = |canonical: &str| engine_name(&nonce, canonical);
         let out = &mut self.out;
         out.push('<');
-        out.push_str(tag);
+        if written == Written::AsPre {
+            out.push_str("pre ");
+            out.push_str(&named(TAG_ATTRIBUTE));
+            out.push_str("=\"");
+            out.push_str(&name.local);
+            out.push('"');
+        } else {
+            out.push_str(tag);
+        }
         // The state attribute is for keyed trees: markup would lose its namespace. Markup, which
         // another engine may load, carries no event handler (`on*`) attributes; keyed trees keep
         // them for `content: attr()`.
         let html = name.ns == ns!(html);
         for a in attrs.iter().filter(|a| {
-            &*a.name.ns != STATE_NS
-                && !matches!(&*a.name.local, "data-pyro-scroll-left" | "data-pyro-scroll-top" | "data-pyro-sticky")
-                && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
+            *a.name.ns != *state_ns(&self.nonce) && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
         }) {
             out.push(' ');
             match &a.name.prefix {
@@ -199,37 +398,49 @@ impl Sink for HtmlSink<'_> {
             }
             if !a.valueless {
                 out.push_str("=\"");
-                escape(out, &a.value, true);
+                escape_render(out, &a.value, true);
                 out.push('"');
             }
         }
         if let (true, Some(name)) = (marked, self.mark) {
             out.push(' ');
-            out.push_str(name);
+            out.push_str(&named(name));
         }
         if let Some((_, (x, y))) = self.scroll.iter().find(|(id, _)| *id == key) {
             use std::fmt::Write;
-            let _ = write!(out, " data-pyro-scroll-left=\"{x}\" data-pyro-scroll-top=\"{y}\"");
+            let _ = write!(out, " {}=\"{x}\" {}=\"{y}\"", named("data-pyro-scroll-left"), named("data-pyro-scroll-top"));
         }
         if let Some((_, (x, y))) = self.sticky.iter().find(|(id, _)| *id == key) {
             use std::fmt::Write;
-            let _ = write!(out, " data-pyro-sticky=\"{x} {y}\"");
+            let _ = write!(out, " {}=\"{x} {y}\"", named("data-pyro-sticky"));
+        }
+        if self.keyed.contains(&key) {
+            use std::fmt::Write;
+            let _ = write!(out, " {}=\"{key}\"", named("data-pyro-key"));
         }
         out.push('>');
+        if written == Written::AsPre {
+            // A leading newline right after <pre> is dropped by parsers.
+            out.push('\n');
+        }
     }
     fn close(&mut self, tag: &str) {
+        let tag = if self.open.pop() == Some(Written::AsPre) { "pre" } else { tag };
         self.out.push_str("</");
         self.out.push_str(tag);
         self.out.push('>');
     }
     fn text(&mut self, _key: u64, text: &str, kind: TextKind) {
         match kind {
-            TextKind::Node => escape(&mut self.out, text, false),
-            TextKind::Style => self.out.push_str(text),
+            TextKind::Node => match self.open.last() {
+                Some(Written::RawText(tag)) => self.out.push_str(&raw_text_safe(text, tag)),
+                _ => escape_render(&mut self.out, text, false),
+            },
+            TextKind::Style => self.out.push_str(&raw_text_safe(text, "style")),
             TextKind::Textarea => {
                 // A leading newline right after <textarea> is dropped by parsers.
                 self.out.push('\n');
-                escape(&mut self.out, text, false);
+                escape_render(&mut self.out, text, false);
             }
         }
     }
@@ -237,6 +448,8 @@ impl Sink for HtmlSink<'_> {
 
 #[derive(Default)]
 struct TreeSink {
+    /// pyro: as [`HtmlSink::nonce`].
+    nonce: String,
     tree: RenderTree,
     /// Open elements (indices into `tree.nodes`).
     open: Vec<u32>,
@@ -251,7 +464,8 @@ impl TreeSink {
 impl Sink for TreeSink {
     fn doctype(&mut self, _name: &str) {}
     fn open(&mut self, key: u64, _tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, void: bool) {
-        let attrs = attrs
+        // (The engine's attributes come under their nonce names from the walk.)
+        let attrs: Vec<(QualName, String)> = attrs
             .iter()
             .map(|a| (a.name.clone().into_owned(), if a.valueless { String::new() } else { a.value.to_string() }))
             .collect();
@@ -298,8 +512,29 @@ impl Dom {
         scroll: &[(u64, (f64, f64))],
         sticky: &[(u64, (f64, f64))],
     ) -> DomResult<String> {
-        let mut sink =
-            HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll, sticky };
+        self.render_html_keyed(doc, opts, scroll, sticky, &[])
+    }
+
+    /// pyro: [`Dom::render_html_positioned`] with the elements of `keyed` (render keys) written
+    /// with a `data-pyro-key` attribute (a frame's animated elements).
+    pub fn render_html_keyed(
+        &self,
+        doc: NodeId,
+        opts: &RenderHtml<'_>,
+        scroll: &[(u64, (f64, f64))],
+        sticky: &[(u64, (f64, f64))],
+        keyed: &[u64],
+    ) -> DomResult<String> {
+        let nonce = self.snapshot_nonce(self.check(doc)?);
+        let mut sink = HtmlSink {
+            out: String::with_capacity(64 * 1024),
+            mark: opts.mark.map(|m| m.1),
+            scroll,
+            sticky,
+            keyed,
+            open: Vec::new(),
+            nonce,
+        };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.out)
     }
@@ -307,7 +542,7 @@ impl Dom {
     /// The nodes [`Dom::render_html`] would serialize, keyed (see
     /// [`RenderTree`]).
     pub fn render_tree(&self, doc: NodeId, opts: &RenderHtml<'_>) -> DomResult<RenderTree> {
-        let mut sink = TreeSink::default();
+        let mut sink = TreeSink { nonce: self.snapshot_nonce(self.check(doc)?), ..Default::default() };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.tree)
     }
@@ -343,6 +578,8 @@ impl Dom {
     /// `single`: stop after the first node written to `sink` (its own
     /// content, no subtree).
     fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink, root: u32, single: bool) {
+        // pyro: the nonce of the document walked (its engine attributes' names, [`state_ns`]).
+        let walk_nonce = roots.first().map(|&r| self.snapshot_nonce(self.n(r).owner_doc)).unwrap_or_default();
         let mark = opts.mark.and_then(|(id, _)| self.check(id).ok());
         // Shadow hosts entered: (host, the host's own scope).
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
@@ -350,6 +587,10 @@ impl Dom {
         let mut tags: Vec<String> = Vec::new();
         // Adopted sheets rendered so far.
         let mut emitted = 0usize;
+        // The element index of each light child of a shadow host or `<details>` (`LIGHT_INDEX_ATTR`),
+        // counted once per parent: one pass over its children, however many it has.
+        let mut light_indices: rustc_hash::FxHashMap<u32, usize> = Default::default();
+        let mut indexed_parents: rustc_hash::FxHashSet<u32> = Default::default();
         let mut stack = Vec::new();
         push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
@@ -368,6 +609,23 @@ impl Dom {
                     sink.open(key, "style", &name, &[], false, false);
                     sink.text(key | SYNTHETIC_TEXT, &text, TextKind::Style);
                     sink.close("style");
+                    continue;
+                }
+                Step::DetailsSlot(key, content, kids, kids_scope) => {
+                    let name = QualName::new(None, ns!(html), markup5ever::local_name!("slot"));
+                    let marker = |name: &str| RAttr {
+                        name: Cow::Owned(QualName::new(None, state_ns(&walk_nonce).into(), name.into())),
+                        value: Cow::Borrowed(""),
+                        valueless: true,
+                    };
+                    let mut attrs = vec![marker(ASSIGNED_SLOT_ATTR)];
+                    if content {
+                        attrs.push(marker(DETAILS_CONTENT_ATTR));
+                    }
+                    sink.open(key, "slot", &name, &attrs, false, false);
+                    tags.push("slot".into());
+                    stack.push(Step::Close);
+                    push_children(&mut stack, kids, kids_scope);
                     continue;
                 }
                 Step::Enter(n, scope) => (n, scope),
@@ -435,10 +693,16 @@ impl Dom {
                     let mut attrs: Vec<RAttr<'_>> = Vec::with_capacity(e.attrs.len() + 1);
                     for a in &e.attrs {
                         let name: &str = &a.name.local;
-                        // The state namespace is the snapshot's own: a page's
-                        // `setAttributeNS` in it would fake pseudo-classes or
-                        // the top layer for the renderer.
-                        if &*a.name.ns == STATE_NS {
+                        // pyro: a page attribute in the state namespace is the page's own: the
+                        // engine's state travels in the nonce namespace ([`state_ns`]).
+                        // pyro: a frame element's source attributes in any other namespace would
+                        // reparse as its own `src`/`srcdoc`/`data`: never written (the renderer
+                        // loads only frame table entries anyway).
+                        if html
+                            && a.name.ns != ns!()
+                            && matches!(local, "iframe" | "frame" | "object" | "embed")
+                            && FRAME_SOURCE_ATTRIBUTES.iter().any(|n| n.eq_ignore_ascii_case(&a.name.local))
+                        {
                             continue;
                         }
                         if a.name.ns == ns!() {
@@ -446,7 +710,7 @@ impl Dom {
                                 ("input", "value" | "checked") => input_type.is_some(),
                                 ("option", "selected") => html,
                                 ("link", "href") => href.is_some(),
-                                ("iframe" | "frame", "src" | "srcdoc") => html,
+                                ("iframe" | "frame", "src") => html,
                                 // An `<object>` showing a frame document: its `data` is not an image.
                                 ("object", "data" | "srcdoc") | ("embed", "src" | "srcdoc") => {
                                     html && self.frame_documents.contains_key(&n)
@@ -464,9 +728,20 @@ impl Dom {
                             valueless: false,
                         });
                     }
+                    // pyro: what follows is the engine's; the page's attributes above are
+                    // written after it, without any that would collide (`ENGINE_ATTRIBUTES`).
+                    let page_end = attrs.len();
                     let plain = |local: &str| Cow::Owned(QualName::new(None, ns!(), local.into()));
                     if let Some(href) = href {
                         attrs.push(RAttr { name: plain("href"), value: Cow::Owned(href), valueless: false });
+                        attrs.push(RAttr { name: plain(SHEET_ATTRIBUTE), value: Cow::Owned(self.sheet_key(id)), valueless: false });
+                        if let Some(policy) = self.sheet_policies.get(&n) {
+                            attrs.push(RAttr {
+                                name: plain(SHEET_POLICY_ATTRIBUTE),
+                                value: Cow::Borrowed(policy),
+                                valueless: false,
+                            });
+                        }
                     }
                     if let Some(source) = image_source {
                         attrs.push(RAttr { name: plain("src"), value: Cow::Borrowed(source), valueless: false });
@@ -483,26 +758,29 @@ impl Dom {
                         } else if ty != InputType::File {
                             let v = self.value(id).unwrap_or_default();
                             let v = if ty == InputType::Password { "•".repeat(v.chars().count()) } else { v };
-                            if !v.is_empty() {
+                            // pyro: and a button's empty label, which is still a line (blitz-dom's
+                            // mutator), where the attribute says so.
+                            let empty_label = matches!(ty, InputType::Button | InputType::Submit | InputType::Reset)
+                                && e.attr("value").is_some();
+                            if !v.is_empty() || empty_label {
                                 attrs.push(RAttr { name: plain("value"), value: Cow::Owned(v), valueless: false });
                             }
                         }
                     }
                     if html && matches!(local, "iframe" | "frame" | "object" | "embed") {
                         if let Some(frame) = self.frame_documents.get(&n) {
-                            attrs.push(RAttr { name: plain("srcdoc"), value: Cow::Borrowed(&frame.html), valueless: false });
+                            // pyro: only the index of its entry in the frame table (and the
+                            // entry's version, so a new document loads again).
                             attrs.push(RAttr {
-                                name: plain("data-pyro-frame-url"),
-                                value: Cow::Borrowed(&frame.url),
+                                name: plain(FRAME_ATTRIBUTE),
+                                value: Cow::Owned(format!(
+                                    "{}:{}:{:016x}",
+                                    self.snapshot_nonce(self.n(n).owner_doc),
+                                    render_key(id),
+                                    frame.version()
+                                )),
                                 valueless: false,
                             });
-                            if frame.scroll != (0.0, 0.0) {
-                                attrs.push(RAttr {
-                                    name: plain("data-pyro-frame-scroll"),
-                                    value: Cow::Owned(format!("{} {}", frame.scroll.0, frame.scroll.1)),
-                                    valueless: false,
-                                });
-                            }
                         }
                     }
                     if html && local == "iframe" {
@@ -532,18 +810,72 @@ impl Dom {
                         });
                     }
                     let marker = |name: &str| RAttr {
-                        name: Cow::Owned(QualName::new(None, STATE_NS.into(), name.into())),
+                        name: Cow::Owned(QualName::new(None, state_ns(&walk_nonce).into(), name.into())),
                         value: Cow::Borrowed(""),
                         valueless: true,
                     };
                     if slot_kids.as_ref().is_some_and(|(_, _, assigned)| *assigned) {
                         attrs.push(marker(ASSIGNED_SLOT_ATTR));
                     }
+                    if let Some(&(tx, ty, scale)) = self.svg_pans.get(&n).filter(|_| e.name.ns == ns!(svg) && local == "svg") {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), SVG_PAN_ATTR.into())),
+                            value: Cow::Owned(format!("{tx} {ty} {scale}")),
+                            valueless: false,
+                        });
+                    }
+                    // A light child of a shadow host (rendered under the slot it is assigned to).
+                    // pyro: or of a `<details>` element (its user-agent shadow tree's slots).
+                    let parent = self.n(n).parent;
+                    if parent != NIL
+                        && (self.n(parent).element().is_some_and(|p| p.shadow_root != NIL && !self.has_ua_shadow_idx(p.shadow_root))
+                            || self.renders_details_slots(parent))
+                    {
+                        if indexed_parents.insert(parent) {
+                            let elements = self.child_idx_iter(parent).filter(|&c| self.n(c).is_element());
+                            light_indices.extend(elements.enumerate().map(|(index, c)| (c, index)));
+                        }
+                        let index = light_indices.get(&n).copied().unwrap_or(0);
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), LIGHT_INDEX_ATTR.into())),
+                            value: Cow::Owned(index.to_string()),
+                            valueless: false,
+                        });
+                    }
                     // A user-agent shadow root (`<use>` instance) renders as if absent.
                     let rendered_shadow = e.shadow_root != NIL && !self.has_ua_shadow_idx(e.shadow_root);
-                    if rendered_shadow {
+                    let details_slots = self.renders_details_slots(n);
+                    if rendered_shadow || details_slots {
                         attrs.push(marker(SHADOW_HOST_ATTR));
                     }
+                    // pyro: the engine's attributes first, then the page's that collide with none.
+                    let page: Vec<RAttr<'_>> = attrs.drain(..page_end).collect();
+                    // pyro: the engine's reserved ones under their nonce names ([`engine_name`]).
+                    let nonce = self.snapshot_nonce(self.n(n).owner_doc);
+                    for a in attrs.iter_mut() {
+                        if a.name.ns == ns!() && a.name.local.starts_with(ENGINE_ATTRIBUTE_PREFIX) {
+                            let renamed = engine_name(&nonce, &a.name.local);
+                            a.name = Cow::Owned(QualName::new(None, ns!(), renamed.into()));
+                        } else if &*a.name.ns == STATE_NS {
+                            // pyro: and its state in the nonce namespace ([`state_ns`]).
+                            a.name = Cow::Owned(QualName::new(None, state_ns(&nonce).into(), a.name.local.clone()));
+                        }
+                    }
+                    // (The engine's state, in the nonce namespace, collides with no page attribute.)
+                    let own_state_ns = state_ns(&nonce);
+                    let mut engine: Vec<String> = attrs
+                        .iter()
+                        .filter(|a| *a.name.ns != *own_state_ns)
+                        .map(|a| match &a.name.prefix {
+                            Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", a.name.local),
+                            _ => a.name.local.to_string(),
+                        })
+                        .map(|name| name.to_ascii_lowercase())
+                        .collect();
+                    if let Some((_, name)) = opts.mark {
+                        engine.push(name.to_ascii_lowercase());
+                    }
+                    attrs.extend(page.into_iter().filter(|a| page_attribute_allowed(&a.name, &engine, &nonce)));
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
@@ -567,13 +899,43 @@ impl Dom {
                         stack.push(Step::Synthetic(n, self.value(id).unwrap_or_default(), TextKind::Textarea));
                         continue;
                     }
+                    // pyro: a raw-text element's text is one stream to a parser: written whole (its
+                    // text nodes joined), so an end tag split across nodes is seen and neutralised
+                    // ([`raw_text_safe`]); element children would be text in a reparse anyway.
+                    if html && matches!(local, "noembed" | "noframes") {
+                        stack.push(Step::Synthetic(n, self.child_text_content(id).into_owned(), TextKind::Node));
+                        continue;
+                    }
                     if html && (matches!(local, "iframe" | "frame") || (local == "object" && self.frame_documents.contains_key(&n))) {
                         continue;
                     }
                     if let Some((kids, kids_scope, _)) = slot_kids {
                         push_children(&mut stack, kids, kids_scope);
+                    } else if details_slots {
+                        // pyro: its first `<summary>` in the summary slot, everything else in the
+                        // content slot (Chromium's user-agent shadow tree for `<details>`).
+                        let kids: Vec<u32> = self.child_idx_iter(n).collect();
+                        let summary = kids.iter().copied().find(|&k| {
+                            self.n(k).element().is_some_and(|c| c.is_html() && &*c.name.local == "summary")
+                        });
+                        let rest: Vec<u32> = kids.iter().copied().filter(|&k| Some(k) != summary).collect();
+                        let key = render_key(id);
+                        stack.push(Step::DetailsSlot(key | DETAILS_SUMMARY_SLOT_KEY | DETAILS_CONTENT_SLOT_KEY, true, rest, scope));
+                        stack.push(Step::DetailsSlot(key | DETAILS_SUMMARY_SLOT_KEY, false, summary.into_iter().collect(), scope));
                     } else if rendered_shadow {
                         hosts.push((n, scope));
+                        // pyro: its light `<style>` children no slot takes still style its tree scope:
+                        // rendered after its shadow tree in a slot marked assigned (`<style>` boxes are
+                        // `display: none`).
+                        let styles: Vec<u32> = self
+                            .child_idx_iter(n)
+                            .filter(|&k| self.n(k).element().is_some_and(|c| c.is_html() && &*c.name.local == "style"))
+                            .collect();
+                        // (the shadow tree's slots looked up once for all of them)
+                        let unassigned = if styles.is_empty() { styles } else { self.unassigned_children(n, styles) };
+                        if !unassigned.is_empty() {
+                            stack.push(Step::DetailsSlot(render_key(id) | UNASSIGNED_STYLE_SLOT_KEY, false, unassigned, scope));
+                        }
                         self.push_adopted(&mut stack, opts, e.shadow_root, &mut emitted);
                         push_children(&mut stack, self.child_idx_iter(e.shadow_root).collect(), hosts.len() - 1);
                     } else {
@@ -724,6 +1086,13 @@ impl Dom {
         parents.sort_unstable();
         parents.dedup();
         for &p in &parents {
+            // pyro: a `<details>` element whose children came or went renders them in its slots
+            // again (its first `<summary>` may be another one): the whole tree. A change deeper in
+            // it, or of its attributes (`open`), is a change of the nodes alone, which keep their
+            // keys in the slots.
+            if rendered(p) == Ok(true) && self.renders_details_slots(p) {
+                return None;
+            }
             match rendered(p) {
                 Err(()) => {
                     // A child of the `<style>` came or went; deeper in it,
@@ -743,7 +1112,7 @@ impl Dom {
             }
             let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
             let fresh: Vec<u32> = kids.iter().copied().filter(|k| inserted.contains(k)).collect();
-            let mut sink = TreeSink::default();
+            let mut sink = TreeSink { nonce: self.snapshot_nonce(d), ..Default::default() };
             self.render_walk_from(fresh, opts, &mut sink, NIL, false);
             ops.push(DeltaOp::Children {
                 parent: (p != d).then(|| render_key(self.id_of(p))),
@@ -804,7 +1173,7 @@ impl Dom {
             }
             // The node alone: the walk stops at the first node it writes
             // (the node's own content, not its subtree).
-            let mut sink = TreeSink::default();
+            let mut sink = TreeSink { nonce: self.snapshot_nonce(d), ..Default::default() };
             self.render_walk_from(vec![i], opts, &mut sink, NIL, true);
             let Some(first) = sink.tree.nodes.into_iter().next() else { continue };
             if first.key != render_key(self.id_of(i)) {
@@ -925,6 +1294,14 @@ impl Dom {
                 }
                 out.push_str(name);
             }
+        }
+        // pyro: a dialog in the top layer, modal or kept there for its `overlay` transition: the
+        // UA sheet lays it out as a modal dialog (`:-moz-topmost-modal`).
+        if self.is_dialog_in_top_layer_idx(n) {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str("dialog-in-top-layer");
         }
         // The top layer's paint order: renderers paint these elements above
         // the document by rank (one empty check without a top layer).
@@ -1059,6 +1436,16 @@ impl Dom {
 /// cascades its sheets in the order it made their elements.
 fn adopted_key(n: usize) -> u64 {
     (1 << 62) | n as u64
+}
+
+impl Dom {
+    /// pyro: whether element `n` is a `<details>` element the render tree gives its user-agent
+    /// shadow tree (its slots: `Step::DetailsSlot`): an HTML one that is no shadow host itself.
+    fn renders_details_slots(&self, n: u32) -> bool {
+        self.n(n).element().is_some_and(|e| {
+            e.is_html() && &*e.name.local == "details" && (e.shadow_root == NIL || self.has_ua_shadow_idx(e.shadow_root))
+        })
+    }
 }
 
 fn push_children(stack: &mut Vec<Step>, kids: Vec<u32>, scope: Scope) {

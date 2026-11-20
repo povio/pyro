@@ -110,15 +110,17 @@ fn a_block_in_the_fallback_does_not_split_an_inline_object() {
     }
 }
 
-/// An SVG with no natural size or ratio keeps the object's fallback, as objects did before
-/// (blitz-dom `object_shows_image`: WPT `replaced-intrinsic-002`).
+/// An SVG with no natural size or ratio is shown at the default object size, 300x150, not the
+/// object's fallback, as the installed Chrome draws this very page (blitz-dom `object_shows_image`;
+/// WPT `replaced-element-021`).
 #[test]
-fn an_object_svg_without_a_size_keeps_the_fallback() {
+fn an_object_svg_without_a_size_shows_at_the_default_size() {
     let img = render(
         "<object data=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='300' height='200' fill='blue'/%3E%3C/svg%3E\" type='image/svg+xml' style='display:block'><i></i></object>",
     );
-    assert_eq!(pixel(&img, 10, 10), RED, "the fallback");
-    assert_eq!(pixel(&img, 50, 10), WHITE, "no SVG");
+    assert_eq!(pixel(&img, 10, 10), BLUE, "the SVG, no fallback");
+    assert_eq!(pixel(&img, 290, 140), BLUE, "300 by 150 (the viewport is 300 wide)");
+    assert_eq!(pixel(&img, 10, 160), WHITE, "150 tall: the SVG's 200px rect is cut at its viewport");
 }
 
 /// An object that is no image (`text/html`), or whose image does not load, shows its fallback.

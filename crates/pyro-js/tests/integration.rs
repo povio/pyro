@@ -2,6 +2,7 @@
 //! whole engine (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
+mod agent_value;
 mod atom_names_review;
 mod binding_shortcuts;
 mod bytecode_cache;

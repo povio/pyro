@@ -78,6 +78,8 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
             inline_box,
             parent_style_index: 0,
             baseline_offset: 0.,
+            glued_before: false,
+            glued_after: false,
         });
     }
 
@@ -182,6 +184,8 @@ impl<'b, B: Brush> StyleRunBuilder<'b, B> {
             inline_box,
             parent_style_index: 0,
             baseline_offset: 0.,
+            glued_before: false,
+            glued_after: false,
         });
     }
 
@@ -295,6 +299,18 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
         self.lcx.tree_style_builder.push_bidi_control(control);
     }
 
+    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pushed and not
+    /// yet resolved (before a `discard-before` box, at the end of a `discard-inner` one).
+    pub fn discard_pending_whitespace(&mut self) {
+        self.lcx.tree_style_builder.discard_pending_whitespace();
+    }
+
+    /// pyro: CSS Text 4 `white-space-trim`: discards the collapsible white space pushed next, up
+    /// to the next content (after a `discard-after` box, at the start of a `discard-inner` one).
+    pub fn discard_next_whitespace(&mut self) {
+        self.lcx.tree_style_builder.discard_next_whitespace();
+    }
+
     /// pyro: pushes the strut of an inline box that holds nothing (U+2061, an invisible
     /// zero-width character with the current span's style), so that the box's font and line
     /// height take part in its line's height. It is no content to white space processing.
@@ -342,6 +358,8 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
             inline_box,
             parent_style_index,
             baseline_offset: 0.,
+            glued_before: false,
+            glued_after: false,
         });
         if matches!(kind, InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd) {
             // pyro: white space pending before a span's edge goes before the edge if it is kept.
@@ -507,6 +525,23 @@ fn build_into_layout<B: Brush>(
     // TODO: consider dropping the sort and requiring `push_inline_box` callers to push boxes in text index order
     // (as `TreeBuilder` already does).
     lcx.inline_boxes.sort_by_key(|b| b.inline_box.index);
+    // pyro: glue characters next to in-flow boxes (`LayoutInlineBox::glued_before`).
+    // Of the in-flow boxes at one text position, the first is after the text before them and
+    // the last before the text after them.
+    let in_flow: alloc::vec::Vec<usize> = (0..lcx.inline_boxes.len())
+        .filter(|&i| lcx.inline_boxes[i].inline_box.kind == InlineBoxKind::InFlow)
+        .collect();
+    for (k, &i) in in_flow.iter().enumerate() {
+        let index = lcx.inline_boxes[i].inline_box.index.min(text.len());
+        if !text.is_char_boundary(index) {
+            continue;
+        }
+        let first = k == 0 || lcx.inline_boxes[in_flow[k - 1]].inline_box.index != lcx.inline_boxes[i].inline_box.index;
+        let last = k + 1 == in_flow.len()
+            || lcx.inline_boxes[in_flow[k + 1]].inline_box.index != lcx.inline_boxes[i].inline_box.index;
+        lcx.inline_boxes[i].glued_before = first && text[..index].chars().next_back().is_some_and(is_line_break_glue);
+        lcx.inline_boxes[i].glued_after = last && text[index..].chars().next().is_some_and(is_line_break_glue);
+    }
 
     {
         super::shape::shape_text(
@@ -535,6 +570,72 @@ fn build_into_layout<B: Brush>(
         &mut layout.data.style_metrics,
     );
 
+    if text.contains('\u{ad}') {
+        let mut forms = alloc::vec::Vec::new();
+        for run in layout.data.shaped_text.runs() {
+            let rtl = run.bidi_level.is_rtl();
+            let clusters = layout.data.shaped_text.shaped_clusters();
+            let chars = layout.data.shaped_text.characters();
+            let mut start = run.shaped_clusters_range.start;
+            while start < run.shaped_clusters_range.end {
+                let mut end = start + 1;
+                while end < run.shaped_clusters_range.end && clusters[end as usize].is_discretionary_continuation() {
+                    end += 1;
+                }
+                if end > start + 1 {
+                    let boundaries = core::iter::once(start)
+                        .chain((start + 1..end).filter(|&index| {
+                            let first = clusters[index as usize].chars_range().start;
+                            !chars[first as usize].flags.is_soft_hyphen()
+                        }))
+                        .chain(core::iter::once(end))
+                        .collect::<alloc::vec::Vec<_>>();
+                    for (pos, &first) in boundaries.iter().enumerate() {
+                        for &last in &boundaries[pos + 1..] {
+                            if first == start && last == end {
+                                continue;
+                            }
+                            let part = clusters[first as usize];
+                            let byte_start = chars[part.chars_range().start as usize].text_byte_start as usize;
+                            let final_char = chars[clusters[last as usize - 1].chars_range().end as usize - 1];
+                            let byte_end = if final_char.flags.is_soft_hyphen() {
+                                final_char.text_byte_start as usize
+                            } else {
+                                final_char.text_byte_range().end
+                            };
+                            let fragment = text[byte_start..byte_end].trim_end_matches('\u{ad}');
+                            let shaped = shape_fragment(lcx, fcx, options, part.style_index, rtl, fragment, false);
+                            forms.push(crate::layout::data::DiscretionaryFragment {
+                                clusters: first..last, group_end: end, byte_start, layout: shaped,
+                            });
+                        }
+                    }
+                }
+                start = end;
+            }
+            for character in &layout.data.shaped_text.characters()
+                [run.characters_range.start as usize..run.characters_range.end as usize]
+            {
+                if !character.flags.is_soft_hyphen() {
+                    continue;
+                }
+                let index = character.style_index;
+                if layout.data.replacements.iter().any(|entry| (entry.0, entry.1) == (index, rtl)) {
+                    continue;
+                }
+                let style = &lcx.style_table[usize::from(index)];
+                let replacement = match &style.soft_hyphen {
+                    crate::SoftHyphen::Chars(text) => text.clone(),
+                    crate::SoftHyphen::Char(ch) => alloc::sync::Arc::from(ch.encode_utf8(&mut [0; 4]) as &str),
+                    _ => continue,
+                };
+                let shaped = shape_fragment(lcx, fcx, options, index, rtl, &replacement, true);
+                layout.data.replacements.push((index, rtl, shaped));
+            }
+        }
+        layout.data.broken_forms = forms;
+    }
+
     // Move inline boxes into the layout
     layout.data.inline_boxes.clear();
     core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
@@ -542,6 +643,73 @@ fn build_into_layout<B: Brush>(
     if let Some(key) = cache_key {
         lcx.build_cache.insert(key, &layout.data);
     }
+}
+
+fn shape_fragment<B: Brush>(
+    lcx: &mut LayoutContext<B>,
+    fcx: &mut FontContext,
+    options: BuilderOptions<'_>,
+    index: u16,
+    rtl: bool,
+    replacement: &str,
+    force_direction: bool,
+) -> Layout<B> {
+    let mut style = lcx.style_table[usize::from(index)].clone();
+    style.parent = 0;
+    let mut analysis = parley_engine::Analysis::new();
+    let direction = if rtl { BaseDirection::Rtl } else { BaseDirection::Ltr };
+    lcx.analyzer.analyze(
+        &replacement,
+        &parley_engine::AnalysisOptions { base_direction: direction, ..Default::default() },
+        &mut analysis,
+    );
+    if force_direction {
+        analysis.set_run_direction(rtl);
+    }
+    let mut shaped = Layout::default();
+    shaped.data.scale = options.scale;
+    shaped.data.quantize = options.quantize;
+    shaped.data.base_level = analysis.paragraph_level();
+    shaped.data.text_len = replacement.len();
+    shaped.data.styles.push(style.as_layout_style());
+    let styles = core::slice::from_ref(&style);
+    let mut fonts = alloc::vec::Vec::new();
+    super::shape::shape_text(
+        &lcx.rcx,
+        fcx,
+        styles,
+        &[],
+        &analysis,
+        &alloc::vec![0; analysis.char_info().len()],
+        &mut lcx.scx,
+        &replacement,
+        &mut shaped,
+        &lcx.analysis_data_sources,
+        &mut fonts,
+    );
+    crate::layout::style_metrics::resolve_style_metrics(
+        &lcx.rcx,
+        fcx,
+        styles,
+        &shaped.data.shaped_text,
+        &fonts,
+        shaped.data.quantum(),
+        &mut shaped.data.style_metrics,
+    );
+    shaped.break_all_lines(None);
+    shaped
+}
+
+/// pyro: a character of UAX #14 class GL (no-break spaces and hyphen, the combining grapheme
+/// joiner, Tibetan and Mongolian glue), WJ or ZWJ: no line break on either side of it. Not
+/// U+00A0, which browsers break beside an atomic inline (WPT css-text `line-breaking-replaced-001`,
+/// `line-breaking-atomic-001`).
+fn is_line_break_glue(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{034F}' | '\u{035C}'..='\u{0362}' | '\u{0F08}' | '\u{0F0C}' | '\u{0F12}' | '\u{0FD9}'
+            | '\u{0FDA}' | '\u{180E}' | '\u{2007}' | '\u{2011}' | '\u{202F}' | '\u{2060}' | '\u{FEFF}' | '\u{200D}'
+    )
 }
 
 fn resolve_range(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {

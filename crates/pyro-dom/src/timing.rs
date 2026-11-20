@@ -49,10 +49,14 @@ enum Longhand {
     TransitionDelay,
     TransitionTimingFunction,
     TransitionBehavior,
+    /// pyro: `animation-trigger` and `timeline-trigger` (CSS Animations 2, Web Animations 2
+    /// triggers): items kept as written (Stylo does not parse them).
+    AnimationTrigger,
+    TimelineTrigger,
 }
 
 impl Longhand {
-    const ALL: [Longhand; 14] = [
+    const ALL: [Longhand; 16] = [
         Longhand::AnimationName,
         Longhand::AnimationDuration,
         Longhand::AnimationDelay,
@@ -67,6 +71,8 @@ impl Longhand {
         Longhand::TransitionDelay,
         Longhand::TransitionTimingFunction,
         Longhand::TransitionBehavior,
+        Longhand::AnimationTrigger,
+        Longhand::TimelineTrigger,
     ];
 
     fn name(self) -> &'static str {
@@ -85,6 +91,8 @@ impl Longhand {
             Longhand::TransitionDelay => "transition-delay",
             Longhand::TransitionTimingFunction => "transition-timing-function",
             Longhand::TransitionBehavior => "transition-behavior",
+            Longhand::AnimationTrigger => "animation-trigger",
+            Longhand::TimelineTrigger => "timeline-trigger",
         }
     }
 
@@ -107,6 +115,7 @@ impl Longhand {
             Longhand::AnimationPlayState => "running",
             Longhand::AnimationComposition => "replace",
             Longhand::TransitionProperty => "all",
+            Longhand::AnimationTrigger | Longhand::TimelineTrigger => "none",
         }
     }
 }
@@ -233,14 +242,35 @@ pub struct AnimationTiming {
     /// How it plays: changing these does not start it again
     /// ([`AnimationTiming::same_run`]).
     pub style: AnimationStyle,
+    /// pyro: its `animation-trigger` item (`<trigger name> <action> [<action>]`), when not `none`.
+    pub trigger: Option<String>,
 }
 
 impl AnimationTiming {
-    /// Whether `other` is the same run: a change of its name or timing starts
-    /// the animation again, one of its [`AnimationStyle`] does not.
+    pub fn from_transition_box(style: &style::properties::ComputedValues) -> impl Iterator<Item = Self> + '_ {
+        use style_traits::ToCss;
+        use style::values::generics::animation::AnimationDuration;
+        let ui = style.get_ui();
+        ui.animation_name_iter().enumerate().filter_map(move |(index, name)| {
+            let name = name.as_atom()?.to_string();
+            let duration = ui.animation_duration_mod(index);
+            Some(Self { name, index, duration_auto: duration.is_auto(), duration_ms: match duration { AnimationDuration::Time(t) => t.seconds() as f64 * 1000.0, _ => 0.0 }, delay_ms: ui.animation_delay_mod(index).seconds() as f64 * 1000.0, iterations: ui.animation_iteration_count_mod(index).0 as f64, style: AnimationStyle {
+                direction: ui.animation_direction_mod(index).to_css_string(), fill: ui.animation_fill_mode_mod(index).to_css_string(), paused: ui.animation_play_state_mod(index).to_css_string() == "paused", composition: ui.animation_composition_mod(index).to_css_string(), easing: Some(ui.animation_timing_function_mod(index).to_css_string()),
+            }, trigger: None })
+        })
+    }
+    /// Whether `other` is the same run: only a change of its name starts the animation again;
+    /// its other `animation-*` values change the running animation (CSS Animations 1 § 3:
+    /// "changes to the values of animation properties while the animation is running apply as if
+    /// the animation had those values from when it began"; Chromium).
     pub fn same_run(&self, other: &AnimationTiming) -> bool {
         self.name == other.name
-            && self.duration_ms == other.duration_ms
+    }
+
+    /// Whether `other` gives the run other times (duration, delay, iteration count).
+    pub fn same_times(&self, other: &AnimationTiming) -> bool {
+        self.duration_ms == other.duration_ms
+            && self.duration_auto == other.duration_auto
             && self.delay_ms == other.delay_ms
             && self.iterations == other.iterations
     }
@@ -315,7 +345,7 @@ struct CandidateCache {
 /// The cascaded value of each longhand for one element ([`TimingRules::lists`]):
 /// `None` is the initial value.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TimingLists([Option<Vec<String>>; 14]);
+pub struct TimingLists([Option<Vec<String>>; 16]);
 
 impl TimingLists {
     fn get(&self, longhand: Longhand) -> Option<&Vec<String>> {
@@ -344,7 +374,7 @@ impl TimingRules {
     pub fn parse<'a>(sheets: impl Iterator<Item = &'a str>, viewport: &Viewport) -> TimingRules {
         let mut out = TimingRules::default();
         for text in sheets {
-            if mentions(text) || text.contains("keyframes") {
+            if mentions(text) || contains_ignore_case(text, "keyframes") {
                 rule_list(&mut Parser::new(text), text, viewport, &mut out);
             }
         }
@@ -357,7 +387,7 @@ impl TimingRules {
     pub fn parse_scoped<'a>(sheets: impl Iterator<Item = (NodeId, &'a str)>, viewport: &Viewport) -> TimingRules {
         let mut out = TimingRules::default();
         for (scope, text) in sheets {
-            if mentions(text) || text.contains("keyframes") {
+            if mentions(text) || contains_ignore_case(text, "keyframes") {
                 let first = out.rules.len();
                 rule_list(&mut Parser::new(text), text, viewport, &mut out);
                 for rule in &mut out.rules[first..] {
@@ -469,6 +499,28 @@ impl TimingRules {
                 text.contains(":empty") || text.contains(":has") || text.contains("[style")
             })
         })
+    }
+
+    /// pyro: the element declaring timeline trigger `name` (`timeline-trigger: <name> <timeline>
+    /// <range>...`) and that item: `el` itself or its nearest ancestor declaring it, else the last
+    /// element in tree order that does (trigger names are document-global without
+    /// `trigger-scope`, which is not supported).
+    pub fn timeline_trigger(&self, dom: &Dom, doc: NodeId, el: NodeId, name: &str, style_of: StyleOf<'_>) -> Option<(NodeId, String)> {
+        let declares = |id: NodeId| -> Option<String> {
+            let lists = self.lists(dom, id, style_of);
+            lists.get(Longhand::TimelineTrigger)?.iter().find(|item| item.split_whitespace().next() == Some(name)).cloned()
+        };
+        let mut at = Some(el);
+        while let Some(id) = at {
+            if let Some(item) = declares(id) {
+                return Some((id, item));
+            }
+            at = dom.parent_element(id).ok().flatten();
+        }
+        self.candidates(dom, doc, Longhand::TimelineTrigger, "timeline-trigger")
+            .into_iter()
+            .filter_map(|id| declares(id).map(|item| (id, item)))
+            .last()
     }
 
     fn candidates(&self, dom: &Dom, doc: NodeId, longhand: Longhand, inline_word: &str) -> Vec<NodeId> {
@@ -671,9 +723,10 @@ impl TimingRules {
         };
         if let Some(names) = lists.get(Longhand::AnimationName) {
             for (i, name) in names.iter().enumerate() {
-                if name == "none" || !self.has_keyframes(name) {
+                if name == "none" || !self.has_keyframes(keyframes_name(name)) {
                     continue;
                 }
+                let name = &keyframes_name(name).to_owned();
                 let easing = lists.item(Longhand::AnimationTimingFunction, i);
                 out.animations.push(AnimationTiming {
                     name: name.clone(),
@@ -694,6 +747,9 @@ impl TimingRules {
                         paused: lists.item(Longhand::AnimationPlayState, i) == "paused",
                         composition: keyword(Longhand::AnimationComposition, i, &COMPOSITIONS),
                     },
+                    trigger: Some(lists.item(Longhand::AnimationTrigger, i))
+                        .filter(|t| !t.is_empty() && *t != "none")
+                        .map(str::to_owned),
                 });
             }
         }
@@ -768,6 +824,7 @@ fn shown(longhand: Longhand, item: &str) -> String {
             Some(ms) => format!("{}s", crate::computed::fmt_num(ms / 1000.0)),
             None => item.to_owned(),
         },
+        Longhand::AnimationName if item == QUOTED_NONE => item.to_owned(),
         Longhand::AnimationName if item != "none" && !is_ident(item) => {
             let mut out = String::new();
             let _ = cssparser::serialize_string(item, &mut out);
@@ -775,6 +832,15 @@ fn shown(longhand: Longhand, item: &str) -> String {
         }
         _ => item.to_owned(),
     }
+}
+
+/// An `animation-name` item that is the string "none" (`animation-name: "none"`, naming
+/// `@keyframes "none"`), told apart from the keyword `none` in the timing lists.
+const QUOTED_NONE: &str = "\"none\"";
+
+/// The `@keyframes` name an `animation-name` item names.
+fn keyframes_name(item: &str) -> &str {
+    if item == QUOTED_NONE { "none" } else { item }
 }
 
 /// Whether `text` is one CSS identifier (and not a word the shorthand would read otherwise).
@@ -995,7 +1061,21 @@ pub fn transition_keyframes(
 
 /// Whether `text` can declare one of the properties.
 fn mentions(text: &str) -> bool {
-    text.contains("animation") || text.contains("transition")
+    // (`timeline-trigger` too: a rule may declare only that, for another element's
+    // `animation-trigger`.)
+    // Property names and at-keywords are ASCII case-insensitive (`TIMELINE-TRIGGER: --t`).
+    ["animation", "transition", "timeline-trigger"].iter().any(|word| contains_ignore_case(text, word))
+}
+
+/// Whether `text` contains `word` (lowercase ASCII), ignoring ASCII case.
+/// pyro: by the positions of its first letter in either case (memchr), not every window: the
+/// prefilter reads whole sheets (megabytes) each time the document's sheets change, and a window
+/// compare per byte held a page with large sheets busy for seconds.
+fn contains_ignore_case(text: &str, word: &str) -> bool {
+    let (bytes, word) = (text.as_bytes(), word.as_bytes());
+    let Some(&first) = word.first() else { return true };
+    memchr::memchr2_iter(first, first.to_ascii_uppercase(), bytes)
+        .any(|at| bytes.get(at..at + word.len()).is_some_and(|w| w.eq_ignore_ascii_case(word)))
 }
 
 fn next_tok<'i>(p: &mut Parser<'i>) -> Option<Token<'i>> {
@@ -1216,6 +1296,18 @@ fn has_var(value: &str) -> bool {
 fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>> {
     use style::properties::{CSSWideKeyword, PropertyDeclaration};
     let longhands = longhands_of(property)?;
+    // pyro: the trigger properties, which Stylo does not parse: their items as written.
+    if let [l @ (Longhand::AnimationTrigger | Longhand::TimelineTrigger)] = longhands {
+        let value = value.trim();
+        let lower = value.to_ascii_lowercase();
+        let v = match lower.as_str() {
+            "inherit" => Value::Inherit,
+            "initial" | "unset" | "revert" | "revert-layer" => Value::Initial,
+            "" => return None,
+            _ => Value::List(split_commas(value).into_iter().map(|i| i.split_whitespace().collect::<Vec<_>>().join(" ")).collect()),
+        };
+        return Some(vec![(*l, v)]);
+    }
     let block = crate::stylo::declarations::parse_block(&format!("{property}: {value}"));
     let mut out = Vec::with_capacity(longhands.len());
     for longhand in longhands {
@@ -1226,8 +1318,16 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
                 _ => Value::Initial,
             },
             PropertyDeclaration::WithVariables(_) => Value::Initial,
+            // (The string "none" names `@keyframes "none"`: kept apart from the keyword, `QUOTED_NONE`.)
             PropertyDeclaration::AnimationName(list) => Value::List(
-                list.0.iter().map(|n| n.as_atom().map_or_else(|| "none".to_owned(), |a| a.to_string())).collect(),
+                list.0
+                    .iter()
+                    .map(|n| match n.as_atom() {
+                        None => "none".to_owned(),
+                        Some(a) if &**a == "none" => QUOTED_NONE.to_owned(),
+                        Some(a) => a.to_string(),
+                    })
+                    .collect(),
             ),
             PropertyDeclaration::AnimationTimingFunction(list) => Value::List(list.0.iter().map(easing_text).collect()),
             PropertyDeclaration::TransitionTimingFunction(list) => {
@@ -1448,5 +1548,20 @@ fn inline_declares(dom: &Dom, id: NodeId, word: &str) -> bool {
     dom.element(id)
         .ok()
         .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
-        .is_some_and(|s| s.contains(word))
+        .is_some_and(|s| contains_ignore_case(s, word))
+}
+
+#[cfg(test)]
+mod prefilter_tests {
+    /// The prefilter finds a word in any ASCII case, at either end, and nothing past the end.
+    #[test]
+    fn contains_ignore_case_finds_every_spelling() {
+        use super::contains_ignore_case as has;
+        assert!(has("a { ANIMATION: x }", "animation"));
+        assert!(has("Transition", "transition"));
+        assert!(has("x timeline-TRIGGER", "timeline-trigger"));
+        assert!(!has("a { anima", "animation"));
+        assert!(!has("", "keyframes"));
+        assert!(has(&format!("{}@KeyFrames", " ".repeat(1 << 20)), "keyframes"));
+    }
 }

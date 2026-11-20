@@ -142,4 +142,56 @@ fn a_hyphenate_character_string_shows_all_its_characters() {
     let s = sizes("<div id=d style='width:7.5ch;hyphenate-character:\"/-/\"'><u id=a>high&shy;</u>ways</div>", &["a", "d"]);
     assert_near(s[0][0], 7.0 * ch);
     assert_near(s[1][1], 80.0);
+    let s = sizes("<div id=d style='width:9.5ch;hyphenate-character:\"ABCDE\"'><u id=a>abcd&shy;</u>efghijkl</div>", &["a", "d"]);
+    assert_near(s[0][0], 9.0 * ch);
+    assert_near(s[1][1], 80.0);
+}
+
+#[test]
+fn cached_arabic_glyphs_respect_isolating_inline_edges() {
+    let widths = sizes("<section dir=rtl style='font:40px sans-serif'><p>ع<u style='color:red'>ع</u>ع</p><p>ع<u id=a style='padding:4px'>ع</u>ع</p><p>ع&zwnj;<u id=b style='padding:4px'>&zwnj;ع&zwnj;</u>&zwnj;ع</p></section>", &["a", "b"]);
+    assert_near(widths[0][0], widths[1][0]);
+}
+
+#[test]
+fn an_unused_soft_hyphen_preserves_cursive_joining() {
+    let widths = sizes(
+        "<div dir=rtl style='width:auto;font:32px sans-serif'><u id=a>قىل&shy;مىغانلىقى</u><br><u id=b>قىلمىغانلىقى</u></div>",
+        &["a", "b"],
+    );
+    assert_near(widths[0][0], widths[1][0]);
+}
+
+#[test]
+fn discretionary_shaping_preserves_ligatures_and_composes_replacements() {
+    let render = |width: u32, replacement: &str, body: &str| {
+        let snapshot = Snapshot {
+            html: format!(
+                "<!doctype html><style>body{{margin:0}}div{{direction:rtl;margin-left:120px;width:{width}px;font:32px/48px sans-serif;hyphenate-character:'{replacement}'}}</style><div>{body}</div>"
+            ),
+            base_url: "http://test/".into(),
+            width: 450,
+            height: 110,
+            device_scale_factor: 1.,
+            ..Default::default()
+        };
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0.data
+    };
+    assert!(render(280, "-", "ل&shy;اميميميم") == render(280, "-", "لاميميميم"));
+    assert!(render(56, "-", "ل&shy;اميميميم") == render(56, "-", "ل-<br>اميميميم"));
+    assert!(render(56, "-", "ل&shy;&shy;اميميميم") == render(56, "-", "ل-<br>اميميميم"));
+    assert!(render(56, "e\u{301}", "قل&shy;ميميميم") == render(56, "é", "قل&shy;ميميميم"));
+}
+
+#[test]
+fn multiple_discretionary_breaks_in_latin_text() {
+    let render = |body: &str| {
+        let snapshot = Snapshot {
+            html: format!("<!doctype html><meta charset=utf-8><div style=\"width:18px;font:32px/48px Times;hyphenate-character:'-'\">{body}</div>"),
+            base_url: "http://test/".into(), width: 160, height: 160, device_scale_factor: 1., ..Default::default()
+        };
+        Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &(Arc::new(NoFetch) as Arc<dyn Fetcher>)).unwrap().0.data
+    };
+    assert!(render("f&shy;f&shy;izz") == render("f-<br>f-<br>izz"));
 }

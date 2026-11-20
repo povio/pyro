@@ -15,6 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { H2_NAME, NEEDS_H2, documentError } from './lib.mjs';
 
 // The whole checkout: crashtests are few, and fetch-wpt.sh checks out every one of them (wpt-paths.txt).
 export const CRASHTEST_DIRS = ['.'];
@@ -68,6 +69,8 @@ export function discoverCrashtests(wpt, dirs, { reasons, wptserve = false, testd
       if (seen.has(rel) || !isCrashtestName(rel)) continue;
       seen.add(rel);
       const base = path.basename(f);
+      // Before the wptserve check, so the count is the same under both servers.
+      if (H2_NAME.test(base)) { exclude(NEEDS_H2); continue; }
       if (!wptserve && SERVER_NAME.test(base)) { exclude('needs wptserve (substitution, https, h2, another host)'); continue; }
       const src = fs.readFileSync(f, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
       if (!testdriver && TESTDRIVER.test(src)) { exclude('needs testdriver'); continue; }
@@ -120,7 +123,9 @@ export async function runCrashtest(page, t, base, limit) {
   const t0 = Date.now();
   const deadline = t0 + limit;
   const left = () => Math.max(1, deadline - Date.now());
-  await page.goto(`${base}/${t.url}`, { waitUntil: 'commit', timeout: left() });
+  // An error document (the server failed, the file is missing) loads and paints like any page: never a pass.
+  const bad = documentError(await page.goto(`${base}/${t.url}`, { waitUntil: 'commit', timeout: left() }), t.url);
+  if (bad) return { status: 'error', ms: Date.now() - t0, subtests: [], error: bad };
   for (;;) {
     // A navigation inside the page destroys the context the wait runs in: wait again in the new one.
     let navigated = false;

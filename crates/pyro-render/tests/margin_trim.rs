@@ -35,6 +35,18 @@ const WHITE: [u8; 3] = [255, 255, 255];
 const GREEN: [u8; 3] = [0, 128, 0];
 const BLUE: [u8; 3] = [0, 0, 255];
 
+#[test]
+fn max_height_separates_bottom_margin_only_when_it_shortens_the_block() {
+    for (max_height, next_top) in [(49, 49), (50, 60), (51, 60)] {
+        let img = render(&format!(
+            "<div style='max-height:{max_height}px'><div style='height:50px;margin-bottom:10px'></div></div>\
+             <div style='height:5px;background:green'></div>"
+        ));
+        assert_eq!(pixel(&img, 10, next_top - 1), WHITE);
+        assert_eq!(pixel(&img, 10, next_top), GREEN);
+    }
+}
+
 #[track_caller]
 fn check(img: &RgbaImage, points: &[(usize, usize, [u8; 3])]) {
     for &(x, y, want) in points {

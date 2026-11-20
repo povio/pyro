@@ -95,10 +95,13 @@ pub struct ElementData {
     pub reference_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the `list-style-image` image of a list item (a list of one), its marker once loaded.
     pub list_style_images: ThinVec<Option<ImageResourceData>>,
+    /// pyro: the `shape-outside` image of a float (a list of one), its float area once loaded.
+    pub shape_images: ThinVec<Option<ImageResourceData>>,
     /// pyro: the image this box shows in place of content and its pixels per CSS px: the URL
     /// of a generated `img` box (`content: url()` of `::before`/`::after`), or of an element
     /// whose own `content` is one image (it is laid out as an `<img>` of it).
     pub content_image: Option<(String, f32)>,
+    pub(crate) source_image_request: Option<Box<(String, blitz_traits::net::FetchOptions)>>,
     /// pyro: an `<img>` whose image failed to load (or has no source) and that has non-empty
     /// `alt` text: it represents its alt text, laid out as a non-replaced box holding it
     /// (HTML rendering § images; `BaseDocument::show_image_alt_text`).
@@ -151,6 +154,9 @@ pub struct ElementData {
     /// pyro: the sampled values of the animations on the element's `::marker`
     /// (`ElementEffects::marker`): cascaded onto the marker's style (`layout::list`).
     pub sampled_marker: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
+    /// pyro: the values of the animations in effect on the element's `::backdrop` (sampled by
+    /// `BaseDocument::sample_animations`), which paint cascades on the backdrop's style.
+    pub sampled_backdrop: Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
     /// pyro: the sampled values of the effects on the element's `::before` (`[0]`) and `::after`
     /// (`[1]`): at the animations level (`.0`) and the transitions level (`.1`) of the pseudo's
     /// cascade (`animation::cascade_sampled_pseudos`).
@@ -173,6 +179,9 @@ pub struct ElementData {
     /// pyro: the node holding this list item's `::marker` style, the brush of its marker's text
     /// (`layout::list`). Not in the tree; its parent is the item.
     pub marker_style: Option<NodeId>,
+    /// pyro: the box of this list item's inside marker when its `::marker` style combines it in a
+    /// vertical line (`text-combine-upright: all`, `layout::combined_text`). Not in the tree.
+    pub marker_combined_box: Option<NodeId>,
     /// pyro: the element's scroll pseudo-element boxes (its `::scroll-marker-group`,
     /// `::scroll-button()`s and `::scroll-marker`), or what pseudo-element box this node is
     /// (`layout::scroll_markers`).
@@ -203,6 +212,7 @@ pub struct LayoutData {
     pub cache: Cache,
     pub unrounded_layout: Layout,
     pub final_layout: Layout,
+    pub(crate) scrollbar_size_limit: Option<taffy::Size<f32>>,
     pub scroll_offset: crate::Point<f64>,
     /// pyro: how far a `position: sticky` box is moved from where it is laid out (CSS px), with
     /// its descendants: the layout places it as if static, its embedder knows the scroll
@@ -238,6 +248,10 @@ pub struct LayoutData {
     /// pyro: what this node's parent grid last gave it as a subgrid (css-grid-2 §9; Taffy's
     /// `LayoutGridContainer::set_subgrid_context`): its tracks there, their line names and sizes.
     pub subgrid: Option<Box<taffy::SubgridContext<style::Atom>>>,
+    /// pyro: the last remembered size of its content box (CSS px), the size it had when last
+    /// laid out with its contents: what `contain-intrinsic-size: auto <length>` sizes it as
+    /// while its contents are skipped (CSS Sizing 4 § 5.1).
+    pub remembered_size: Option<(f32, f32)>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -249,6 +263,7 @@ impl LayoutData {
         Self {
             cache: Cache::new(),
             unrounded_layout: Layout::new(),
+            scrollbar_size_limit: None,
             final_layout: Layout::new(),
             scroll_offset: crate::Point::ZERO,
             sticky_offset: crate::Point::ZERO,
@@ -261,6 +276,7 @@ impl LayoutData {
             table_baseline_offset: 0.0,
             columns: None,
             subgrid: None,
+            remembered_size: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }
@@ -401,6 +417,7 @@ impl std::fmt::Debug for ElementData {
             .field("mask_images", &self.mask_images)
             .field("border_images", &self.border_images)
             .field("list_style_images", &self.list_style_images)
+            .field("shape_images", &self.shape_images)
             .field("reference_images", &self.reference_images)
             .field("inline_layout_data", &self.inline_layout_data)
             .field("list_item_data", &self.list_item_data)
@@ -430,7 +447,9 @@ impl Clone for ElementData {
             mask_images: self.mask_images.clone(),
             border_images: self.border_images.clone(),
             list_style_images: self.list_style_images.clone(),
+            shape_images: self.shape_images.clone(),
             content_image: self.content_image.clone(),
+            source_image_request: self.source_image_request.clone(),
             image_broken: self.image_broken,
             image_failed: self.image_failed,
             content_gradient: self.content_gradient,
@@ -451,6 +470,8 @@ impl Clone for ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_backdrop: None,
+            marker_combined_box: None,
             sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
@@ -565,7 +586,9 @@ impl ElementData {
             mask_images: ThinVec::new(),
             border_images: ThinVec::new(),
             list_style_images: ThinVec::new(),
+            shape_images: ThinVec::new(),
             content_image: None,
+            source_image_request: None,
             image_broken: false,
             image_failed: false,
             content_gradient: false,
@@ -582,6 +605,8 @@ impl ElementData {
             may_have_animations: AtomicBool::new(false),
             sampled_animations: None,
             sampled_marker: None,
+            sampled_backdrop: None,
+            marker_combined_box: None,
             sampled_pseudos: Default::default(),
             sampled_transitions: None,
             animation_stacking_context: false,
@@ -641,6 +666,13 @@ impl ElementData {
         Some(&attr.value)
     }
 
+    /// pyro: the engine's reserved attribute `local` (`data-pyro-*`), which no author-visible path
+    /// sees ([`crate::node::Attributes::reserved`]). Engine readers check the snapshot's nonce
+    /// (`BaseDocument::engine_attr`).
+    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
+        self.attrs.reserved(local)
+    }
+
     pub fn attr_parsed<T: FromStr>(&self, name: impl PartialEq<LocalName>) -> Option<T> {
         let attr = self.attrs.iter().find(|attr| name == attr.name.local)?;
         attr.value.parse::<T>().ok()
@@ -654,7 +686,7 @@ impl ElementData {
     /// pyro: whether pyro-dom's render tree gave the element its [`crate::PYRO_STATE_NS`] `state`
     /// tokens (which then carry `:enabled`/`:disabled`).
     pub(crate) fn has_pyro_state(&self) -> bool {
-        self.attrs.iter().any(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
+        self.attrs.state("state").is_some()
     }
 
     pub fn can_be_disabled(&self) -> bool {
@@ -822,11 +854,8 @@ impl ElementData {
     /// pyro-dom's render tree writes up to the attributes: `:checked` of a
     /// selected `<option>`, and the [`crate::PYRO_STATE_NS`] `state` tokens.
     pub(crate) fn sync_lp_attribute_state(&mut self) {
-        let lp = self
-            .attrs
-            .iter()
-            .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
-            .map(|a| a.value.as_str());
+        // (The engine's store: `Attributes::state`.)
+        let lp = self.attrs.state("state");
         let bits = crate::has_invalidation::pyro_state_bits(lp);
         self.element_state.remove(crate::has_invalidation::PYRO_STATES);
         // pyro: `:enabled`/`:disabled` come from the tokens when they say either (pyro-dom knows
@@ -1135,6 +1164,10 @@ pub struct ImageResourceData {
     pub status: Status,
     /// The image data
     pub image: ImageData,
+    /// pyro: how the image was requested (a `url()`'s request URL modifiers, the CORS mode of a
+    /// mask or shape, the frame document it is for): with `url`, the identity of the request
+    /// the slot holds the response of. A response to another request never goes in it.
+    pub options: blitz_traits::net::FetchOptions,
 }
 
 impl ImageResourceData {
@@ -1143,7 +1176,24 @@ impl ImageResourceData {
             url,
             status: Status::Loading,
             image: ImageData::None,
+            options: Default::default(),
         }
+    }
+
+    /// pyro: this slot for the request made with `options`.
+    pub fn with_options(mut self, options: blitz_traits::net::FetchOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// pyro: whether this slot holds the response to the request for `url` made with `options`.
+    pub fn is_request(&self, url: &Url, options: &blitz_traits::net::FetchOptions) -> bool {
+        *self.url == *url && self.options == *options
+    }
+
+    /// pyro: the key the response to this slot's request is cached and delivered under.
+    pub fn request_key(&self) -> String {
+        self.options.cache_key(self.url.as_str())
     }
 }
 
@@ -1190,6 +1240,9 @@ pub struct ListItemLayout {
     /// sheet: `::marker { unicode-bidi: isolate }`), unless a `::marker` rule declares
     /// `unicode-bidi: normal`.
     pub isolate: bool,
+    /// pyro: the room after an image marker: Blink's 7px after a `list-style-image`, none after
+    /// a `::marker`'s `content` image (inline content of the marker).
+    pub image_gap: f32,
     /// Offset (in physical CSS px) of the unrounded content box origin from the rounded one in
     /// `final_layout`. Paint draws text from the unrounded origin so that it keeps its sub-pixel
     /// position while box edges stay snapped. Set by the `writing-mode` layout pass; zero otherwise.
@@ -1295,9 +1348,10 @@ mod tests {
                 data.scroll_offset > 0.0,
                 "expected horizontal scroll for overflowing single-line input"
             );
-            // The caret must be within the visible region after scrolling.
+            // The caret must be within the visible region after scrolling (pyro: its start edge:
+            // its width may hang past text that ends at the edge, which is not scrolled for it).
             let caret = data.editor.cursor_geometry(1.5).unwrap();
-            assert!(caret.x1 as f32 <= data.scroll_offset + content_box_width + 0.5);
+            assert!(caret.x0 as f32 <= data.scroll_offset + content_box_width + 0.5);
             assert!(caret.x0 as f32 >= data.scroll_offset - 0.5);
         }
 

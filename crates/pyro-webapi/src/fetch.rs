@@ -158,7 +158,6 @@ impl Drop for KeepaliveGuard {
 #[derive(Default)]
 pub(crate) struct DocumentReferrer {
     referrer: RefCell<String>,
-    header_policy: Cell<Option<pyro_net::ReferrerPolicy>>,
 }
 struct Reader {
     realm: WeakRealm,
@@ -245,18 +244,18 @@ impl PageDom {
             .zip(pyro_net::Url::parse(&url).ok())
             .and_then(|(r, target)| pyro_net::referrer::referrer_for(&r, &target, policy));
         *self.referrer.referrer.borrow_mut() = value.unwrap_or_default();
-        self.referrer.header_policy.set(header);
+        self.set_referrer_policy_header(header);
     }
     /// Sets `document.referrer` to the `Referer` the navigation request's
     /// last hop sent (empty: none) and the document response's
     /// `Referrer-Policy` header.
     pub fn set_sent_referrer(&self, referrer: String, header: Option<pyro_net::ReferrerPolicy>) {
         *self.referrer.referrer.borrow_mut() = referrer;
-        self.referrer.header_policy.set(header);
+        self.set_referrer_policy_header(header);
     }
     /// The `Referrer-Policy` header of a worker's main script response.
     pub(crate) fn set_referrer_policy_header(&self, header: Option<pyro_net::ReferrerPolicy>) {
-        self.referrer.header_policy.set(header);
+        self.dom.borrow_mut().set_header_referrer_policy(self.document(), header.map(|policy| policy.as_str()));
     }
     /// `document.referrer`.
     pub fn document_referrer(&self) -> String {
@@ -267,12 +266,7 @@ impl PageDom {
     /// strict-origin-when-cross-origin. Read when a request is made (the head
     /// is found in constant time and scanned over its children only).
     pub fn referrer_policy(&self) -> pyro_net::ReferrerPolicy {
-        self.dom
-            .borrow()
-            .meta_referrer_policy(self.document())
-            .and_then(pyro_net::ReferrerPolicy::parse)
-            .or(self.referrer.header_policy.get())
-            .unwrap_or_default()
+        pyro_net::ReferrerPolicy::parse(self.dom.borrow().effective_referrer_policy(self.document())).unwrap_or_default()
     }
     /// The document's URL, parsed (see `Dom::document_url_parsed`).
     pub(crate) fn document_url_parsed(&self) -> Option<pyro_net::Url> {

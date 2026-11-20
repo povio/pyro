@@ -82,6 +82,9 @@ struct NavState {
     /// deserialized object per realm until it changes.
     state_version: u64,
     scroll_restoration_manual: bool,
+    /// The viewport scroll position persisted for an entry of this document when it stopped
+    /// being the current one (HTML "persist the history entry state"), by entry id.
+    scroll_positions: std::collections::HashMap<u64, (i32, i32)>,
     /// The only entry is the page's initial about:blank document, which the
     /// next navigation replaces (HTML "is initial about:blank").
     initial: bool,
@@ -189,6 +192,7 @@ impl PageNav {
                 entry_seq: 0,
                 state_version: 0,
                 scroll_restoration_manual: false,
+                scroll_positions: Default::default(),
                 initial: false,
                 first_blank: false,
                 stops: 0,
@@ -424,6 +428,7 @@ impl PageNav {
 
     /// Same-document navigation (pushState/replaceState/fragment).
     fn same_document(&self, url: &str, state: Option<HistoryState>, kind: SameDocumentKind) {
+        self.persist_scroll();
         {
             let mut st = self.state.borrow_mut();
             st.state_version += 1;
@@ -577,6 +582,7 @@ impl PageNav {
                     return;
                 }
             }
+            nav.persist_scroll();
             {
                 let mut state = nav.state.borrow_mut();
                 // Navigation can replace the document, or pushState can replace
@@ -591,6 +597,7 @@ impl PageNav {
             if entry.doc == current_doc {
                 let old_url = nav.url();
                 nav.set_url_sync(&entry.url);
+                nav.restore_scroll(&entry);
                 b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
                 nav.navigation_committed("traverse");
                 b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
@@ -633,6 +640,7 @@ impl PageNav {
             NavigateDecision::Proceed => {}
         }
         self.same_document(target.as_str(), None, kind);
+        self.scroll_to_fragment(&target);
         self.navigation_committed(navigation_type);
         self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
@@ -655,7 +663,46 @@ impl PageNav {
         }
     }
 
-    /// Queues `hashchange` at the window when a same-document navigation
+    /// HTML "persist the history entry state": the viewport's scroll position, kept for the
+    /// current entry as it stops being current.
+    fn persist_scroll(&self) {
+        let Some(page) = self.page_dom.borrow().upgrade() else { return };
+        let position = pyro_webapi::layout_api::viewport_scroll(&page);
+        let mut st = self.state.borrow_mut();
+        if let Some(id) = st.entries.get(st.index).map(|e| e.id) {
+            st.scroll_positions.insert(id, position);
+        }
+    }
+
+    /// HTML "restore persisted state" of a same-document traversal to `entry`: with
+    /// `history.scrollRestoration` `auto`, its persisted scroll position; else, without one,
+    /// the scroll to its fragment.
+    fn restore_scroll(&self, entry: &Entry) {
+        let (manual, saved) = {
+            let st = self.state.borrow();
+            (st.scroll_restoration_manual, st.scroll_positions.get(&entry.id).copied())
+        };
+        let Some(page) = self.page_dom.borrow().upgrade() else { return };
+        match saved {
+            Some(position) if !manual => pyro_webapi::layout_api::restore_viewport_scroll(&page, position),
+            Some(_) => {}
+            None => {
+                if let Ok(url) = Url::parse(&entry.url) {
+                    self.scroll_to_fragment(&url);
+                }
+            }
+        }
+    }
+
+        /// HTML "scroll to the fragment" of a same-document navigation to `target`.
+    fn scroll_to_fragment(&self, target: &Url) {
+        let Some(fragment) = target.fragment() else { return };
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            pyro_webapi::layout_api::scroll_to_fragment(&page, fragment);
+        }
+    }
+
+        /// Queues `hashchange` at the window when a same-document navigation
     /// changed only the fragment.
     fn queue_hashchange(&self, old_url: &str, new_url: &str) {
         let (Ok(old), Ok(new)) = (Url::parse(old_url), Url::parse(new_url)) else { return };
@@ -1102,6 +1149,7 @@ fn navigate_to(nav: &PageNav, mut target: Url, replace: bool) -> bool {
             // HTML "navigate": the document's own URL is a replace.
             let kind = if replace || same_url { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
+            nav.scroll_to_fragment(&target);
             nav.navigation_committed(navigation_type);
             nav.fire_fragment_popstate();
             nav.queue_hashchange(cur.as_str(), target.as_str());

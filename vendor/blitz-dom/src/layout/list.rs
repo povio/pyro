@@ -157,8 +157,9 @@ fn node_list_item_child(
     let resolution = crate::util::image_resolution(&styles.get_list().list_style_image);
     // pyro: a marker image without a natural size (a gradient, an SVG without `width` and
     // `height`) is, as Blink's `ListMarker`, a square of half the font's ascent.
+    let font_ctx = doc.font_ctx.clone();
     let default_size = || {
-        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: doc.font_ctx.clone() };
+        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: font_ctx.clone() };
         let font = styles.get_font();
         let ascent = provider.metrics_for(font, font.font_size.computed_size(), ' ').ascent.px();
         Marker::Image { width: ascent / 2.0, height: ascent / 2.0 }
@@ -194,10 +195,32 @@ fn node_list_item_child(
         None => None,
     };
     let from_content = content.is_some();
+    // pyro: a `content` image (`marker_content_image`), loaded in the list-style slot: nothing
+    // until it has loaded.
+    let content_image = rule_style.as_ref().and_then(|style| single_content_image(style));
+    if let Some(url) = &content_image {
+        let stored = doc.nodes[child_id]
+            .element_data()
+            .and_then(|element| element.list_style_images.first().cloned().flatten())
+            .map(|data| data.url.as_str().to_string());
+        if stored.as_deref() != Some(url.as_str()) {
+            doc.flush_image_layers_from_style(child_id, crate::util::ImageLayerKind::ListStyle);
+        }
+    }
+    let image = match &content_image {
+        Some(_) => doc.nodes[child_id].element_data().and_then(|element| image_marker(element, 1.0)).map(
+            |marker| match marker {
+                Marker::Image { width, height } if width.is_nan() || height.is_nan() => default_size(),
+                marker => marker,
+            },
+        ),
+        None => image,
+    };
     let style_node = marker_style_node(doc, child_id, marker_style.clone());
     let mut marker = match (content, image) {
         (Some(text), _) => Marker::String(text),
         (None, Some(image)) => image,
+        (None, None) if content_image.is_some() => Marker::String(String::new()),
         (None, None) => match custom_counter_marker(doc, child_id, list_style_type, number) {
             Some(marker) => marker,
             None => marker_for_style(list_style_type, number)?,
@@ -307,9 +330,45 @@ fn node_list_item_child(
         position,
         tabular_nums,
         isolate,
+        image_gap: if content_image.is_some() { 0.0 } else { 7.0 },
         content_box_subpixel_offset: taffy::Point::ZERO,
         annotations,
     })
+}
+
+/// pyro: the URL of the one image a `::marker` style's `content` is, if it is one.
+fn single_content_image(style: &style::properties::ComputedValues) -> Option<String> {
+    use style::values::computed::{Content, ContentItem};
+    match &style.get_counters().content {
+        Content::Items(items) => match &items.items[..] {
+            [ContentItem::Image(image)] => match crate::util::unfiltered_image(image) {
+                style::values::computed::Image::Url(style::url::ComputedUrl::Valid(url, _)) => Some(url.as_str().to_string()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// pyro: the image a list item's `::marker` `content` is, which it shows instead of its
+/// `list-style-image` (`flush_image_layers_from_style` loads it in the list-style slot).
+pub(crate) fn marker_content_image(doc: &BaseDocument, node_id: NodeId) -> Option<style::values::computed::Image> {
+    use style::values::computed::{Content, ContentItem};
+    let node = doc.nodes.get(node_id)?;
+    let style = node.primary_styles()?;
+    if !style.get_box().display.is_list_item() {
+        return None;
+    }
+    let style = style::servo_arc::Arc::clone(&*style);
+    let marker = marker_pseudo_style(doc, node_id, &style)?;
+    match &marker.get_counters().content {
+        Content::Items(items) => match &items.items[..] {
+            [ContentItem::Image(image)] => Some(image.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// pyro: the marker an item's `list-style-image` makes once it has loaded: its natural size.

@@ -64,7 +64,11 @@ pub fn load(page: &Rc<PageDom>, doc: NodeId) {
     if let Some(w) = window_key(page, doc) {
         page.note_timing(|t| &mut t.load_start);
         let ev = EventCore::trusted(page, EventInterface::Event, "load", false, false);
+        // While the window's `load` runs: a frame of this document's own iframe re-inserted now
+        // stays on its initial document (pyro-browser `FrameHost::connected`, as in Chrome).
+        let outer = page.dispatching_load.replace(true);
         fire_for_document(page, w, doc, &ev);
+        page.dispatching_load.set(outer);
         page.note_timing(|t| &mut t.load_end);
         fire_for_document(page, w, doc, &page_transition_event(page, "pageshow"));
     }
@@ -123,7 +127,22 @@ pub fn before_unload(page: &Rc<PageDom>) -> bool {
 /// the network running afterwards, so keepalive requests made by the
 /// listeners (`sendBeacon`, `fetch(.., {keepalive})`) go out.
 pub fn unload(page: &Rc<PageDom>) {
-    if page.is_disposed() || page.is_hidden() {
+    unload_document(page, true);
+}
+
+/// The events of a document whose frame was removed from its parent (its iframe left the document),
+/// as Chrome fires them, synchronously after the removal: `pagehide` and `visibilitychange` (now
+/// hidden), and `unload` only when `fire_unload` (the frame being removed, when its container's
+/// permissions policy allows `unload`; never its descendants). HTML's "destroy a child navigable"
+/// fires none of them; pyro follows Chrome.
+pub fn removed(page: &Rc<PageDom>, fire_unload: bool) {
+    unload_document(page, fire_unload);
+}
+
+fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
+    // Once per document, marked before any listener runs: one that removes an ancestor frame unloads
+    // that frame's documents, this one among them, which must not get its events again.
+    if page.is_disposed() || page.is_hidden() || !page.start_unloading() {
         return;
     }
     let window = page.window_target().filter(|_| !page.scripting_disabled());
@@ -142,7 +161,7 @@ pub fn unload(page: &Rc<PageDom>) {
         crate::input::fire_simple(page, doc, "visibilitychange", true, false);
     }
     // A listener may have added an `unload` one: look again.
-    if page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(window)) {
+    if fire_unload && page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(window)) {
         let ev = EventCore::trusted(page, EventInterface::Event, "unload", false, false);
         fire_for_document(page, window, doc, &ev);
     }

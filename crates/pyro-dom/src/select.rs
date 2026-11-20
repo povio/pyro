@@ -217,7 +217,9 @@ impl ToCss for PseudoElement {
         dest.write_str(&self.0)
     }
 }
-impl selectors::parser::PseudoElement for PseudoElement {}
+impl selectors::parser::PseudoElement for PseudoElement {
+    fn is_in_pseudo_element_tree(&self) -> bool { self.0.starts_with("view-transition-") && self.0.contains('(') }
+}
 
 impl selectors::parser::SelectorImpl for Impl {
     type ExtraMatchingData<'a> = ();
@@ -359,13 +361,11 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                     return Err(invalid());
                 }
             }
-            "highlight"
-            | "cue"
-            | "cue-region"
-            | "view-transition-group"
-            | "view-transition-image-pair"
-            | "view-transition-old"
-            | "view-transition-new"
+            "view-transition-group" | "view-transition-image-pair" | "view-transition-old" | "view-transition-new" => {
+                let pseudo = style::selector_parser::transition_selector(&lower, parser).map_err(|_| invalid())?;
+                return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
+            }
+            "highlight" | "cue" | "cue-region"
             | "picker"
             | "scroll-button"
             | "column" => {

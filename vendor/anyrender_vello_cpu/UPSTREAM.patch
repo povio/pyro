@@ -2733,10 +2733,10 @@ index 619d5d4..6352428 100644
  
      fn reset(&mut self) {
 diff --git a/src/lib.rs b/src/lib.rs
-index 5bc2e2c..19619c6 100644
+index 5bc2e2c..142f48a 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -7,8 +7,22 @@ mod image_renderer;
+@@ -7,12 +7,29 @@ mod image_renderer;
  mod scene;
  mod window_renderer;
  
@@ -2760,6 +2760,14 @@ index 5bc2e2c..19619c6 100644
  
  pub use image_cache::ImageCacheConfig;
  pub use image_renderer::VelloCpuImageRenderer;
+-pub use scene::VelloCpuScenePainter;
++pub use scene::{VelloCpuScenePainter, fine_segments};
++
++pub static TEXT_OUTLINE_GROUP: std::sync::LazyLock<std::sync::Arc<anyrender::Filter>> =
++    std::sync::LazyLock::new(|| std::sync::Arc::new(anyrender::Filter::empty()));
+ 
+ #[cfg(any(
+     feature = "pixels_window_renderer",
 diff --git b/src/occlusion.rs b/src/occlusion.rs
 new file mode 100644
 index 0000000..4b14273
@@ -4662,10 +4670,10 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..367f5b6 100644
+index 1b09a33..c8ab0c0 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -1,11 +1,14 @@
+@@ -1,19 +1,322 @@
  use std::sync::Arc;
  
 +use anyrender::recording::{LayerCommand, RenderCommand};
@@ -4682,7 +4690,286 @@ index 1b09a33..367f5b6 100644
  use crate::image_cache::{ImageCache, ImageCacheConfig};
  
  const DEFAULT_TOLERANCE: f64 = 0.1;
-@@ -14,6 +17,27 @@ pub struct VelloCpuScenePainter {
+ 
++/// pyro: how finely a curved fill or clip is flattened (device px) before vello_cpu, which flattens
++/// at a quarter pixel in device space: one shape described with other curve segments (a circle as
++/// `r="25"` scaled by 2 and as `r="5000"` by 0.01, which usvg cuts into different arcs; an SVG
++/// `<circle>` and a `border-radius: 50%` box) came out up to 50 levels apart at its edge. Flattened
++/// this finely, each is the curve.
++const FINE: f64 = 0.02;
++
++/// pyro: `path` under `transform` for vello_cpu: a path with curves in device space, flattened to
++/// [`FINE`], with the identity left to apply; a path of lines only as it is, under `transform`.
++/// Only a path that lies near the raster (`bounds`, device px) is flattened here: flattening the
++/// whole of one reaching far past it (a huge ellipse of which an arc shows) would cost what is out
++/// of view; such a path is left to vello_cpu, which culls what lies outside as it flattens.
++fn device_path(path: BezPath, transform: Affine, bounds: Rect) -> (BezPath, Affine) {
++    use kurbo::PathEl;
++    if !path.elements().iter().any(|el| matches!(el, PathEl::QuadTo(..) | PathEl::CurveTo(..))) {
++        return (path, transform);
++    }
++    if !near_raster(transform.transform_rect_bbox(curves_bbox(&path)), bounds) {
++        return (path, transform);
++    }
++    // (At most `MAX_FINE_SEGMENTS`, counted before: past them, vello_cpu's own coarser flattening.)
++    let device = transform * path;
++    if flattened_segments(&device, FINE) > MAX_FINE_SEGMENTS {
++        return (transform.inverse() * device, transform);
++    }
++    let mut out = BezPath::new();
++    kurbo::flatten(device, FINE, |el| out.push(el));
++    count_segments(out.elements().len());
++    (out, Affine::IDENTITY)
++}
++
++/// pyro: the most segments one path is flattened into at [`FINE`] here (a path of countless tiny
++/// curves in view would otherwise be cut into as many pieces at a fiftieth of a pixel): past it,
++/// the path goes to vello_cpu as it is, which flattens it at its own, coarser tolerance.
++const MAX_FINE_SEGMENTS: usize = 1 << 16;
++
++/// pyro: the most cuts `cull_far_segments` makes in one path's curves (a curve zoomed to millions
++/// of device px is cut where it nears the raster only, about twice its depth of halvings).
++const MAX_SPLITS: usize = 1 << 12;
++
++/// pyro: an upper bound of how many lines flattening the device-space `path` at `tolerance` makes
++/// (Wang's formula for each curve, from its control points' second differences), in time linear in
++/// its elements.
++fn flattened_segments(path: &BezPath, tolerance: f64) -> usize {
++    use kurbo::PathEl;
++    let mut last = kurbo::Point::ZERO;
++    let mut total = 0usize;
++    for el in path.elements() {
++        total = total.saturating_add(match *el {
++            PathEl::MoveTo(p) | PathEl::LineTo(p) => {
++                last = p;
++                1
++            }
++            PathEl::QuadTo(a, p) => {
++                let d = (last.to_vec2() - 2.0 * a.to_vec2() + p.to_vec2()).hypot();
++                last = p;
++                ((0.25 * d / tolerance).sqrt().ceil() as usize).max(1)
++            }
++            PathEl::CurveTo(a, b, p) => {
++                let d1 = (last.to_vec2() - 2.0 * a.to_vec2() + b.to_vec2()).hypot();
++                let d2 = (a.to_vec2() - 2.0 * b.to_vec2() + p.to_vec2()).hypot();
++                last = p;
++                let n = (0.75 * d1.max(d2) / tolerance).sqrt().ceil();
++                if n.is_finite() { (n as usize).max(1) } else { usize::MAX }
++            }
++            PathEl::ClosePath => 1,
++        });
++    }
++    total
++}
++
++/// pyro: a run of a stroked path that `cull_far_segments` keeps: its segments, and how far along
++/// its subpath it starts (where a dash pattern is there).
++struct Run {
++    path: BezPath,
++    start: f64,
++}
++
++/// pyro: `path` (in the space `transform` maps to device px) without its segments that lie wholly
++/// outside `bounds` grown by `reach` (a stroke's half width, joins and caps), as runs of the
++/// segments kept: no join or cap where a run ends can reach into `bounds` (its end lies on a far
++/// segment), so expanding a stroke costs what lies near the raster, not the whole of a huge path. A
++/// curve much larger than the raster is cut in halves where it nears it (a far half is left out
++/// before it is cut again; at most `MAX_SPLITS` cuts, each counted as work). A closed subpath kept
++/// whole stays closed; one broken whose closing segment and first segment are both kept is one run
++/// across its start, which keeps the join there. With `dashed`, each run knows how far along its
++/// subpath it starts, so its dashes keep their phase (lengths measured for what is reached only).
++fn cull_far_segments(path: &BezPath, transform: Affine, bounds: Rect, reach: f64, dashed: bool) -> Vec<Run> {
++    use kurbo::{ParamCurve as _, ParamCurveArclen as _, PathEl};
++    let near = bounds.inflate(reach + 1.0, reach + 1.0);
++    let far = |bbox: Rect| !transform.transform_rect_bbox(bbox).overlaps(near);
++    let size = {
++        let [a, b, c, d, _, _] = transform.as_coeffs();
++        let scale = (a * a + b * b).sqrt().min((c * c + d * d).sqrt());
++        near.width().max(near.height()) / scale.max(1e-12)
++    };
++    // The pieces of one segment, in order, each kept or not.
++    fn pieces(c: kurbo::CubicBez, far: &dyn Fn(Rect) -> bool, size: f64, splits: &mut usize, out: &mut Vec<(kurbo::CubicBez, bool)>) {
++        use kurbo::ParamCurve as _;
++        let bbox = Rect::from_points(c.p0, c.p0).union_pt(c.p1).union_pt(c.p2).union_pt(c.p3);
++        if far(bbox) {
++            out.push((c, false));
++            return;
++        }
++        if bbox.width().max(bbox.height()) > size && *splits < MAX_SPLITS {
++            *splits += 1;
++            count_segments(1);
++            let (a, b) = c.subdivide();
++            pieces(a, far, size, splits, out);
++            pieces(b, far, size, splits, out);
++            return;
++        }
++        out.push((c, true));
++    }
++    let length = |el: &PathEl, from: kurbo::Point| -> f64 {
++        if !dashed {
++            return 0.0;
++        }
++        match *el {
++            PathEl::LineTo(p) => (p - from).hypot(),
++            PathEl::QuadTo(a, p) => kurbo::QuadBez::new(from, a, p).arclen(1e-3),
++            PathEl::CurveTo(a, b, p) => {
++                let c = kurbo::CubicBez::new(from, a, b, p);
++                c.arclen((c.p3 - c.p0).hypot().max(1.0) * 1e-7)
++            }
++            _ => 0.0,
++        }
++    };
++    let mut runs: Vec<Run> = Vec::new();
++    let mut splits = 0usize;
++    // The subpath: its start, the runs it has so far (index of the first), the run open, whether
++    // its first segment was kept, and whether it lost a segment.
++    let mut start = kurbo::Point::ZERO;
++    let mut last = kurbo::Point::ZERO;
++    let mut pos = 0.0f64;
++    let mut first_run = 0usize;
++    let mut open: Option<Run> = None;
++    let mut first_kept: Option<bool> = None;
++    let mut broken = false;
++    let mut segment = |el: PathEl, from: kurbo::Point, pos: &mut f64, open: &mut Option<Run>, runs: &mut Vec<Run>, first_kept: &mut Option<bool>, broken: &mut bool, splits: &mut usize| {
++        let mut list = Vec::new();
++        match el {
++            PathEl::LineTo(p) => {
++                let bbox = Rect::from_points(from, p);
++                list.push((el, !far(bbox), length(&el, from), from));
++            }
++            PathEl::QuadTo(a, p) => {
++                let mut ps = Vec::new();
++                pieces(kurbo::QuadBez::new(from, a, p).raise(), &far, size, splits, &mut ps);
++                for (c, kept) in ps {
++                    let el = PathEl::CurveTo(c.p1, c.p2, c.p3);
++                    list.push((el, kept, length(&el, c.p0), c.p0));
++                }
++            }
++            PathEl::CurveTo(a, b, p) => {
++                let mut ps = Vec::new();
++                pieces(kurbo::CubicBez::new(from, a, b, p), &far, size, splits, &mut ps);
++                for (c, kept) in ps {
++                    let el = PathEl::CurveTo(c.p1, c.p2, c.p3);
++                    list.push((el, kept, length(&el, c.p0), c.p0));
++                }
++            }
++            _ => {}
++        }
++        for (el, kept, len, p0) in list {
++            first_kept.get_or_insert(kept);
++            if kept {
++                let run = open.get_or_insert_with(|| {
++                    let mut path = BezPath::new();
++                    path.move_to(p0);
++                    Run { path, start: *pos }
++                });
++                run.path.push(el);
++            } else {
++                *broken = true;
++                if let Some(run) = open.take() {
++                    runs.push(run);
++                }
++            }
++            *pos += len;
++        }
++    };
++    let mut end_subpath = |closed: bool, open: &mut Option<Run>, runs: &mut Vec<Run>, first_run: usize, first_kept: Option<bool>, broken: bool| {
++        if closed && !broken {
++            if let Some(mut run) = open.take() {
++                run.path.close_path();
++                runs.push(run);
++            }
++            return;
++        }
++        let closing = open.take();
++        match closing {
++            // A closed subpath whose closing segment and first segment are kept: one run across
++            // its start (not for dashes, whose phase does not run on across the start).
++            Some(closing) if closed && !dashed && first_kept == Some(true) && runs.len() > first_run => {
++                let first = runs.remove(first_run);
++                let mut path = closing.path;
++                path.extend(first.path.elements().iter().skip(1).copied());
++                runs.insert(first_run, Run { path, start: closing.start });
++            }
++            Some(closing) => runs.push(closing),
++            None => {}
++        }
++    };
++    for el in path.elements() {
++        match *el {
++            PathEl::MoveTo(p) => {
++                end_subpath(false, &mut open, &mut runs, first_run, first_kept, broken);
++                (start, last, pos, first_run, first_kept, broken) = (p, p, 0.0, runs.len(), None, false);
++            }
++            PathEl::ClosePath => {
++                segment(PathEl::LineTo(start), last, &mut pos, &mut open, &mut runs, &mut first_kept, &mut broken, &mut splits);
++                end_subpath(true, &mut open, &mut runs, first_run, first_kept, broken);
++                (last, pos, first_run, first_kept, broken) = (start, 0.0, runs.len(), None, false);
++            }
++            PathEl::LineTo(p) | PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => {
++                segment(*el, last, &mut pos, &mut open, &mut runs, &mut first_kept, &mut broken, &mut splits);
++                last = p;
++            }
++        }
++    }
++    end_subpath(false, &mut open, &mut runs, first_run, first_kept, broken);
++    runs
++}
++
++thread_local! {
++    static SEGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++
++fn count_segments(n: usize) {
++    SEGMENTS.with(|segments| segments.set(segments.get().saturating_add(n)));
++}
++
++/// pyro: how many path segments this thread's painters flattened or expanded finely here (fills,
++/// clips and stroke outlines): a measure of their work, which tests bound.
++pub fn fine_segments() -> usize {
++    SEGMENTS.with(|segments| segments.get())
++}
++
++/// pyro: the bounding box of `path`'s curved segments (their ends and control points): what
++/// flattening costs work for (its lines cost none: a huge rectangle around an oval that cuts a
++/// shadow is no reason to leave the oval coarse).
++fn curves_bbox(path: &BezPath) -> Rect {
++    use kurbo::PathEl;
++    let mut bbox: Option<Rect> = None;
++    let mut last = kurbo::Point::ZERO;
++    let mut add = |p: kurbo::Point, bbox: &mut Option<Rect>| {
++        *bbox = Some(bbox.map_or(Rect::from_points(p, p), |b| b.union_pt(p)));
++    };
++    for el in path.elements() {
++        match *el {
++            PathEl::MoveTo(p) | PathEl::LineTo(p) => last = p,
++            PathEl::QuadTo(a, p) => {
++                for q in [last, a, p] {
++                    add(q, &mut bbox);
++                }
++                last = p;
++            }
++            PathEl::CurveTo(a, b, p) => {
++                for q in [last, a, b, p] {
++                    add(q, &mut bbox);
++                }
++                last = p;
++            }
++            PathEl::ClosePath => {}
++        }
++    }
++    bbox.unwrap_or(Rect::ZERO)
++}
++
++/// pyro: whether `bbox` (device px) lies within the raster `bounds` grown by their own size on
++/// every side: the work of flattening what lies there at [`FINE`] is bounded by the raster's size.
++fn near_raster(bbox: Rect, bounds: Rect) -> bool {
++    let margin = bounds.width().max(bounds.height()).max(1.0);
++    let near = bounds.inflate(margin, margin);
++    bbox.is_finite() && bbox.x0 >= near.x0 && bbox.y0 >= near.y0 && bbox.x1 <= near.x1 && bbox.y1 <= near.y1
++}
++
+ pub struct VelloCpuScenePainter {
      pub(crate) render_ctx: vello_cpu::RenderContext,
      pub(crate) resources: vello_cpu::Resources,
      pub(crate) image_cache: ImageCache,
@@ -4704,13 +4991,14 @@ index 1b09a33..367f5b6 100644
 +    /// much of it (out of 255), as Chromium draws text when WPT runs it without font
 +    /// antialiasing. `None` (the default): antialiased.
 +    pub(crate) text_aliasing_threshold: Option<u8>,
++    text_outlines: bool,
 +    /// pyro: whether a replay leaves out work that shows in no pixel (see [`crate::occlusion`]);
 +    /// tests turn it off to compare.
 +    pub(crate) occlusion: bool,
  }
  
  impl VelloCpuScenePainter {
-@@ -22,13 +46,38 @@ impl VelloCpuScenePainter {
+@@ -22,13 +325,39 @@ impl VelloCpuScenePainter {
      }
  
      pub fn with_image_cache_config(width: u16, height: u16, config: ImageCacheConfig) -> Self {
@@ -4736,6 +5024,7 @@ index 1b09a33..367f5b6 100644
 +            backdrops: Vec::new(),
 +            frame_to_ctx: Affine::IDENTITY,
 +            text_aliasing_threshold: None,
++            text_outlines: false,
 +            occlusion: true,
          }
      }
@@ -4750,7 +5039,7 @@ index 1b09a33..367f5b6 100644
      fn convert_paint(&mut self, paint: PaintRef<'_>) -> PaintType {
          match paint {
              Paint::Solid(alpha_color) => PaintType::Solid(alpha_color),
-@@ -64,10 +113,22 @@ impl VelloCpuScenePainter {
+@@ -64,10 +393,29 @@ impl VelloCpuScenePainter {
      }
  }
  
@@ -4765,6 +5054,13 @@ index 1b09a33..367f5b6 100644
 +    Nothing,
 +}
 +
++impl VelloCpuScenePainter {
++    /// pyro: the raster's bounds, device px.
++    fn raster_bounds(&self) -> Rect {
++        Rect::new(0.0, 0.0, f64::from(self.render_ctx.width()), f64::from(self.render_ctx.height()))
++    }
++}
++
  impl RenderContext for VelloCpuScenePainter {}
  impl PaintScene for VelloCpuScenePainter {
      fn reset(&mut self) {
@@ -4773,7 +5069,7 @@ index 1b09a33..367f5b6 100644
      }
  
      fn push_layer(
-@@ -77,20 +138,11 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -77,40 +425,38 @@ impl PaintScene for VelloCpuScenePainter {
          alpha: f32,
          transform: Affine,
          clip: &impl Shape,
@@ -4794,10 +5090,12 @@ index 1b09a33..367f5b6 100644
 -
 +        // pyro: a layer's filter is applied by `append_scene` (see `crate::filters`); a layer
 +        // pushed here directly is drawn unfiltered, as vello_cpu cannot filter on worker threads.
++        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
          self.render_ctx.push_layer(
-@@ -98,8 +150,9 @@ impl PaintScene for VelloCpuScenePainter {
+-            Some(&clip.into_path(DEFAULT_TOLERANCE)),
++            Some(&clip),
              Some(blend.into()),
              Some(alpha),
              None,
@@ -4808,10 +5106,12 @@ index 1b09a33..367f5b6 100644
      }
  
      fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-@@ -107,10 +160,15 @@ impl PaintScene for VelloCpuScenePainter {
++        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
+         self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
-         self.render_ctx
-             .push_clip_layer(&clip.into_path(DEFAULT_TOLERANCE));
+-        self.render_ctx
+-            .push_clip_layer(&clip.into_path(DEFAULT_TOLERANCE));
++        self.render_ctx.push_clip_layer(&clip);
 +        self.clip_paths.push(Pushed::Layer);
      }
  
@@ -4825,7 +5125,73 @@ index 1b09a33..367f5b6 100644
      }
  
      fn stroke<'a>(
-@@ -163,6 +221,16 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -121,14 +467,36 @@ impl PaintScene for VelloCpuScenePainter {
+         brush_transform: Option<Affine>,
+         shape: &impl Shape,
+     ) {
+-        self.render_ctx.set_transform(transform);
+-        self.render_ctx.set_stroke(style.clone());
+-        let paint = self.convert_paint(paint.into());
+-        self.render_ctx.set_paint(paint);
+-        self.render_ctx
+-            .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
+-        self.render_ctx
+-            .stroke_path(&shape.into_path(DEFAULT_TOLERANCE));
++        // pyro: expanded here as vello_cpu would (in the path's space, the pen sheared by the
++        // transform), at a tolerance of [`FINE`] device px, and filled as a fill is (`device_path`):
++        // a stroked circle and a filled ring of the same curve are then one shape.
++        let [a, b, c, d, _, _] = transform.as_coeffs();
++        let scale = (a * a + b * b).sqrt().max((c * c + d * d).sqrt());
++        // (Only near the raster, as `device_path`: the stroke's reach counts too.) Its segments far
++        // outside the raster are left out first, whichever way it is expanded.
++        let reach = (style.width * scale * style.miter_limit.max(1.0)).max(style.width * scale);
++        let path = shape.into_path(DEFAULT_TOLERANCE);
++        // (A dashed stroke's runs each start their dashes where its subpath had them there.)
++        let dashed = !style.dash_pattern.is_empty();
++        if reach.is_finite() {
++            let runs = cull_far_segments(&path, transform, self.raster_bounds(), reach, dashed);
++            // (A dashed run starting along its subpath, alone or not, is stroked with its own offset.)
++            if dashed && (runs.len() > 1 || runs.first().is_some_and(|run| run.start > 0.0)) {
++                let paint = paint.into();
++                for run in runs {
++                    let mut style = style.clone();
++                    style.dash_offset += run.start;
++                    self.stroke_kept(&style, transform, paint.clone(), brush_transform, run.path, scale, reach);
++                }
++                return;
++            }
++            let mut kept = BezPath::new();
++            for run in runs {
++                kept.extend(run.path.elements().iter().copied());
++            }
++            return self.stroke_kept(style, transform, paint, brush_transform, kept, scale, reach);
++        }
++        self.stroke_kept(style, transform, paint, brush_transform, path, scale, reach)
+     }
+ 
+     fn fill<'a>(
+@@ -139,14 +507,15 @@ impl PaintScene for VelloCpuScenePainter {
+         brush_transform: Option<Affine>,
+         shape: &impl Shape,
+     ) {
+-        self.render_ctx.set_transform(transform);
++        let (path, path_transform) = device_path(shape.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
++        self.render_ctx.set_transform(path_transform);
+         self.render_ctx.set_fill_rule(style);
+         let paint = self.convert_paint(paint.into());
+         self.render_ctx.set_paint(paint);
+-        self.render_ctx
+-            .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
+-        self.render_ctx
+-            .fill_path(&shape.into_path(DEFAULT_TOLERANCE));
++        // (The paint stays where it was: through `transform`, then the brush transform.)
++        let brush = path_transform.inverse() * transform * brush_transform.unwrap_or(Affine::IDENTITY);
++        self.render_ctx.set_paint_transform(brush);
++        self.render_ctx.fill_path(&path);
+     }
+ 
+     fn draw_glyphs<'a, 's: 'a>(
+@@ -163,6 +532,21 @@ impl PaintScene for VelloCpuScenePainter {
          glyph_transform: Option<Affine>,
          glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
      ) {
@@ -4833,6 +5199,11 @@ index 1b09a33..367f5b6 100644
 +        // 512th of a device pixel right and down: a pixel half covered at a glyph's left or top
 +        // edge is then left out and one at its right or bottom edge painted, as Skia paints
 +        // aliased paths (rounding a pixel centre on an edge down and right).
++        let glyphs = glyphs.map(move |glyph| vello_cpu::Glyph {
++            id: glyph.id,
++            x: glyph.x,
++            y: glyph.y,
++        });
 +        let transform = match self.text_aliasing_threshold {
 +            Some(_) => Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform,
 +            None => transform,
@@ -4842,7 +5213,7 @@ index 1b09a33..367f5b6 100644
          self.render_ctx.set_transform(transform);
          let paint = self.convert_paint(paint.into());
          self.render_ctx.set_paint(paint);
-@@ -177,7 +245,13 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,13 +561,15 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -4855,17 +5226,32 @@ index 1b09a33..367f5b6 100644
 +                        transform * glyph_transform.unwrap_or_default(),
 +                    ))
                      .glyph_transform(glyph_transform.unwrap_or_default())
-                     .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
-                         id: g.id,
-@@ -201,6 +275,7 @@ impl PaintScene for VelloCpuScenePainter {
-                     }));
+-                    .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
+-                        id: g.id,
+-                        x: g.x,
+-                        y: g.y,
+-                    }));
++                    .fill_glyphs(glyphs);
+             }
+             StyleRef::Stroke(stroke) => {
+                 self.render_ctx.set_stroke(stroke.clone());
+@@ -194,13 +580,10 @@ impl PaintScene for VelloCpuScenePainter {
+                     .hint(hint)
+                     .normalized_coords(normalized_coords)
+                     .glyph_transform(glyph_transform.unwrap_or_default())
+-                    .stroke_glyphs(glyphs.map(|g| vello_cpu::Glyph {
+-                        id: g.id,
+-                        x: g.x,
+-                        y: g.y,
+-                    }));
++                    .stroke_glyphs(glyphs);
              }
          }
 +        self.render_ctx.set_aliasing_threshold(None);
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +291,775 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +599,877 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -4883,6 +5269,10 @@ index 1b09a33..367f5b6 100644
 +        self.backdrops.clear();
 +    }
 +}
++
++/// pyro: the alpha of the empty layer blitz-paint pushes before a clip layer to have it clip as a
++/// clip path, each draw on its own, as Skia clips (blitz-paint `highlight::push_clip_path`).
++const CLIP_PATH_HINT_ALPHA: f32 = 1.0 - 2.0 * f32::EPSILON;
 +
 +impl VelloCpuScenePainter {
 +    /// pyro: replays `commands`; a layer with a filter is drawn by [`Self::draw_filtered_layer`],
@@ -4907,6 +5297,16 @@ index 1b09a33..367f5b6 100644
 +        let mut unwrapped: Vec<usize> = Vec::new();
 +        let mut i = 0;
 +        while i < commands.len() {
++            if let RenderCommand::PushLayer(layer) = &commands[i]
++                && layer.filter.as_ref().is_some_and(|filter| Arc::ptr_eq(filter, &crate::TEXT_OUTLINE_GROUP))
++            {
++                let end = matching_pop(commands, i);
++                let previous = std::mem::replace(&mut self.text_outlines, true);
++                self.replay(&commands[i + 1..end], transform);
++                self.text_outlines = previous;
++                i = end + 1;
++                continue;
++            }
 +            if unwrapped.last() == Some(&i) {
 +                unwrapped.pop();
 +                i += 1;
@@ -4924,13 +5324,60 @@ index 1b09a33..367f5b6 100644
 +                i += 2;
 +                continue;
 +            }
++            // pyro: a clip path hint (an empty layer of `CLIP_PATH_HINT_ALPHA`): the clip layer
++            // pushed after it is a clip path (blitz-paint's highlighted text).
++            if let RenderCommand::PushLayer(layer) = &commands[i]
++                && layer.alpha == CLIP_PATH_HINT_ALPHA
++                && layer.filter.is_none()
++                && layer.backdrop_filter.is_none()
++                && matches!(commands.get(i + 1), Some(RenderCommand::PopLayer))
++            {
++                if let Some(RenderCommand::PushClipLayer(clip)) = commands.get(i + 2) {
++                    let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
++                    self.render_ctx.set_transform(path_transform);
++                    self.render_ctx.set_fill_rule(clip.fill);
++                    self.render_ctx.push_clip_path(&path);
++                    self.clip_paths.push(Pushed::ClipPath);
++                    open.push((i + 2, false));
++                    i += 3;
++                } else {
++                    i += 2;
++                }
++                continue;
++            }
++            // pyro: a clip to a rectangle on whole device pixels (an `overflow` clip) is a clip
++            // path too: its coverage is the layer's, and like Skia's it composites what it clips
++            // once, as the same content drawn unclipped (a layer rounds it a second time; WPT
++            // css-pseudo `highlight-painting-004`, whose references clip with `overflow: hidden`).
++            if let RenderCommand::PushClipLayer(clip) = &commands[i]
++                && pixel_aligned_rect(&clip.clip, transform * clip.transform)
++                && !(self.backdrop_filters && crate::backdrop::is_root(commands, i))
++            {
++                // pyro: flattened as a fill or clip layer is (`device_path`), so the clip's edge is
++                // the edge of the fills it clips or meets (a blended child in a rounded clip blends
++                // with its parent's background edge at the coverage that edge has: WPT
++                // `mix-blend-mode-parent-element-overflow-hidden-and-border-radius`).
++                let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
++                self.render_ctx.set_transform(path_transform);
++                self.render_ctx.set_fill_rule(clip.fill);
++                self.render_ctx.push_clip_path(&path);
++                self.clip_paths.push(Pushed::ClipPath);
++                open.push((i, false));
++                i += 1;
++                continue;
++            }
 +            if let RenderCommand::PushClipLayer(clip) = &commands[i]
 +                && self.blending
 +                && blends_inside(commands, i)
 +            {
-+                self.render_ctx.set_transform(transform * clip.transform);
++                // pyro: flattened as a fill or clip layer is (`device_path`), so the clip's edge is
++                // the edge of the fills it clips or meets (a blended child in a rounded clip blends
++                // with its parent's background edge at the coverage that edge has: WPT
++                // `mix-blend-mode-parent-element-overflow-hidden-and-border-radius`).
++                let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
++                self.render_ctx.set_transform(path_transform);
 +                self.render_ctx.set_fill_rule(clip.fill);
-+                self.render_ctx.push_clip_path(&clip.clip);
++                self.render_ctx.push_clip_path(&path);
 +                self.clip_paths.push(Pushed::ClipPath);
 +                open.push((i, false));
 +                i += 1;
@@ -5078,6 +5525,12 @@ index 1b09a33..367f5b6 100644
 +
 +    /// One command, its solid paint replaced by `recolor` if given (a colour filter's).
 +    fn replay_command(&mut self, command: &RenderCommand, transform: Affine, recolor: Option<Color>) {
++        let glyph_edge = self.text_outlines && self.text_aliasing_threshold.is_some()
++            && matches!(command, RenderCommand::Fill(_) | RenderCommand::Stroke(_));
++        let transform = if glyph_edge {
++            self.render_ctx.set_aliasing_threshold(self.text_aliasing_threshold);
++            Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform
++        } else { transform };
 +        let paint = |brush| recolor.map_or_else(|| paint_ref(brush), Paint::Solid);
 +        match command {
 +            RenderCommand::PushLayer(c) => self.push_layer(
@@ -5121,6 +5574,9 @@ index 1b09a33..367f5b6 100644
 +            RenderCommand::BoxShadow(c) => {
 +                self.draw_box_shadow(transform * c.transform, c.rect, c.brush, c.radius, c.std_dev)
 +            }
++        }
++        if glyph_edge {
++            self.render_ctx.set_aliasing_threshold(None);
 +        }
 +    }
 +
@@ -5423,35 +5879,26 @@ index 1b09a33..367f5b6 100644
 +/// rectangle path (four axis-aligned sides) under a transform without rotation or skew, its
 +/// edges on whole pixels.
 +pub(crate) fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
++    let rect = device_rect(clip, transform)?;
++    let whole = |v: f64| (v - v.round()).abs() < 1e-6;
++    (whole(rect.x0) && whole(rect.y0) && whole(rect.x1) && whole(rect.y1)).then(|| PixelRect::around(rect))
++}
++
++fn device_rect(clip: &BezPath, transform: Affine) -> Option<Rect> {
 +    let [_, b, c, _, _, _] = transform.as_coeffs();
 +    if b != 0.0 || c != 0.0 {
 +        return None;
 +    }
-+    let mut points = Vec::with_capacity(5);
-+    for element in clip.elements() {
-+        match *element {
-+            PathEl::MoveTo(p) if points.is_empty() => points.push(p),
-+            PathEl::LineTo(p) if !points.is_empty() => points.push(p),
-+            PathEl::ClosePath if !points.is_empty() => {}
-+            _ => return None,
-+        }
-+    }
-+    if points.len() == 5 && points[4] == points[0] {
-+        points.pop();
-+    }
-+    if points.len() != 4 {
++    let elements = clip.elements().strip_suffix(&[PathEl::ClosePath]).unwrap_or(clip.elements());
++    let [PathEl::MoveTo(first), PathEl::LineTo(second), PathEl::LineTo(third), PathEl::LineTo(fourth), rest @ ..] = elements else {
++        return None;
++    };
++    if !(rest.is_empty() || rest == [PathEl::LineTo(*first)]) {
 +        return None;
 +    }
-+    // Each side horizontal or vertical.
-+    for i in 0..4 {
-+        let (p, q) = (points[i], points[(i + 1) % 4]);
-+        if p.x != q.x && p.y != q.y {
-+            return None;
-+        }
-+    }
-+    let rect = transform.transform_rect_bbox(clip.bounding_box());
-+    let whole = |v: f64| (v - v.round()).abs() < 1e-6;
-+    (whole(rect.x0) && whole(rect.y0) && whole(rect.x1) && whole(rect.y1)).then(|| PixelRect::around(rect))
++    let horizontal = first.y == second.y && second.x == third.x && third.y == fourth.y && fourth.x == first.x;
++    let vertical = first.x == second.x && second.y == third.y && third.x == fourth.x && fourth.y == first.y;
++    (horizontal || vertical).then(|| transform.transform_rect_bbox(Rect::from_points(*first, *third)))
 +}
 +
 +/// The pixels `clip` under `transform` touches.
@@ -5638,10 +6085,74 @@ index 1b09a33..367f5b6 100644
 +        .find(|&record| data.get(record..record + 4) == Some(b"head".as_slice()))
 +        .and_then(|record| u16_at(u32_at(record + 8)? as usize + 18))
 +        .filter(|&upem| upem > 0)
++}
++
++impl VelloCpuScenePainter {
++    /// pyro: `stroke` of the path it keeps (`cull_far_segments`).
++    #[allow(clippy::too_many_arguments)]
++    fn stroke_kept<'a>(
++        &mut self,
++        style: &Stroke,
++        transform: Affine,
++        paint: impl Into<PaintRef<'a>>,
++        brush_transform: Option<Affine>,
++        path: BezPath,
++        scale: f64,
++        reach: f64,
++    ) {
++        let near = near_raster(transform.transform_rect_bbox(curves_bbox(&path)).inflate(reach, reach), self.raster_bounds());
++        // (An outline is about twice the path's lines, and a join or cap for each element: at most
++        // `MAX_FINE_SEGMENTS` in all, as a fill.)
++        let fine = near
++            && scale.is_finite()
++            && scale > 1e-9
++            && flattened_segments(&(transform * path.clone()), FINE)
++                .saturating_mul(2)
++                .saturating_add(path.elements().len().saturating_mul(8))
++                <= MAX_FINE_SEGMENTS;
++        if fine {
++            let outline = kurbo::stroke(path.elements().iter().copied(), style, &kurbo::StrokeOpts::default(), FINE / scale);
++            count_segments(outline.elements().len());
++            self.fill(Fill::NonZero, transform, paint, brush_transform, &outline);
++            return;
++        }
++        self.render_ctx.set_transform(transform);
++        self.render_ctx.set_stroke(style.clone());
++        let paint = self.convert_paint(paint.into());
++        self.render_ctx.set_paint(paint);
++        self.render_ctx
++            .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
++        // (Counted as what vello_cpu expands: both sides at its quarter-pixel tolerance.)
++        count_segments(flattened_segments(&(transform * path.clone()), 0.25).saturating_mul(2));
++        self.render_ctx.stroke_path(&path);
++    }
  }
  
  #[cfg(test)]
-@@ -292,4 +1136,197 @@ mod clip_rule_tests {
+@@ -277,6 +1531,22 @@ mod clip_rule_tests {
+         }
+     }
+ 
++    #[test]
++    fn rectangular_clip_preserves_fractional_device_coverage() {
++        let render = |top: f64| {
++            render_to_buffer::<VelloCpuImageRenderer, _>(|scene| {
++                let path = Rect::new(5.0, top, 40.0, 24.0);
++                scene.push_clip_layer(Fill::NonZero, Affine::scale(2.0), &path);
++                scene.fill(Fill::NonZero, Affine::IDENTITY, RED, None, &Rect::new(0.0, 0.0, 100.0, 100.0));
++                scene.pop_layer();
++            }, 100, 100)
++        };
++        let edge_alpha = |top| render(top)[(10 * 100 + 12) * 4 + 3];
++        assert!(edge_alpha(5.0) > edge_alpha(5.05));
++        assert!(edge_alpha(5.05) > edge_alpha(5.09));
++        assert!(edge_alpha(5.09) > edge_alpha(5.14));
++    }
++
+     #[test]
+     fn clip_layers_respect_fill_rule() {
+         assert_pixels(false, false);
+@@ -292,4 +1562,314 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }
@@ -5837,5 +6348,122 @@ index 1b09a33..367f5b6 100644
 +        assert!(blended.chunks_exact(4).any(|p| p[3] > 0 && p[3] < 255), "antialiased edges");
 +        let off = blended.chunks_exact(4).zip(painted.chunks_exact(4)).filter(|(a, b)| a != b).count();
 +        assert_eq!(off, 0, "pixels off");
++    }
++}
++
++/// pyro: whether `path` under `transform` is an axis-aligned rectangle with its edges on whole
++/// device pixels (so a clip to it has no antialiased edge).
++fn pixel_aligned_rect(path: &kurbo::BezPath, transform: Affine) -> bool {
++    use kurbo::PathEl;
++    let mut points: Vec<kurbo::Point> = Vec::with_capacity(5);
++    for el in path.elements() {
++        match *el {
++            PathEl::MoveTo(p) if points.is_empty() => points.push(transform * p),
++            PathEl::LineTo(p) if !points.is_empty() && points.len() < 5 => points.push(transform * p),
++            PathEl::ClosePath => {}
++            _ => return false,
++        }
++    }
++    if points.len() == 5 && (points[4] - points[0]).hypot() < 1e-6 {
++        points.pop();
++    }
++    if points.len() != 4 {
++        return false;
++    }
++    let whole = |v: f64| (v - v.round()).abs() < 1e-3;
++    if !points.iter().all(|p| whole(p.x) && whole(p.y)) {
++        return false;
++    }
++    // Consecutive corners share an x or a y, alternately.
++    (0..4).all(|k| {
++        let (a, b) = (points[k], points[(k + 1) % 4]);
++        let horizontal = (a.y - b.y).abs() < 1e-3;
++        let vertical = (a.x - b.x).abs() < 1e-3;
++        horizontal != vertical || (horizontal && vertical)
++    }) && {
++        let (a, b, c) = (points[0], points[1], points[2]);
++        let first_horizontal = (a.y - b.y).abs() < 1e-3;
++        let second_horizontal = (b.y - c.y).abs() < 1e-3;
++        first_horizontal != second_horizontal
++    }
++}
++
++
++#[cfg(test)]
++mod stroke_cull_tests {
++    use anyrender::{PaintScene, recording::Scene, render_to_buffer};
++    use kurbo::{Affine, BezPath, Stroke};
++    use peniko::Color;
++
++    use crate::VelloCpuImageRenderer;
++
++    /// pyro: a stroked cubic millions of device px long, of which a short piece crosses the raster,
++    /// is cut where it nears the raster only: its far halves are left out before they are cut again
++    /// (they were all cut down to the raster's size first). Review cycle 5, finding 1.
++    #[test]
++    fn a_huge_cubic_is_cut_only_near_the_raster() {
++        let mut path = BezPath::new();
++        path.move_to((-1.0e6, 80.0));
++        path.curve_to((-3.0e5, 80.0), (3.0e5, 80.0), (1.0e6, 80.0));
++        let mut scene = Scene::new();
++        scene.stroke(&Stroke::new(4.0), Affine::IDENTITY, Color::from_rgba8(0, 0, 255, 255), None, &path);
++        let before = super::fine_segments();
++        let buffer = render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(scene, Affine::IDENTITY), 160, 160);
++        let work = super::fine_segments() - before;
++        assert!(work > 0, "the paint ran on this thread");
++        assert!(work < 2_000, "{work} cuts and segments");
++        let i = (80 * 160 + 80) * 4;
++        assert!(buffer[i + 2] > 200 && buffer[i] < 60, "the stroke in view: {:?}", &buffer[i..i + 4]);
++    }
++
++    fn render(path: &BezPath, stroke: &Stroke) -> Vec<u8> {
++        let mut scene = Scene::new();
++        scene.stroke(stroke, Affine::IDENTITY, Color::from_rgba8(0, 0, 255, 255), None, path);
++        render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(scene, Affine::IDENTITY), 160, 160)
++    }
++
++    /// pyro: a dashed path whose first segment lies far off screen keeps its dashes' phase where
++    /// it is in view: the run kept starts its dashes as far along the subpath as it is (it restarted
++    /// them where the culled segment ended). Review cycle 5, finding 4.
++    #[test]
++    fn a_dashed_path_with_an_offscreen_prefix_keeps_its_dash_phase() {
++        let stroke = Stroke::new(4.0).with_dashes(0.0, [10.0, 10.0]);
++        let mut culled = BezPath::new();
++        culled.move_to((-1005.0, 80.0));
++        culled.line_to((-500.0, 80.0));
++        culled.line_to((150.0, 80.0));
++        // The same dashes from x -5 (1000, a whole number of periods, before): nothing culled.
++        let mut near = BezPath::new();
++        near.move_to((-5.0, 80.0));
++        near.line_to((150.0, 80.0));
++        let (a, b) = (render(&culled, &stroke), render(&near, &stroke));
++        let row = |buffer: &[u8]| (0..150).map(|x| buffer[(80 * 160 + x) * 4 + 2]).collect::<Vec<_>>();
++        let (ra, rb) = (row(&a), row(&b));
++        assert!(ra.iter().zip(&rb).all(|(x, y)| x.abs_diff(*y) <= 40), "the dashes along the row: {ra:?} against {rb:?}");
++    }
++
++    /// pyro: a closed path whose far segment is left out keeps the join at its start corner, in
++    /// view: the run of its closing segment goes on into its first segment. Review cycle 5,
++    /// finding 4.
++    #[test]
++    fn a_closed_path_with_a_far_segment_keeps_its_start_join() {
++        // (Butt caps and a miter join: only the join fills the corner's outer square.)
++        let stroke = Stroke::new(8.0).with_caps(kurbo::Cap::Butt).with_join(kurbo::Join::Miter);
++        let mut culled = BezPath::new();
++        culled.move_to((20.0, 20.0));
++        culled.line_to((140.0, 20.0));
++        culled.line_to((140.0, 1.0e6));
++        culled.line_to((20.0, 1.0e6));
++        culled.close_path();
++        let mut near = BezPath::new();
++        near.move_to((20.0, 20.0));
++        near.line_to((140.0, 20.0));
++        near.line_to((140.0, 150.0));
++        near.line_to((20.0, 150.0));
++        near.close_path();
++        let (a, b) = (render(&culled, &stroke), render(&near, &stroke));
++        let at = |buffer: &[u8], x: usize, y: usize| buffer[(y * 160 + x) * 4 + 3];
++        assert!(at(&b, 17, 17) > 200, "the reference's corner");
++        assert!(at(&a, 17, 17).abs_diff(at(&b, 17, 17)) <= 40, "the join at the start corner: {} against {}", at(&a, 17, 17), at(&b, 17, 17));
 +    }
  }

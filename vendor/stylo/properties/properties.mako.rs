@@ -1649,7 +1649,7 @@ pub struct ComputedValues {
     inner: ComputedValuesInner,
 
     /// The pseudo-element that we're using.
-    pseudo: Option<PseudoElement>,
+    pseudo: Option<Box<PseudoElement>>,
 }
 
 #[cfg(feature = "servo")]
@@ -1695,13 +1695,13 @@ impl ComputedValues {
     /// Returns the pseudo-element that this style represents.
     #[cfg(feature = "servo")]
     pub fn pseudo(&self) -> Option<PseudoElement> {
-        self.pseudo
+        self.pseudo.as_deref().cloned()
     }
 
     /// Returns true if this is the style for a pseudo-element.
     #[cfg(feature = "servo")]
     pub fn is_pseudo_style(&self) -> bool {
-        self.pseudo().is_some()
+        self.pseudo.is_some()
     }
 
     /// Returns whether this style's display value is equal to contents.
@@ -1936,7 +1936,7 @@ impl ComputedValues {
                 ${style_struct.ident},
             % endfor
             },
-            pseudo: pseudo.cloned(),
+            pseudo: pseudo.cloned().map(Box::new),
         })
     }
 
@@ -2081,7 +2081,7 @@ impl ComputedValuesInner {
                 ${style_struct.ident}: self.${style_struct.ident}.clone(),
                 % endfor
             },
-            pseudo: pseudo.cloned(),
+            pseudo: pseudo.cloned().map(Box::new),
         })
     }
 

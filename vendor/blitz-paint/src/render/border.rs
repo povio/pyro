@@ -1,12 +1,12 @@
 use anyrender::PaintScene;
 use blitz_dom::CopyStyleGetters;
 use blitz_dom::node::SpecialElementData;
-use kurbo::{BezPath, Cap, Circle, Insets, Join, Point, Rect, Shape as _, Stroke, Vec2};
+use kurbo::{Affine, BezPath, Cap, Circle, Insets, Join, Point, Rect, Shape as _, Stroke, Vec2};
 use peniko::{Color, Fill};
 use smallvec::SmallVec;
 use style::{
     computed_values::border_collapse::T as BorderCollapse,
-    values::computed::{BorderStyle, OutlineStyle},
+    values::computed::{BorderStyle, ColorOrAuto, OutlineStyle},
 };
 
 use crate::{
@@ -91,7 +91,7 @@ fn beveled_edge_color(color: Color, edge: Edge, inset: bool) -> Color {
 ///
 /// A `groove` looks carved into the page: its outer half is shaded like `inset`
 /// and its inner half like `outset`. `ridge` is the reverse (raised).
-fn grooved_edge_colors(color: Color, edge: Edge, ridge: bool) -> (Color, Color) {
+pub(super) fn grooved_edge_colors(color: Color, edge: Edge, ridge: bool) -> (Color, Color) {
     let outer = beveled_edge_color(color, edge, !ridge);
     let inner = beveled_edge_color(color, edge, ridge);
     (outer, inner)
@@ -184,10 +184,16 @@ fn dot_period(length: f64, width: f64, closed: bool) -> f64 {
 /// Blink works in whole CSS px, so the pattern is laid out in them and then
 /// stretched over the side.
 ///
-/// `dots` holds the round dots already in `path`: two sides alike each have a
+/// `dots` holds the corner dots already in `path`: two sides alike each have a
 /// dot in the corner they share, and the same dot twice in one fill would come
-/// out bolder than the others (the coverage of its edge adds up).
-fn straight_side_marks(
+/// out bolder than the others (the coverage of its edge adds up). Only a side's
+/// end dots can be shared, so only those are kept there (a side's own dots never
+/// coincide, and checking each against all others would be quadratic).
+///
+/// pyro: `visible`: the part of the side (device px from `origin`, along it)
+/// that can show; marks wholly outside it are not made, the pattern keeping its
+/// place (a column rule a million pixels tall makes only the marks in view).
+pub(super) fn straight_side_marks(
     path: &mut BezPath,
     dots: &mut Vec<(Point, f64)>,
     style: BorderStyle,
@@ -195,6 +201,7 @@ fn straight_side_marks(
     (along, across): (Vec2, Vec2),
     (length, thickness): (f64, f64),
     scale: f64,
+    visible: Option<(f64, f64)>,
 ) {
     let width = (thickness / scale).round().max(1.0);
     let len = (length / scale).round();
@@ -202,6 +209,8 @@ fn straight_side_marks(
         return;
     }
     let unit = length / len;
+    // The visible part in the pattern's units (whole CSS px along the side).
+    let (seen_from, seen_to) = visible.map_or((f64::NEG_INFINITY, f64::INFINITY), |(a, b)| (a / unit, b / unit));
     let at = |a: f64, depth: f64| origin + along * (a * unit) + across * depth;
     let mut rect = |from: f64, to: f64| {
         if to > from {
@@ -212,11 +221,15 @@ fn straight_side_marks(
     if !stroke_is_dashed(width, style) {
         // Round dots, the first and the last touching the ends of the side.
         let radius = thickness / 2.0;
+        // (The corner dots of the sides before this one.)
+        let shared = dots.len();
         let mut dot = |a: f64| {
             let center = at(a, radius);
             let same = |&(c, r): &(Point, f64)| r == radius && (c - center).hypot() < 0.25 * scale;
-            if !dots.iter().any(same) {
-                dots.push((center, radius));
+            if !dots[..shared].iter().any(same) {
+                if a <= width || a >= len - width {
+                    dots.push((center, radius));
+                }
                 path.extend(Circle::new(center, radius).path_elements(0.1));
             }
         };
@@ -225,8 +238,10 @@ fn straight_side_marks(
             return;
         }
         let period = dot_period(len, width, false);
-        let mut distance = 0.0;
-        while distance < len - width {
+        // (From the first dot that reaches into view.)
+        let first = ((seen_from - width) / period).floor().max(0.0);
+        let mut distance = first * period;
+        while distance < len - width && width / 2.0 + distance <= seen_to + width {
             dot(width / 2.0 + distance);
             distance += period;
         }
@@ -273,10 +288,12 @@ fn straight_side_marks(
     match dash_pattern(len, width, style, false) {
         None => rect(start, end),
         Some((dash, gap)) => {
-            let mut from = start;
-            while from < end {
+            let pitch = dash + gap;
+            let skipped = ((seen_from - dash - start) / pitch).floor().max(0.0);
+            let mut from = start + skipped * pitch;
+            while from < end && from <= seen_to {
                 rect(from, (from + dash).min(end));
-                from += dash + gap;
+                from += pitch;
             }
         }
     }
@@ -475,6 +492,26 @@ impl CenterLine {
 impl ElementCx<'_, '_> {
     /// Draw all borders for a node
     pub(crate) fn draw_border(&self, scene: &mut impl PaintScene) {
+        // pyro: a fieldset's block-start border is not drawn behind its rendered legend (HTML
+        // § 15.3.13: the gap is the legend's border box; Chromium).
+        if let Some((x0, x1)) = self.context.fieldset_legend_gap(self.node.id).filter(|(x0, x1)| x1 > x0) {
+            let bb = self.frame.border_box;
+            let top = bb.y0;
+            let band = self.frame.border_width.y0.max(1.0);
+            let mut clip = kurbo::BezPath::new();
+            let whole = bb.inflate(bb.width().max(bb.height()) + 1.0, bb.width().max(bb.height()) + 1.0);
+            clip.extend(kurbo::Shape::path_elements(&whole, 0.1));
+            let gap = kurbo::Rect::new(x0 as f64 * self.scale, top - 1.0, x1 as f64 * self.scale, top + band + 1.0);
+            clip.extend(kurbo::Shape::path_elements(&gap, 0.1));
+            scene.push_clip_layer(peniko::Fill::EvenOdd, self.transform, &clip);
+            self.draw_border_unclipped(scene);
+            scene.pop_layer();
+            return;
+        }
+        self.draw_border_unclipped(scene);
+    }
+
+    fn draw_border_unclipped(&self, scene: &mut impl PaintScene) {
         // A table without uniform collapsed borders draws them all (`draw_collapsed_edges`).
         // pyro: a collapsed table with cells draws its outer borders as the collapsed ones that
         // won there, never its own (`draw_table_borders`).
@@ -493,6 +530,21 @@ impl ElementCx<'_, '_> {
         // pyro: a border image is drawn instead of the border's styles (Blink's
         // `BoxPainterBase::PaintBorder`); one that cannot be drawn leaves them.
         if self.draw_border_image(scene) {
+            return;
+        }
+        // pyro: a text field of native appearance (`native_textfield`): Chromium's themed field, a
+        // 1px border round the box with 2px corners (`NativeThemeBase::PaintTextField`), in place of
+        // the UA sheet's 2px inset border, which `appearance: none` shows (WPT css-ui
+        // `appearance-invalidate-author-styling-001`).
+        if self.native_textfield() {
+            let bb = self.frame.border_box;
+            let s = self.scale;
+            let outer = kurbo::RoundedRect::from_rect(bb, 2.0 * s);
+            let inner = kurbo::RoundedRect::from_rect(bb.inset(-s), s);
+            let mut ring = outer.to_path(0.1);
+            ring.extend(inner.to_path(0.1));
+            let color = if self.dark_color_scheme() { Color::from_rgb8(133, 133, 133) } else { Color::from_rgb8(118, 118, 118) };
+            scene.fill(Fill::EvenOdd, self.transform, color, None, &ring);
             return;
         }
 
@@ -782,7 +834,7 @@ impl ElementCx<'_, '_> {
                         Edge::Left => (Point::new(bb.x0, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), bb.height()),
                         Edge::Right => (Point::new(bb.x1, bb.y0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), bb.height()),
                     };
-                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale);
+                    straight_side_marks(&mut path, &mut dots, style, origin, (along, across), (length, width), self.scale, None);
                 }
                 _ => path.extend(&self.frame.border_edge_shape(edge)),
             }
@@ -933,6 +985,20 @@ impl ElementCx<'_, '_> {
     /// line around the whole box, clipped to the side.
     fn draw_dotted_dashed_sides(&self, scene: &mut impl PaintScene, frame: &CssBox, sides: [Side; 4]) {
         let scale = self.scale;
+        // pyro: the part of the element's space that can show (its paint clip): a side a million
+        // pixels long makes the marks in it only (`straight_side_marks`).
+        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
+        let seen = (screen * self.transform).inverse().transform_rect_bbox(self.context.paint_clip.get());
+        let seen = (seen.x0.is_finite() && seen.y0.is_finite() && seen.x1.is_finite() && seen.y1.is_finite())
+            .then_some(seen);
+        // The visible interval of a side from `origin` along `along` (unit), when bounded.
+        let visible = |origin: Point, along: Vec2| {
+            seen.map(|r| {
+                let ds = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x0, r.y1), Point::new(r.x1, r.y1)]
+                    .map(|p| (p - origin).dot(along));
+                (ds.iter().copied().fold(f64::INFINITY, f64::min), ds.iter().copied().fold(f64::NEG_INFINITY, f64::max))
+            })
+        };
         let thickness = |edge: Edge| match edge {
             Edge::Top => frame.border_width.y0,
             Edge::Right => frame.border_width.x1,
@@ -1001,7 +1067,11 @@ impl ElementCx<'_, '_> {
                     let mut dots = BezPath::new();
                     let mut at = 0.0;
                     while at < line.length {
-                        dots.extend(Circle::new(line.point_at(at), radius).path_elements(0.1));
+                        let center = line.point_at(at);
+                        // (Only the dots that can show.)
+                        if seen.is_none_or(|r| r.inflate(radius, radius).contains(center)) {
+                            dots.extend(Circle::new(center, radius).path_elements(0.1));
+                        }
                         at += period;
                     }
                     scene.fill(Fill::NonZero, self.transform, color, None, &dots);
@@ -1041,11 +1111,11 @@ impl ElementCx<'_, '_> {
                     }
                 };
                 let (_, marks, dots) = &mut open[group];
-                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale);
+                straight_side_marks(marks, dots, style, origin, side.0, side.1, scale, visible(origin, side.0.0));
                 continue;
             }
             let mut marks = BezPath::new();
-            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale);
+            straight_side_marks(&mut marks, &mut Vec::new(), style, origin, side.0, side.1, scale, visible(origin, side.0.0));
             // The side's box, an end cut back along the corner's diagonal where
             // it is mitred. Clockwise, `before` is at the start of the top and
             // right sides and at the end of the bottom and left ones.
@@ -1244,19 +1314,70 @@ impl ElementCx<'_, '_> {
             let (lo, lo_w, hi, hi_w) = if from <= to { (from, a, to, b) } else { (to, b, from, a) };
             (snap(lo - lo_w / 2.0, lo_w), snap(hi - hi_w / 2.0, hi_w) + hi_w)
         };
-        for line in 0..=edges.rows {
-            let mut c = 0;
-            while c < edges.columns {
-                let edge = *edges.horizontal_at(line, c);
-                let mut end = c + 1;
-                while end < edges.columns && same_edge(edges.horizontal_at(line, end), &edge) {
-                    end += 1;
+        // pyro: the runs of one grid line (`CollapsedEdges::*_runs`, only those some border reaches),
+        // joined where they look the same, so that a long rule has no seams.
+        let joined = |runs: Vec<(usize, usize, blitz_dom::CollapsedEdge)>| {
+            let mut out: Vec<(usize, usize, blitz_dom::CollapsedEdge)> = Vec::with_capacity(runs.len());
+            for (s, e, edge) in runs {
+                match out.last_mut() {
+                    Some(prev) if prev.1 == s && same_edge(&prev.2, &edge) => prev.1 = e,
+                    _ => out.push((s, e, edge)),
                 }
+            }
+            out
+        };
+        // pyro: grid lines on one coordinate (around a collapsed column or row, `visibility:
+        // collapse`) are one rule: each segment is the edge that wins among theirs, and the
+        // narrower ones do not stripe it. `group(i)` is the first and last line at line i's place.
+        let groups = |at: &[f64]| -> Vec<(usize, usize)> {
+            let mut out = vec![(0, 0); at.len()];
+            let mut i = 0;
+            while i < at.len() {
+                let mut j = i;
+                while j + 1 < at.len() && (at[j + 1] - at[i]).abs() < 1e-3 {
+                    j += 1;
+                }
+                for slot in &mut out[i..=j] {
+                    *slot = (i, j);
+                }
+                i = j + 1;
+            }
+            out
+        };
+        let (col_group, row_group) = (groups(&xs), groups(&ys));
+        let best = |edges: &mut dyn Iterator<Item = blitz_dom::CollapsedEdge>| {
+            edges.filter(|edge| edge.width > 0.0).reduce(|best, edge| if edge.outranks(&best) { edge } else { best })
+        };
+        let best_v = |r: usize, (l0, l1): (usize, usize)| best(&mut (l0..=l1).map(|l| *edges.vertical_at(r, l)));
+        let best_h = |(l0, l1): (usize, usize), c: usize| best(&mut (l0..=l1).map(|l| *edges.horizontal_at(l, c)));
+        // The runs of a group of lines: its one line's, or the winners segment by segment.
+        let line_runs = |(l0, l1): (usize, usize), vertical: bool| -> Vec<(usize, usize, blitz_dom::CollapsedEdge)> {
+            if l0 == l1 {
+                let runs: Vec<_> = if vertical {
+                    edges.vertical_runs(l0).map(|(s, e, edge)| (s, e, *edge)).collect()
+                } else {
+                    edges.horizontal_runs(l0).map(|(s, e, edge)| (s, e, *edge)).collect()
+                };
+                return joined(runs);
+            }
+            let len = if vertical { edges.rows } else { edges.columns };
+            joined(
+                (0..len)
+                    .filter_map(|i| if vertical { best_v(i, (l0, l1)) } else { best_h((l0, l1), i) }.map(|edge| (i, i + 1, edge)))
+                    .collect(),
+            )
+        };
+        for line in 0..=edges.rows {
+            if row_group[line].0 != line {
+                continue;
+            }
+            let group = row_group[line];
+            for (c, end, edge) in line_runs(group, false) {
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
                     let across = |col: usize| {
-                        let up = line.checked_sub(1).map_or(0.0, |r| edges.vertical_at(r, col).width);
-                        let down = (line < edges.rows).then(|| edges.vertical_at(line, col).width).unwrap_or(0.0);
+                        let up = group.0.checked_sub(1).and_then(|r| best_v(r, col_group[col])).map_or(0.0, |e| e.width);
+                        let down = (group.1 < edges.rows).then(|| best_v(group.1, col_group[col])).flatten().map_or(0.0, |e| e.width);
                         up.max(down) as f64
                     };
                     let (x0, x1) = span(&snap_x, xs[c], across(c), xs[end], across(end));
@@ -1270,17 +1391,13 @@ impl ElementCx<'_, '_> {
                         fill(x0, y0, x1, y0 + width, edge.color);
                     }
                 }
-                c = end;
             }
         }
         for line in 0..=edges.columns {
-            let mut r = 0;
-            while r < edges.rows {
-                let edge = *edges.vertical_at(r, line);
-                let mut end = r + 1;
-                while end < edges.rows && same_edge(edges.vertical_at(end, line), &edge) {
-                    end += 1;
-                }
+            if col_group[line].0 != line {
+                continue;
+            }
+            for (r, end, edge) in line_runs(col_group[line], true) {
                 if edge.width > 0.0 {
                     let width = edge.width as f64;
                     let x0 = snap_x(xs[line] - width / 2.0, width);
@@ -1293,7 +1410,6 @@ impl ElementCx<'_, '_> {
                         fill(x0, y0, x0 + width, y1, edge.color);
                     }
                 }
-                r = end;
             }
         }
         // pyro: where rules cross, the square they share is the colour of the edge that wins there
@@ -1301,11 +1417,30 @@ impl ElementCx<'_, '_> {
         // crossing, the column line's before it, the row line's after and the column line's after:
         // the row-start and column-start ones win, as among the borders of cells).
         for hl in 0..=edges.rows {
-            for vl in 0..=edges.columns {
-                let left = vl.checked_sub(1).map(|c| *edges.horizontal_at(hl, c));
-                let right = (vl < edges.columns).then(|| *edges.horizontal_at(hl, vl));
-                let above = hl.checked_sub(1).map(|r| *edges.vertical_at(r, vl));
-                let below = (hl < edges.rows).then(|| *edges.vertical_at(hl, vl));
+            let hg = row_group[hl];
+            if hg.0 != hl {
+                continue;
+            }
+            // (Only where a row line's rule is: the column lines at its runs' ends and inside them.)
+            let mut crossings: Vec<usize> = Vec::new();
+            for h in hg.0..=hg.1 {
+                for (s, e, edge) in edges.horizontal_runs(h) {
+                    if edge.width > 0.0 {
+                        crossings.extend(s..=e);
+                    }
+                }
+            }
+            crossings.sort_unstable();
+            crossings.dedup();
+            for vl in crossings {
+                let vg = col_group[vl];
+                if vg.0 != vl {
+                    continue;
+                }
+                let left = vg.0.checked_sub(1).and_then(|c| best_h(hg, c));
+                let right = (vg.1 < edges.columns).then(|| best_h(hg, vg.1)).flatten();
+                let above = hg.0.checked_sub(1).and_then(|r| best_v(r, vg));
+                let below = (hg.1 < edges.rows).then(|| best_v(hg.1, vg)).flatten();
                 let across = |a: Option<blitz_dom::CollapsedEdge>, b: Option<blitz_dom::CollapsedEdge>| {
                     a.map_or(0.0, |e| e.width).max(b.map_or(0.0, |e| e.width)) as f64
                 };
@@ -1330,6 +1465,35 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: whether this is a text field of native appearance: a textarea or a text-like input
+    /// (text, search, url, tel, email, password, number) whose `appearance` is not `none` and whose
+    /// border and background no author or user rule sets (css-ui-4's appearance-disabling
+    /// properties), with the UA sheet's border.
+    pub(crate) fn native_textfield(&self) -> bool {
+        use style::computed_values::appearance::T as Appearance;
+        let name = &self.element.name.local;
+        let text_like = if *name == blitz_dom::local_name!("textarea") {
+            true
+        } else if *name == blitz_dom::local_name!("input") {
+            let ty = self.element.attr(blitz_dom::local_name!("type")).unwrap_or("text").trim().to_ascii_lowercase();
+            matches!(ty.as_str(), "text" | "search" | "url" | "tel" | "email" | "password" | "number" | "")
+                || !matches!(
+                    ty.as_str(),
+                    "checkbox" | "radio" | "range" | "color" | "file" | "hidden" | "image" | "button" | "submit"
+                        | "reset" | "date" | "datetime-local" | "month" | "week" | "time"
+                )
+        } else {
+            false
+        };
+        text_like
+            && *self.style.get_box().get_appearance() != Appearance::None
+            && !self
+                .style
+                .flags
+                .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
+            && self.frame.border_width.x0 > 0.0
+    }
+
     /// The outline's style, colour and width (device px), and how far its
     /// outer edge is from the border box; `None` for an element that draws no
     /// outline.
@@ -1338,21 +1502,47 @@ impl ElementCx<'_, '_> {
     /// further in than to the middle of the box.
     pub(super) fn outline_line(&self) -> Option<(BorderStyle, Color, f64, f64)> {
         let outline = self.style.get_outline();
+        // pyro: `outline-color: auto` is the accent colour of an `auto` outline when there is one,
+        // else currentcolor (CSS UI 4).
+        let current = self.style.clone_color();
+        let color = match (&outline.outline_color.0, outline.outline_style) {
+            (ColorOrAuto::Color(color), _) => color.resolve_to_absolute(&current),
+            (ColorOrAuto::Auto, OutlineStyle::Auto) => match &self.style.get_inherited_ui().accent_color {
+                ColorOrAuto::Color(accent) => accent.resolve_to_absolute(&current),
+                ColorOrAuto::Auto => current,
+            },
+            (ColorOrAuto::Auto, _) => current,
+        }
+        .as_srgb_color();
         let style = match outline.outline_style {
-            OutlineStyle::Auto => return None,
+            // pyro: `auto` is Chromium's focus ring: a 2px solid line in the outline's colour
+            // whatever its width, across the edge `outline-offset` from the border box (one pixel
+            // out, one in); `outline-offset: inset` keeps it inside the border box (CSS UI 4).
+            OutlineStyle::Auto => {
+                if color.components[3] <= 0.0 {
+                    return None;
+                }
+                let scale = self.scale;
+                let bb = self.frame.border_box;
+                let offset = (outline.outline_offset.px(0.0).trunc() * scale)
+                    .max(-(bb.width() / 2.0).floor())
+                    .max(-(bb.height() / 2.0).floor());
+                let outset = match outline.outline_offset {
+                    style::values::computed::OutlineOffset::Inset => 0.0,
+                    _ => offset + scale,
+                };
+                return Some((BorderStyle::Solid, color, 2.0 * scale, outset));
+            }
             OutlineStyle::BorderStyle(style) => style,
         };
-        let color = outline
-            .outline_color
-            .resolve_to_absolute(&self.style.clone_color())
-            .as_srgb_color();
         if style.none_or_hidden() || self.frame.outline_width <= 0.0 || color.components[3] <= 0.0 {
             return None;
         }
         let scale = self.scale;
         let width = (self.frame.outline_width / scale).floor().max(1.0) * scale;
         let bb = self.frame.border_box;
-        let offset = (outline.outline_offset.to_f64_px().trunc() * scale)
+        // (`inset`: minus the outline's used width, CSS UI 4.)
+        let offset = (outline.outline_offset.px(width / scale).trunc() * scale)
             .max(-(bb.width() / 2.0).floor())
             .max(-(bb.height() / 2.0).floor());
         Some((style, color, width, offset + width))
@@ -1366,17 +1556,156 @@ impl ElementCx<'_, '_> {
     /// ✅ dotted - Defines a dotted border
     /// ✅ dashed - Defines a dashed border
     /// ✅ solid - Defines a solid border
-    /// ❌ double - Defines a double border
+    /// ✅ double - Defines a double border
     /// ❌ groove - Defines a 3D grooved border. The effect depends on the border-color value
     /// ❌ ridge - Defines a 3D ridged border. The effect depends on the border-color value
     /// ❌ inset - Defines a 3D inset border. The effect depends on the border-color value
     /// ❌ outset - Defines a 3D outset border. The effect depends on the border-color value
     /// ✅ none - Defines no border
     /// ✅ hidden - Defines a hidden border
+    /// pyro: the box an `auto` outline goes around: the border box, and the boxes of the
+    /// element's descendants that overflow it unless it clips them.
+    /// pyro: the rects an `auto` outline goes around (device px, in its border box's frame): its
+    /// border box, and the border boxes of descendants reaching out of it (not into a box that
+    /// clips them), as Chromium's outline rects with block ink overflow. One rect: none reach out.
+    fn auto_outline_rects(&self) -> Vec<Rect> {
+        use style::computed_values::overflow_x::T as Overflow;
+        let bb = self.frame.border_box;
+        let mut rects = vec![bb];
+        let clips = |node: &blitz_dom::Node| {
+            node.primary_styles().is_some_and(|s| {
+                let b = s.get_box();
+                b.overflow_x != Overflow::Visible || b.overflow_y != Overflow::Visible
+            })
+        };
+        if self.text_input.is_some() || clips(self.node) {
+            return rects;
+        }
+        let dom = self.context.dom.as_ref();
+        let scale = self.scale;
+        let mut stack: Vec<(blitz_dom::NodeId, f64, f64)> = Vec::new();
+        let push_children = |stack: &mut Vec<(blitz_dom::NodeId, f64, f64)>, node: &blitz_dom::Node, x: f64, y: f64| {
+            if let Some(children) = node.layout_children.borrow().as_ref() {
+                for &c in children.iter() {
+                    stack.push((c, x, y));
+                }
+            }
+        };
+        let outside = |r: &Rect| r.x0 < bb.x0 - 0.01 || r.y0 < bb.y0 - 0.01 || r.x1 > bb.x1 + 0.01 || r.y1 > bb.y1 + 0.01;
+        // The content of each line of an inline root at (x, y) (CSS px): text reaching out counts
+        // as boxes do (Chromium's line box fragments).
+        let lines = |rects: &mut Vec<Rect>, node: &blitz_dom::Node, x: f64, y: f64| {
+            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_deref()) else { return };
+            let l = node.final_layout();
+            let ox = (x + (l.padding.left + l.border.left) as f64) * scale;
+            let oy = (y + (l.padding.top + l.border.top) as f64) * scale + text.block_offset as f64;
+            for line in text.layout.lines() {
+                let m = line.metrics();
+                if m.advance <= 0.0 {
+                    continue;
+                }
+                let r = Rect::new(
+                    ox + m.offset as f64,
+                    oy + m.block_min_coord as f64,
+                    ox + (m.offset + m.advance) as f64,
+                    oy + m.block_max_coord as f64,
+                );
+                if outside(&r) {
+                    rects.push(r);
+                }
+            }
+        };
+        lines(&mut rects, self.node, 0.0, 0.0);
+        push_children(&mut stack, self.node, 0.0, 0.0);
+        while let Some((id, x, y)) = stack.pop() {
+            let Some(node) = dom.get_node(id) else { continue };
+            let l = node.final_layout();
+            let (cx, cy) = (x + l.location.x as f64, y + l.location.y as f64);
+            if node.is_element() && l.size.width > 0.0 && l.size.height > 0.0 {
+                let r = Rect::new(cx * scale, cy * scale, (cx + l.size.width as f64) * scale, (cy + l.size.height as f64) * scale);
+                if outside(&r) {
+                    rects.push(r);
+                }
+            }
+            if !clips(node) {
+                lines(&mut rects, node, cx, cy);
+                push_children(&mut stack, node, cx, cy);
+            }
+        }
+        rects
+    }
+
+    fn auto_outline_box(&self) -> Rect {
+        use style::computed_values::overflow_x::T as Overflow;
+        let bb = self.frame.border_box;
+        let box_ = self.style.get_box();
+        if self.text_input.is_none() && box_.overflow_x == Overflow::Visible && box_.overflow_y == Overflow::Visible {
+            bb.union(*self.node.scrollable_overflow())
+        } else {
+            bb
+        }
+    }
+
     pub(crate) fn draw_outline(&self, scene: &mut impl PaintScene) {
         let Some((style, color, width, outset)) = self.outline_line() else {
             return;
         };
+        // pyro: an `auto` ring across the edge itself (no offset) is a stroke of that edge: the
+        // border shape's outer edge, or the rounded border box, the same curves either way (WPT
+        // css-borders `border-shape/border-shape-outline-auto*` match `border-radius` boxes).
+        if matches!(self.style.get_outline().outline_style, OutlineStyle::Auto)
+            && (outset - width / 2.0).abs() < 1e-6
+            && (self.border_shape().is_none() || self.auto_outline_box() == self.frame.border_box)
+        {
+            let outline_rects = if self.border_shape().is_none() { self.auto_outline_rects() } else { Vec::new() };
+            let path = match self.border_shape() {
+                Some(shape) => shape.outer_edge(),
+                // pyro: descendants' boxes reach out of it: the ring is one path along the union
+                // of the boxes (Chromium's focus ring over the element's outline rects, not their
+                // bounding box), its joins round.
+                None if outline_rects.len() > 1 => {
+                    let union = rect_union_outline(&outline_rects);
+                    let stroke = Stroke::new(width).with_join(Join::Round);
+                    scene.stroke(&stroke, self.transform, color, None, &union);
+                    return;
+                }
+                None => {
+                    // (Around the overflowing descendants' boxes too: that box, its corners
+                    // rounded as the border box's.)
+                    // pyro: its corners shaped as the border box's (`corner-shape`), as Chromium
+                    // draws the ring along the box's edge (WPT css-borders `corner-shape-outline-auto-001`).
+                    let r = self.frame.border_radii;
+                    CssBox::new(self.auto_outline_box(), Insets::ZERO, Insets::ZERO, 0.0, r)
+                        .contoured_like(&self.frame)
+                        .border_box_path()
+                }
+            };
+            // (Each contour closed: an open end leaves a seam in the ring.)
+            let mut closed = BezPath::new();
+            let mut open = false;
+            for el in path.elements() {
+                match el {
+                    kurbo::PathEl::MoveTo(_) if open => {
+                        closed.close_path();
+                        closed.push(*el);
+                    }
+                    kurbo::PathEl::MoveTo(_) => {
+                        closed.push(*el);
+                        open = true;
+                    }
+                    kurbo::PathEl::ClosePath => {
+                        closed.close_path();
+                        open = false;
+                    }
+                    _ => closed.push(*el),
+                }
+            }
+            if open {
+                closed.close_path();
+            }
+            scene.stroke(&Stroke::new(width), self.transform, color, None, &closed);
+            return;
+        }
         // pyro: around a `border-shape`, a solid or double outline is the band between the outer
         // edge grown by the offset and by the offset and the width
         // (`BorderShapePainter::PaintOutline`); other styles are drawn around the box.
@@ -1384,7 +1713,15 @@ impl ElementCx<'_, '_> {
             if let Some(shape) = self.border_shape() {
                 use crate::kurbo_css::contoured::{boolean, flatten};
                 let offset = outset - width;
+                // pyro: around an oval both edges are ovals (`border-radius: 50%` boxes), filled
+                // even-odd as exact curves, as the outline of such a box is drawn.
+                let oval = shape.oval.is_some();
                 let band = |outer: f64, inner: f64| {
+                    if oval {
+                        let mut path = shape.outer_path_with_offset(outer);
+                        path.extend(shape.outer_path_with_offset(inner).iter());
+                        return path;
+                    }
                     let shapes = [
                         flatten(&shape.outer_path_with_offset(outer)),
                         flatten(&shape.outer_path_with_offset(inner)),
@@ -1399,11 +1736,18 @@ impl ElementCx<'_, '_> {
                 } else {
                     band(offset + width, offset)
                 };
-                scene.fill(Fill::NonZero, self.transform, color, None, &path);
+                let fill = if oval { Fill::EvenOdd } else { Fill::NonZero };
+                scene.fill(fill, self.transform, color, None, &path);
                 return;
             }
         }
-        let bb = self.frame.border_box;
+        // pyro: an `auto` outline (a focus ring) goes around the boxes of the element's
+        // descendants that overflow it too, unless it clips them (Chromium's outline rects with
+        // block ink overflow; WPT css-ui `outline-with-padding-001`).
+        let bb = match self.style.get_outline().outline_style {
+            OutlineStyle::Auto => self.auto_outline_box(),
+            _ => self.frame.border_box,
+        };
         // A rounded corner grows with the outline, and a square one stays
         // square.
         let corner = |r: Vec2| {
@@ -1417,7 +1761,11 @@ impl ElementCx<'_, '_> {
         // pyro: a negative `outline-offset` pulls the outline in no further than to the middle of
         // the box in each axis apart (Blink: a wide box's outline meets in the middle of its
         // height, not of its width; WPT css-ui `outline-014`, `-015`).
-        let raw = self.style.get_outline().outline_offset.to_f64_px().trunc() * self.scale;
+        let raw = match self.style.get_outline().outline_style {
+            // (`auto`: its inner edge, [`Self::outline_line`].)
+            OutlineStyle::Auto => outset - width,
+            _ => self.style.get_outline().outline_offset.px(width / self.scale).trunc() * self.scale,
+        };
         let (ox, oy) = if raw < 0.0 {
             (raw.max(-(bb.width() / 2.0).floor()) + width, raw.max(-(bb.height() / 2.0).floor()) + width)
         } else {
@@ -1443,6 +1791,15 @@ impl ElementCx<'_, '_> {
             BorderStyle::Dotted | BorderStyle::Dashed => {
                 self.draw_dotted_dashed_sides(scene, &frame, [Some((style, color)); 4]);
             }
+            // pyro: a double outline is two lines a third of its width each, as a double border
+            // (WPT css-ui `outline-style-014`).
+            BorderStyle::Double
+                if width >= 3.0 * self.scale && frame.border_box.width().min(frame.border_box.height()) > 2.0 * width =>
+            {
+                let mut path = frame.border_slice(0.0, 1.0 / 3.0).border_ring();
+                path.extend(&frame.border_slice(2.0 / 3.0, 1.0).border_ring());
+                scene.fill(Fill::NonZero, self.transform, color, None, &path);
+            }
             // TODO: Implement other border styles
             BorderStyle::Solid
             | BorderStyle::Inset
@@ -1464,3 +1821,248 @@ fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool
     a.width == b.width && a.color == b.color && a.is_double() == b.is_double()
 }
 
+
+/// pyro: at most this many outline rects are united along their edges; more (an element of
+/// thousands of line boxes) are outlined by their bounding box, keeping the ring's cost bounded.
+const MAX_UNITED_OUTLINE_RECTS: usize = 256;
+
+/// pyro: the outline of the union of axis-aligned `rects` (device px) as closed loops, for an
+/// `auto` outline's ring: a sweep over the slabs between the rects' distinct x edges, the merged
+/// y-intervals of each slab giving its horizontal edges and the change between neighbouring slabs
+/// the vertical ones, chained into loops. Past [`MAX_UNITED_OUTLINE_RECTS`] rects, their
+/// bounding box.
+pub(crate) fn rect_union_outline(rects: &[Rect]) -> BezPath {
+    use std::collections::HashMap;
+    // Coordinates snapped to 1/64 px, compared exactly; whether a rect has an area is decided
+    // after snapping (one thinner than the grid unites as nothing: it is a line).
+    let q = |v: f64| (v * 64.0).round() as i64;
+    let snapped = rects.iter().map(|r| [q(r.x0), q(r.y0), q(r.x1), q(r.y1)]);
+    let (rects, lines): (Vec<[i64; 4]>, Vec<[i64; 4]>) =
+        snapped.filter(|r| r[2] >= r[0] && r[3] >= r[1] && (r[2] > r[0] || r[3] > r[1])).partition(|r| r[2] > r[0] && r[3] > r[1]);
+    let point = |(x, y): (i64, i64)| Point::new(x as f64 / 64.0, y as f64 / 64.0);
+    if rects.len() + lines.len() > MAX_UNITED_OUTLINE_RECTS {
+        let b = rects.iter().chain(&lines).fold([i64::MAX, i64::MAX, i64::MIN, i64::MIN], |b, r| {
+            [b[0].min(r[0]), b[1].min(r[1]), b[2].max(r[2]), b[3].max(r[3])]
+        });
+        return Rect::from_points(point((b[0], b[1])), point((b[2], b[3]))).to_path(0.1);
+    }
+    let mut path = BezPath::new();
+    // A rect of no width or no height outside the others: its outline, a line (the ring around
+    // it).
+    for l in &lines {
+        if !rects.iter().any(|r| r[0] <= l[0] && r[1] <= l[1] && l[2] <= r[2] && l[3] <= r[3]) {
+            path.move_to(point((l[0], l[1])));
+            path.line_to(point((l[2], l[3])));
+            path.close_path();
+        }
+    }
+    if rects.is_empty() {
+        return path;
+    }
+    let mut xs: Vec<i64> = rects.iter().flat_map(|r| [r[0], r[2]]).collect();
+    xs.sort_unstable();
+    xs.dedup();
+    // The merged y-intervals of each slab [xs[i], xs[i + 1]).
+    let mut slabs: Vec<Vec<(i64, i64)>> = Vec::with_capacity(xs.len().saturating_sub(1));
+    let mut by_x0: Vec<&[i64; 4]> = rects.iter().collect();
+    by_x0.sort_by_key(|r| r[0]);
+    let mut next = 0;
+    let mut active: Vec<(i64, i64, i64)> = Vec::new(); // (y0, y1, x1)
+    for w in xs.windows(2) {
+        let (x0, _) = (w[0], w[1]);
+        while next < by_x0.len() && by_x0[next][0] <= x0 {
+            let r = by_x0[next];
+            active.push((r[1], r[3], r[2]));
+            next += 1;
+        }
+        active.retain(|&(_, _, x1)| x1 > x0);
+        let mut intervals: Vec<(i64, i64)> = active.iter().map(|&(a, b, _)| (a, b)).collect();
+        intervals.sort_unstable();
+        let mut merged: Vec<(i64, i64)> = Vec::with_capacity(intervals.len());
+        for (a, b) in intervals {
+            match merged.last_mut() {
+                Some(last) if a <= last.1 => last.1 = last.1.max(b),
+                _ => merged.push((a, b)),
+            }
+        }
+        slabs.push(merged);
+    }
+    // Directed boundary edges, the union on their right in y-down coordinates (clockwise loops):
+    // a top edge runs +x, a bottom edge -x, a left edge -y, a right edge +y.
+    let mut edges: Vec<((i64, i64), (i64, i64))> = Vec::new();
+    for (i, merged) in slabs.iter().enumerate() {
+        let (xa, xb) = (xs[i], xs[i + 1]);
+        for &(a, b) in merged {
+            edges.push(((xa, a), (xb, a)));
+            edges.push(((xb, b), (xa, b)));
+        }
+    }
+    // Vertical edges at each x: where only the slab on the right covers y, a left edge (upwards);
+    // where only the slab on the left does, a right edge (downwards).
+    let empty: Vec<(i64, i64)> = Vec::new();
+    for (i, &x) in xs.iter().enumerate() {
+        let left = if i > 0 { &slabs[i - 1] } else { &empty };
+        let right = slabs.get(i).unwrap_or(&empty);
+        let mut cuts: Vec<i64> = left.iter().chain(right.iter()).flat_map(|&(a, b)| [a, b]).collect();
+        cuts.sort_unstable();
+        cuts.dedup();
+        let covers = |set: &[(i64, i64)], y: i64| set.iter().any(|&(a, b)| a <= y && y < b);
+        for c in cuts.windows(2) {
+            let (a, b) = (c[0], c[1]);
+            match (covers(left, a), covers(right, a)) {
+                (false, true) => edges.push(((x, b), (x, a))),
+                (true, false) => edges.push(((x, a), (x, b))),
+                _ => {}
+            }
+        }
+    }
+    // Chain the edges into loops (each point starts as many edges as it ends).
+    let mut from: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, e) in edges.iter().enumerate() {
+        from.entry(e.0).or_default().push(i);
+    }
+    let mut used = vec![false; edges.len()];
+    for start in 0..edges.len() {
+        if used[start] {
+            continue;
+        }
+        let mut loop_points: Vec<(i64, i64)> = vec![edges[start].0];
+        let mut at = start;
+        loop {
+            used[at] = true;
+            let end = edges[at].1;
+            if end == edges[start].0 {
+                break;
+            }
+            loop_points.push(end);
+            let Some(nexts) = from.get(&end) else { break };
+            let Some(&n) = nexts.iter().find(|&&n| !used[n]) else { break };
+            at = n;
+        }
+        // Collinear points dropped: the corners alone.
+        let len = loop_points.len();
+        let corners: Vec<(i64, i64)> = (0..len)
+            .filter(|&k| {
+                let (p, c, n) = (loop_points[(k + len - 1) % len], loop_points[k], loop_points[(k + 1) % len]);
+                !((p.0 == c.0 && c.0 == n.0) || (p.1 == c.1 && c.1 == n.1))
+            })
+            .map(|k| loop_points[k])
+            .collect();
+        if corners.len() < 4 {
+            continue;
+        }
+        path.move_to(point(corners[0]));
+        for &c in &corners[1..] {
+            path.line_to(point(c));
+        }
+        path.close_path();
+    }
+    path
+}
+
+#[cfg(test)]
+mod rect_union_tests {
+    use super::*;
+
+    fn loops(path: &BezPath) -> Vec<usize> {
+        let mut out = Vec::new();
+        for el in path.elements() {
+            match el {
+                kurbo::PathEl::MoveTo(_) => out.push(1),
+                kurbo::PathEl::LineTo(_) => *out.last_mut().unwrap() += 1,
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn overlapping_rects_make_one_l_shaped_loop() {
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 60.0, 10.0), Rect::new(10.0, 0.0, 60.0, 50.0)]);
+        // An L: six corners.
+        assert_eq!(loops(&path), vec![6]);
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(5.0, 5.0, 15.0, 15.0)]);
+        assert_eq!(loops(&path), vec![8]);
+    }
+
+    #[test]
+    fn disjoint_rects_make_one_loop_each_and_contained_ones_none() {
+        let path = rect_union_outline(&[
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Rect::new(20.0, 0.0, 30.0, 10.0),
+            Rect::new(2.0, 2.0, 8.0, 8.0),
+        ]);
+        assert_eq!(loops(&path), vec![4, 4]);
+    }
+
+    /// pyro: a rect thinner than the 1/64 px grid is a line once snapped: outlined as one (out and
+    /// back) where no other rect covers it, not dropped with the degenerate loop its edges made.
+    #[test]
+    fn a_rect_that_snaps_to_no_height_or_width_is_outlined_as_a_line() {
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(20.0, 0.0, 30.0, 0.004)]);
+        assert_eq!(loops(&path), vec![2, 4]);
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(20.0, 0.0, 20.0, 10.0)]);
+        assert_eq!(loops(&path), vec![2, 4]);
+        // Covered by the other rect, or alone: no ring beside it, or the line alone.
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(2.0, 2.0, 2.004, 8.0)]);
+        assert_eq!(loops(&path), vec![4]);
+        assert_eq!(loops(&rect_union_outline(&[Rect::new(5.0, 0.0, 5.004, 8.0)])), vec![2]);
+        // A rect just past the grid in both directions keeps its area.
+        assert_eq!(loops(&rect_union_outline(&[Rect::new(5.0, 0.0, 5.01, 0.01)])), vec![4]);
+    }
+
+    #[test]
+    fn ten_thousand_line_boxes_are_outlined_within_a_bound() {
+        // An element of 10,000 overflowing line boxes: past the cap, their bounding box, at once.
+        let rects: Vec<Rect> =
+            (0..10_000).map(|i| Rect::new(0.0, i as f64 * 20.0, 100.0 + (i % 7) as f64, i as f64 * 20.0 + 18.0)).collect();
+        let t = std::time::Instant::now();
+        let path = rect_union_outline(&rects);
+        assert_eq!(loops(&path), vec![4]);
+        assert!(t.elapsed() < std::time::Duration::from_millis(50), "took {:?}", t.elapsed());
+        // At the cap, the sweep: still fast, one loop per disjoint line.
+        let rects: Vec<Rect> = rects.into_iter().take(MAX_UNITED_OUTLINE_RECTS).collect();
+        let t = std::time::Instant::now();
+        let path = rect_union_outline(&rects);
+        assert_eq!(loops(&path).len(), MAX_UNITED_OUTLINE_RECTS);
+        assert!(t.elapsed() < std::time::Duration::from_millis(200), "took {:?}", t.elapsed());
+    }
+}
+
+#[cfg(test)]
+mod side_marks_tests {
+    use super::*;
+    use kurbo::PathEl;
+
+    fn starts(style: BorderStyle, length: f64, visible: Option<(f64, f64)>) -> (Vec<(i64, i64)>, usize) {
+        let mut path = BezPath::new();
+        let mut dots = Vec::new();
+        let axes = (Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0));
+        straight_side_marks(&mut path, &mut dots, style, Point::ZERO, axes, (length, 4.0), 1.0, visible);
+        let starts = path
+            .elements()
+            .iter()
+            .filter_map(|el| match el {
+                PathEl::MoveTo(p) => Some(((p.x * 64.0).round() as i64, (p.y * 64.0).round() as i64)),
+                _ => None,
+            })
+            .collect();
+        (starts, dots.len())
+    }
+
+    /// pyro: a dotted or dashed side a million pixels long (a column rule) makes the marks in
+    /// view only, where the whole side has them, and keeps only its corner dots for the
+    /// corners it shares (the dedup is not quadratic).
+    #[test]
+    fn a_tall_side_makes_only_its_visible_marks_in_place() {
+        for style in [BorderStyle::Dotted, BorderStyle::Dashed] {
+            let (all, corner_dots) = starts(style, 20_000.0, None);
+            let (seen, _) = starts(style, 20_000.0, Some((1_000.0, 2_000.0)));
+            assert!(!seen.is_empty() && seen.len() * 10 < all.len(), "{style:?}: {} of {}", seen.len(), all.len());
+            assert!(seen.iter().all(|s| all.contains(s)), "{style:?}: marks moved");
+            assert!(corner_dots <= 2);
+            let (huge, _) = starts(style, 4.0e6, Some((0.0, 1_000.0)));
+            assert!(huge.len() < 400, "{style:?}: {}", huge.len());
+        }
+    }
+}

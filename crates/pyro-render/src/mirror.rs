@@ -289,10 +289,18 @@ impl Mirror {
                 self.scrolled.push(id);
             }
         }
+        // pyro: the active scroll markers follow the scroll positions (a group that scrolls keeps
+        // its active marker in view), without waiting for a layout.
+        self.doc.update_scroll_marker_states();
     }
 
     /// Gives the document the current scroll targets in `targets` (by key; `u64::MAX`: the
     /// viewport's, which is the root element's), for scroll marker selection.
+    pub(crate) fn set_popover_anchors(&mut self, pairs: &[(u64, u64)]) {
+        let anchors = pairs.iter().filter_map(|&(popover, source)| Some((self.node(popover)?, self.node(source)?))).collect();
+        self.doc.set_popover_anchors(anchors);
+    }
+
     pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
         let root = self.doc.try_root_element().map(|root| root.id);
         let targets: Vec<(NodeId, NodeId)> = targets
@@ -385,7 +393,18 @@ impl Mirror {
     }
 
     pub(crate) fn node(&self, key: u64) -> Option<NodeId> {
-        self.nodes.get(&key).map(|e| e.id)
+        if let Some(e) = self.nodes.get(&key) {
+            return Some(e.id);
+        }
+        // pyro: a `::before` / `::after` box, by its element's key with the pseudo-element in the
+        // top two bits (pyro-dom `snapshot::pseudo_render_key`).
+        let element = self.nodes.get(&(key & !(3 << 62)))?.id;
+        let node = self.doc.get_node(element)?;
+        match key >> 62 {
+            1 => node.before(),
+            2 => node.after(),
+            _ => None,
+        }
     }
 
     /// The key of the mirrored Blitz node `id`.
@@ -552,11 +571,19 @@ impl Mirror {
         // them through the provider, which serves the new text.
         if !changed_sheets.is_empty() {
             let href = QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("href"));
+            // pyro: the engine's sheet key travels under the document's nonce name.
+            let nonce = m.doc.snapshot_nonce().to_owned();
             for n in new {
                 if let TreeKind::Element { name, attrs } = &n.kind {
                     if name.local == blitz_dom::local_name!("link") {
-                        if let Some((_, url)) = attrs.iter().find(|(a, _)| a.local == href.local) {
-                            if changed_sheets.contains(url) {
+                        // pyro: by its sheet key (the link's engine attribute), never its URL.
+                        let sheet = attrs
+                            .iter()
+                            .find(|(a, _)| blitz_dom::engine_field(&nonce, a).as_deref() == Some(blitz_dom::SHEET_ATTRIBUTE))
+                            .map(|(_, v)| v);
+                        let url = attrs.iter().find(|(a, _)| a.local == href.local).map(|(_, v)| v);
+                        if let (Some(sheet), Some(url)) = (sheet, url) {
+                            if changed_sheets.contains(sheet) {
                                 m.set_attribute(nodes[&n.key].id, href.clone(), url);
                                 mutations += 1;
                             }
@@ -785,8 +812,11 @@ fn differs(doc: &BaseDocument, id: NodeId, kind: &TreeKind) -> bool {
         TreeKind::Element { attrs, .. } => match node.element_data() {
             None => true,
             Some(el) => {
-                el.attrs.iter().any(|a| !attrs.iter().any(|(n, _)| *n == a.name))
-                    || attrs.iter().any(|(n, v)| !el.attrs.iter().any(|a| a.name == *n && a.value == *v))
+                // pyro: as the tree carries them: the engine's under their nonce names
+                // (`Attributes::wire`), which the element keeps apart from its own.
+                let have = el.attrs.wire(doc.snapshot_nonce());
+                have.iter().any(|(a, _)| !attrs.iter().any(|(n, _)| n == a))
+                    || attrs.iter().any(|(n, v)| !have.iter().any(|(a, w)| a == n && w == v))
             }
         },
     }
@@ -803,8 +833,8 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) -> bool {
         TreeKind::Text(t) => m.set_node_text(id, t),
         TreeKind::Element { name: tag, attrs } => {
             let el = m.doc.get_node(id).and_then(|n| n.element_data());
-            let current: Vec<(QualName, String)> =
-                el.map(|e| e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect()).unwrap_or_default();
+            let nonce = m.doc.snapshot_nonce().to_owned();
+            let current: Vec<(QualName, String)> = el.map(|e| e.attrs.wire(&nonce)).unwrap_or_default();
             let has_checkbox = el.is_some_and(|e| e.checkbox_input_checked().is_some());
             for (name, _) in &current {
                 if !attrs.iter().any(|(n, _)| n == name) {

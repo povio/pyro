@@ -53,6 +53,50 @@ fn assert_near(got: [u8; 3], want: [u8; 3], what: &str) {
 
 const BOX: &str = "position:absolute;left:0;top:0;width:100px;height:100px;box-sizing:border-box;background:green;";
 
+#[test]
+fn independent_fill_under_fractional_clip_remains_visible() {
+    use anyrender::{PaintScene, Scene, render_to_buffer};
+    use kurbo::{Affine, BezPath, Rect};
+    use peniko::{Fill, color::palette::css};
+    let paint = |separate| render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(|painter| {
+        let mut scene = Scene::new();
+        let shape = BezPath::from_svg("M1 15L15 1L29 15L15 29Z").unwrap();
+        let bounds = Rect::new(0., 0., 30., 30.);
+        scene.fill(Fill::NonZero, Affine::IDENTITY, css::RED, None, &shape);
+        if separate {
+            painter.append_scene(std::mem::take(&mut scene), Affine::IDENTITY);
+        }
+        scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &shape);
+        scene.fill(Fill::NonZero, Affine::IDENTITY, css::GREEN, None, &bounds);
+        scene.pop_layer();
+        painter.append_scene(scene, Affine::IDENTITY);
+    }, 30, 30);
+    assert!(paint(false) == paint(true));
+}
+
+#[test]
+fn covering_child_hides_underpaint_up_to_the_overflow_clip() {
+    let clipped = |color, width| render(&format!("<div style='{BOX}background:{color};corner-shape:bevel;border-radius:40px;overflow:clip'><div style='width:{width}px;height:140px;background:green'></div></div>"), 1.0);
+    assert!(clipped("red", 140).data == clipped("white", 140).data);
+    assert_eq!(pixel(&clipped("red", 20), 1.0, 55.0, 55.0), RED);
+}
+
+#[test]
+fn rotating_a_solid_circle_preserves_its_coverage() {
+    let circle = |angle| render(&format!("<div style='{BOX}border-radius:50%;transform:rotate({angle}deg)'></div>"), 1.0);
+    let plain = circle(0);
+    assert_eq!(pixel(&plain, 1.0, 50.0, 50.0), GREEN);
+    assert!(circle(45).data == plain.data);
+}
+
+#[test]
+fn background_color_under_an_opaque_image_does_not_bleed_at_round_corners() {
+    let image = |color| render(&format!("<div style='{BOX}border-radius:24px;background:{color} linear-gradient(green,green)'></div>"), 1.0);
+    let clear = image("transparent");
+    assert_eq!(pixel(&clear, 1.0, 50.0, 50.0), GREEN);
+    assert!(image("red").data == clear.data);
+}
+
 /// A bevelled corner is the straight line between the ends of its radii, and the border's inner
 /// edge is that line moved in by the border width along its normal (WPT `corner-shape-bevel`:
 /// the padding edge meets the top at 27.071px).

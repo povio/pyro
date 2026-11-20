@@ -68,14 +68,10 @@ where
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
-    let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-        Overflow::Scroll => style.scrollbar_width(),
-        _ => 0.0,
-    });
-    // TODO: make side configurable based on the `direction` property
-    let mut content_box_inset = padding_border;
-    content_box_inset.right += scrollbar_gutter.x;
-    content_box_inset.bottom += scrollbar_gutter.y;
+    // pyro: `CoreStyle::scrollbar_gutter`: which edges hold scrollbar space.
+    let gutter_edges = style.scrollbar_gutter();
+    let scrollbar_gutter = Point { x: gutter_edges.left + gutter_edges.right, y: gutter_edges.top + gutter_edges.bottom };
+    let content_box_inset = padding_border + gutter_edges;
 
     let has_styles_preventing_being_collapsed_through = !style.is_block()
         || style.overflow().x.is_scroll_container()
@@ -123,7 +119,7 @@ where
             .maybe_set(known_dimensions.width)
             .maybe_set(node_size.width)
             .map_definite_value(|size| {
-                size.maybe_clamp(node_min_size.width, node_max_size.width) - content_box_inset.horizontal_axis_sum()
+                (size.maybe_clamp(node_min_size.width, node_max_size.width) - content_box_inset.horizontal_axis_sum()).max(0.0)
             }),
         height: known_dimensions
             .height
@@ -132,7 +128,7 @@ where
             .maybe_set(known_dimensions.height)
             .maybe_set(node_size.height)
             .map_definite_value(|size| {
-                size.maybe_clamp(node_min_size.height, node_max_size.height) - content_box_inset.vertical_axis_sum()
+                (size.maybe_clamp(node_min_size.height, node_max_size.height) - content_box_inset.vertical_axis_sum()).max(0.0)
             }),
     };
 
@@ -149,9 +145,17 @@ where
         .or(node_size)
         .unwrap_or(measured_size + content_box_inset.sum_axes())
         .maybe_clamp(node_min_size, node_max_size);
+    // pyro: a height that is known (or the box's own) is not the ratio's (css-sizing-4 § 5.1: with
+    // both sizes definite the preferred aspect ratio has no effect; WPT css-sizing
+    // `aspect-ratio/select-element-001`, a select made as wide as its label).
+    let height_given = known_dimensions.height.is_some() || node_size.height.is_some();
     let size = Size {
         width: clamped_size.width,
-        height: f32_max(clamped_size.height, aspect_ratio.map(|ratio| clamped_size.width / ratio).unwrap_or(0.0)),
+        height: if height_given {
+            clamped_size.height
+        } else {
+            f32_max(clamped_size.height, aspect_ratio.map(|ratio| clamped_size.width / ratio).unwrap_or(0.0))
+        },
     };
     let size = size.maybe_max(padding_border.sum_axes().map(Some));
 

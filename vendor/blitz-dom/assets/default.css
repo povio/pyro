@@ -8,6 +8,28 @@
 /* pyro: for the `svg|svg` rule below. */
 @namespace svg url(http://www.w3.org/2000/svg);
 
+*|*:root { view-transition-name: root; }
+
+*|*::view-transition { position: absolute; inset: 0; }
+*|*::view-transition-group(*) {
+    position: absolute; top: 0; left: 0;
+    animation-duration: 0.25s; animation-fill-mode: both;
+}
+*|*::view-transition-image-pair(*) { position: absolute; inset: 0; }
+*|*::view-transition-old(*), *|*::view-transition-new(*) {
+    position: absolute; inset-block-start: 0; inline-size: 100%; block-size: auto;
+}
+*|*::view-transition-image-pair(*), *|*::view-transition-old(*), *|*::view-transition-new(*) {
+    animation-duration: inherit; animation-fill-mode: inherit; animation-delay: inherit;
+    animation-timing-function: inherit; animation-iteration-count: inherit;
+    animation-direction: inherit; animation-play-state: inherit;
+}
+@keyframes -ua-view-transition-fade-out { to { opacity: 0; } }
+@keyframes -ua-view-transition-fade-in { from { opacity: 0; } }
+@keyframes -ua-mix-blend-mode-plus-lighter {
+    from { mix-blend-mode: plus-lighter; } to { mix-blend-mode: plus-lighter; }
+}
+
 @font-face {
     font-family: -moz-bullet-font;
     src: url("data:font/woff2;base64,d09GMgABAAAAAARYAAwAAAAACqAAAAQFAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP0ZGVE0cBmAAgwIRCAqKDIcYATYCJAMsCxgABCAFg2AHIBtDCFGUrM0MyM/DGJyndUclpZwnU8QPQ6wsFOHO+/yHNvV9IEqSQgsVJW2p+uZkohKbVExPEz/JUW7zk6rzYH9723UJ/4DzBII8CSzwgFMOOE4KW2rjAmh4qQWSiid60f7Y9FsXScfUpeluagFqTTQYyoQaQSubXil0lHRsBehAI9KofG/6ogF9/Hl6lBd920LmeTxj8JXBfFWKwYAY3QsAAXD17ZAB4M6Ocv/nsZlkaTl0gLipewIQEMB2d9lKDAT1ZjP/F7jmWsQ3wn8AZvZFgIIC7ESh4AP1iFb4nPnfWyJgcQArpUWqW9W96j71kHr/L9a/dNRbj+8/ujXLWCMMFYVYiXoEaZQ4YOC/E7Dkz3JEjaokxAP6i3hIUjv9fwYyE6I3yIozKkaGN63fP36aeLJmxlRZwZiFziPrMVvOlnCF98SQJfGO/Xllv/FnWAcEjrMqaMCPwVmktCDO5zzxcXqeKS+QFxYnvJLFVzKZAFcKnlZRwHEPVM3mXxNt2gdZEpkKaIAG9gbgDTU5SOYDcmX7Rr61evEA1U+1/3SMb6FFtUqh55nYleE95j2zPNxzdlnGoR5xu/PxQKzb7bFaFLvl79Z54Lx9OH+g0/PPYlcsNo/nwP2V2vsHUHsV4KqEsd+e2r6Fu2v7abkfvsb65b41uwvRvqewH25kTntqolbYsEr5DAqrX97a0jrBLjFRExVHR2dH1Za6unyZfCVZHqQP0BtYjuUYlg9J6SurcrTEiOr26m5xcuTW4Sp3ljkUYWJ9+/iVmzbzPpcuXnGeqU3U7IKjz/qeKSSCltyhuSoxkqqTZX+DXt/OMmAikC8SzVD0jg3dbhIE0eUqc04UFFrxCSXzFxgHclzRMPe0ocOjiKRoSZISE0OtpkBjECdxkkRM1KiaJV0ed0V5umBP1wyUPL2ZBGLSDh5itIHahHRF0CY5nZMGib6T3cOmDvcTSZKuPiFJFpPRGNTIOq7jl5OjDiGIoo6qEE0QtfQJ3VYUD2RZvbm5uWWCWOgR4HXAk5GxLEO0izhLdvPTfpTV3xeOnOfT96uR53CdPrPq+P9HZvzO4QCMmDr7lTcNZorT6iMOYgI+IxClMzeCspeoLt5ABGSpta6gRZmQSnzk9e9jmOAYKC7RsyGMYaB6MpbNKMiRq2U6vI0yPZuTMiODFytMrGEBi7pjGgkAMoaNLGOFSoYceaZMx1+XTC/UNpmRzY1nmwT7AIcK+fK5lYNjz893lwMTuXlD2AKl8Md+24AxitRaLH/MUMqd9z862owy/bZTuZUqs1iRQop0KdLgZwPc9JS0lprnkef1gitBCRhjgV+vjGK8BfIV8CrlVghj1vIyZfyC/AJvqbsQYAEA/v+IAQA=");
@@ -90,6 +112,7 @@ input[type="checkbox"] {
 input[type="checkbox" i],
 input[type="radio" i],
 input[type="range" i],
+select,
 progress,
 meter {
     appearance: auto;
@@ -101,6 +124,19 @@ input[type="radio"] {
     border: none;
     padding: initial;
     margin: 3px 3px 0 5px;
+}
+
+/* pyro: Chromium's color well (html.css): sized in logical axes, so it turns with the
+   writing mode. */
+input[type="color" i] {
+    box-sizing: border-box;
+    inline-size: 50px;
+    block-size: 27px;
+    border: 1px solid #767676;
+    padding-block: 1px;
+    padding-inline: 2px;
+    background-color: #EFEFEF;
+    cursor: default;
 }
 
 /* pyro: Chromium's range, progress and meter (html.css): a range is 129x16 by
@@ -133,16 +169,23 @@ meter {
 
 /* Chromium's UA sheet: text inputs are 2px-inset-bordered with 1px 2px
    padding (a 40x30 input's box is 48x36), textareas 1px solid with 2px. */
+/* pyro: and of native appearance (Chromium's html.css: `appearance: auto`), which blitz-paint
+   draws as Chromium's themed field (`native_textfield`); `appearance: none` shows this border. */
 input {
     border: 2px inset #767676;
-    padding: 1px 2px;
+    padding-block: 1px;
+    padding-inline: 2px;
     background-color: Field;
+    appearance: auto;
 }
 
 textarea {
+    appearance: auto;
     border: 1px solid #999;
     padding: 2px;
     background-color: Field;
+    /* pyro: Blink's StyleAdjuster: a textarea's `overflow: visible` is `auto`. */
+    overflow: auto;
 }
 
 /* Chromium's `font: -webkit-small-control`: form controls default to 13.333px. */
@@ -166,6 +209,15 @@ select {
     box-sizing: border-box;
     border: 1px solid #767676;
     line-height: normal !important;
+    /* pyro: blitz-paint rounds a native menu list's corners (not of `appearance: none` or
+       `menulist-button`, which is painted with its CSS border). */
+    -moz-default-appearance: menulist;
+}
+
+/* pyro: a list box is no menu list (`menulist-button` is an alias of `auto` on it). */
+select[multiple],
+select[size]:not([size="0"]):not([size="1"]) {
+    -moz-default-appearance: listbox;
 }
 
 /* Chromium: `select:-internal-list-box { vertical-align: text-bottom }`. */
@@ -183,6 +235,14 @@ textarea {
 textarea {
     white-space: pre-wrap;
     overflow-wrap: break-word;
+}
+
+/* pyro: https://html.spec.whatwg.org/multipage/rendering.html#the-textarea-element-2: a
+   textarea with wrap=off does not wrap its lines (WPT css-overflow
+   text-overflow-string-in-textarea-multiline). */
+textarea[wrap="off" i] {
+    overflow-wrap: normal;
+    text-wrap-mode: nowrap;
 }
 
 /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
@@ -240,7 +300,8 @@ input[type="button"] {
        appearance-disabling properties; WPT css-ui `compute-kind-widget-generated/*`). */
     -moz-default-appearance: button;
     appearance: auto;
-    padding: 1px 6px;
+    padding-block: 1px;
+    padding-inline: 6px;
     color: black;
     background-color: #EFEFEF;
     text-align: center;
@@ -278,7 +339,8 @@ input[type="file" i]::file-selector-button {
     border: 1px solid #999;
     -moz-default-appearance: button;
     appearance: auto;
-    padding: 1px 6px;
+    padding-block: 1px;
+    padding-inline: 6px;
     color: black;
     background-color: #EFEFEF;
     text-align: center;
@@ -318,6 +380,11 @@ legend {
     padding-inline-start: 2px;
     padding-inline-end: 2px;
 }
+
+/* pyro: HTML § 15.3.13 rendering: a legend's `align` places it over the fieldset's border. */
+legend[align=left i] { justify-self: left; }
+legend[align=center i] { justify-self: center; }
+legend[align=right i] { justify-self: right; }
 
 /* pyro: Chromium's computed style for options and groups. A
    drop-down select's children generate no boxes (layout/construct.rs); a
@@ -1028,6 +1095,9 @@ frameset {
     position: static ! important;
     float: none ! important;
     border: none ! important;
+    /* pyro: a frameset is the viewport's size wherever it is, whatever its author size (Chrome). */
+    width: 100vw ! important;
+    height: 100vh ! important;
 }
 
 frame {
@@ -1036,10 +1106,12 @@ frame {
 
 /* pyro: an inline <svg> clips its content at its viewport, as Chromium's UA sheet
  * has it (svg.css). The clip is blitz-paint's (`draw_svg`), at the content box
- * (`overflow-clip-margin: content-box`); in layout the overflow of a replaced
+ * (`overflow-clip-margin: content-box`, which an author's margin moves out:
+ * WPT css-overflow `overflow-clip-margin-svg`); in layout the overflow of a replaced
  * element is ignored (stylo_taffy). */
 svg|svg:not(:root) {
     overflow: hidden;
+    overflow-clip-margin: content-box;
 }
 
 /* pyro: so does a <foreignObject> at its box (Chromium's svg.css), which holds its HTML
@@ -1061,6 +1133,11 @@ img, video, canvas {
 
 iframe {
     border: 2px inset;
+}
+
+/* pyro: HTML § 15.4.1 (embedded content): the `frameborder` attribute's "no border". */
+iframe[frameborder="0"], iframe[frameborder=no i] {
+    border: none;
 }
 
 spacer {
@@ -1154,6 +1231,11 @@ details:not([open])>:not(summary:first-of-type) {
     display: none !important;
 }
 
+/* pyro: the slot its content renders in (its user-agent shadow tree's, as Chromium has it). */
+details::details-content {
+    display: block;
+}
+
 /* media elements */
 video {
     object-fit: contain;
@@ -1228,7 +1310,9 @@ dialog:not([open]) {
     display: none;
 }
 
-dialog:modal {
+/* pyro: and a dialog kept in the top layer for its overlay transition (-moz-topmost-modal:
+   Chromium's :-internal-dialog-in-top-layer). */
+dialog:modal, dialog:-moz-topmost-modal {
     -moz-top-layer: top !important;
     position: fixed;
     overflow: auto;
@@ -1398,4 +1482,10 @@ dialog:modal, :popover-open {
     inset: 0;
     pointer-events: none !important;
     background-color: transparent;
+}
+
+/* pyro: preformatted and code text gets no automatic spacing between ideographs and letters
+ * (HTML § 15.3.4, as Gecko; WPT css-text `text-autospace-preformatted-001`). */
+pre, listing, plaintext, xmp, code, kbd, samp, tt {
+    text-autospace: no-autospace;
 }

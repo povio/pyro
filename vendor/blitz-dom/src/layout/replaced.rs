@@ -83,6 +83,12 @@ pub(crate) fn object_loads_image(element: &ElementData) -> bool {
     match element.attr(local_name!("type")).map(str::trim) {
         Some(mime) if !mime.is_empty() => mime.get(..6).is_some_and(|m| m.eq_ignore_ascii_case("image/")),
         _ => element.attr(local_name!("data")).is_some_and(|data| {
+            // pyro: a `data:` URL says its type (HTML "the object element" takes the resource's
+            // type): `data:image/...` is an image (WPT css-contain `contain-size-replaced-001`).
+            let trimmed = data.trim_start();
+            if trimmed.get(..5).is_some_and(|p| p.eq_ignore_ascii_case("data:")) {
+                return trimmed[5..].trim_start().get(..6).is_some_and(|m| m.eq_ignore_ascii_case("image/"));
+            }
             let path = data.split(['?', '#']).next().unwrap_or_default();
             let extension = path.rsplit_once('.').map_or("", |(_, ext)| ext);
             ["svg", "svgz", "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"]
@@ -92,19 +98,16 @@ pub(crate) fn object_loads_image(element: &ElementData) -> bool {
     }
 }
 
-/// pyro: whether an `<object>` shows a loaded `image`: a raster image, or an SVG
-/// with a natural width or height or a ratio. An SVG with none of them keeps the
-/// object's fallback, as before objects loaded images: Chromium would draw it at
-/// the default object size, which makes WPT CSS2 `replaced-intrinsic-002` (a
-/// pass only because its fallback text lay under the reference's green square;
-/// every browser fails it) fail.
+/// pyro: whether an `<object>` shows a loaded `image`: a raster image or an SVG, also one with no
+/// natural size or ratio, drawn at the default object size as Chromium does (WPT css-sizing
+/// `aspect-ratio/replaced-element-021`; the owner's "follow Chrome": WPT CSS2
+/// `replaced-intrinsic-002`, which every browser fails, passed only because its fallback text
+/// lay under the reference's green square, and fails now as in Chromium).
 pub(crate) fn object_shows_image(image: &crate::node::ImageData) -> bool {
     match image {
         crate::node::ImageData::Raster(_) => true,
         #[cfg(feature = "svg")]
-        crate::node::ImageData::Svg(svg) => {
-            svg.intrinsic_width().is_some() || svg.intrinsic_height().is_some() || svg.viewbox_aspect_ratio().is_some()
-        }
+        crate::node::ImageData::Svg(_) => true,
         crate::node::ImageData::None => false,
     }
 }
@@ -155,6 +158,9 @@ pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
 /// pyro: whether `element` is laid out as an atomic inline box when inline-level:
 /// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image or a document.
 pub(crate) fn is_inline_box(element: &ElementData) -> bool {
+    if element.image_broken && !is_content_image(element) {
+        return false;
+    }
     is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
 }
 

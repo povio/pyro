@@ -952,6 +952,9 @@ pub trait TElement:
         display: &Display,
     ) -> euclid::default::Size2D<Option<app_units::Au>>;
 
+    /// Last layout's selected fallback, if any.
+    fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
+
     /// Returns true if the element has all of specified selector flags.
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
 

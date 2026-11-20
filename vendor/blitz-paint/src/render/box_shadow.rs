@@ -65,7 +65,6 @@ fn spread_radii(
 pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::ComputedValues, scale: f64) -> kurbo::BezPath {
     use kurbo::Shape as _;
     use style::values::computed::Overflow;
-    use style::values::generics::box_::OverflowClipMarginBox;
     let box_style = style.get_box();
     let (visible_x, visible_y) = (box_style.overflow_x == Overflow::Visible, box_style.overflow_y == Overflow::Visible);
     // Paint containment clips as `overflow: clip` does, on both axes.
@@ -77,6 +76,22 @@ pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::Comp
     if !(clip_x || clip_y) || !(clip_x || visible_x) || !(clip_y || visible_y) {
         return frame.padding_box_path();
     }
+    margin_clip_path(frame, style, scale, clip_x, clip_y)
+}
+
+/// pyro: the clip of a box that clips on `clip_x` and/or `clip_y` as `overflow: clip` does, at
+/// its `overflow-clip-margin` (see [`overflow_clip_path`]). Also the viewport clip of an inline
+/// `<svg>` (a replaced element, which `overflow: hidden` clips as `clip` does: Chromium's
+/// `LayoutReplaced` applies the margin to it; WPT css-overflow `overflow-clip-margin-svg`).
+pub(super) fn margin_clip_path(
+    frame: &CssBox,
+    style: &style::properties::ComputedValues,
+    scale: f64,
+    clip_x: bool,
+    clip_y: bool,
+) -> kurbo::BezPath {
+    use kurbo::Shape as _;
+    use style::values::generics::box_::OverflowClipMarginBox;
     let clip_margin = &style.get_margin().overflow_clip_margin;
     // (A negative margin moves the edge inwards, to the box's middle at most.)
     let margin = f64::from(clip_margin.offset.px()) * scale;
@@ -190,8 +205,61 @@ impl ElementCx<'_, '_> {
     /// pyro: what this element clips its overflow to ([`overflow_clip_path`]): with a
     /// `border-shape`, the inner edge of its border.
     pub(super) fn overflow_clip_path(&self, style: &style::properties::ComputedValues) -> kurbo::BezPath {
+        let mut path = self.overflow_clip_path_of_box(style);
+        // pyro: a fieldset's `overflow` clips its anonymous content box, not its rendered legend
+        // (HTML § 15.3.13; WPT the-fieldset-and-legend-elements `legend-position-relative-2`).
+        if let Some(legend) = self.context.fieldset_legend_rect(self.node.id) {
+            use kurbo::Shape as _;
+            path.extend(legend.scale_from_origin(self.scale).path_elements(0.1));
+        }
+        path
+    }
+
+    fn overflow_clip_path_of_box(&self, style: &style::properties::ComputedValues) -> kurbo::BezPath {
         if let Some(shape) = self.border_shape() {
             return shape.inner_path();
+        }
+        // pyro: a table with captions clips its wrapper box, captions too (its frame is its grid
+        // alone; Chromium's table fragment holds its captions; WPT css-contain
+        // `contain-paint-table-002`).
+        // (Only with captions: a grid as tall as the wrapper keeps its own frame, the collapsed
+        // borders it was laid out with. And only for paint containment: `overflow` on a table
+        // applies to the table box, the grid, not the wrapper (CSS 2 § 11.1.1; WPT
+        // css21-errata `s-11-1-1b-001`).)
+        let visible = {
+            use style::values::computed::Overflow;
+            let b = style.get_box();
+            b.overflow_x == Overflow::Visible && b.overflow_y == Overflow::Visible
+        };
+        let contains_paint = style.get_box().contain.contains(style::values::computed::Contain::PAINT);
+        if let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data
+            && visible
+            && contains_paint
+            && table.grid_box.borrow().is_some_and(|(top, height)| {
+                top != 0.0 || (height - self.node.final_layout().size.height).abs() > 0.01
+            })
+        {
+            let wrapper = super::create_css_rect(style, self.node.final_layout(), self.scale);
+            return overflow_clip_path(&wrapper, style, self.scale);
+        }
+        // pyro: classic scrollbars: a scroll container's content is cut to its scrollport, the
+        // padding box less the scrollbar gutters (Chrome: WPT css-overflow
+        // `overflow-scroll-resize-visibility-hidden`). A rounded padding box keeps its shape.
+        if let Some(bars) = self.node.classic_scrollbars() {
+            use kurbo::Shape as _;
+            use style::values::computed::Overflow;
+            let b = style.get_box();
+            let scrolls = |o: Overflow| matches!(o, Overflow::Hidden | Overflow::Scroll | Overflow::Auto);
+            let r = self.frame.border_radii;
+            let square = [r.top_left, r.top_right, r.bottom_right, r.bottom_left].iter().all(|v| v.x <= 0.0 && v.y <= 0.0);
+            if square && scrolls(b.overflow_x) && scrolls(b.overflow_y) {
+                let (g, s) = (bars.gutters, self.scale);
+                let p = self.frame.padding_box;
+                let x0 = p.x0 + g.left as f64 * s;
+                let y0 = p.y0 + g.top as f64 * s;
+                return kurbo::Rect::new(x0, y0, (p.x1 - g.right as f64 * s).max(x0), (p.y1 - g.bottom as f64 * s).max(y0))
+                    .to_path(0.1);
+            }
         }
         overflow_clip_path(&self.frame, style, self.scale)
     }
@@ -217,6 +285,7 @@ impl ElementCx<'_, '_> {
             (blur / 2.0) as f32,
         )));
         let bounds = path.bounding_box().inflate(blur * 2.0, blur * 2.0);
+        if self.capture_budget.is_some_and(|budget| !budget.take(path.elements().len().saturating_add(8))) { return; }
         let mut group = anyrender::Scene::new();
         group.push_layer(Fill::NonZero, Mix::Normal, 1.0, transform, &bounds, Some(filter), None);
         group.fill(Fill::NonZero, transform, color, None, path);
@@ -239,7 +308,17 @@ impl ElementCx<'_, '_> {
         let current_color = self.style.clone_color();
         let box_shadow = &self.style.get_effects().box_shadow.0;
         let clip = if inset { shape.inner_path() } else { shape.outer_path() };
-        let mut clipped = false;
+        // pyro: an outer shadow under a shape its opaque background fills (no inner shape: the
+        // background is clipped to the shape) needs no cut, as a box's (`draw_outset_box_shadow`):
+        // the shadow shows under the shape's anti-aliased edge as it does a `border-radius` box's
+        // (WPT css-borders `border-shape-shadow-blur`).
+        let covered = !inset && shape.inner.is_none() && {
+            let background = self.style.get_background().background_color.resolve_to_absolute(&current_color).as_srgb_color();
+            let canvas_background = self.context.root_element_id == Some(self.node.id)
+                || self.context.canvas_background == Some(self.node.id);
+            background.components[3] >= 1.0 && !canvas_background && self.style.get_effects().opacity >= 1.0
+        };
+        let mut clipped = covered;
         for shadow in box_shadow.iter().filter(|s| s.inset == inset).rev() {
             let color = shadow.base.color.resolve_to_absolute(&current_color).as_srgb_color();
             if color.components[3] <= 0.0 {
@@ -251,21 +330,47 @@ impl ElementCx<'_, '_> {
             );
             let spread = shadow.spread.px() as f64 * self.scale;
             let blur = shadow.base.blur.px() as f64 * self.scale;
-            if !clipped {
+            // pyro: a circle's blurred inset shadow clips itself to the circle (below): a second
+            // clip would take its anti-aliased edge's coverage twice.
+            let inset_circle = inset && blur > 0.0 && shape.inner_circle().is_some();
+            if !clipped && !inset_circle {
                 if inset {
                     scene.push_clip_layer(Fill::NonZero, self.transform, &clip);
                 } else {
                     // Everything but the outer edge's area.
                     let far = clip.bounding_box().inflate(1e5, 1e5);
-                    let outside = boolean(
-                        &[vec![rect_polygon(far)], flatten(&clip)],
-                        |inside| inside[0] && !inside[1],
-                    );
-                    scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
+                    if shape.oval.is_some() {
+                        // pyro: an oval's edge as its curve (one contour, even-odd), as a
+                        // `border-radius` box's shadow is cut: a flattened edge took its
+                        // anti-aliased pixels apart (WPT css-borders `border-shape-shadow-circle`).
+                        let mut outside = far.to_path(0.1);
+                        outside.extend(clip.iter());
+                        scene.push_clip_layer(Fill::EvenOdd, self.transform, &outside);
+                    } else {
+                        let outside = boolean(
+                            &[vec![rect_polygon(far)], flatten(&clip)],
+                            |inside| inside[0] && !inside[1],
+                        );
+                        scene.push_clip_layer(Fill::NonZero, self.transform, &outside);
+                    }
                 }
                 clipped = true;
             }
-            if inset {
+            if let Some(circle) = shape.inner_circle().filter(|_| inset_circle) {
+                // pyro: a circle's blurred inset shadow as a `border-radius: 50%` box's: the
+                // colour less the blurred hole (WPT css-borders `border-shape-shadow-inset-blur`).
+                let clip_path = super::border_shape::oval_path(circle).unwrap_or_default();
+                scene.push_layer(Fill::NonZero, Mix::Normal, 1.0, self.transform, &clip_path, None, None);
+                scene.fill(Fill::NonZero, self.transform, color, None, &clip_path);
+                scene.push_layer(Fill::NonZero, Compose::DestOut, 1.0, self.transform, &clip_path, None, None);
+                let hole = circle.inflate(-spread, -spread);
+                if hole.width() > 0.0 && hole.height() > 0.0 {
+                    let transform = self.transform.then_translate(offset);
+                    scene.draw_box_shadow(transform, hole, Color::WHITE, hole.width() / 2.0, blur / 2.0);
+                }
+                scene.pop_layer();
+                scene.pop_layer();
+            } else if inset {
                 // The hole is the inner edge shrunk by the spread; the shadow is all around it.
                 let hole = if spread == 0.0 {
                     clip.clone()
@@ -288,7 +393,7 @@ impl ElementCx<'_, '_> {
                 self.fill_shadow_path(scene, &path, color, offset, blur);
             }
         }
-        if clipped {
+        if clipped && !covered {
             scene.pop_layer();
         }
     }

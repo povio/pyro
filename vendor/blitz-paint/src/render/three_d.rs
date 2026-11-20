@@ -147,8 +147,7 @@ impl M4 {
     }
 }
 
-/// The smallest W a plane point is drawn at: the plane is cut at the viewer's plane there.
-const MIN_W: f64 = 1e-6;
+use blitz_dom::projection::{clip_w, project, MIN_W, PROJECT_LIMIT};
 
 /// The clip rect a plane is recorded with: Blitz culls nothing in a plane (its stand-in can lie
 /// elsewhere than the plane does).
@@ -196,6 +195,9 @@ impl BlitzDomPainter<'_, '_> {
     /// (recorded with its context's planes, then drawn sorted). Returns whether it did.
     pub(super) fn paint_plane(&self, scene: &mut impl PaintScene, node: &Node, parent_transform: Affine) -> bool {
         let Some(plane) = node.plane_3d() else { return false };
+        if !plane.matrix.to_array().iter().all(|v| v.is_finite()) {
+            return true;
+        }
         if self.three_d.entered.get() == Some(node.id) {
             self.three_d.entered.set(None);
             return false;
@@ -275,12 +277,15 @@ impl BlitzDomPainter<'_, '_> {
         for (plane, commands) in chunks {
             let Some(record) = collector.planes[plane].as_ref() else { continue };
             let (recorded, matrix) = (record.recorded, record.matrix);
-            if record.own_hidden || !(recorded.determinant().abs() > 1e-12) {
+            let determinant = recorded.determinant();
+            if record.own_hidden || !recorded.is_finite() || !determinant.is_finite() || determinant.abs() <= 1e-12
+                || !matrix.0.iter().flatten().all(|v| v.is_finite()) {
                 continue;
             }
             let local = transformed(&commands, recorded.inverse());
             let Some(bounds) = crate::bounds::scene_bounds(&local) else { continue };
             let (draw, local) = match matrix.flat(bounds) {
+                Some(Some(affine)) if !affine.is_finite() => continue,
                 Some(None) => continue,
                 Some(Some(affine)) if close(affine, recorded) => (Draw::AsRecorded, local),
                 Some(Some(affine)) => (Draw::Affine(affine), local),
@@ -336,7 +341,7 @@ impl BlitzDomPainter<'_, '_> {
                     clip_w(&homogeneous)
                 }
             };
-            if points.len() < 3 {
+            if points.len() < 3 || !points.iter().flatten().all(|v| v.is_finite()) {
                 continue;
             }
             polygons.push(bsp::Polygon::new(points, prepared.len(), prepared.len()));
@@ -492,8 +497,7 @@ fn project_commands(commands: &[RenderCommand], h: &[f64; 9], bounds: Rect) -> O
         // each pixel samples only what it shows.
         let projected = project_path(path, transform, h);
         let far = kurbo::Shape::bounding_box(&projected);
-        const LIMIT: f64 = 1e5;
-        (far.x0 > -LIMIT && far.y0 > -LIMIT && far.x1 < LIMIT && far.y1 < LIMIT).then_some(projected)
+        (far.x0 > -PROJECT_LIMIT && far.y0 > -PROJECT_LIMIT && far.x1 < PROJECT_LIMIT && far.y1 < PROJECT_LIMIT).then_some(projected)
     };
     let mut out = Vec::with_capacity(commands.len());
     for command in commands {
@@ -542,7 +546,7 @@ fn project_path(path: &BezPath, transform: Affine, h: &[f64; 9]) -> BezPath {
             // `perspective()` function or the `perspective` property) lands on the same pixels,
             // where rounding noise moved an edge's coverage by a level (WPT
             // `transform3d-perspective-001`).
-            let snap = |v: f64| (v * 1024.0).round() / 1024.0;
+            let snap = |v: f64| if v.abs() <= PROJECT_LIMIT { (v * 1024.0).round() / 1024.0 } else { v };
             let points: Vec<[f64; 3]> =
                 clip_w(&homogeneous).into_iter().map(|p| [snap(p[0]), snap(p[1]), p[2]]).collect();
             for (k, p) in points.iter().enumerate() {
@@ -712,36 +716,6 @@ fn close(a: Affine, b: Affine) -> bool {
     (0..4).all(|i| (a[i] - b[i]).abs() <= 1e-9) && (4..6).all(|i| (a[i] - b[i]).abs() <= 1e-7)
 }
 
-/// The projection of `rect` through the homography `h`, cut at the viewer's plane.
-fn project(h: &[f64; 9], rect: Rect) -> Vec<(f64, f64)> {
-    let corners = [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)];
-    let homogeneous: Vec<[f64; 4]> = corners
-        .iter()
-        .map(|&(x, y)| {
-            let [a, b, c, d, e, f, g, i, j] = *h;
-            [a * x + b * y + c, d * x + e * y + f, 0.0, g * x + i * y + j]
-        })
-        .collect();
-    clip_w(&homogeneous).into_iter().map(|p| (p[0], p[1])).collect()
-}
-
-/// A polygon of homogeneous points cut at the viewer's plane (W below [`MIN_W`]) and divided by W.
-fn clip_w(points: &[[f64; 4]]) -> Vec<[f64; 3]> {
-    let mut out = Vec::with_capacity(points.len() + 2);
-    for i in 0..points.len() {
-        let (a, b) = (points[i], points[(i + 1) % points.len()]);
-        let (a_in, b_in) = (a[3] >= MIN_W, b[3] >= MIN_W);
-        if a_in {
-            out.push([a[0] / a[3], a[1] / a[3], a[2] / a[3]]);
-        }
-        if a_in != b_in {
-            let t = (MIN_W - a[3]) / (b[3] - a[3]);
-            let p: [f64; 4] = std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t);
-            out.push([p[0] / MIN_W, p[1] / MIN_W, p[2] / MIN_W]);
-        }
-    }
-    out
-}
 
 #[cfg(test)]
 mod tests {

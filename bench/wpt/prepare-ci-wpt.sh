@@ -13,11 +13,12 @@ stamp="$root/$mode.ready"
 rev=$(tr -d '[:space:]' < "$here/wpt-revision.txt")
 unset WPT_REVISION WPT_REMOTE
 
-set --
-python_identity=
+# Both checkouts carry wptserve's venv: the reftests and crashtests (subset) and the full suite are served by
+# wptserve (bench/wpt/README.md "wptserve").
+export WPT_PYTHON="${WPT_PYTHON:-python3}"
+python_identity=$("$WPT_PYTHON" -c 'import os, sys; print(os.path.realpath(sys.executable)); print(sys.version)')
+set -- --venv
 if [ "$mode" = full ]; then
-  export WPT_PYTHON="${WPT_PYTHON:-python3}"
-  python_identity=$("$WPT_PYTHON" -c 'import os, sys; print(os.path.realpath(sys.executable)); print(sys.version)')
   set -- --all --venv
 fi
 inputs=$(cd "$here" && shasum -a 256 prepare-ci-wpt.sh fetch-wpt.sh wpt-revision.txt wpt-paths.txt)
@@ -29,10 +30,8 @@ matches_checkout() {
     changes=$(git -C "$dir" status --porcelain --untracked-files=no) && [ -z "$changes" ]
 }
 venv_ready() {
-  [ "$mode" != full ] || {
-    cmp -s "$dir/tools/serve/requirements.txt" "$dir/.git/pyro-venv/.pyro-req" &&
-      "$dir/.git/pyro-venv/bin/python" -m pip --version >/dev/null
-  }
+  cmp -s "$dir/tools/serve/requirements.txt" "$dir/.git/pyro-venv/.pyro-req" &&
+    "$dir/.git/pyro-venv/bin/python" -m pip --version >/dev/null
 }
 
 if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$key" ] && matches_checkout && venv_ready &&

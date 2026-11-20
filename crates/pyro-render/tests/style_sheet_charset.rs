@@ -19,12 +19,12 @@ fn a_linked_sheet_is_not_decoded_again_by_its_charset_rule() {
     let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
     for charset in ["iso-8859-1", "shift_jis", "utf-8"] {
         let snapshot = Snapshot {
-            html: "<!doctype html><link rel=stylesheet href='http://test/s.css'>\
+            html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet=s>\
                    <body style='margin:0;background:#fff'><div class='t\u{e9}st' style='width:40px;height:40px'></div>"
                 .into(),
             base_url: "http://test/".into(),
             sheets: HashMap::from([(
-                "http://test/s.css".to_owned(),
+                "s".to_owned(),
                 format!("@charset \"{charset}\";\n.t\u{e9}st {{ background: #0f0 }}"),
             )]),
             width: 100,

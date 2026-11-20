@@ -124,6 +124,39 @@ impl BaseDocument {
             return RestyleDamage::empty();
         };
         let mut damage = own_damage;
+        if !own_damage.is_empty() {
+            if !self.anchor_transform_users.get_mut().is_empty()
+                && let Some((old, blocks)) = self.anchor_transform_users.get_mut().get_mut(&node_id)
+                && let Some(style) = self.nodes[node_id].primary_styles() {
+                let (before, after) = (old.get_box(), style.get_box());
+                if before.transform != after.transform || before.translate != after.translate || before.scale != after.scale || before.rotate != after.rotate || before.transform_origin != after.transform_origin || before.transform_box != after.transform_box || before.transform_style != after.transform_style || before.perspective != after.perspective || before.perspective_origin != after.perspective_origin {
+                    self.anchor_transform_dirty.extend(blocks.iter().copied());
+                }
+                *old = style.clone();
+            }
+            let (options,visibility,out_of_flow,queries) = self.nodes[node_id].primary_styles().map_or((false,false,false,false),|style| {
+                let pos = style.get_position();
+                let positioned = style.get_box().position.is_absolutely_positioned() && !style.get_box().display.is_none();
+                (!pos.position_try_fallbacks.value.is_none(),pos.position_visibility.contains(style::values::computed::PositionVisibility::NO_OVERFLOW),positioned,positioned && Self::uses_anchor_queries(&style))
+            });
+            let node = &mut self.nodes[node_id];
+            node.flags.set(NodeFlags::POSITION_TRY_OPTIONS, options);
+            if !queries && !self.anchor_area_snapshots.get_mut().is_empty() { self.anchor_area_snapshots.get_mut().remove(&node_id); }
+            node.flags.set(NodeFlags::ANCHOR_QUERIES, queries);
+            node.flags.set(NodeFlags::POSITION_VISIBILITY_CHECK, visibility);
+            if !visibility || !out_of_flow { node.anchor_hidden.set(false); }
+            if !queries { node.anchor_scroll_axes.set((None,None)); node.anchor_visibility_target.set(None); node.anchor_invalid.set(false); }
+            let names = self.nodes[node_id].primary_styles().and_then(|s| {
+                let names = &s.get_box().anchor_name;
+                (!names.value.0.is_empty()).then(|| {
+                    let scope = names.scope.get_shadow_root_for_scoped(&self.nodes[node_id]);
+                    (scope.map(|root| root.id), names.value.clone())
+                })
+            });
+            self.update_anchor_names(node_id, names);
+            let rules = (options && out_of_flow).then(|| self.nodes[node_id].primary_styles().unwrap().get_position().position_try_fallbacks.value.clone());
+            self.update_anchor_rule_users(node_id, rules);
+        }
         self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
         self.nodes[node_id].flags.set(NodeFlags::OWN_LAYOUT_DAMAGE, reaches_layout(own_damage));
 
@@ -187,6 +220,7 @@ impl BaseDocument {
             }
         }
         damage |= damage_from_children;
+        if !self.anchor_transform_dirty.is_empty() && self.anchor_transform_dirty.remove(&node_id) { damage |= ONLY_RELAYOUT; }
 
         // Put children back
         self.nodes[node_id].children = children;
@@ -225,6 +259,13 @@ impl BaseDocument {
         }
 
         // Reconstruction replaces the anonymous boxes with freshly styled ones.
+        if !own_damage.is_empty() && super::multicol::uses_anonymous_content_box(&self.nodes[node_id])
+            && (super::multicol::has_multicol_content_box(&self.nodes[node_id])
+                || self.nodes[node_id].anonymous_blocks.iter().any(|&id| self.nodes.get(id).is_some_and(super::multicol::is_multicol_node)))
+        {
+            damage.insert(CONSTRUCT_FC);
+            damage_for_parent.insert(CONSTRUCT_DESCENDENT);
+        }
         if !own_damage.is_empty() && !damage.intersects(CONSTRUCT_BOX | CONSTRUCT_FC) {
             let anonymous_damage = self.refresh_anonymous_block_styles(node_id) - POS_CHILD_RELAYOUT;
             damage |= anonymous_damage;
@@ -324,7 +365,7 @@ impl BaseDocument {
     /// Notes `node_id` in its table if it is a table cell: to transform and visit in the paint
     /// tree again, and, when its damage reaches `layout`, as a changed cell to measure and lay
     /// out again.
-    fn note_changed_table_cell(&self, node_id: NodeId, layout: bool) {
+    pub(crate) fn note_changed_table_cell(&self, node_id: NodeId, layout: bool) {
         let node = &self.nodes[node_id];
         let index = node.layout_data().table_cell_index;
         if index == u32::MAX {
@@ -947,7 +988,7 @@ impl BaseDocument {
             let Content::Items(items) = &style.get_counters().content else { return None };
             let [ContentItem::Image(image)] = &items.items[..] else { return None };
             match crate::util::unfiltered_image(image) {
-                StyloImage::Url(ComputedUrl::Valid(url)) => {
+                StyloImage::Url(ComputedUrl::Valid(url, _)) => {
                     Some((url.as_str().to_string(), crate::util::image_resolution(image)))
                 }
                 _ => None,
@@ -1006,6 +1047,7 @@ impl BaseDocument {
             self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::BorderImage);
             self.flush_image_layers_from_style(node_id, ImageLayerKind::ListStyle);
+            self.flush_image_layers_from_style(node_id, ImageLayerKind::Shape);
             self.flush_content_image(node_id);
             #[cfg(feature = "svg")]
             self.flush_svg_references_from_style(node_id);
@@ -1042,11 +1084,16 @@ impl BaseDocument {
         if candidates.is_empty() && elem.reference_images.is_empty() {
             return;
         }
-        let urls: Vec<Option<ServoArc<url::Url>>> = candidates
+        // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5 § 4.5.4).
+        let urls: Vec<Option<(ServoArc<url::Url>, blitz_traits::net::FetchOptions)>> = candidates
             .into_iter()
             .map(|candidate| match candidate {
-                ReferenceCandidate::Url(url) => Some(url.clone()),
-                ReferenceCandidate::Attr(raw) => self.resolve_url(raw).map(ServoArc::new),
+                ReferenceCandidate::Url(url, modifiers) => {
+                    Some((url.clone(), crate::net::url_fetch_options(modifiers, Some(&self.inline_urls), Some(&self.sheet_policies))))
+                }
+                ReferenceCandidate::Attr(raw) => {
+                    self.resolve_url(raw).map(|url| (ServoArc::new(url), Default::default()))
+                }
             })
             .collect();
         let old = elem.reference_images.clone();
@@ -1054,40 +1101,54 @@ impl BaseDocument {
         let own = [document(self.url().as_str()), document(self.base_url().as_str())];
         let mut new: ThinVec<Option<ImageResourceData>> = ThinVec::with_capacity(urls.len());
         for (idx, url) in urls.into_iter().enumerate() {
-            let Some(url) = url else {
+            let Some((url, options)) = url else {
                 new.push(None);
                 continue;
             };
-            if let Some(kept) = old.get(idx).and_then(Option::as_ref).filter(|kept| *kept.url == *url) {
+            // pyro: kept only for the same request (URL, mode, integrity, referrer policy, client):
+            // a changed `integrity()` asks again, and its response alone goes in.
+            let options = self.request_options(options);
+            if let Some(kept) = old.get(idx).and_then(Option::as_ref).filter(|kept| kept.is_request(&url, &options)) {
                 new.push(Some(kept.clone()));
                 continue;
             }
             // An element of this document: nothing to load.
             if own.contains(&document(url.as_str())) {
-                new.push(Some(ImageResourceData { url, status: Status::Ok, image: ImageData::None }));
+                new.push(Some(
+                    ImageResourceData { url, status: Status::Ok, image: ImageData::None, options: Default::default() }
+                        .with_options(options),
+                ));
                 continue;
             }
-            let url_str = url.as_str();
+            let key = options.cache_key(url.as_str());
+            let url_str = key.as_str();
             let kind = ImageType::Reference(idx);
             if let Some(cached_image) = self.image_cache.get(url_str) {
-                new.push(Some(ImageResourceData { url: url.clone(), status: Status::Ok, image: cached_image.clone() }));
+                new.push(Some(ImageResourceData {
+                    url: url.clone(),
+                    status: Status::Ok,
+                    image: cached_image.clone(),
+                    options: options.clone(),
+                }));
             } else if let Some(waiting_list) = self.pending_images.get_mut(url_str) {
                 waiting_list.push((node_id, kind));
-                new.push(Some(ImageResourceData::new(url.clone())));
+                new.push(Some(ImageResourceData::new(url.clone()).with_options(options.clone())));
             } else {
                 self.pending_images.insert(url_str.to_string(), vec![(node_id, kind)]);
+                let mut request = crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref());
+                request.options = options.clone().for_destination(blitz_traits::net::Destination::Image);
                 self.net_provider.fetch(
                     doc_id,
-                    crate::net::stamped_request((*url).clone(), self.abort_signal.as_ref()),
+                    request,
                     ResourceHandler::boxed(
                         self.tx.clone(),
                         doc_id,
                         None,
                         self.shell_provider.clone(),
-                        ImageHandler::new(kind),
+                        ImageHandler::new(kind, &self.raster_budget).options(options.clone()).document(&self.url),
                     ),
                 );
-                new.push(Some(ImageResourceData::new(url.clone())));
+                new.push(Some(ImageResourceData::new(url.clone()).with_options(options)));
             }
         }
         let loaded = new.iter().flatten().any(|data| !matches!(data.image, ImageData::None));
@@ -1102,8 +1163,21 @@ impl BaseDocument {
 
     /// Flush a CSS image layer list (`background-image` or `mask-image`) from style
     /// to dedicated storage on the node, fetching any images which are not yet loaded.
-    fn flush_image_layers_from_style(&mut self, node_id: NodeId, kind: ImageLayerKind) {
+    pub(crate) fn flush_image_layers_from_style(&mut self, node_id: NodeId, kind: ImageLayerKind) {
+        // pyro: a list item's `::marker` whose `content` is one image shows that image instead of
+        // its `list-style-image` (CSS Lists 3 § 3.2): it loads in the list-style slot.
+        let marker_image = match kind {
+            ImageLayerKind::ListStyle => super::list::marker_content_image(self, node_id),
+            _ => None,
+        };
         let doc_id = self.id();
+        // pyro: requests made with other than the defaults are this (frame) document's
+        // (`BaseDocument::request_options`).
+        let client_options = self.request_options(blitz_traits::net::FetchOptions {
+            cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
+            ..Default::default()
+        });
+        let document_url: url::Url = (*self.url).clone();
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
         // borrow of `node` (held by the stylo element data guard) is released
@@ -1132,27 +1206,58 @@ impl BaseDocument {
             // pyro: `mask-border-source` loads as the second border image.
             ImageLayerKind::BorderImage => (&border_sources[..], &mut elem.border_images),
             ImageLayerKind::ListStyle => (
-                std::slice::from_ref(&style.get_list().list_style_image),
+                std::slice::from_ref(marker_image.as_ref().unwrap_or(&style.get_list().list_style_image)),
                 &mut elem.list_style_images,
             ),
+            ImageLayerKind::Shape => (shape_image(&style), &mut elem.shape_images),
         };
 
-        let len = style_images.len();
+        // pyro: the layers' images, then the `url()`s of their `cross-fade()`s (`image_slots`); a
+        // `filter()` image loads the image it filters.
+        let slots = match kind {
+            ImageLayerKind::Background | ImageLayerKind::Mask => crate::util::image_slots(style_images),
+            _ => style_images.iter().map(crate::util::unfiltered_image).collect(),
+        };
+        let len = slots.len();
         elem_images.resize(len, None);
 
         for idx in 0..len {
-            // pyro: a `filter()` image loads the image it filters.
-            let style_image = crate::util::unfiltered_image(&style_images[idx]);
+            let style_image = slots[idx];
             let new_image = match style_image {
-                StyloImage::Url(ComputedUrl::Valid(new_url)) => {
-                    let old_image = elem_images[idx].as_ref();
-                    let old_image_url = old_image.map(|data| &data.url);
-                    if old_image_url.is_some_and(|old_url| **new_url == **old_url) {
+                StyloImage::Url(ComputedUrl::Valid(new_url, modifiers)) => {
+
+                    // pyro: a `shape-outside` image is fetched with CORS (anonymous), and a
+                    // cross-origin one kept apart from the same URL fetched without (CSS Shapes 1
+                    // § 4.1): one that fails the CORS check is no shape (`none`), and one loaded
+                    // for an `<img>` never stands in for it. The mode holds for the whole fetch,
+                    // redirects included (a same-origin URL may redirect to another origin without
+                    // CORS permission), so a same-origin one is kept apart too; only a `data:` URL,
+                    // which cannot redirect, is the same response either way. So is a `mask-image`
+                    // (CSS Masking 1 § 6.2: a potentially CORS-enabled fetch in "Anonymous" mode):
+                    // a cross-origin mask the CORS check does not pass is no mask image.
+                    //
+                    // pyro: a `url()` with request URL modifiers is fetched as they say (CSS Values 5
+                    // § 4.5.4), its response kept apart from the same URL fetched otherwise.
+                    // (An inline sheet's referrer is the document: by its identity, `url_fetch_options`.)
+                    let mut options =
+                        crate::net::url_fetch_options(modifiers.as_deref(), Some(&self.inline_urls), Some(&self.sheet_policies));
+                    if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask)
+                        && options.cors.is_none()
+                        && new_url.scheme() != "data"
+                    {
+                        options.cors = Some(blitz_traits::net::CorsCredentials::SameOrigin);
+                    }
+                    if !options.is_default() {
+                        options.client = client_options.client.clone();
+                    }
+                    // pyro: kept only for the same request (URL, mode, integrity, referrer policy,
+                    // client): a changed `integrity()` asks again, and its response alone goes in.
+                    if elem_images[idx].as_ref().is_some_and(|data| data.is_request(new_url, &options)) {
                         continue;
                     }
-
+                    let key = options.cache_key(new_url.as_str());
                     // Check cache first
-                    let url_str = new_url.as_str();
+                    let url_str = key.as_str();
                     if let Some(cached_image) = self.image_cache.get(url_str) {
                         #[cfg(feature = "tracing")]
                         tracing::info!("Loading image {url_str} from cache");
@@ -1160,13 +1265,14 @@ impl BaseDocument {
                             url: new_url.clone(),
                             status: Status::Ok,
                             image: cached_image.clone(),
+                            options: options.clone(),
                         })
                     } else if let Some(waiting_list) = self.pending_images.get_mut(url_str) {
                         // Image is already being fetched, queue this node
                         #[cfg(feature = "tracing")]
                         tracing::info!("Image {url_str} already pending, queueing node {node_id}");
                         waiting_list.push((node_id, kind.image_type(idx)));
-                        Some(ImageResourceData::new(new_url.clone()))
+                        Some(ImageResourceData::new(new_url.clone()).with_options(options.clone()))
                     } else {
                         // Start fetch and track as pending
                         #[cfg(feature = "tracing")]
@@ -1174,22 +1280,22 @@ impl BaseDocument {
                         self.pending_images
                             .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
 
+                        let mut request =
+                            crate::net::stamped_request((**new_url).clone(), self.abort_signal.as_ref());
+                        request.options = options.clone().for_destination(blitz_traits::net::Destination::Image);
                         self.net_provider.fetch(
                             doc_id,
-                            crate::net::stamped_request(
-                                (**new_url).clone(),
-                                self.abort_signal.as_ref(),
-                            ),
+                            request,
                             ResourceHandler::boxed(
                                 self.tx.clone(),
                                 doc_id,
                                 None, // Don't pass node_id, we'll handle via pending_images
                                 self.shell_provider.clone(),
-                                ImageHandler::new(kind.image_type(idx)),
+                                ImageHandler::new(kind.image_type(idx), &self.raster_budget).options(options.clone()).document(&document_url),
                             ),
                         );
 
-                        Some(ImageResourceData::new(new_url.clone()))
+                        Some(ImageResourceData::new(new_url.clone()).with_options(options))
                     }
                 }
                 _ => None,
@@ -1198,6 +1304,18 @@ impl BaseDocument {
             // Element will always exist due to resize_with above
             elem_images[idx] = new_image;
         }
+    }
+}
+
+/// pyro: the image a float's `shape-outside` names (none or one; none for an element that is not
+/// a float, which `shape-outside` does not apply to: nothing is fetched for it).
+pub(crate) fn shape_image(style: &style::properties::ComputedValues) -> &[style::values::computed::Image] {
+    if style.get_box().float == style::computed_values::float::T::None {
+        return &[];
+    }
+    match &style.get_box().shape_outside {
+        style::values::computed::basic_shape::ShapeOutside::Image(image) => std::slice::from_ref(image),
+        _ => &[],
     }
 }
 
@@ -1212,4 +1330,130 @@ pub(crate) fn border_image_sources(
         sources.push(mask.clone());
     }
     sources
+}
+
+#[cfg(test)]
+mod shape_image_tests {
+    use crate::node::{ImageData, Status};
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
+    use std::sync::{Arc, Mutex};
+
+    /// Records each request (URL, CORS mode) and keeps its handler to answer later.
+    #[derive(Default)]
+    struct Recorder {
+        requests: Mutex<Vec<(String, bool, Option<Box<dyn NetHandler>>)>>,
+    }
+    impl NetProvider for Recorder {
+        fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+            let cors = crate::net::is_cors_request(&request);
+            self.requests.lock().unwrap().push((request.url.to_string(), cors, Some(handler)));
+        }
+    }
+    impl Recorder {
+        fn requests(&self) -> Vec<(String, bool)> {
+            self.requests.lock().unwrap().iter().map(|(u, c, _)| (u.clone(), *c)).collect()
+        }
+        /// Answers the request for `url` with `body` (empty: a failure, as a failed CORS check).
+        fn answer(&self, url: &str, body: &str) {
+            let handler = {
+                let mut requests = self.requests.lock().unwrap();
+                requests.iter_mut().find(|(u, _, h)| u == url && h.is_some()).and_then(|(_, _, h)| h.take())
+            };
+            handler.expect("a pending request").bytes(url.to_string(), Bytes::from(body.to_string()));
+        }
+    }
+
+    const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="5" height="10"/></svg>"#;
+
+    fn doc_with(css: &str) -> (BaseDocument, Arc<Recorder>, crate::NodeId) {
+        doc_cached(css, None)
+    }
+
+    /// With an image already loaded without CORS (an `<img>`'s) at `cached`, the document at
+    /// `http://page.test/`.
+    fn doc_cached(css: &str, cached: Option<&str>) -> (BaseDocument, Arc<Recorder>, crate::NodeId) {
+        let net = Arc::new(Recorder::default());
+        let mut doc = BaseDocument::new(DocumentConfig {
+            net_provider: Some(net.clone()),
+            base_url: Some("http://page.test/".into()),
+            ..Default::default()
+        });
+        if let Some(url) = cached {
+            let svg = crate::util::parse_svg_image(SVG.as_bytes()).expect("svg");
+            doc.image_cache.insert(url.into(), ImageData::Svg(svg.into()));
+        }
+        let root = doc.root_node().id;
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html"), vec![]);
+        let body = mutator.create_element(qual_name!("body"), vec![]);
+        let div = mutator.create_element(qual_name!("div"), vec![Attribute { name: qual_name!("style"), value: css.into() }]);
+        mutator.append_children(body, &[div]);
+        mutator.append_children(html, &[body]);
+        mutator.append_children(root, &[html]);
+        drop(mutator);
+        doc.resolve(0.0);
+        (doc, net, div)
+    }
+
+    /// The shape image slot: (URL, loaded OK, has an image).
+    fn shape(doc: &BaseDocument, div: crate::NodeId) -> Option<(String, bool, bool)> {
+        let el = doc.nodes[div].element_data()?;
+        el.shape_images
+            .first()?
+            .as_ref()
+            .map(|s| (s.url.to_string(), matches!(s.status, Status::Ok), !matches!(s.image, ImageData::None)))
+    }
+
+    #[test]
+    fn shape_images_load_with_cors_apart_from_other_images() {
+        // Not a float: shape-outside does not apply, nothing is fetched.
+        let (_, net, _) = doc_with("shape-outside: url(http://other.test/a.svg)");
+        assert!(net.requests().is_empty(), "{:?}", net.requests());
+
+        // An image of that URL already loaded without CORS (an `<img>`'s) does not stand in.
+        let url = Some("http://other.test/a.svg");
+        let (_, net, _) = doc_cached("float: left; shape-outside: url(http://other.test/a.svg)", url);
+        assert_eq!(net.requests(), vec![("http://other.test/a.svg".to_string(), true)]);
+        // A same-origin one is fetched in CORS mode too: its URL may redirect to another origin
+        // that grants no CORS permission (security review finding 2), so an image of it loaded
+        // without CORS does not stand in either.
+        let (_, net, _) = doc_cached("float: left; shape-outside: url(http://page.test/a.svg)", Some("http://page.test/a.svg"));
+        assert_eq!(net.requests(), vec![("http://page.test/a.svg".to_string(), true)]);
+        let (mut doc, net, div) = doc_cached("float: left; shape-outside: url(http://other.test/a.svg)", url);
+        // The CORS check fails (an empty body): no shape (as `none`).
+        net.answer("http://other.test/a.svg", "");
+        doc.handle_messages();
+        let (_, ok, loaded) = shape(&doc, div).expect("a slot");
+        assert!(!loaded && !ok);
+    }
+
+    #[test]
+    fn a_late_image_the_shape_no_longer_names_is_not_its_shape() {
+        let (mut doc, net, div) = doc_with("float: left; shape-outside: url(http://x.test/a.svg)");
+        let mut mutator = doc.mutate();
+        mutator.set_attribute(div, qual_name!("style"), "float: left; shape-outside: url(http://x.test/b.svg)");
+        drop(mutator);
+        doc.resolve(0.0);
+        assert_eq!(net.requests().len(), 2, "{:?}", net.requests());
+        // B first, then A late: B stays.
+        net.answer("http://x.test/b.svg", SVG);
+        doc.handle_messages();
+        net.answer("http://x.test/a.svg", SVG);
+        doc.handle_messages();
+        let (url, ok, loaded) = shape(&doc, div).expect("a slot");
+        assert_eq!(url, "http://x.test/b.svg");
+        assert!(loaded && ok);
+        // A only: the slot names B, still loading.
+        let (mut doc, net, div) = doc_with("float: left; shape-outside: url(http://x.test/a.svg)");
+        let mut mutator = doc.mutate();
+        mutator.set_attribute(div, qual_name!("style"), "float: left; shape-outside: url(http://x.test/b.svg)");
+        drop(mutator);
+        doc.resolve(0.0);
+        net.answer("http://x.test/a.svg", SVG);
+        doc.handle_messages();
+        let (url, _, loaded) = shape(&doc, div).expect("a slot");
+        assert_eq!(url, "http://x.test/b.svg");
+        assert!(!loaded, "A's image went into B's slot");
+    }
 }

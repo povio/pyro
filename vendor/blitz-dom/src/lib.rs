@@ -37,6 +37,7 @@ pub const BULLET_FONT: &[u8] = include_bytes!("../assets/moz-bullet-font.otf");
 mod document;
 /// pyro: animated values the embedder samples into the cascade.
 pub mod animation;
+pub mod view_transition;
 
 /// The nodes themsleves, and their data.
 pub mod node;
@@ -58,21 +59,24 @@ mod layout;
 pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 pub use layout::multicol::{ColumnFragment, ColumnFragments};
 pub use layout::inline::span_edge_margins;
+pub use layout::inline::effect_entry as inline_effect_entry;
+#[cfg(feature = "svg")]
+pub use layout::shape_outside::{SvgRasterizer, set_svg_rasterizer};
 mod mutator;
 mod query_selector;
 mod resolve;
 pub use resolve::phase_profile;
+pub use resolve::scrolls_leftward;
 /// Computation of resolved CSS property values (`getComputedStyle()`)
 mod resolved_style;
-/// Scrolling of nodes and the viewport, and scroll animations.
+pub mod projection;
 pub mod shape_path;
+/// Scrolling of nodes and the viewport, and scroll animations.
 mod scrolling;
 mod selection;
 /// pyro: the embedder's document selection, painted as highlighted text.
 mod dom_selection;
-pub use dom_selection::{DomSelection, HighlightName};
-/// pyro: the colour space of tagged images.
-mod icc;
+pub use dom_selection::{CaretPosition, DomSelection, HighlightName};
 /// pyro: the language of an element, for `:lang()`.
 mod lang;
 /// pyro: the directionality of an element, for `:dir()`.
@@ -110,7 +114,7 @@ pub mod util;
 #[cfg(feature = "accessibility")]
 mod accessibility;
 
-pub use crate::layout::paint_tree::{HoistedPaintChild, StackingContext, hoisted_child_position};
+pub use crate::layout::paint_tree::{HoistedPaintChild, StackingContext, hoisted_child_position, hoisted_child_strip_position};
 pub use crate::layout::replaced::IntrinsicSizes;
 pub use crate::layout::text_transform::{full_size_kana, full_width};
 #[cfg(feature = "custom-widget")]
@@ -119,11 +123,18 @@ pub use crate::node::Widget;
 pub use blitz_traits::node_id::NodeId;
 // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
 // `Node::final_layout`)
-pub use config::{DocumentConfig, StyleThreading};
+pub use document::SHEET_ATTRIBUTE;
+pub use config::{
+    DocumentConfig, REJECT_ALL_NONCE, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, StyleThreading, ENGINE_FIELDS, engine_field, engine_marked, engine_state,
+    same_secret,
+};
 pub use document::{SvgImageDocument, 
     StyleChange,
     BaseDocument, BoundingRect, DocGuard, DocGuardMut, Document, PlainDocument, UserAgentStylesheet,
+    ViewportScrollbars,
 };
+/// pyro: the process's scrollbar mode (overlay or classic scrollbars).
+pub use stylo_taffy::scrollbars::{self as scrollbar_mode, ScrollbarMode, scrollbar_mode as current_scrollbar_mode, set_scrollbar_mode};
 pub use markup5ever::{
     LocalName, Namespace, NamespaceStaticSet, Prefix, PrefixStaticSet, QualName, local_name,
     namespace_prefix, namespace_url, ns,

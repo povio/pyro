@@ -12,10 +12,10 @@ use super::clip_path::ElementClip;
 use crate::color::{Color, ToColorColor as _};
 use crate::kurbo_css::contoured::{boolean, flatten_with, polygons_path};
 
-/// How finely shape outlines are flattened, and their strokes expanded (device px): as vello_cpu
-/// strokes and fills curves (`vello_common::flatten::TOL`), so that an edge worked out here (the
+/// How finely shape outlines are flattened, and their strokes expanded (device px): as the scene
+/// strokes and fills curves (anyrender_vello_cpu `FINE`), so that an edge worked out here (the
 /// inner edge of a stroke, which clips the overflow) falls where the drawn stroke's does.
-const TOLERANCE: f64 = 0.25;
+const TOLERANCE: f64 = 0.02;
 
 fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
     flatten_with(path, TOLERANCE)
@@ -23,23 +23,63 @@ fn flatten(path: &BezPath) -> Vec<Vec<Point>> {
 
 /// `path` with every subpath closed: a stroke draws the closing side (shapes built for fills,
 /// such as a rectangle's, end at their last corner).
+/// pyro: the oval filling `rect`, drawn as a `border-radius: 50%` box is (as `ellipse()` is);
+/// `None` for an empty rectangle.
+pub(super) fn oval_path(rect: Rect) -> Option<BezPath> {
+    if !(rect.width() > 0.0 && rect.height() > 0.0) {
+        return None;
+    }
+    let radius = kurbo::Vec2::new(rect.width() / 2.0, rect.height() / 2.0);
+    let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
+        top_left: radius,
+        top_right: radius,
+        bottom_right: radius,
+        bottom_left: radius,
+    };
+    let insets = kurbo::Insets::ZERO;
+    Some(closed(&crate::kurbo_css::CssBox::new(rect, insets, insets, 0.0, radii).border_box_path()))
+}
+
 fn closed(path: &BezPath) -> BezPath {
     let mut out = BezPath::new();
     let mut open = false;
+    let mut start = Point::ZERO;
+    // pyro: a subpath whose last segment ends a hair from its start (an arc to the start point
+    // computed in floating point) ends exactly there: the close then adds no segment of its own,
+    // whose arbitrary direction made a stray miter at the vertex (WPT css-borders
+    // `border-shape-shape-arc-miter-limit`).
+    let snap_end = |out: &mut BezPath, start: Point| {
+        let elements = out.elements_mut();
+        if let Some(last) = elements.last_mut() {
+            let end = match last {
+                PathEl::LineTo(p) | PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => Some(p),
+                _ => None,
+            };
+            if let Some(end) = end.filter(|end| end.distance(start) < 1e-6) {
+                *end = start;
+            }
+        }
+    };
     for el in path.elements() {
         match el {
-            PathEl::MoveTo(_) => {
+            PathEl::MoveTo(p) => {
                 if open {
+                    snap_end(&mut out, start);
                     out.close_path();
                 }
                 open = true;
+                start = *p;
             }
-            PathEl::ClosePath => open = false,
+            PathEl::ClosePath => {
+                snap_end(&mut out, start);
+                open = false;
+            }
             _ => {}
         }
         out.push(*el);
     }
     if open {
+        snap_end(&mut out, start);
         out.close_path();
     }
     out
@@ -58,9 +98,15 @@ pub(super) struct BorderShape {
     /// The outer shape (the only one in stroke mode).
     outer: BezPath,
     /// The inner shape, with two.
-    inner: Option<BezPath>,
+    pub(super) inner: Option<BezPath>,
+    /// pyro: the inner shape is an oval inside the outer oval: the border between them is the two
+    /// curves filled even-odd (`ring`), as a `border-radius` box's border is drawn.
+    nested_ovals: bool,
+    /// pyro: nested ovals a uniform width apart around one centre: the border is their centre-line
+    /// ellipse stroked, as a solid `border-radius: 50%` border is drawn (`border.rs`).
+    concentric_ovals: Option<(kurbo::Ellipse, f64)>,
     /// The outer shape's box when it is a circle or an ellipse (Skia grows those as ovals).
-    oval: Option<Rect>,
+    pub(super) oval: Option<Rect>,
     /// Whether the outer shape is all straight lines: its stroke's miters are then never cut.
     polygon: bool,
     /// The relevant side's border width (the stroke's width) and colour.
@@ -115,30 +161,60 @@ impl BorderShape {
     /// What the background is clipped to: the inner shape, or the shape in stroke mode (the
     /// stroke is drawn over it).
     pub(super) fn background_clip(&self) -> BezPath {
-        self.inner.clone().unwrap_or_else(|| self.outer.clone())
+        match (&self.inner, self.oval) {
+            (Some(inner), _) => inner.clone(),
+            // pyro: an oval as a `border-radius: 50%` box's edge (`oval_path`), as its shadow is
+            // drawn: another description of the curve took its anti-aliased pixels apart (WPT
+            // css-borders `border-shape-shadow-blur`).
+            (None, Some(oval)) => oval_path(oval).unwrap_or_else(|| self.outer.clone()),
+            (None, None) => self.outer.clone(),
+        }
     }
 
     /// The outer edge moved out by `offset` (in, when negative), for shadows and outlines
     /// (`BorderShapePainter::OuterPathWithOffset`): an oval grows as an oval, anything else by
     /// its stroke.
+    /// pyro: the visible outer edge's path: the outer shape, or with one shape (the border is
+    /// drawn across it) the outer side of its stroke of the border width, in exact curves (not
+    /// flattened as [`Self::outer_path_with_offset`]'s).
+    pub(super) fn outer_edge(&self) -> BezPath {
+        if self.inner.is_some() || self.width <= 0.0 {
+            return self.outer.clone();
+        }
+        let stroked = kurbo::stroke(
+            self.outer.iter(),
+            &kurbo::Stroke::new(self.width),
+            &kurbo::StrokeOpts::default(),
+            0.01,
+        );
+        // Its contours: the one with the largest bounds is the outer side.
+        let mut best: Option<(f64, BezPath)> = None;
+        let mut current = BezPath::new();
+        let mut take = |path: BezPath, best: &mut Option<(f64, BezPath)>| {
+            use kurbo::Shape as _;
+            let area = path.bounding_box().area();
+            if path.elements().len() > 1 && best.as_ref().is_none_or(|(a, _)| area > *a) {
+                *best = Some((area, path));
+            }
+        };
+        for el in stroked.elements() {
+            if let kurbo::PathEl::MoveTo(_) = el {
+                take(std::mem::take(&mut current), &mut best);
+            }
+            current.push(*el);
+        }
+        take(current, &mut best);
+        best.map_or_else(|| self.outer.clone(), |(_, path)| path)
+    }
+
     pub(super) fn outer_path_with_offset(&self, offset: f64) -> BezPath {
         let total = offset + if self.inner.is_none() { self.width / 2.0 } else { 0.0 };
         if total == 0.0 {
             return self.outer.clone();
         }
         if let Some(oval) = self.oval {
-            let grown = oval.inflate(total, total);
-            if grown.width() > 0.0 && grown.height() > 0.0 {
-                // (Drawn as a `border-radius: 50%` box is, as `ellipse()` is.)
-                let radius = kurbo::Vec2::new(grown.width() / 2.0, grown.height() / 2.0);
-                let radii = crate::kurbo_css::NonUniformRoundedRectRadii {
-                    top_left: radius,
-                    top_right: radius,
-                    bottom_right: radius,
-                    bottom_left: radius,
-                };
-                let insets = kurbo::Insets::ZERO;
-                return closed(&crate::kurbo_css::CssBox::new(grown, insets, insets, 0.0, radii).border_box_path());
+            if let Some(path) = oval_path(oval.inflate(total, total)) {
+                return path;
             }
             return BezPath::new();
         }
@@ -148,6 +224,17 @@ impl BorderShape {
         } else {
             boolean(&shapes, |inside| inside[0] && !inside[1])
         }
+    }
+
+    /// pyro: the box of the inner edge when it is a circle (an oval shape without an inner one):
+    /// its inset shadow is drawn as a `border-radius: 50%` box's.
+    pub(super) fn inner_circle(&self) -> Option<Rect> {
+        if self.inner.is_some() {
+            return None;
+        }
+        let half = self.width.max(0.0) / 2.0;
+        let inner = self.oval?.inflate(-half, -half);
+        ((inner.width() - inner.height()).abs() < 1e-6 && inner.width() > 0.0).then_some(inner)
     }
 
     /// The box of the outer edge moved out by `offset` when it is a circle: vello's blurred
@@ -175,9 +262,22 @@ impl BorderShape {
         }
     }
 
+    /// pyro: the border between two nested ovals as their curves, filled even-odd.
+    fn ring(&self) -> Option<BezPath> {
+        let inner = self.inner.as_ref().filter(|_| self.nested_ovals)?;
+        let mut ring = self.outer.clone();
+        ring.extend(inner.iter());
+        Some(ring)
+    }
+
     /// The area the border covers (`background-clip: border-area` paints there): between the
     /// shapes, or the stroke along the shape (`BorderShapePainter::PaintBorderArea`).
     pub(super) fn border_area_path(&self) -> BezPath {
+        // pyro: between concentric ovals, the stroke the border is drawn as (`paint`), so the
+        // area and the border are one shape (WPT css-backgrounds `clip-border-area-border-shape`).
+        if let Some((ellipse, width)) = self.concentric_ovals {
+            return kurbo::stroke(ellipse.path_elements(TOLERANCE), &Stroke::new(width), &StrokeOpts::default(), TOLERANCE);
+        }
         if let Some(inner) = &self.inner {
             let shapes = [flatten(&self.outer), flatten(inner)];
             return boolean(&shapes, |inside| inside[0] && !inside[1]);
@@ -191,6 +291,14 @@ impl BorderShape {
     /// Draws the border: the area between the shapes, or the stroke along the shape.
     pub(super) fn paint(&self, scene: &mut impl PaintScene, transform: kurbo::Affine) {
         if self.color.components[3] <= 0.0 {
+            return;
+        }
+        if let Some((ellipse, width)) = self.concentric_ovals {
+            scene.stroke(&Stroke::new(width), transform, self.color, None, &ellipse);
+            return;
+        }
+        if let Some(ring) = self.ring() {
+            scene.fill(Fill::EvenOdd, transform, self.color, None, &ring);
             return;
         }
         if let Some(inner) = &self.inner {
@@ -225,6 +333,14 @@ impl ElementCx<'_, '_> {
             match self.basic_shape_clip_with(&item.shape, reference, false) {
                 ElementClip::Shape(mut path, _) => {
                     path.apply_affine(kurbo::Affine::scale(self.scale));
+                    // pyro: an oval as a `border-radius: 50%` box's edge (`oval_path`), the
+                    // curve its border, outline and shadows are compared with (WPT css-borders
+                    // `border-shape-outline-with-border-ellipse`).
+                    if matches!(*item.shape, GenericBasicShape::Circle(_) | GenericBasicShape::Ellipse(_)) {
+                        if let Some(oval) = oval_path(path.bounding_box()) {
+                            return oval;
+                        }
+                    }
                     closed(&path)
                 }
                 _ => BezPath::new(),
@@ -243,6 +359,24 @@ impl ElementCx<'_, '_> {
         let oval = matches!(*outer.shape, GenericBasicShape::Circle(_) | GenericBasicShape::Ellipse(_))
             .then(|| outer_path.bounding_box())
             .filter(|b| b.width() > 0.0 && b.height() > 0.0);
+        let is_oval = |shape: &BasicShape| matches!(shape, GenericBasicShape::Circle(_) | GenericBasicShape::Ellipse(_));
+        let nested_ovals = oval.is_some()
+            && inner.is_some_and(|inner| is_oval(&inner.shape))
+            && inner_path.as_ref().is_some_and(|inner_path| {
+                let (o, i) = (outer_path.bounding_box(), inner_path.bounding_box());
+                i.x0 >= o.x0 && i.y0 >= o.y0 && i.x1 <= o.x1 && i.y1 <= o.y1
+            });
+        let concentric_ovals = inner_path.as_ref().filter(|_| nested_ovals).and_then(|inner_path| {
+            let (o, i) = (outer_path.bounding_box(), inner_path.bounding_box());
+            let width = (o.width() - i.width()) / 2.0;
+            let same = |a: f64, b: f64| (a - b).abs() < 1e-3;
+            (width > 0.0 && same(width, (o.height() - i.height()) / 2.0) && same(o.center().x, i.center().x)
+                && same(o.center().y, i.center().y))
+            .then(|| {
+                let radii = ((o.width() + i.width()) / 4.0, (o.height() + i.height()) / 4.0);
+                (kurbo::Ellipse::new(o.center(), radii, 0.0), width)
+            })
+        });
         let polygon = outer_path
             .elements()
             .iter()
@@ -251,6 +385,8 @@ impl ElementCx<'_, '_> {
         Some(BorderShape {
             outer: outer_path,
             inner: inner_path,
+            nested_ovals,
+            concentric_ovals,
             oval,
             polygon,
             width,

@@ -19,8 +19,10 @@
 //! clamped to it), and with the parent's line names added to its own. It then lays them out in fixed
 //! tracks of the sizes its parent gave it ([`subgrid_tracks`]).
 //!
-//! Not done: subgrids in an orthogonal writing mode (they lay out as `none`), the hypothetical items for
-//! a subgrid's margin, border and padding at an edge with no item, baseline alignment across a subgrid.
+//! An orthogonal subgrid's items are read (style, subgrid axes, baseline flow) in the sizing grid's axes, its
+//! own tracks found through [`AxisMap`]s; subgrids nested in it are mapped against the sizing grid directly.
+//!
+//! Not done: the standalone (own-track) sizes of an orthogonal subgrid's items.
 
 use super::explicit_grid::{compute_explicit_grid_size_in_axis, AutoRepeatStrategy};
 use super::implicit_grid::compute_grid_size_estimate;
@@ -364,7 +366,10 @@ pub(super) fn place_subgrid_items<Tree: LayoutGridContainer>(
     (items, names)
 }
 
-/// The margin, border and padding of a box, `auto` margins as zero, percentages against `basis`
+/// The margin, border and padding of a box, `auto` margins as zero, percentages against `basis`, with its
+/// scrollbar gutters (pyro: a scroll container subgrid's tracks are the parent's less its classic scrollbar
+/// gutters too, as in Blink: WPT css-grid `subgrid/scrollbar-gutter-001`, a 75px column's `overflow: auto;
+/// scrollbar-gutter: stable` subgrid has a 60px track and no horizontal scrollbar)
 fn margin_border_padding<Tree: LayoutGridContainer>(
     tree: &Tree,
     style: &impl CoreStyle,
@@ -374,7 +379,7 @@ fn margin_border_padding<Tree: LayoutGridContainer>(
     let margin = style.margin().map(|margin| margin.resolve_or_zero(basis, calc));
     let border = style.border().map(|border| border.resolve_or_zero(basis, calc));
     let padding = style.padding().map(|padding| padding.resolve_or_zero(basis, calc));
-    margin + border + padding
+    margin + border + padding + style.scrollbar_gutter()
 }
 
 /// The used gap of a subgrid in `axis`: its own, or with `normal` its parent's (`parent_gap`)
@@ -547,9 +552,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         AbsoluteAxis::Horizontal => (extra.left, extra.right) = if rtl { (end, start) } else { (start, end) },
         AbsoluteAxis::Vertical => (extra.top, extra.bottom) = (start, end),
     };
-    let first_new = out.len();
-    // This subgrid's own items as they were pushed (index in `out`), for the edge items
-    let mut direct: Vec<usize> = Vec::new();
     for mut item in items {
         let local = InBothAbsAxis { horizontal: item.column, vertical: item.row };
         item.subgrid_owner = Some(node);
@@ -590,9 +592,9 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             _ => alignment,
         };
         if orthogonal {
-            // (its alignment in the subgrid's axes, which are this grid's swapped)
+            // (its alignment in the subgrid's axes, which are this grid's swapped; its baseline flow is read against
+            // this grid's writing mode already, as its style)
             core::mem::swap(&mut item.align_self, &mut item.justify_self);
-            item.baseline_flow = Size { width: item.baseline_flow.height, height: item.baseline_flow.width };
         }
         if !top_level || maps.vertical.reversed {
             item.align_self = no_baseline(item.align_self);
@@ -601,12 +603,26 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             item.justify_self = no_baseline(item.justify_self);
         }
         let mut excluded = Size { width: !sizing.width, height: !sizing.height };
-        // (Subgrids nested in an orthogonal one are left to it.)
-        let nested = Size {
-            width: item.subgrid.width && sizing.width && !orthogonal,
-            height: item.subgrid.height && sizing.height && !orthogonal,
-        };
-        if nested.width || nested.height {
+        let nested = Size { width: item.subgrid.width && sizing.width, height: item.subgrid.height && sizing.height };
+        if (nested.width || nested.height) && orthogonal {
+            // pyro: a subgrid nested in an orthogonal one: its flags, like its style, are read in the sizing grid's
+            // axes, as is the area it was mapped to there, so its context is found against the sizing grid's
+            // lines directly (its lines' names: the sizing grid's; its gaps: this subgrid's)
+            let gap_of = |axis: AbsoluteAxis| context.axis(maps.get(axis).own).map_or(parent.gap.get_abs(axis), |sub| sub.gap);
+            let nested_parent = SubgridParent {
+                names: parent.names,
+                gap: Size { width: gap_of(AbsoluteAxis::Horizontal), height: gap_of(AbsoluteAxis::Vertical) },
+                direction: parent.direction,
+                percent_basis: parent.percent_basis,
+            };
+            let nested_maps = axis_maps(&tree.get_grid_child_style(item.node));
+            let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
+            let nested_context = child_context(tree, item.node, nested, mapped_area, &nested_parent, nested_maps);
+            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
+            stretch_subgrid_item(&mut item, nested);
+            excluded.width |= nested.width;
+            excluded.height |= nested.height;
+        } else if nested.width || nested.height {
             // A nested subgrid: its lines' names are this subgrid's for its area; its direction is compared
             // with the sizing grid's, whose lines its items are mapped to.
             let nested_parent = SubgridParent {
@@ -663,7 +679,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         }
         item.excluded = excluded;
         if !(excluded.width && excluded.height) {
-            direct.push(out.len());
             out.push(item);
         } else if nested.width || nested.height {
             // A nested subgrid that sizes nothing here itself: kept (taking no part in sizing) for where it
@@ -676,14 +691,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         if !sizing.get_abs(axis) {
             continue;
         }
-        let excluded_in = |item: &GridItem| match axis {
-            AbsoluteAxis::Horizontal => item.excluded.width,
-            AbsoluteAxis::Vertical => item.excluded.height,
-        };
-        let lines_of = |item: &GridItem| match axis {
-            AbsoluteAxis::Horizontal => item.column,
-            AbsoluteAxis::Vertical => item.row,
-        };
         let span = area.get(axis);
         let (edge_start, edge_end) = edge_margins(axis);
         // A zero-size item over `lines` of the subgrid's tracks that carries its margin, border and padding
@@ -729,27 +736,23 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             spacer.extra_margin = extra;
             spacer
         };
-        // Where no item of the subgrid starts at its start (ends at its end), its margin, border and padding
-        // there go into its edge track alone, not across the empty tracks between it and the edge-most item;
-        // an empty subgrid has both in its edge tracks (Chromium; WPT css-grid `subgrid/grid-gap-002`,
-        // `orthogonal-writing-mode-002`, `-003`)
-        let empty = !out[first_new..].iter().any(|item| !excluded_in(item));
-        let own: Vec<usize> = direct.iter().copied().filter(|&index| !excluded_in(&out[index])).collect();
-        if own.is_empty() && !empty {
-            continue;
-        }
-        let first = own.iter().map(|&index| lines_of(&out[index]).start.0).min().unwrap_or(span.end.0);
-        let last = own.iter().map(|&index| lines_of(&out[index]).end.0).max().unwrap_or(span.start.0);
-        if span.span() == 1 && first != span.start.0 && last != span.end.0 {
+        // Its edge tracks take at least its margin, border and padding there, whatever its items (which an
+        // item at the edge may not hold: the half gap difference at its other edge can be negative), and not
+        // the empty tracks between the edge and its edge-most item (Blink's `AccommodateSubgridExtraMargins`;
+        // WPT css-grid `subgrid/grid-gap-002`, `orthogonal-writing-mode-001`..`-003`,
+        // `item-percentage-height-001`)
+        if span.span() == 1 {
             // (one track holds both edges)
-            out.push(spacer_over(span, edge_start, edge_end));
+            if edge_start + edge_end != 0.0 {
+                out.push(spacer_over(span, edge_start, edge_end));
+            }
             continue;
         }
-        if first != span.start.0 && edge_start != 0.0 {
+        if edge_start != 0.0 {
             let lines = Line { start: span.start, end: OriginZeroLine(span.start.0 + 1) };
             out.push(spacer_over(lines, edge_start, 0.0));
         }
-        if last != span.end.0 && edge_end != 0.0 {
+        if edge_end != 0.0 {
             let lines = Line { start: OriginZeroLine(span.end.0 - 1), end: span.end };
             out.push(spacer_over(lines, 0.0, edge_end));
         }
@@ -1060,9 +1063,19 @@ pub(super) fn update_subgrid_track_sizes<Tree: LayoutGridContainer>(
         let mut sub_spans: Vec<(f32, f32)> = (0..count)
             .map(|k| {
                 let (start, end) = spans[k];
-                let start = if k == 0 { start + edge_start } else { start + (sub.gap - (start - spans[k - 1].1)) / 2.0 };
-                let end = if k + 1 == count { end - edge_end } else { end - (sub.gap - (spans[k + 1].0 - end)) / 2.0 };
-                (start, end)
+                let gap_start = if k == 0 { start } else { start + (sub.gap - (start - spans[k - 1].1)) / 2.0 };
+                let gap_end = if k + 1 == count { end } else { end - (sub.gap - (spans[k + 1].0 - end)) / 2.0 };
+                let start = if k == 0 { start + edge_start } else { gap_start };
+                let end = if k + 1 == count { end - edge_end } else { gap_end };
+                // pyro: an edge track that its margin, border and padding (not its gutters) cover more than whole
+                // is empty at the inset edge, not reversed (its far line resolves there: WPT css-grid
+                // `subgrid/abs-pos-002`).
+                let edge_reversed = end < start && gap_end >= gap_start;
+                match (k == 0, k + 1 == count) {
+                    (_, true) if edge_reversed => (end, end),
+                    (true, false) if edge_reversed => (start, start),
+                    _ => (start, end),
+                }
             })
             .collect();
         let content_start = spans[0].0 + edge_start;

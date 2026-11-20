@@ -54,6 +54,7 @@ struct ManualLoader {
     files: RefCell<HashMap<String, String>>,
     /// Every request, in order.
     requests: RefCell<Vec<String>>,
+    image_policies: RefCell<Vec<Option<pyro_net::ReferrerPolicy>>>,
     /// Requests not answered yet: (URL, completion id).
     pending: RefCell<Vec<(String, u64)>>,
     /// Requests whose transport was cancelled (`fetch_cancellable` handle
@@ -68,7 +69,8 @@ impl ManualLoader {
             status: 200,
             mime: mime_of(url).into(),
             charset: None,
-            body: body.as_bytes().to_vec(),
+            body: body.as_bytes().to_vec().into(),
+            immutable_local: false,
             content_disposition: None,
             header_csp: None,
             refresh: None,
@@ -77,7 +79,7 @@ impl ManualLoader {
             sent_referrer: None,
             timing: None,
             partial: None,
-                nosniff: false,
+                nosniff: false, opaque: false,
         }
     }
 
@@ -106,6 +108,7 @@ impl ManualLoader {
 impl ResourceLoader for ManualLoader {
     fn fetch(&self, browser: &mut Browser, request: FetchRequest, done: FetchDone) {
         self.requests.borrow_mut().push(request.url.clone());
+        if request.kind == ResourceKind::Image { self.image_policies.borrow_mut().push(request.referrer_policy); }
         let id = browser.register_completion(done);
         if request.kind == ResourceKind::Document {
             // The document itself arrives on its own.
@@ -205,6 +208,25 @@ impl Manual {
 
 fn logs(names: &[&str]) -> Vec<(String, String)> {
     names.iter().map(|n| (format!("/{n}.js"), format!("console.log('{n}')"))).collect()
+}
+
+#[test]
+fn image_layout_dispatch_joins_exact_request() {
+    let mut manual = Manual::start("<img src='/asset.png'>", &[("/asset.png", "image")]);
+    manual.wait_pending(&["/asset.png"]);
+    manual.thread.browser.fetch_subresource_options(manual.page, format!("{ORIGIN}/asset.png"), ResourceKind::Image, Default::default(), Box::new(|_, _| {}));
+    assert_eq!(manual.loader.count("/asset.png"), 1);
+}
+
+#[test]
+fn image_dispatch_does_not_claim_a_different_policy() {
+    let mut manual = Manual::start("<script src='/wait.js'></script><img src='/asset.png'>", &[("/wait.js", "document.write(\"<img referrerpolicy=no-referrer src='/asset.png'>\")"), ("/asset.png", "image")]);
+    manual.wait_pending(&["/wait.js", "/asset.png"]);
+    manual.complete("/wait.js");
+    manual.complete("/asset.png");
+    manual.thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
+    assert_eq!(manual.loader.count("/asset.png"), 2);
+    assert!(manual.loader.image_policies.borrow().contains(&Some(pyro_net::ReferrerPolicy::NoReferrer)));
 }
 
 /// Five parser-blocking scripts: all five are requested while the first is

@@ -567,3 +567,32 @@ fn details_summary_keyboard_activation_and_cancellation() {
     }
     e.page.dispose();
 }
+
+/// HTML "hide all popovers until" terminates whatever the page's script does: a focus handler
+/// that opens another child popover each time focus comes back to it does not keep it hiding
+/// forever. The popovers above the endpoint close without moving focus; focus goes back once,
+/// to where it was before the lowest of them opened (the handler may then open one more,
+/// which the next step closes).
+#[test]
+fn hiding_popovers_until_an_endpoint_ends_whatever_focus_handlers_do() {
+    let e = env(
+        "<div popover id=parent><button id=btn>b</button>\
+         <div popover id=a><input id=ia autofocus></div>\
+         <div popover id=b><input id=ib autofocus></div></div>",
+    );
+    assert_eq!(
+        e.eval(
+            "window.opened = 0;\
+             parent.showPopover(); btn.focus(); a.showPopover();\
+             btn.addEventListener('focus', () => { if (++opened < 200) (opened % 2 ? b : a).showPopover(); });\
+             document.activeElement.id"
+        ),
+        "ia"
+    );
+    e.eval("parent.hidePopover()");
+    // Focus goes back once when its children close (the handler opens `b`), and once more
+    // when the popover the handler opened is closed by the check after `beforetoggle` (it
+    // opens `a`): not 200 times.
+    assert_eq!(e.eval("opened"), "2", "focus was restored once per hide-all-until");
+    assert_eq!(e.eval("parent.matches(':popover-open')"), "false");
+}

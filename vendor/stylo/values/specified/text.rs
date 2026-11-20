@@ -532,6 +532,8 @@ pub enum TextAlignKeyword {
     Center,
     Justify,
     End,
+    /// pyro: `justify-all` (CSS Text 3): `justify` with the last line justified too.
+    JustifyAll,
     #[parse(aliases = "-webkit-center")]
     MozCenter,
     #[parse(aliases = "-webkit-left")]
@@ -1377,6 +1379,193 @@ bitflags! {
     }
 }
 
+/// pyro: the `white-space-trim` property: which collapsible white space at a box's edges is
+/// discarded.
+///
+/// https://drafts.csswg.org/css-text-4/#white-space-trim
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToCss,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(single = "none", mixed = "discard-before,discard-after,discard-inner"))]
+#[repr(C)]
+pub struct WhiteSpaceTrim(u8);
+bitflags! {
+    impl WhiteSpaceTrim: u8 {
+        /// Nothing is discarded.
+        const NONE = 0;
+        /// The collapsible white space immediately before the box's start.
+        const DISCARD_BEFORE = 1 << 0;
+        /// The collapsible white space immediately after the box's end.
+        const DISCARD_AFTER = 1 << 1;
+        /// The collapsible white space at the start and end of the box's content.
+        const DISCARD_INNER = 1 << 2;
+    }
+}
+
+/// pyro: the `word-space-transform` property: what word separators zero width spaces and `<wbr>`
+/// become.
+///
+/// https://drafts.csswg.org/css-text-4/#word-space-transform
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToCss,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(
+    single = "none",
+    mixed = "space,ideographic-space,auto-phrase",
+    validate_mixed = "Self::validate_mixed_flags",
+))]
+#[repr(C)]
+pub struct WordSpaceTransform(u8);
+bitflags! {
+    impl WordSpaceTransform: u8 {
+        /// No transformation.
+        const NONE = 0;
+        /// Zero width spaces and `<wbr>` become U+0020 spaces.
+        const SPACE = 1 << 0;
+        /// Zero width spaces and `<wbr>` become U+3000 ideographic spaces.
+        const IDEOGRAPHIC_SPACE = 1 << 1;
+        /// Phrase boundaries become virtual word separators first.
+        const AUTO_PHRASE = 1 << 2;
+    }
+}
+
+impl WordSpaceTransform {
+    fn validate_mixed_flags(&self) -> bool {
+        self.intersects(Self::SPACE | Self::IDEOGRAPHIC_SPACE) && !self.contains(Self::SPACE | Self::IDEOGRAPHIC_SPACE)
+    }
+}
+
+/// pyro: the `hanging-punctuation` property: which punctuation may hang outside the line box.
+///
+/// https://drafts.csswg.org/css-text-3/#hanging-punctuation-property
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    Serialize,
+    SpecifiedValueInfo,
+    ToCss,
+    ToComputedValue,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[css(bitflags(
+    single = "none",
+    mixed = "first,force-end,allow-end,last",
+    validate_mixed = "Self::validate_mixed_flags",
+))]
+#[repr(C)]
+pub struct HangingPunctuation(u8);
+bitflags! {
+    impl HangingPunctuation: u8 {
+        /// No punctuation hangs.
+        const NONE = 0;
+        /// Opening punctuation at the start of an element's first line hangs.
+        const FIRST = 1 << 0;
+        /// Stops and commas at the end of a line hang.
+        const FORCE_END = 1 << 1;
+        /// Stops and commas at the end of a line hang when they would not fit.
+        const ALLOW_END = 1 << 2;
+        /// Closing punctuation at the end of an element's last line hangs.
+        const LAST = 1 << 3;
+    }
+}
+
+impl HangingPunctuation {
+    fn validate_mixed_flags(&self) -> bool {
+        !self.contains(Self::FORCE_END | Self::ALLOW_END)
+    }
+}
+
+/// pyro: the `text-group-align` property: how a block's lines align as a group.
+///
+/// https://drafts.csswg.org/css-text-4/#text-group-align-property
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum TextGroupAlign {
+    None,
+    Start,
+    End,
+    Left,
+    Right,
+    Center,
+}
+
+/// pyro: the `wrap-inside` property: whether lines avoid breaking inside an inline box.
+///
+/// https://drafts.csswg.org/css-text-4/#wrap-inside
+#[allow(missing_docs)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    FromPrimitive,
+    Hash,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(u8)]
+pub enum WrapInside {
+    Auto,
+    Avoid,
+}
+
 /// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
 ///
 /// https://drafts.csswg.org/css-text-4/#text-spacing-trim-property
@@ -1730,12 +1919,9 @@ pub enum RubyAlign {
     FromPrimitive,
     Hash,
     MallocSizeOf,
-    Parse,
     PartialEq,
     Serialize,
-    SpecifiedValueInfo,
     ToComputedValue,
-    ToCss,
     ToResolvedValue,
     ToShmem,
     ToTyped,
@@ -1744,6 +1930,58 @@ pub enum RubyAlign {
 pub enum TextCombineUpright {
     None,
     All,
+    /// pyro: `digits <integer [2,4]>?`: runs of up to that many ASCII digits are combined.
+    Digits2,
+    Digits3,
+    Digits4,
+}
+
+impl TextCombineUpright {
+    /// pyro: the most ASCII digits a run of `digits N` combines (`None` for other values).
+    pub fn digits(self) -> Option<usize> {
+        match self {
+            Self::Digits2 => Some(2),
+            Self::Digits3 => Some(3),
+            Self::Digits4 => Some(4),
+            _ => None,
+        }
+    }
+}
+
+impl Parse for TextCombineUpright {
+    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(Self::None);
+        }
+        if input.try_parse(|i| i.expect_ident_matching("all")).is_ok() {
+            return Ok(Self::All);
+        }
+        input.expect_ident_matching("digits")?;
+        match input.try_parse(|i| i.expect_integer()).unwrap_or(2) {
+            2 => Ok(Self::Digits2),
+            3 => Ok(Self::Digits3),
+            4 => Ok(Self::Digits4),
+            _ => Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
+        }
+    }
+}
+
+impl ToCss for TextCombineUpright {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        dest.write_str(match self {
+            Self::None => "none",
+            Self::All => "all",
+            Self::Digits2 => "digits 2",
+            Self::Digits3 => "digits 3",
+            Self::Digits4 => "digits 4",
+        })
+    }
+}
+
+impl SpecifiedValueInfo for TextCombineUpright {
+    fn collect_completion_keywords(f: KeywordsCollectFn) {
+        f(&["none", "all", "digits"]);
+    }
 }
 
 /// https://svgwg.org/svg2-draft/painting.html#TextRenderingProperty

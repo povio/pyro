@@ -220,6 +220,11 @@ pub trait GridContainerStyle: CoreStyle {
     fn collapsed_rows(&self) -> &[u16] {
         &[]
     }
+    /// pyro: the explicit column tracks that are collapsed (`Style::collapsed_columns`), sorted.
+    #[inline(always)]
+    fn collapsed_columns(&self) -> &[u16] {
+        &[]
+    }
     /// Controls how items get placed into the grid for auto-placed items
     #[inline(always)]
     fn grid_auto_flow(&self) -> GridAutoFlow {

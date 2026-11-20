@@ -319,8 +319,20 @@ diff -ruN a/data.rs b/data.rs
  
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
-+++ b/device/servo.rs	2026-11-19 02:31:52
-@@ -61,6 +61,10 @@
++++ b/device/servo.rs	2026-11-19 22:03:37
+@@ -52,6 +52,11 @@
+     ) -> FontMetrics;
+     /// Gets the base size given a generic font family.
+     fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length;
++    /// pyro: the used `line-height: normal` of `font` at `size` (from its first available
++    /// font's metrics), when the client can measure it: what the `lh` unit resolves against.
++    fn normal_line_height(&self, _font: &Font, _size: CSSPixelLength) -> Option<CSSPixelLength> {
++        None
++    }
+ }
+ 
+ #[derive(Debug, MallocSizeOf)]
+@@ -61,6 +66,14 @@
      /// An implementation of a trait which implements support for querying font metrics.
      #[ignore_malloc_size_of = "Owned by embedder"]
      font_metrics_provider: Box<dyn FontMetricsProvider>,
@@ -328,28 +340,75 @@ diff -ruN a/device/servo.rs b/device/servo.rs
 +    /// element whose `color-scheme` is `normal` uses.
 +    #[ignore_malloc_size_of = "Plain flags"]
 +    page_color_scheme: ColorSchemeFlags,
++    /// pyro: what the viewport is smaller by for viewport units (CSS px): the root's classic
++    /// scrollbar gutters that `overflow: scroll` or `scrollbar-gutter: stable` reserve (Chrome).
++    #[ignore_malloc_size_of = "Plain data"]
++    viewport_unit_inset: (f32, f32),
  }
  
  #[derive(Debug, MallocSizeOf, Clone, PartialEq)]
-@@ -118,6 +122,7 @@
+@@ -118,6 +131,8 @@
              extra: ExtraDeviceData {
                  media_data,
                  font_metrics_provider,
 +                page_color_scheme: ColorSchemeFlags::empty(),
++                viewport_unit_inset: (0.0, 0.0),
              },
          }
      }
-@@ -359,9 +364,17 @@
-     /// Returns the pointer capabilities of this [`Device`].
-     pub fn all_pointer_capabilities(&self) -> PointerCapabilities {
-         self.extra.media_data.all_pointer_capabilities
+@@ -132,8 +147,14 @@
+         _element: Option<()>,
+     ) -> NonNegativeLength {
+         (match font.line_height {
+-            // TODO: compute `normal` from the font metrics
+-            LineHeight::Normal => CSSPixelLength::new(0.),
++            // pyro: `normal` from the font metrics, when the client measures them.
++            LineHeight::Normal => {
++                self.used_font_metrics.store(true, Ordering::Relaxed);
++                self.extra
++                    .font_metrics_provider
++                    .normal_line_height(font, font.font_size.computed_size())
++                    .unwrap_or(CSSPixelLength::new(0.))
++            },
+             LineHeight::Number(number) => font.font_size.computed_size() * number.0,
+             LineHeight::Length(length) => length.0,
+         })
+@@ -222,9 +243,25 @@
+         self.used_viewport_size.store(true, Ordering::Relaxed);
+         // Servo doesn't have dynamic UA interfaces that affect the viewport,
+         // so we can just ignore the ViewportVariant.
+-        self.au_viewport_size()
++        self.au_viewport_unit_size()
+     }
+ 
++    /// pyro: the viewport size viewport units resolve against (the viewport less
++    /// [`Self::set_viewport_unit_inset`]), without noting that a style used it.
++    pub fn au_viewport_unit_size(&self) -> UntypedSize2D<Au> {
++        let size = self.au_viewport_size();
++        let (w, h) = self.extra.viewport_unit_inset;
++        Size2D::new(
++            (size.width - Au::from_f32_px(w)).max(Au(0)),
++            (size.height - Au::from_f32_px(h)).max(Au(0)),
++        )
 +    }
 +
++    /// pyro: sets what the viewport is smaller by for viewport units (CSS px).
++    pub fn set_viewport_unit_inset(&mut self, inset: (f32, f32)) {
++        self.extra.viewport_unit_inset = inset;
++    }
++
+     /// Returns the number of app units per device pixel we're using currently.
+     pub fn app_units_per_device_pixel(&self) -> i32 {
+         (AU_PER_PX as f32 / self.extra.media_data.device_pixel_ratio.0) as i32
+@@ -361,7 +398,15 @@
+         self.extra.media_data.all_pointer_capabilities
+     }
+ 
 +    /// pyro: sets the page's supported color schemes (HTML `<meta name=color-scheme>`).
 +    pub fn set_page_color_scheme(&mut self, flags: ColorSchemeFlags) {
 +        self.extra.page_color_scheme = flags;
-     }
- 
++    }
++
      pub(crate) fn is_dark_color_scheme(&self, color_scheme_flags: ColorSchemeFlags) -> bool {
 +        // pyro: `color-scheme: normal` takes the page's supported color schemes.
 +        let color_scheme_flags =
@@ -357,7 +416,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
          // Inspired by
          // https://searchfox.org/firefox-main/rev/0a7f146ccac85b8f413264042dcd764028d419ec/widget/nsXPLookAndFeel.cpp#1296
          let supports_dark_mode = color_scheme_flags.contains(ColorSchemeFlags::DARK);
-@@ -400,15 +413,17 @@
+@@ -400,15 +445,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -378,7 +437,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  SystemColor::Buttontext => srgb(245, 245, 245),
                  SystemColor::Canvas
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
-@@ -450,15 +465,17 @@
+@@ -450,15 +497,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -399,6 +458,19 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  SystemColor::Buttontext => srgb(0, 0, 0),
                  SystemColor::Canvas
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
+diff -ruN a/dom.rs b/dom.rs
+--- a/dom.rs	2026-11-11 19:55:57
++++ b/dom.rs	2026-11-20 13:27:27
+@@ -952,6 +952,9 @@
+         display: &Display,
+     ) -> euclid::default::Size2D<Option<app_units::Au>>;
+ 
++    /// Last layout's selected fallback, if any.
++    fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
++
+     /// Returns true if the element has all of specified selector flags.
+     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
+ 
 diff -ruN a/font_face.rs b/font_face.rs
 --- a/font_face.rs	2026-11-11 19:55:57
 +++ b/font_face.rs	2026-11-17 11:03:29
@@ -578,7 +650,24 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      if uses_viewport_units {
 diff -ruN a/matching.rs b/matching.rs
 --- a/matching.rs	2026-11-11 19:55:57
-+++ b/matching.rs	2026-11-17 23:56:40
++++ b/matching.rs	2026-11-20 12:39:19
+@@ -712,14 +712,14 @@
+             context,
+             old_values.as_deref(),
+             new_values,
+-            pseudo_element,
++            pseudo_element.clone(),
+         );
+ 
+         let might_need_transitions_update = self.might_need_transitions_update(
+             context,
+             old_values.as_deref(),
+             new_values,
+-            pseudo_element,
++            pseudo_element.clone(),
+         );
+ 
+         let mut after_change_style = None;
 @@ -1014,6 +1014,7 @@
  
          // First of all, update the styles.
@@ -600,6 +689,109 @@ diff -ruN a/matching.rs b/matching.rs
  
          if data.styles.pseudos.is_empty() && old_styles.pseudos.is_empty() {
              // This is the common case; no need to examine pseudos here.
+diff -ruN a/properties/cascade.rs b/properties/cascade.rs
+--- a/properties/cascade.rs	2026-11-11 19:55:57
++++ b/properties/cascade.rs	2026-11-19 21:28:19
+@@ -976,7 +976,6 @@
+             },
+             FontSize => {
+                 if self.seen.longhands.contains(LonghandId::MathDepth) {
+-                    #[cfg(feature = "gecko")]
+                     Self::recompute_math_font_size_if_needed(context);
+                 }
+                 if self.seen.longhands.contains(LonghandId::XLang)
+@@ -1504,6 +1503,43 @@
+             return;
+         }
+         builder.mutate_font().set_font_size(new_size);
++    }
++
++    /// pyro: `font-size: math` for servo (MathML Core § 3.1.2): the parent's size scaled by the
++    /// change of `math-depth`, by the first available font's MATH script scale-downs or else
++    /// 0.71 a level (no `script-min-size` clamping, as Blink).
++    #[cfg(feature = "servo")]
++    fn recompute_math_font_size_if_needed(context: &mut computed::Context) {
++        use crate::values::computed::font::FontSize;
++        use crate::values::specified::font::QueryFontMetricsFlags;
++        use crate::values::specified::length::FontBaseSize;
++        use crate::font_metrics::FontMetricsOrientation;
++        if context.builder.get_font().slow_clone_font_size().keyword_info.kw != specified::FontSizeKeyword::Math {
++            return;
++        }
++        let parent_depth = context.builder.get_parent_font().math_depth as i32;
++        let depth = context.builder.get_font().math_depth as i32;
++        if parent_depth == depth {
++            return;
++        }
++        let metrics = context.query_font_metrics(
++            FontBaseSize::InheritedStyle,
++            FontMetricsOrientation::Horizontal,
++            QueryFontMetricsFlags::NEEDS_MATH_SCALES,
++        );
++        let scale = math_depth_scale_factor(
++            parent_depth,
++            depth,
++            metrics.script_percent_scale_down,
++            metrics.script_script_percent_scale_down,
++        );
++        let parent = context.builder.get_parent_font().slow_clone_font_size();
++        let size = FontSize {
++            computed_size: crate::values::generics::NonNegative(parent.computed_size.0.scale_by(scale)),
++            used_size: crate::values::generics::NonNegative(parent.used_size.0.scale_by(scale)),
++            keyword_info: context.builder.get_font().slow_clone_font_size().keyword_info,
++        };
++        context.builder.mutate_font().set_font_size(size);
+     }
+ 
+     /// Special handling of font-size: math (used for MathML).
+@@ -2783,5 +2819,47 @@
+             &mut self_ref,
+             &mut Default::default(),
+         );
++    }
++}
++
++/// pyro: the font-size scale factor for a `math-depth` change from `parent_math_depth` to
++/// `computed_math_depth` (MathML Core § 3.1.2), the gecko cascade's algorithm, for servo.
++#[cfg(feature = "servo")]
++fn math_depth_scale_factor(
++    parent_math_depth: i32,
++    computed_math_depth: i32,
++    parent_script_percent_scale_down: Option<f32>,
++    parent_script_script_percent_scale_down: Option<f32>,
++) -> f32 {
++    let mut a = parent_math_depth;
++    let mut b = computed_math_depth;
++    let c = 0.71_f32;
++    let scale_between_0_and_1 = parent_script_percent_scale_down.unwrap_or(c);
++    let scale_between_0_and_2 = parent_script_script_percent_scale_down.unwrap_or(c * c);
++    let mut s = 1.0;
++    let mut invert_scale_factor = false;
++    if a == b {
++        return s;
+     }
++    if b < a {
++        std::mem::swap(&mut a, &mut b);
++        invert_scale_factor = true;
++    }
++    let mut e = b - a;
++    if a <= 0 && b >= 2 {
++        s *= scale_between_0_and_2;
++        e -= 2;
++    } else if a == 1 {
++        s *= scale_between_0_and_2 / scale_between_0_and_1;
++        e -= 1;
++    } else if b == 1 {
++        s *= scale_between_0_and_1;
++        e -= 1;
++    }
++    s *= c.powi(e);
++    if invert_scale_factor {
++        1.0 / s.max(f32::MIN_POSITIVE)
++    } else {
++        s
++    }
+ }
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -640,7 +832,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-19 00:45:22
++++ b/properties/data.py	2026-11-20 08:55:43
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -670,7 +862,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "FlexDirection",
                  "ListStylePosition",
                  "TextWrapStyle",
-@@ -606,10 +617,13 @@
+@@ -606,10 +617,14 @@
                  "MathShift",
                  "ColumnSpan",
                  "ColumnFill",
@@ -678,21 +870,35 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "Orient",
                  "BackfaceVisibility",
                  "Isolation",
++                "ViewTransitionScope",
                  "ScrollBehavior",
 +                "ScrollMarkerGroup",
 +                "ScrollTargetGroup",
                  "TopLayer",
                  "FloatEdge",
                  "ImageLayerAttachment",
-@@ -686,6 +700,7 @@
+@@ -670,6 +685,7 @@
+                 "OverscrollBehavior",
+                 "PageOrientation",
+                 "PointerEvents",
++                "CaretShape",
+                 "PositionTryOrder",
+                 "PositionVisibility",
+                 "PrintColorAdjust",
+@@ -686,6 +702,12 @@
                  "TextAlign",
                  "TextAlignLast",
                  "TextAutospace",
++                "WordSpaceTransform",
++                "WhiteSpaceTrim",
++                "WrapInside",
++                "HangingPunctuation",
++                "TextGroupAlign",
 +                "TextSpacingTrim",
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
-@@ -1323,8 +1338,17 @@
+@@ -1323,8 +1345,17 @@
                  "cursor",
                  "direction",
                  "hyphens",
@@ -768,7 +974,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-19 02:48:31
++++ b/properties/longhands.toml	2026-11-20 09:33:11
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -777,6 +983,24 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui-4/#widget-accent"
  ignored_when_colors_disabled = true
  affects = "paint"
+@@ -183,7 +182,7 @@
+ servo_pref = "layout.css.anchor-positioning.enabled"
+ animation_type = "discrete"
+ spec = "https://drafts.csswg.org/css-anchor-position-1/#propdef-anchor-name"
+-affects = ""
++affects = "layout"
+ 
+ [anchor-scope]
+ type = "ScopedName"
+@@ -192,7 +191,7 @@
+ servo_pref = "layout.css.anchor-positioning.enabled"
+ animation_type = "discrete"
+ spec = "https://drafts.csswg.org/css-anchor-position-1/#propdef-scope"
+-affects = ""
++affects = "layout"
+ 
+ [animation-delay]
+ type = "Time"
 @@ -325,7 +324,9 @@
  spec = "https://drafts.csswg.org/css-ui-4/#propdef-appearance"
  animation_type = "discrete"
@@ -804,7 +1028,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,11 +490,28 @@
+@@ -491,9 +490,26 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
@@ -818,23 +1042,45 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
-+affects = "layout"
-+
+ affects = "layout"
+ 
  [caption-side]
- type = "table::CaptionSide"
- initial = "computed::table::CaptionSide::Top"
-@@ -545,7 +561,6 @@
+@@ -509,11 +525,23 @@
+ type = "color::CaretColor"
+ initial = "generics::color::CaretColor::auto()"
+ struct = "inherited_ui"
++# pyro: two colours (the second for the text under a block caret).
++boxed = true
+ spec = "https://drafts.csswg.org/css-ui/#caret-color"
+ ignored_when_colors_disabled = true
+ servo_restyle_damage = "repaint"
+ affects = "paint"
+ 
++# pyro: CSS UI 4 caret-shape (the caret is painted in blitz-paint).
++[caret-shape]
++type = "CaretShape"
++initial = "computed::CaretShape::Auto"
++struct = "inherited_ui"
++animation_type = "discrete"
++spec = "https://drafts.csswg.org/css-ui/#caret-shape"
++servo_restyle_damage = "repaint"
++affects = "paint"
++
+ [clear]
+ type = "Clear"
+ initial = "computed::Clear::None"
+@@ -545,7 +573,6 @@
  type = "FillRule"
  initial = "Default::default()"
  struct = "inherited_svg"
@@ -842,7 +1088,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/masking.html#ClipRuleProperty"
  affects = "paint"
-@@ -591,7 +606,6 @@
+@@ -591,7 +618,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
  struct = "column"
@@ -850,7 +1096,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  ignored_when_colors_disabled = true
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-color"
  affects = "paint"
-@@ -600,7 +614,6 @@
+@@ -600,7 +626,6 @@
  type = "BorderStyle"
  initial = "computed::BorderStyle::None"
  struct = "column"
@@ -858,7 +1104,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-style"
  affects = "paint"
-@@ -609,7 +622,6 @@
+@@ -609,7 +634,6 @@
  type = "BorderSideWidth"
  initial = "computed::BorderSideWidth::medium()"
  struct = "column"
@@ -866,7 +1112,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  initial_specified_value = "specified::BorderSideWidth::medium()"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
  affects = "layout"
-@@ -636,39 +648,39 @@
+@@ -636,39 +660,39 @@
  type = "ContainIntrinsicSize"
  initial = "computed::ContainIntrinsicSize::None"
  struct = "position"
@@ -910,7 +1156,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [container-name]
  type = "ContainerName"
-@@ -701,7 +713,8 @@
+@@ -701,7 +725,8 @@
  type = "ContentVisibility"
  initial = "computed::ContentVisibility::Visible"
  struct = "box"
@@ -920,7 +1166,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-contain/#content-visibility"
  affects = "layout"
  
-@@ -844,7 +857,6 @@
+@@ -844,7 +869,6 @@
  type = "Color"
  initial = "computed::Color::BLACK"
  struct = "svg"
@@ -928,7 +1174,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.fxtf.org/filter-effects-1/#FloodColorProperty"
  affects = "paint"
  
-@@ -852,7 +864,6 @@
+@@ -852,7 +876,6 @@
  type = "Opacity"
  initial = "1.0"
  struct = "svg"
@@ -936,7 +1182,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.fxtf.org/filter-effects-1/#FloodOpacityProperty"
  affects = "paint"
  
-@@ -890,7 +901,7 @@
+@@ -890,7 +913,7 @@
  type = "FontPalette"
  initial = "computed::FontPalette::normal()"
  struct = "font"
@@ -945,7 +1191,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-fonts/#font-palette-prop"
  affects = "layout"
-@@ -1255,7 +1266,6 @@
+@@ -1255,7 +1278,6 @@
  type = "Color"
  initial = "computed::Color::WHITE"
  struct = "svg"
@@ -953,7 +1199,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.fxtf.org/filter-effects-1#LightingColorProperty"
  affects = "paint"
  
-@@ -1281,6 +1291,7 @@
+@@ -1281,6 +1303,7 @@
  [list-style-image]
  type = "Image"
  initial = "computed::Image::None"
@@ -961,7 +1207,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "list"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-lists/#propdef-list-style-image"
-@@ -1300,7 +1311,6 @@
+@@ -1300,7 +1323,6 @@
  type = "url::UrlOrNone"
  initial = "computed::url::UrlOrNone::none()"
  struct = "inherited_svg"
@@ -969,7 +1215,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#VertexMarkerProperties"
  affects = "layout"
-@@ -1309,7 +1319,6 @@
+@@ -1309,7 +1331,6 @@
  type = "url::UrlOrNone"
  initial = "computed::url::UrlOrNone::none()"
  struct = "inherited_svg"
@@ -977,7 +1223,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#VertexMarkerProperties"
  affects = "layout"
-@@ -1318,7 +1327,6 @@
+@@ -1318,7 +1339,6 @@
  type = "url::UrlOrNone"
  initial = "computed::url::UrlOrNone::none()"
  struct = "inherited_svg"
@@ -985,12 +1231,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#VertexMarkerProperties"
  affects = "layout"
-@@ -1425,13 +1433,23 @@
- struct = "position"
- boxed = true
+@@ -1427,11 +1447,21 @@
  spec = "https://drafts.csswg.org/css-images-3/#the-object-position"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: `object-view-box: none | <basic-shape-rect>` (CSS Images 5): the part of a replaced
 +# element's content that is its view, as a `clip-path` value of `none` or one rectangle.
 +[object-view-box]
@@ -1000,8 +1244,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +parse_method = "parse_object_view_box"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
- affects = "layout"
- 
++affects = "layout"
++
  [offset-anchor]
  type = "PositionOrAuto"
  initial = "computed::PositionOrAuto::auto()"
@@ -1010,7 +1254,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
  spec = "https://drafts.fxtf.org/motion-1/#offset-anchor-property"
  servo_restyle_damage = "rebuild_box"
-@@ -1442,7 +1460,6 @@
+@@ -1442,7 +1472,6 @@
  type = "LengthPercentage"
  initial = "computed::LengthPercentage::zero()"
  struct = "box"
@@ -1018,7 +1262,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
  spec = "https://drafts.fxtf.org/motion-1/#offset-distance-property"
  servo_restyle_damage = "rebuild_box"
-@@ -1462,7 +1479,6 @@
+@@ -1462,7 +1491,6 @@
  type = "OffsetPosition"
  initial = "computed::OffsetPosition::normal()"
  struct = "box"
@@ -1026,7 +1270,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
  spec = "https://drafts.fxtf.org/motion-1/#offset-position-property"
  servo_restyle_damage = "rebuild_box"
-@@ -1473,7 +1489,6 @@
+@@ -1473,7 +1501,6 @@
  type = "OffsetRotate"
  initial = "computed::OffsetRotate::auto()"
  struct = "box"
@@ -1034,7 +1278,31 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
  spec = "https://drafts.fxtf.org/motion-1/#offset-rotate-property"
  servo_restyle_damage = "rebuild_box"
-@@ -1536,7 +1551,6 @@
+@@ -1498,8 +1525,9 @@
+ affects = "layout"
+ 
+ [outline-color]
+-type = "Color"
+-initial = "computed_value::T::currentcolor()"
++# pyro: `auto | <color>` (CSS UI 4).
++type = "color::OutlineColor"
++initial = "generics::color::OutlineColor::auto()"
+ struct = "outline"
+ ignored_when_colors_disabled = true
+ spec = "https://drafts.csswg.org/css-ui/#propdef-outline-color"
+@@ -1507,8 +1535,9 @@
+ affects = "paint"
+ 
+ [outline-offset]
+-type = "BorderSideOffset"
+-initial = "app_units::Au(0)"
++# pyro: and `inset` (CSS UI 4).
++type = "OutlineOffset"
++initial = "computed::OutlineOffset::Length(computed::Length::zero())"
+ struct = "outline"
+ spec = "https://drafts.csswg.org/css-ui/#propdef-outline-offset"
+ servo_restyle_damage = "repaint"
+@@ -1536,7 +1565,6 @@
  type = "OverflowAnchor"
  initial = "computed::OverflowAnchor::Auto"
  struct = "box"
@@ -1042,7 +1310,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  gecko_pref = "layout.css.scroll-anchoring.enabled"
  spec = "https://drafts.csswg.org/css-scroll-anchoring/#exclusion-api"
  animation_type = "discrete"
-@@ -1666,7 +1680,6 @@
+@@ -1666,7 +1694,6 @@
  type = "SVGPaintOrder"
  initial = "computed::SVGPaintOrder::normal()"
  struct = "inherited_svg"
@@ -1050,7 +1318,16 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#PaintOrder"
  affects = "paint"
-@@ -1791,7 +1804,6 @@
+@@ -1761,7 +1788,7 @@
+ 
+ [position-visibility]
+ type = "PositionVisibility"
+-initial = "computed::PositionVisibility::ANCHORS_VISIBLE"
++initial = "computed::PositionVisibility::ANCHOR_VISIBLE"
+ struct = "position"
+ servo_pref = "layout.css.anchor-positioning.enabled"
+ animation_type = "discrete"
+@@ -1791,7 +1818,6 @@
  type = "Resize"
  initial = "computed::Resize::None"
  struct = "box"
@@ -1058,7 +1335,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  gecko_ffi_name = "mResize"
  spec = "https://drafts.csswg.org/css-ui/#propdef-resize"
-@@ -1843,7 +1855,6 @@
+@@ -1843,7 +1869,6 @@
  type = "ScrollSnapAlign"
  initial = "computed::ScrollSnapAlign::none()"
  struct = "box"
@@ -1066,7 +1343,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-align"
  animation_type = "discrete"
  affects = "paint"
-@@ -1852,16 +1863,34 @@
+@@ -1852,16 +1877,34 @@
  type = "ScrollSnapStop"
  initial = "computed::ScrollSnapStop::Normal"
  struct = "box"
@@ -1074,7 +1351,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
  animation_type = "discrete"
  affects = "paint"
-+
+ 
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -1084,7 +1361,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property"
 +affects = "layout"
- 
++
 +[scroll-target-group]
 +type = "ScrollTargetGroup"
 +initial = "computed::ScrollTargetGroup::None"
@@ -1103,7 +1380,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-type"
  animation_type = "discrete"
  affects = "paint"
-@@ -1932,7 +1961,6 @@
+@@ -1932,7 +1975,6 @@
  type = "ScrollbarGutter"
  initial = "computed::ScrollbarGutter::AUTO"
  struct = "box"
@@ -1111,7 +1388,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-overflow-3/#scrollbar-gutter-property"
  affects = "layout"
-@@ -1941,7 +1969,6 @@
+@@ -1941,7 +1983,6 @@
  type = "Opacity"
  initial = "0.0"
  struct = "box"
@@ -1119,7 +1396,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-image-threshold-property"
  affects = "layout"
  
-@@ -1949,7 +1976,6 @@
+@@ -1949,7 +1990,6 @@
  type = "NonNegativeLengthPercentage"
  initial = "computed::NonNegativeLengthPercentage::zero()"
  struct = "box"
@@ -1127,7 +1404,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-margin-property"
  affects = "layout"
  
-@@ -1957,7 +1983,6 @@
+@@ -1957,7 +1997,6 @@
  type = "basic_shape::ShapeOutside"
  initial = "generics::basic_shape::ShapeOutside::None"
  struct = "box"
@@ -1135,7 +1412,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-outside-property"
  affects = "layout"
  
-@@ -1975,7 +2000,6 @@
+@@ -1975,7 +2014,6 @@
  type = "Color"
  initial = "computed::Color::BLACK"
  struct = "svg"
@@ -1143,7 +1420,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/pservers.html#StopColorProperties"
  affects = "paint"
  
-@@ -1983,7 +2007,6 @@
+@@ -1983,7 +2021,6 @@
  type = "Opacity"
  initial = "1.0"
  struct = "svg"
@@ -1151,7 +1428,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/pservers.html#StopOpacityProperty"
  affects = "paint"
  
-@@ -2117,7 +2140,6 @@
+@@ -2117,7 +2154,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -1159,7 +1436,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2272,10 +2294,10 @@
+@@ -2272,10 +2308,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -1171,7 +1448,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2284,10 +2306,10 @@
+@@ -2284,10 +2320,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -1183,7 +1460,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2296,10 +2318,10 @@
+@@ -2296,10 +2332,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -1195,7 +1472,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2308,10 +2330,10 @@
+@@ -2308,10 +2344,10 @@
  type = "ViewTimelineInset"
  initial = "computed::ViewTimelineInset::default()"
  struct = "ui"
@@ -1207,7 +1484,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2320,10 +2342,10 @@
+@@ -2320,10 +2356,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -1219,7 +1496,24 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2350,7 +2372,6 @@
+@@ -2337,6 +2373,16 @@
+ spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-class-prop"
+ affects = ""
+ 
++[view-transition-scope]
++type = "ViewTransitionScope"
++initial = "computed::ViewTransitionScope::Auto"
++struct = "ui"
++engine = "servo"
++servo_pref = "layout.css.view-transitions.enabled"
++animation_type = "discrete"
++spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-scope-prop"
++affects = ""
++
+ [view-transition-name]
+ type = "ViewTransitionName"
+ initial = "computed::ViewTransitionName::none()"
+@@ -2350,7 +2396,6 @@
  type = "VectorEffect"
  initial = "computed::VectorEffect::none()"
  struct = "svg"
@@ -1227,7 +1521,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/coords.html#VectorEffects"
  affects = "layout"
-@@ -2521,7 +2542,6 @@
+@@ -2521,7 +2566,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
  struct = "inherited_text"
@@ -1235,7 +1529,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  ignored_when_colors_disabled = true
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-color"
  affects = "paint"
-@@ -2530,7 +2550,6 @@
+@@ -2530,7 +2574,6 @@
  type = "LineWidth"
  initial = "app_units::Au(0)"
  struct = "inherited_text"
@@ -1243,7 +1537,64 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2597,8 +2616,30 @@
+@@ -2588,6 +2631,56 @@
+ extra_gecko_aliases = ["-moz-tab-size"]
+ affects = "layout"
+ 
++[hanging-punctuation]
++type = "HangingPunctuation"
++initial = "computed::text::HangingPunctuation::NONE"
++struct = "inherited_text"
++animation_type = "discrete"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-text-3/#hanging-punctuation-property"
++servo_restyle_damage = "rebuild_box"
++affects = "layout"
++
++[text-group-align]
++type = "TextGroupAlign"
++initial = "computed::text::TextGroupAlign::None"
++struct = "text"
++animation_type = "discrete"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-text-4/#text-group-align-property"
++servo_restyle_damage = "rebuild_box"
++affects = "layout"
++
++[wrap-inside]
++type = "WrapInside"
++initial = "computed::text::WrapInside::Auto"
++struct = "text"
++animation_type = "discrete"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-text-4/#wrap-inside"
++servo_restyle_damage = "rebuild_box"
++affects = "layout"
++
++[white-space-trim]
++type = "WhiteSpaceTrim"
++initial = "computed::text::WhiteSpaceTrim::NONE"
++struct = "text"
++animation_type = "discrete"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-text-4/#white-space-trim"
++servo_restyle_damage = "rebuild_box"
++affects = "layout"
++
++[word-space-transform]
++type = "WordSpaceTransform"
++initial = "computed::text::WordSpaceTransform::NONE"
++struct = "inherited_text"
++animation_type = "discrete"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-text-4/#word-space-transform"
++servo_restyle_damage = "rebuild_box"
++affects = "layout"
++
+ [text-autospace]
+ type = "TextAutospace"
+ initial = "computed::text::TextAutospace::NO_AUTOSPACE"
+@@ -2597,6 +2690,28 @@
  gecko_pref = "layout.css.text-autospace.enabled"
  has_effect_on_gecko_scrollbars = false
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
@@ -1258,8 +1609,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-4/#text-spacing-trim-property"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: CSS Text 5 `text-fit` (scale a block's text to fill its lines), for Servo: blitz-dom
 +# passes it to parley's line breaking. Inherited, as in Blink.
 +[text-fit]
@@ -1269,12 +1620,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
-+affects = "layout"
-+
+ affects = "layout"
+ 
  [text-autospace-size]
- type = "Number"
- initial = "0.125"
-@@ -2635,7 +2676,6 @@
+@@ -2635,7 +2750,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -1282,7 +1631,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2705,7 @@
+@@ -2665,6 +2779,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -1290,12 +1639,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3212,15 @@
- boxed = true
- logical_group = "border-radius"
+@@ -3173,6 +3288,15 @@
  logical = true
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -1303,10 +1650,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
- affects = "paint"
- 
++affects = "paint"
++
  [corner-top-left-shape]
-@@ -3383,9 +3433,9 @@
+ type = "CornerShape"
+ initial = "computed::CornerShape::round()"
+@@ -3383,9 +3507,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -1317,7 +1666,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3393,7 +3443,6 @@
+@@ -3393,7 +3517,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1325,7 +1674,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
-@@ -3403,7 +3452,6 @@
+@@ -3403,7 +3526,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1333,7 +1682,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
-@@ -3413,7 +3461,6 @@
+@@ -3413,7 +3535,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1341,7 +1690,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
-@@ -3423,7 +3470,6 @@
+@@ -3423,7 +3544,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1349,7 +1698,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
-@@ -3433,7 +3479,6 @@
+@@ -3433,7 +3553,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1357,7 +1706,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.4"
-@@ -3444,7 +3489,6 @@
+@@ -3444,7 +3563,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1365,7 +1714,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.5"
-@@ -3455,7 +3499,6 @@
+@@ -3455,7 +3573,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1373,7 +1722,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.6"
-@@ -3466,7 +3509,6 @@
+@@ -3466,7 +3583,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -1381,7 +1730,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.7"
-@@ -3567,7 +3609,6 @@
+@@ -3567,7 +3683,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1389,7 +1738,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-top"
-@@ -3577,7 +3618,6 @@
+@@ -3577,7 +3692,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1397,7 +1746,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-right"
-@@ -3587,7 +3627,6 @@
+@@ -3587,7 +3701,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1405,7 +1754,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-bottom"
-@@ -3597,7 +3636,6 @@
+@@ -3597,7 +3710,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1413,7 +1762,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-left"
-@@ -3607,7 +3645,6 @@
+@@ -3607,7 +3719,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1421,7 +1770,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.4"
-@@ -3618,7 +3655,6 @@
+@@ -3618,7 +3729,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1429,7 +1778,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.5"
-@@ -3629,7 +3665,6 @@
+@@ -3629,7 +3739,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1437,7 +1786,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.6"
-@@ -3640,7 +3675,6 @@
+@@ -3640,7 +3749,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -1445,7 +1794,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.7"
-@@ -3694,6 +3728,7 @@
+@@ -3694,6 +3802,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -1453,7 +1802,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +3765,18 @@
+@@ -3730,6 +3839,18 @@
  type = "TopLayer"
  initial = "computed::TopLayer::None"
  
@@ -1472,7 +1821,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [scroll-behavior]
  struct = "box"
  servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,13 +3817,31 @@
+@@ -3770,13 +3891,31 @@
  
  [column-fill]
  struct = "column"
@@ -1482,7 +1831,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  type = "ColumnFill"
  initial = "computed::ColumnFill::Balance"
-+
+ 
 +# pyro: css-multicol-2 `column-height` and `column-wrap` (blitz-dom lays them out: multicol.rs).
 +[column-height]
 +type = "length::NonNegativeLengthOrAuto"
@@ -1492,7 +1841,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-multicol-2/#ch"
 +servo_restyle_damage = "rebuild_box"
 +affects = "layout"
- 
++
 +[column-wrap]
 +struct = "column"
 +spec = "https://drafts.csswg.org/css-multicol-2/#cwr"
@@ -1505,7 +1854,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [column-span]
  struct = "column"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
-@@ -3901,9 +3966,9 @@
+@@ -3901,9 +4040,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -1516,7 +1865,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +3977,6 @@
+@@ -3912,7 +4051,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -1524,7 +1873,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +3985,6 @@
+@@ -3921,7 +4059,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -1532,7 +1881,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +3993,6 @@
+@@ -3930,7 +4067,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -1540,7 +1889,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +4001,6 @@
+@@ -3939,7 +4075,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -1548,7 +1897,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4093,6 +4154,17 @@
+@@ -4093,6 +4228,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -1566,10 +1915,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4110,6 +4182,61 @@
+@@ -4109,7 +4255,62 @@
+ affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
- 
++
 +[mask-border-source]
 +type = "Image"
 +initial = "computed::Image::None"
@@ -1588,7 +1938,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-slice"
 +boxed = true
 +affects = "paint"
-+
+ 
 +[mask-border-width]
 +type = "BorderImageWidth"
 +initial = "computed::BorderImageWidth::all(computed::BorderImageSideWidth::auto())"
@@ -1628,7 +1978,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [mask-mode]
  struct = "svg"
  servo_pref = "layout.css.masking.enabled"
-@@ -4249,7 +4376,7 @@
+@@ -4249,7 +4450,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -1637,10 +1987,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4417,61 @@
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
- 
+@@ -4287,9 +4488,64 @@
+ affects = "layout"
+ gecko_ffi_name = "mBoxOrient"
+ aliases = ["-webkit-box-orient"]
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -1651,9 +2004,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
-+
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
 +# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
 +# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
 +[-webkit-box-align]
@@ -1699,7 +2052,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4526,8 @@
+@@ -4344,8 +4600,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -1711,7 +2064,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = ""
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-19 00:47:25
++++ b/properties/properties.mako.rs	2026-11-20 12:39:19
 @@ -1557,7 +1557,8 @@
              /// Whether this is a multicol style.
              #[cfg(feature = "servo")]
@@ -1735,10 +2088,12 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  }
  
  /// The struct that Servo uses to represent computed values.
-@@ -1643,6 +1650,45 @@
+@@ -1642,20 +1649,59 @@
+     inner: ComputedValuesInner,
  
      /// The pseudo-element that we're using.
-     pseudo: Option<PseudoElement>,
+-    pseudo: Option<PseudoElement>,
++    pseudo: Option<Box<PseudoElement>>,
 +}
 +
 +#[cfg(feature = "servo")]
@@ -1781,7 +2136,22 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  }
  
  impl ComputedValues {
-@@ -1883,6 +1929,7 @@
+     /// Returns the pseudo-element that this style represents.
+     #[cfg(feature = "servo")]
+     pub fn pseudo(&self) -> Option<PseudoElement> {
+-        self.pseudo
++        self.pseudo.as_deref().cloned()
+     }
+ 
+     /// Returns true if this is the style for a pseudo-element.
+     #[cfg(feature = "servo")]
+     pub fn is_pseudo_style(&self) -> bool {
+-        self.pseudo().is_some()
++        self.pseudo.is_some()
+     }
+ 
+     /// Returns whether this style's display value is equal to contents.
+@@ -1883,16 +1929,30 @@
                  writing_mode,
                  rules,
                  visited_style,
@@ -1789,7 +2159,11 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  effective_zoom,
                  flags,
              % for style_struct in data.active_style_structs():
-@@ -1893,6 +1940,19 @@
+                 ${style_struct.ident},
+             % endfor
+             },
+-            pseudo: pseudo.cloned(),
++            pseudo: pseudo.cloned().map(Box::new),
          })
      }
  
@@ -1817,7 +2191,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  effective_zoom: crate::values::computed::Zoom::ONE,
                  flags: ComputedValueFlags::empty(),
              },
-@@ -2013,6 +2074,7 @@
+@@ -2013,13 +2074,14 @@
                  writing_mode: self.writing_mode.clone(),
                  rules: self.rules.clone(),
                  visited_style: self.visited_style.clone(),
@@ -1825,6 +2199,14 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  flags,
                  effective_zoom: self.effective_zoom.clone(),
                  % for style_struct in data.active_style_structs():
+                 ${style_struct.ident}: self.${style_struct.ident}.clone(),
+                 % endfor
+             },
+-            pseudo: pseudo.cloned(),
++            pseudo: pseudo.cloned().map(Box::new),
+         })
+     }
+ 
 @@ -2028,6 +2090,7 @@
          self.visited_style.as_deref()
      }
@@ -1850,7 +2232,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              % for style_struct in data.active_style_structs():
              % if style_struct.inherited:
              ${style_struct.ident}: StyleStructRef::Borrowed(inherited_style.get_${style_struct.name_lower}()),
-@@ -2317,6 +2383,7 @@
+@@ -2317,12 +2383,57 @@
              color_scheme: style_to_derive_from.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(style_to_derive_from.flags),
              visited_style: None,
@@ -1858,10 +2240,11 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              % for style_struct in data.active_style_structs():
              ${style_struct.ident}: StyleStructRef::Borrowed(
                  style_to_derive_from.get_${style_struct.name_lower}()
-@@ -2325,6 +2392,50 @@
-         }
-     }
- 
+             ),
+             % endfor
++        }
++    }
++
 +    /// pyro: a visited link's (and its contents') used values of the visited-dependent properties
 +    /// (the colours Chromium takes from `:visited` rules) come from its visited style. Every other
 +    /// property keeps the style of the link as unvisited (CSS Selectors 4 § 7.2, privacy).
@@ -1887,7 +2270,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +            % else:
 +            unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine);
 +            % endif
-+        }
+         }
 +        % endif
 +        % endfor
 +        self.pyro_unvisited = Some(Arc::new(unvisited));
@@ -1904,11 +2287,9 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +        }
 +        % endif
 +        % endfor
-+    }
-+
+     }
+ 
      /// Copy the reset properties from `style`.
-     pub fn copy_reset_from(&mut self, style: &'a ComputedValues) {
-         % for style_struct in data.active_style_structs():
 @@ -2550,7 +2661,8 @@
  
      /// Turns this `StyleBuilder` into a proper `ComputedValues` instance.
@@ -1946,7 +2327,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-19 02:49:19
++++ b/properties/shorthands.rs	2026-11-19 20:56:41
 @@ -265,6 +265,152 @@
                  self.corner_bottom_left_shape,
              )
@@ -2194,11 +2575,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
          {
              if self.column_width.is_auto() {
 -                return self.column_count.to_css(dest);
--            }
--            self.column_width.to_css(dest)?;
--            if !self.column_count.is_auto() {
--                dest.write_char(' ')?;
-                 self.column_count.to_css(dest)?;
++                self.column_count.to_css(dest)?;
 +            } else {
 +                self.column_width.to_css(dest)?;
 +                if !self.column_count.is_auto() {
@@ -2206,11 +2583,15 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +                    self.column_count.to_css(dest)?;
 +                }
              }
+-            self.column_width.to_css(dest)?;
+-            if !self.column_count.is_auto() {
+-                dest.write_char(' ')?;
+-                self.column_count.to_css(dest)?;
 +            // pyro: `column-height`, after a slash when it is not `auto`.
 +            if !self.column_height.is_auto() {
 +                dest.write_str(" / ")?;
 +                self.column_height.to_css(dest)?;
-+            }
+             }
              Ok(())
          }
      }
@@ -2264,7 +2645,44 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod animation_range {
      pub use crate::properties::generated::shorthands::animation_range::*;
  
-@@ -3399,8 +3562,9 @@
+@@ -2092,7 +2255,13 @@
+             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+         }
+         Ok(expanded! {
+-            outline_color: unwrap_or_initial!(outline_color, color),
++            // pyro: (`auto` in the shorthand is the style.)
++            outline_color: unwrap_or_initial!(
++                outline_color,
++                color.map(|color| crate::values::generics::color::OutlineColor(
++                    crate::values::generics::color::ColorOrAuto::Color(color)
++                ))
++            ),
+             outline_style: unwrap_or_initial!(outline_style, style),
+             outline_width: unwrap_or_initial!(outline_width, width),
+         })
+@@ -2103,15 +2272,17 @@
+         where
+             W: fmt::Write,
+         {
++            // pyro: in the border shorthands' canonical order, width, style, colour (CSSOM;
++            // WPT css-ui `parsing/outline-valid`).
+             let mut writer = SequenceWriter::new(dest, " ");
+-            if *self.outline_color != outline_color::get_initial_specified_value() {
+-                writer.item(self.outline_color)?;
++            if *self.outline_width != outline_width::get_initial_specified_value() {
++                writer.item(self.outline_width)?;
+             }
+             if *self.outline_style != outline_style::get_initial_specified_value() {
+                 writer.item(self.outline_style)?;
+             }
+-            if *self.outline_width != outline_width::get_initial_specified_value() {
+-                writer.item(self.outline_width)?;
++            if *self.outline_color != outline_color::get_initial_specified_value() {
++                writer.item(self.outline_color)?;
+             }
+             if !writer.has_written() {
+                 self.outline_style.to_css(dest)?;
+@@ -3399,8 +3570,9 @@
                      dest.write_str(", ")?;
                  }
  
@@ -2276,19 +2694,17 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  let has_timing_function = !self.animation_timing_function.0[i].is_ease();
                  let has_delay = !self.animation_delay.0[i].is_zero();
                  let has_iteration_count = !self.animation_iteration_count.0[i].is_one();
-@@ -3680,20 +3844,10 @@
- 
-                 if has_repeat {
+@@ -3682,18 +3854,8 @@
                      writer.item(repeat)?;
--                }
--
+                 }
+ 
 -                #[cfg(feature = "gecko")]
 -                {
 -                    if has_origin || (has_clip && *clip != Clip::NoClip) {
 -                        writer.item(origin)?;
 -                    }
-                 }
- 
+-                }
+-
 -                #[cfg(feature = "servo")]
 -                {
 -                    if has_origin || has_clip {
@@ -2460,6 +2876,111 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND ALLOWS_DISABLED_SUBPROPERTIES"
  sub_properties = ["line-clamp"]
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
+diff -ruN a/queries/condition.rs b/queries/condition.rs
+--- a/queries/condition.rs	2026-11-11 19:55:57
++++ b/queries/condition.rs	2026-11-20 13:27:27
+@@ -25,6 +25,7 @@
+ use crate::substitution;
+ use crate::substitution::AttrTaint;
+ use crate::values::{AtomString, DashedIdent, computed};
++use crate::values::specified::position::PositionTryFallbacksItem;
+ use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
+ use cssparser::{
+     Parser, SourceLocation, SourcePosition, Token, match_ignore_ascii_case, parse_important,
+@@ -675,6 +676,8 @@
+     InParens(Box<QueryCondition>),
+     /// A <style> query.
+     Style(StyleQuery),
++    /// A fallback query, optionally comparing against none or a descriptor.
++    Anchored(Option<Option<PositionTryFallbacksItem>>),
+     /// A -moz-pref() query.
+     MozPref(MozPrefFeature),
+     /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
+@@ -709,6 +712,17 @@
+                 c.to_css(dest)?;
+                 dest.write_char(')')
+             },
++            Self::Anchored(ref query) => {
++                dest.write_str("anchored(fallback")?;
++                if let Some(value) = query {
++                    dest.write_str(": ")?;
++                    match value {
++                        Some(item) => item.to_css(dest)?,
++                        None => dest.write_str("none")?,
++                    }
++                }
++                dest.write_char(')')
++            },
+             Self::MozPref(ref c) => {
+                 dest.write_str("-moz-pref(")?;
+                 c.to_css(dest)?;
+@@ -755,6 +769,7 @@
+             | Self::Feature(..)
+             | Self::GeneralEnclosed(..)
+             | Self::Style(..)
++            | Self::Anchored(..)
+             | Self::MozPref(..) => {},
+             Self::Not(ref cond) => cond.visit(visitor),
+             Self::Operation(ref conds, _op) => {
+@@ -772,6 +787,7 @@
+         let mut result = FeatureFlags::empty();
+         self.visit(&mut |condition| match condition {
+             Self::Style(..) => result.insert(FeatureFlags::STYLE),
++            Self::Anchored(..) => result.insert(FeatureFlags::ANCHORED),
+             Self::Feature(f) => result.insert(f.feature_flags()),
+             Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
+             _ => {},
+@@ -834,6 +850,9 @@
+             Self::InParens(ref c) => c.matches(context, custom, attribute_tracker),
+             Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
+             Self::Style(ref c) => c.matches(context, attribute_tracker),
++            Self::Anchored(ref query) => context.container_info.as_ref().map_or(KleeneValue::Unknown, |info| {
++                query.as_ref().map_or_else(|| info.fallback.is_some(), |value| value == &info.fallback).into()
++            }),
+             Self::MozPref(ref c) => c.matches(context),
+             Self::Operation(ref conditions, op) => {
+                 debug_assert!(!conditions.is_empty(), "We never create an empty op");
+@@ -962,6 +981,16 @@
+             },
+             Token::Function(ref name) => {
+                 match_ignore_ascii_case! { name,
++                    "anchored" if feature_type == FeatureType::Container => {
++                        if let Some(query) = try_parse_block(context, input, start, start_location, |input| {
++                            input.expect_ident_matching("fallback")?;
++                            if input.is_exhausted() { return Ok(None); }
++                            input.expect_colon()?;
++                            if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() { return Ok(Some(None)); }
++                            PositionTryFallbacksItem::parse(context, input).map(|item| Some(Some(item)))
++                        }) { return Ok(Self::Anchored(query)); }
++                        flags.insert(FeatureFlags::ANCHORED);
++                    },
+                     "style" if StyleQuery::enabled(feature_type) => {
+                         let query = try_parse_block(context, input, start, start_location, |input| {
+                             StyleQuery::parse(context, input, feature_type)
+diff -ruN a/queries/feature.rs b/queries/feature.rs
+--- a/queries/feature.rs	2026-11-11 19:55:57
++++ b/queries/feature.rs	2026-11-20 13:27:27
+@@ -105,9 +105,9 @@
+ /// Different flags or toggles that change how a expression is parsed or
+ /// evaluated.
+ #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, ToShmem)]
+-pub struct FeatureFlags(u8);
++pub struct FeatureFlags(u16);
+ bitflags! {
+-    impl FeatureFlags : u8 {
++    impl FeatureFlags : u16 {
+         /// The feature should only be parsed in chrome and ua sheets.
+         const CHROME_AND_UA_ONLY = 1 << 0;
+         /// The feature requires a -webkit- prefix.
+@@ -124,6 +124,8 @@
+         const VIEWPORT_DEPENDENT = 1 << 6;
+         /// The feature evaluation depends on style queries.
+         const STYLE = 1 << 7;
++        /// Requires an anchored query container.
++        const ANCHORED = 1 << 8;
+     }
+ }
+ 
 diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
 --- a/queries/feature_expression.rs	2026-11-11 19:55:57
 +++ b/queries/feature_expression.rs	2026-11-17 11:00:31
@@ -2985,7 +3506,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
      // so we can skip the diffing process for later flags if an earlier flag is true
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-16 21:15:31
++++ b/servo/selector_parser.rs	2026-11-20 12:39:19
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -2994,7 +3515,24 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  use std::ops::{Deref, DerefMut};
  use style_traits::{ParseError, StyleParseErrorKind};
  
-@@ -50,6 +49,27 @@
+@@ -32,7 +31,7 @@
+ ///
+ /// NB: If you add to this list, be sure to update `each_simple_pseudo_element` too.
+ #[derive(
+-    Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, ToShmem,
++    Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, ToShmem,
+ )]
+ #[allow(missing_docs)]
+ #[repr(u8)]
+@@ -45,11 +44,51 @@
+     // APPLIES_TO_PLACEHOLDER properties expect!
+     FirstLetter,
+     FirstLine,
++    WebkitScrollbar,
++    WebkitScrollbarVertical,
++    WebkitScrollbarHorizontal,
+ 
+     // Non-eager pseudos.
      Backdrop,
      DetailsContent,
      Marker,
@@ -3019,10 +3557,26 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // `matching_fn`). Both are styled lazily, when highlights are painted.
 +    TargetText,
 +    Highlight(u16),
++    ViewTransition,
++    ViewTransitionGroup(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
++    ViewTransitionPair(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
++    ViewTransitionOld(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
++    ViewTransitionNew(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
++    // pyro: CSS Form Control Styling's `::picker(select)` and `::picker-icon`, and Chrome's
++    // `::-webkit-slider-thumb`: parsed (so `@supports selector()` knows them) but styled by nothing.
++    PickerSelect,
++    PickerIcon,
++    WebkitSliderThumb,
++    WebkitScrollbarThumb,
++    WebkitScrollbarTrack,
++    WebkitScrollbarTrackPiece,
++    WebkitScrollbarButton,
++    WebkitScrollbarCorner,
++    WebkitResizer,
  
      // Implemented pseudos. These pseudo elements are representing the
      // elements within an UA shadow DOM, and matching the elements with
-@@ -76,8 +96,36 @@
+@@ -76,8 +115,62 @@
  }
  
  /// The count of all pseudo-elements.
@@ -3034,6 +3588,32 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +pub const ANY_HIGHLIGHT: u16 = 0;
 +
 +static HIGHLIGHT_NAMES: std::sync::RwLock<Vec<Atom>> = std::sync::RwLock::new(Vec::new());
++
++/// Parses the named transition selector argument, preserving escaped wildcard identifiers.
++pub fn transition_selector(kind: &str, input: &mut CssParser) -> Result<PseudoElement, ParseError> {
++    use crate::values::CustomIdent;
++    let bad = || ParseError::custom(StyleParseErrorKind::UnspecifiedError);
++    let ctor: fn(crate::ArcSlice<Atom>) -> PseudoElement = match kind {
++        "view-transition-group" => PseudoElement::ViewTransitionGroup,
++        "view-transition-image-pair" => PseudoElement::ViewTransitionPair,
++        "view-transition-old" => PseudoElement::ViewTransitionOld,
++        "view-transition-new" => PseudoElement::ViewTransitionNew,
++        _ => return Err(bad()),
++    };
++    input.skip_whitespace();
++    let name = if input.try_parse(|p| p.expect_delim('*')).is_ok() { Some(Atom::from("")) }
++        else { input.try_parse(|p| CustomIdent::parse(p, &[])).ok().map(|id| id.0) };
++    let required_class = name.is_none();
++    let mut parts = vec![name.unwrap_or_else(|| Atom::from(""))];
++    while !input.is_exhausted() {
++        if parts.len() > 32 || !matches!(input.next_including_whitespace()?, cssparser::Token::Delim('.')) { return Err(bad()); }
++        let cssparser::Token::Ident(name) = input.next_including_whitespace()? else { return Err(bad()); };
++        parts.push(CustomIdent::from_ident(name, &[])?.0);
++    }
++    if (required_class && parts.len() == 1) || parts.iter().map(|atom| atom.len()).sum::<usize>() > 1024 { return Err(bad()); }
++    if parts.len() == 1 && parts[0].is_empty() { parts.clear(); }
++    Ok(ctor(crate::ArcSlice::from_iter(parts.into_iter())))
++}
 +
 +/// pyro: the id of a `::highlight()` name (ids live as long as the process; names are few).
 +pub fn highlight_name_id(name: &Atom) -> u16 {
@@ -3060,7 +3640,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  impl ToCss for PseudoElement {
      fn to_css<W>(&self, dest: &mut W) -> fmt::Result
      where
-@@ -93,6 +141,26 @@
+@@ -93,6 +186,47 @@
              Backdrop => "::backdrop",
              DetailsContent => "::details-content",
              Marker => "::marker",
@@ -3077,6 +3657,17 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            ScrollButtonLeft => "::scroll-button(left)",
 +            ScrollButtonRight => "::scroll-button(right)",
 +            TargetText => "::target-text",
++            ViewTransition => "::view-transition",
++            ViewTransitionGroup(ref parts) | ViewTransitionPair(ref parts) | ViewTransitionOld(ref parts) | ViewTransitionNew(ref parts) => {
++                dest.write_str(match self { ViewTransitionGroup(_) => "::view-transition-group(", ViewTransitionPair(_) => "::view-transition-image-pair(", ViewTransitionOld(_) => "::view-transition-old(", _ => "::view-transition-new(" })?;
++                if parts.is_empty() { dest.write_char('*')?; } else {
++                    for (index, part) in parts.iter().enumerate() {
++                        if index > 0 { dest.write_char('.')?; }
++                        if part.is_empty() { dest.write_char('*')?; } else { serialize_identifier(part, dest)?; }
++                    }
++                }
++                return dest.write_char(')');
++            },
 +            Highlight(id) => {
 +                dest.write_str("::highlight(")?;
 +                if let Some(name) = highlight_name(id) {
@@ -3084,10 +3675,25 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                }
 +                return dest.write_char(')');
 +            },
++            PickerSelect => "::picker(select)",
++            PickerIcon => "::picker-icon",
++            WebkitSliderThumb => "::-webkit-slider-thumb",
++            WebkitScrollbar | WebkitScrollbarVertical | WebkitScrollbarHorizontal => "::-webkit-scrollbar",
++            WebkitScrollbarThumb => "::-webkit-scrollbar-thumb",
++            WebkitScrollbarTrack => "::-webkit-scrollbar-track",
++            WebkitScrollbarTrackPiece => "::-webkit-scrollbar-track-piece",
++            WebkitScrollbarButton => "::-webkit-scrollbar-button",
++            WebkitScrollbarCorner => "::-webkit-scrollbar-corner",
++            WebkitResizer => "::-webkit-resizer",
              ColorSwatch => "::color-swatch",
              FileSelectorButton => "::file-selector-button",
              Placeholder => "::placeholder",
-@@ -116,6 +184,42 @@
+@@ -113,31 +247,98 @@
+ }
+ 
+ impl ::selectors::parser::PseudoElement for PseudoElement {
++    fn is_in_pseudo_element_tree(&self) -> bool { self.transition_argument().is_some() }
++    fn specificity_count(&self) -> u32 { u32::from(!self.transition_argument().is_some_and(|parts| parts.is_empty())) }
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
      }
@@ -3109,7 +3715,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // accepts them too, or the parser would reject them after its `::scroll-marker` as well
 +    // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
 +    fn accepts_state_pseudo_classes(&self) -> bool {
-+        self.is_scroll_marker() || self.is_scroll_button() || *self == Self::Column
++        self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
 +    }
 +
 +    // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
@@ -3130,7 +3736,32 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  }
  
  /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
-@@ -126,18 +230,26 @@
+-pub const EAGER_PSEUDO_COUNT: usize = 5;
++pub const EAGER_PSEUDO_COUNT: usize = 8;
+ 
+ impl PseudoElement {
++    /// Builds the name and classes owned by a generated view-transition box.
++    pub fn transition_box_argument(name: &str, classes: &[Atom]) -> Option<crate::ArcSlice<Atom>> {
++        if classes.len() > 32 || name.len() + classes.iter().map(|class| class.len()).sum::<usize>() > 1024 { return None; }
++        let mut parts = vec![Atom::from(name)];
++        parts.extend_from_slice(classes);
++        Some(crate::ArcSlice::from_iter(parts.into_iter()))
++    }
++    /// Name and classes for a named transition pseudo; empty for the universal selector.
++    pub fn transition_argument(&self) -> Option<&crate::ArcSlice<Atom>> {
++        use PseudoElement::*;
++        match self { ViewTransitionGroup(parts) | ViewTransitionPair(parts) | ViewTransitionOld(parts) | ViewTransitionNew(parts) => Some(parts), _ => None }
++    }
++
++    /// Matches a transition pseudo box against a rule within its kind's rule map.
++    pub fn matches_transition_selector(&self, selector: &Self) -> bool {
++        if self.discriminant() != selector.discriminant() { return false; }
++        let (Some(actual), Some(pattern)) = (self.transition_argument(), selector.transition_argument()) else { return self == selector; };
++        if pattern.is_empty() { return true; }
++        if actual.is_empty() { return false; }
++        (pattern[0].is_empty() || pattern[0] == actual[0]) && pattern[1..].iter().all(|class| actual[1..].contains(class))
++    }
+     /// Gets the canonical index of this eagerly-cascaded pseudo-element.
      #[inline]
      pub fn eager_index(&self) -> usize {
          debug_assert!(self.is_eager());
@@ -3160,7 +3791,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Creates a pseudo-element from an eager index.
-@@ -145,8 +257,15 @@
+@@ -145,8 +346,18 @@
      pub fn from_eager_index(i: usize) -> Self {
          const _: () = assert!(EAGER_PSEUDO_COUNT <= (u8::MAX as usize));
          assert!(i < EAGER_PSEUDO_COUNT);
@@ -3170,19 +3801,20 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            1 => PseudoElement::Before,
 +            2 => PseudoElement::Selection,
 +            3 => PseudoElement::FirstLetter,
-+            _ => PseudoElement::FirstLine,
++            4 => PseudoElement::FirstLine,
++            5 => PseudoElement::WebkitScrollbar,
++            6 => PseudoElement::WebkitScrollbarVertical,
++            _ => PseudoElement::WebkitScrollbarHorizontal,
 +        };
          debug_assert!(result.is_eager());
 +        debug_assert_eq!(result.eager_index(), i);
          result
      }
  
-@@ -166,8 +285,45 @@
-     #[inline]
-     pub fn is_marker(&self) -> bool {
+@@ -168,6 +379,56 @@
          *self == PseudoElement::Marker
-+    }
-+
+     }
+ 
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -3204,26 +3836,49 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | PseudoElement::ScrollButtonLeft
 +                | PseudoElement::ScrollButtonRight
 +        )
-     }
- 
++    }
++
 +    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
 +    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
 +    /// node then matches each rule's argument against its direction).
 +    #[inline]
 +    pub fn rule_map_key(&self) -> PseudoElement {
-+        if self.is_scroll_button() {
++        use PseudoElement::*;
++        match self { ViewTransitionGroup(_) => return ViewTransitionGroup(Default::default()), ViewTransitionPair(_) => return ViewTransitionPair(Default::default()), ViewTransitionOld(_) => return ViewTransitionOld(Default::default()), ViewTransitionNew(_) => return ViewTransitionNew(Default::default()), _ => () }
++        if self.scrollbar_orientation().is_some() {
++            PseudoElement::WebkitScrollbar
++        } else if self.is_scroll_button() {
 +            PseudoElement::ScrollButtonAll
 +        } else if self.is_highlight() {
 +            PseudoElement::Highlight(ANY_HIGHLIGHT)
 +        } else {
-+            *self
++            self.clone()
++        }
++    }
++
++    /// State used when cascading a custom scrollbar for a physical axis.
++    pub fn scrollbar_orientation(&self) -> Option<NonTSPseudoClass> {
++        match self {
++            Self::WebkitScrollbarVertical => Some(NonTSPseudoClass::ScrollbarVertical),
++            Self::WebkitScrollbarHorizontal => Some(NonTSPseudoClass::ScrollbarHorizontal),
++            _ => None,
 +        }
 +    }
 +
      /// Whether this pseudo-element is the ::selection pseudo.
      #[inline]
      pub fn is_selection(&self) -> bool {
-@@ -261,7 +417,21 @@
+@@ -249,6 +510,9 @@
+             | PseudoElement::Before
+             | PseudoElement::FirstLetter
+             | PseudoElement::FirstLine
++            | PseudoElement::WebkitScrollbar
++            | PseudoElement::WebkitScrollbarVertical
++            | PseudoElement::WebkitScrollbarHorizontal
+             | PseudoElement::Selection => PseudoElementCascadeType::Eager,
+             PseudoElement::Backdrop
+             | PseudoElement::ColorSwatch
+@@ -261,7 +525,31 @@
              | PseudoElement::SliderTrack
              | PseudoElement::MozProgressBar
              | PseudoElement::ServoTextControlInnerContainer
@@ -3242,11 +3897,21 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            | PseudoElement::ScrollButtonLeft
 +            | PseudoElement::ScrollButtonRight
 +            | PseudoElement::TargetText
++            | PseudoElement::ViewTransition | PseudoElement::ViewTransitionGroup(_) | PseudoElement::ViewTransitionPair(_) | PseudoElement::ViewTransitionOld(_) | PseudoElement::ViewTransitionNew(_)
++            | PseudoElement::PickerSelect
++            | PseudoElement::PickerIcon
++            | PseudoElement::WebkitSliderThumb
++            | PseudoElement::WebkitScrollbarThumb
++            | PseudoElement::WebkitScrollbarTrack
++            | PseudoElement::WebkitScrollbarTrackPiece
++            | PseudoElement::WebkitScrollbarButton
++            | PseudoElement::WebkitScrollbarCorner
++            | PseudoElement::WebkitResizer
 +            | PseudoElement::Highlight(_) => PseudoElementCascadeType::Lazy,
              PseudoElement::ServoAnonymousBox
              | PseudoElement::ServoAnonymousTable
              | PseudoElement::ServoAnonymousTableCell
-@@ -292,7 +462,9 @@
+@@ -292,7 +580,9 @@
                  PropertyFlags::APPLIES_TO_MARKER
              },
              PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
@@ -3257,7 +3922,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => PropertyFlags::empty(),
          }
      }
-@@ -313,19 +485,22 @@
+@@ -313,19 +603,22 @@
  
      /// Whether this pseudo-element is the ::highlight pseudo.
      pub fn is_highlight(&self) -> bool {
@@ -3272,7 +3937,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      #[inline]
      pub fn has_argument(&self) -> bool {
 -        false
-+        self.is_scroll_button() || self.is_highlight()
++        self.is_scroll_button() || self.is_highlight() || self.transition_argument().is_some()
      }
  
      /// Whether this pseudo-element is the ::target-text pseudo.
@@ -3283,7 +3948,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Whether this is a highlight pseudo-element that is styled lazily during
-@@ -341,7 +516,10 @@
+@@ -341,7 +634,10 @@
      #[inline]
      pub fn is_element_backed(&self) -> bool {
          use selectors::parser::PseudoElement;
@@ -3294,7 +3959,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              || matches!(
                  self,
                  Self::Placeholder
-@@ -357,6 +535,14 @@
+@@ -357,6 +653,14 @@
      }
  }
  
@@ -3309,7 +3974,33 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// The type used for storing `:lang` arguments.
  pub type Lang = Box<str>;
  
-@@ -376,6 +562,9 @@
+@@ -364,6 +668,25 @@
+ #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+ pub struct CustomState(pub AtomIdent);
+ 
++/// pyro: the argument of the functional `:has-slotted()` pseudo-class: the selectors (no
++/// pseudo-elements) one of a slot's flattened assigned elements must match.
++#[derive(Clone, Debug, PartialEq, ToShmem)]
++pub struct HasSlottedArgument(pub selectors::parser::SelectorList<SelectorImpl>);
++
++impl Eq for HasSlottedArgument {}
++
++impl std::hash::Hash for HasSlottedArgument {
++    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
++        self.0.to_css_string().hash(state)
++    }
++}
++
++impl malloc_size_of::MallocSizeOf for HasSlottedArgument {
++    fn size_of(&self, _: &mut malloc_size_of::MallocSizeOfOps) -> usize {
++        0
++    }
++}
++
+ /// A non tree-structural pseudo-class.
+ /// See https://drafts.csswg.org/selectors-4/#structural-pseudos
+ #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToShmem)]
+@@ -376,6 +699,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -3319,20 +4010,25 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +594,12 @@
+@@ -405,6 +731,17 @@
      Required,
      ServoNonZeroBorder,
      Target,
 +    /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
 +    TargetCurrent,
++    ScrollbarVertical,
++    ScrollbarHorizontal,
 +    /// pyro: `:target-before` and `:target-after` (CSS Overflow 5): the scroll markers of a group
 +    /// before and after its active one, in tree order.
 +    TargetBefore,
 +    TargetAfter,
++    /// pyro: `:has-slotted` and `:has-slotted(<selector-list>)` (CSS Scoping 1 § 3.2.5): a slot
++    /// whose flattened assigned nodes are not empty (of which an element matches the argument).
++    HasSlotted(Option<HasSlottedArgument>),
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +612,22 @@
+@@ -417,11 +754,24 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -3349,6 +4045,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | NonTSPseudoClass::Focus
 +                | NonTSPseudoClass::FocusVisible
 +                | NonTSPseudoClass::TargetCurrent
++                | NonTSPseudoClass::ScrollbarVertical
++                | NonTSPseudoClass::ScrollbarHorizontal
 +                | NonTSPseudoClass::TargetBefore
 +                | NonTSPseudoClass::TargetAfter
 +                | NonTSPseudoClass::Enabled
@@ -3356,7 +4054,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -441,6 +647,11 @@
+@@ -441,6 +791,20 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
          }
@@ -3365,14 +4063,25 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            serialize_identifier(dir, dest)?;
 +            return dest.write_char(')');
 +        }
++        if let HasSlotted(ref argument) = *self {
++            dest.write_str(":has-slotted")?;
++            if let Some(argument) = argument {
++                dest.write_char('(')?;
++                argument.0.to_css(dest)?;
++                dest.write_char(')')?;
++            }
++            return Ok(());
++        }
  
          dest.write_str(match *self {
              Self::Active => ":active",
-@@ -481,11 +692,14 @@
+@@ -481,11 +845,16 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
 +            Self::TargetCurrent => ":target-current",
++            Self::ScrollbarVertical => ":vertical",
++            Self::ScrollbarHorizontal => ":horizontal",
 +            Self::TargetBefore => ":target-before",
 +            Self::TargetAfter => ":target-after",
              Self::UserInvalid => ":user-invalid",
@@ -3380,11 +4089,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              Self::Valid => ":valid",
              Self::Visited => ":visited",
 -            Self::Lang(_) => unreachable!(),
-+            Self::Lang(_) | Self::Dir(_) => unreachable!(),
++            Self::Lang(_) | Self::Dir(_) | Self::HasSlotted(_) => unreachable!(),
          })
      }
  }
-@@ -527,11 +741,14 @@
+@@ -527,11 +896,20 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -3396,31 +4105,58 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              Self::Valid => ElementState::VALID,
              Self::Visited => ElementState::VISITED,
 -            Self::CustomState(_) | Self::Lang(_) | Self::ServoNonZeroBorder => {
-+            Self::CustomState(_) | Self::Lang(_) | Self::Dir(_) | Self::ServoNonZeroBorder => {
++            Self::CustomState(_)
++            | Self::ScrollbarVertical
++            | Self::ScrollbarHorizontal
++            | Self::Lang(_)
++            | Self::Dir(_)
++            | Self::HasSlotted(_)
++            | Self::ServoNonZeroBorder => {
                  ElementState::empty()
              },
          }
-@@ -646,6 +863,9 @@
+@@ -646,6 +1024,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
 +            "target-current" => NonTSPseudoClass::TargetCurrent,
++            "vertical" => NonTSPseudoClass::ScrollbarVertical,
++            "horizontal" => NonTSPseudoClass::ScrollbarHorizontal,
 +            "target-before" => NonTSPseudoClass::TargetBefore,
 +            "target-after" => NonTSPseudoClass::TargetAfter,
++            "has-slotted" => NonTSPseudoClass::HasSlotted(None),
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -696,6 +916,9 @@
-             "state" => {
+@@ -697,6 +1081,27 @@
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-+            },
+             },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
-             },
++            },
++            "has-slotted" => {
++                let list = selectors::parser::SelectorList::parse_disallow_pseudo(
++                    self,
++                    parser,
++                    selectors::parser::ParseRelative::No,
++                )?;
++                // Compound selectors, joined by sibling combinators only (WPT
++                // css/selectors/parsing `parse-has-slotted`: `div + div` but not `div > span`).
++                let ancestor = list.slice().iter().any(|selector| {
++                    selector.iter_raw_match_order().any(|component| {
++                        matches!(component, selectors::parser::Component::Combinator(c) if !c.is_sibling())
++                    })
++                });
++                if ancestor {
++                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
++                }
++                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
++            },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
-@@ -714,6 +937,10 @@
+ 
+@@ -714,8 +1119,22 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -3428,13 +4164,27 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            "scroll-marker" => ScrollMarker,
 +            "column" => Column,
 +            "target-text" => TargetText,
++            "view-transition" => ViewTransition,
              "details-content" => DetailsContent,
              "color-swatch" => ColorSwatch,
++            "picker-icon" => PickerIcon,
++            "-webkit-slider-thumb" => WebkitSliderThumb,
++            "-webkit-scrollbar" => WebkitScrollbar,
++            "-webkit-scrollbar-thumb" => WebkitScrollbarThumb,
++            "-webkit-scrollbar-track" => WebkitScrollbarTrack,
++            "-webkit-scrollbar-track-piece" => WebkitScrollbarTrackPiece,
++            "-webkit-scrollbar-button" => WebkitScrollbarButton,
++            "-webkit-scrollbar-corner" => WebkitScrollbarCorner,
++            "-webkit-resizer" => WebkitResizer,
              "placeholder" => Placeholder,
-@@ -776,6 +1003,37 @@
-         Ok(pseudo_element)
-     }
+             "-servo-text-control-inner-container" => {
+                 if !self.in_user_agent_stylesheet() {
+@@ -774,6 +1193,44 @@
+         };
  
+         Ok(pseudo_element)
++    }
++
 +    // pyro: `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2).
 +    fn parse_functional_pseudo_element(
 +        &self,
@@ -3445,6 +4195,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +        if name.eq_ignore_ascii_case("highlight") {
 +            let ident = arguments.expect_ident()?;
 +            return Ok(Highlight(highlight_name_id(&Atom::from(ident.as_ref()))));
++        }
++        if name.get(..16).is_some_and(|prefix| prefix.eq_ignore_ascii_case("view-transition-")) {
++            return transition_selector(&name.to_ascii_lowercase(), arguments);
++        }
++        if name.eq_ignore_ascii_case("picker") {
++            arguments.expect_ident_matching("select")?;
++            return Ok(PickerSelect);
 +        }
 +        if !name.eq_ignore_ascii_case("scroll-button") {
 +            return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
@@ -3464,15 +4221,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            "right" => ScrollButtonRight,
 +            _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
 +        })
-+    }
-+
-     fn default_namespace(&self) -> Option<Namespace> {
-         self.namespaces.default.as_ref().map(|ns| ns.clone())
      }
+ 
+     fn default_namespace(&self) -> Option<Namespace> {
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-19 00:13:04
-@@ -184,8 +184,86 @@
++++ b/style_adjuster.rs	2026-11-20 11:16:55
+@@ -184,6 +184,84 @@
          self.style
              .mutate_box()
              .set_adjusted_display(new_display, false);
@@ -3538,8 +4293,8 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        if clamps {
 +            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
 +        }
-     }
- 
++    }
++
 +    /// pyro: a child of a legacy horizontal `-webkit-box` (laid out as flex) flexes by
 +    /// `-webkit-box-flex`, growing and shrinking alike, and its `align-self` does nothing (the
 +    /// box's `-webkit-box-align` aligns it): Blink's `LayoutDeprecatedFlexibleBox`.
@@ -3554,15 +4309,16 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        pos.set_flex_grow(flex);
 +        pos.set_flex_shrink(flex);
 +        pos.set_align_self(SelfAlignment::auto());
-+    }
-+
-     /// CSS 2.1 section 9.7:
-     ///
-     ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
-@@ -406,6 +484,48 @@
-         }
      }
  
+     /// CSS 2.1 section 9.7:
+@@ -403,7 +481,52 @@
+             } else {
+                 self.style.mutate_box().set_display(Display::InlineBlock);
+             }
++        }
++    }
++
 +    /// pyro: `text-combine-upright: all` on an inline box in a vertical (not sideways) line: its
 +    /// text is combined into one upright 1em square (CSS Writing Modes 4 § 9.1.1). Laid out as an
 +    /// inline-block of `horizontal-tb` writing (`adjust_for_writing_mode` below makes it one), 1em
@@ -3589,8 +4345,11 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            crate::values::computed::TextEmphasisStyle::None
 +        ) {
 +            return;
-+        }
+         }
 +        let em = self.style.get_font().slow_clone_font_size().computed_size();
++        // pyro: the box of combined text (blitz-dom: no letter spacing, width variants, one glued
++        // letter in the line).
++        self.style.add_flags(ComputedValueFlags::IS_TEXT_COMBINED);
 +        self.style.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
 +        self.style.writing_mode = crate::logical_geometry::WritingMode::new(self.style.get_inherited_box());
 +        let text = self.style.mutate_inherited_text();
@@ -3603,31 +4362,27 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        self.style
 +            .mutate_font()
 +            .set_line_height(crate::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
-+    }
-+
+     }
+ 
      /// CSS overflow-x and overflow-y require some fixup as well in some cases.
-     /// https://drafts.csswg.org/css-overflow-3/#overflow-properties
-     /// "Computed value: as specified, except with `visible`/`clip` computing to
-@@ -419,9 +539,16 @@
+@@ -419,9 +542,14 @@
          }
  
          if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
-+            // pyro: `clip` beside `hidden` stays `clip`, as in Blink: that axis neither scrolls nor
-+            // keeps a scroll offset (WPT css-overflow `single-axis-overflow-scroll-to-clip`)
 +            use crate::values::computed::Overflow;
-+            let adjust = |own: Overflow, other: Overflow| match (own, other) {
-+                (Overflow::Clip, Overflow::Hidden) => Overflow::Clip,
++            let adjust = |own: Overflow| match own {
++                Overflow::Clip => Overflow::Clip,
 +                _ => own.to_scrollable(),
 +            };
              let box_style = self.style.mutate_box();
 -            box_style.set_overflow_x(overflow_x.to_scrollable());
 -            box_style.set_overflow_y(overflow_y.to_scrollable());
-+            box_style.set_overflow_x(adjust(overflow_x, overflow_y));
-+            box_style.set_overflow_y(adjust(overflow_y, overflow_x));
++            box_style.set_overflow_x(adjust(overflow_x));
++            box_style.set_overflow_y(adjust(overflow_y));
          }
      }
  
-@@ -821,6 +948,95 @@
+@@ -821,6 +949,95 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -3723,7 +4478,40 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1064,7 +1280,20 @@
+@@ -1029,7 +1246,32 @@
+             pos.set_align_self(flipped);
+         } else {
+             pos.set_justify_self(flipped);
++        }
++    }
++
++    /// pyro: `backface-visibility: hidden` on an element participating in a 3D rendering context
++    /// (its layout parent `preserve-3d`) makes it the containing block of its absolutely and
++    /// fixed positioned descendants, as in Chromium (WPT css-transforms
++    /// `backface-visibility-hidden-003`, `-004`): marked as `will-change` of such a property
++    /// marks it (`WillChangeBits::FIXPOS_CB_NON_SVG`), which every containing block check reads.
++    /// Not on a non-atomic inline box, to which `backface-visibility` does not apply.
++    #[cfg(feature = "servo")]
++    fn adjust_for_backface_in_3d_context(&mut self, layout_parent_style: &ComputedValues) {
++        use crate::computed_values::backface_visibility::T as BackfaceVisibility;
++        use crate::computed_values::transform_style::T as TransformStyle;
++        use crate::values::specified::box_::WillChangeBits;
++        let box_style = self.style.get_box();
++        if box_style.backface_visibility != BackfaceVisibility::Hidden
++            || layout_parent_style.get_box().transform_style != TransformStyle::Preserve3d
++            || box_style.will_change.bits.contains(WillChangeBits::FIXPOS_CB_NON_SVG)
++        {
++            return;
+         }
++        let display = *box_style.get_display();
++        if display.is_none() || display.is_contents() || display.is_inline_flow() {
++            return;
++        }
++        self.style.mutate_box().will_change.bits |= WillChangeBits::FIXPOS_CB_NON_SVG;
+     }
+ 
+     /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
+@@ -1064,7 +1306,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -3744,7 +4532,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
          {
-@@ -1084,12 +1313,20 @@
+@@ -1084,12 +1339,21 @@
          }
          self.adjust_for_justify_items();
          self.adjust_for_table_text_align();
@@ -3761,13 +4549,14 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            self.adjust_for_content_visibility();
 +            self.adjust_for_scroll_marker_group();
 +            self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
++            self.adjust_for_backface_in_3d_context(layout_parent_style);
 +        }
          if !try_tactic.is_empty() {
              self.adjust_for_try_tactic(try_tactic);
          }
 diff -ruN a/style_resolver.rs b/style_resolver.rs
 --- a/style_resolver.rs	2026-11-11 19:55:57
-+++ b/style_resolver.rs	2026-11-18 23:42:41
++++ b/style_resolver.rs	2026-11-20 08:37:14
 @@ -196,8 +196,10 @@
  
          let inside_link = parent_style.is_some_and(|s| s.visited_style().is_some());
@@ -3780,9 +4569,23 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          {
              if self.needs_visited_matching() {
                  let visited_matching_results =
-@@ -588,6 +590,47 @@
+@@ -307,6 +309,10 @@
+             let layout_parent_style_for_pseudo =
+                 layout_parent_style_for_pseudo(&primary_style, layout_parent_style);
+             SelectorImpl::each_eagerly_cascaded_pseudo_element(|pseudo| {
++                #[cfg(feature = "servo")]
++                if pseudo.scrollbar_orientation().is_some() && pseudo_styles.get(&PseudoElement::WebkitScrollbar).is_none() {
++                    return;
++                }
+                 let pseudo_style = self.resolve_pseudo_style(
+                     &pseudo,
+                     &primary_style,
+@@ -587,7 +593,50 @@
+             MatchingForInvalidation::No,
          );
          matching_context.extra_data.originating_element_style = Some(originating_element_style);
++        #[cfg(feature = "servo")]
++        { matching_context.pseudo_element_state = pseudo_element.scrollbar_orientation(); }
  
 +        // pyro: no rule that can generate a `::before`/`::after` box matches, so the
 +        // style matched and cascaded below would be dropped by
@@ -3828,6 +4631,34 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          // NB: We handle animation rules for ::before and ::after when
          // traversing them.
          stylist.push_applicable_declarations(
+diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
+--- a/stylesheets/container_rule.rs	2026-11-11 19:55:57
++++ b/stylesheets/container_rule.rs	2026-11-20 13:27:27
+@@ -273,6 +273,8 @@
+         // Filter by container-type.
+         let container_type = *box_style.get_container_type();
+         let available_axes = container_type_axes(container_type, wm);
++        let anchored = self.flags.contains(FeatureFlags::ANCHORED);
++        if anchored && !container_type.contains(ContainerType::ANCHORED) { return TraversalResult::InProgress; }
+         if !available_axes.contains(self.flags.container_axes()) {
+             return TraversalResult::InProgress;
+         }
+@@ -290,6 +292,7 @@
+         TraversalResult::Done(ContainerLookupResult {
+             element: potential_container,
+             info: ContainerInfo {
++                fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
+                 size,
+                 wm,
+                 inherited_style: {
+@@ -442,6 +445,7 @@
+ /// Information needed to evaluate an individual container query.
+ #[derive(Clone)]
+ pub struct ContainerInfo {
++    pub(crate) fallback: Option<crate::values::specified::position::PositionTryFallbacksItem>,
+     size: Size2D<Option<Au>>,
+     wm: WritingMode,
+     inherited_style: Option<Arc<ComputedValues>>,
 diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_values_rule.rs
 --- a/stylesheets/font_palette_values_rule.rs	2026-11-11 19:55:57
 +++ b/stylesheets/font_palette_values_rule.rs	2026-11-16 15:05:29
@@ -3894,7 +4725,7 @@ diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_v
              return Ok(FontPaletteBase::Index(v));
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
 --- a/stylesheets/rule_parser.rs	2026-11-11 19:55:57
-+++ b/stylesheets/rule_parser.rs	2026-11-16 16:33:29
++++ b/stylesheets/rule_parser.rs	2026-11-19 17:13:26
 @@ -279,10 +279,11 @@
              "font-face" => Self::FontFace,
              "font-feature-values" => Self::FontFeatureValues,
@@ -3909,6 +4740,101 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
              "supports" => Self::Supports,
              "keyframes" => Self::Keyframes(None),
              "-webkit-keyframes" => Self::Keyframes(Some(VendorPrefix::WebKit)),
+@@ -422,9 +423,17 @@
+                     ));
+                 }
+ 
+-                let url_string = input.expect_url_or_string()?.as_ref().to_owned();
+-                let url =
+-                    CssUrl::new_from_untainted_string(url_string, &self.context, CorsMode::None);
++                // pyro: `@import [ <url> | <string> ]`, a `<url>` with its request URL modifiers
++                // (CSS Values 5 § 4.5.4).
++                let url = match input
++                    .try_parse(|input| CssUrl::parse_with_cors_mode(&self.context, input, CorsMode::None))
++                {
++                    Ok(url) => url,
++                    Err(..) => {
++                        let url_string = input.expect_string()?.as_ref().to_owned();
++                        CssUrl::new_from_untainted_string(url_string, &self.context, CorsMode::None)
++                    },
++                };
+ 
+                 let (layer, supports) =
+                     ImportRule::parse_layer_and_supports(input, &mut self.context);
+diff -ruN a/stylesheets/scope_rule.rs b/stylesheets/scope_rule.rs
+--- a/stylesheets/scope_rule.rs	2026-11-11 19:55:57
++++ b/stylesheets/scope_rule.rs	2026-11-19 19:56:04
+@@ -302,8 +302,22 @@
+     let mut result = vec![];
+     let mut parent = Some(element);
+     let mut proximity = 0usize;
++    // pyro: once a link is passed on the way up, the elements above it match `:visited` as
++    // unvisited (Selectors 4 § 12.2, as for a selector's own ancestors: WPT css-cascade
++    // `scope-visited`, a visited link in a visited link).
++    let mut past_link = false;
+     while let Some(p) = parent {
+-        if target.check(p, ceiling, scope_subject_map, context) {
++        let matches = if past_link {
++            context.with_visited_handling_mode(selectors::matching::VisitedHandlingMode::AllLinksUnvisited, |context| {
++                target.check(p, ceiling, scope_subject_map, context)
++            })
++        } else {
++            target.check(p, ceiling, scope_subject_map, context)
++        };
++        if p.is_link() {
++            past_link = true;
++        }
++        if matches {
+             result.push(ScopeRootCandidate {
+                 root: p.opaque(),
+                 proximity: ScopeProximity::new(proximity),
+diff -ruN a/stylesheets/stylesheet.rs b/stylesheets/stylesheet.rs
+--- a/stylesheets/stylesheet.rs	2026-11-11 19:55:57
++++ b/stylesheets/stylesheet.rs	2026-11-19 19:38:22
+@@ -229,6 +229,9 @@
+     pub media: Arc<Locked<MediaList>>,
+     /// Whether this stylesheet should be disabled.
+     pub disabled: AtomicBool,
++    /// pyro: the implicit scope root of its prelude-less `@scope` rules (the owner node's parent
++    /// element, or the shadow host of a sheet at a shadow tree's top), as the document set it.
++    pub implicit_scope_root: Option<ImplicitScopeRoot>,
+ }
+ 
+ /// A trait to represent a given stylesheet in a document.
+@@ -279,7 +282,7 @@
+     }
+ 
+     fn implicit_scope_root(&self) -> Option<ImplicitScopeRoot> {
+-        None
++        self.implicit_scope_root
+     }
+ }
+ 
+@@ -309,7 +312,7 @@
+     }
+ 
+     fn implicit_scope_root(&self) -> Option<ImplicitScopeRoot> {
+-        None
++        self.0.implicit_scope_root
+     }
+ }
+ 
+@@ -523,6 +526,7 @@
+             shared_lock,
+             media,
+             disabled: AtomicBool::new(false),
++            implicit_scope_root: None,
+         }
+     }
+ 
+@@ -565,6 +569,7 @@
+             media,
+             shared_lock: lock,
+             disabled: AtomicBool::new(self.disabled.load(Ordering::SeqCst)),
++            implicit_scope_root: self.implicit_scope_root,
+         }
+     }
+ }
 diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
 --- a/stylesheets/supports_rule.rs	2026-11-11 19:55:57
 +++ b/stylesheets/supports_rule.rs	2026-11-17 11:03:09
@@ -3941,7 +4867,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-18 23:37:56
++++ b/stylist.rs	2026-11-20 12:13:59
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -3953,20 +4879,20 @@ diff -ruN a/stylist.rs b/stylist.rs
  };
  use crate::properties_and_values::registry::{
      PropertyRegistration, ScriptRegistry as CustomPropertyScriptRegistry,
-@@ -1040,6 +1040,13 @@
-     #[inline]
-     pub fn iter_extra_data_origins_rev(&self) -> ExtraStyleDataIterator<'_> {
+@@ -1042,6 +1042,13 @@
          ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
-+    }
-+
+     }
+ 
 +    /// Whether active cascade data contains a container condition.
 +    pub fn has_container_queries(&self) -> bool {
 +        self.cascade_data
 +            .iter_origins()
 +            .any(|(data, _)| data.container_conditions.len() > 1)
-     }
- 
++    }
++
      /// Returns the number of selectors.
+     pub fn num_selectors(&self) -> usize {
+         self.cascade_data
 @@ -1217,6 +1224,62 @@
          }
  
@@ -4120,11 +5046,66 @@ diff -ruN a/stylist.rs b/stylist.rs
          Some(CascadeInputs {
              rules: Some(rules),
              visited_rules,
-@@ -2863,6 +2987,82 @@
-     fn clear(&mut self) {
+@@ -1757,6 +1881,8 @@
+         let mut cur = element;
+         let mut pseudos = SmallVec::<[_; 2]>::new();
+         if let Some(pseudo) = pseudo_element {
++            #[cfg(feature = "servo")]
++            let pseudo = if pseudo.scrollbar_orientation().is_some() { &PseudoElement::WebkitScrollbar } else { pseudo };
+             pseudos.push(pseudo.clone());
+         }
+         while let Some(p) = cur.implemented_pseudo_element() {
+@@ -1857,7 +1983,36 @@
+         self.lookup_element_dependent_at_rule(element, |data| data.animations.get(name))
+     }
+ 
+-    /// Returns the last @view-transition rule
++    /// pyro: the `@keyframes` rule `name` as seen from the tree scope of the declaration that
++    /// named it (`scope`, its cascade level), not from `element`'s: the rules of the declaration's
++    /// own tree first, then those of each host's tree out to the document (CSS Scoping 1
++    /// § 3.5.1, tree-scoped names; a `::part()` rule of the document names the document's
++    /// keyframes).
++    pub fn lookup_keyframes_scoped<'a, E>(
++        &'a self,
++        name: &Atom,
++        scope: CascadeLevel,
++        element: E,
++    ) -> Option<&'a KeyframesAnimation>
++    where
++        E: TElement + 'a,
++    {
++        let mut shadow_root = scope.get_shadow_root_for_scoped(element);
++        while let Some(r) = shadow_root {
++            if let Some(animation) = r.style_data().and_then(|data| data.animations.get(name)) {
++                return Some(animation);
++            }
++            shadow_root = r.host().containing_shadow();
++        }
++        self.cascade_data
++            .author
++            .animations
++            .get(name)
++            .or_else(|| self.cascade_data.user.animations.get(name))
++            .or_else(|| self.cascade_data.user_agent.cascade_data.animations.get(name))
++    }
++
++        /// Returns the last @view-transition rule
+     /// <https://drafts.csswg.org/css-view-transitions-2/#resolve-view-transition-rule>
+     #[inline]
+     pub fn last_view_transition_rule(&self) -> Option<&Arc<ViewTransitionRule>> {
+@@ -1870,7 +2025,7 @@
+ 
+     /// Returns the registered `@position-try-rule` animation for the specified name.
+     #[inline]
+-    fn lookup_position_try<'a, E>(
++    pub fn lookup_position_try<'a, E>(
+         &'a self,
+         name: &Atom,
+         scope: CascadeLevel,
+@@ -2864,8 +3019,84 @@
          self.element_map.clear();
          self.pseudos_map.clear();
-+    }
+     }
 +}
 +
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
@@ -4147,8 +5128,8 @@ diff -ruN a/stylist.rs b/stylist.rs
 +struct BoxGeneratingPseudoRules {
 +    before: SelectorMap<Rule>,
 +    after: SelectorMap<Rule>,
-+}
-+
+ }
+ 
 +impl BoxGeneratingPseudoRules {
 +    /// Whether a rule with these declarations goes in the index (when it is a single-level
 +    /// `::before` or `::after` rule).
@@ -4200,10 +5181,13 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    fn shrink_if_needed(&mut self) {
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
-     }
- }
- 
-@@ -3360,6 +3560,10 @@
++    }
++}
++
+ /// The id of a given layer, a sequentially-increasing identifier.
+ #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
+ pub struct LayerId(u16);
+@@ -3360,6 +3591,10 @@
      /// The data coming from normal style rules that apply to elements at this
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
@@ -4214,7 +5198,7 @@ diff -ruN a/stylist.rs b/stylist.rs
  
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
-@@ -3522,10 +3726,17 @@
+@@ -3522,10 +3757,17 @@
  }
  
  impl CascadeData {
@@ -4232,10 +5216,12 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3732,6 +3943,25 @@
+@@ -3730,6 +3972,25 @@
+     #[inline]
+     pub fn normal_rules(&self, pseudo_elements: &[PseudoElement]) -> Option<&SelectorMap<Rule>> {
          self.normal_rules.rules(pseudo_elements)
-     }
- 
++    }
++
 +    /// pyro: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
 +    /// or `::after`) generate a box. `None` for other pseudo-elements.
 +    #[inline]
@@ -4253,12 +5239,10 @@ diff -ruN a/stylist.rs b/stylist.rs
 +                .is_some_and(|m| !m.is_empty())
 +            || self.slotted_rules(pseudos).is_some_and(|m| !m.is_empty())
 +            || self.part_rules(pseudos).is_some_and(|m| !m.is_empty())
-+    }
-+
+     }
+ 
      /// Returns the featureless pseudo rule map for a given pseudo-element.
-     #[inline]
-     pub fn featureless_host_rules(
-@@ -3850,6 +4080,7 @@
+@@ -3850,6 +4111,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -4266,7 +5250,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4186,20 @@
+@@ -3955,10 +4217,20 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -4288,7 +5272,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              let pseudo_elements = selector.pseudo_elements();
              let inner_pseudo_element = pseudo_elements.first();
              if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4343,15 @@
+@@ -4102,6 +4374,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -4304,7 +5288,21 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4817,6 +5067,7 @@
+@@ -4476,6 +4757,13 @@
+                                 | ImplicitScopeRoot::DocumentElement => {
+                                     StylistImplicitScopeRoot::Normal(root)
+                                 },
++                                // pyro: (servo) a sheet with an implicit scope root is its
++                                // owner's alone (Blitz parses it for that element: its cascade
++                                // data is not shared between shadow trees).
++                                #[cfg(feature = "servo")]
++                                ImplicitScopeRoot::ShadowHost(_)
++                                | ImplicitScopeRoot::InShadowTree(_) => StylistImplicitScopeRoot::Normal(root),
++                                #[cfg(not(feature = "servo"))]
+                                 ImplicitScopeRoot::ShadowHost(_)
+                                 | ImplicitScopeRoot::InShadowTree(_) => {
+                                     // Style data can be shared between shadow trees, so we must
+@@ -4817,6 +5105,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
@@ -4312,6 +5310,34 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut slotted_rules) = self.slotted_rules {
              slotted_rules.clear();
          }
+diff -ruN a/substitution/attr.rs b/substitution/attr.rs
+--- a/substitution/attr.rs	2026-11-11 19:55:57
++++ b/substitution/attr.rs	2026-11-19 23:28:55
+@@ -131,6 +131,12 @@
+         if let Ok(ns) =
+             input.try_parse(|input| ParsedNamespace::parse(&context.namespaces.prefixes, input))
+         {
++            // pyro: Chromium takes no namespace prefix in `attr()`: `attr(x|href)` is invalid
++            // (`@supports (content: attr(x|href))` is false; WPT css-conditional
++            // `at-supports-namespace-001` as Chrome renders it).
++            if cfg!(feature = "servo") {
++                return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++            }
+             namespace = ns;
+             let prev = input.state();
+             let is_ident = matches!(input.next_including_whitespace(), Ok(Token::Ident(_)));
+@@ -188,6 +194,11 @@
+         context: &mut SubstitutionParserContext,
+     ) -> Result<Self, ParseError> {
+         let arg = SubstitutionArgument::try_parse(input, context, Delimiter::Comma)?;
++        // pyro: arguments that do not match `<attr-name> <attr-type>?` make the declaration
++        // invalid when it is parsed, as in Chromium (`@supports` reads them so).
++        if cfg!(feature = "servo") && matches!(arg, SubstitutionArgument::Invalid) {
++            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++        }
+         let namespaces = match arg {
+             SubstitutionArgument::Unparsed(..) => {
+                 Some(context.parser_context.namespaces.prefixes.clone())
 diff -ruN a/traversal.rs b/traversal.rs
 --- a/traversal.rs	2026-11-11 19:55:57
 +++ b/traversal.rs	2026-11-17 23:56:40
@@ -4399,6 +5425,398 @@ diff -ruN a/traversal.rs b/traversal.rs
          CascadeOnly => {
              // Skipping full matching, load cascade inputs from previous values.
              let cascade_inputs = ElementCascadeInputs::new_from_element_data(data);
+diff -ruN a/url/mod.rs b/url/mod.rs
+--- a/url/mod.rs	2026-11-11 19:55:57
++++ b/url/mod.rs	2026-11-19 20:21:23
+@@ -4,10 +4,12 @@
+ 
+ //! Common handling for the specified value CSS url() values.
+ 
++use crate::derives::*;
+ use crate::parser::{Parse, ParserContext};
+ use crate::stylesheets::CorsMode;
+-use cssparser::Parser;
+-use style_traits::ParseError;
++use cssparser::{Parser, Token};
++use std::fmt::{self, Write};
++use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
+ 
+ #[cfg(feature = "gecko")]
+ pub mod gecko;
+@@ -26,9 +28,26 @@
+         cors_mode: CorsMode,
+     ) -> Result<Self, ParseError> {
+         let start = input.position().byte_index();
+-        let url = input.expect_url()?;
++        // pyro: `url( <string> <url-modifier>* )` (CSS Values 4 § 4.5.1): only the functional
++        // notation with a quoted URL takes modifiers, the request URL modifiers of CSS Values 5
++        // § 4.5.4. An unquoted `url()` is one token and takes none.
++        let (url, modifiers) = match *input.next()? {
++            Token::UnquotedUrl(ref value) => (value.as_ref().to_owned(), None),
++            Token::Function(ref name) if name.eq_ignore_ascii_case("url") => {
++                input.parse_nested_block(|input| {
++                    let url = input.expect_string()?.as_ref().to_owned();
++                    let modifiers = RequestUrlModifiers::parse(context, input)?;
++                    Ok((url, modifiers))
++                })?
++            },
++            _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
++        };
+         let end = input.position().byte_index();
+-        Self::parse_from_string(url.as_ref().to_owned(), start, end, context, cors_mode)
++        let url = Self::parse_from_string(url, start, end, context, cors_mode)?;
++        Ok(match modifiers {
++            Some(modifiers) => url.with_modifiers(modifiers),
++            None => url,
++        })
+     }
+ 
+     /// Parse a URL from a string value that is a valid CSS token for a URL,
+@@ -69,3 +88,179 @@
+         Self::parse_with_cors_mode(context, input, CorsMode::None)
+     }
+ }
++
++/// pyro: the `cross-origin()` request URL modifier (CSS Values 5 § 4.5.4.1): the request's mode
++/// is "cors", its credentials mode "same-origin" (`anonymous`) or "include" (`use-credentials`).
++#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
++pub enum CrossOriginModifier {
++    /// `cross-origin(anonymous)`
++    Anonymous,
++    /// `cross-origin(use-credentials)`
++    UseCredentials,
++}
++
++impl CrossOriginModifier {
++    /// The keyword.
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Anonymous => "anonymous",
++            Self::UseCredentials => "use-credentials",
++        }
++    }
++}
++
++/// pyro: the `referrer-policy()` request URL modifier (CSS Values 5 § 4.5.4.3): a referrer
++/// policy keyword (Referrer Policy § 3).
++#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
++pub enum ReferrerPolicyModifier {
++    /// `no-referrer`
++    NoReferrer,
++    /// `no-referrer-when-downgrade`
++    NoReferrerWhenDowngrade,
++    /// `same-origin`
++    SameOrigin,
++    /// `origin`
++    Origin,
++    /// `strict-origin`
++    StrictOrigin,
++    /// `origin-when-cross-origin`
++    OriginWhenCrossOrigin,
++    /// `strict-origin-when-cross-origin`
++    StrictOriginWhenCrossOrigin,
++    /// `unsafe-url`
++    UnsafeUrl,
++}
++
++impl ReferrerPolicyModifier {
++    const ALL: [Self; 8] = [
++        Self::NoReferrer,
++        Self::NoReferrerWhenDowngrade,
++        Self::SameOrigin,
++        Self::Origin,
++        Self::StrictOrigin,
++        Self::OriginWhenCrossOrigin,
++        Self::StrictOriginWhenCrossOrigin,
++        Self::UnsafeUrl,
++    ];
++
++    /// The keyword, as the `Referrer-Policy` header and the `referrerpolicy` attribute spell it.
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::NoReferrer => "no-referrer",
++            Self::NoReferrerWhenDowngrade => "no-referrer-when-downgrade",
++            Self::SameOrigin => "same-origin",
++            Self::Origin => "origin",
++            Self::StrictOrigin => "strict-origin",
++            Self::OriginWhenCrossOrigin => "origin-when-cross-origin",
++            Self::StrictOriginWhenCrossOrigin => "strict-origin-when-cross-origin",
++            Self::UnsafeUrl => "unsafe-url",
++        }
++    }
++}
++
++/// pyro: the request URL modifiers of a `url()` (CSS Values 5 § 4.5.4), each at most once, and
++/// the URL of the style sheet the `url()` was written in, the referrer of its request whatever
++/// its mode, as Blink sends it (`CSSImageValue::PrepareFetch`: the sheet for an external sheet,
++/// the document for inline style; CSS Values 4 "fetch a style resource" says the sheet only in
++/// CORS mode). Every valid `url()` has these, most with no modifier set.
++#[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
++pub struct RequestUrlModifiers {
++    /// `cross-origin()`
++    pub cross_origin: Option<CrossOriginModifier>,
++    /// `integrity()`: the integrity metadata (Subresource Integrity § 3.3).
++    pub integrity: Option<String>,
++    /// `referrer-policy()`
++    pub referrer_policy: Option<ReferrerPolicyModifier>,
++    /// The URL of the style sheet (for a `<style>` sheet or a `style` attribute, the document's
++    /// base URL) the `url()` was written in.
++    #[ignore_malloc_size_of = "Arc"]
++    pub referrer: Option<servo_arc::Arc<url::Url>>,
++}
++
++impl RequestUrlModifiers {
++    /// Parses `<request-url-modifier>*` up to the end of `input`: `None` when there is none, an
++    /// error for any other token, an unknown modifier, or one given twice.
++    pub fn parse(context: &ParserContext, input: &mut Parser) -> Result<Option<Self>, ParseError> {
++        let mut modifiers = Self {
++            cross_origin: None,
++            integrity: None,
++            referrer_policy: None,
++            referrer: None,
++        };
++        let mut any = false;
++        while !input.is_exhausted() {
++            let name = input.expect_function()?.clone();
++            if name.eq_ignore_ascii_case("cross-origin") {
++                if modifiers.cross_origin.is_some() {
++                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
++                modifiers.cross_origin = Some(input.parse_nested_block(|input| {
++                    let ident = input.expect_ident()?.clone();
++                    if ident.eq_ignore_ascii_case("anonymous") {
++                        Ok(CrossOriginModifier::Anonymous)
++                    } else if ident.eq_ignore_ascii_case("use-credentials") {
++                        Ok(CrossOriginModifier::UseCredentials)
++                    } else {
++                        Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++                    }
++                })?);
++            } else if name.eq_ignore_ascii_case("integrity") {
++                if modifiers.integrity.is_some() {
++                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
++                modifiers.integrity = Some(
++                    input.parse_nested_block(|input| Ok(input.expect_string()?.as_ref().to_owned()))?,
++                );
++            } else if name.eq_ignore_ascii_case("referrer-policy") {
++                if modifiers.referrer_policy.is_some() {
++                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
++                modifiers.referrer_policy = Some(input.parse_nested_block(|input| {
++                    let ident = input.expect_ident()?.clone();
++                    match ReferrerPolicyModifier::ALL
++                        .into_iter()
++                        .find(|policy| ident.eq_ignore_ascii_case(policy.as_str()))
++                    {
++                        Some(policy) => Ok(policy),
++                        None => Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
++                    }
++                })?);
++            } else {
++                return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++            }
++            any = true;
++        }
++        if !any {
++            return Ok(None);
++        }
++        modifiers.referrer = Some(context.url_data.0.clone());
++        Ok(Some(modifiers))
++    }
++}
++
++impl style_traits::SpecifiedValueInfo for RequestUrlModifiers {}
++
++impl ToCss for RequestUrlModifiers {
++    /// Each modifier given, after a space, in the canonical order (CSS Values 5 § 4.5.4).
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        if let Some(cross_origin) = self.cross_origin {
++            dest.write_str(" cross-origin(")?;
++            dest.write_str(cross_origin.as_str())?;
++            dest.write_char(')')?;
++        }
++        if let Some(ref integrity) = self.integrity {
++            dest.write_str(" integrity(")?;
++            integrity.to_css(dest)?;
++            dest.write_char(')')?;
++        }
++        if let Some(policy) = self.referrer_policy {
++            dest.write_str(" referrer-policy(")?;
++            dest.write_str(policy.as_str())?;
++            dest.write_char(')')?;
++        }
++        Ok(())
++    }
++}
+diff -ruN a/url/servo.rs b/url/servo.rs
+--- a/url/servo.rs	2026-11-11 19:55:57
++++ b/url/servo.rs	2026-11-19 20:21:23
+@@ -45,6 +45,10 @@
+     /// The resolved value for the url, if valid.
+     #[ignore_malloc_size_of = "Arc"]
+     resolved: Option<Arc<Url>>,
++
++    /// pyro: the request URL modifiers written in the `url()` (CSS Values 5 § 4.5.4), if any.
++    #[ignore_malloc_size_of = "Arc"]
++    modifiers: Option<Arc<super::RequestUrlModifiers>>,
+ }
+ 
+ impl ToShmem for CssUrl {
+@@ -79,12 +83,38 @@
+             .then(|| context.url_data.0.join(&serialization))
+             .and_then(Result::ok)
+             .map(Arc::new);
++        // pyro: every `url()` remembers the style sheet it was written in, its request's referrer
++        // (Blink `CSSImageValue::PrepareFetch`; the fetch decides for inline style), with no
++        // modifier of its own.
++        let modifiers = resolved.is_some().then(|| {
++            Arc::new(super::RequestUrlModifiers {
++                cross_origin: None,
++                integrity: None,
++                referrer_policy: None,
++                referrer: Some(context.url_data.0.clone()),
++            })
++        });
+         CssUrl(Arc::new(CssUrlData {
+             original: Some(serialization),
+             resolved: resolved,
++            modifiers,
+         }))
+     }
+ 
++    /// pyro: this URL with the request URL modifiers `modifiers`.
++    pub(super) fn with_modifiers(self, modifiers: super::RequestUrlModifiers) -> Self {
++        CssUrl(Arc::new(CssUrlData {
++            original: self.0.original.clone(),
++            resolved: self.0.resolved.clone(),
++            modifiers: Some(Arc::new(modifiers)),
++        }))
++    }
++
++    /// pyro: the request URL modifiers written in the `url()`, if any.
++    pub fn modifiers(&self) -> Option<&Arc<super::RequestUrlModifiers>> {
++        self.modifiers.as_ref()
++    }
++
+     /// Returns true if the URL is definitely invalid. For Servo URLs, we can
+     /// use its |resolved| status.
+     pub fn is_invalid(&self) -> bool {
+@@ -123,6 +153,7 @@
+         CssUrl(Arc::new(CssUrlData {
+             original: None,
+             resolved: Some(url),
++            modifiers: None,
+         }))
+     }
+ 
+@@ -134,6 +165,7 @@
+                 .then(|| ::url::Url::parse(url))
+                 .and_then(Result::ok)
+                 .map(Arc::new),
++            modifiers: None,
+         }))
+     }
+ }
+@@ -142,7 +174,7 @@
+     fn eq(&self, other: &Self) -> bool {
+         // TODO(emilio): maybe we care about equality of the specified values if
+         // present? Seems not.
+-        self.resolved == other.resolved
++        self.resolved == other.resolved && self.modifiers == other.modifiers
+     }
+ }
+ 
+@@ -166,6 +198,9 @@
+ 
+         dest.write_str("url(")?;
+         string.to_css(dest)?;
++        if let Some(ref modifiers) = self.0.modifiers {
++            modifiers.to_css(dest)?;
++        }
+         dest.write_char(')')
+     }
+ }
+@@ -180,7 +215,7 @@
+     // but still return it as a ComputedUrl::Invalid
+     fn to_computed_value(&self, _: &Context) -> Self::ComputedValue {
+         match self.resolved {
+-            Some(ref url) => ComputedUrl::Valid(url.clone()),
++            Some(ref url) => ComputedUrl::Valid(url.clone(), self.modifiers.clone()),
+             None => match self.original {
+                 Some(ref url) => ComputedUrl::Invalid(url.clone()),
+                 None => {
+@@ -192,13 +227,15 @@
+ 
+     fn from_computed_value(computed: &ComputedUrl) -> Self {
+         let data = match *computed {
+-            ComputedUrl::Valid(ref url) => CssUrlData {
++            ComputedUrl::Valid(ref url, ref modifiers) => CssUrlData {
+                 original: None,
+                 resolved: Some(url.clone()),
++                modifiers: modifiers.clone(),
+             },
+             ComputedUrl::Invalid(ref url) => CssUrlData {
+                 original: Some(url.clone()),
+                 resolved: None,
++                modifiers: None,
+             },
+         };
+         CssUrl(Arc::new(data))
+@@ -210,18 +247,30 @@
+ pub enum ComputedUrl {
+     /// The `url()` was invalid or it wasn't specified by the user.
+     Invalid(#[ignore_malloc_size_of = "Arc"] Arc<String>),
+-    /// The resolved `url()` relative to the stylesheet URL.
+-    Valid(#[ignore_malloc_size_of = "Arc"] Arc<Url>),
++    /// The resolved `url()` relative to the stylesheet URL, and (pyro) its request URL
++    /// modifiers, if any (CSS Values 5 § 4.5.4).
++    Valid(
++        #[ignore_malloc_size_of = "Arc"] Arc<Url>,
++        #[ignore_malloc_size_of = "Arc"] Option<Arc<super::RequestUrlModifiers>>,
++    ),
+ }
+ 
+ impl ComputedUrl {
+     /// Returns the resolved url if it was valid.
+     pub fn url(&self) -> Option<&Arc<Url>> {
+         match *self {
+-            ComputedUrl::Valid(ref url) => Some(url),
++            ComputedUrl::Valid(ref url, _) => Some(url),
+             _ => None,
+         }
+     }
++
++    /// pyro: the request URL modifiers of a valid `url()`, if any.
++    pub fn modifiers(&self) -> Option<&Arc<super::RequestUrlModifiers>> {
++        match *self {
++            ComputedUrl::Valid(_, ref modifiers) => modifiers.as_ref(),
++            _ => None,
++        }
++    }
+ }
+ 
+ impl ToCss for ComputedUrl {
+@@ -230,12 +279,15 @@
+         W: Write,
+     {
+         let string = match *self {
+-            ComputedUrl::Valid(ref url) => url.as_str(),
++            ComputedUrl::Valid(ref url, _) => url.as_str(),
+             ComputedUrl::Invalid(ref invalid_string) => invalid_string,
+         };
+ 
+         dest.write_str("url(")?;
+         string.to_css(dest)?;
++        if let Some(modifiers) = self.modifiers() {
++            modifiers.to_css(dest)?;
++        }
+         dest.write_char(')')
+     }
+ }
 diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 --- a/values/animated/effects.rs	2026-11-11 19:55:57
 +++ b/values/animated/effects.rs	2026-11-14 18:55:29
@@ -4441,8 +5859,50 @@ diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
      generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/border.rs b/values/computed/border.rs
 --- a/values/computed/border.rs	2026-11-11 19:55:57
-+++ b/values/computed/border.rs	2026-11-19 02:49:19
-@@ -129,6 +129,12 @@
++++ b/values/computed/border.rs	2026-11-19 20:43:48
+@@ -92,6 +92,41 @@
+ /// A computed value for outline-offset
+ pub type BorderSideOffset = Au;
+ 
++/// pyro: a computed value for outline-offset: a length, or `inset` (minus the outline's width).
++#[derive(
++    Animate,
++    Clone,
++    ComputeSquaredDistance,
++    Copy,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    ToAnimatedValue,
++    ToAnimatedZero,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(C, u8)]
++pub enum OutlineOffset {
++    /// (A computed length, for animation; app-unit precise.)
++    Length(CSSPixelLength),
++    /// `inset`.
++    #[animation(error)]
++    Inset,
++}
++
++impl OutlineOffset {
++    /// The offset (CSS px) for an outline of `width` CSS px.
++    pub fn px(&self, width: f64) -> f64 {
++        match self {
++            OutlineOffset::Length(length) => length.px() as f64,
++            OutlineOffset::Inset => -width,
++        }
++    }
++}
++
+ /// A computed value for the `border-image-width` property.
+ pub type BorderImageWidth = Rect<BorderImageSideWidth>;
+ 
+@@ -129,6 +164,12 @@
      pub fn one() -> Self {
          GenericBorderImageSideWidth::Number(NonNegative(1.))
      }
@@ -4455,7 +5915,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  }
  
  impl BorderImageSlice {
-@@ -140,6 +146,15 @@
+@@ -140,6 +181,15 @@
              fill: false,
          }
      }
@@ -4473,13 +5933,15 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  impl BorderSpacing {
 diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 --- a/values/computed/box.rs	2026-11-11 19:55:57
-+++ b/values/computed/box.rs	2026-11-16 18:58:01
-@@ -22,8 +22,8 @@
++++ b/values/computed/box.rs	2026-11-20 08:53:30
+@@ -21,9 +21,9 @@
+     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineSource, BoxAlign, BoxCollapse,
      BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain, ContainerName,
      ContainerType, ContentVisibility, DirectionProperty, Display, DominantBaseline, Float,
-     ImageOrientation, Isolation, MarginTrim, Orient, Overflow, OverflowAnchor, OverscrollBehavior,
+-    ImageOrientation, Isolation, MarginTrim, Orient, Overflow, OverflowAnchor, OverscrollBehavior,
 -    PositionProperty, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 -    ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, TextOrientation, TopLayer, TouchAction,
++    ImageOrientation, Isolation, MarginTrim, Orient, Overflow, OverflowAnchor, OverscrollBehavior, ViewTransitionScope,
 +    PositionProperty, ScrollBehavior, ScrollMarkerGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 +    ScrollSnapStrictness, ScrollSnapType, ScrollTargetGroup, ScrollbarGutter, TextOrientation, TopLayer, TouchAction,
      Visibility, WillChange, WritingModeProperty,
@@ -4494,6 +5956,16 @@ diff -ruN a/values/computed/box.rs b/values/computed/box.rs
  
  /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
  pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
+diff -ruN a/values/computed/color.rs b/values/computed/color.rs
+--- a/values/computed/color.rs	2026-11-11 19:55:57
++++ b/values/computed/color.rs	2026-11-19 20:50:37
+@@ -155,3 +155,6 @@
+ 
+ /// caret-color
+ pub type CaretColor = GenericCaretColor<Color>;
++
++/// pyro: outline-color.
++pub type OutlineColor = crate::values::generics::color::GenericOutlineColor<Color>;
 diff -ruN a/values/computed/column.rs b/values/computed/column.rs
 --- a/values/computed/column.rs	2026-11-11 19:55:57
 +++ b/values/computed/column.rs	2026-11-19 00:44:34
@@ -4581,12 +6053,55 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
              #[cfg(feature = "gecko")]
              Self::MozAvailable => {},
          }
+diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
+--- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
++++ b/values/computed/length_percentage.rs	2026-11-20 09:33:11
+@@ -640,6 +640,28 @@
+ }
+ 
+ impl CalcLengthPercentage {
++    /// Substitute layout-dependent anchor leaves while retaining percentage terms.
++    #[cfg(feature = "servo")]
++    pub fn substitute_anchors(&self, mut lookup: impl FnMut(&CalcNode) -> Option<f32>) -> Option<LengthPercentage> {
++        fn substitute(node: &mut CalcNode, remaining: &mut usize, lookup: &mut impl FnMut(&CalcNode) -> Option<f32>) -> Result<(), ()> {
++            node.map_node(|term| {
++                *remaining = remaining.checked_sub(1).ok_or(())?;
++                let fallback = match term {
++                    CalcNode::Anchor(func) => func.fallback.as_ref(),
++                    CalcNode::AnchorSize(func) => func.fallback.as_ref(),
++                    _ => return Ok(None),
++                };
++                if let Some(value) = lookup(term) { return Ok(Some(CalcNode::Leaf(ComputedLeaf::Length(Length::new(value))))); }
++                let mut replacement = fallback.ok_or(())?.node.clone();
++                substitute(&mut replacement, remaining, lookup)?;
++                Ok(Some(replacement))
++            })
++        }
++        let mut node = self.node.clone();
++        substitute(&mut node, &mut 4096, &mut lookup).ok()?;
++        Some(LengthPercentage::new_calc(node,self.clamping_mode))
++    }
++
+     /// Resolves the percentage.
+     #[inline]
+     pub fn resolve(&self, basis: Length) -> Length {
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-19 00:44:34
-@@ -69,14 +69,14 @@
++++ b/values/computed/mod.rs	2026-11-20 08:53:30
+@@ -60,23 +60,23 @@
+ pub use self::basic_shape::FillRule;
+ pub use self::border::{
+     BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
+-    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, BorderSpacing,
++    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, OutlineOffset, BorderSpacing,
+     BoxDecorationBreak, FloatEdge, LineWidth,
+ };
+ pub use self::box_::{
+     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
+     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-     Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
+-    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
++    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
      Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
 -    PositionProperty, Resize, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 +    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
@@ -4615,10 +6130,19 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
  pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
  pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
 -pub use self::text::{TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAutospace, TextFit, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify,
+@@ -141,7 +141,7 @@
+ #[cfg(feature = "gecko")]
+ pub use self::ui::CursorImage;
+ pub use self::ui::{
+-    BoolInteger, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
++    BoolInteger, CaretShape, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
+     ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
+ };
+ pub use super::specified::TextTransform;
 diff -ruN a/values/computed/position.rs b/values/computed/position.rs
 --- a/values/computed/position.rs	2026-11-11 19:55:57
 +++ b/values/computed/position.rs	2026-11-17 14:08:59
@@ -4633,13 +6157,13 @@ diff -ruN a/values/computed/position.rs b/values/computed/position.rs
      PositionTryFallbacksTryTacticKeyword, PositionTryOrder, PositionVisibility, ScopedName,
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
-+++ b/values/computed/text.rs	2026-11-16 17:29:45
++++ b/values/computed/text.rs	2026-11-19 18:38:15
 @@ -26,7 +26,7 @@
  
  pub use crate::values::specified::text::{
      HyphenateCharacter, Hyphens, LineBreak, MozControlCharacterVisibility, OverflowWrap, RubyAlign,
 -    RubyPosition, TextAlignLast, TextAutospace, TextBoxEdge, TextBoxTrim, TextCombineUpright,
-+    RubyPosition, TextAlignLast, TextAutospace, TextSpacingTrim, TextBoxEdge, TextBoxTrim, TextCombineUpright,
++    RubyPosition, TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextSpacingTrim, TextBoxEdge, TextBoxTrim, TextCombineUpright,
      TextDecorationLine, TextDecorationSkipInk, TextDecorationStyle, TextEmphasisPosition,
      TextJustify, TextOverflow, TextRendering, TextSecurity, TextSizeAdjust, TextTransform,
      TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, WhiteSpaceCollapse, WordBreak,
@@ -4661,6 +6185,18 @@ diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 +
  /// A computed value for the `hyphenate-character` property.
  pub type HyphenateLimitChars = GenericHyphenateLimitChars<CSSInteger>;
+ 
+diff -ruN a/values/computed/ui.rs b/values/computed/ui.rs
+--- a/values/computed/ui.rs	2026-11-11 19:55:57
++++ b/values/computed/ui.rs	2026-11-19 11:59:16
+@@ -10,7 +10,7 @@
+ use crate::values::generics::ui as generics;
+ 
+ pub use crate::values::specified::ui::{
+-    BoolInteger, CursorKind, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
++    BoolInteger, CaretShape, CursorKind, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
+     ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
+ };
  
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
@@ -4763,6 +6299,90 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  /// A value for the `shape-outside` property.
  #[allow(missing_docs)]
  #[derive(
+diff -ruN a/values/generics/color.rs b/values/generics/color.rs
+--- a/values/generics/color.rs	2026-11-11 19:55:57
++++ b/values/generics/color.rs	2026-11-19 20:50:37
+@@ -240,6 +240,9 @@
+ 
+ /// Caret color is effectively a ColorOrAuto, but resolves `auto` to
+ /// currentColor.
++///
++/// pyro: with CSS UI 4's optional second value, the colour of the text a block caret covers
++/// (`auto | <color> [auto | <color>]?`; `auto`: the text keeps its colour).
+ #[derive(
+     Animate,
+     Clone,
+@@ -252,22 +255,66 @@
+     ToAnimatedValue,
+     ToAnimatedZero,
+     ToComputedValue,
+-    ToCss,
+     ToShmem,
+     ToTyped,
+ )]
+-#[repr(transparent)]
+-pub struct GenericCaretColor<C>(pub GenericColorOrAuto<C>);
++#[repr(C)]
++pub struct GenericCaretColor<C>(pub GenericColorOrAuto<C>, pub GenericColorOrAuto<C>);
+ 
+ impl<C> GenericCaretColor<C> {
+     /// Returns the `auto` value.
+     pub fn auto() -> Self {
+-        GenericCaretColor(GenericColorOrAuto::Auto)
++        GenericCaretColor(GenericColorOrAuto::Auto, GenericColorOrAuto::Auto)
+     }
+ }
+ 
++impl<C: ToCss> ToCss for GenericCaretColor<C> {
++    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
++    where
++        W: Write,
++    {
++        self.0.to_css(dest)?;
++        if let GenericColorOrAuto::Color(text) = &self.1 {
++            dest.write_char(' ')?;
++            text.to_css(dest)?;
++        }
++        Ok(())
++    }
++}
++
+ pub use self::GenericCaretColor as CaretColor;
+ 
++/// pyro: outline-color, `auto | <color>` (CSS UI 4): `auto` is the accent colour (else
++/// currentcolor) of an `outline-style: auto` outline, currentcolor for the other styles.
++#[derive(
++    Animate,
++    Clone,
++    ComputeSquaredDistance,
++    Copy,
++    Debug,
++    MallocSizeOf,
++    PartialEq,
++    Parse,
++    SpecifiedValueInfo,
++    ToAnimatedValue,
++    ToAnimatedZero,
++    ToComputedValue,
++    ToCss,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(transparent)]
++pub struct GenericOutlineColor<C>(pub GenericColorOrAuto<C>);
++
++impl<C> GenericOutlineColor<C> {
++    /// Returns the `auto` value.
++    pub fn auto() -> Self {
++        GenericOutlineColor(GenericColorOrAuto::Auto)
++    }
++}
++
++pub use self::GenericOutlineColor as OutlineColor;
++
+ /// A light-dark(<light>, <dark>) function.
+ #[derive(
+     Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToShmem, ToCss, ToResolvedValue,
 diff -ruN a/values/generics/image.rs b/values/generics/image.rs
 --- a/values/generics/image.rs	2026-11-11 19:55:57
 +++ b/values/generics/image.rs	2026-11-15 07:03:49
@@ -5056,6 +6676,92 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
          if !self.sink.is_zero() {
              dest.write_char(' ')?;
              self.sink.to_css(dest)?;
+diff -ruN a/values/resolved/color.rs b/values/resolved/color.rs
+--- a/values/resolved/color.rs	2026-11-11 19:55:57
++++ b/values/resolved/color.rs	2026-11-19 20:50:37
+@@ -30,10 +30,29 @@
+     }
+ }
+ 
++/// pyro: a resolved caret-color: the caret's colour (`auto` resolved to currentcolor) and the
++/// colour of the text under a block caret, when it has one.
++#[derive(Clone, Debug, PartialEq)]
++pub struct ResolvedCaretColor(pub computed::Color, pub Option<computed::Color>);
++
++impl style_traits::ToCss for ResolvedCaretColor {
++    fn to_css<W>(&self, dest: &mut style_traits::CssWriter<W>) -> std::fmt::Result
++    where
++        W: std::fmt::Write,
++    {
++        self.0.to_css(dest)?;
++        if let Some(text) = &self.1 {
++            std::fmt::Write::write_str(dest, " ")?;
++            text.to_css(dest)?;
++        }
++        Ok(())
++    }
++}
++
+ impl ToResolvedValue for computed::CaretColor {
+     // A resolved caret-color value is an rgba color, with auto resolving to
+     // currentcolor.
+-    type ResolvedValue = computed::Color;
++    type ResolvedValue = ResolvedCaretColor;
+ 
+     #[inline]
+     fn to_resolved_value(self, context: &Context) -> Self::ResolvedValue {
+@@ -41,13 +60,47 @@
+             generics::ColorOrAuto::Color(color) => color,
+             generics::ColorOrAuto::Auto => generics::Color::currentcolor(),
+         };
+-        color.to_resolved_value(context)
++        let text = match self.1 {
++            generics::ColorOrAuto::Color(color) => Some(color.to_resolved_value(context)),
++            generics::ColorOrAuto::Auto => None,
++        };
++        ResolvedCaretColor(color.to_resolved_value(context), text)
+     }
+ 
+     #[inline]
+     fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
+-        generics::CaretColor(generics::ColorOrAuto::Color(
+-            computed::Color::from_resolved_value(resolved),
+-        ))
++        generics::CaretColor(
++            generics::ColorOrAuto::Color(computed::Color::from_resolved_value(resolved.0)),
++            resolved.1.map_or(generics::ColorOrAuto::Auto, |text| {
++                generics::ColorOrAuto::Color(computed::Color::from_resolved_value(text))
++            }),
++        )
+     }
+ }
++
++impl ToResolvedValue for computed::OutlineColor {
++    // pyro: `auto` stays `auto` for an `outline-style: auto` outline, and is currentcolor for the
++    // other styles (CSS UI 4); a colour is an rgba colour.
++    type ResolvedValue = computed::ColorOrAuto;
++
++    #[inline]
++    fn to_resolved_value(self, context: &Context) -> Self::ResolvedValue {
++        use crate::values::specified::OutlineStyle;
++        match self.0 {
++            generics::ColorOrAuto::Auto
++                if matches!(context.style.get_outline().outline_style, OutlineStyle::Auto) =>
++            {
++                generics::ColorOrAuto::Auto
++            },
++            generics::ColorOrAuto::Auto => {
++                generics::ColorOrAuto::Color(computed::Color::currentcolor().to_resolved_value(context))
++            },
++            generics::ColorOrAuto::Color(color) => generics::ColorOrAuto::Color(color.to_resolved_value(context)),
++        }
++    }
++
++    #[inline]
++    fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
++        generics::OutlineColor(resolved)
++    }
++}
 diff -ruN a/values/specified/align.rs b/values/specified/align.rs
 --- a/values/specified/align.rs	2026-11-11 19:55:57
 +++ b/values/specified/align.rs	2026-11-17 01:17:02
@@ -5144,6 +6850,21 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
  
      if axis == AxisDirection::Inline {
          f(&["left", "right"]);
+diff -ruN a/values/specified/animation.rs b/values/specified/animation.rs
+--- a/values/specified/animation.rs	2026-11-11 19:55:57
++++ b/values/specified/animation.rs	2026-11-20 08:51:17
+@@ -691,6 +691,11 @@
+ pub struct ViewTransitionNameKeyword(AtomIdent);
+ 
+ impl ViewTransitionNameKeyword {
++    /// The computed identifier without serializing or copying its text.
++    pub fn as_atom(&self) -> &Atom {
++        &self.0.0
++    }
++
+     /// Returns the `none` value.
+     pub fn none() -> Self {
+         Self(AtomIdent::new(atom!("none")))
 diff -ruN a/values/specified/background.rs b/values/specified/background.rs
 --- a/values/specified/background.rs	2026-11-11 19:55:57
 +++ b/values/specified/background.rs	2026-11-18 13:46:01
@@ -5337,9 +7058,67 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
      }
  }
  
+diff -ruN a/values/specified/border.rs b/values/specified/border.rs
+--- a/values/specified/border.rs	2026-11-11 19:55:57
++++ b/values/specified/border.rs	2026-11-19 20:43:48
+@@ -292,9 +292,54 @@
+     #[inline]
+     fn from_computed_value(computed: &Au) -> Self {
+         Self(Length::from_px(computed.to_f32_px()))
++    }
++}
++
++/// pyro: a specified value for outline-offset: a length, or `inset` (CSS UI 4: the outline is
++/// drawn inside the border box, its offset minus its width).
++#[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
++pub enum OutlineOffset {
++    /// A length.
++    Length(BorderSideOffset),
++    /// `inset`.
++    Inset,
++}
++
++impl Parse for OutlineOffset {
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|input| input.expect_ident_matching("inset")).is_ok() {
++            return Ok(OutlineOffset::Inset);
++        }
++        BorderSideOffset::parse(context, input).map(OutlineOffset::Length)
+     }
+ }
+ 
++impl ToComputedValue for OutlineOffset {
++    type ComputedValue = crate::values::computed::border::OutlineOffset;
++
++    #[inline]
++    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
++        use crate::values::computed::border::OutlineOffset as Computed;
++        match self {
++            OutlineOffset::Length(length) => {
++                Computed::Length(crate::values::computed::Length::new(length.to_computed_value(context).to_f32_px()))
++            },
++            OutlineOffset::Inset => Computed::Inset,
++        }
++    }
++
++    #[inline]
++    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
++        use crate::values::computed::border::OutlineOffset as Computed;
++        match computed {
++            Computed::Length(length) => {
++                OutlineOffset::Length(BorderSideOffset::from_computed_value(&Au::from_f32_px(length.px())))
++            },
++            Computed::Inset => OutlineOffset::Inset,
++        }
++    }
++}
++
+ impl BorderImageSideWidth {
+     /// Returns `1`.
+     #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-19 02:29:41
++++ b/values/specified/box.rs	2026-11-20 13:17:37
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -5402,7 +7181,27 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayInside::FlowRoot => true,
              _ => false,
          }
-@@ -239,7 +240,6 @@
+@@ -222,9 +223,18 @@
+     // Our u16 bits are used as follows: LOOOOOOOIIIIIIII
+     pub const LIST_ITEM_MASK: u16 = 0b1000000000000000;
+     pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
+-    pub const INSIDE_MASK: u16 = 0b0000000011111111;
++    pub const INSIDE_MASK: u16 = 0b0000000001111111;
++    /// pyro: `display: run-in` (CSS 2.1 § 9.2.3), a block (`block flow`) with this bit: where it
++    /// runs in, the next block box lays it out as its first inline box (blitz-dom
++    /// `layout::construct`); everywhere else it is the block box it says.
++    pub const RUN_IN_MASK: u16 = 0b0000000010000000;
+     pub const OUTSIDE_SHIFT: u16 = 8;
+ 
++    /// pyro: `display: run-in` (see [`Self::RUN_IN_MASK`]).
++    pub const RunIn: Self = Self(
++        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUN_IN_MASK,
++    );
++
+     /// https://drafts.csswg.org/css-display/#the-display-properties
+     /// ::new() inlined so cbindgen can use it
+     pub const None: Self =
+@@ -239,7 +249,6 @@
      );
      pub const Block: Self =
          Self(((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16);
@@ -5410,7 +7209,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const FlowRoot: Self = Self(
          ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::FlowRoot as u16,
      );
-@@ -268,11 +268,9 @@
+@@ -268,11 +277,9 @@
      #[cfg(feature = "gecko")]
      pub const Ruby: Self =
          Self(((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Ruby as u16);
@@ -5422,7 +7221,31 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -495,6 +493,10 @@
+@@ -368,6 +375,12 @@
+     #[inline]
+     pub fn is_inline_flow(&self) -> bool {
+         self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
++    }
++
++    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
++    #[inline]
++    pub const fn is_run_in(&self) -> bool {
++        (self.0 & Self::RUN_IN_MASK) != 0
+     }
+ 
+     /// Returns whether this `display` value is some kind of list-item.
+@@ -440,6 +453,10 @@
+         if is_root_element && (self.is_contents() || self.is_list_item()) {
+             return Display::Block;
+         }
++        // pyro: a blockified run-in is a block.
++        if self.is_run_in() {
++            return Display::Block;
++        }
+ 
+         match self.outside() {
+             DisplayOutside::Inline => {
+@@ -495,6 +512,10 @@
      Inside(DisplayInside),
      Outside(DisplayOutside),
      ListItem,
@@ -5433,7 +7256,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl DisplayKeyword {
-@@ -525,9 +527,7 @@
+@@ -525,21 +546,21 @@
              "ruby-text" => Full(Display::RubyText),
              #[cfg(feature = "gecko")]
              "ruby-text-container" => Full(Display::RubyTextContainer),
@@ -5443,7 +7266,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "-webkit-inline-box" => Full(Display::WebkitInlineBox),
  
              /// <display-outside> = block | inline | run-in
-@@ -540,6 +540,7 @@
+             /// https://drafts.csswg.org/css-display/#typedef-display-outside
+             "block" => Outside(DisplayOutside::Block),
+             "inline" => Outside(DisplayOutside::Inline),
++            "run-in" => Full(Display::RunIn),
+ 
+             "list-item" => ListItem,
+ 
              /// <display-inside> = flow | flow-root | table | flex | grid | ruby
              /// https://drafts.csswg.org/css-display/#typedef-display-inside
              "flow" => Inside(DisplayInside::Flow),
@@ -5451,7 +7280,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "flex" => Inside(DisplayInside::Flex),
              "flow-root" => Inside(DisplayInside::FlowRoot),
              "table" => Inside(DisplayInside::Table),
-@@ -561,7 +562,6 @@
+@@ -558,10 +579,12 @@
+     {
+         let outside = self.outside();
+         let inside = self.inside();
++        if self.is_run_in() {
++            return dest.write_str("run-in");
++        }
          match *self {
              Display::Block | Display::Inline => outside.to_css(dest),
              Display::InlineBlock => dest.write_str("inline-block"),
@@ -5459,7 +7294,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              Display::WebkitInlineBox => dest.write_str("-webkit-inline-box"),
              Display::TableCaption => dest.write_str("table-caption"),
              _ => match (outside, inside) {
-@@ -626,10 +626,15 @@
+@@ -626,10 +649,15 @@
  impl Parse for Display {
      fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
          let mut got_list_item = false;
@@ -5475,7 +7310,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayKeyword::Outside(o) => {
                  outside = Some(o);
              },
-@@ -652,13 +657,19 @@
+@@ -652,13 +680,19 @@
                  DisplayKeyword::Inside(i) if inside.is_none() => {
                      inside = Some(i);
                  },
@@ -5497,7 +7332,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
  
-@@ -788,7 +799,6 @@
+@@ -788,7 +822,6 @@
      Parse,
      PartialEq,
      SpecifiedValueInfo,
@@ -5505,7 +7340,35 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -824,6 +834,78 @@
+@@ -801,31 +834,98 @@
+     /// Use the text-under baseline.
+     TextBottom,
+     /// Use the alphabetic baseline.
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
+     Alphabetic,
+     /// Use the ideographic-under baseline.
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
+     Ideographic,
+     /// In general, use the x-middle baselines; except under text-orientation: upright
+     /// (where the alphabetic and x-height baselines are essentially meaningless) use
+     /// the central baseline instead.
+     Middle,
+     /// Use the central baseline.
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
+     Central,
+     /// Use the math baseline.
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
+     Mathematical,
+     /// Use the hanging baseline.
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
+     Hanging,
+     /// Use the text-over baseline.
+     TextTop,
      /// Used to implement the deprecated "align=middle" attribute for HTML img elements.
      #[cfg(feature = "gecko")]
      MozMiddleWithBaseline,
@@ -5525,8 +7388,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[cfg(feature = "servo")]
 +    #[css(skip)]
 +    VerticalAlignTextTop,
-+}
-+
+ }
+ 
 +#[cfg(feature = "servo")]
 +impl AlignmentBaseline {
 +    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
@@ -5563,16 +7426,11 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        dest.write_str(match value {
 +            Self::Baseline => "baseline",
 +            Self::TextBottom => "text-bottom",
-+            #[cfg(feature = "gecko")]
 +            Self::Alphabetic => "alphabetic",
-+            #[cfg(feature = "gecko")]
 +            Self::Ideographic => "ideographic",
 +            Self::Middle => "middle",
-+            #[cfg(feature = "gecko")]
 +            Self::Central => "central",
-+            #[cfg(feature = "gecko")]
 +            Self::Mathematical => "mathematical",
-+            #[cfg(feature = "gecko")]
 +            Self::Hanging => "hanging",
 +            Self::TextTop => "text-top",
 +            #[cfg(feature = "gecko")]
@@ -5581,10 +7439,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
 +        })
 +    }
- }
- 
++}
++
  /// A specified value for the `baseline-source` property.
-@@ -1336,11 +1418,17 @@
+ /// https://drafts.csswg.org/css-inline-3/#baseline-source
+ #[derive(
+@@ -1336,11 +1436,17 @@
      ToShmem,
      ToTyped,
  )]
@@ -5606,7 +7466,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          /// `none` variant
          const NONE = 1 << 0;
          /// `auto` variant
-@@ -1353,10 +1441,25 @@
+@@ -1353,10 +1459,25 @@
          const MANIPULATION = 1 << 4;
          /// `pinch-zoom` variant
          const PINCH_ZOOM = 1 << 5;
@@ -5632,7 +7492,25 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
-@@ -2013,8 +2116,12 @@
+@@ -1593,7 +1714,7 @@
+ )]
+ #[css(bitflags(
+     single = "normal",
+-    mixed = "size,inline-size,scroll-state",
++    mixed = "size,inline-size,scroll-state,anchored",
+     validate_mixed = "Self::validate_mixed_flags",
+ ))]
+ #[repr(C)]
+@@ -1614,6 +1735,8 @@
+         const SIZE = 1 << 1;
+         /// The `scroll-state` variant.
+         const SCROLL_STATE = 1 << 2;
++        #[allow(missing_docs)]
++        const ANCHORED = 1 << 3;
+     }
+ }
+ 
+@@ -2013,8 +2136,12 @@
      Auto,
      Page,
      Avoid,
@@ -5645,7 +7523,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl BreakBetween {
-@@ -2030,7 +2137,9 @@
+@@ -2030,7 +2157,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -5656,7 +7534,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2156,7 @@
+@@ -2047,7 +2176,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -5665,10 +7543,27 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2629,3 +2738,90 @@
+@@ -2318,6 +2447,15 @@
+ pub enum Isolation {
+     Auto,
+     Isolate,
++}
++
++/// Which view transition names are scoped to this element.
++#[allow(missing_docs)]
++#[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
++#[repr(u8)]
++pub enum ViewTransitionScope {
++    Auto,
++    All,
+ }
+ 
+ /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
+@@ -2628,4 +2766,91 @@
+ pub enum DirectionProperty {
      Ltr,
      Rtl,
- }
++}
 +
 +/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 +/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
@@ -5710,7 +7605,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        /// The markers are tabs (the focus model).
 +        const TABS = 1 << 3;
 +    }
-+}
+ }
 +
 +impl ScrollMarkerGroup {
 +    fn validate_mixed_flags(&self) -> bool {
@@ -5853,7 +7748,7 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
          context: &ParserContext,
 diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 --- a/values/specified/color.rs	2026-11-11 19:55:57
-+++ b/values/specified/color.rs	2026-11-19 08:15:23
++++ b/values/specified/color.rs	2026-11-19 20:50:37
 @@ -841,6 +841,11 @@
                  ) {
                      $color.components.0 = normalize($color.components.0);
@@ -5883,6 +7778,28 @@ diff -ruN a/values/specified/color.rs b/values/specified/color.rs
              },
              Color::LightDark(ref ld) => ld.compute(context.ok_or(())?),
              Color::ColorMix(ref mix) => {
+@@ -995,9 +1008,20 @@
+ /// caret-color
+ pub type CaretColor = GenericCaretColor<Color>;
+ 
++/// pyro: outline-color.
++pub type OutlineColor = crate::values::generics::color::GenericOutlineColor<Color>;
++
+ impl Parse for CaretColor {
+     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+-        ColorOrAuto::parse(context, input).map(GenericCaretColor)
++        // pyro: and the optional colour of the text under a block caret, after a colour.
++        let caret = ColorOrAuto::parse(context, input)?;
++        let text = match caret {
++            GenericColorOrAuto::Auto => GenericColorOrAuto::Auto,
++            GenericColorOrAuto::Color(_) => {
++                input.try_parse(|input| ColorOrAuto::parse(context, input)).unwrap_or(GenericColorOrAuto::Auto)
++            },
++        };
++        Ok(GenericCaretColor(caret, text))
+     }
+ }
+ 
 diff -ruN a/values/specified/column.rs b/values/specified/column.rs
 --- a/values/specified/column.rs	2026-11-11 19:55:57
 +++ b/values/specified/column.rs	2026-11-19 00:44:34
@@ -5985,8 +7902,34 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 --- a/values/specified/font.rs	2026-11-11 19:55:57
-+++ b/values/specified/font.rs	2026-11-16 15:05:29
-@@ -1642,44 +1642,154 @@
++++ b/values/specified/font.rs	2026-11-19 21:27:50
+@@ -515,7 +515,7 @@
+     XXXLarge,
+     /// Indicate whether to apply font-size: math is specified so that extra
+     /// scaling due to math-depth changes is applied during the cascade.
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (MathML Core `font-size: math`, scaled in the cascade).
+     Math,
+     #[css(skip)]
+     None,
+@@ -529,16 +529,9 @@
+     }
+ 
+     /// Returns true if the font size is the math keyword
+-    #[cfg(feature = "gecko")]
+     pub fn is_math(self) -> bool {
+         matches!(self, Self::Math)
+     }
+-
+-    /// Returns true if the font size is the math keyword
+-    #[cfg(feature = "servo")]
+-    pub fn is_math(self) -> bool {
+-        false
+-    }
+ }
+ 
+ #[derive(
+@@ -1642,44 +1635,154 @@
  #[derive(
      Clone,
      Debug,
@@ -6159,7 +8102,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
              } else {
                  Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent))
              },
-@@ -1687,12 +1797,34 @@
+@@ -1687,12 +1790,34 @@
      }
  }
  
@@ -6197,7 +8140,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
  
 diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 --- a/values/specified/image.rs	2026-11-11 19:55:57
-+++ b/values/specified/image.rs	2026-11-15 19:35:19
++++ b/values/specified/image.rs	2026-11-19 15:38:23
 @@ -38,7 +38,8 @@
  
  /// Specified values for an image according to CSS-IMAGES.
@@ -6308,7 +8251,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
          )
      }
  
-@@ -300,6 +355,36 @@
+@@ -300,6 +355,37 @@
          Self::parse_with_cors_mode(context, input, CorsMode::None, ParseImageFlags::FORBID_NONE)
      }
  
@@ -6323,7 +8266,8 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
 +            context,
 +            input,
 +            CorsMode::None,
-+            ParseImageFlags::FORBID_NONE | ParseImageFlags::FORBID_FILTER,
++            // pyro: `filter()` too: blitz-paint draws a content image through its filters.
++            ParseImageFlags::FORBID_NONE,
 +        )
 +    }
 +
@@ -6345,6 +8289,28 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// Provides an alternate method for parsing, but only for urls.
      pub fn parse_only_url(
          context: &ParserContext,
+@@ -331,15 +417,12 @@
+ 
+ impl CrossFadeElement {
+     fn parse_percentage(context: &ParserContext, input: &mut Parser) -> Option<Percentage> {
+-        // We clamp our values here as this is the way that Safari and Chrome's
+-        // implementation handle out-of-bounds percentages but whether or not
+-        // this behavior follows the specification is still being discussed.
+-        // See: <https://github.com/w3c/csswg-drafts/issues/5333>
+-        let mut p = input
+-            .try_parse(|input| Percentage::parse_non_negative(context, input))
+-            .ok()?;
+-        p.clamp_to_hundred();
+-        Some(p)
++        // pyro: a percentage past 100% is invalid (CSS Images 4: `<percentage [0,100]>`; WPT
++        // css-backgrounds/parsing `background-image-invalid`: `cross-fade(101% red, green)`), and a
++        // `calc()` is clamped to it.
++        input
++            .try_parse(|input| Percentage::parse_zero_to_a_hundred(context, input))
++            .ok()
+     }
+ 
+     /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
 +++ b/values/specified/length.rs	2026-11-16 23:22:52
@@ -6409,12 +8375,49 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
      }
  }
  
+diff -ruN a/values/specified/list.rs b/values/specified/list.rs
+--- a/values/specified/list.rs	2026-11-11 19:55:57
++++ b/values/specified/list.rs	2026-11-19 19:52:43
+@@ -149,6 +149,9 @@
+     QuoteList(QuoteList),
+     /// auto (use lang-dependent quote marks)
+     Auto,
++    /// pyro: `match-parent` (CSS Content 3): the quote marks of the parent element's language
++    /// choice, as `auto` resolved there.
++    MatchParent,
+ }
+ 
+ impl Parse for Quotes {
+@@ -159,6 +162,12 @@
+         {
+             return Ok(Quotes::Auto);
+         }
++        if input
++            .try_parse(|input| input.expect_ident_matching("match-parent"))
++            .is_ok()
++        {
++            return Ok(Quotes::MatchParent);
++        }
+ 
+         if input
+             .try_parse(|input| input.expect_ident_matching("none"))
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-19 00:44:34
-@@ -48,7 +48,7 @@
++++ b/values/specified/mod.rs	2026-11-20 08:53:30
+@@ -39,16 +39,16 @@
+ pub use self::basic_shape::FillRule;
+ pub use self::border::{
+     BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
+-    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, BorderSpacing, BorderStyle,
++    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, OutlineOffset, BorderSpacing, BorderStyle,
+     BoxDecorationBreak, FloatEdge, LineWidth,
+ };
+ pub use self::box_::{
+     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
+     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-     Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
+-    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
++    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
      Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
 -    PositionProperty, Resize, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 +    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
@@ -6444,10 +8447,19 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
  pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
 -pub use self::text::{TextAlignLast, TextAutospace, TextUnderlinePosition};
-+pub use self::text::{TextAlignLast, TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
++pub use self::text::{TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextFit, TextSpacingTrim, TextUnderlinePosition};
  pub use self::text::{TextBoxEdge, TextBoxTrim};
  pub use self::text::{
      TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
+@@ -133,7 +133,7 @@
+ #[cfg(feature = "gecko")]
+ pub use self::ui::CursorImage;
+ pub use self::ui::{
+-    BoolInteger, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
++    BoolInteger, CaretShape, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
+     ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
+ };
+ pub use super::generics::grid::GridTemplateComponent as GenericGridTemplateComponent;
 @@ -201,6 +201,19 @@
          if let Ok(per) = input.try_parse(|i| Percentage::parse(context, i)) {
              return Ok(AngleOrPercentage::Percentage(per));
@@ -6521,13 +8533,51 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/position.rs b/values/specified/position.rs
 --- a/values/specified/position.rs	2026-11-11 19:55:57
-+++ b/values/specified/position.rs	2026-11-17 14:08:59
-@@ -2164,6 +2164,38 @@
- pub enum BoxSizing {
-     ContentBox,
-     BorderBox,
-+}
++++ b/values/specified/position.rs	2026-11-20 12:13:18
+@@ -427,6 +427,15 @@
+ );
+ 
+ impl ScopedNameList {
++    /// The declared names, including the wildcard keyword.
++    pub fn names(&self) -> impl Iterator<Item = &Atom> {
++        self.0.iter().map(|ident| &ident.0)
++    }
 +
++    /// Whether this scope captures the given dashed identifier.
++    pub fn includes(&self, name: &DashedIdent) -> bool {
++        self.0.iter().any(|ident| ident.0 == name.0 || ident.0 == atom!("all"))
++    }
+     /// Return the `none` value.
+     pub fn none() -> Self {
+         Self(crate::ArcSlice::default())
+@@ -827,7 +836,7 @@
+     ToShmem,
+     ToTyped,
+ )]
+-#[css(bitflags(single = "always", mixed = "anchors-valid,anchors-visible,no-overflow"))]
++#[css(bitflags(single = "always", mixed = "anchor-valid,anchor-visible,no-overflow"))]
+ #[repr(C)]
+ /// Specified keyword values for the position-visibility property.
+ pub struct PositionVisibility(u8);
+@@ -835,10 +844,10 @@
+     impl PositionVisibility: u8 {
+         /// Element is displayed without regard for its anchors or its overflowing status.
+         const ALWAYS = 0;
+-        /// anchors-valid
+-        const ANCHORS_VALID = 1 << 0;
+-        /// anchors-visible
+-        const ANCHORS_VISIBLE = 1 << 1;
++        /// anchor-valid
++        const ANCHOR_VALID = 1 << 0;
++        /// anchor-visible
++        const ANCHOR_VISIBLE = 1 << 1;
+         /// no-overflow
+         const NO_OVERFLOW = 1 << 2;
+     }
+@@ -2166,6 +2175,38 @@
+     BorderBox,
+ }
+ 
 +/// pyro: `frame-sizing` (css-sizing-4 responsive iframes): whether an iframe takes its natural size from
 +/// its embedded document's content.
 +/// https://drafts.csswg.org/css-sizing-4/#frame-sizing
@@ -6558,12 +8608,14 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
 +    ContentHeight,
 +    ContentBlockSize,
 +    ContentInlineSize,
- }
- 
++}
++
  /// https://drafts.csswg.org/css-images/#propdef-object-fit
+ #[allow(missing_docs)]
+ #[derive(
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-17 11:04:11
++++ b/values/specified/text.rs	2026-11-19 20:09:26
 @@ -25,6 +25,23 @@
  use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
  use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
@@ -6588,10 +8640,11 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  /// A specified type for the `initial-letter` property.
  pub type InitialLetter = GenericInitialLetter<Number, Integer>;
  
-@@ -152,11 +169,26 @@
+@@ -151,12 +168,27 @@
+             .is_ok()
          {
              return Ok(Self::normal());
-         }
++        }
 +        // pyro: `<number> && [ drop | raise ]?` besides `<number> <integer>?` (CSS Inline 3 § 7.2).
 +        use crate::values::generics::text::InitialLetterKeyword;
 +        let keyword = |i: &mut Parser<'_>| -> Result<InitialLetterKeyword, ParseError> {
@@ -6603,7 +8656,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +        if let Ok(keyword) = input.try_parse(keyword) {
 +            let size = Number::parse_at_least_one(context, input)?;
 +            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
-+        }
+         }
          let size = Number::parse_at_least_one(context, input)?;
 +        if let Ok(keyword) = input.try_parse(keyword) {
 +            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
@@ -6616,18 +8669,27 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      }
  }
  
-@@ -826,6 +858,10 @@
+@@ -500,6 +532,8 @@
+     Center,
+     Justify,
+     End,
++    /// pyro: `justify-all` (CSS Text 3): `justify` with the last line justified too.
++    JustifyAll,
+     #[parse(aliases = "-webkit-center")]
+     MozCenter,
+     #[parse(aliases = "-webkit-left")]
+@@ -824,6 +858,10 @@
+         self.remove(Self::RIGHT); // Right is the default
+         true
      }
- }
- 
-+fn word_break_manual_enabled(_: &ParserContext) -> bool {
-+    cfg!(feature = "servo")
 +}
 +
- fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-     crate::pref!("layout.css.word-break.break-word.enabled", gecko = true)
++fn word_break_manual_enabled(_: &ParserContext) -> bool {
++    cfg!(feature = "servo")
  }
-@@ -858,6 +894,14 @@
+ 
+ fn word_break_break_word_enabled(_: &ParserContext) -> bool {
+@@ -858,6 +896,14 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
      BreakWord,
@@ -6642,10 +8704,198 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1331,6 +1375,38 @@
+@@ -1330,7 +1376,226 @@
+         /// Auto-spacing may replace an existing U+0020 space with custom space.
          const REPLACE = 1 << 6;
          */
++    }
++}
++
++/// pyro: the `white-space-trim` property: which collapsible white space at a box's edges is
++/// discarded.
++///
++/// https://drafts.csswg.org/css-text-4/#white-space-trim
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    Serialize,
++    SpecifiedValueInfo,
++    ToCss,
++    ToComputedValue,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[css(bitflags(single = "none", mixed = "discard-before,discard-after,discard-inner"))]
++#[repr(C)]
++pub struct WhiteSpaceTrim(u8);
++bitflags! {
++    impl WhiteSpaceTrim: u8 {
++        /// Nothing is discarded.
++        const NONE = 0;
++        /// The collapsible white space immediately before the box's start.
++        const DISCARD_BEFORE = 1 << 0;
++        /// The collapsible white space immediately after the box's end.
++        const DISCARD_AFTER = 1 << 1;
++        /// The collapsible white space at the start and end of the box's content.
++        const DISCARD_INNER = 1 << 2;
++    }
++}
++
++/// pyro: the `word-space-transform` property: what word separators zero width spaces and `<wbr>`
++/// become.
++///
++/// https://drafts.csswg.org/css-text-4/#word-space-transform
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    Serialize,
++    SpecifiedValueInfo,
++    ToCss,
++    ToComputedValue,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[css(bitflags(
++    single = "none",
++    mixed = "space,ideographic-space,auto-phrase",
++    validate_mixed = "Self::validate_mixed_flags",
++))]
++#[repr(C)]
++pub struct WordSpaceTransform(u8);
++bitflags! {
++    impl WordSpaceTransform: u8 {
++        /// No transformation.
++        const NONE = 0;
++        /// Zero width spaces and `<wbr>` become U+0020 spaces.
++        const SPACE = 1 << 0;
++        /// Zero width spaces and `<wbr>` become U+3000 ideographic spaces.
++        const IDEOGRAPHIC_SPACE = 1 << 1;
++        /// Phrase boundaries become virtual word separators first.
++        const AUTO_PHRASE = 1 << 2;
++    }
++}
++
++impl WordSpaceTransform {
++    fn validate_mixed_flags(&self) -> bool {
++        self.intersects(Self::SPACE | Self::IDEOGRAPHIC_SPACE) && !self.contains(Self::SPACE | Self::IDEOGRAPHIC_SPACE)
++    }
++}
++
++/// pyro: the `hanging-punctuation` property: which punctuation may hang outside the line box.
++///
++/// https://drafts.csswg.org/css-text-3/#hanging-punctuation-property
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    Serialize,
++    SpecifiedValueInfo,
++    ToCss,
++    ToComputedValue,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[css(bitflags(
++    single = "none",
++    mixed = "first,force-end,allow-end,last",
++    validate_mixed = "Self::validate_mixed_flags",
++))]
++#[repr(C)]
++pub struct HangingPunctuation(u8);
++bitflags! {
++    impl HangingPunctuation: u8 {
++        /// No punctuation hangs.
++        const NONE = 0;
++        /// Opening punctuation at the start of an element's first line hangs.
++        const FIRST = 1 << 0;
++        /// Stops and commas at the end of a line hang.
++        const FORCE_END = 1 << 1;
++        /// Stops and commas at the end of a line hang when they would not fit.
++        const ALLOW_END = 1 << 2;
++        /// Closing punctuation at the end of an element's last line hangs.
++        const LAST = 1 << 3;
      }
++}
++
++impl HangingPunctuation {
++    fn validate_mixed_flags(&self) -> bool {
++        !self.contains(Self::FORCE_END | Self::ALLOW_END)
++    }
++}
++
++/// pyro: the `text-group-align` property: how a block's lines align as a group.
++///
++/// https://drafts.csswg.org/css-text-4/#text-group-align-property
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    FromPrimitive,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum TextGroupAlign {
++    None,
++    Start,
++    End,
++    Left,
++    Right,
++    Center,
++}
++
++/// pyro: the `wrap-inside` property: whether lines avoid breaking inside an inline box.
++///
++/// https://drafts.csswg.org/css-text-4/#wrap-inside
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    FromPrimitive,
++    Hash,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum WrapInside {
++    Auto,
++    Avoid,
 +}
 +
 +/// pyro: the `text-spacing-trim` property: which fullwidth punctuation is set half-width.
@@ -6681,6 +8931,80 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /* Bug 1980111: Uncomment the following to support 'replace' value.
+@@ -1654,12 +1919,9 @@
+     FromPrimitive,
+     Hash,
+     MallocSizeOf,
+-    Parse,
+     PartialEq,
+     Serialize,
+-    SpecifiedValueInfo,
+     ToComputedValue,
+-    ToCss,
+     ToResolvedValue,
+     ToShmem,
+     ToTyped,
+@@ -1668,8 +1930,60 @@
+ pub enum TextCombineUpright {
+     None,
+     All,
++    /// pyro: `digits <integer [2,4]>?`: runs of up to that many ASCII digits are combined.
++    Digits2,
++    Digits3,
++    Digits4,
+ }
+ 
++impl TextCombineUpright {
++    /// pyro: the most ASCII digits a run of `digits N` combines (`None` for other values).
++    pub fn digits(self) -> Option<usize> {
++        match self {
++            Self::Digits2 => Some(2),
++            Self::Digits3 => Some(3),
++            Self::Digits4 => Some(4),
++            _ => None,
++        }
++    }
++}
++
++impl Parse for TextCombineUpright {
++    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
++            return Ok(Self::None);
++        }
++        if input.try_parse(|i| i.expect_ident_matching("all")).is_ok() {
++            return Ok(Self::All);
++        }
++        input.expect_ident_matching("digits")?;
++        match input.try_parse(|i| i.expect_integer()).unwrap_or(2) {
++            2 => Ok(Self::Digits2),
++            3 => Ok(Self::Digits3),
++            4 => Ok(Self::Digits4),
++            _ => Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
++        }
++    }
++}
++
++impl ToCss for TextCombineUpright {
++    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++        dest.write_str(match self {
++            Self::None => "none",
++            Self::All => "all",
++            Self::Digits2 => "digits 2",
++            Self::Digits3 => "digits 3",
++            Self::Digits4 => "digits 4",
++        })
++    }
++}
++
++impl SpecifiedValueInfo for TextCombineUpright {
++    fn collect_completion_keywords(f: KeywordsCollectFn) {
++        f(&["none", "all", "digits"]);
++    }
++}
++
+ /// https://svgwg.org/svg2-draft/painting.html#TextRenderingProperty
+ #[allow(missing_docs)]
+ #[derive(
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29
@@ -6696,8 +9020,8 @@ diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
  /// The specified value of `transform-box`.
 diff -ruN a/values/specified/ui.rs b/values/specified/ui.rs
 --- a/values/specified/ui.rs	2026-11-11 19:55:57
-+++ b/values/specified/ui.rs	2026-11-19 02:32:05
-@@ -274,22 +274,19 @@
++++ b/values/specified/ui.rs	2026-11-19 11:59:16
+@@ -274,22 +274,46 @@
  pub enum PointerEvents {
      Auto,
      None,
@@ -6722,6 +9046,33 @@ diff -ruN a/values/specified/ui.rs b/values/specified/ui.rs
 +    // pyro: Chromium's `bounding-box`.
 +    #[cfg(feature = "servo")]
 +    BoundingBox,
++}
++
++/// pyro: the caret-shape property (CSS UI 4 § 6.2.3).
++/// https://drafts.csswg.org/css-ui/#caret-shape
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Eq,
++    FromPrimitive,
++    MallocSizeOf,
++    Parse,
++    PartialEq,
++    SpecifiedValueInfo,
++    ToComputedValue,
++    ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum CaretShape {
++    Auto,
++    Bar,
++    Block,
++    Underscore,
  }
  
  /// Internal property to represent the inert attribute state:

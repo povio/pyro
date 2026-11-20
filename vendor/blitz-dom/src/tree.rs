@@ -40,15 +40,21 @@ pub(crate) struct ContainerQuerySize {
 /// referring to the dropped node no longer resolve ([`NodeTree::get`] returns
 /// `None`, and indexing panics) instead of aliasing the new occupant.
 pub struct NodeTree {
+    pub(crate) raster_budget: pyro_raster::PageRasters,
     map: SlotMap<NodeKey, Node>,
     // Sparse: only containers actually queried by Stylo occupy an entry. Style
     // workers can ask about the same container concurrently.
     pub(crate) container_query_sizes: Mutex<HashMap<NodeId, ContainerQuerySize>>,
+    pub(crate) anchor_query_choices: Mutex<HashMap<NodeId, Option<style::values::specified::position::PositionTryFallbacksItem>>>,
+    pub(crate) anchor_query_samples: AtomicU64,
     /// Bumped whenever box geometry may have moved (layout ran or a scroll
     /// offset changed). Values derived from `final_layout()` (e.g. hoisted
     /// paint child offsets) are memoised against it. Starts at 1 so that a
     /// stamp of 0 is never current.
     geometry_generation: AtomicU64,
+    pub(crate) anchor_clip_steps: AtomicU64,
+    pub(crate) anchor_visibility: Mutex<(u64, HashMap<NodeId,bool>)>,
+    pub(crate) anchor_offsets: Mutex<(u64, HashMap<NodeId,crate::Point<f64>>)>,
     /// Scroll offset of the viewport (the root element scrolls the viewport,
     /// so its offset lives here rather than on the node).
     viewport_scroll: crate::Point<f64>,
@@ -65,14 +71,26 @@ pub struct NodeTree {
     /// pyro: an element of this tree has been a shadow host (`crate::shadow`): until then,
     /// every node is in the document's tree and its DOM parent is its parent.
     pub(crate) has_shadow_hosts: bool,
+    /// pyro: the document's base URL without its fragment (`BaseDocument::url`), which a `url()`
+    /// naming an element of this document (`url(#m)`) resolves to.
+    pub(crate) base_url: String,
+    /// pyro: the document lays out classic scrollbars (`stylo_taffy::scrollbars`): the process's
+    /// mode when it was made, or [`crate::BaseDocument::set_classic_scrollbars`]'s.
+    pub(crate) classic_scrollbars: bool,
 }
 
 impl NodeTree {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(raster_budget: pyro_raster::PageRasters) -> Self {
         Self {
+            raster_budget,
             map: SlotMap::with_key(),
             container_query_sizes: Mutex::new(HashMap::new()),
+            anchor_query_choices: Default::default(),
+            anchor_query_samples: Default::default(),
             geometry_generation: AtomicU64::new(1),
+            anchor_clip_steps: AtomicU64::new(0),
+            anchor_visibility: Default::default(),
+            anchor_offsets: Default::default(),
             viewport_scroll: crate::Point::ZERO,
             xml_document: false,
             quirks_mode: false,
@@ -80,6 +98,8 @@ impl NodeTree {
             content_language: None,
             shadow_roots: HashMap::new(),
             has_shadow_hosts: false,
+            base_url: String::new(),
+            classic_scrollbars: stylo_taffy::scrollbars::scrollbar_mode() == stylo_taffy::scrollbars::ScrollbarMode::Classic,
         }
     }
 
@@ -103,9 +123,20 @@ impl NodeTree {
         self.geometry_generation.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// pyro: forgets the anchor visibility and scroll offsets memoised for this generation (a
+    /// layout pass changed what they were computed from).
+    pub(crate) fn clear_anchor_caches(&self) {
+        self.anchor_visibility.lock().unwrap().1.clear();
+        self.anchor_offsets.lock().unwrap().1.clear();
+    }
+
     /// The number of live nodes in the map.
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    pub(crate) fn slot_bytes(&self) -> usize {
+        (self.map.capacity() + 1).saturating_mul(std::mem::size_of::<(Node, u32)>())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -135,6 +166,7 @@ impl NodeTree {
     /// Remove the node with the given id, returning it if it was still live.
     pub(crate) fn remove(&mut self, id: NodeId) -> Option<Node> {
         self.container_query_sizes.get_mut().unwrap().remove(&id);
+        self.anchor_query_choices.get_mut().unwrap().remove(&id);
         self.map.remove(to_key(id))
     }
 

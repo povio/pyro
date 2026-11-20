@@ -21,6 +21,11 @@ impl Fetcher for Images {
         };
         std::thread::spawn(move || done(body));
     }
+    /// The page's own origin: a CORS fetch (a `mask-image`'s, which CSS Masking makes one) gets
+    /// the same response.
+    fn fetch_cors(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.fetch(url, done)
+    }
 }
 
 fn render(body: &str, scale: f64) -> RgbaImage {

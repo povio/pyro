@@ -161,9 +161,39 @@ impl<'a> ImageLayerStyles<'a> {
 }
 
 impl ElementCx<'_, '_> {
+    pub(super) fn background_inside_overflow(&self, clip: &BezPath) -> bool {
+        use style::dom::TElement as _;
+        if !self.frame.has_border_radius() || self.frame.border_width != kurbo::Insets::ZERO
+            || self.devtools.show_layout || self.node.local_name() == "input"
+            || !matches!(self.style.clone_display().inside(), style::values::specified::box_::DisplayInside::Flow | style::values::specified::box_::DisplayInside::FlowRoot)
+            || self.style.clone_overflow_x() != Overflow::Clip || self.style.clone_overflow_y() != Overflow::Clip
+            || !matches!(self.element.special_data, SpecialElementData::None)
+            || !self.style.get_effects().box_shadow.0.is_empty() || self.border_shape().is_some()
+            || !matches!(self.style.get_border().border_image_source, GenericImage::None)
+            || *clip != self.frame.border_box_path()
+        { return false; }
+        true
+    }
+
+    pub(super) fn draw_background_inside_overflow(&self, scene: &mut impl PaintScene, clip: &BezPath) {
+        self.draw_background_layers(scene, &self.style, &self.element.background_images, None, None, Some(clip));
+    }
+
     pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
+        // pyro: a checkbox, radio button or range input in its native appearance paints no author
+        // background (Chromium draws the widget alone; `appearance: none` draws the box).
+        use blitz_dom::local_name;
+        use style::dom::TElement as _;
+        if self.node.local_name() == "input"
+            && self.node.attr(local_name!("type")).is_some_and(|kind| {
+                ["checkbox", "radio", "range"].iter().any(|native| kind.trim().eq_ignore_ascii_case(native))
+            })
+            && !self.native_appearance_none()
+        {
+            return;
+        }
         let style = self.style.clone();
-        self.draw_background_layers(scene, &style, &self.element.background_images, None, None);
+        self.draw_background_layers(scene, &style, &self.element.background_images, None, None, None);
     }
 
     /// pyro: the canvas background (CSS Backgrounds 3 §2.11.2), drawn by the root element in place
@@ -188,7 +218,7 @@ impl ElementCx<'_, '_> {
         }
         let canvas = self.transform.inverse().transform_rect_bbox(canvas);
         let style = (*style).clone();
-        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas), None);
+        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas), None, None);
     }
 
     /// The background of `style` with the images `image_data`, over this element's background
@@ -203,6 +233,7 @@ impl ElementCx<'_, '_> {
         image_data: &[Option<ImageResourceData>],
         canvas: Option<Rect>,
         text_mask: Option<(NodeId, Affine)>,
+        overflow_clip: Option<&BezPath>,
     ) {
         let text_clips = canvas.is_none() || text_mask.is_some();
         let bg_styles = &style.get_background();
@@ -244,7 +275,7 @@ impl ElementCx<'_, '_> {
         let clip_path = |clip: BoxModelBox,
                          border_area: bool,
                          attachment: StyloBackgroundAttachment| {
-            match (canvas, local_cx(attachment)) {
+            let path = match (canvas, local_cx(attachment)) {
                 (Some(canvas), _) => canvas.to_path(0.1),
                 (None, Some(local)) => local.box_path(clip),
                 (None, None) if border_area => self.border_area_path(),
@@ -267,7 +298,8 @@ impl ElementCx<'_, '_> {
                         .unwrap_or_else(|| self.box_path(clip)),
                     _ => self.box_path(clip),
                 },
-            }
+            };
+            if overflow_clip == Some(&path) { self.frame.border_box.to_path(0.1) } else { path }
         };
 
         // pyro: `background-blend-mode`: each layer blends with the layers and the colour under it,
@@ -301,7 +333,14 @@ impl ElementCx<'_, '_> {
             .background_color
             .resolve_to_absolute(&current_color)
             .as_srgb_color();
-        if bg_color != Color::TRANSPARENT {
+        let color_with_image = bg_color != Color::TRANSPARENT
+            && canvas.is_none()
+            && !text_run
+            && !blends
+            && self.frame.has_border_radius()
+            && local_cx(last_attachment).is_none()
+            && !layer_paints_nothing(&ImageLayerStyles::from_background(bg_styles, image_data, layer_count - 1));
+        if bg_color != Color::TRANSPARENT && !color_with_image {
             // pyro: the colour's clip only when there is a colour.
             let background_clip_path = clip_path(
                 background_clip,
@@ -316,9 +355,30 @@ impl ElementCx<'_, '_> {
                     &self.frame.padding_box_path(),
                 );
             }
+            let color_transform = if canvas.is_none()
+                && last_clip == StyloBackgroundClip::BorderBox
+                && !local_color
+                && shape_clip.is_none()
+                && shrunk_border_box.get().is_some_and(Option::is_none)
+                && self.frame.border_box.width() == self.frame.border_box.height()
+                && self.frame.is_elliptical_border()
+            {
+                let [xx, yx, xy, yy, ..] = self.transform.as_coeffs();
+                if xx == yy && xy == -yx && yx != 0.0 {
+                    let center = self.frame.border_box.center();
+                    let scale = xx.hypot(yx);
+                    Affine::translate((self.transform * center).to_vec2())
+                        * Affine::scale(scale)
+                        * Affine::translate(-center.to_vec2())
+                } else {
+                    self.transform
+                }
+            } else {
+                self.transform
+            };
             scene.fill(
                 Fill::NonZero,
-                self.transform,
+                color_transform,
                 bg_color,
                 None,
                 &background_clip_path,
@@ -349,9 +409,12 @@ impl ElementCx<'_, '_> {
             let local = local_cx(layer.attachment);
             let cx = local.unwrap_or(self);
             let area = canvas.unwrap_or_else(|| cx.box_rect(layer.clip));
-            // pyro: a `border-shape` reaching out of the box takes the painting area with it.
+            // pyro: a `border-shape` reaching out of the box takes the painting area with it, to
+            // the whole pixels its edge reaches into (what is painted is cut to the shape: the
+            // image covers its partly covered pixels too; WPT css-backgrounds
+            // `clip-border-area-border-shape`).
             let area = match &shape_bounds {
-                Some(bounds) if canvas.is_none() => area.union(*bounds),
+                Some(bounds) if canvas.is_none() => area.union(bounds.expand()),
                 _ => area,
             };
 
@@ -362,19 +425,40 @@ impl ElementCx<'_, '_> {
                     &self.frame.padding_box_path(),
                 );
             }
-            self.context.layer_manager.maybe_with_layer(
+            // pyro: no clip layer where nothing reaches past the clip: one image, not repeated,
+            // inside a rectangular clip box (Chromium clips a background to a pixel rectangle
+            // without a layer; a vello_cpu layer rounds what it holds a level apart from the
+            // same image drawn directly, as an `<img>` is: WPT css-images `object-position-svg-*`).
+            let blend = *get_cyclic(&bg_styles.background_blend_mode.0, idx);
+            let unclipped = blend == style::values::computed::effects::Blend::Normal
+                && canvas.is_none()
+                && local.is_none()
+                && !layer.border_area
+                && shape_clip.is_none()
+                && !self.frame.has_border_radius()
+                && self.frame.corner_curvature.is_none()
+                && !(layer.clip == BoxModelBox::BorderBox && shrunk_border_box.get().is_some_and(Option::is_some))
+                && self.image_tile_within(&layer, area);
+            let clipped = self.context.layer_manager.maybe_push_layer(
                 scene,
-                true,
-                crate::blend::convert_blend_mode(*get_cyclic(&bg_styles.background_blend_mode.0, idx)),
+                !unclipped,
+                crate::blend::convert_blend_mode(blend),
                 1.0,
                 self.transform,
                 &background_clip_path,
                 None,
                 None,
-                |scene| {
-                    cx.draw_image_layer_in(scene, &layer, area, &current_color);
-                },
             );
+            if color_with_image && idx == layer_count - 1 {
+                if clipped {
+                    let bounds = self.transform.transform_rect_bbox(background_clip_path.bounding_box()).expand();
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &bounds);
+                } else {
+                    scene.fill(Fill::NonZero, self.transform, bg_color, None, &background_clip_path);
+                }
+            }
+            cx.draw_image_layer_in(scene, &layer, area, &current_color);
+            self.context.layer_manager.maybe_pop_layer(scene, clipped);
             if local.is_some() {
                 scene.pop_layer();
             }
@@ -620,9 +704,126 @@ impl ElementCx<'_, '_> {
                 #[cfg(feature = "tracing")]
                 warn!("Implement image layer drawing for Image::PaintWorklet")
             }
-            GenericImage::CrossFade(_) => {
-                #[cfg(feature = "tracing")]
-                warn!("Implement image layer drawing for Image::CrossFade")
+            // pyro: `cross-fade()` (CSS Images 4 § 2.6): its images (and colours, as images of
+            // that colour) each drawn as the layer would draw it, weighted by its percentage
+            // (those left out share what the others leave of 100%, a sum past 100% is scaled
+            // down to it) and added up premultiplied (`plus-lighter`) in a group.
+            GenericImage::CrossFade(cross_fade) => {
+                use style::values::generics::image::GenericCrossFadeImage;
+                use style::values::generics::Optional;
+                let elements = &cross_fade.elements;
+                let given: Vec<Option<f32>> = elements
+                    .iter()
+                    .map(|element| match &element.percent {
+                        Optional::Some(percent) => Some(percent.0.clamp(0.0, 1.0)),
+                        Optional::None => None,
+                    })
+                    .collect();
+                let sum: f32 = given.iter().flatten().sum();
+                let left_out = given.iter().filter(|weight| weight.is_none()).count();
+                let share = if left_out > 0 { (1.0 - sum).max(0.0) / left_out as f32 } else { 0.0 };
+                let weights: Vec<f32> = given.iter().map(|weight| weight.unwrap_or(share)).collect();
+                let total: f32 = weights.iter().sum();
+                let scale = if total > 1.0 { 1.0 / total } else { 1.0 };
+                // A `url()` image: its slot among the element's stored images
+                // (`blitz_dom::util::image_slots`), found by its URL.
+                let data_of = |image| match blitz_dom::util::unfiltered_image(image) {
+                    // pyro: and its request (a slot of the same URL fetched with other
+                    // modifiers is not its image).
+                    GenericImage::Url(style::values::computed::url::ComputedUrl::Valid(url, modifiers)) => self
+                        .element
+                        .background_images
+                        .iter()
+                        .chain(&self.element.mask_images)
+                        .flatten()
+                        .find(|data| {
+                            *data.url == **url && blitz_dom::net::asks_same_request(&data.options, modifiers.as_deref())
+                        }),
+                    _ => layer.image_data,
+                };
+                // pyro: the natural size of the cross-fade: the weighted average of those of its
+                // images that have one (CSS Images 4 § 2.6), and each image drawn at the size
+                // the cross-fade gets, so a smaller image is stretched to it (it was drawn at
+                // its own size).
+                let mut natural = (0.0f32, 0.0f32, 0.0f32);
+                for (element, weight) in elements.iter().zip(&weights) {
+                    let GenericCrossFadeImage::Image(image) = &element.image else { continue };
+                    let size = data_of(image).and_then(|data| match &data.image {
+                        ImageData::Raster(raster) => {
+                            let unoriented = blitz_dom::util::image_unoriented(&self.style) && raster.orientation != 1;
+                            let (w, h) = raster.shown_size(unoriented);
+                            Some((w as f32 / layer.resolution, h as f32 / layer.resolution))
+                        }
+                        #[cfg(feature = "svg")]
+                        ImageData::Svg(svg) => svg.intrinsic_width().zip(svg.intrinsic_height()),
+                        #[allow(unreachable_patterns)]
+                        _ => None,
+                    });
+                    if let Some((w, h)) = size.filter(|(w, h)| *w > 0.0 && *h > 0.0) {
+                        natural = (natural.0 + w * weight, natural.1 + h * weight, natural.2 + weight);
+                    }
+                }
+                let sized = (natural.2 > 0.0).then(|| {
+                    let (w, h) = (natural.0 / natural.2, natural.1 / natural.2);
+                    let (origin_rect, _, _) = self.positioning_area(layer, area);
+                    let size = compute_layer_size(
+                        layer,
+                        (origin_rect.width() / self.scale) as f32,
+                        (origin_rect.height() / self.scale) as f32,
+                        BackgroundSizeComputeMode::Intrinsic { width: Some(w), height: Some(h), ratio: Some(w / h) },
+                    );
+                    use style::values::generics::length::GenericLengthPercentageOrAuto as Lpa;
+                    use style::values::generics::NonNegative;
+                    let px = |v: f64| {
+                        Lpa::LengthPercentage(NonNegative(style::values::computed::LengthPercentage::new_length(
+                            style::values::computed::Length::new(v as f32),
+                        )))
+                    };
+                    BackgroundSize::ExplicitSize { width: px(size.width), height: px(size.height) }
+                });
+                let size = sized.as_ref().unwrap_or(layer.size);
+                let clip = area.to_path(0.1);
+                scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, self.transform, &clip, None, None);
+                for (element, weight) in elements.iter().zip(weights) {
+                    let weight = weight * scale;
+                    if weight <= 0.0 {
+                        continue;
+                    }
+                    scene.push_layer(
+                        Fill::NonZero,
+                        BlendMode::new(Mix::Normal, Compose::PlusLighter),
+                        weight,
+                        self.transform,
+                        &clip,
+                        None,
+                        None,
+                    );
+                    match &element.image {
+                        GenericCrossFadeImage::Image(image) => {
+                            let inner = ImageLayerStyles { stylo_image: image, image_data: data_of(image), size, ..*layer };
+                            self.draw_image_layer_in(scene, &inner, area, current_color);
+                        }
+                        // A colour is an image of that colour without a natural size: in the
+                        // cross-fade's tiles when it has a size.
+                        GenericCrossFadeImage::Color(color) if sized.is_some() => {
+                            let color = color.resolve_to_absolute(current_color).as_dynamic_color();
+                            let inner = ImageLayerStyles { size, ..*layer };
+                            self.draw_generated_layer(scene, &inner, area, |_, _| {
+                                let mut solid = peniko::Gradient::new_linear((0.0, 0.0), (1.0, 0.0));
+                                for offset in [0.0, 1.0] {
+                                    solid.stops.push(peniko::ColorStop { color, offset });
+                                }
+                                (solid, None)
+                            })
+                        }
+                        GenericCrossFadeImage::Color(color) => {
+                            let color = color.resolve_to_absolute(current_color).as_srgb_color();
+                            scene.fill(Fill::NonZero, self.transform, color, None, &clip);
+                        }
+                    }
+                    scene.pop_layer();
+                }
+                scene.pop_layer();
             }
             // pyro: `image(<color>)`: an image of that colour without a natural size, sized,
             // positioned and tiled as a gradient is.
@@ -865,9 +1066,25 @@ impl ElementCx<'_, '_> {
             }
             let transform = self.transform
                 * Affine::translate(Vec2::new((sticky.x * self.scale).round(), (sticky.y * self.scale).round()));
+            // pyro: in the cell's `border-shape`, which the backgrounds of its table parts take as
+            // the cell's own (CSS Borders 4 § 11; WPT css-backgrounds
+            // `clip-border-shape-table-part-background`).
+            let cell_shape = self.context.dom.get_node(cell.node_id).and_then(|cell_node| {
+                let layout = *cell_node.final_layout();
+                let location = Vec2::new(layout.location.x as f64, layout.location.y as f64);
+                let cell_transform = transform * Affine::translate(location * self.scale);
+                let cell_cx = self.context.element_cx(cell_node, layout, cell_transform, None);
+                cell_cx.border_shape().map(|shape| (cell_transform, shape.background_clip()))
+            });
+            if let Some((cell_transform, path)) = &cell_shape {
+                scene.push_clip_layer(Fill::NonZero, *cell_transform, path);
+            }
             if !images {
                 for color in colors {
                     scene.fill(Fill::NonZero, transform, *color, None, &shape);
+                }
+                if cell_shape.is_some() {
+                    scene.pop_layer();
                 }
                 continue;
             }
@@ -910,6 +1127,9 @@ impl ElementCx<'_, '_> {
                         }
                     }
                 }
+            }
+            if cell_shape.is_some() {
+                scene.pop_layer();
             }
         }
     }
@@ -1023,7 +1243,13 @@ impl ElementCx<'_, '_> {
             .iter()
             .map(|track| (track.start as f64 + top, track.end as f64 + top))
             .collect();
-        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows })
+        // pyro: a vertical table's grid runs its columns down the page and its rows across it, from
+        // the right in `vertical-rl` (WPT css-tables `paint/col-paint-vrl-rtl`).
+        let vertical = self.node.primary_styles().and_then(|style| {
+            let wm = style.writing_mode;
+            wm.is_vertical().then(|| (!wm.is_vertical_lr(), self.frame.border_box.width() / self.scale))
+        });
+        (!columns.is_empty() && !rows.is_empty()).then_some(TablePartRects { columns, rows, vertical })
     }
 
     /// pyro: the background of a table part (`part`, the box its images are positioned against,
@@ -1052,7 +1278,7 @@ impl ElementCx<'_, '_> {
         let canvas = *clip - Vec2::new(part.x0, part.y0) * self.scale;
         if let (Some(style), Some(element)) = (node.primary_styles(), node.element_data()) {
             let style = (*style).clone();
-            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas), Some((cell, cell_transform)));
+            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas), Some((cell, cell_transform)), None);
         }
         scene.pop_layer();
     }
@@ -1136,6 +1362,15 @@ impl ElementCx<'_, '_> {
         };
         let ImageData::Svg(svg) = &bg_image.image else {
             return;
+        };
+        // pyro: in this element's used colour scheme (`SvgImageData::for_color_scheme`).
+        let schemed;
+        let svg = match svg.for_color_scheme(self.dark_color_scheme()) {
+            Some(dark) => {
+                schemed = dark;
+                &schemed
+            }
+            None => svg,
         };
 
         // A zero-sized `viewBox` disables rendering of the SVG
@@ -1247,6 +1482,35 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    /// pyro: a background image's rectangle (`pos`, device px from `origin_rect`'s corner, and its size) as
+    /// Chromium places it on a box laid out at a fraction of a pixel: from the box's unrounded
+    /// place, the image's rectangle snapped to whole device pixels (`BackgroundImageGeometry`), so
+    /// that two boxes rounded apart place images centred on one point alike (WPT css-backgrounds
+    /// `subpixel-position-center`, `background-position-subpixel-at-border`). A box at whole
+    /// pixels, or under a transform that is not a translation, keeps the position as it is.
+    fn subpixel_image_rect(&self, pos: Point, size: Size, origin_rect: Rect, base: Affine) -> (Point, Size) {
+        let [a, b, c, d, tx, ty] = (self.transform * base).as_coeffs();
+        // A zero-sized image paints nothing: it stays zero-sized, not snapped to a pixel.
+        if a != 1.0 || b != 0.0 || c != 0.0 || d != 1.0 || !(size.width > 0.0 && size.height > 0.0) {
+            return (pos, size);
+        }
+        let (unrounded, _) = self.context.dom.physical_unrounded_geometry(self.node.id);
+        let fraction = |v: f32| f64::from(v) - f64::from(v).round();
+        let (fx, fy) = (fraction(unrounded.x), fraction(unrounded.y));
+        if fx.abs() < 1e-6 && fy.abs() < 1e-6 {
+            return (pos, size);
+        }
+        // Each edge at the whole device pixel nearest its unrounded place.
+        let snap = |v: f64, length: f64, f: f64, origin: f64, t: f64| {
+            let start = t + origin + v + f * self.scale;
+            let (x0, x1) = (start.round(), (start + length).round());
+            (x0 - t - origin, (x1 - x0).max(1.0))
+        };
+        let (x, w) = snap(pos.x, size.width, fx, origin_rect.x0, tx);
+        let (y, h) = snap(pos.y, size.height, fy, origin_rect.y0, ty);
+        (Point::new(x, y), Size::new(w, h))
+    }
+
     fn draw_raster_image_layer(
         &self,
         scene: &mut impl PaintScene,
@@ -1282,7 +1546,7 @@ impl ElementCx<'_, '_> {
         );
 
         let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
-        let bg_size = bg_size * self.scale;
+        let (bg_pos, bg_size) = self.subpixel_image_rect(bg_pos, bg_size * self.scale, origin_rect, base_transform);
         if !(bg_size.width > 0.0 && bg_size.height > 0.0) {
             return;
         }
@@ -1382,6 +1646,55 @@ impl ElementCx<'_, '_> {
     /// The background positioning area of `layer` and the transform from its space to the scene,
     /// with `area` (this element's space) taken to that space: the viewport for a fixed layer,
     /// else the origin box in this element's space.
+    /// pyro: whether `layer` draws one SVG image tile (a `url()` image, `no-repeat` on both axes,
+    /// not fixed) that lies inside `clip` (this element's space, device px), its drawing too (it
+    /// stays in its viewport).
+    fn image_tile_within(&self, layer: &ImageLayerStyles, clip: Rect) -> bool {
+        use BackgroundRepeatKeyword::NoRepeat;
+        let BackgroundRepeat(repeat_x, repeat_y) = layer.repeat;
+        if !matches!((repeat_x, repeat_y), (NoRepeat, NoRepeat))
+            || self.layer_is_fixed(layer)
+            || !matches!(layer.stylo_image, GenericImage::Url(_))
+        {
+            return false;
+        }
+        let Some(data) = layer.image_data else { return false };
+        let origin_rect = self.box_rect(layer.origin);
+        let (w, h) = (origin_rect.width() / self.scale, origin_rect.height() / self.scale);
+        let (pos, size) = match &data.image {
+            // (A raster `<img>` is drawn in its element's clip layer, `should_clip_node`: its
+            // background twin keeps its layer too.)
+            #[cfg(feature = "svg")]
+            ImageData::Svg(svg) => {
+                let size = svg.tree.size();
+                let ink = svg.tree.root().abs_layer_bounding_box();
+                if ink.left() < -0.01
+                    || ink.top() < -0.01
+                    || ink.right() > size.width() + 0.01
+                    || ink.bottom() > size.height() + 0.01
+                    || svg.intrinsic_dimensions.degenerate_view_box
+                {
+                    return false;
+                }
+                let width = svg.intrinsic_width().filter(|w| w.is_finite() && *w > 0.0);
+                let height = svg.intrinsic_height().filter(|h| h.is_finite() && *h > 0.0);
+                let ratio = match (width, height) {
+                    (Some(w), Some(h)) => Some(w / h),
+                    _ => svg.viewbox_aspect_ratio(),
+                }
+                .filter(|r| r.is_finite() && *r > 0.0);
+                let mode = BackgroundSizeComputeMode::Intrinsic { width, height, ratio };
+                let (pos, size) = compute_layer_position_and_size(layer, w, h, mode);
+                ((pos.to_vec2() * self.scale).to_point(), size * self.scale)
+            }
+            #[allow(unreachable_patterns)]
+            _ => return false,
+        };
+        let tile = Rect::from_origin_size(origin_rect.origin() + pos.to_vec2(), size);
+        let e = 1e-3;
+        tile.x0 >= clip.x0 - e && tile.y0 >= clip.y0 - e && tile.x1 <= clip.x1 + e && tile.y1 <= clip.y1 + e
+    }
+
     fn positioning_area(&self, layer: &ImageLayerStyles, area: Rect) -> (Rect, Affine, Rect) {
         if self.layer_is_fixed(layer) {
             let (viewport_rect, transform) = self.fixed_positioning_area();
@@ -1959,6 +2272,8 @@ enum PartKind {
 struct TablePartRects {
     columns: Vec<(f64, f64)>,
     rows: Vec<(f64, f64)>,
+    /// A vertical table's: whether its block axis runs right to left, and its border box width.
+    vertical: Option<(bool, f64)>,
 }
 
 impl TablePartRects {
@@ -1996,6 +2311,10 @@ impl TablePartRects {
                 (span(&self.columns, columns.map(|(at, _)| at)).unwrap_or(all_columns), all_rows)
             }
         };
-        Rect::new(xs.0, ys.0, xs.1, ys.1)
+        match self.vertical {
+            None => Rect::new(xs.0, ys.0, xs.1, ys.1),
+            Some((false, _)) => Rect::new(ys.0, xs.0, ys.1, xs.1),
+            Some((true, width)) => Rect::new(width - ys.1, xs.0, width - ys.0, xs.1),
+        }
     }
 }

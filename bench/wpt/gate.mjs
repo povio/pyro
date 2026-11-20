@@ -5,12 +5,15 @@
 // crashtests (one subtest, "crashtest"): crashtest-baseline.json, crashtest-flaky.json, wpt-crashtest-baseline.
 //
 //   bun bench/wpt/gate.mjs run --wpt DIR --bin PATH [--out FILE] [--jobs N] [--shard I/N] [--full]
-//                              [--dirs a,b|all] [--server static|wptserve] [--match RE] [--retest PREVIOUS.json] [--no-rerun] [--no-check]
+//                              [--dirs a,b|all] [--server static|wptserve [--testdriver]] [--match RE] [--retest PREVIOUS.json] [--no-rerun] [--no-check]
 //                              [--summary FILE] [--reuse-context] [--timeout MS] [--long-timeout MS]
 //       Runs the gate's plan (every page with --full, or when there is no baseline for this WPT revision yet), then
 //       reruns every page whose result differs from the baseline at least twice more, at the same --jobs (with no
 //       baseline: every page once more), then checks the result.
 //       --retest PREVIOUS.json runs only the pages whose result in that file differs from the baseline.
+//       --server: reftests and crashtests run under wptserve with testdriver (README "wptserve"; it needs the venv
+//       fetch-wpt.sh --venv makes), testharness pages under serve.mjs; --server static|wptserve picks one (with
+//       --server static a reftest or crashtest run leaves out the pages that need wptserve or testdriver, counted).
 //   bun bench/wpt/gate.mjs check FILE... [--summary FILE] [--base-baseline FILE [--base-flaky FILE]] [--accept-loss]
 //       Merges shard results and compares them with the baseline. Exit 1 on a regression, a missing shard, a
 //       planned page without a result, a baseline page that no shard planned, improvements the baseline does not
@@ -34,7 +37,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   MAX_IGNORED_INCOMPLETE, consensus, differs, entryOf, formatBaseline, readBaselineAt, writeBaselineAt, isImprovement, isRegression, judge, lostCount,
-  mergeEntry, newMs, passCount, passing, readFlaky, readJson, roundMs, skippable, weakening, wholePage,
+  mergeEntry, newMs, passCount, passing, readFlaky, readJson, roundMs, serverFor, skippable, weakening, wholePage,
 } from './lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -95,9 +98,13 @@ function run() {
   const jobs = Number(opt('--jobs', os.availableParallelism?.() ?? os.cpus().length));
   const common = ['--kind', KIND, '--wpt', wpt, '--bin', `gate=${path.resolve(bin)}`];
   if (baseline) common.push('--baseline', BASELINE_FILE);
-  for (const k of ['--dirs', '--server', '--match', '--timeout', '--long-timeout', '--sample-encoding', '--slow-jobs']) if (opt(k)) common.push(k, opt(k));
+  for (const k of ['--dirs', '--match', '--timeout', '--long-timeout', '--sample-encoding', '--slow-jobs']) if (opt(k)) common.push(k, opt(k));
   if (flag('--reuse-context')) common.push('--reuse-context');
-  if (flag('--testdriver')) common.push('--testdriver');
+  // The server (README "wptserve"): reftests and crashtests are served by wptserve, with testdriver, so no reftest
+  // or crashtest is left out for needing either; testharness pages by serve.mjs unless --server wptserve.
+  const { server, testdriver } = serverFor(KIND, opt('--server'), flag('--testdriver'));
+  common.push('--server', server);
+  if (testdriver) common.push('--testdriver');
   const first = ['--out', out, '--jobs', String(jobs), ...common, ...(full ? [] : ['--gate'])];
   if (opt('--shard')) first.push('--shard', opt('--shard'));
   const flaky = readFlaky(FLAKY_FILE);
@@ -157,6 +164,9 @@ function load(files) {
   }
   const kinds = [...new Set(runs.map((r) => r.kind ?? 'testharness'))];
   if (kinds.length > 1 || kinds[0] !== KIND) problems.push(`results of kind ${kinds.join(', ')} given to the ${KIND} gate (--kind)`);
+  // One server for every shard (results from before the field: serve.mjs, no testdriver): discovery differs by server.
+  const servers = [...new Set(runs.map(serving))];
+  if (servers.length > 1) problems.push(`shards ran with different servers: ${servers.join(', ')}`);
   const revisions = [...new Set(runs.map((r) => r.wptRevision ?? null))];
   if (revisions.length > 1) problems.push(`shards ran different WPT revisions: ${revisions.join(', ')}`);
   const pages = new Map();
@@ -171,6 +181,8 @@ function load(files) {
     full: runs.every((r) => r.mode === 'full'), restricted: runs.some((r) => r.restricted),
   };
 }
+
+const serving = (r) => `${r.server ?? 'static'}${r.testdriver ? ' + testdriver' : ''}`;
 
 // The baseline these runs are checked against, or null when there is none for their WPT revision.
 function baselineFor(revision) {
@@ -226,6 +238,9 @@ function check(files) {
   const nowPass = cmp.reduce((a, c) => a + (c.runs > 1 ? consensus(c.runList).pass.length : passing(c.t).length), 0);
   md += `| this run | ${L.pages.size} run${skippedNote} | ${baseline ? `${before - lost + gained} (−${lost} +${gained})` : nowPass} |\n\n`;
   const walls = L.runs.map((r) => `${(r.wallMs / 1000).toFixed(0)} s`).join(' / ');
+  // What discovery left out, by reason (the same in every shard), and the server that decided part of it.
+  const excl = Object.entries(L.runs[0].excluded ?? {}).filter(([why]) => !NOT_PAGES.has(why)).sort((a, b) => b[1] - a[1]);
+  md += `Served by ${serving(L.runs[0]) === 'static' ? 'serve.mjs' : serving(L.runs[0])}. Left out by discovery: ${excl.length ? excl.map(([why, n]) => `${esc(why)} ${n}`).join(', ') : 'nothing'}.\n\n`;
   md += `${L.full ? 'Every page' : 'Gate plan'}, ${L.runs.length} shard(s): wall ${walls}; CPU: browser ${sum('browserCpuS').toFixed(0)} s, runner ${sum('runnerCpuS').toFixed(0)} s; browser restarts ${sum('restarts')}.\n\n`;
   for (const p of problems) md += `- **${esc(p)}**\n`;
   if (weakened.length) {
@@ -284,6 +299,9 @@ function statusIn(runs, n) {
 }
 const esc = (s) => String(s).replace(/\|/g, '\\|').replace(/</g, '&lt;').replace(/\n/g, ' ');
 const ghEsc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+
+// Discovery reasons that name files which are not tests (references, support pages): left out of the summary's count.
+const NOT_PAGES = new Set(['reference file', 'no reference (visual test or support page)', 'crash test']);
 
 // ---------- update ----------
 // --match RE / --tests FILE (a JSON list of URLs, or a results or baseline file) as a URL predicate, or null.

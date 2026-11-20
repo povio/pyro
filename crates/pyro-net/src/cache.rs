@@ -144,6 +144,11 @@ struct Entry {
     protocol: Version,
     used: u64,
     size: usize,
+    /// pyro: the request it answered carried credentials (cookies, HTTP authentication: a
+    /// `credentials` mode of "include", or "same-origin" to its origin). A response is served
+    /// only to a request of the same kind: a credentialed one never answers an anonymous CORS
+    /// request (it may be personalized), nor the other way round (as Chromium keys it).
+    credentialed: bool,
 }
 
 impl Entry {
@@ -240,7 +245,8 @@ impl HttpCache {
         self.bytes = 0;
     }
 
-    pub fn lookup(&mut self, url: &Url, request: &HeaderMap, mode: CacheMode, now: f64) -> Lookup {
+    /// `credentialed`: the request carries credentials ([`Entry::credentialed`]).
+    pub fn lookup(&mut self, url: &Url, request: &HeaderMap, credentialed: bool, mode: CacheMode, now: f64) -> Lookup {
         if matches!(mode, CacheMode::NoStore | CacheMode::Reload) || !self.enabled() {
             return Lookup::Miss;
         }
@@ -250,7 +256,11 @@ impl HttpCache {
         }
         self.tick += 1;
         let tick = self.tick;
-        let Some(entry) = self.entries.get_mut(key(url)).and_then(|v| v.iter_mut().find(|e| e.matches(request))) else {
+        let Some(entry) = self
+            .entries
+            .get_mut(key(url))
+            .and_then(|v| v.iter_mut().find(|e| e.credentialed == credentialed && e.matches(request)))
+        else {
             return Lookup::Miss;
         };
         entry.used = tick;
@@ -307,6 +317,7 @@ impl HttpCache {
         &mut self,
         url: &Url,
         request: &HeaderMap,
+        credentialed: bool,
         status: StatusCode,
         response: &HeaderMap,
         body: Bytes,
@@ -329,9 +340,10 @@ impl HttpCache {
         self.next_id += 1;
         let id = self.next_id;
         let used = self.tick;
-        let entry = Entry { id, vary, status, headers, body, request_time, response_time, protocol, used, size };
+        let entry =
+            Entry { id, vary, status, headers, body, request_time, response_time, protocol, used, size, credentialed };
         let variants = self.entries.entry(k.to_owned()).or_default();
-        if let Some(i) = variants.iter().position(|e| e.vary == entry.vary) {
+        if let Some(i) = variants.iter().position(|e| e.vary == entry.vary && e.credentialed == credentialed) {
             self.bytes -= variants.remove(i).size;
         }
         if variants.len() >= MAX_VARIANTS {
@@ -345,7 +357,9 @@ impl HttpCache {
 
     /// Applies a 304 to the entry it revalidated (RFC 9111 §4.3.4). Returns
     /// the updated response, or `None` if it no longer matches: the entry is
-    /// gone, or a strong ETag differs. The caller must then fetch unconditionally.
+    /// gone, a strong ETag differs, or it is of the other kind than the request the 304 answered
+    /// (pyro: `credentialed`, as that request was last sent: an authenticated retry's 304 never
+    /// merges into an anonymous entry). The caller must then fetch unconditionally.
     pub fn update_from_304(
         &mut self,
         url: &Url,
@@ -353,10 +367,11 @@ impl HttpCache {
         not_modified: &HeaderMap,
         request_time: f64,
         response_time: f64,
+        credentialed: bool,
     ) -> Option<Cached> {
         let k = key(url);
         let variants = self.entries.get_mut(k)?;
-        let i = variants.iter().position(|e| e.id == id)?;
+        let i = variants.iter().position(|e| e.id == id && e.credentialed == credentialed)?;
         let stored_etag = variants[i].headers.get(header::ETAG).cloned();
         if let (Some(new), Some(old)) = (not_modified.get(header::ETAG), stored_etag.as_ref()) {
             if new != old {
@@ -696,6 +711,44 @@ mod tests {
         assert!(Directives::parse(&h(&[("cache-control", "no-cache=\"set-cookie\"")]), false).no_cache);
     }
 
+    /// A 304 merges only into an entry of the same kind as the request it answered: an
+    /// authenticated retry's 304 (credentialed) never refreshes the anonymous entry its first
+    /// attempt revalidated, which stays as it was; the caller fetches in full (security review
+    /// cycles 2-3, 2c).
+    #[test]
+    fn a_credentialed_304_never_merges_into_an_anonymous_entry() {
+        let mut c = HttpCache::new(1 << 20, 1 << 20);
+        let req = HeaderMap::new();
+        let stale = h(&[("etag", "\"v1\""), ("cache-control", "max-age=0"), ("x-old", "1")]);
+        c.insert(&url("/a"), &req, false, StatusCode::OK, &stale, Bytes::from_static(b"anon"), T0, T0, Version::HTTP_11);
+        let Lookup::Revalidate(stale) = c.lookup(&url("/a"), &req, false, CacheMode::Default, T0 + 10.0) else { panic!("stale") };
+        let not_modified = h(&[("etag", "\"v1\""), ("cache-control", "max-age=600"), ("x-auth", "secret")]);
+        assert!(c.update_from_304(&url("/a"), stale.id, &not_modified, T0 + 10.0, T0 + 10.0, true).is_none());
+        let Lookup::Revalidate(again) = c.lookup(&url("/a"), &req, false, CacheMode::Default, T0 + 11.0) else {
+            panic!("the anonymous entry is still stale (not refreshed by the credentialed 304)")
+        };
+        assert!(again.headers.get("x-auth").is_none());
+        assert!(c.update_from_304(&url("/a"), stale.id, &not_modified, T0 + 12.0, T0 + 12.0, false).is_some());
+    }
+
+    /// A response to a credentialed request is never served to an anonymous one (a CORS request
+    /// with credentials "same-origin" to another origin), nor the other way round: the cache
+    /// matched URL and Vary only, so a personalized response reached an anonymous CORS request
+    /// whose CORS check then passed on `Access-Control-Allow-Origin: *`.
+    #[test]
+    fn credentialed_and_anonymous_requests_are_served_apart() {
+        let mut c = HttpCache::new(1 << 20, 1 << 20);
+        let req = HeaderMap::new();
+        let fresh = h(&[("cache-control", "max-age=100"), ("access-control-allow-origin", "*")]);
+        c.insert(&url("/me"), &req, true, StatusCode::OK, &fresh, Bytes::from_static(b"alice"), T0, T0, Version::HTTP_11);
+        assert!(matches!(c.lookup(&url("/me"), &req, false, CacheMode::Default, T0), Lookup::Miss));
+        assert!(matches!(c.lookup(&url("/me"), &req, true, CacheMode::Default, T0), Lookup::Hit(_)));
+        c.insert(&url("/me"), &req, false, StatusCode::OK, &fresh, Bytes::from_static(b"anon"), T0, T0, Version::HTTP_11);
+        let Lookup::Hit(anon) = c.lookup(&url("/me"), &req, false, CacheMode::Default, T0) else { panic!() };
+        let Lookup::Hit(cred) = c.lookup(&url("/me"), &req, true, CacheMode::Default, T0) else { panic!() };
+        assert_eq!((&anon.body[..], &cred.body[..]), (&b"anon"[..], &b"alice"[..]), "both kept, each for its own kind");
+    }
+
     #[test]
     fn freshness_and_age_follow_rfc9111() {
         let mut c = HttpCache::new(1 << 20, 1 << 20);
@@ -705,6 +758,7 @@ mod tests {
         c.insert(
             &url("/a"),
             &req,
+            true,
             StatusCode::OK,
             &h(&[("cache-control", "max-age=100"), ("date", date), ("age", "10")]),
             Bytes::from_static(b"x"),
@@ -714,14 +768,15 @@ mod tests {
         );
         // corrected initial age = max(2, 10 + 1) = 11; at T0 + 2 + 88 the age is 99 < 100: fresh.
         assert!(
-            matches!(c.lookup(&url("/a"), &req, CacheMode::Default, T0 + 90.0), Lookup::Hit(ref x) if x.headers[header::AGE] == "99")
+            matches!(c.lookup(&url("/a"), &req, true, CacheMode::Default, T0 + 90.0), Lookup::Hit(ref x) if x.headers[header::AGE] == "99")
         );
         // At age 101 it is stale, and without validators it is a miss.
-        assert!(matches!(c.lookup(&url("/a"), &req, CacheMode::Default, T0 + 92.0), Lookup::Miss));
+        assert!(matches!(c.lookup(&url("/a"), &req, true, CacheMode::Default, T0 + 92.0), Lookup::Miss));
         // Expires - Date gives the lifetime when there is no max-age; an invalid Expires is stale.
         c.insert(
             &url("/e"),
             &req,
+            true,
             StatusCode::OK,
             &h(&[("date", date), ("expires", "Sun, 06 Nov 1994 08:50:37 GMT"), ("etag", "\"1\"")]),
             Bytes::new(),
@@ -729,11 +784,12 @@ mod tests {
             T0,
             Version::HTTP_11,
         );
-        assert!(matches!(c.lookup(&url("/e"), &req, CacheMode::Default, T0 + 59.0), Lookup::Hit(_)));
-        assert!(matches!(c.lookup(&url("/e"), &req, CacheMode::Default, T0 + 61.0), Lookup::Revalidate(_)));
+        assert!(matches!(c.lookup(&url("/e"), &req, true, CacheMode::Default, T0 + 59.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/e"), &req, true, CacheMode::Default, T0 + 61.0), Lookup::Revalidate(_)));
         c.insert(
             &url("/z"),
             &req,
+            true,
             StatusCode::OK,
             &h(&[("date", date), ("expires", "0"), ("etag", "\"1\"")]),
             Bytes::new(),
@@ -741,14 +797,14 @@ mod tests {
             T0,
             Version::HTTP_11,
         );
-        assert!(matches!(c.lookup(&url("/z"), &req, CacheMode::Default, T0), Lookup::Revalidate(_)));
+        assert!(matches!(c.lookup(&url("/z"), &req, true, CacheMode::Default, T0), Lookup::Revalidate(_)));
         // Request max-age / min-fresh constrain a fresh entry.
         let r = h(&[("cache-control", "max-age=50")]);
-        assert!(matches!(c.lookup(&url("/a"), &r, CacheMode::Default, T0 + 60.0), Lookup::Miss));
+        assert!(matches!(c.lookup(&url("/a"), &r, true, CacheMode::Default, T0 + 60.0), Lookup::Miss));
         let r = h(&[("cache-control", "min-fresh=30")]);
-        assert!(matches!(c.lookup(&url("/e"), &r, CacheMode::Default, T0 + 40.0), Lookup::Revalidate(_)));
+        assert!(matches!(c.lookup(&url("/e"), &r, true, CacheMode::Default, T0 + 40.0), Lookup::Revalidate(_)));
         // force-cache / only-if-cached use stale entries.
-        assert!(matches!(c.lookup(&url("/a"), &req, CacheMode::ForceCache, T0 + 1000.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/a"), &req, true, CacheMode::ForceCache, T0 + 1000.0), Lookup::Hit(_)));
     }
 
     #[test]
@@ -802,10 +858,10 @@ mod tests {
         ]);
         let en = h(&[("accept-language", "en")]);
         let de = h(&[("accept-language", "de")]);
-        c.insert(&url("/v"), &en, StatusCode::OK, &resp, Bytes::from_static(b"en"), T0, T0, Version::HTTP_11);
-        assert!(matches!(c.lookup(&url("/v"), &de, CacheMode::Default, T0), Lookup::Miss));
-        c.insert(&url("/v"), &de, StatusCode::OK, &resp, Bytes::from_static(b"de"), T0, T0, Version::HTTP_11);
-        let Lookup::Hit(hit) = c.lookup(&url("/v#frag"), &en, CacheMode::Default, T0) else { panic!() };
+        c.insert(&url("/v"), &en, true, StatusCode::OK, &resp, Bytes::from_static(b"en"), T0, T0, Version::HTTP_11);
+        assert!(matches!(c.lookup(&url("/v"), &de, true, CacheMode::Default, T0), Lookup::Miss));
+        c.insert(&url("/v"), &de, true, StatusCode::OK, &resp, Bytes::from_static(b"de"), T0, T0, Version::HTTP_11);
+        let Lookup::Hit(hit) = c.lookup(&url("/v#frag"), &en, true, CacheMode::Default, T0) else { panic!() };
         assert_eq!(hit.body, "en");
         assert!(
             !hit.headers.contains_key("x-hop") && !hit.headers.contains_key(header::CONNECTION),
@@ -820,6 +876,7 @@ mod tests {
                 &h(&[("etag", "\"v1\""), ("cache-control", "max-age=120"), ("x-new", "1"), ("content-length", "0")]),
                 T0 + 5.0,
                 T0 + 5.0,
+                true,
             )
             .unwrap();
         assert_eq!(merged.body.as_ref(), b"en");
@@ -827,7 +884,7 @@ mod tests {
         assert_eq!(merged.headers["x-new"], "1");
         assert!(!merged.headers.contains_key(header::CONTENT_LENGTH));
         // A 304 with a different strong ETag does not match: the entry is dropped.
-        assert!(c.update_from_304(&url("/v"), hit.id, &h(&[("etag", "\"v2\"")]), T0, T0).is_none());
+        assert!(c.update_from_304(&url("/v"), hit.id, &h(&[("etag", "\"v2\"")]), T0, T0, true).is_none());
         assert_eq!(c.usage().0, 1);
         c.invalidate(&url("/v"));
         assert_eq!(c.usage(), (0, 0));
@@ -839,16 +896,16 @@ mod tests {
         let fresh = h(&[("cache-control", "max-age=60")]);
         let none = HeaderMap::new();
         let mut c = HttpCache::new(3000, 1500);
-        c.insert(&url("/1"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
-        c.insert(&url("/2"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
-        assert!(matches!(c.lookup(&url("/1"), &none, CacheMode::Default, T0), Lookup::Hit(_))); // /1 now more recent
-        c.insert(&url("/3"), &none, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
+        c.insert(&url("/1"), &none, true, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
+        c.insert(&url("/2"), &none, true, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
+        assert!(matches!(c.lookup(&url("/1"), &none, true, CacheMode::Default, T0), Lookup::Hit(_))); // /1 now more recent
+        c.insert(&url("/3"), &none, true, StatusCode::OK, &fresh, body.clone(), T0, T0, Version::HTTP_11);
         assert!(c.usage().1 <= 3000);
-        assert!(matches!(c.lookup(&url("/2"), &none, CacheMode::Default, T0), Lookup::Miss), "LRU evicted");
-        assert!(matches!(c.lookup(&url("/1"), &none, CacheMode::Default, T0), Lookup::Hit(_)));
-        c.insert(&url("/big"), &none, StatusCode::OK, &fresh, Bytes::from(vec![0u8; 2000]), T0, T0, Version::HTTP_11);
+        assert!(matches!(c.lookup(&url("/2"), &none, true, CacheMode::Default, T0), Lookup::Miss), "LRU evicted");
+        assert!(matches!(c.lookup(&url("/1"), &none, true, CacheMode::Default, T0), Lookup::Hit(_)));
+        c.insert(&url("/big"), &none, true, StatusCode::OK, &fresh, Bytes::from(vec![0u8; 2000]), T0, T0, Version::HTTP_11);
         assert!(
-            matches!(c.lookup(&url("/big"), &none, CacheMode::Default, T0), Lookup::Miss),
+            matches!(c.lookup(&url("/big"), &none, true, CacheMode::Default, T0), Lookup::Miss),
             "over the per-entry cap"
         );
         c.clear();
@@ -877,12 +934,12 @@ mod tests {
         let mut c = HttpCache::new(1 << 20, 1 << 20);
         let req = HeaderMap::new();
         let resp = h(&[("cache-control", "max-age=100")]);
-        c.insert(&url("/r?q=1#one"), &req, StatusCode::OK, &resp, Bytes::from_static(b"x"), T0, T0, Version::HTTP_11);
-        assert!(matches!(c.lookup(&url("/r?q=1#two"), &req, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
-        assert!(matches!(c.lookup(&url("/r?q=1"), &req, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
-        assert!(matches!(c.lookup(&url("/r?q=2#one"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
-        assert!(matches!(c.lookup(&url("/r?q=1%23one"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+        c.insert(&url("/r?q=1#one"), &req, true, StatusCode::OK, &resp, Bytes::from_static(b"x"), T0, T0, Version::HTTP_11);
+        assert!(matches!(c.lookup(&url("/r?q=1#two"), &req, true, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/r?q=1"), &req, true, CacheMode::Default, T0 + 1.0), Lookup::Hit(_)));
+        assert!(matches!(c.lookup(&url("/r?q=2#one"), &req, true, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+        assert!(matches!(c.lookup(&url("/r?q=1%23one"), &req, true, CacheMode::Default, T0 + 1.0), Lookup::Miss));
         c.invalidate(&url("/r?q=1#zzz"));
-        assert!(matches!(c.lookup(&url("/r?q=1"), &req, CacheMode::Default, T0 + 1.0), Lookup::Miss));
+        assert!(matches!(c.lookup(&url("/r?q=1"), &req, true, CacheMode::Default, T0 + 1.0), Lookup::Miss));
     }
 }

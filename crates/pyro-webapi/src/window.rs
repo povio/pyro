@@ -174,6 +174,7 @@ where
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     crate::streams::define_globals(def);
     crate::observable::define_globals(def);
+    crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition");
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
     crate::service_worker::define_globals(def);
@@ -183,6 +184,9 @@ where
     crate::indexeddb::define_globals(def);
     crate::editing_globals::define_globals(def);
     crate::font_loading::define_globals(def);
+    crate::web_locks::define_globals(def);
+    crate::media_devices::define_globals(def);
+    crate::paint_worklet::define_globals(def);
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
@@ -310,9 +314,10 @@ where
 /// itself (the embedder's Window class replaces it with a frame-aware one).
 pub fn post_message_to_self<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<()> {
     let origin = crate::storage::document_origin(page).unwrap_or_else(|| "null".into());
-    let (message, target_origin, options) = crate::window_message::post_message_args(s, a, &origin)?;
+    let key = page.origin_key();
+    let (message, target_origin, options) = crate::window_message::post_message_args(s, a, &key)?;
     let realm = page.main_world_realm().unwrap_or_else(|| s.realm());
-    let deliver = target_origin.allows(&origin);
+    let deliver = target_origin.allows(&key);
     crate::window_message::send_window_message(s, message, options, page, &realm, origin, None, deliver)
 }
 
@@ -408,6 +413,8 @@ impl JsClass for Navigator {
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
+        def.getter("locks", |s, p| crate::web_locks::locks(s, p));
+        def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
@@ -736,6 +743,10 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     o.set_atom("registerProperty", register.value())?;
     let page = crate::target::page_of(s)?;
     o.set_atom("highlights", crate::highlights::member(s, &page, "highlights")?)?;
+    // CSS Painting API: `paintWorklet` ([SecureContext]).
+    if let Some(worklet) = crate::paint_worklet::paint_worklet(s, &page)? {
+        o.set_atom("paintWorklet", worklet)?;
+    }
     Ok(o.value())
 }
 

@@ -68,6 +68,11 @@ pub struct DocumentMutator<'doc> {
     pub doc: &'doc mut BaseDocument,
 
     eager_op_queue: Vec<SpecialOp>,
+    /// pyro: the attribute being set or cleared is the engine's state (`crate::engine_state`,
+    /// authenticated by the document's nonce), under its canonical `urn:x-pyro:state` name: it goes
+    /// to the engine's store, and only it drives the top layer, shadow markers and state tokens. A
+    /// page's attribute in that namespace is an ordinary attribute.
+    state_write: bool,
 
     // Tracked nodes for deferred processing when mutations have completed
     title_node: Option<NodeId>,
@@ -106,6 +111,7 @@ impl DocumentMutator<'_> {
         DocumentMutator {
             doc,
             eager_op_queue: Vec::new(),
+            state_write: false,
             title_node: None,
             style_nodes: HashSet::new(),
             link_media_nodes: HashSet::new(),
@@ -171,12 +177,28 @@ impl DocumentMutator<'_> {
     }
 
     pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
+        // pyro: the engine's attributes (under this document's nonce names) go to its store, by
+        // canonical name; every other attribute, the page's `data-pyro-*` too, is the element's.
+        let nonce = self.doc.frames.nonce.clone();
+        // pyro: and its state attributes (`urn:x-pyro:state:<nonce>`), by local name.
+        let (state, attrs): (Vec<Attribute>, Vec<Attribute>) =
+            attrs.into_iter().partition(|a| crate::engine_state(&nonce, &a.name).is_some());
         // pyro: the top layer is marked in pyro-dom's state attribute.
-        let pyro_state = attrs
-            .iter()
-            .find(|a| is_lp_state(&a.name))
-            .map(|a| a.value.clone());
-        let mut data = ElementData::new(name, attrs);
+        let pyro_state = state.iter().find(|a| &*a.name.local == "state").map(|a| a.value.clone());
+        let (engine, attrs): (Vec<(String, Attribute)>, Vec<(String, Attribute)>) = attrs
+            .into_iter()
+            .map(|a| (crate::engine_field(&nonce, &a.name).unwrap_or_default(), a))
+            .partition(|(field, _)| !field.is_empty());
+        let mut data = ElementData::new(name, attrs.into_iter().map(|(_, a)| a).collect());
+        for (field, a) in engine {
+            data.attrs.set_reserved(&field, &a.value);
+        }
+        for a in &state {
+            data.attrs.set_state(&a.name.local, &a.value);
+        }
+        if !state.is_empty() {
+            data.sync_lp_attribute_state();
+        }
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
         // pyro: a link to the document itself is visited.
         if data.is_link() {
@@ -197,10 +219,7 @@ impl DocumentMutator<'_> {
             self.doc.note_lp_state(id, Some(&state));
         }
         // pyro: a shadow host or an assigned slot (`crate::shadow`).
-        if self.doc.nodes[id]
-            .element_data()
-            .is_some_and(|e| e.attrs.iter().any(|a| crate::shadow::is_shadow_marker(&a.name)))
-        {
+        if state.iter().any(|a| crate::shadow::is_shadow_marker(&QualName::new(None, crate::PYRO_STATE_NS.into(), a.name.local.clone()))) {
             self.doc.sync_shadow_markers(id);
         }
         id
@@ -372,7 +391,28 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
-        if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
+        // pyro: an engine attribute goes to the engine's store (`create_element`).
+        if let Some(field) = crate::engine_field(&self.doc.frames.nonce.clone(), &name) {
+            if let Some(element) = self.doc.nodes[node_id].element_data_mut() {
+                element.attrs.set_reserved(&field, value);
+            }
+            self.engine_attribute_changed(node_id, &field, true);
+            return;
+        }
+        // pyro: the engine's state, under its canonical name (`state_write`).
+        if let Some(local) = crate::engine_state(&self.doc.frames.nonce.clone(), &name) {
+            let previous = std::mem::replace(&mut self.state_write, true);
+            self.set_attribute_inner(node_id, QualName::new(None, crate::PYRO_STATE_NS.into(), local.into()), value);
+            self.state_write = previous;
+            return;
+        }
+        let previous = std::mem::replace(&mut self.state_write, false);
+        self.set_attribute_inner(node_id, name, value);
+        self.state_write = previous;
+    }
+
+    fn set_attribute_inner(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        if self.state_write && is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
             self.doc.note_lp_state(node_id, Some(value));
         }
         // pyro: `:has()` anchors that can see the element follow
@@ -381,7 +421,7 @@ impl DocumentMutator<'_> {
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
-        let shadow_marker = crate::shadow::is_shadow_marker(&name);
+        let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
         // pyro: `start`, `reversed` and `value` number list items (`layout::counters`).
         if matches!(
@@ -397,9 +437,15 @@ impl DocumentMutator<'_> {
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
         }
+        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
+        self.doc.invalidate_has_slotted(node_id);
+        // pyro: and the children a `<details>` element renders in its slots (`details:not([open])
+        // > *`).
+        self.doc.invalidate_slotted_children(node_id);
     }
 
     fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        let engine = self.state_write;
         // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
         // `href` change only.
         let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
@@ -454,8 +500,13 @@ impl DocumentMutator<'_> {
                 .attribute_changed(&name.local, old_value, Some(value));
         }
 
-        element.attrs.set(name.clone(), value);
-        if is_state_attribute(&element.name, &name) {
+        // pyro: the engine's state goes to its store (`state_write`).
+        if engine {
+            element.attrs.set_state(&name.local, value);
+        } else {
+            element.attrs.set(name.clone(), value);
+        }
+        if is_state_attribute(&element.name, &name, engine) {
             element.sync_lp_attribute_state();
         }
         if node_is_in_document {
@@ -547,9 +598,9 @@ impl DocumentMutator<'_> {
 
         if (tag, attr) == tag_and_attr!("input", "checked") {
             set_input_checked_state(element, value.to_string());
-        } else if (tag, attr) == tag_and_attr!("img", "src")
-            // pyro: an `<embed>`'s image.
-            || (tag, attr) == tag_and_attr!("embed", "src")
+        } else if &**tag == "img" && matches!(&**attr, "src" | "crossorigin" | "referrerpolicy") {
+            self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+        } else if (tag, attr) == tag_and_attr!("embed", "src")
             // pyro: an image button fetches its `src` like `<img>`;
             // `type` becoming "image" starts the load (HTML "image button
             // state": the type changing to Image Button updates the image data).
@@ -574,20 +625,63 @@ impl DocumentMutator<'_> {
             || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
             || (tag, attr) == tag_and_attr!("object", "srcdoc")
             || (tag, attr) == tag_and_attr!("embed", "srcdoc")
+            || (matches!(&**tag, "iframe" | "frame" | "object" | "embed") && &**attr == crate::FRAME_ATTRIBUTE)
         {
             self.load_iframe(node_id);
         }
     }
 
+    /// pyro: the engine's attribute `field` (canonical) of `node_id` was set (`set`) or removed:
+    /// a frame marker loads or drops the frame document; any one lays the element out again.
+    fn engine_attribute_changed(&mut self, node_id: NodeId, field: &str, set: bool) {
+        let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
+        let tag = self.doc.nodes[node_id].element_data().map(|e| e.name.local.clone());
+        if node_is_in_document {
+            self.doc.snapshot_node(node_id, &markup5ever::LocalName::from(field));
+            self.restyle_for_attribute_change(node_id, &markup5ever::LocalName::from(field));
+        }
+        if field != crate::FRAME_ATTRIBUTE {
+            return;
+        }
+        match tag.as_deref() {
+            Some("iframe" | "frame") if set || node_is_in_document => self.load_iframe(node_id),
+            Some("object" | "embed") if set => self.load_iframe(node_id),
+            Some("object" | "embed") => {
+                self.remove_sub_document(node_id);
+                self.load_image(node_id);
+            }
+            _ => {}
+        }
+    }
+
     pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
-        if is_lp_state(&name) {
+        if let Some(field) = crate::engine_field(&self.doc.frames.nonce.clone(), &name) {
+            if let Some(element) = self.doc.nodes[node_id].element_data_mut() {
+                element.attrs.remove_reserved(&field);
+            }
+            self.engine_attribute_changed(node_id, &field, false);
+            return;
+        }
+        if let Some(local) = crate::engine_state(&self.doc.frames.nonce.clone(), &name) {
+            let previous = std::mem::replace(&mut self.state_write, true);
+            self.clear_attribute_inner(node_id, QualName::new(None, crate::PYRO_STATE_NS.into(), local.into()));
+            self.state_write = previous;
+            return;
+        }
+        let previous = std::mem::replace(&mut self.state_write, false);
+        self.clear_attribute_inner(node_id, name);
+        self.state_write = previous;
+    }
+
+    fn clear_attribute_inner(&mut self, node_id: NodeId, name: QualName) {
+        if self.state_write && is_lp_state(&name) {
             self.doc.note_lp_state(node_id, None);
         }
         // pyro: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
-        let shadow_marker = crate::shadow::is_shadow_marker(&name);
+        let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
         // pyro: `start`, `reversed` and `value` number list items (`layout::counters`).
         if matches!(
@@ -603,9 +697,15 @@ impl DocumentMutator<'_> {
         if let Some(change) = change.and_then(|c| c.after(self.doc, node_id)) {
             self.doc.invalidate_relative_attribute(node_id, change);
         }
+        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
+        self.doc.invalidate_has_slotted(node_id);
+        // pyro: and the children a `<details>` element renders in its slots (`details:not([open])
+        // > *`).
+        self.doc.invalidate_slotted_children(node_id);
     }
 
     fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
+        let engine = self.state_write;
         // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
         // `href` change only.
         let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
@@ -647,12 +747,12 @@ impl DocumentMutator<'_> {
             return;
         };
 
-        let removed_attr = element.attrs.remove(&name);
+        let removed_attr = if engine { element.attrs.remove_state(&name.local) } else { element.attrs.remove(&name) };
         let had_attr = removed_attr.is_some();
         if !had_attr {
             return;
         }
-        if is_state_attribute(&element.name, &name) {
+        if is_state_attribute(&element.name, &name, engine) {
             element.sync_lp_attribute_state();
         }
         self.mutations_occurred |= node_is_in_document;
@@ -732,14 +832,23 @@ impl DocumentMutator<'_> {
         } else if (tag, attr) == tag_and_attr!("link", "href") || (tag, attr) == tag_and_attr!("link", "rel") {
             // pyro: without its `rel` too (as a `rel` without `stylesheet`: `load_linked_stylesheet`).
             self.unload_stylesheet(node_id);
-        } else if (tag, attr) == tag_and_attr!("iframe", "srcdoc") && node_is_in_document {
+        } else if matches!(&**tag, "object" | "embed") && &**attr == crate::FRAME_ATTRIBUTE {
+            // pyro: the snapshot no longer gives it a frame document: its image or fallback again.
+            self.remove_sub_document(node_id);
+            self.load_image(node_id);
+        } else if ((tag, attr) == tag_and_attr!("iframe", "srcdoc")
+            || (matches!(&**tag, "iframe" | "frame") && &**attr == crate::FRAME_ATTRIBUTE))
+            && node_is_in_document
+        {
             // Fall back to loading from the `src` attribute (if any)
             self.load_iframe(node_id);
         } else if (tag, attr) == tag_and_attr!("object", "srcdoc") || (tag, attr) == tag_and_attr!("embed", "srcdoc") {
             // pyro: the object's frame document is gone: its image or fallback again.
             self.remove_sub_document(node_id);
             self.load_image(node_id);
-        } else if (tag, attr) == tag_and_attr!("object", "data") || (tag, attr) == tag_and_attr!("object", "type") {
+        } else if &**tag == "img" && matches!(&**attr, "src" | "crossorigin" | "referrerpolicy") && node_is_in_document {
+            self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+        } else if matches!((&**tag, &**attr), ("object", "data" | "type") | ("embed", "src") | ("video", "poster")) {
             // pyro: an `<object>` without its image shows its fallback again (`load_image`).
             self.load_image(node_id);
         }
@@ -907,13 +1016,13 @@ impl DocumentMutator<'_> {
     /// Upstream restyled the parent's subtree on every attribute change; it now hints the element
     /// alone (blitz#1276).
     fn restyle_siblings_for_attribute_change(&mut self, node_id: NodeId, name: &QualName, value: Option<&str>) {
-        if is_lp_state(name) {
+        if self.state_write && is_lp_state(name) {
             let natural =
                 |v: &str| v.split_ascii_whitespace().find(|t| t.starts_with("natural=")).map(str::to_owned);
             let node = &mut self.doc.nodes[node_id];
             let old = node
                 .element_data()
-                .and_then(|e| e.attrs.iter().find(|a| a.name == *name).and_then(|a| natural(&a.value)));
+                .and_then(|e| e.attrs.state(&name.local).and_then(natural));
             if old != value.and_then(natural) {
                 if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
                     data.damage.insert(ALL_DAMAGE);
@@ -1328,6 +1437,19 @@ impl DocumentMutator<'_> {
                 self.process_added_subtree(child_id);
             } else if !new_parent_is_in_document && child_was_in_doc {
                 self.process_removed_subtree(child_id);
+            } else if new_parent_is_in_document {
+                // pyro: a moved `<style>` with `@scope` rules has a new implicit scope root (its new
+                // parent: `BaseDocument::process_style_element`): its sheet is parsed again.
+                let mut moved_styles = Vec::new();
+                self.doc.iter_subtree_mut(child_id, |id, doc| {
+                    let node = &doc.nodes[id];
+                    if node.data.is_element_with_tag_name(&local_name!("style"))
+                        && crate::document::sheet_has_scope_rules(&node.text_content())
+                    {
+                        moved_styles.push(id);
+                    }
+                });
+                self.style_nodes.extend(moved_styles);
             }
         }
         // pyro: the `:has()` anchors that can see the new positions,
@@ -1586,9 +1708,14 @@ impl<'doc> DocumentMutator<'doc> {
 
     fn flush_eager_ops(&mut self) {
         let mut ops = mem::take(&mut self.eager_op_queue);
+        let mut images = HashSet::new();
         for op in ops.drain(0..) {
             match op {
-                SpecialOp::LoadImage(node_id) => self.load_image(node_id),
+                SpecialOp::LoadImage(node_id) => {
+                    if images.insert(node_id) && self.doc.get_node(node_id).is_some_and(|node| node.flags.is_in_document()) {
+                        self.load_image(node_id);
+                    }
+                }
                 SpecialOp::LoadIframe(node_id) => self.load_iframe(node_id),
                 SpecialOp::LoadStylesheet(node_id) => self.load_linked_stylesheet(node_id),
                 SpecialOp::UnloadStylesheet(node_id) => self.unload_stylesheet(node_id),
@@ -1657,7 +1784,7 @@ impl<'doc> DocumentMutator<'doc> {
                 // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does, or the frame
                 // document the render snapshot gives it (`srcdoc`) as an iframe does (plugins are
                 // not done).
-                "embed" if element.attr(local_name!("srcdoc")).is_some() => {
+                "embed" if element.attr(local_name!("srcdoc")).is_some() || element.reserved_attr(crate::FRAME_ATTRIBUTE).is_some() => {
                     self.eager_op_queue.push(SpecialOp::LoadIframe(node_id))
                 }
                 "embed" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -1667,7 +1794,7 @@ impl<'doc> DocumentMutator<'doc> {
                 "object" => {
                     // pyro: an `<object>` the render snapshot gives a frame document (`srcdoc`)
                     // shows it as an iframe does.
-                    if element.attr(local_name!("srcdoc")).is_some() {
+                    if element.attr(local_name!("srcdoc")).is_some() || element.reserved_attr(crate::FRAME_ATTRIBUTE).is_some() {
                         self.eager_op_queue.push(SpecialOp::LoadIframe(node_id));
                     } else {
                         self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
@@ -1839,6 +1966,11 @@ impl<'doc> DocumentMutator<'doc> {
                 guard: self.doc.guard.clone(),
                 net_provider: self.doc.net_provider.clone(),
                 abort_signal: self.doc.abort_signal.clone(),
+                client: self.doc.request_client(),
+                // pyro: the response's policy as the snapshot wrote it on the link (an engine
+                // attribute page content cannot write).
+                policy: self.doc.engine_attr(target_id, crate::document::SHEET_POLICY_ATTRIBUTE).map(str::to_owned),
+                policies: self.doc.sheet_policies.clone(),
             },
         );
 
@@ -1848,11 +1980,12 @@ impl<'doc> DocumentMutator<'doc> {
                 .insert(handler.request_id());
         }
 
-        self.doc.net_provider.fetch(
-            self.doc.id(),
-            self.doc.build_request(url),
-            Box::new(handler),
-        );
+        // pyro: a style sheet's request (its destination says so, never its URL).
+        let mut request = self.doc.build_request(url);
+        request.options.destination = blitz_traits::net::Destination::Style;
+        // pyro: the snapshot's sheet of this link (its engine attribute), served by identity.
+        request.options.sheet = self.doc.engine_attr(target_id, crate::document::SHEET_ATTRIBUTE).map(str::to_owned);
+        self.doc.net_provider.fetch(self.doc.id(), request, Box::new(handler));
     }
 
     fn unload_stylesheet(&mut self, node_id: NodeId) {
@@ -1887,6 +2020,12 @@ impl<'doc> DocumentMutator<'doc> {
     }
 
     fn load_image(&mut self, target_id: NodeId) {
+        if let Some(previous) = self.doc.nodes[target_id].element_data_mut().and_then(|element| element.source_image_request.take()) {
+            let (url, options) = *previous;
+            if let Some(waiters) = self.doc.pending_images.get_mut(&options.cache_key(&url)) {
+                waiters.retain(|(id, kind)| *id != target_id || !matches!(kind, ImageType::Image));
+            }
+        }
         let node = &self.doc.nodes[target_id];
         // pyro: a `<video>`'s image is its poster; without one it
         // paints nothing.
@@ -1964,7 +2103,30 @@ impl<'doc> DocumentMutator<'doc> {
                 let Some(src) = self.doc.resolve_url(raw_src) else {
                     return;
                 };
-                let src_string = src.as_str();
+                // pyro: an `<img crossorigin>` is fetched in CORS mode (HTML "CORS settings
+                // attribute": a missing value is no CORS, an invalid one `anonymous`), its
+                // response kept apart from the same URL fetched otherwise.
+                let mut options = blitz_traits::net::FetchOptions::default();
+                if is_img {
+                    options.referrer_policy = node.attrs().and_then(|attrs| attrs.iter().find(|attr| attr.name.ns == markup5ever::ns!() && &*attr.name.local == "referrerpolicy")).and_then(|attr| {
+                        ["no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-cross-origin", "same-origin", "strict-origin", "strict-origin-when-cross-origin", "unsafe-url"]
+                            .into_iter().find(|token| attr.value.eq_ignore_ascii_case(token)).map(str::to_owned)
+                    });
+                    if let Some(value) = node.attr(local_name!("crossorigin")) {
+                        options.cors = Some(if value.eq_ignore_ascii_case("use-credentials") {
+                            blitz_traits::net::CorsCredentials::Include
+                        } else {
+                            blitz_traits::net::CorsCredentials::SameOrigin
+                        });
+                    }
+                }
+                let options = self.doc.request_options(options);
+                let key = options.cache_key(src.as_str());
+                if matches!(src.scheme(), "http" | "https") {
+                    self.doc.nodes[target_id].element_data_mut().unwrap().source_image_request =
+                        Some(Box::new((src.to_string(), options.clone())));
+                }
+                let src_string = key.as_str();
 
                 // Check cache first
                 if let Some(cached_image) = self.doc.image_cache.get(src_string) {
@@ -1997,15 +2159,18 @@ impl<'doc> DocumentMutator<'doc> {
                     .pending_images
                     .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
 
+                let mut request = self.doc.build_request(src);
+                request.options = options.clone().for_destination(blitz_traits::net::Destination::Image);
+                let handler = ImageHandler::new(ImageType::Image, &self.doc.raster_budget).options(options).document(&self.doc.url);
                 self.doc.net_provider.fetch(
                     self.doc.id(),
-                    self.doc.build_request(src),
+                    request,
                     ResourceHandler::boxed(
                         self.doc.tx.clone(),
                         self.doc.id(),
                         None, // Don't pass node_id, we'll handle it via pending_images
                         self.doc.shell_provider.clone(),
-                        ImageHandler::new(ImageType::Image),
+                        handler,
                     ),
                 );
             }
@@ -2022,6 +2187,15 @@ impl<'doc> DocumentMutator<'doc> {
             return;
         }
 
+        // pyro: in a render snapshot's document (it has a frame table), a frame element shows its
+        // valid table entry's document or nothing, whatever attributes it has (`src`, `srcdoc`, an
+        // unmarked element): never a load of its own.
+        if self.doc.is_snapshot_document() {
+            if let Some(frame) = self.doc.frame_entry(target_id) {
+                self.doc.load_frame_document(target_id, &frame);
+            }
+            return;
+        }
         let node = &self.doc.nodes[target_id];
         let Some(element) = node.element_data() else {
             return;
@@ -2100,7 +2274,10 @@ impl<'doc> DocumentMutator<'doc> {
         if let ("input", Some("button" | "submit" | "reset"), Some(value)) =
             (tagname, type_attr, value)
         {
-            let value = value.to_string();
+            // pyro: an empty label is still a line, as in Chromium: the button is one line
+            // tall (a zero-width word joiner, which draws nothing; WPT css-inline
+            // `empty-span-size-001`).
+            let value = if value.is_empty() { "\u{2060}".to_string() } else { value.to_string() };
             let id = self.create_text_node(&value);
             self.append_children(target_id, &[id]);
             return;
@@ -2133,8 +2310,8 @@ impl<'doc> DocumentMutator<'doc> {
 /// pyro: attributes whose value is element state
 /// ([`ElementData::sync_lp_attribute_state`]): pyro-dom's `state` tokens and an
 /// `<option>`'s `selected`.
-fn is_state_attribute(element: &QualName, name: &QualName) -> bool {
-    (&*name.ns == crate::PYRO_STATE_NS && &*name.local == "state")
+fn is_state_attribute(element: &QualName, name: &QualName, engine: bool) -> bool {
+    (engine && &*name.ns == crate::PYRO_STATE_NS && &*name.local == "state")
         || (element.local == local_name!("option") && name.local == local_name!("selected"))
 }
 

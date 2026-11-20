@@ -423,9 +423,17 @@ impl<'a, 'i> AtRuleParser<'i> for TopLevelRuleParser<'a, 'i> {
                     ));
                 }
 
-                let url_string = input.expect_url_or_string()?.as_ref().to_owned();
-                let url =
-                    CssUrl::new_from_untainted_string(url_string, &self.context, CorsMode::None);
+                // pyro: `@import [ <url> | <string> ]`, a `<url>` with its request URL modifiers
+                // (CSS Values 5 § 4.5.4).
+                let url = match input
+                    .try_parse(|input| CssUrl::parse_with_cors_mode(&self.context, input, CorsMode::None))
+                {
+                    Ok(url) => url,
+                    Err(..) => {
+                        let url_string = input.expect_string()?.as_ref().to_owned();
+                        CssUrl::new_from_untainted_string(url_string, &self.context, CorsMode::None)
+                    },
+                };
 
                 let (layer, supports) =
                     ImportRule::parse_layer_and_supports(input, &mut self.context);

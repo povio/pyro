@@ -295,6 +295,51 @@ impl ToComputedValue for BorderSideOffset {
     }
 }
 
+/// pyro: a specified value for outline-offset: a length, or `inset` (CSS UI 4: the outline is
+/// drawn inside the border box, its offset minus its width).
+#[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
+pub enum OutlineOffset {
+    /// A length.
+    Length(BorderSideOffset),
+    /// `inset`.
+    Inset,
+}
+
+impl Parse for OutlineOffset {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|input| input.expect_ident_matching("inset")).is_ok() {
+            return Ok(OutlineOffset::Inset);
+        }
+        BorderSideOffset::parse(context, input).map(OutlineOffset::Length)
+    }
+}
+
+impl ToComputedValue for OutlineOffset {
+    type ComputedValue = crate::values::computed::border::OutlineOffset;
+
+    #[inline]
+    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+        use crate::values::computed::border::OutlineOffset as Computed;
+        match self {
+            OutlineOffset::Length(length) => {
+                Computed::Length(crate::values::computed::Length::new(length.to_computed_value(context).to_f32_px()))
+            },
+            OutlineOffset::Inset => Computed::Inset,
+        }
+    }
+
+    #[inline]
+    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
+        use crate::values::computed::border::OutlineOffset as Computed;
+        match computed {
+            Computed::Length(length) => {
+                OutlineOffset::Length(BorderSideOffset::from_computed_value(&Au::from_f32_px(length.px())))
+            },
+            Computed::Inset => OutlineOffset::Inset,
+        }
+    }
+}
+
 impl BorderImageSideWidth {
     /// Returns `1`.
     #[inline]

@@ -540,7 +540,7 @@ enum Overflow {
 }
 
 /// The computed `overflow-x`/`overflow-y` keyword of one declared value
-/// after the per-axis coercion (`visible` → `auto`, `clip` → `hidden` when
+/// after the per-axis coercion (`visible` → `auto` when
 /// the other axis scrolls); `overlay` computes to `auto`.
 pub(crate) fn computed_overflow_keywords(x: Option<&str>, y: Option<&str>) -> (String, String) {
     let norm = |v: Option<&str>| -> String {
@@ -557,7 +557,6 @@ pub(crate) fn computed_overflow_keywords(x: Option<&str>, y: Option<&str>) -> (S
     }
     let fix = |v: String| match v.as_str() {
         "visible" => "auto".to_owned(),
-        "clip" => "hidden".to_owned(),
         _ => v,
     };
     (fix(x), fix(y))
@@ -812,6 +811,10 @@ struct Sheet {
     /// to the renderer). Kept when the sheet is read again (a `<style>`'s
     /// registration can come after a script disabled its sheet) or edited.
     disabled: bool,
+    /// pyro: the owner's style block generation (`Dom::style_sheet_generation`) the flag was set
+    /// at: it is that sheet object's, so an updated `<style>` block (a new sheet object) is enabled
+    /// at once, without waiting for anything to clear it ([`StyleEngine::is_off`]).
+    disabled_at: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -827,6 +830,9 @@ pub struct StyleEngine {
     doc: NodeId,
     viewport: Viewport,
     sheets: Vec<Sheet>,
+    /// pyro: the URL of the response each `<link>`'s sheet text came from (after redirects):
+    /// its URLs resolve against it, in the renderer too ([`StyleEngine::sheet_url`]).
+    sheet_urls: rustc_hash::FxHashMap<NodeId, String>,
     popover_open: FxHashSet<NodeId>,
     generation: u64,
     /// Generation bumps by [`StyleEngine::invalidate`] (anything but a sheet
@@ -934,6 +940,7 @@ impl StyleEngine {
             viewport,
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
+            sheet_urls: rustc_hash::FxHashMap::default(),
             generation: 0,
             invalidations: 0,
             memo: RefCell::default(),
@@ -1018,7 +1025,7 @@ impl StyleEngine {
     }
 
     /// The animated values' stamp now (`None`: no animation source).
-    fn animation_stamp(&self) -> Option<u64> {
+    pub fn animation_stamp(&self) -> Option<u64> {
         let source = self.animation_source.try_borrow().ok()?;
         Some(source.as_ref()?.stamp())
     }
@@ -1089,13 +1096,14 @@ impl StyleEngine {
         &self,
         source: Option<NodeId>,
         subject: Option<NodeId>,
+        pseudo: u8,
         axis: u8,
         inset: [(u8, f64); 2],
     ) -> Option<(f64, f64, f64)> {
         let external = self.external.borrow();
         let (engine, _) = external.as_ref()?;
         let key = crate::snapshot::render_key;
-        engine.timeline_state(source.map(key), subject.map(key), axis, inset).map(|(o, s, e, ..)| (o, s, e))
+        engine.timeline_state(source.map(key), subject.map(key), pseudo, axis, inset).map(|(o, s, e, ..)| (o, s, e))
     }
 
     /// The animated values for a sync of the layout engine, now; `None`
@@ -1112,6 +1120,19 @@ impl StyleEngine {
     /// replaced since the last call (while tracked), with the style before
     /// and after: a transition's before-change and after-change styles.
     /// Elements gone from `dom` are left out.
+    /// pyro: the elements whose `::scroll-marker-group` scrolled to keep its active marker in view
+    /// since the last call ([`crate::geometry::GeometrySource::take_scroll_group_moves`]).
+    pub fn take_scroll_group_moves(&self, dom: &Dom) -> Vec<NodeId> {
+        let external = self.external.borrow();
+        let Some((source, _)) = &*external else { return Vec::new() };
+        source
+            .take_scroll_group_moves()
+            .into_iter()
+            .filter_map(|key| crate::geometry::node_of(dom, key))
+            .filter(|&el| self.owns(dom, el).is_some())
+            .collect()
+    }
+
     pub fn take_style_changes(
         &self,
         dom: &Dom,
@@ -1142,6 +1163,11 @@ impl StyleEngine {
         }
         self.registered_properties.push(property);
         true
+    }
+
+    /// The document's `CSS.registerProperty()` registrations, in order.
+    pub fn registered_properties(&self) -> &[RegisteredProperty] {
+        &self.registered_properties
     }
 
     /// The registration of custom property `name`, if script made one.
@@ -1496,7 +1522,7 @@ impl StyleEngine {
             }
             s.source = source;
         } else {
-            self.sheets.push(Sheet { owner, source, revision, disabled: false });
+            self.sheets.push(Sheet { owner, source, revision, disabled: false, disabled_at: 0 });
         }
         self.sheets_added();
     }
@@ -1504,6 +1530,36 @@ impl StyleEngine {
     /// Replaces the text of a loader-supplied sheet (or adds it).
     pub fn set_sheet_text(&mut self, owner: NodeId, text: &str) {
         self.add_sheet(owner, SheetSource::Text(text.to_owned()));
+    }
+
+    /// pyro: `owner`'s sheet text is the response at `url` (its URL after redirects); `None`: not
+    /// a response's (a reserved slot, CSSOM text).
+    pub fn set_sheet_url(&mut self, owner: NodeId, url: Option<&str>) {
+        match url {
+            Some(url) => self.sheet_urls.insert(owner, url.to_owned()),
+            None => self.sheet_urls.remove(&owner),
+        };
+    }
+
+    /// pyro: the URL of the response `owner`'s sheet text came from ([`Self::set_sheet_url`]):
+    /// the sheet's location, which its relative URLs resolve against.
+    pub fn sheet_url(&self, owner: NodeId) -> Option<&str> {
+        self.sheet_urls.get(&owner).map(String::as_str)
+    }
+
+    /// pyro: THE base URL of `owner`'s sheet, which its URLs resolve against everywhere (layout,
+    /// the renderer, fonts, CSSOM): a linked sheet's response URL after redirects, else its href
+    /// resolved against `document_base`; a `<style>`'s, the document's base.
+    pub fn sheet_base_url(&self, dom: &Dom, owner: NodeId, document_base: &str) -> Option<String> {
+        if let Some(url) = self.sheet_url(owner) {
+            return Some(url.to_owned());
+        }
+        let link = dom.element(owner).is_ok_and(|e| &*e.name.local == "link");
+        if !link {
+            return Some(document_base.to_owned());
+        }
+        let href = dom.get_attribute(owner, "href").ok().flatten()?;
+        url::Url::parse(document_base).ok()?.join(href.trim()).ok().map(|u| u.to_string())
     }
 
     pub fn remove_sheet(&mut self, owner: NodeId) -> bool {
@@ -1520,32 +1576,50 @@ impl StyleEngine {
 
     /// Text the loader or CSSOM gave `owner`'s sheet; `None` for a
     /// `<style>` element read from the DOM, or no sheet.
-    pub fn sheet_text(&self, owner: NodeId) -> Option<&str> {
+    pub fn sheet_text(&self, dom: &Dom, owner: NodeId) -> Option<&str> {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            _ if s.disabled => Some(""),
+            // pyro: and a link that applies nothing now (its `disabled` attribute, its `rel`).
+            _ if Self::is_off(s, dom) || link_not_stylesheet(dom, owner) => Some(""),
+            SheetSource::Text(t) => Some(t.as_str()),
+            SheetSource::StyleElement => None,
+        })
+    }
+
+    /// pyro: the text the loader or CSSOM gave `owner`'s sheet, disabled or not (a disabled sheet
+    /// keeps its rules; it only applies nothing, which [`Self::sheet_text`] says): the CSSOM's.
+    pub fn sheet_own_text(&self, owner: NodeId) -> Option<&str> {
+        self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
             SheetSource::Text(t) => Some(t.as_str()),
             SheetSource::StyleElement => None,
         })
     }
 
     /// `CSSStyleSheet.disabled` of the sheet `owner` (a `<style>` or `<link>`) owns.
-    pub fn sheet_disabled(&self, owner: NodeId) -> bool {
-        self.sheets.iter().any(|s| s.owner == owner && s.disabled)
+    pub fn sheet_disabled(&self, dom: &Dom, owner: NodeId) -> bool {
+        self.sheets.iter().any(|s| s.owner == owner && Self::is_off(s, dom))
+    }
+
+    /// pyro: whether `sheet` applies nothing: disabled, by its current sheet object (the flag of
+    /// another style block generation of the owner is not this one's).
+    fn is_off(sheet: &Sheet, dom: &Dom) -> bool {
+        sheet.disabled && dom.style_sheet_generation(sheet.owner) == sheet.disabled_at
     }
 
     /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
     /// A `<style>` element not registered yet (a shadow tree's) is registered.
-    pub fn set_sheet_disabled(&mut self, owner: NodeId, disabled: bool) {
+    pub fn set_sheet_disabled(&mut self, dom: &Dom, owner: NodeId, disabled: bool) {
         self.revisions += 1;
         let revision = self.revisions;
+        let at = dom.style_sheet_generation(owner);
         match self.sheets.iter_mut().find(|s| s.owner == owner) {
-            Some(s) if s.disabled == disabled => return,
+            Some(s) if Self::is_off(s, dom) == disabled => return,
             Some(s) => {
                 s.disabled = disabled;
+                s.disabled_at = at;
                 s.revision = revision;
             }
             None if !disabled => return,
-            None => self.sheets.push(Sheet { owner, source: SheetSource::StyleElement, revision, disabled }),
+            None => self.sheets.push(Sheet { owner, source: SheetSource::StyleElement, revision, disabled, disabled_at: at }),
         }
         self.sheets_added();
     }
@@ -1563,7 +1637,7 @@ impl StyleEngine {
     /// script-font sheet).
     pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             match &sheet.source {
@@ -1588,7 +1662,7 @@ impl StyleEngine {
     /// document or a shadow root).
     pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
@@ -1721,7 +1795,7 @@ impl StyleEngine {
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
         // A disabled sheet's text is empty: its own identity, its revision of the toggle.
-        if sheet.disabled {
+        if Self::is_off(sheet, dom) {
             return Some((sheet.revision << 2) | 2);
         }
         Some(match &sheet.source {
@@ -1754,6 +1828,7 @@ impl StyleEngine {
                     source: SheetSource::StyleElement,
                     revision: self.revisions,
                     disabled: false,
+                    disabled_at: 0,
                 });
             }
         }
@@ -2390,6 +2465,9 @@ fn link_not_stylesheet(dom: &Dom, owner: NodeId) -> bool {
     dom.element(owner).is_ok_and(|e| {
         e.is_html()
             && &*e.name.local == "link"
-            && !e.attr("rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+            && (!e.attr("rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+                // pyro: a link with the `disabled` attribute has no sheet (Chrome), from the moment
+                // it is set: nothing waits for the loader to drop it.
+                || e.attr("disabled").is_some())
     })
 }

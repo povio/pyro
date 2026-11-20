@@ -414,6 +414,36 @@ impl BaseDocument {
         let format_used_px = |px: f32| format_px(px / zoom);
 
         // Layout-dependent "used value" special cases
+        if has_layout_box && matches!(property_name, "min-width" | "min-height" | "max-width" | "max-height") {
+                use style::values::computed::length::{MaxSize, Size};
+                let horizontal = property_name.ends_with("width");
+                let container = node.containing_block().and_then(|id| self.get_node(id)).filter(|_| node.is_out_of_flow());
+                let pos = styles.get_position();
+                macro_rules! resolved_size {
+                    ($kind:ident,$value:expr,$initial:expr) => {{
+                        let mut value = $value;
+                        for _ in 0..64 {
+                            match value {
+                                $kind::AnchorSizeFunction(func) => {
+                                    if let Some(size) = container.and_then(|cb|self.anchor_dimension(func,node,cb,horizontal,styles)) { return format_used_px(size); }
+                                    let Some(fallback) = func.fallback.as_ref() else {return $initial.into()};
+                                    value = fallback;
+                                }
+                                $kind::AnchorContainingCalcFunction(lp) => return container.and_then(|cb| self.anchor_calc_size(&lp.0,node,cb,horizontal,styles)).map_or_else(||$initial.into(),|v|v.to_css_string()),
+                                _ => return value.to_css_string(),
+                            }
+                        }
+                        return $initial.into();
+                    }}
+                }
+                if property_name.starts_with("min") {
+                    let val = if horizontal {&pos.min_width} else {&pos.min_height};
+                    if matches!(val, Size::AnchorSizeFunction(_) | Size::AnchorContainingCalcFunction(_)) {resolved_size!(Size,val,"0px");}
+                } else {
+                    let val = if horizontal {&pos.max_width} else {&pos.max_height};
+                    if matches!(val, MaxSize::AnchorSizeFunction(_) | MaxSize::AnchorContainingCalcFunction(_)) {resolved_size!(MaxSize,val,"none");}
+                }
+        }
         match property_name {
             // Shorthands of longhands that resolve to used values
             "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"

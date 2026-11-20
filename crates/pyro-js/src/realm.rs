@@ -95,6 +95,20 @@ pub struct RealmOptions {
     pub origin: Option<String>,
 }
 
+/// A worklet's module map, by module URL (a failed module leaves it). Shared by every graph of the
+/// worklet.
+pub type WorkletModuleMap = Rc<RefCell<std::collections::HashMap<String, WorkletModule>>>;
+
+/// A module of a [`WorkletModuleMap`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkletModule {
+    /// Its source was handed to the worklet's realm (its own imports may still be loading); false
+    /// while it is being fetched.
+    pub fetched: bool,
+    /// The graph that fetched it (`ModuleFetcher::for_worklet_graph`'s `graph`).
+    pub graph: u64,
+}
+
 /// Receives ES module fetch requests from a realm (`import`, `import()`).
 pub trait ModuleFetcher {
     /// Fetch `url` (absolute) and complete `request`, now or later on the loop.
@@ -105,12 +119,32 @@ pub trait ModuleFetcher {
     fn document_base_url(&self, _realm: &Realm) -> Option<String> {
         None
     }
+
+    /// Calls `then` once none of this fetcher's fetches is in flight: now
+    /// when none is, else when the last one has been completed. A fetcher
+    /// that completes every request within `fetch` is always idle.
+    fn when_idle(&self, then: Box<dyn FnOnce()>) {
+        then();
+    }
+
+    /// Whether a fetch of this fetcher is in flight.
+    fn busy(&self) -> bool {
+        false
+    }
+
+    /// A fetcher for a worklet's module graph ("fetch a worklet script graph"): every module of the
+    /// graph is fetched with `credentials` ("omit", "same-origin" or "include"), outside the
+    /// document's module map, and recorded in the worklet's module map `modules` as fetched by graph
+    /// `graph`. `None`: this fetcher cannot make one.
+    fn for_worklet_graph(&self, _credentials: &str, _modules: WorkletModuleMap, _graph: u64) -> Option<Rc<dyn ModuleFetcher>> {
+        None
+    }
 }
 
 /// The `type` import attribute of a module request (HTML "module type").
 /// Engines without import-attribute support report every request as
 /// [`ModuleType::JavaScript`] ([`crate::Capabilities::typed_modules`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModuleType {
     /// No `type` attribute: a JavaScript module script.
     JavaScript,
@@ -1088,6 +1122,11 @@ impl Realm {
         *self.inner.module_fetcher.borrow_mut() = fetcher;
     }
 
+    /// The fetcher [`Realm::set_module_fetcher`] installed.
+    pub fn module_fetcher(&self) -> Option<Rc<dyn ModuleFetcher>> {
+        self.inner.module_fetcher.borrow().clone()
+    }
+
     pub fn ptr_eq(&self, other: &Realm) -> bool {
         Rc::ptr_eq(&self.inner, &other.inner)
     }
@@ -1444,6 +1483,31 @@ impl<'s> Scope<'s> {
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
 
+    /// The value `source` evaluates to in the engine's root context, made on
+    /// the first call with `key` and the same value for every realm of the
+    /// engine (the agent) after that. For state that the agent's realms
+    /// share, such as the internal slots of objects that script implements
+    /// per realm: an object made in a page's realm would keep that realm
+    /// alive, one made in the root context lives as long as the engine.
+    /// `source` must not depend on the realm asking.
+    pub fn agent_value(&self, key: &'static str, source: &str) -> JsResult<Value<'s>> {
+        let engine = self.engine_inner();
+        if let Some(v) = engine.agent_values.borrow().get(key) {
+            return Ok(v.get(self));
+        }
+        let root = engine.root_ctx();
+        let src = JsString::new(source);
+        let mut exc = ptr::null();
+        // SAFETY: the engine's root context, alive while the engine is; a
+        // value of its VM is usable in every context of the VM.
+        let v = unsafe { sys::JSEvaluateScript(root, src.as_raw(), ptr::null_mut(), ptr::null(), 1, &mut exc) };
+        check(root, exc)?;
+        // SAFETY: `v` is a live value of this engine, just made.
+        let held = unsafe { crate::Persistent::from_raw(root, v) }.ok_or(JsError::Type("no engine".into()))?;
+        engine.agent_values.borrow_mut().insert(key, held);
+        Ok(unsafe { Value::from_raw(self.ctx, v) })
+    }
+
     /// Parses without running; returns the SyntaxError on failure.
     pub fn check_syntax(&self, source: &str, url: Option<&str>) -> JsResult<()> {
         let src = JsString::new(source);
@@ -1529,6 +1593,108 @@ impl<'s> Scope<'s> {
                 unsafe { JsString::from_raw_owned(err) }.to_string()
             };
             return Err(JsError::Type(msg.into()));
+        }
+        Ok(unsafe { Value::from_raw(self.ctx, v) })
+    }
+
+    /// A WindowProxy of this realm for a Window it reaches through native
+    /// functions (helpers.js `windowProxy`): `target()` answers the
+    /// Window's global object when same origin, null while there is none
+    /// (`stand_in`'s members and the proxy's own expandos answer), the
+    /// Window's origin (a string) when cross origin; `child(key)` a child
+    /// window by index or target name as this realm may see it cross origin
+    /// (undefined for none); `deny(name)` throws the SecurityError of a
+    /// cross-origin access. Every WindowProxy internal method follows HTML
+    /// (CrossOriginProperties and child windows cross origin, a cross-origin
+    /// Location, what is handed out kept per origin). `stand_in` and the
+    /// Window are never handed to page code through it.
+    pub fn window_proxy(
+        &self,
+        stand_in: Object<'_>,
+        target: Object<'_>,
+        child: Object<'_>,
+        deny: Object<'_>,
+    ) -> JsResult<Object<'s>> {
+        let make = self.realm.cached_helper(self, "windowProxy")?;
+        make.call(None, &[stand_in.value(), target.value(), child.value(), deny.value()])?
+            .as_object()
+            .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
+    }
+
+    /// Whether this JavaScriptCore runs a module script in HTML's two steps
+    /// ([`Scope::load_module_graph`], [`Scope::link_and_evaluate_module`];
+    /// patch 0037).
+    pub fn has_module_phases() -> bool {
+        // SAFETY: plain capability probe without arguments.
+        unsafe { sys::modules::pyro_jsc_module_phases_available() == 1 }
+    }
+
+    /// HTML "fetch a module script graph" for the module script `source`
+    /// at `url` (registered as [`Scope::eval_module`] registers it): its
+    /// static imports are fetched through the realm's [`ModuleFetcher`] and
+    /// the graph parsed; nothing runs. Returns a promise that fulfills when
+    /// the graph is ready for [`Scope::link_and_evaluate_module`] and
+    /// rejects with the failure (a fetch's TypeError, a SyntaxError). `None`
+    /// without [`Scope::has_module_phases`].
+    pub fn load_module_graph(&self, source: &str, url: &str) -> JsResult<Option<Value<'s>>> {
+        if !self.realm.engine.caps.modules || !Self::has_module_phases() {
+            return Ok(None);
+        }
+        self.realm.inline_modules.borrow_mut().insert(url.to_string(), source.to_string());
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
+        let mut err: sys::JSStringRef = ptr::null();
+        let v = unsafe {
+            sys::modules::pyro_jsc_module_load(self.realm.global_ctx()?, url.as_ptr().cast(), url.len(), &mut err)
+        };
+        if v.is_null() {
+            let msg = if err.is_null() {
+                "module loading failed".to_string()
+            } else {
+                unsafe { JsString::from_raw_owned(err) }.to_string()
+            };
+            return Err(JsError::Type(msg.into()));
+        }
+        Ok(Some(unsafe { Value::from_raw(self.ctx, v) }))
+    }
+
+    /// [`Scope::load_module_graph`] for a module already in the registry (requested as another
+    /// graph's import): the promise of its graph, shared with the load in progress, which fulfills
+    /// once the module and its imports are fetched and parsed and rejects with the failure. `None`
+    /// without [`Scope::has_module_phases`].
+    pub fn load_registered_module_graph(&self, url: &str) -> JsResult<Option<Value<'s>>> {
+        if !self.realm.engine.caps.modules || !Self::has_module_phases() {
+            return Ok(None);
+        }
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
+        let mut err: sys::JSStringRef = ptr::null();
+        let v = unsafe {
+            sys::modules::pyro_jsc_module_load(self.realm.global_ctx()?, url.as_ptr().cast(), url.len(), &mut err)
+        };
+        if v.is_null() {
+            let msg = if err.is_null() {
+                "module loading failed".to_string()
+            } else {
+                unsafe { JsString::from_raw_owned(err) }.to_string()
+            };
+            return Err(JsError::Type(msg.into()));
+        }
+        Ok(Some(unsafe { Value::from_raw(self.ctx, v) }))
+    }
+
+    /// HTML "run a module script" for the graph [`Scope::load_module_graph`]
+    /// fetched for `url`: links and evaluates it with this realm as the
+    /// entry realm and returns the evaluation promise (pending on a
+    /// top-level await, rejected by an evaluation error), or the link error
+    /// (or a parse error of the graph) as `Err`.
+    pub fn link_and_evaluate_module(&self, url: &str) -> JsResult<Value<'s>> {
+        let _entry = crate::engine::EntryGuard::enter(self.ctx);
+        let mut exc: sys::JSValueRef = ptr::null();
+        let v = unsafe {
+            sys::modules::pyro_jsc_module_link_evaluate(self.realm.global_ctx()?, url.as_ptr().cast(), url.len(), &mut exc)
+        };
+        if v.is_null() {
+            check(self.ctx, exc)?;
+            return Err(JsError::Type("module evaluation failed".into()));
         }
         Ok(unsafe { Value::from_raw(self.ctx, v) })
     }

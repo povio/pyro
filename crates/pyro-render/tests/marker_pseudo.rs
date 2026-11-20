@@ -42,6 +42,30 @@ fn columns(img: &RgbaImage, color: [u8; 3]) -> Vec<u32> {
 }
 
 #[test]
+fn right_aligned_text_items_match_a_separately_sized_float() {
+    let draw = |align: &str, content: &str| {
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let snapshot = Snapshot {
+            html: format!("<!doctype html><style>body,ul{{margin:0;padding:0}}ul{{position:absolute;left:302.375px;width:max-content}}li{{list-style-position:inside}}::marker{{font-family:inherit}}</style><ul dir=rtl><li>text</li><li style='{align}'>{content}</li></ul>"),
+            width: 400, height: 80, device_scale_factor: 1.0, ..Default::default()
+        };
+        let mut renderer = Renderer::new();
+        renderer.text_antialiasing = false;
+        renderer.subpixel_text_positioning = false;
+        renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0.data
+    };
+    assert!(draw("unicode-bidi:plaintext", "text") == draw("", "<span style='float:right'>text</span>"));
+}
+
+#[test]
+fn outside_marker_tracks_the_fractional_inline_origin() {
+    let list = "<ul style='margin-left:7.375px'><li>item</li></ul>";
+    let marker = render(&format!("<style>li::marker{{content:'abc'}}</style>{list}"));
+    let before = render(&format!("<style>li{{list-style:none}}li::before{{content:'abc';display:inline-block;width:0;direction:rtl}}</style>{list}"));
+    assert!(marker.data == before.data);
+}
+
+#[test]
 fn a_marker_has_the_colour_of_its_pseudo_element() {
     for list in ["<ul><li>x</li></ul>", "<ol><li>x</li></ol>", "<ul style='list-style-position:inside'><li>x</li></ul>"]
     {

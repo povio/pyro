@@ -23,6 +23,7 @@ svg = ["dep:anyrender_svg", "blitz-dom/svg"]
 scrollbars = ["blitz-dom/scrollbars"]
 
 [dependencies]
+pyro-raster = { path = "../../crates/pyro-raster" }
 anyrender = { version = "0.14.0" }
 anyrender_svg = { optional = true, version = "0.15.0" }
 blitz-traits = { version = "=0.3.0-beta.4", default-features = false }

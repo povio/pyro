@@ -104,6 +104,15 @@ impl Analysis {
         &self.levels
     }
 
+    /// Inherit the embedding direction when shaping an inserted string within a resolved run.
+    pub fn set_run_direction(&mut self, rtl: bool) {
+        self.paragraph_level = BidiLevel::new(u8::from(rtl));
+        self.levels.clear();
+        if rtl {
+            self.levels.resize(self.info.len(), self.paragraph_level);
+        }
+    }
+
     /// The base bidi level of the paragraph of text.
     #[inline(always)]
     pub fn paragraph_level(&self) -> BidiLevel {
@@ -237,7 +246,15 @@ impl SegmenterKey {
         let ja_zh = match strictness {
             LineBreakStrictness::Normal | LineBreakStrictness::Loose => config
                 .language
-                .is_some_and(|language| matches!(language.language(), "ja" | "zh")),
+                // pyro: in a Chinese or Japanese writing system: the script subtag decides where
+                // there is one (`ja-Hang` is not, `en-Hrkt` is: WPT css-text
+                // `writing-system-line-break-001/002`), else the language.
+                .is_some_and(|language| match language.script() {
+                    Some(script) => {
+                        matches!(script, "Jpan" | "Hira" | "Kana" | "Hrkt" | "Hani" | "Hans" | "Hant" | "Bopo")
+                    }
+                    None => matches!(language.language(), "ja" | "zh"),
+                }),
             _ => false,
         };
         Self {
@@ -258,6 +275,23 @@ pub struct CharInfo {
 }
 
 impl CharInfo {
+    /// pyro: whether the character is a letter of a cursive script (CSS Text 3 § 8.2, the
+    /// scripts its appendix lists as cursive), to which letter-spacing does not apply. `None` for
+    /// a character of no particular script.
+    pub fn cursive_script(&self) -> Option<bool> {
+        match self.script {
+            Script::Common | Script::Inherited | Script::Unknown => None,
+            Script::Arabic
+            | Script::HanifiRohingya
+            | Script::Mandaic
+            | Script::Mongolian
+            | Script::Nko
+            | Script::PhagsPa
+            | Script::Syriac => Some(true),
+            _ => Some(false),
+        }
+    }
+
     const VARIATION_SELECTOR_SHIFT: u16 = 0;
     const REGION_INDICATOR_SHIFT: u16 = 1;
     const CONTROL_SHIFT: u16 = 2;
@@ -698,6 +732,13 @@ pub(crate) fn analyze_text(
         .filter(|(_, config)| config.line_break == LineBreak::Anywhere)
         .map(|(range, _)| range)
         .peekable();
+    // pyro: the `word-break: break-all` ranges.
+    let mut break_all_iter = options
+        .line_break
+        .iter()
+        .filter(|(_, config)| config.word_break == WordBreak::BreakAll && config.line_break != LineBreak::Anywhere)
+        .map(|(range, _)| range)
+        .peekable();
     let boundary_iter = text.char_indices().map(|(byte_pos, ch)| {
         // advance any stale word boundary positions
         while let Some(&w) = wb_iter.peek() {
@@ -779,6 +820,10 @@ pub(crate) fn analyze_text(
         {
             _ = break_anywhere_iter.next();
         }
+        while break_all_iter.peek().is_some_and(|range| range.end <= byte_pos) {
+            _ = break_all_iter.next();
+        }
+        let is_break_all = break_all_iter.peek().is_some_and(|range| range.contains(&byte_pos));
         let is_break_anywhere = break_anywhere_iter
             .peek()
             .is_some_and(|range| range.contains(&byte_pos));
@@ -795,7 +840,30 @@ pub(crate) fn analyze_text(
                 // `line-break: anywhere`: an opportunity around every grapheme.
                 prev_char.is_some() && is_grapheme_start
             } else {
-                is_icu_line || after_break_space
+                // pyro: no break after an exclamation mark before an ASCII letter or digit
+                // (`!seven`), as in Chromium's line break table (`kAsciiLineBreakTable`), where
+                // UAX #14 has one (`EX ÷ AL`); and always one after a space, as in Chromium
+                // (`LazyLineBreakIterator::NextBreakablePosition`), where UAX #14 LB13 has none
+                // before an exclamation mark (`six, !seven`); not before a closing bracket, which
+                // LB13 keeps on the line (`Yes )`).
+                // pyro: `word-break: break-all` breaks next to letters; between two ASCII
+                // punctuation characters Chromium keeps its usual pairs (`\\\` stays whole,
+                // WPT css-text `word-break-break-all-023`), where UAX #14 breaks `PR ÷ PR`.
+                let punctuation_pair = is_break_all
+                    && ch.is_ascii_punctuation()
+                    && prev_char.is_some_and(|prev: char| prev.is_ascii_punctuation());
+                let is_icu_line = match punctuation_pair {
+                    true => is_icu_line
+                        && crate::break_overrides::CHROMIUM_LINE_BREAK_TABLE
+                            .lookup(prev_char.unwrap_or(' '), ch)
+                            .unwrap_or(true),
+                    false => is_icu_line,
+                };
+                (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
+                    // (Nor before a word joiner or zero width space, which UAX #14 LB7 and LB11
+                    // keep: `a &#x2060;b`.)
+                    || (prev_char == Some(' ') && !matches!(ch, ' ' | ')' | ']' | '}' | '\u{2060}' | '\u{FEFF}' | '\u{200B}'))
+                    || after_break_space
             };
             // Consumers can override soft wrap opportunities, except around a mandatory
             // break.
@@ -1051,6 +1119,48 @@ fn phrase_breaks(
 ///   anything but punctuation that does not open and white space, as if they were opening and
 ///   closing brackets (Chromium breaks `国国国国“` before the quotation mark in `zh`, not in `ja`).
 /// Not where breaking is anywhere already or `keep-all` keeps East Asian text together.
+/// pyro: whether a segment break between `before` and `after` is removed (CSS Text 3 § 4.1.3):
+/// both are East Asian Width F, W or H and not Hangul, or either is such punctuation, as in Gecko
+/// (WPT css-text `segment-break-transformation-punctuation-001`, Mozilla bug 1935148).
+pub fn removes_segment_break(before: char, after: char) -> bool {
+    use icu_properties::props::EastAsianWidth;
+    let east_asian = |ch: char| {
+        let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
+        matches!(width, EastAsianWidth::Fullwidth | EastAsianWidth::Wide | EastAsianWidth::Halfwidth)
+            && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
+    };
+    let punctuation = |ch: char| {
+        east_asian(ch)
+            && matches!(
+                icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
+                GeneralCategory::ConnectorPunctuation
+                    | GeneralCategory::DashPunctuation
+                    | GeneralCategory::OpenPunctuation
+                    | GeneralCategory::ClosePunctuation
+                    | GeneralCategory::InitialPunctuation
+                    | GeneralCategory::FinalPunctuation
+                    | GeneralCategory::OtherPunctuation
+            )
+    };
+    (east_asian(before) && east_asian(after)) || punctuation(before) || punctuation(after)
+}
+
+/// pyro: punctuation that `hanging-punctuation: first` hangs at the start of a first line
+/// (`opening`: Ps, Pi, Pf, U+0027, U+0022) or `last` at the end of a last line (Pe, Pi, Pf,
+/// U+0027, U+0022) (CSS Text 3 § 8.2).
+pub fn hangs_at_edge(ch: char, opening: bool) -> bool {
+    if matches!(ch, '\'' | '"') {
+        return true;
+    }
+    let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
+    match category {
+        GeneralCategory::InitialPunctuation | GeneralCategory::FinalPunctuation => true,
+        GeneralCategory::OpenPunctuation => opening,
+        GeneralCategory::ClosePunctuation => !opening,
+        _ => false,
+    }
+}
+
 fn quotation_mark_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
     if !text.chars().any(|ch| matches!(ch, '\u{2018}'..='\u{201F}')) {
         return;

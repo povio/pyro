@@ -240,6 +240,9 @@ pub use self::GenericColorOrAuto as ColorOrAuto;
 
 /// Caret color is effectively a ColorOrAuto, but resolves `auto` to
 /// currentColor.
+///
+/// pyro: with CSS UI 4's optional second value, the colour of the text a block caret covers
+/// (`auto | <color> [auto | <color>]?`; `auto`: the text keeps its colour).
 #[derive(
     Animate,
     Clone,
@@ -252,21 +255,65 @@ pub use self::GenericColorOrAuto as ColorOrAuto;
     ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(C)]
+pub struct GenericCaretColor<C>(pub GenericColorOrAuto<C>, pub GenericColorOrAuto<C>);
+
+impl<C> GenericCaretColor<C> {
+    /// Returns the `auto` value.
+    pub fn auto() -> Self {
+        GenericCaretColor(GenericColorOrAuto::Auto, GenericColorOrAuto::Auto)
+    }
+}
+
+impl<C: ToCss> ToCss for GenericCaretColor<C> {
+    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: Write,
+    {
+        self.0.to_css(dest)?;
+        if let GenericColorOrAuto::Color(text) = &self.1 {
+            dest.write_char(' ')?;
+            text.to_css(dest)?;
+        }
+        Ok(())
+    }
+}
+
+pub use self::GenericCaretColor as CaretColor;
+
+/// pyro: outline-color, `auto | <color>` (CSS UI 4): `auto` is the accent colour (else
+/// currentcolor) of an `outline-style: auto` outline, currentcolor for the other styles.
+#[derive(
+    Animate,
+    Clone,
+    ComputeSquaredDistance,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    PartialEq,
+    Parse,
+    SpecifiedValueInfo,
+    ToAnimatedValue,
+    ToAnimatedZero,
+    ToComputedValue,
     ToCss,
     ToShmem,
     ToTyped,
 )]
 #[repr(transparent)]
-pub struct GenericCaretColor<C>(pub GenericColorOrAuto<C>);
+pub struct GenericOutlineColor<C>(pub GenericColorOrAuto<C>);
 
-impl<C> GenericCaretColor<C> {
+impl<C> GenericOutlineColor<C> {
     /// Returns the `auto` value.
     pub fn auto() -> Self {
-        GenericCaretColor(GenericColorOrAuto::Auto)
+        GenericOutlineColor(GenericColorOrAuto::Auto)
     }
 }
 
-pub use self::GenericCaretColor as CaretColor;
+pub use self::GenericOutlineColor as OutlineColor;
 
 /// A light-dark(<light>, <dark>) function.
 #[derive(

@@ -302,8 +302,22 @@ where
     let mut result = vec![];
     let mut parent = Some(element);
     let mut proximity = 0usize;
+    // pyro: once a link is passed on the way up, the elements above it match `:visited` as
+    // unvisited (Selectors 4 § 12.2, as for a selector's own ancestors: WPT css-cascade
+    // `scope-visited`, a visited link in a visited link).
+    let mut past_link = false;
     while let Some(p) = parent {
-        if target.check(p, ceiling, scope_subject_map, context) {
+        let matches = if past_link {
+            context.with_visited_handling_mode(selectors::matching::VisitedHandlingMode::AllLinksUnvisited, |context| {
+                target.check(p, ceiling, scope_subject_map, context)
+            })
+        } else {
+            target.check(p, ceiling, scope_subject_map, context)
+        };
+        if p.is_link() {
+            past_link = true;
+        }
+        if matches {
             result.push(ScopeRootCandidate {
                 root: p.opaque(),
                 proximity: ScopeProximity::new(proximity),

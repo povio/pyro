@@ -28,12 +28,174 @@ pub enum StyleThreading {
     Sequential,
 }
 
+/// pyro: one frame document of the render snapshot's frame table ([`DocumentConfig::frames`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameContent {
+    /// Its markup.
+    pub html: String,
+    /// Its URL, which its relative URLs resolve against.
+    pub url: String,
+    /// Its viewport's scroll position.
+    pub scroll: (f64, f64),
+    /// The frame (frame id and loader id) its requests are made for.
+    pub client: String,
+    /// Its own frames' documents.
+    pub frames: FrameTable,
+    /// The entry's version (its content), which its frame element's marker names.
+    pub version: u64,
+    /// pyro: the texts of its own linked sheets by URL (the renderer serves them to it alone).
+    pub sheets: std::collections::BTreeMap<String, String>,
+}
+
+/// pyro: a document's frame documents by the index its frame elements' markers name, and the
+/// nonce they carry ([`FrameTableData::lookup`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameTableData {
+    /// 128 random bits (hex) the document's markup was serialised with.
+    pub nonce: String,
+    pub entries: std::collections::HashMap<String, FrameContent>,
+}
+
+impl FrameTableData {
+    /// pyro: the ONE check of a frame element's marker: its whole value is
+    /// `<nonce>:<index>:<version>` of this table (the nonce this document's markup was serialised
+    /// with, an index it holds, that entry's version), or the element shows no document.
+    pub fn lookup(&self, marker: &str) -> Option<&FrameContent> {
+        let mut parts = marker.split(':');
+        let (nonce, index, version) = (parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some() || self.nonce.is_empty() || !same_secret(nonce, &self.nonce) {
+            return None;
+        }
+        self.entries.get(index).filter(|entry| format!("{:016x}", entry.version) == version)
+    }
+}
+
+/// pyro: whether `given` is `secret`, in time that depends on their lengths only (never on where
+/// they first differ): a marker's nonce is compared without telling a prober how much of it was
+/// right.
+pub fn same_secret(given: &str, secret: &str) -> bool {
+    let (given, secret) = (given.as_bytes(), secret.as_bytes());
+    if given.len() != secret.len() {
+        return false;
+    }
+    let diff = given.iter().zip(secret).fold(0u8, |acc, (a, b)| acc | (a ^ b));
+    std::hint::black_box(diff) == 0
+}
+
+#[cfg(test)]
+mod same_secret_tests {
+    #[test]
+    fn same_secret_is_equality() {
+        assert!(super::same_secret("00ff", "00ff"));
+        assert!(!super::same_secret("00fe", "00ff"));
+        assert!(!super::same_secret("10ff", "00ff"));
+        assert!(!super::same_secret("00f", "00ff"));
+        assert!(!super::same_secret("", "00ff"));
+    }
+
+    /// Which attributes are the engine's: under this document's nonce name only; without a nonce,
+    /// the known canonical names; with the reject-all nonce (an SVG image's), none (cycles 7, 8).
+    #[test]
+    fn the_reject_all_nonce_takes_no_engine_attribute() {
+        let q = |local: &str| markup5ever::QualName::new(None, markup5ever::ns!(), local.into());
+        assert_eq!(super::engine_field(super::REJECT_ALL_NONCE, &q("data-pyro-sheet")), None);
+        assert_eq!(super::engine_field("", &q("data-pyro-sheet")).as_deref(), Some("data-pyro-sheet"));
+        assert_eq!(super::engine_field("", &q("data-pyro-theme")), None);
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-00ff-sheet")).as_deref(), Some("data-pyro-sheet"));
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-00fe-sheet")), None);
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-sheet")), None);
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-00ff-")), None);
+    }
+}
+
+/// pyro: see [`FrameTableData`].
+pub type FrameTable = Arc<FrameTableData>;
+
+/// pyro: the attribute a frame element names its frame table entry in: `"<nonce>:<index>:<version>"`.
+pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
+
+
+
+/// pyro: the nonce of a document that takes no engine attribute at all (an SVG image's): NUL,
+/// which no parsed attribute value holds (the HTML parser replaces it, XML forbids it).
+pub const REJECT_ALL_NONCE: &str = "\0";
+
+/// pyro: whether the engine attributes of element `element` count in a document whose markup was
+/// serialised with `nonce`: it carries that nonce ([`NONCE_ATTRIBUTE`], compared in constant
+/// time). A document without a nonce is no render snapshot's (markup written by hand): its
+/// markup is taken as written.
+pub fn engine_marked(nonce: &str, _element: &crate::node::ElementData) -> bool {
+    // (The engine store holds only attributes authenticated as they came in: `engine_field`.)
+    nonce != REJECT_ALL_NONCE
+}
+
+/// pyro: the engine attributes a document without a nonce (markup written by hand, a test's) takes
+/// under their canonical names; a render snapshot's travel under nonce names only.
+pub const ENGINE_FIELDS: &[&str] = &[
+    "data-pyro-frame",
+    "data-pyro-frame-content-height",
+    "data-pyro-sheet",
+    "data-pyro-sheet-referrer-policy",
+    "data-pyro-scroll-left",
+    "data-pyro-scroll-top",
+    "data-pyro-sticky",
+    "data-pyro-key",
+    "data-pyro-tag",
+    "data-pyro-render-clip",
+];
+
+/// pyro: the local name of the engine state attribute (`urn:x-pyro:state`: pseudo-class state,
+/// top layer, shadow and slot markers) that attribute `name` is in a document serialised with
+/// `nonce`, if it is the engine's: one in the namespace `urn:x-pyro:state:<nonce>` (the nonce
+/// compared in constant time; pyro-dom `snapshot::state_ns`); without a nonce, one in
+/// `urn:x-pyro:state` as written; in a document taking none, never. Any other attribute, a page's
+/// `state` in any namespace (`urn:x-pyro:state` too) included, is the element's own.
+pub fn engine_state(nonce: &str, name: &markup5ever::QualName) -> Option<String> {
+    if nonce == REJECT_ALL_NONCE {
+        return None;
+    }
+    let ns: &str = &name.ns;
+    let rest = ns.strip_prefix(crate::PYRO_STATE_NS)?;
+    let authentic = if nonce.is_empty() {
+        rest.is_empty()
+    } else {
+        rest.strip_prefix(':').is_some_and(|given| same_secret(given, nonce))
+    };
+    authentic.then(|| name.local.to_string())
+}
+
+/// pyro: the canonical engine attribute (`data-pyro-<field>`) that attribute `name` is in a
+/// document serialised with `nonce`, if it is the engine's: `data-pyro-<nonce>-<field>`, the nonce
+/// compared in constant time (pyro-dom `snapshot::engine_name`); without a nonce, one of
+/// [`ENGINE_FIELDS`] as written; in a document taking none ([`REJECT_ALL_NONCE`]), never. Any other
+/// attribute, `data-pyro-*` ones included, is the page's own (CSS sees it, the engine ignores it).
+pub fn engine_field(nonce: &str, name: &markup5ever::QualName) -> Option<String> {
+    if name.ns != markup5ever::ns!() || nonce == REJECT_ALL_NONCE {
+        return None;
+    }
+    let local = &*name.local;
+    if nonce.is_empty() {
+        return ENGINE_FIELDS.contains(&local).then(|| local.to_owned());
+    }
+    let rest = local.strip_prefix("data-pyro-")?;
+    let (given, field) = (rest.get(..nonce.len())?, rest.get(nonce.len()..)?);
+    let field = field.strip_prefix('-').filter(|f| !f.is_empty())?;
+    same_secret(given, nonce).then(|| format!("data-pyro-{field}"))
+}
+
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
 pub struct DocumentConfig {
     /// The initial `Viewport`
     pub viewport: Option<Viewport>,
     /// The base url which relative URLs are resolved against
     pub base_url: Option<String>,
+    /// pyro: the id of the frame this is the document of (a frame document of the render
+    /// snapshot): its requests made with other than the defaults name it as their client.
+    pub frame_client: Option<String>,
+    /// pyro: the frame table of the render snapshot: the documents its frame elements show, by
+    /// the index their `data-pyro-frame` attribute names. A frame element loads only the entry
+    /// it names (content, URL, client), never content from its own attributes.
+    pub frames: FrameTable,
     /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
     ///
     /// The list is used as given, so replacing it removes the default sheet unless it is
@@ -68,6 +230,7 @@ pub struct DocumentConfig {
     /// How deeply this document is nested within other documents
     /// (0 for a root document). Used to limit `<iframe>` nesting depth.
     pub subdocument_depth: usize,
+    pub raster_budget: pyro_raster::PageRasters,
     /// Soft wrap opportunities to add or remove from the default (UAX #14, as ICU tailors it),
     /// e.g. [`parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE`] for Chrome's breaks between a hyphen
     /// and a digit. Applies to every text layout of the document (line breaking and min/max
@@ -97,6 +260,8 @@ impl Default for DocumentConfig {
         Self {
             viewport: None,
             base_url: None,
+            frame_client: None,
+            frames: FrameTable::default(),
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
             net_provider: None,
             navigation_provider: None,
@@ -108,6 +273,7 @@ impl Default for DocumentConfig {
             incremental: None,
             abort_signal: None,
             subdocument_depth: 0,
+            raster_budget: Default::default(),
             line_break_override: None,
             xml_document: false,
             quirks_mode: false,

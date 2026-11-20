@@ -203,3 +203,22 @@ JSValueRef pyro_jsc_module_evaluate(JSGlobalContextRef ctx, const char *src, siz
         return result.JSValueRef;
     }
 }
+
+// The module script phases are the source-built JavaScriptCore's (patch 0037).
+int pyro_jsc_module_phases_available(void) { return 0; }
+
+JSValueRef pyro_jsc_module_load(JSGlobalContextRef ctx, const char *url, size_t url_len, JSStringRef *error) {
+    (void)ctx;
+    (void)url;
+    (void)url_len;
+    *error = JSStringCreateWithUTF8CString("module graph phases need the source-built JavaScriptCore");
+    return NULL;
+}
+
+JSValueRef pyro_jsc_module_link_evaluate(JSGlobalContextRef ctx, const char *url, size_t url_len, JSValueRef *exception) {
+    (void)ctx;
+    (void)url;
+    (void)url_len;
+    *exception = NULL;
+    return NULL;
+}

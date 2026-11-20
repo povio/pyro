@@ -355,6 +355,19 @@ fn origin_grants_apply_to_that_origin_only() {
     server.join().unwrap();
 }
 
+/// testdriver's set_permission sends Browser.setPermission on the page's session (no
+/// browserContextId): it applies to the page's browser context, and the reply comes on that session.
+#[test]
+fn permission_commands_on_a_page_session_apply_to_its_context() {
+    let mut h = Harness::new();
+    let r = h.page("Browser.setPermission", json!({"permission": {"name": "notifications"}, "setting": "granted"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_await(&mut h, "navigator.permissions.query({name: 'notifications'}).then(s => s.state)"), json!("granted"));
+    let r = h.page("Browser.resetPermissions", json!({}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_await(&mut h, "navigator.permissions.query({name: 'notifications'}).then(s => s.state)"), json!("prompt"));
+}
+
 #[test]
 fn permission_status_fires_change_when_its_state_flips() {
     let mut h = Harness::new();

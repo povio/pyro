@@ -1,0 +1,115 @@
+Pyro patch 0037: a module script's graph fetch and its evaluation, apart.
+
+JSLoadAndEvaluateModule fetches a module graph and evaluates it as one promise, so an embedder could
+not tell when the graph had been fetched from when evaluation had settled: a top-level await kept
+the whole promise pending, and HTML runs a module script (the next deferred script, DOMContentLoaded,
+load, the element's load event) once its graph is fetched, without awaiting its evaluation. Nor could
+it tell a fetch failure (the element's error event) from an evaluation error (reported, and load).
+JSLoadModuleGraph (JSModuleLoaderRefPrivate.h) fetches and parses the graph of a top-level module
+URL through the fetch callback, as JSC::loadModule does for WebCore, and JSLinkAndEvaluateModule then
+links and evaluates it (JSC::linkAndEvaluateModule), returning the evaluation promise or throwing
+the link error. The URL is resolved as JSLoadAndEvaluateModule resolves it.
+
+diff --git a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+--- a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
++++ b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+@@ -197,6 +197,17 @@
+    support module loading. */
+ JS_EXPORT JSObjectRef JSLoadAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef* exception);
+ 
++/* HTML's two steps for a module script, apart (patch 0037): JSLoadModuleGraph
++   fetches `url` and its static imports through the fetch callback and returns a
++   promise that fulfills once the whole graph is fetched and
++   parsed, or rejects with the failure; nothing runs. JSLinkAndEvaluateModule then
++   links and evaluates that graph and returns the evaluation promise (pending on a
++   top-level await, rejected by an evaluation error), or NULL with *exception set
++   when the graph cannot be linked or holds a parse error. NULL (with *exception)
++   from either when the context does not support module loading. */
++JS_EXPORT JSObjectRef JSLoadModuleGraph(JSContextRef ctx, JSStringRef url, JSValueRef* exception);
++JS_EXPORT JSObjectRef JSLinkAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef* exception);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+@@ -801,6 +801,78 @@
+         return toRef(promise);
+     }
+     return toRef(asObject(result));
++}
++
++static JSAPIGlobalObject* moduleGlobalObject(JSGlobalObject* globalObject, JSValueRef* exception)
++{
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject && exception)
++        *exception = toRef(globalObject, createError(globalObject, "Context does not support module loading"_s));
++    return apiGlobalObject;
++}
++
++// The key JSLoadAndEvaluateModule's import would give `url` (resolved as a top-level specifier, import map included).
++static Identifier topLevelModuleKey(JSAPIGlobalObject* globalObject, JSStringRef url)
++{
++    VM& vm = globalObject->vm();
++    return globalObject->moduleLoader()->resolve(globalObject, Identifier::fromString(vm, url->string()), Identifier(), nullptr, /* useImportMap */ true);
++}
++
++JSObjectRef JSLoadModuleGraph(JSContextRef ctx, JSStringRef url, JSValueRef* exception)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    auto* apiGlobalObject = moduleGlobalObject(globalObject, exception);
++    if (!apiGlobalObject)
++        return nullptr;
++
++    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
++    auto reject = [&]() -> JSObjectRef {
++        JSValue reason = scope.exception()->value();
++        scope.clearException();
++        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
++        promise->reject(vm, reason);
++        return toRef(promise);
++    };
++    Identifier key = topLevelModuleKey(apiGlobalObject, url);
++    if (scope.exception())
++        return reject();
++    JSPromise* loaded = loadModule(globalObject, key, nullptr, nullptr);
++    if (scope.exception())
++        return reject();
++    // Marked as handled by the loader; its fulfillment value is the loader's own (the embedder only waits).
++    return toRef(loaded);
+ }
+ 
++JSObjectRef JSLinkAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef* exception)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    auto* apiGlobalObject = moduleGlobalObject(globalObject, exception);
++    if (!apiGlobalObject)
++        return nullptr;
++
++    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
++    auto fail = [&]() -> JSObjectRef {
++        if (exception)
++            *exception = toRef(globalObject, scope.exception()->value());
++        scope.clearException();
++        return nullptr;
++    };
++    Identifier key = topLevelModuleKey(apiGlobalObject, url);
++    if (scope.exception())
++        return fail();
++    JSPromise* evaluated = linkAndEvaluateModule(globalObject, key, nullptr);
++    if (scope.exception())
++        return fail();
++    if (!evaluated) {
++        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
++        promise->resolve(globalObject, vm, jsUndefined());
++        return toRef(promise);
++    }
++    return toRef(evaluated);
++}
++
+ #endif

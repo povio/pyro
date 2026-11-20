@@ -717,6 +717,9 @@
       if (o.detached) throw domError('InvalidStateError', 'The image source is detached.');
       return [1, o.context, o.width, o.height];
     }
+    // pyro: a CSSImageValue (Typed OM) draws the image its url() names, once loaded.
+    const CSSImageValueC = globalThis.CSSImageValue;
+    if (typeof CSSImageValueC === 'function' && image instanceof CSSImageValueC) return [4, String(image)];
     if (imageData) {
       const d = images.get(image);
       if (d) return [2, d.data, d.width, d.height];

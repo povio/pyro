@@ -99,39 +99,48 @@ impl SvgIntrinsicDimensions {
 /// attributes, which are captured at parse time.
 #[derive(Debug, Clone)]
 pub struct SvgImageData {
+    pub(crate) resources: Option<std::sync::Weak<crate::util::SvgResourceMap>>,
     /// The parsed SVG tree.
-    pub tree: Arc<usvg::Tree>,
+    pub tree: Arc<SvgTree>,
     /// The dimensions declared on the root `<svg>` element.
     pub intrinsic_dimensions: SvgIntrinsicDimensions,
     /// pyro: the source of an inline `<svg>` without a `viewBox`, whose content
     /// is laid out in its CSS box (see [`Self::sized`]).
-    pub inline_source: Option<Arc<str>>,
+    pub inline_source: Option<Arc<crate::util::SvgSource<str>>>,
     /// pyro: the document an SVG image was loaded from, which an inline `<svg>` with CSS
     /// `mask-image` layers of it embeds (`svg_css`).
-    pub source: Option<Arc<[u8]>>,
+    pub source: Option<Arc<crate::util::SvgSource<[u8]>>>,
     /// pyro: the source of an SVG image with a `<foreignObject>`, which is rendered as a document
     /// of its own (`BaseDocument::svg_image_documents`) to draw its HTML content.
-    pub foreign_source: Option<Arc<str>>,
+    pub foreign_source: Option<Arc<crate::util::SvgSource<str>>>,
     /// pyro: an inline `<svg>` whose source depends on its laid-out size (a `view-box` reference box of a root
     /// sized in percentages or not at all): painted from a source serialized again at that size
     /// (`BaseDocument::inline_svg_at_viewport`).
     pub viewport_dependent: bool,
 }
 
-/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (a `background` or
-/// `background-color` declaration of its `style` attribute) drawn as a full-size `<rect>` under its
-/// content: an image's root element paints its background over the whole canvas, which usvg does
-/// not (WPT css-ui `box-sizing-*`, whose images are only that). `None` when there is none.
+/// pyro: an SVG image's source with its root `<svg>`'s CSS background colour (the last `background`
+/// or `background-color` declaration of its `style` attribute, names in any case) drawn as a
+/// full-size `<rect>` under its content: an image's root element paints its background over the
+/// whole canvas (WPT css-ui `box-sizing-*`, whose images are only that). usvg paints a
+/// `background-color` itself, but only one named in lowercase (it matches names case-sensitively):
+/// that one is left to it (drawing it here too painted it twice). `None` when there is none.
 fn root_background_painted(text: &str, doc: &roxmltree::Document) -> Option<String> {
     let root = doc.root_element();
     let style = root.attribute("style")?;
-    let color = style.split(';').find_map(|declaration| {
-        let (name, value) = declaration.split_once(':')?;
-        let name = name.trim();
-        (name.eq_ignore_ascii_case("background") || name.eq_ignore_ascii_case("background-color"))
-            .then(|| value.trim())
-            .filter(|value| value.parse::<svgtypes::Color>().is_ok())
-    })?;
+    let (name, color) = style
+        .split(';')
+        .filter_map(|declaration| {
+            let (name, value) = declaration.split_once(':')?;
+            let name = name.trim();
+            (name.eq_ignore_ascii_case("background") || name.eq_ignore_ascii_case("background-color"))
+                .then(|| (name, value.trim()))
+                .filter(|(_, value)| value.parse::<svgtypes::Color>().is_ok())
+        })
+        .last()?;
+    if name == "background-color" {
+        return None;
+    }
     // Under the first child (an empty root has nothing to paint over the background anyway; the
     // background alone is then inserted before the closing tag).
     let at = match root.first_child() {
@@ -147,23 +156,48 @@ fn root_background_painted(text: &str, doc: &roxmltree::Document) -> Option<Stri
     Some(format!("{}{}{}", &text[..at], rect, &text[at..]))
 }
 
+#[derive(Debug)]
+pub struct SvgTree {
+    _storage: pyro_raster::Reservation,
+    pub(crate) shape_alpha: std::sync::Mutex<Option<(u32, u32, Arc<(Vec<u8>, pyro_raster::Reservation)>)>>,
+    pub(crate) page: pyro_raster::PageRasters,
+    pub(crate) embedded: Vec<pyro_raster::Reservation>,
+    parsed: usvg::Tree,
+    pub(crate) external_images: Vec<Arc<crate::util::SvgResource>>,
+}
+
+fn tree_storage(tree: &usvg::Tree) -> usize {
+    use std::mem::{size_of, size_of_val};
+    fn group_bytes(group: &usvg::Group, visited: &mut std::collections::HashSet<*const usvg::Group>) -> usize {
+        if !visited.insert(group) { return 0; }
+        crate::util::ensure_stack(|| {
+            let mut bytes = size_of::<usvg::Group>().saturating_add(size_of_val(group.children()));
+            for node in group.children() {
+                bytes = bytes.saturating_add(node.id().len()).saturating_add(match node {
+                    usvg::Node::Group(child) => group_bytes(child, visited),
+                    usvg::Node::Path(path) => size_of::<usvg::Path>() + size_of_val(path.data().points()) + size_of_val(path.data().verbs()),
+                    usvg::Node::Image(_) => size_of::<usvg::Image>(),
+                    usvg::Node::Text(text) => size_of::<usvg::Text>() + size_of_val(text.chunks()) + text.chunks().iter().map(|chunk| chunk.text().len() + size_of_val(chunk.spans())).sum::<usize>(),
+                });
+                node.subroots(|root| bytes = bytes.saturating_add(group_bytes(root, visited)));
+            }
+            bytes
+        })
+    }
+    size_of::<SvgTree>().saturating_add(group_bytes(tree.root(), &mut Default::default()))
+}
+
+impl std::ops::Deref for SvgTree {
+    type Target = usvg::Tree;
+    fn deref(&self) -> &Self::Target { &self.parsed }
+}
+
 impl SvgImageData {
     /// Parse an SVG image from raw data, capturing both the rendered
     /// [`usvg::Tree`] and the declared root dimensions from a single XML
     /// parse.
     ///
-    /// Like [`usvg::Tree::from_data`], gzip-compressed data (SVGZ) is
-    /// decompressed first.
-    pub fn from_data(data: &[u8], options: &usvg::Options) -> Result<Self, usvg::Error> {
-        // Gzip magic bytes, matching the SVGZ detection in `usvg::Tree::from_data`.
-        let decompressed;
-        let data = if data.starts_with(&[0x1f, 0x8b]) {
-            decompressed = usvg::decompress_svgz(data)?;
-            decompressed.as_slice()
-        } else {
-            data
-        };
-
+    pub(crate) fn from_xml_bytes(data: &[u8], options: &usvg::Options, page: &pyro_raster::PageRasters) -> Result<Self, usvg::Error> {
         let text = std::str::from_utf8(data).map_err(|_| usvg::Error::NotAnUtf8Str)?;
         let xml_options = roxmltree::ParsingOptions {
             allow_dtd: true,
@@ -206,7 +240,8 @@ impl SvgImageData {
             Err(error) => return Err(error),
         };
         Ok(Self {
-            tree: Arc::new(tree),
+            tree: Arc::new(SvgTree { _storage: page.reserve(tree_storage(&tree)).map_err(|_| usvg::Error::ElementsLimitReached)?, parsed: tree, external_images: Vec::new(), page: page.clone(), embedded: Vec::new(), shape_alpha: Default::default() }),
+            resources: None,
             intrinsic_dimensions,
             inline_source: None,
             source: None,
@@ -221,12 +256,23 @@ impl SvgImageData {
     /// otherwise: the image as loaded is the light one.
     pub fn for_color_scheme(&self, dark: bool) -> Option<SvgImageData> {
         let source = self.source.as_deref().filter(|_| dark)?;
-        crate::svg_refs::find_bytes(source, b"light-dark(")?;
-        if !crate::svg_refs::allows_dark_scheme(source) {
+        // pyro: its `prefers-color-scheme` media blocks follow the embedding element's used colour
+        // scheme too (WPT css/mediaqueries `prefers-color-scheme-svg-image`), whatever its own
+        // `color-scheme`; its `light-dark()` colours only where that allows dark.
+        let media = crate::svg_refs::find_bytes(source, b"prefers-color-scheme").is_some();
+        let light_dark = crate::svg_refs::find_bytes(source, b"light-dark(").is_some()
+            && crate::svg_refs::allows_dark_scheme(source);
+        if !media && !light_dark {
             return None;
         }
-        let dark_source = crate::svg_refs::resolve_light_dark(source, true)?;
-        let mut svg = crate::util::parse_svg_image(&dark_source).ok()?;
+        let media_source = if media { crate::svg_refs::resolve_scheme_media(source, true) } else { None };
+        let source_now = media_source.as_deref().unwrap_or(source);
+        let dark_source = if light_dark {
+            crate::svg_refs::resolve_light_dark(source_now, true).unwrap_or_else(|| source_now.to_vec())
+        } else {
+            source_now.to_vec()
+        };
+        let mut svg = crate::util::parse_svg_resources(&dark_source, self.resources.as_ref().and_then(|map| map.upgrade()).as_ref(), &self.tree.page).ok()?;
         svg.source = self.source.clone();
         Some(svg)
     }
@@ -243,7 +289,7 @@ impl SvgImageData {
             return None;
         }
         let source = with_root_size(source, width, height)?;
-        crate::util::parse_svg_image(source.as_bytes()).ok()
+        crate::util::parse_svg_resources(source.as_bytes(), self.resources.as_ref().and_then(|map| map.upgrade()).as_ref(), &self.tree.page).ok()
     }
 
     /// The intrinsic width in CSS px, present only when the root `<svg>`
@@ -422,14 +468,14 @@ impl crate::BaseDocument {
             next = node.parent;
         }
         let root = root?;
-        let source = self.with_svg_sprites(self.with_svg_images(root.svg_source(), root.id));
+        let source = self.with_svg_sprites(root.svg_source());
         // pyro: `content` in a group anyrender_svg knows a box's reference by (its masks of
         // opaque shapes are drawn as the shapes).
         let document = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
              width=\"{width}\" height=\"{height}\"><defs>{source}</defs><g id=\"__pyro_box_reference\">{content}</g></svg>"
         );
-        crate::util::parse_svg_image(document.as_bytes()).ok()
+        crate::util::parse_svg_resources(document.as_bytes(), Some(&self.svg_images), &self.raster_budget).ok()
     }
 }
 
@@ -489,13 +535,13 @@ impl SvgImageData {
         // as that id selector.
         let targeted = fragment.and_then(|fragment| with_target(text, fragment));
         let text = targeted.as_deref().unwrap_or(text);
-        let viewed = fragment.and_then(|fragment| with_view(text, fragment)).or(targeted.clone());
-        let (mut svg, text) = match viewed {
-            Some(viewed) => match crate::util::parse_svg_image(viewed.as_bytes()) {
+        let viewed = fragment.and_then(|fragment| with_view(text, fragment));
+        let (mut svg, text) = match viewed.as_deref().or(targeted.as_deref()) {
+            Some(viewed) => match crate::util::parse_svg_resources(viewed.as_bytes(), None, &self.tree.page) {
                 Ok(svg) => (svg, viewed),
-                Err(_) => (self, text.to_string()),
+                Err(_) => (self, text),
             },
-            None => (self, text.to_string()),
+            None => (self, text),
         };
         // pyro: so does one with a zero `width` or `height` (no natural ratio), as Blink draws it:
         // the concrete object size is its viewport, unscaled (a `width="0" height="20"` circle of
@@ -504,7 +550,7 @@ impl SvgImageData {
         let (width, height) = (svg.intrinsic_width(), svg.intrinsic_height());
         let no_natural_ratio = (width.is_none() && height.is_none()) || width == Some(0.0) || height == Some(0.0);
         if svg.intrinsic_dimensions.view_box.is_none() && no_natural_ratio && !svg.intrinsic_dimensions.degenerate_view_box {
-            svg.inline_source = Some(text.into());
+            svg.inline_source = crate::util::SvgSource::copy(text, &svg.tree.page);
         }
         svg
     }
@@ -624,8 +670,8 @@ mod sized_tests {
 /// pyro: one `url()` of an element that may name an element of another SVG document
 /// ([`reference_candidates`]).
 pub(crate) enum ReferenceCandidate<'a> {
-    /// A computed `clip-path` or `filter` URL.
-    Url(&'a style::servo_arc::Arc<url::Url>),
+    /// A computed `clip-path` or `filter` URL, and its request URL modifiers.
+    Url(&'a style::servo_arc::Arc<url::Url>, Option<&'a style::url::RequestUrlModifiers>),
     /// The URL written in an SVG element's `filter` or `mask` attribute (not a fragment alone).
     Attr(&'a str),
 }
@@ -645,12 +691,12 @@ pub(crate) fn reference_candidates<'a>(
     // engine resolves without the document's base: it is taken as written, below.
     let clip_path_attr = svg
         && element.attr(markup5ever::local_name!("clip-path")).is_some_and(|value| value.trim_start().starts_with("url("));
-    if let (ClipPath::Url(ComputedUrl::Valid(url)), false) = (style.get_clip_path(), clip_path_attr) {
-        out.push(ReferenceCandidate::Url(url));
+    if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
+        out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
     }
     for filter in style.get_effects().filter.0.iter() {
-        if let GenericFilter::Url(ComputedUrl::Valid(url)) = filter {
-            out.push(ReferenceCandidate::Url(url));
+        if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
+            out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
         }
     }
     if svg {
@@ -686,8 +732,11 @@ pub(crate) fn references_out_of_sync(
     }
     std::iter::zip(candidates, element.reference_images.iter()).any(|(candidate, stored)| {
         match (candidate, stored) {
-            (ReferenceCandidate::Url(url), Some(data)) => **url != *data.url,
-            (ReferenceCandidate::Url(_), None) => true,
+            // pyro: or another request for it (its modifiers changed).
+            (ReferenceCandidate::Url(url, modifiers), Some(data)) => {
+                **url != *data.url || !crate::net::asks_same_request(&data.options, modifiers)
+            }
+            (ReferenceCandidate::Url(..), None) => true,
             // Resolved against the document's base: the stored URL ends with what is written.
             (ReferenceCandidate::Attr(raw), Some(data)) => {
                 let stored = data.url.as_str();
@@ -724,14 +773,14 @@ impl SvgImageData {
     /// pyro: [`crate::BaseDocument::svg_reference_document`] for an element of another SVG
     /// document, `source` (`clip-path: url(shapes.svg#clip)` on a box): that document in
     /// `<defs>`, then `content`, which references the element by `url(#id)`.
-    pub fn reference_document_from_source(source: &[u8], content: &str, width: f32, height: f32) -> Option<SvgImageData> {
+    pub fn reference_document_from_source(source: &[u8], content: &str, width: f32, height: f32, page: &pyro_raster::PageRasters) -> Option<SvgImageData> {
         let source = embeddable_svg(source)?;
         let source = source.as_str();
         let document = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
              width=\"{width}\" height=\"{height}\"><defs>{source}</defs><g id=\"__pyro_box_reference\">{content}</g></svg>"
         );
-        crate::util::parse_svg_image(document.as_bytes()).ok()
+        crate::util::parse_svg_resources(document.as_bytes(), None, page).ok()
     }
 }
 
@@ -750,4 +799,27 @@ fn absolute_length_px(length: svgtypes::Length) -> Option<f32> {
     };
     let px = (length.number * scale) as f32;
     (px.is_finite() && px >= 0.0).then_some(px)
+}
+
+#[cfg(test)]
+mod root_background_tests {
+    use super::{root_background_painted, roxmltree};
+
+    fn painted(svg: &str) -> Option<String> {
+        let doc = roxmltree::Document::parse(svg).expect("xml");
+        root_background_painted(svg, &doc)
+    }
+
+    #[test]
+    fn background_color_in_any_case_but_usvgs_own() {
+        let svg = |style: &str| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" style="{style}"><g/></svg>"#);
+        // usvg paints a lowercase `background-color` itself: not drawn again.
+        assert_eq!(painted(&svg("background-color: red")), None);
+        // It does not see other cases: drawn here.
+        assert!(painted(&svg("BACKGROUND-COLOR: red")).is_some_and(|s| s.contains(r#"fill="red""#)));
+        assert!(painted(&svg("Background: lime")).is_some_and(|s| s.contains(r#"fill="lime""#)));
+        // The last declaration wins.
+        assert_eq!(painted(&svg("BACKGROUND-COLOR: red; background-color: blue")), None);
+        assert!(painted(&svg("background-color: red; background: blue")).is_some_and(|s| s.contains(r#"fill="blue""#)));
+    }
 }

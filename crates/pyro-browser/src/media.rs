@@ -46,6 +46,8 @@ impl Browser {
         };
         let cors = request.crossorigin.is_some();
         let fetch = FetchRequest {
+            parser_priority: false,
+            credentials: None,
             post: None,
             url: request.url,
             kind: if request.video { ResourceKind::Video } else { ResourceKind::Audio },
@@ -70,8 +72,8 @@ impl Browser {
                 if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                     done(result.map(|r| {
                         // CORS-checked (a `crossorigin` request), or same origin.
-                        let clean = cors || b.image_origin_clean(page, &r.url);
-                        MediaResponse { status: r.status, mime: r.mime, body: r.body, partial: r.partial, clean }
+                        let clean = cors || (!r.opaque && b.image_origin_clean(page, &r.url));
+                        MediaResponse { status: r.status, mime: r.mime, body: std::sync::Arc::unwrap_or_clone(r.body), partial: r.partial, clean }
                     }));
                 }
             }),

@@ -22,6 +22,10 @@ struct Server {
 }
 impl Server {
     fn new(challenge: &'static str, success: bool) -> Self {
+        Self::with(challenge, success, false)
+    }
+    /// pyro: with `cacheable`, the authorized response may be cached (`Cache-Control: max-age`).
+    fn with(challenge: &'static str, success: bool, cacheable: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -55,7 +59,8 @@ impl Server {
                     headers.lines().any(|line| line.eq_ignore_ascii_case("authorization: Basic dXNlcjpwYXNz"));
                 record.lock().unwrap().push((headers, body));
                 let (status, extra, body) = if success && authorized {
-                    ("200 OK", String::new(), "accepted")
+                    let cache = if cacheable { "Cache-Control: max-age=600\r\n" } else { "" };
+                    ("200 OK", cache.to_owned(), "accepted")
                 } else {
                     ("401 Unauthorized", format!("WWW-Authenticate: {challenge}\r\n"), "declined")
                 };
@@ -260,4 +265,30 @@ fn cancellation_releases_auth_reply_before_terminal_callback() {
         assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), (NetError::Aborted, true));
         assert!(matches!(rx.recv_timeout(Duration::from_secs(5)), Err(mpsc::RecvTimeoutError::Disconnected)));
     }
+}
+
+/// A response to an authentication retry (the CDP handler gave credentials to an anonymous
+/// request's challenge) is stored as answering a credentialed request, under the headers it was
+/// sent with: a later anonymous request does not get the authenticated bytes from the cache, it is
+/// challenged again. It was stored under the anonymous request's headers and credentials.
+#[test]
+fn an_authenticated_retry_is_not_cached_as_anonymous() {
+    let server = Server::with(r#"Basic realm="test""#, true, true);
+    let (client, _intercept, auth) = setup(NetConfig::default());
+    let get = |client: &NetClient| {
+        let (tx, rx) = mpsc::channel();
+        let mut req = Request::get(server.url.clone(), Destination::Fetch);
+        req.credentials = Credentials::Omit;
+        client.fetch(req, Box::new(move |event| tx.send(event).unwrap()));
+        rx
+    };
+    let rx = get(&client);
+    let (_, reply) = auth.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(reply.send(credentials()).is_ok());
+    assert_eq!(finish(&rx), (Some(200), b"accepted".to_vec(), None));
+    let rx = get(&client);
+    let (_, reply) = auth.recv_timeout(Duration::from_secs(5)).expect("challenged again, not served from the cache");
+    assert!(reply.send(AuthDecision::Default).is_ok());
+    assert_eq!(finish(&rx), (Some(401), b"declined".to_vec(), None));
+    assert_eq!(server.requests.lock().unwrap().len(), 3);
 }

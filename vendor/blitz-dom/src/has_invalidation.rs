@@ -81,6 +81,9 @@ pub(crate) fn pyro_state_bits(value: Option<&str>) -> ElementState {
             "default" => ElementState::DEFAULT,
             "open" => ElementState::OPEN,
             "modal" => ElementState::MODAL,
+            // pyro: a dialog in the top layer, modal or kept there for its `overlay` transition
+            // (`:-moz-topmost-modal` in the UA sheet).
+            "dialog-in-top-layer" => ElementState::TOPMOST_MODAL,
             "popover-open" => ElementState::POPOVER_OPEN,
             "in-range" => ElementState::INRANGE,
             "out-of-range" => ElementState::OUTOFRANGE,
@@ -144,10 +147,8 @@ fn searched(node: &Node) -> bool {
 }
 
 fn custom_states_attr(node: &Node) -> Option<&str> {
-    node.attrs()?
-        .iter()
-        .find(|a| &*a.name.ns == PYRO_STATE_NS && &*a.name.local == "custom-states")
-        .map(|a| a.value.as_str())
+    // (The engine's store: `Attributes::state`.)
+    node.element_data()?.attrs.state("custom-states")
 }
 
 /// The ids, classes or custom states `kind` names on `node`.
@@ -259,6 +260,10 @@ impl BaseDocument {
     /// `:has()` invalidation for a change of the `changed` state bits of
     /// `node_id` (made already; a snapshot holds the state before it).
     pub(crate) fn invalidate_relative_state(&self, node_id: NodeId, changed: ElementState) {
+        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
+        if !changed.is_empty() {
+            self.invalidate_has_slotted(node_id);
+        }
         let Some(node) = self.nodes.get(node_id) else { return };
         // pyro: a shadow tree's own sheets may depend on it (`relative_state_dependency` checks the
         // document's).

@@ -31,7 +31,7 @@ use style_traits::{ParseError, StyleParseErrorKind};
 ///
 /// NB: If you add to this list, be sure to update `each_simple_pseudo_element` too.
 #[derive(
-    Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, ToShmem,
+    Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, ToShmem,
 )]
 #[allow(missing_docs)]
 #[repr(u8)]
@@ -44,6 +44,9 @@ pub enum PseudoElement {
     // APPLIES_TO_PLACEHOLDER properties expect!
     FirstLetter,
     FirstLine,
+    WebkitScrollbar,
+    WebkitScrollbarVertical,
+    WebkitScrollbarHorizontal,
 
     // Non-eager pseudos.
     Backdrop,
@@ -70,6 +73,22 @@ pub enum PseudoElement {
     // `matching_fn`). Both are styled lazily, when highlights are painted.
     TargetText,
     Highlight(u16),
+    ViewTransition,
+    ViewTransitionGroup(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
+    ViewTransitionPair(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
+    ViewTransitionOld(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
+    ViewTransitionNew(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
+    // pyro: CSS Form Control Styling's `::picker(select)` and `::picker-icon`, and Chrome's
+    // `::-webkit-slider-thumb`: parsed (so `@supports selector()` knows them) but styled by nothing.
+    PickerSelect,
+    PickerIcon,
+    WebkitSliderThumb,
+    WebkitScrollbarThumb,
+    WebkitScrollbarTrack,
+    WebkitScrollbarTrackPiece,
+    WebkitScrollbarButton,
+    WebkitScrollbarCorner,
+    WebkitResizer,
 
     // Implemented pseudos. These pseudo elements are representing the
     // elements within an UA shadow DOM, and matching the elements with
@@ -103,6 +122,32 @@ pub const PSEUDO_COUNT: usize = PseudoElement::ServoTableWrapper.discriminant() 
 pub const ANY_HIGHLIGHT: u16 = 0;
 
 static HIGHLIGHT_NAMES: std::sync::RwLock<Vec<Atom>> = std::sync::RwLock::new(Vec::new());
+
+/// Parses the named transition selector argument, preserving escaped wildcard identifiers.
+pub fn transition_selector(kind: &str, input: &mut CssParser) -> Result<PseudoElement, ParseError> {
+    use crate::values::CustomIdent;
+    let bad = || ParseError::custom(StyleParseErrorKind::UnspecifiedError);
+    let ctor: fn(crate::ArcSlice<Atom>) -> PseudoElement = match kind {
+        "view-transition-group" => PseudoElement::ViewTransitionGroup,
+        "view-transition-image-pair" => PseudoElement::ViewTransitionPair,
+        "view-transition-old" => PseudoElement::ViewTransitionOld,
+        "view-transition-new" => PseudoElement::ViewTransitionNew,
+        _ => return Err(bad()),
+    };
+    input.skip_whitespace();
+    let name = if input.try_parse(|p| p.expect_delim('*')).is_ok() { Some(Atom::from("")) }
+        else { input.try_parse(|p| CustomIdent::parse(p, &[])).ok().map(|id| id.0) };
+    let required_class = name.is_none();
+    let mut parts = vec![name.unwrap_or_else(|| Atom::from(""))];
+    while !input.is_exhausted() {
+        if parts.len() > 32 || !matches!(input.next_including_whitespace()?, cssparser::Token::Delim('.')) { return Err(bad()); }
+        let cssparser::Token::Ident(name) = input.next_including_whitespace()? else { return Err(bad()); };
+        parts.push(CustomIdent::from_ident(name, &[])?.0);
+    }
+    if (required_class && parts.len() == 1) || parts.iter().map(|atom| atom.len()).sum::<usize>() > 1024 { return Err(bad()); }
+    if parts.len() == 1 && parts[0].is_empty() { parts.clear(); }
+    Ok(ctor(crate::ArcSlice::from_iter(parts.into_iter())))
+}
 
 /// pyro: the id of a `::highlight()` name (ids live as long as the process; names are few).
 pub fn highlight_name_id(name: &Atom) -> u16 {
@@ -154,6 +199,17 @@ impl ToCss for PseudoElement {
             ScrollButtonLeft => "::scroll-button(left)",
             ScrollButtonRight => "::scroll-button(right)",
             TargetText => "::target-text",
+            ViewTransition => "::view-transition",
+            ViewTransitionGroup(ref parts) | ViewTransitionPair(ref parts) | ViewTransitionOld(ref parts) | ViewTransitionNew(ref parts) => {
+                dest.write_str(match self { ViewTransitionGroup(_) => "::view-transition-group(", ViewTransitionPair(_) => "::view-transition-image-pair(", ViewTransitionOld(_) => "::view-transition-old(", _ => "::view-transition-new(" })?;
+                if parts.is_empty() { dest.write_char('*')?; } else {
+                    for (index, part) in parts.iter().enumerate() {
+                        if index > 0 { dest.write_char('.')?; }
+                        if part.is_empty() { dest.write_char('*')?; } else { serialize_identifier(part, dest)?; }
+                    }
+                }
+                return dest.write_char(')');
+            },
             Highlight(id) => {
                 dest.write_str("::highlight(")?;
                 if let Some(name) = highlight_name(id) {
@@ -161,6 +217,16 @@ impl ToCss for PseudoElement {
                 }
                 return dest.write_char(')');
             },
+            PickerSelect => "::picker(select)",
+            PickerIcon => "::picker-icon",
+            WebkitSliderThumb => "::-webkit-slider-thumb",
+            WebkitScrollbar | WebkitScrollbarVertical | WebkitScrollbarHorizontal => "::-webkit-scrollbar",
+            WebkitScrollbarThumb => "::-webkit-scrollbar-thumb",
+            WebkitScrollbarTrack => "::-webkit-scrollbar-track",
+            WebkitScrollbarTrackPiece => "::-webkit-scrollbar-track-piece",
+            WebkitScrollbarButton => "::-webkit-scrollbar-button",
+            WebkitScrollbarCorner => "::-webkit-scrollbar-corner",
+            WebkitResizer => "::-webkit-resizer",
             ColorSwatch => "::color-swatch",
             FileSelectorButton => "::file-selector-button",
             Placeholder => "::placeholder",
@@ -181,6 +247,8 @@ impl ToCss for PseudoElement {
 }
 
 impl ::selectors::parser::PseudoElement for PseudoElement {
+    fn is_in_pseudo_element_tree(&self) -> bool { self.transition_argument().is_some() }
+    fn specificity_count(&self) -> u32 { u32::from(!self.transition_argument().is_some_and(|parts| parts.is_empty())) }
     fn parses_as_element_backed(&self) -> bool {
         matches!(self, Self::DetailsContent)
     }
@@ -202,7 +270,7 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     // accepts them too, or the parser would reject them after its `::scroll-marker` as well
     // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
     fn accepts_state_pseudo_classes(&self) -> bool {
-        self.is_scroll_marker() || self.is_scroll_button() || *self == Self::Column
+        self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
     }
 
     // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
@@ -223,9 +291,30 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
 }
 
 /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
-pub const EAGER_PSEUDO_COUNT: usize = 5;
+pub const EAGER_PSEUDO_COUNT: usize = 8;
 
 impl PseudoElement {
+    /// Builds the name and classes owned by a generated view-transition box.
+    pub fn transition_box_argument(name: &str, classes: &[Atom]) -> Option<crate::ArcSlice<Atom>> {
+        if classes.len() > 32 || name.len() + classes.iter().map(|class| class.len()).sum::<usize>() > 1024 { return None; }
+        let mut parts = vec![Atom::from(name)];
+        parts.extend_from_slice(classes);
+        Some(crate::ArcSlice::from_iter(parts.into_iter()))
+    }
+    /// Name and classes for a named transition pseudo; empty for the universal selector.
+    pub fn transition_argument(&self) -> Option<&crate::ArcSlice<Atom>> {
+        use PseudoElement::*;
+        match self { ViewTransitionGroup(parts) | ViewTransitionPair(parts) | ViewTransitionOld(parts) | ViewTransitionNew(parts) => Some(parts), _ => None }
+    }
+
+    /// Matches a transition pseudo box against a rule within its kind's rule map.
+    pub fn matches_transition_selector(&self, selector: &Self) -> bool {
+        if self.discriminant() != selector.discriminant() { return false; }
+        let (Some(actual), Some(pattern)) = (self.transition_argument(), selector.transition_argument()) else { return self == selector; };
+        if pattern.is_empty() { return true; }
+        if actual.is_empty() { return false; }
+        (pattern[0].is_empty() || pattern[0] == actual[0]) && pattern[1..].iter().all(|class| actual[1..].contains(class))
+    }
     /// Gets the canonical index of this eagerly-cascaded pseudo-element.
     #[inline]
     pub fn eager_index(&self) -> usize {
@@ -262,7 +351,10 @@ impl PseudoElement {
             1 => PseudoElement::Before,
             2 => PseudoElement::Selection,
             3 => PseudoElement::FirstLetter,
-            _ => PseudoElement::FirstLine,
+            4 => PseudoElement::FirstLine,
+            5 => PseudoElement::WebkitScrollbar,
+            6 => PseudoElement::WebkitScrollbarVertical,
+            _ => PseudoElement::WebkitScrollbarHorizontal,
         };
         debug_assert!(result.is_eager());
         debug_assert_eq!(result.eager_index(), i);
@@ -315,12 +407,25 @@ impl PseudoElement {
     /// node then matches each rule's argument against its direction).
     #[inline]
     pub fn rule_map_key(&self) -> PseudoElement {
-        if self.is_scroll_button() {
+        use PseudoElement::*;
+        match self { ViewTransitionGroup(_) => return ViewTransitionGroup(Default::default()), ViewTransitionPair(_) => return ViewTransitionPair(Default::default()), ViewTransitionOld(_) => return ViewTransitionOld(Default::default()), ViewTransitionNew(_) => return ViewTransitionNew(Default::default()), _ => () }
+        if self.scrollbar_orientation().is_some() {
+            PseudoElement::WebkitScrollbar
+        } else if self.is_scroll_button() {
             PseudoElement::ScrollButtonAll
         } else if self.is_highlight() {
             PseudoElement::Highlight(ANY_HIGHLIGHT)
         } else {
-            *self
+            self.clone()
+        }
+    }
+
+    /// State used when cascading a custom scrollbar for a physical axis.
+    pub fn scrollbar_orientation(&self) -> Option<NonTSPseudoClass> {
+        match self {
+            Self::WebkitScrollbarVertical => Some(NonTSPseudoClass::ScrollbarVertical),
+            Self::WebkitScrollbarHorizontal => Some(NonTSPseudoClass::ScrollbarHorizontal),
+            _ => None,
         }
     }
 
@@ -405,6 +510,9 @@ impl PseudoElement {
             | PseudoElement::Before
             | PseudoElement::FirstLetter
             | PseudoElement::FirstLine
+            | PseudoElement::WebkitScrollbar
+            | PseudoElement::WebkitScrollbarVertical
+            | PseudoElement::WebkitScrollbarHorizontal
             | PseudoElement::Selection => PseudoElementCascadeType::Eager,
             PseudoElement::Backdrop
             | PseudoElement::ColorSwatch
@@ -431,6 +539,16 @@ impl PseudoElement {
             | PseudoElement::ScrollButtonLeft
             | PseudoElement::ScrollButtonRight
             | PseudoElement::TargetText
+            | PseudoElement::ViewTransition | PseudoElement::ViewTransitionGroup(_) | PseudoElement::ViewTransitionPair(_) | PseudoElement::ViewTransitionOld(_) | PseudoElement::ViewTransitionNew(_)
+            | PseudoElement::PickerSelect
+            | PseudoElement::PickerIcon
+            | PseudoElement::WebkitSliderThumb
+            | PseudoElement::WebkitScrollbarThumb
+            | PseudoElement::WebkitScrollbarTrack
+            | PseudoElement::WebkitScrollbarTrackPiece
+            | PseudoElement::WebkitScrollbarButton
+            | PseudoElement::WebkitScrollbarCorner
+            | PseudoElement::WebkitResizer
             | PseudoElement::Highlight(_) => PseudoElementCascadeType::Lazy,
             PseudoElement::ServoAnonymousBox
             | PseudoElement::ServoAnonymousTable
@@ -494,7 +612,7 @@ impl PseudoElement {
     /// does not decide whether one matches.
     #[inline]
     pub fn has_argument(&self) -> bool {
-        self.is_scroll_button() || self.is_highlight()
+        self.is_scroll_button() || self.is_highlight() || self.transition_argument().is_some()
     }
 
     /// Whether this pseudo-element is the ::target-text pseudo.
@@ -550,6 +668,25 @@ pub type Lang = Box<str>;
 #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToCss, ToShmem)]
 pub struct CustomState(pub AtomIdent);
 
+/// pyro: the argument of the functional `:has-slotted()` pseudo-class: the selectors (no
+/// pseudo-elements) one of a slot's flattened assigned elements must match.
+#[derive(Clone, Debug, PartialEq, ToShmem)]
+pub struct HasSlottedArgument(pub selectors::parser::SelectorList<SelectorImpl>);
+
+impl Eq for HasSlottedArgument {}
+
+impl std::hash::Hash for HasSlottedArgument {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_css_string().hash(state)
+    }
+}
+
+impl malloc_size_of::MallocSizeOf for HasSlottedArgument {
+    fn size_of(&self, _: &mut malloc_size_of::MallocSizeOfOps) -> usize {
+        0
+    }
+}
+
 /// A non tree-structural pseudo-class.
 /// See https://drafts.csswg.org/selectors-4/#structural-pseudos
 #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToShmem)]
@@ -596,10 +733,15 @@ pub enum NonTSPseudoClass {
     Target,
     /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
     TargetCurrent,
+    ScrollbarVertical,
+    ScrollbarHorizontal,
     /// pyro: `:target-before` and `:target-after` (CSS Overflow 5): the scroll markers of a group
     /// before and after its active one, in tree order.
     TargetBefore,
     TargetAfter,
+    /// pyro: `:has-slotted` and `:has-slotted(<selector-list>)` (CSS Scoping 1 § 3.2.5): a slot
+    /// whose flattened assigned nodes are not empty (of which an element matches the argument).
+    HasSlotted(Option<HasSlottedArgument>),
     UserInvalid,
     UserValid,
     Valid,
@@ -624,6 +766,8 @@ impl ::selectors::parser::NonTSPseudoClass for NonTSPseudoClass {
                 | NonTSPseudoClass::Focus
                 | NonTSPseudoClass::FocusVisible
                 | NonTSPseudoClass::TargetCurrent
+                | NonTSPseudoClass::ScrollbarVertical
+                | NonTSPseudoClass::ScrollbarHorizontal
                 | NonTSPseudoClass::TargetBefore
                 | NonTSPseudoClass::TargetAfter
                 | NonTSPseudoClass::Enabled
@@ -651,6 +795,15 @@ impl ToCss for NonTSPseudoClass {
             dest.write_str(":dir(")?;
             serialize_identifier(dir, dest)?;
             return dest.write_char(')');
+        }
+        if let HasSlotted(ref argument) = *self {
+            dest.write_str(":has-slotted")?;
+            if let Some(argument) = argument {
+                dest.write_char('(')?;
+                argument.0.to_css(dest)?;
+                dest.write_char(')')?;
+            }
+            return Ok(());
         }
 
         dest.write_str(match *self {
@@ -693,13 +846,15 @@ impl ToCss for NonTSPseudoClass {
             Self::ServoNonZeroBorder => ":-servo-nonzero-border",
             Self::Target => ":target",
             Self::TargetCurrent => ":target-current",
+            Self::ScrollbarVertical => ":vertical",
+            Self::ScrollbarHorizontal => ":horizontal",
             Self::TargetBefore => ":target-before",
             Self::TargetAfter => ":target-after",
             Self::UserInvalid => ":user-invalid",
             Self::UserValid => ":user-valid",
             Self::Valid => ":valid",
             Self::Visited => ":visited",
-            Self::Lang(_) | Self::Dir(_) => unreachable!(),
+            Self::Lang(_) | Self::Dir(_) | Self::HasSlotted(_) => unreachable!(),
         })
     }
 }
@@ -748,7 +903,13 @@ impl NonTSPseudoClass {
             Self::UserValid => ElementState::USER_VALID,
             Self::Valid => ElementState::VALID,
             Self::Visited => ElementState::VISITED,
-            Self::CustomState(_) | Self::Lang(_) | Self::Dir(_) | Self::ServoNonZeroBorder => {
+            Self::CustomState(_)
+            | Self::ScrollbarVertical
+            | Self::ScrollbarHorizontal
+            | Self::Lang(_)
+            | Self::Dir(_)
+            | Self::HasSlotted(_)
+            | Self::ServoNonZeroBorder => {
                 ElementState::empty()
             },
         }
@@ -864,8 +1025,11 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "required" => NonTSPseudoClass::Required,
             "target" => NonTSPseudoClass::Target,
             "target-current" => NonTSPseudoClass::TargetCurrent,
+            "vertical" => NonTSPseudoClass::ScrollbarVertical,
+            "horizontal" => NonTSPseudoClass::ScrollbarHorizontal,
             "target-before" => NonTSPseudoClass::TargetBefore,
             "target-after" => NonTSPseudoClass::TargetAfter,
+            "has-slotted" => NonTSPseudoClass::HasSlotted(None),
             "user-invalid" => NonTSPseudoClass::UserInvalid,
             "user-valid" => NonTSPseudoClass::UserValid,
             "valid" => NonTSPseudoClass::Valid,
@@ -920,6 +1084,24 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "dir" if !after_part => {
                 NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
             },
+            "has-slotted" => {
+                let list = selectors::parser::SelectorList::parse_disallow_pseudo(
+                    self,
+                    parser,
+                    selectors::parser::ParseRelative::No,
+                )?;
+                // Compound selectors, joined by sibling combinators only (WPT
+                // css/selectors/parsing `parse-has-slotted`: `div + div` but not `div > span`).
+                let ancestor = list.slice().iter().any(|selector| {
+                    selector.iter_raw_match_order().any(|component| {
+                        matches!(component, selectors::parser::Component::Combinator(c) if !c.is_sibling())
+                    })
+                });
+                if ancestor {
+                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
+                }
+                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
+            },
             _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
         };
 
@@ -941,8 +1123,18 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "scroll-marker" => ScrollMarker,
             "column" => Column,
             "target-text" => TargetText,
+            "view-transition" => ViewTransition,
             "details-content" => DetailsContent,
             "color-swatch" => ColorSwatch,
+            "picker-icon" => PickerIcon,
+            "-webkit-slider-thumb" => WebkitSliderThumb,
+            "-webkit-scrollbar" => WebkitScrollbar,
+            "-webkit-scrollbar-thumb" => WebkitScrollbarThumb,
+            "-webkit-scrollbar-track" => WebkitScrollbarTrack,
+            "-webkit-scrollbar-track-piece" => WebkitScrollbarTrackPiece,
+            "-webkit-scrollbar-button" => WebkitScrollbarButton,
+            "-webkit-scrollbar-corner" => WebkitScrollbarCorner,
+            "-webkit-resizer" => WebkitResizer,
             "placeholder" => Placeholder,
             "-servo-text-control-inner-container" => {
                 if !self.in_user_agent_stylesheet() {
@@ -1013,6 +1205,13 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         if name.eq_ignore_ascii_case("highlight") {
             let ident = arguments.expect_ident()?;
             return Ok(Highlight(highlight_name_id(&Atom::from(ident.as_ref()))));
+        }
+        if name.get(..16).is_some_and(|prefix| prefix.eq_ignore_ascii_case("view-transition-")) {
+            return transition_selector(&name.to_ascii_lowercase(), arguments);
+        }
+        if name.eq_ignore_ascii_case("picker") {
+            arguments.expect_ident_matching("select")?;
+            return Ok(PickerSelect);
         }
         if !name.eq_ignore_ascii_case("scroll-button") {
             return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));

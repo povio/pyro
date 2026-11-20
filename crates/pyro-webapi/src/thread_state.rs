@@ -18,7 +18,11 @@
 //!   document): it stays, and tells a page nothing but that the thread is
 //!   older than the page;
 //! - `worker::ENDED`, a note that a worker's end left something to collect:
-//!   forgotten, since the engine it was about is dropped or recycled.
+//!   forgotten, since the engine it was about is dropped or recycled;
+//! - `paint_worklet::FORCE_GRAPH_FALLBACK`, a test hook compiled only with the
+//!   `test-hooks` feature (test builds, never the browser's): the test that sets
+//!   it clears it. Listed in every configuration, as the source scan of
+//!   `tests/thread_state.rs` sees it in every one.
 
 /// The crate's thread-local statics, as `module::NAME`.
 pub const STATICS: &[&str] = &[
@@ -38,6 +42,7 @@ pub const STATICS: &[&str] = &[
     "message_channel::MADE",
     "message_channel::REMOTE",
     "node::FOUND",
+    "paint_worklet::FORCE_GRAPH_FALLBACK",
     "port_link::RELEASE_ACTIVE",
     "port_link::RELEASING",
     "resource_timing::PAGES",
@@ -53,6 +58,9 @@ pub const STATICS: &[&str] = &[
     "structured_clone::WIRE_BLOBS",
     "structured_clone::WIRE_CANVASES",
     "target::WATCHED",
+    "web_locks::CANCELLED",
+    "web_locks::MANAGERS",
+    "web_locks::NEXT_ID",
     "webaudio::NEXT",
     "webaudio::PENDING",
     "websocket::NEXT",
@@ -70,7 +78,7 @@ pub const STATICS: &[&str] = &[
 /// first static that still holds something of them; the thread must then not
 /// serve another client.
 pub fn reset_thread() -> Result<(), &'static str> {
-    let checks: [fn() -> Option<&'static str>; 21] = [
+    let checks: [fn() -> Option<&'static str>; 22] = [
         crate::dom_pages_leftover,
         crate::abort::thread_leftover,
         crate::canvas::thread_leftover,
@@ -80,6 +88,7 @@ pub fn reset_thread() -> Result<(), &'static str> {
         crate::formdata::thread_leftover,
         crate::indexeddb::thread_leftover,
         crate::message_channel::thread_leftover,
+        crate::web_locks::thread_leftover,
         crate::node::thread_leftover,
         crate::port_link::thread_leftover,
         crate::resource_timing::thread_leftover,

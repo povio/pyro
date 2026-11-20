@@ -53,6 +53,19 @@ bitflags! {
         /// pyro: the element is an `<input>`: its `overflow` makes it no scroll container for layout (an
         /// automatic minimum size of zero; Blink, WPT css-grid `stretch-grid-item-text-input-overflow`).
         const IS_INPUT = 1 << 10;
+        /// pyro: classic scrollbars (`crate::scrollbars`): the node's `overflow-x: auto` shows its
+        /// horizontal scrollbar (its content overflowed horizontally the last time it was laid out).
+        const AUTO_SCROLLBAR_X = 1 << 11;
+        /// pyro: classic scrollbars: the node's `overflow-y: auto` shows its vertical scrollbar.
+        const AUTO_SCROLLBAR_Y = 1 << 12;
+        /// pyro: the node is the root element, whose `overflow` and `scrollbar-gutter` are the
+        /// viewport's: its own box takes no scrollbar gutters.
+        const IS_ROOT = 1 << 13;
+        /// pyro: the node never has scrollbars (a `<frameset>`: no scroll container in Chrome).
+        const NO_SCROLLBARS = 1 << 14;
+        /// pyro: the node's document lays out classic scrollbars (`crate::scrollbars`); without
+        /// it scrollbars are overlay scrollbars, which take no space.
+        const CLASSIC_SCROLLBARS = 1 << 15;
     }
 }
 
@@ -80,6 +93,10 @@ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
     /// pyro: the natural aspect ratio of a replaced element (width over height, physical), set by the
     /// tree; `CoreStyle::natural_aspect_ratio` answers it while `aspect-ratio` is `auto`.
     pub natural_ratio: Option<f32>,
+    #[allow(missing_docs)]
+    pub custom_scrollbars: Option<taffy::Size<f32>>,
+    #[allow(missing_docs)]
+    pub scrollbar_size_limit: Option<taffy::Size<f32>>,
 }
 
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
@@ -89,7 +106,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
         let display = self.style.clone_display();
         if self.flags.contains(StyleFlags::IS_BUTTON_INPUT) {
             convert::button_input_display(display)
-        } else if self.flags.contains(StyleFlags::IS_FIELDSET) {
+        } else if self.flags.intersects(StyleFlags::IS_FIELDSET | StyleFlags::IS_BUTTON) {
             convert::fieldset_display(display)
         } else {
             display
@@ -111,6 +128,8 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
             natural_ratio: None,
+            custom_scrollbars: None,
+            scrollbar_size_limit: None,
         }
     }
 
@@ -128,6 +147,8 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
             natural_ratio: None,
+            custom_scrollbars: None,
+            scrollbar_size_limit: None,
         }
     }
 
@@ -264,11 +285,47 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         self.layout_wm().logical_point(overflow)
     }
 
-    // pyro: scrollbars overlay content (as headless Chrome, and Chrome with overlay scrollbars):
-    // no box reserves scrollbar space, so `scrollbar-gutter` (parsed, computed) changes no layout.
+    // pyro: overlay scrollbars (the default `crate::scrollbars::ScrollbarMode`) take no space, so
+    // `scrollbar-gutter` changes no layout; classic ones take their thickness.
     #[inline]
     fn scrollbar_width(&self) -> f32 {
-        0.0
+        if !self.flags.contains(StyleFlags::CLASSIC_SCROLLBARS) {
+            return 0.0;
+        }
+        crate::scrollbars::thickness_in(crate::scrollbars::ScrollbarMode::Classic, self.style.clone_scrollbar_width())
+    }
+
+    // pyro: the gutters of classic scrollbars (`crate::scrollbars::GutterInputs::gutters`), in the
+    // layout's axes.
+    #[inline]
+    fn scrollbar_gutter(&self) -> taffy::Rect<f32> {
+        let zero = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
+        // (Overlay scrollbars: one flag test, as cheap as the constant it replaced.)
+        if !self.flags.contains(StyleFlags::CLASSIC_SCROLLBARS)
+            || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT | StyleFlags::NO_SCROLLBARS | StyleFlags::IS_REPLACED)
+        {
+            return zero;
+        }
+        let thickness = self.scrollbar_width();
+        if thickness <= 0.0 {
+            return zero;
+        }
+        let box_styles = self.style.get_box();
+        let gutter = box_styles.scrollbar_gutter;
+        let own_wm = self.style.writing_mode;
+        let inputs = crate::scrollbars::GutterInputs {
+            thickness: self.custom_scrollbars.unwrap_or(taffy::Size { width: thickness, height: thickness }),
+            overflow: taffy::Point { x: box_styles.overflow_x, y: box_styles.overflow_y },
+            auto_shows: taffy::Point {
+                x: self.flags.contains(StyleFlags::AUTO_SCROLLBAR_X),
+                y: self.flags.contains(StyleFlags::AUTO_SCROLLBAR_Y),
+            },
+            stable: gutter.contains(style::values::computed::ScrollbarGutter::STABLE),
+            both_edges: gutter.contains(style::values::computed::ScrollbarGutter::BOTH_EDGES),
+            vertical: own_wm.is_vertical(),
+            rtl: !own_wm.is_bidi_ltr(),
+        };
+        self.rect(inputs.layout_edges(self.scrollbar_size_limit))
     }
 
     #[inline]
@@ -454,6 +511,22 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 // BlockContainerStyle impl
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
+    /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
+    /// box is a flow root already) establishes an independent formatting context.
+    #[inline]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        let clamp = &self.style.get_box().line_clamp;
+        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
+        // inline-size`: "causes the box to establish an independent formatting context"; no layout
+        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
+        // `inline-size-bfc-floats`).
+        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
+            || self.style.get_box().container_type.intersects(
+                style::values::specified::box_::ContainerType::SIZE
+                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
+            )
+    }
+
     #[inline]
     fn own_height_keywords(&self) -> (taffy::Dimension, taffy::Dimension) {
         let (min, max) = (
@@ -487,7 +560,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyl
         let (start, end) = if taffy::CoreStyle::direction(self).is_rtl() { (End, Start) } else { (Start, End) };
         let (left, right) = if self.layout_wm().line_left_is_bottom() { (End, Start) } else { (Start, End) };
         match self.style.clone_text_align() {
-            stylo::TextAlign::Start | stylo::TextAlign::Justify => start,
+            stylo::TextAlign::Start | stylo::TextAlign::Justify | stylo::TextAlign::JustifyAll => start,
             stylo::TextAlign::End => end,
             stylo::TextAlign::Left | stylo::TextAlign::MozLeft => left,
             stylo::TextAlign::Right | stylo::TextAlign::MozRight => right,
@@ -640,6 +713,22 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
 // BlockItemStyle impl
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyle<T> {
+    /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
+    /// box is a flow root already) establishes an independent formatting context.
+    #[inline]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        let clamp = &self.style.get_box().line_clamp;
+        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
+        // inline-size`: "causes the box to establish an independent formatting context"; no layout
+        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
+        // `inline-size-bfc-floats`).
+        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
+            || self.style.get_box().container_type.intersects(
+                style::values::specified::box_::ContainerType::SIZE
+                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
+            )
+    }
+
     #[inline]
     fn is_table(&self) -> bool {
         convert::is_table(self.effective_display())
@@ -705,9 +794,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     #[inline]
     fn float(&self) -> taffy::Float {
         // pyro: `inline-start` and `inline-end` are sides of the containing block's inline axis:
-        // in a right-to-left one (the box's inherited direction stands in for it) they trade.
+        // in a right-to-left one they trade. The containing block's direction is that of the
+        // algorithm laying the box out (`layout_wm`), not the box's own (WPT css-logical
+        // `logical-values-float-clear-reftest`).
         let value = self.style.clone_float();
-        let float = match (value, self.style.writing_mode.is_bidi_ltr()) {
+        let float = match (value, self.layout_wm().is_bidi_ltr()) {
             (stylo::Float::InlineStart, false) => taffy::Float::Right,
             (stylo::Float::InlineEnd, false) => taffy::Float::Left,
             _ => convert::float(value),
@@ -719,7 +810,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyl
     #[inline]
     fn clear(&self) -> taffy::Clear {
         let value = self.style.clone_clear();
-        let clear = match (value, self.style.writing_mode.is_bidi_ltr()) {
+        let clear = match (value, self.layout_wm().is_bidi_ltr()) {
             (stylo::Clear::InlineStart, false) => taffy::Clear::Right,
             (stylo::Clear::InlineEnd, false) => taffy::Clear::Left,
             _ => convert::clear(value),

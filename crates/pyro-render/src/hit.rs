@@ -175,7 +175,7 @@ impl Descent<'_> {
         let node = self.doc.get_node(id)?;
         if let Some(p) = node.containing_block().filter(|_| self.multicol) {
             let (_, _, above) = self.transform_and_planes(p)?;
-            if self.columns.contains(&p) || self.doc.get_node(p)?.column_fragments().is_some() {
+            if self.columns.contains(&p) || self.doc.get_node(p)?.columns_with_axes().is_some() {
                 self.columns.insert(id);
                 let (t, fixed) = self.g.transform(self.doc, id)?;
                 let projective = above || node.plane_3d().is_some_and(geometry::is_projective_plane);
@@ -274,7 +274,7 @@ impl Descent<'_> {
 
     fn visit(&mut self, id: NodeId) {
         let Some(node) = self.doc.get_node(id) else { return };
-        if !node.is_element() {
+        if !node.is_element() || node.hidden_by_anchor() {
             return;
         }
         // Not rendered (display: none, or inside it: never styled): no box
@@ -315,9 +315,10 @@ impl Descent<'_> {
             // pyro: nor is a multi-column container's subtree: its hit bound (its strip's overflow
             // cut at the breaks, `resolve.rs`) missed content the scan of every box reached
             // (`hit_adversarial`'s interleaved-mutations page 26).
-            let in_columns = self.columns.contains(&id) || (self.multicol && node.column_fragments().is_some());
+            let in_columns = self.columns.contains(&id) || (self.multicol && node.columns_with_axes().is_some());
             let cull = if in_columns { None } else { self.bound(id).map(|(r, _)| r) };
-            (candidate, cull)
+            let may_hit_text = (w == 0.0 || h == 0.0) && (node.flags.is_inline_root() || !node.anonymous_blocks.is_empty());
+            (candidate || (may_hit_text && cull.is_none_or(|r| self.contains_any(&r, shift))), cull)
         } else if is_table_part {
             match self.rows.get(&id).copied() {
                 // Both fixed states: the row's box takes its table's.
@@ -338,6 +339,9 @@ impl Descent<'_> {
             (candidate, None)
         };
         self.path.push(Path { key, order, needed: false, reported: false });
+        // pyro: a box a line clamp discarded (a float after the clamp point too) is not hit; its
+        // place stays in the order (blitz-dom `NodeFlags::HIDDEN_BY_CLAMP`).
+        let candidate = candidate && !geometry::hidden_by_clamp(self.doc, id);
         if candidate {
             if let (Some(key), Some(b)) = (key, self.g.element_box(self.doc, id)) {
                 if b.width > 0.0 || b.height > 0.0 {

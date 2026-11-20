@@ -1350,6 +1350,13 @@ impl<H: Host> Browser<H> {
                 let info = self.info(target, &url, &title, true);
                 out.send(msg::result_frame(cmd.id, &serde_json::json!({ "targetInfo": info }), Some(session_id)));
             }
+            // Permission overrides sent on a page session (testdriver's set_permission does) apply
+            // to the page's browser context, as on the browser session with its browserContextId.
+            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" => {
+                let context_id = self.targets[index].context_id.clone();
+                let key = self.context(&context_id)?.key;
+                self.host.browser_command(cmd, Some(key), out);
+            }
             "Runtime.runIfWaitingForDebugger" => {
                 // Only popups start paused; resuming starts their navigation.
                 out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));

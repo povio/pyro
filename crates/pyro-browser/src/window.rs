@@ -448,22 +448,59 @@ impl JsClass for Window {
 /// ancestor frames are potentially trustworthy (Chrome checks every
 /// ancestor; an about:blank or about:srcdoc document counts as its parent).
 fn is_secure_context(w: &WindowData) -> bool {
-    let trustworthy = |url: &str| pyro_net::Url::parse(url).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u));
-    if !trustworthy(&w.url()) {
-        return false;
+    match (w.frames.upgrade(), w.frame) {
+        (Some(host), Some(key)) => frame_chain_secure(&host, key, &w.url()),
+        _ => trustworthy_url(&w.url()),
     }
-    let (Some(host), Some(mut key)) = (w.frames.upgrade(), w.frame) else { return true };
-    while key.child.is_some() {
-        let parent = host.parent_key(key);
-        if parent == key {
-            break;
+}
+
+fn trustworthy_url(url: &str) -> bool {
+    pyro_net::Url::parse(url).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u))
+}
+
+/// HTML "secure context" for the document of frame `key` at `url`: it and every ancestor frame's
+/// document are potentially trustworthy (also the page's `[SecureContext]` members,
+/// `PageHooks::is_secure_context`).
+pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate::frames::FrameKey, url: &str) -> bool {
+    let mut url = url.to_owned();
+    loop {
+        // A popup's about:blank / about:srcdoc document: its creator's state (`FrameHost::creator_secure`),
+        // which already covers the creator's ancestors; it ends the walk, for the popup itself and for
+        // the frames inside it.
+        if key.child.is_none() && matches!(url.as_str(), "about:blank" | "about:srcdoc") {
+            if let Some(secure) = host.creator_secure.get() {
+                return secure;
+            }
         }
-        key = parent;
-        if !host.nav(key).is_some_and(|nav| trustworthy(&nav.url())) {
+        if !document_trustworthy(host, key, &url) {
             return false;
         }
+        if key.child.is_none() {
+            return true;
+        }
+        let parent = host.parent_key(key);
+        if parent == key {
+            return true;
+        }
+        key = parent;
+        let Some(nav) = host.nav(key) else { return false };
+        url = nav.url();
     }
-    true
+}
+
+/// Whether the document of frame `key` at `url` is potentially trustworthy: by its tuple origin
+/// (HTML "secure context" asks of the environment's origin), which an about:blank document inherits
+/// from its creator (a popup's initial document from an http page is not trustworthy, though
+/// about:blank URLs are); an opaque origin by its URL (data:, a sandboxed frame).
+fn document_trustworthy(host: &crate::frames::FrameHost, key: crate::frames::FrameKey, url: &str) -> bool {
+    let origin = host
+        .with_frame(key, |f| pyro_net::Url::parse(&f.origin).ok().map(|u| u.origin()))
+        .flatten()
+        .filter(|o| o.is_tuple());
+    match origin {
+        Some(origin) => pyro_net::is_potentially_trustworthy_origin(&origin),
+        None => trustworthy_url(url),
+    }
 }
 
 fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
@@ -714,6 +751,8 @@ fn run_animation_frame(scope: &Scope<'_>) {
         return;
     }
     pyro_webapi::layout_api::flush_pending_scrolls(&w.target.page);
+    // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
+    pyro_webapi::layout_api::content_visibility_frame(&w.target.page);
     // The style update of the frame before this one, when the document changed since and none
     // ran yet (the first frame after a load, whose update is a task of its own that this
     // frame's timer can beat): the styles a callback of this frame changes then have their
@@ -751,6 +790,7 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // The frame's style update: what its callbacks changed starts transitions
     // and animations now (the next frame's callbacks see them running).
     w.target.page.update_animations();
+    w.target.page.sync_frame_resources();
 }
 
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {

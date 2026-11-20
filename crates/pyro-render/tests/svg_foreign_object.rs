@@ -105,3 +105,12 @@ fn an_svg_image_draws_its_foreign_object() {
     assert_pixel(&img, (50, 75), GREEN, "the foreignObject's content");
     assert_pixel(&img, (50, 25), WHITE, "above it");
 }
+
+#[test]
+fn sibling_foreign_documents_compete_for_one_page_budget() {
+    let draw = || render("<img src='fo.svg'><img src='fo.svg'>");
+    let (limited, _) = pyro_raster::with_test_budget(8192, draw);
+    for x in [50, 150] { assert_pixel(&limited, (x, 75), WHITE, "insufficient document storage"); }
+    let allowed = draw();
+    for x in [50, 150] { assert_pixel(&allowed, (x, 75), GREEN, "admitted document"); }
+}

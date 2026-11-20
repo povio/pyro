@@ -53,6 +53,7 @@ pub(crate) fn filter_steps(
     dom: &BaseDocument,
     size: (f32, f32),
     references: &[Option<blitz_dom::node::ImageResourceData>],
+    source_tainted: bool,
 ) -> Option<Vec<FilterStep>> {
     if !filters.iter().any(|f| matches!(f, StyloFilter::Url(_))) {
         return None;
@@ -62,7 +63,9 @@ pub(crate) fn filter_steps(
     let mut any_graph = false;
     // Whether the source of what follows is tainted: a `drop-shadow()` coloured from
     // `currentcolor` (which a `:visited` link's colour can be) taints it.
-    let mut tainted = false;
+    // pyro: and a backdrop (`source_tainted`), as Chromium treats one: a displacement map read
+    // from it moves nothing (WPT filter-effects `backdrop-filter-svg-displacement`).
+    let mut tainted = source_tainted;
     for filter in filters {
         match filter {
             StyloFilter::Url(url) => {
@@ -211,6 +214,7 @@ fn reference_graph(
             &content,
             width.max(1e-3),
             height.max(1e-3),
+            &dom.raster_budget,
         )?,
         (None, None) => return None,
     };
@@ -225,7 +229,9 @@ fn reference_graph(
     let filter = first_filter(svg.tree.root())?;
     // (What the document knows of its primitives; another document's are taken as usvg has them.)
     let notes = node_id.map(|node_id| primitive_notes(dom, &dom.tree()[node_id])).unwrap_or_default();
-    anyrender_svg::FilterGraph::new(&filter, &|index| notes.get(index).copied().unwrap_or_default(), source_tainted)
+    // (The filtered rectangle of the reference document is its bounding box.)
+    let bbox = anyrender_svg::usvg::Rect::from_xywh(0.0, 0.0, width.max(1e-3), height.max(1e-3));
+    anyrender_svg::FilterGraph::new(&filter, &|index| notes.get(index).copied().unwrap_or_default(), source_tainted, bbox)
 }
 
 /// pyro: what the document knows of the filters of an inline `<svg>`'s tree that usvg does not

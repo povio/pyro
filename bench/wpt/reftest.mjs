@@ -19,6 +19,7 @@
 // The reference renders are cached by URL and viewport (as wptrunner's screenshot cache), so a reference that many
 // tests share renders once per runner.
 
+import { documentError } from './lib.mjs';
 import path from 'node:path';
 
 /** CDP screenshot of the viewport as raw RGBA. pyro answers format "rgba" without encoding; other browsers get PNG. */
@@ -112,14 +113,18 @@ export const REFTEST_CONTEXT = { viewport: VIEWPORT, deviceScaleFactor: 1 };
  *  environment variables, which a pyro without these options ignores (an older binary in an A/B run). */
 export const reftestEnv = (wpt) => ({
   PYRO_TEXT_ANTIALIASING: 'off',
+  PYRO_SUBPIXEL_TEXT_POSITIONING: 'off',
   // As wptrunner's Chrome (`--autoplay-policy=no-user-gesture-required`): a page whose `<video autoplay>` must play
   // before it is done otherwise depends on the runner's first evaluation (a user gesture) beating the media's load
   // (css/css-overflow/overflow-video-hidden.html timed out on first runs).
   PYRO_AUTOPLAY_POLICY: 'no-user-gesture-required',
   ...ahemEnv(wpt),
 });
-/** Ahem alone, for testharness pages (wptrunner installs it for every test; geometry pages measure its boxes). */
-export const ahemEnv = (wpt) => ({ PYRO_FONTS: path.join(wpt, 'fonts', 'Ahem.ttf') });
+/** Ahem, for every kind of page (wptrunner installs it for every test; geometry pages measure its boxes), and classic
+ *  scrollbars: wpt.fyi runs Chrome on Linux, whose scrollbars take 15px of their box and whose `scrollbar-gutter`
+ *  reserves that (pyro's `--scrollbars classic`; overlay scrollbars, pyro's default, take none; an A/B run can set
+ *  PYRO_SCROLLBARS=overlay). */
+export const ahemEnv = (wpt) => ({ PYRO_FONTS: path.join(wpt, 'fonts', 'Ahem.ttf'), PYRO_SCROLLBARS: process.env.PYRO_SCROLLBARS ?? 'classic' });
 
 /** One page's render: navigate, settle (bounded by `deadline`, a Date.now() value), capture. `st` (optional) adds
  *  each stage's milliseconds: goto (navigation to commit), settle (load, fonts, the two real frames, reftest-wait),
@@ -128,7 +133,15 @@ async function render(page, cdp, base, url, deadline, st) {
   const left = () => Math.max(1, deadline - Date.now());
   let t = Date.now();
   const lap = (k) => { if (st) { const n = Date.now(); st[k] = (st[k] ?? 0) + n - t; t = n; } };
-  await page.goto(url === 'about:blank' ? url : `${base}/${url}`, { waitUntil: 'commit', timeout: left() });
+  // The page's time ran out before this render (the test took it all, a reference is next): a timeout, not a goto
+  // error. A navigation that does not commit in time is one too.
+  if (Date.now() >= deadline) return { timeout: true, late: true };
+  const response = await page.goto(url === 'about:blank' ? url : `${base}/${url}`, { waitUntil: 'commit', timeout: left() })
+    .then((r) => ({ r }), (e) => (Date.now() >= deadline && /Timeout/.test(String(e.message)) ? null : Promise.reject(e)));
+  if (!response) return { timeout: true };
+  // An error document (the server failed, the file is missing) is no render to compare: an error result.
+  const bad = documentError(response.r, url);
+  if (bad) throw new Error(bad);
   lap('goto');
   // A navigation inside the page destroys the context the wait runs in: wait again in the new one.
   for (;;) {
@@ -139,11 +152,14 @@ async function render(page, cdp, base, url, deadline, st) {
   }
 }
 
+/** The reference cache's key: the viewport and the full URL the reference loads from (the origin is the test's:
+ *  an http test and an https or www one with the same relative reference render it from different origins). */
+export const refKey = (viewport, base, url) => `${viewport.width}x${viewport.height} ${url === 'about:blank' ? url : `${base}/${url}`}`;
 const cache = new Map();
 const CACHE_MAX = 48; // ~92 MB of 800x600 RGBA renders
 /** A reference's render, from the cache when this runner rendered it before at this viewport. */
 async function renderRef(page, cdp, base, url, viewport, deadline, st) {
-  const key = `${viewport.width}x${viewport.height} ${url}`;
+  const key = refKey(viewport, base, url);
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); if (st) st.cached = (st.cached ?? 0) + 1; return hit; }
   if (st) st.renders = (st.renders ?? 0) + 1;
@@ -186,7 +202,7 @@ export async function runReftest(page, t, base, limit) {
     const refs = [];
     for (const r of t.refs) {
       const shot = await renderRef(page, cdp, base, r.url, viewport, deadline, st);
-      if (shot.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], stages: st, error: `reference ${r.url} ${shot.wait ? 'kept reftest-wait' : 'did not load'}` };
+      if (shot.timeout) return { status: 'timeout', ms: Date.now() - t0, subtests: [], stages: st, error: shot.late ? `no time left for reference ${r.url}` : `reference ${r.url} ${shot.wait ? 'kept reftest-wait' : 'did not load'}` };
       refs.push(shot);
     }
     t1 = Date.now();

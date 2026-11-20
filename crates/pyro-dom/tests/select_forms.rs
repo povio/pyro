@@ -113,9 +113,10 @@ fn text_editing() {
     );
     let mut dom = dom.borrow_mut();
     let t = dom.get_element_by_id(d, "t").unwrap().unwrap();
-    assert_eq!(dom.selection(t).unwrap(), (3, 3));
+    // A fresh control's cursor is at the start of its value (as in Chromium).
+    assert_eq!(dom.selection(t).unwrap(), (0, 0));
     assert!(dom.insert_text(t, "d").unwrap());
-    assert_eq!(dom.value(t).unwrap(), "abcd");
+    assert_eq!(dom.value(t).unwrap(), "dabc");
     dom.set_selection_range(t, 0, 4).unwrap();
     // TOS fillInput clear path: select all, insert "".
     assert!(dom.insert_text(t, "").unwrap());

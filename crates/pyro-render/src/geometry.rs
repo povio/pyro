@@ -46,6 +46,17 @@ pub struct LayoutBox {
     pub border: [f64; 4],
     pub padding: [f64; 4],
     pub position: BoxPosition,
+    /// pyro: discarded by a line clamp (it or an ancestor in the clamping box): laid out, not
+    /// painted, and not hit (blitz-dom `NodeFlags::HIDDEN_BY_CLAMP`).
+    pub hidden: bool,
+    /// pyro: the border box's origin with no CSS transform applied (document coordinates, as
+    /// `x`/`y`), when a transform on its containing-block chain moves it: `offsetLeft` and
+    /// `offsetTop` ignore transforms (CSSOM View; Chromium).
+    pub layout_origin: Option<[f64; 2]>,
+    /// pyro: a flex or grid container whose items paint with its painter's inline content, its own
+    /// box with the block backgrounds (blitz-dom `Node::items_in_phases`): hit testing orders its
+    /// items as the painter does.
+    pub items_in_phases: bool,
 }
 
 /// An element's `position`.
@@ -81,7 +92,8 @@ pub(crate) fn placement(doc: &BaseDocument, node: &blitz_dom::Node, scale: f64) 
         let [a, b, c, d, e, f] = t.as_coeffs();
         Affine::new([a, b, c, d, e / scale, f / scale])
     });
-    Affine::translate((location.x as f64, location.y as f64)) * own
+    let delta = node.anchor_scroll_offset();
+    Affine::translate((location.x as f64 + delta.x, location.y as f64 + delta.y)) * own
 }
 
 /// pyro: the move into its column of the box `chain[0]` in a multi-column container's strip:
@@ -94,12 +106,20 @@ fn column_shift(
     scale: f64,
 ) -> Affine {
     let last = chain.len() - 1;
-    let mut below = placement(doc, chain[last], scale);
-    for j in (0..last).rev() {
-        let scroll = chain[j + 1].scroll_offset();
-        below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
+    // The box's origin in the container's strip, through the columns of any multi-column
+    // container nested between them (where those show it: their rows lie in this strip).
+    let mut origin = kurbo::Point::ZERO;
+    for j in 0..last {
+        origin = placement(doc, chain[j], scale) * origin;
+        let parent = chain[j + 1];
+        if let Some(nested) = parent.column_fragments() {
+            let (x, y) = nested.shift_at(origin.y as f32);
+            origin += kurbo::Vec2::new(x as f64, y as f64);
+        }
+        let scroll = parent.scroll_offset();
+        origin -= kurbo::Vec2::new(scroll.x, scroll.y);
     }
-    let origin = below * kurbo::Point::ZERO;
+    let origin = placement(doc, chain[last], scale) * origin;
     let (x, y) = columns.shift_at(origin.y as f32);
     Affine::translate((x as f64, y as f64))
 }
@@ -208,6 +228,44 @@ impl Geometry {
         self.transform_and_planes(doc, id).map(|(t, fixed, _)| (t, fixed))
     }
 
+    /// pyro: the origin of `id`'s border box as its containing-block chain places it without
+    /// the CSS transforms on it (scroll offsets and column shifts kept), when one has a
+    /// transform. `None` when none has.
+    fn untransformed_origin(&self, doc: &BaseDocument, id: NodeId) -> Option<[f64; 2]> {
+        let mut chain = Vec::new();
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let node = doc.get_node(i)?;
+            chain.push(node);
+            cur = node.containing_block();
+        }
+        if !chain.iter().any(|node| node.transform().is_some()) {
+            return None;
+        }
+        let scale = doc.viewport().scale_f64();
+        let multicol = doc.has_multicol();
+        let mut t = Affine::IDENTITY;
+        let mut parent: Option<&blitz_dom::Node> = None;
+        for (index, &node) in chain.iter().enumerate().rev() {
+            let mut base = match parent {
+                Some(p) => {
+                    let scroll = p.scroll_offset();
+                    t * Affine::translate((-scroll.x, -scroll.y))
+                }
+                None => Affine::IDENTITY,
+            };
+            if let Some(columns) = parent.filter(|_| multicol).and_then(|p| p.column_fragments()) {
+                base *= column_shift(doc, columns, &chain[..=index], scale);
+            }
+            let location = doc.physical_unrounded_layout(node.id).location;
+            let delta = node.anchor_scroll_offset();
+            t = base * Affine::translate((location.x as f64 + delta.x, location.y as f64 + delta.y));
+            parent = Some(node);
+        }
+        let origin = t * kurbo::Point::ZERO;
+        Some([origin.x, origin.y])
+    }
+
     /// [`Self::transform`], and whether a plane on the chain is placed by its homography (drawn
     /// through a perspective, or in a context element placed so; then [`Self::projective`] places
     /// the box).
@@ -304,52 +362,116 @@ impl Geometry {
     /// column (document CSS px; Chromium's fragments, which `getClientRects` lists and hit
     /// testing tests one by one). `None` when no multi-column container shows it.
     pub(crate) fn columns_pieces(&self, doc: &BaseDocument, id: NodeId) -> Option<Vec<Rect>> {
+        self.column_rects(doc, id, false)
+    }
+
+    pub(crate) fn column_rects(&self, doc: &BaseDocument, id: NodeId, for_hit: bool) -> Option<Vec<Rect>> {
         if !doc.has_multicol() {
             return None;
         }
         let mut chain = vec![doc.get_node(id)?];
         let container = loop {
             let cb = doc.get_node(chain.last()?.containing_block()?)?;
-            if cb.column_fragments().is_some() {
+            if cb.columns_with_axes().is_some() {
                 break cb;
             }
             chain.push(cb);
         };
-        let columns = container.column_fragments()?;
         let scale = doc.viewport().scale_f64();
-        let last = chain.len() - 1;
-        let mut below = placement(doc, chain[last], scale);
-        for j in (0..last).rev() {
-            let scroll = chain[j + 1].scroll_offset();
-            below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
-        }
-        let l = doc.physical_unrounded_layout(id);
-        let strip = below.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
-        let (t, _) = self.transform(doc, container.id)?;
-        let scroll = container.scroll_offset();
-        let base = t * Affine::translate((-scroll.x, -scroll.y));
-        let mut out: Vec<(Rect, f64)> = Vec::new();
-        for f in &columns.fragments {
-            let (y0, y1) = (strip.y0.max(f.start as f64), strip.y1.min(f.end as f64));
-            let shows =
-                if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= f.start as f64 && strip.y0 < f.end as f64 };
-            if !shows {
-                continue;
+        // `chain` (leaf first, up to the container's child) places a box in the container's strip.
+        let to_strip = |chain: &[&blitz_dom::Node]| {
+            let last = chain.len() - 1;
+            let mut below = placement(doc, chain[last], scale);
+            for j in (0..last).rev() {
+                let scroll = chain[j + 1].scroll_offset();
+                below = below * Affine::translate((-scroll.x, -scroll.y)) * placement(doc, chain[j], scale);
             }
-            out.push((
-                base.transform_rect_bbox(
-                    Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64),
-                ),
-                y1 - y0,
-            ));
-        }
+            below
+        };
+        // A strip rectangle cut at the container's breaks, each piece where its column shows it
+        // (the container's coordinates), with its height in the strip.
+        let mut restricted = false;
+        let mut cut = |(columns, axes): (&blitz_dom::ColumnFragments, Affine), chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, Option<f64>)>| {
+            let begin = out.len();
+            let strip = axes.inverse().transform_rect_bbox(strip);
+            let child = chain.iter().find(|node| columns.first_after_spanner.contains_key(&node.id)).unwrap_or(&chain[0]).id;
+            let wrapper = chain.iter()
+                    .find(|node| columns.run_wrappers.contains(&node.id) || box_position(node) != BoxPosition::Static || node.is_stacking_context_root(false))
+                    .and_then(|node| columns.wrapper_initial_consumption.get(&node.id));
+            for f in &columns.fragments {
+                if f.spanner && columns.wrapper_initial_consumption.contains_key(&chain[0].id) {
+                    if !for_hit && out.is_empty() && strip.y0 >= f64::from(f.start) && strip.y0 < f64::from(f.end) {
+                        let top = strip.y0 + f64::from(f.offset.y);
+                        out.push((Rect::new(strip.x0, top, strip.x1, top), None));
+                    }
+                    continue;
+                }
+                let Some(start) = columns.child_start(child, f.start) else { continue };
+                let start = if for_hit && start < f.start {
+                    restricted = true;
+                    wrapper.map_or(start, |consumed| f.start.min(strip.y0 as f32 + consumed))
+                } else { start };
+                let (y0, y1) = (strip.y0.max(start as f64), strip.y1.min(f.end as f64));
+                let shows =
+                    if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= start as f64 && strip.y0 < f.end as f64 };
+                if shows {
+                    let mut piece = Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64);
+                    if y1 == f64::from(f.end) && columns.owner_spends_slot(chain[0].id, f.end) {
+                        piece.y1 = piece.y1.max(f64::from(f.top + f.height));
+                    }
+                    out.push((piece, (strip.height() > 0.0).then_some(y1 - y0)));
+                } else if !for_hit && f.start as f64 >= strip.y1 && columns.continuation_end(chain[0].id).is_some_and(|end| f.start < end) {
+                    let top = f64::from(f.top);
+                    let dx = f64::from(f.offset.x);
+                    out.push((Rect::new(strip.x0 + dx, top, strip.x1 + dx, top), None));
+                }
+            }
+            if axes != Affine::IDENTITY {
+                for (piece, _) in &mut out[begin..] { *piece = axes.transform_rect_bbox(*piece); }
+            }
+        };
+        let l = doc.physical_unrounded_layout(id);
+        let strip = to_strip(&chain).transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
+        let mut out = Vec::new();
+        cut(container.columns_with_axes()?, &chain, strip, &mut out);
         // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
         // position against the rounded break) is no fragment of it: a monolithic box a column
         // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
-        if out.iter().any(|&(_, height)| height >= 1.0) {
-            out.retain(|&(_, height)| height >= 1.0);
+        if out.iter().any(|&(_, height)| height.is_some_and(|height| height >= 1.0)) {
+            out.retain(|&(_, height)| height.is_none_or(|height| height >= 1.0));
         }
-        (!out.is_empty()).then(|| out.into_iter().map(|(rect, _)| rect).collect())
+        // pyro: a container nested in another's columns has its rows there too: the pieces are cut
+        // again at the outer container's breaks, out to the outermost one (as paint shows them).
+        let mut container = container;
+        loop {
+            let mut outer_chain = vec![container];
+            let outer = loop {
+                match outer_chain.last().and_then(|n| n.containing_block()).and_then(|cb| doc.get_node(cb)) {
+                    Some(cb) if cb.columns_with_axes().is_some() => break Some(cb),
+                    Some(cb) => outer_chain.push(cb),
+                    None => break None,
+                }
+            };
+            let Some(outer) = outer else { break };
+            let scroll = container.scroll_offset();
+            let into = to_strip(&outer_chain) * Affine::translate((-scroll.x, -scroll.y));
+            let columns = outer.columns_with_axes()?;
+            let mut next = Vec::new();
+            for (piece, height) in out {
+                let before = next.len();
+                cut(columns, &outer_chain, into.transform_rect_bbox(piece), &mut next);
+                for entry in &mut next[before..] {
+                    entry.1 = height;
+                }
+            }
+            out = next;
+            container = outer;
+        }
+        let (t, _) = self.transform(doc, container.id)?;
+        let scroll = container.scroll_offset();
+        let base = t * Affine::translate((-scroll.x, -scroll.y));
+        (restricted || if for_hit { out.len() > 1 } else { !out.is_empty() })
+            .then(|| out.into_iter().map(|(rect, _)| base.transform_rect_bbox(rect)).collect())
     }
 
     /// The box Blitz lays out for `id`, before the adjustments. A node that
@@ -379,15 +501,23 @@ impl Geometry {
         // overflow on its start side, from the padding box's end edge; one at the start, over
         // the overflow on its end side.
         let reversed = node.final_layout().scrollable_overflow_rect.is_reversed();
+        // pyro: classic scrollbars: the scrollport is the padding box less the scrollbar gutters.
+        let g = node.classic_scrollbars().map(|bars| bars.gutters);
+        let g = (
+            g.map_or(0.0, |g| g.left),
+            g.map_or(0.0, |g| g.right),
+            g.map_or(0.0, |g| g.top),
+            g.map_or(0.0, |g| g.bottom),
+        );
         let scroll_width = if reversed.x {
-            client_width.max((l.size.width - l.border.right) as f64 - o.x0)
+            client_width.max((l.size.width - l.border.right - g.1) as f64 - o.x0)
         } else {
-            client_width.max(o.x1 - l.border.left as f64)
+            client_width.max(o.x1 - (l.border.left + g.0) as f64)
         };
         let scroll_height = if reversed.y {
-            client_height.max((l.size.height - l.border.bottom) as f64 - o.y0)
+            client_height.max((l.size.height - l.border.bottom - g.3) as f64 - o.y0)
         } else {
-            client_height.max(o.y1 - l.border.top as f64)
+            client_height.max(o.y1 - (l.border.top + g.2) as f64)
         };
         Some(LayoutBox {
             x: rect.x0,
@@ -400,9 +530,14 @@ impl Geometry {
             scroll_height,
             scroll_reversed: [reversed.x, reversed.y],
             fixed,
-            border: [l.border.top, l.border.right, l.border.bottom, l.border.left].map(f64::from),
+            // pyro: with the classic scrollbar gutters at each edge (CSSOM `clientLeft`/`clientTop`
+            // include a left/top one: Chrome's 3px-border rtl scroller's clientLeft is 18).
+            border: [l.border.top + g.2, l.border.right + g.1, l.border.bottom + g.3, l.border.left + g.0].map(f64::from),
             padding: [l.padding.top, l.padding.right, l.padding.bottom, l.padding.left].map(f64::from),
             position: BoxPosition::Static,
+            hidden: hidden_by_clamp(doc, id),
+            layout_origin: None,
+            items_in_phases: false,
         })
     }
 
@@ -452,6 +587,9 @@ impl Geometry {
             border: b.border.map(unit),
             padding: b.padding.map(unit),
             position: box_position(doc.get_node(id)?),
+            hidden: b.hidden,
+            layout_origin: self.untransformed_origin(doc, id).map(|origin| origin.map(unit)),
+            items_in_phases: doc.get_node(id).is_some_and(|node| node.items_in_phases()),
         })
     }
 
@@ -587,7 +725,15 @@ impl Geometry {
                 });
             }
             // No fragment (an empty span among collapsed white space): a
-            // zero box at the content-box origin of the nearest box around it.
+            // zero box at the content-box origin of the nearest box around it,
+            // pyro: the anonymous block laying it out where there is one (an
+            // empty line between two blocks is where that block is).
+            if let Some(anon) = self.anonymous_inline_root(doc, id) {
+                if let Some(pb) = self.laid_out(doc, anon) {
+                    let (x, y) = (pb.x + pb.border[3] + pb.padding[3], pb.y + pb.border[0] + pb.padding[0]);
+                    return Some(LayoutBox { fixed: pb.fixed, ..LayoutBox::from_rect(Rect::new(x, y, x, y), pb.fixed) });
+                }
+            }
             let mut cur = doc.get_node(id).and_then(|n| n.parent);
             while let Some(p) = cur {
                 if self.in_layout_tree(doc, p) {
@@ -733,6 +879,26 @@ impl Geometry {
     /// Union of the fragments of inline element `id` in its inline root's
     /// text layout (see [`Geometry::inline_items`]), each grown by the
     /// element's block-axis border and padding: its border box.
+    /// pyro: the anonymous block that lays out inline element `id` (the first, for one split
+    /// around blocks), if `id` is not laid out by a DOM ancestor.
+    fn anonymous_inline_root(&self, doc: &BaseDocument, id: NodeId) -> Option<NodeId> {
+        let mut child = id;
+        let mut cur = doc.get_node(id)?.parent;
+        loop {
+            let n = doc.get_node(cur?)?;
+            if n.flags.is_inline_root() {
+                return None;
+            }
+            if let Some(anon) = n.anonymous_blocks.iter().copied().find(|&a| {
+                doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
+            }) {
+                return self.in_layout_tree(doc, anon).then_some(anon);
+            }
+            child = cur?;
+            cur = n.parent;
+        }
+    }
+
     fn inline_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
         let (top, bottom) = inline_block_growth(doc, id);
         let mut acc: Option<Rect> = None;
@@ -1052,18 +1218,24 @@ fn used_border(width: &style::values::computed::BorderSideWidth, style: style::v
 /// are then each rotated within their slot (see [`line_slot`]).
 pub(crate) fn line_box_origin(doc: &BaseDocument, id: NodeId, text: &blitz_dom::node::TextLayout) -> Affine {
     let l = doc.physical_unrounded_layout(id);
-    let (left, top) = ((l.border.left + l.padding.left) as f64, (l.border.top + l.padding.top) as f64);
+    // pyro: after the start-edge classic scrollbar gutters (`Node::content_box_origin`).
+    // pyro: inside the classic scrollbar gutters (`Node::gutter_insets`).
+    let (gl, gt, gr, gb) = doc.get_node(id).map_or((0.0, 0.0, 0.0, 0.0), |n| {
+        let g = n.gutter_insets();
+        (g.left, g.top, g.right, g.bottom)
+    });
+    let (left, top) = ((l.border.left + l.padding.left + gl) as f64, (l.border.top + l.padding.top + gt) as f64);
     let block_offset = text.block_offset as f64;
     match doc.get_node(id).and_then(|n| n.vertical_block_axis()) {
         None => Affine::translate((left, top + block_offset)),
         // `sideways-lr`: a quarter counterclockwise, up from the content box's bottom.
         Some(true) if sideways_lr(doc, id) => {
-            let bottom = (l.size.height - l.border.bottom - l.padding.bottom) as f64;
+            let bottom = (l.size.height - l.border.bottom - l.padding.bottom - gb) as f64;
             Affine::new([0.0, -1.0, 1.0, 0.0, left + block_offset, bottom])
         }
         Some(true) => Affine::new([0.0, 1.0, -1.0, 0.0, left + block_offset, top]),
         Some(false) => {
-            let right = (l.size.width - l.border.right - l.padding.right) as f64;
+            let right = (l.size.width - l.border.right - l.padding.right - gr) as f64;
             Affine::new([0.0, 1.0, -1.0, 0.0, right - block_offset, top])
         }
     }
@@ -1117,6 +1289,29 @@ pub struct TextWord {
 }
 
 impl Geometry {
+    pub(crate) fn overflowing_text_hits(&self, doc: &BaseDocument, id: NodeId, border: Rect) -> Vec<Rect> {
+        let Some(node) = doc.get_node(id) else { return Vec::new() };
+        if !node.children.iter().any(|&child| doc.get_node(child).is_some_and(|child| child.is_text_node())) {
+            return Vec::new();
+        }
+        let Some(style) = node.primary_styles() else { return Vec::new() };
+        let clips_x = style.clone_overflow_x() != style::values::computed::Overflow::Visible;
+        let clips_y = style.clone_overflow_y() != style::values::computed::Overflow::Visible;
+        if clips_x && clips_y { return Vec::new(); }
+        let mut words = Vec::new();
+        self.root_words(doc, id, &mut words);
+        for &root in &node.anonymous_blocks {
+            self.root_words(doc, root, &mut words);
+        }
+        words.into_iter().filter(|word| doc.get_node(word.node).is_some_and(|text| text.parent == Some(id)))
+            .filter_map(|word| {
+                let mut rect = Rect::new(word.x, word.y, word.x + word.width, word.y + word.height);
+                if clips_x { rect.x0 = rect.x0.max(border.x0); rect.x1 = rect.x1.min(border.x1); }
+                if clips_y { rect.y0 = rect.y0.max(border.y0); rect.y1 = rect.y1.min(border.y1); }
+                (rect.width() > 0.0 && rect.height() > 0.0 && rect.intersect(border) != rect).then_some(rect)
+            }).collect()
+    }
+
     /// Every word laid out in the document's inline formatting contexts, in
     /// layout order.
     pub(crate) fn text_words(&self, doc: &BaseDocument) -> Vec<TextWord> {
@@ -1188,8 +1383,13 @@ impl Geometry {
                 return;
             }
             let Some((t, fixed)) = self.transform(doc, id) else { return };
-            let origin = t * line_box_origin(doc, id, text);
+            let line_origin = line_box_origin(doc, id, text);
+            let origin = t * line_origin;
             let scale = text.layout.scale() as f64;
+            // pyro: lines in a multi-column container's columns, as their boxes are
+            // (`Geometry::line_rects`): words are where their columns show them (Range rects,
+            // caret positions).
+            let columns = line_column_shift(doc, id);
             // Per text node: the UTF-16 offset of each byte of its laid-out text.
             let offsets: Vec<Vec<u32>> = text
                 .text_nodes
@@ -1205,7 +1405,11 @@ impl Geometry {
             };
             for line in text.layout.lines() {
                 let m = line.metrics();
-                let origin = origin * line_slot(doc, id, m, scale);
+                let mut origin = origin * line_slot(doc, id, m, scale);
+                if let Some(shift) = &columns {
+                    let top = line_origin * kurbo::Point::new(0.0, m.block_min_coord as f64 / scale);
+                    origin = shift(top.y) * origin;
+                }
                 let (line_top, line_height) =
                     (m.block_min_coord as f64 / scale, (m.block_max_coord - m.block_min_coord) as f64 / scale);
                 for item in line.items() {
@@ -1249,7 +1453,7 @@ impl Geometry {
                         if blank || word.as_ref().is_some_and(|(i, _)| Some(*i) != at) {
                             flush(&mut word);
                         }
-                        if let (false, Some(i)) = (blank, at) {
+                        if let Some(i) = at.filter(|_| !cluster.is_hard_line_break()) {
                             let base = text.text_nodes[i].1.start;
                             let map = &offsets[i];
                             let offset = |b: usize| map[(b - base).min(map.len() - 1)];
@@ -1257,6 +1461,9 @@ impl Geometry {
                                 if cluster.is_rtl() { (range.end, range.start) } else { (range.start, range.end) };
                             let w = word.get_or_insert_with(|| (i, vec![(offset(start), x)]));
                             w.1.push((offset(end), x + advance));
+                            if blank {
+                                flush(&mut word);
+                            }
                         }
                         x += advance;
                     }
@@ -1523,4 +1730,17 @@ impl Homography {
         const LIMIT: f64 = 1e7;
         bounds.map(|b| Rect::new(b.x0.max(-LIMIT), b.y0.max(-LIMIT), b.x1.min(LIMIT), b.y1.min(LIMIT)))
     }
+}
+
+/// pyro: whether a line clamp discarded `id` or a box it is laid out in (blitz-dom
+/// `NodeFlags::HIDDEN_BY_CLAMP`).
+pub(crate) fn hidden_by_clamp(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
+    let mut current = doc.get_node(id);
+    while let Some(node) = current {
+        if node.flags.contains(blitz_dom::node::NodeFlags::HIDDEN_BY_CLAMP) {
+            return true;
+        }
+        current = node.layout_parent.get().and_then(|parent| doc.get_node(parent));
+    }
+    false
 }

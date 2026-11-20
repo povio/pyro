@@ -285,3 +285,46 @@ fn a_host_child_renders_under_one_slot() {
         assert!(keys_are_unique(&tree), "flags {flags}");
     }
 }
+
+/// A shadow host's light `<style>` children that no slot takes are rendered (in a synthetic slot),
+/// those a slot takes once, under it; the slots are looked up once per host, not once per style,
+/// so many styles beside a large shadow tree render in bounded time. Review cycle 4, finding 2.
+#[test]
+fn a_hosts_unassigned_styles_render_once_each_in_bounded_time() {
+    fn style_texts(tree: &RenderTree) -> Vec<&str> {
+        let styles: Vec<u32> = (0..tree.nodes.len() as u32)
+            .filter(|&i| matches!(&tree.nodes[i as usize].kind, RenderNodeKind::Element { name, .. } if &*name.local == "style"))
+            .collect();
+        tree.nodes
+            .iter()
+            .filter(|n| styles.contains(&n.parent))
+            .filter_map(|n| if let RenderNodeKind::Text(t) = &n.kind { Some(t.as_str()) } else { None })
+            .collect()
+    }
+    let (dom, d) = doc("<body><div id=host><style>.a{}</style><style slot=s>.b{}</style><style slot=x>.c{}</style></div></body>");
+    let host = find(&dom.borrow(), d, "#host");
+    {
+        let mut dom = dom.borrow_mut();
+        let sr = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+        let frag = parse_fragment(&mut dom, host, "<b>shadow</b><slot name=s></slot>").unwrap();
+        dom.append_child(sr, frag).unwrap();
+    }
+    let tree = dom.borrow().render_tree(d, &OPTS).unwrap();
+    let mut texts = style_texts(&tree);
+    texts.sort_unstable();
+    assert_eq!(texts, [".a{}", ".b{}", ".c{}"]);
+
+    let styles = "<style>.x{}</style>".repeat(5000);
+    let (dom, d) = doc(&format!("<body><div id=host>{styles}</div></body>"));
+    let host = find(&dom.borrow(), d, "#host");
+    {
+        let mut dom = dom.borrow_mut();
+        let sr = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+        let frag = parse_fragment(&mut dom, host, &"<i>s</i>".repeat(20000)).unwrap();
+        dom.append_child(sr, frag).unwrap();
+    }
+    let start = std::time::Instant::now();
+    let tree = dom.borrow().render_tree(d, &OPTS).unwrap();
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "took {:?}", start.elapsed());
+    assert_eq!(style_texts(&tree).len(), 5000);
+}

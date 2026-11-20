@@ -522,7 +522,7 @@ pub(crate) fn text_align(input: stylo::TextAlignKeyword) -> parley::Alignment {
         stylo::TextAlignKeyword::Left => parley::Alignment::Left,
         stylo::TextAlignKeyword::Right => parley::Alignment::Right,
         stylo::TextAlignKeyword::Center => parley::Alignment::Center,
-        stylo::TextAlignKeyword::Justify => parley::Alignment::Justify,
+        stylo::TextAlignKeyword::Justify | stylo::TextAlignKeyword::JustifyAll => parley::Alignment::Justify,
         stylo::TextAlignKeyword::End => parley::Alignment::End,
         stylo::TextAlignKeyword::MozCenter => parley::Alignment::Center,
         stylo::TextAlignKeyword::MozLeft => parley::Alignment::Left,
@@ -579,6 +579,11 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
                 DominantBaseline::TextTop => parley::AlignmentBaseline::TextOver,
                 DominantBaseline::TextBottom => parley::AlignmentBaseline::TextUnder,
                 DominantBaseline::Middle => parley::AlignmentBaseline::XMiddle,
+                DominantBaseline::Alphabetic => parley::AlignmentBaseline::Alphabetic,
+                DominantBaseline::Ideographic => parley::AlignmentBaseline::Ideographic,
+                DominantBaseline::Central => parley::AlignmentBaseline::Central,
+                DominantBaseline::Mathematical => parley::AlignmentBaseline::Mathematical,
+                DominantBaseline::Hanging => parley::AlignmentBaseline::Hanging,
                 _ => parley::AlignmentBaseline::Baseline,
             }
         }
@@ -588,6 +593,22 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
         stylo::AlignmentBaseline::TextTop => parley::AlignmentBaseline::TextOver,
         stylo::AlignmentBaseline::TextBottom => parley::AlignmentBaseline::TextUnder,
         stylo::AlignmentBaseline::Middle => parley::AlignmentBaseline::XMiddle,
+        stylo::AlignmentBaseline::Alphabetic => parley::AlignmentBaseline::Alphabetic,
+        stylo::AlignmentBaseline::Ideographic => parley::AlignmentBaseline::Ideographic,
+        stylo::AlignmentBaseline::Central => parley::AlignmentBaseline::Central,
+        stylo::AlignmentBaseline::Mathematical => parley::AlignmentBaseline::Mathematical,
+        stylo::AlignmentBaseline::Hanging => parley::AlignmentBaseline::Hanging,
+    };
+    // pyro: vertical lines of text that is not sideways align on the central baseline already
+    // (`inline::build`'s `central_baseline`): `central` aligns as `baseline` there, as `auto`
+    // does (WPT css-inline `dominant-baseline-auto` vertical-rl, expect-central).
+    let alignment = match alignment {
+        parley::AlignmentBaseline::Central
+            if style.writing_mode.is_vertical() && !style.writing_mode.is_sideways() =>
+        {
+            parley::AlignmentBaseline::Baseline
+        }
+        alignment => alignment,
     };
     let shift = match box_styles.get_baseline_shift() {
         stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Sub) => {
@@ -618,7 +639,10 @@ pub(crate) fn vertical_align(style: &stylo::ComputedValues) -> parley::VerticalA
                     stylo::LineHeight::Number(num) => font_size * num.0,
                     stylo::LineHeight::Length(value) => value.0.px(),
                 };
-                lp.resolve(Length::new(line_height)).px()
+                return parley::VerticalAlign::new(
+                    alignment,
+                    parley::BaselineShift::LineHeight(lp.resolve(Length::new(line_height)).px()),
+                );
             } else {
                 lp.resolve(Length::new(0.0)).px()
             };
@@ -719,11 +743,15 @@ pub(crate) fn style(
     let font_size = font_size * adjust;
     let vertical_align = self::vertical_align(style);
 
-    let letter_spacing = itext_styles
-        .letter_spacing
-        .0
-        .resolve(Length::new(font_size))
-        .px();
+    // pyro: combined text (`text-combine-upright: all`, the horizontal box Stylo makes of it in a
+    // vertical line) is composed without letter spacing (css-writing-modes-4 §9.1.1).
+    // (Stylo flags the box it made of it: the property does nothing to horizontal text.)
+    let combined = style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED);
+    let letter_spacing = if combined {
+        0.0
+    } else {
+        itext_styles.letter_spacing.0.resolve(Length::new(font_size)).px()
+    };
 
     let word_spacing = itext_styles
         .word_spacing
@@ -823,6 +851,21 @@ pub(crate) fn style(
         text_wrap_mode,
         white_space_collapse: white_space_collapse(itext_styles.white_space_collapse),
         dictionary_breaks,
+        // (Set where an inline element's span is built, `inline::build`.)
+        isolates: false,
+        // (Set where an inline element's span is built, `inline::build`.)
+        wrap_avoid_depth: 0,
+        full_width_space: style
+            .get_inherited_text()
+            .text_transform
+            .contains(style::values::specified::text::TextTransform::FULL_WIDTH),
+        hanging_punctuation: {
+            use style::values::computed::HangingPunctuation as H;
+            let value = itext_styles.hanging_punctuation;
+            (u8::from(value.contains(H::FORCE_END)) << 1)
+                | (u8::from(value.contains(H::ALLOW_END)) << 2)
+                | (u8::from(value.contains(H::LAST)) << 3)
+        },
         phrase_breaks: itext_styles.word_break == stylo::WordBreak::AutoPhrase,
         // pyro: `font-size-adjust` sets the size (a face's `size-adjust` is then not applied).
         font_size_adjusted: font_styles.font_size_adjust != style::values::computed::font::FontSizeAdjust::None,
@@ -839,16 +882,7 @@ pub(crate) fn style(
                 match (chars.next(), chars.next()) {
                     (None, _) => parley::SoftHyphen::Hidden,
                     (Some(ch), None) => parley::SoftHyphen::Char(ch),
-                    _ if string.chars().count() <= 4 => {
-                        let mut chars = ['\0'; 4];
-                        let mut len = 0;
-                        for ch in string.chars() {
-                            chars[len] = ch;
-                            len += 1;
-                        }
-                        parley::SoftHyphen::Chars(chars, len as u8)
-                    }
-                    _ => parley::SoftHyphen::Auto,
+                    _ => parley::SoftHyphen::Chars((&**string).into()),
                 }
             }
         },
@@ -864,6 +898,16 @@ pub(crate) fn style(
         upright: style.writing_mode.is_vertical()
             && !style.writing_mode.is_sideways()
             && style.writing_mode.contains(style::logical_geometry::WritingMode::UPRIGHT),
+        vertical: style.writing_mode.is_vertical() && !style.writing_mode.is_sideways(),
+        font_variant_emoji: {
+            use style::values::computed::font::FontVariantEmoji as E;
+            match font_styles.font_variant_emoji {
+                E::Normal => parley::FontVariantEmoji::Normal,
+                E::Text => parley::FontVariantEmoji::Text,
+                E::Emoji => parley::FontVariantEmoji::Emoji,
+                E::Unicode => parley::FontVariantEmoji::Unicode,
+            }
+        },
         text_justify: match itext_styles.text_justify {
             style::values::computed::TextJustify::Auto => parley::TextJustify::Auto,
             style::values::computed::TextJustify::None => parley::TextJustify::None,

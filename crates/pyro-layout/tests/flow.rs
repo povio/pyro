@@ -2780,9 +2780,9 @@ fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
         } else {
             p.layout.window_scroll_to(&p.dom, None, Some(pre));
         }
-        let before = (p.layout.scroll_y(), p.layout.scroll_top(s) as u32);
+        let before = (p.layout.scroll_y() as u32, p.layout.scroll_top(s) as u32);
         let moved = p.layout.scroll_into_view_if_needed_targets(&p.dom, t);
-        let after = (p.layout.scroll_y(), p.layout.scroll_top(s) as u32);
+        let after = (p.layout.scroll_y() as u32, p.layout.scroll_top(s) as u32);
         assert_eq!([after.0, after.1], [window, scroller], "{name}");
         assert_eq!(moved.is_empty(), before == after, "{name}: targets report exactly the moved scrollers");
     }
@@ -2816,7 +2816,7 @@ fn focus_scroll_is_unchanged_by_a_scroll_margin_that_cannot_matter() {
         let mut p = page(&html);
         let t = p.id("t");
         let moved = p.layout.reveal_for_focus(&p.dom, t);
-        assert_eq!([p.layout.scroll_x(), p.layout.scroll_y()], [0, window_y], "{name}");
+        assert_eq!([p.layout.scroll_x() as u32, p.layout.scroll_y() as u32], [0, window_y], "{name}");
         assert_eq!(moved.is_empty(), window_y == 0, "{name}: targets report exactly the moved scrollers");
     }
     // Inside an overflow container: the 200px scroller's box at 100..150 is visible; at 400 it is centred.
@@ -3837,6 +3837,20 @@ fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
     p.dom.remove_child(sc, i6).unwrap();
     style(&mut p, "i2", "height:150px");
     assert_eq!(settle_top(&mut p), 350, "anchor removed with growth: Chromium 350");
+}
+
+#[test]
+fn text_range_and_hit_test_share_fractional_cluster_edges() {
+    let page = page("<body style='margin:0'><div id=p dir=rtl style='font:16px Arial;letter-spacing:.4px;transform:translateX(10.4px)'>שָׁלוֹם שָׁלוֹם</div>");
+    let element = page.id("p");
+    let text = page.dom.first_child(element).unwrap().unwrap();
+    let range = |start, end| page.layout.text_range_rect(&page.dom, text, start, end).unwrap();
+    let cluster = range(0, 1);
+    assert_eq!(cluster, range(1, 3));
+    assert!(cluster.width > 0.0 && cluster.width < 20.0);
+    let space = range(7, 8);
+    assert!(space.width > 0.0 && space.right() < cluster.left());
+    assert_eq!(page.layout.caret_from_point(&page.dom, element, cluster.left() + 0.1, cluster.top() + 5.0, &|_| true).unwrap().1, 3);
 }
 
 #[test]
@@ -4883,6 +4897,19 @@ fn review_misc2_deep_nesting_of_each_algorithm_on_a_browser_thread_stack() {
         .unwrap()
         .join()
         .expect("no stack overflow");
+}
+
+#[test]
+fn visible_text_overflow_hits_its_owner_without_widening_the_border_box() {
+    for (overflow, hits_text) in [("visible", true), ("hidden", false)] {
+        let document = page(&format!("<body style='margin:0'><div id=leaf style='width:0;white-space:nowrap;overflow:{overflow}'>deep</div>"));
+        let leaf = document.id("leaf");
+        assert_eq!(document.layout.bounding_client_rect(&document.dom, leaf).width, 0.0);
+        for hit in [Layout::element_from_point, Layout::element_from_point_scan, Layout::element_from_point_indexed] {
+            assert_eq!(hit(&document.layout, &document.dom, 5.0, 8.0) == Some(leaf), hits_text, "{overflow}");
+            assert_ne!(hit(&document.layout, &document.dom, 40.0, 8.0), Some(leaf));
+        }
+    }
 }
 
 #[test]

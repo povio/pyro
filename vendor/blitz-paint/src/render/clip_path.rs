@@ -28,7 +28,7 @@ pub(super) enum ElementClip {
     /// an isolated layer, and the region is drawn into it with `DestIn`.
     #[cfg(feature = "svg")]
     Svg {
-        tree: std::sync::Arc<anyrender_svg::usvg::Tree>,
+        tree: std::sync::Arc<blitz_dom::node::SvgTree>,
         transform: Affine,
     },
 }
@@ -159,7 +159,14 @@ impl ElementCx<'_, '_> {
             #[cfg(not(feature = "svg"))]
             ClipPath::Url(_) => None,
             ClipPath::Shape(basic_shape, geometry_box) => {
+                // pyro: grown to the box as laid out only for a shape with percentages, which
+                // resolve against it: lengths alone (`inset(2px)`) stay on the painted box's edges.
                 let reference = self.reference_box(geometry_box);
+                let reference = if shape_has_percentage(basic_shape) {
+                    self.unrounded_size(reference)
+                } else {
+                    reference
+                };
                 if !(reference.width() >= 0.0 && reference.height() >= 0.0) {
                     return Some(ElementClip::Nothing);
                 }
@@ -193,6 +200,19 @@ impl ElementCx<'_, '_> {
             }
         };
         scale_rect(device, 1.0 / self.scale)
+    }
+
+    /// pyro: `reference` (CSS px) grown by what rounding the box to whole pixels took off its size
+    /// (its unrounded size less its painted one): a shape's percentages resolve against the box as
+    /// laid out, as Chromium's do (its layout units; WPT css-masking
+    /// `clip-path-interpolation-shape-arc-direction-agnostic-radius`, a 353.546875 px box).
+    fn unrounded_size(&self, reference: Rect) -> Rect {
+        let (unrounded, painted) = (self.node.unrounded_layout().size, self.node.final_layout().size);
+        let (dw, dh) = (f64::from(unrounded.width - painted.width), f64::from(unrounded.height - painted.height));
+        if !(dw.abs() < 1.0 && dh.abs() < 1.0) || self.node.final_layout().size.width <= 0.0 {
+            return reference;
+        }
+        Rect::new(reference.x0, reference.y0, reference.x1 + dw, reference.y1 + dh)
     }
 
     /// The margin box, in CSS px from the border box's origin.
@@ -362,10 +382,13 @@ impl ElementCx<'_, '_> {
                 let right = resolve_lp(&inset_rect.rect.1, w);
                 let bottom = resolve_lp(&inset_rect.rect.2, h);
                 let left = resolve_lp(&inset_rect.rect.3, w);
-                let rect = Rect::new(ox + left, oy + top, ox + w - right, oy + h - bottom);
-                if !(rect.x1 > rect.x0 && rect.y1 > rect.y0) {
+                let unit = |value: f64| (value * 64.0).round() / 64.0;
+                let width = unit(w - left - right);
+                let height = unit(h - top - bottom);
+                if !(width > 0.0 && height > 0.0) {
                     return ElementClip::Nothing;
                 }
+                let rect = Rect::from_origin_size((ox + unit(left), oy + unit(top)), (width, height));
                 // `round`: corner radii as `border-radius` gives them, percentages of the
                 // reference box, shrunk together when they overlap.
                 let radii = resolve_radii(&inset_rect.round, w, h);
@@ -632,10 +655,17 @@ pub(super) mod svg_reference {
     /// pyro: the SVG document a `url()` names an element of, when it is another document that
     /// the element has loaded (`images`: its `reference_images`, or its `mask_images`), with the
     /// element's id: `clip-path: url(shapes.svg#clip)`, a `data:` URL too.
+    /// pyro: whether the document `url` names (another document's element) is still loading.
+    pub(crate) fn external_loading(images: &[Option<blitz_dom::node::ImageResourceData>], url: &ComputedUrl) -> bool {
+        use blitz_dom::node::Status;
+        let Some(url) = url.url() else { return false };
+        images.iter().flatten().any(|image| *image.url == **url && image.status == Status::Loading)
+    }
+
     pub(crate) fn external_reference(
         images: &[Option<blitz_dom::node::ImageResourceData>],
         url: &ComputedUrl,
-    ) -> Option<(std::sync::Arc<[u8]>, String)> {
+    ) -> Option<(std::sync::Arc<blitz_dom::util::SvgSource<[u8]>>, String)> {
         use blitz_dom::node::{ImageData, Status};
         let url = url.url()?;
         let fragment = url.fragment()?;
@@ -855,7 +885,7 @@ impl ElementCx<'_, '_> {
         let dom = self.context.dom;
         // pyro: a `<clipPath>` of this document, or of another one the element has loaded
         // (`url(shapes.svg#clip)`).
-        let mut external: Option<std::sync::Arc<[u8]>> = None;
+        let mut external: Option<std::sync::Arc<blitz_dom::util::SvgSource<[u8]>>> = None;
         let (target, id, object_bounding_box) = match local_reference(dom, url) {
             Some(target) => {
                 let node = dom.get_node(target)?;
@@ -869,6 +899,11 @@ impl ElementCx<'_, '_> {
                 (Some(target), node.attr(blitz_dom::local_name!("id"))?.to_string(), units)
             }
             None => {
+                // pyro: another document's `<clipPath>` still loading clips everything (an empty
+                // path, as Chromium has it; WPT css-masking `clip-path-url-reference-empty-while-loading`).
+                if external_loading(&self.element.reference_images, url) {
+                    return Some(ElementClip::Nothing);
+                }
                 let (source, id) = external_reference(&self.element.reference_images, url)?;
                 let (name, units) = blitz_dom::node::svg_source_element(&source, &id, "clipPathUnits")?;
                 if name != "clipPath" {
@@ -897,7 +932,7 @@ impl ElementCx<'_, '_> {
         let (width, height) = ((painter.width as f64 * to_user) as f32, (painter.height as f64 * to_user) as f32);
         let svg = match target {
             Some(target) => dom.svg_reference_document(target, &content, width, height)?,
-            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref().unwrap_or_default(), &content, width, height)?,
+            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref()?, &content, width, height, &dom.raster_budget)?,
         };
         let user = Affine::scale(zoom);
         // usvg leaves out a shape whose clip path is empty or invalid: it clips everything.
@@ -948,9 +983,12 @@ impl ElementCx<'_, '_> {
         use style::values::computed::basic_shape::ClipPath as StyloClipPath;
         use style::values::generics::image::GenericImage;
 
-        if INLINE_EFFECTS.get() || self.node.vertical_block_axis().is_some() {
+        if INLINE_EFFECTS.get() {
             return false;
         }
+        // pyro: a vertical layout's lines each have their transform (`vertical_line_transform`):
+        // the fragments are placed in this element's space through them.
+        let vertical = self.node.vertical_block_axis();
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else {
             return false;
         };
@@ -970,6 +1008,8 @@ impl ElementCx<'_, '_> {
         let has_effect = |id: blitz_dom::NodeId| {
             dom.get_node(id)
                 .filter(|node| node.element_data().is_some())
+                // pyro: one painted at its entry in the paint tree (blitz-dom `effect_entry`).
+                .filter(|node| !node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
                 .and_then(|node| node.primary_styles())
                 // pyro: a `display: contents` element has no box to clip, mask or fade.
                 .filter(|style| !style.clone_display().is_contents())
@@ -984,11 +1024,13 @@ impl ElementCx<'_, '_> {
                         || (!recording
                             && (style.get_effects().opacity < 1.0
                                 || !style.get_effects().backdrop_filter.0.is_empty()
-                                || inline_filter(dom, &style, self.scale).is_some())
+                                || inline_filter(dom, &style, self.scale).is_some()
+                                || dom.get_node(id).is_some_and(|node| has_layered_filter(dom, node, &style)))
                             && paints_alone(dom, root, id))
                 })
         };
         let mut effects: Vec<blitz_dom::NodeId> = Vec::new();
+        if self.capture_budget.is_some_and(|budget| !budget.take(styles.len().saturating_mul(styles.len()))) { return true; }
         for style in styles {
             let id = style.brush.id;
             if id != root && !effects.contains(&id) && has_effect(id) {
@@ -996,6 +1038,34 @@ impl ElementCx<'_, '_> {
             }
         }
         if effects.is_empty() {
+            return false;
+        }
+        if let Some(budget) = self.capture_budget {
+            let simple = effects.len() == 1 && layout.len() <= 16 && effects.iter().all(|&id| {
+                dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                    matches!(style.get_clip_path(), StyloClipPath::None)
+                        && style.get_effects().filter.0.is_empty()
+                        && style.get_effects().backdrop_filter.0.is_empty()
+                        && style.get_effects().box_shadow.0.is_empty()
+                        && style.get_svg().mask_image.0.iter().all(|image| matches!(image, GenericImage::None))
+                })
+            });
+            if !simple || !budget.take(layout.len().saturating_pow(3)) || !layout.lines().all(|line| {
+                budget.take(line.len().saturating_mul(styles.len().saturating_add(1)))
+            }) {
+                budget.exhausted.set(true);
+                return true;
+            }
+        }
+        // pyro: a mask over vertical fragments (its strip is laid out horizontally) is not done:
+        // such a layout paints plainly, as before.
+        if vertical.is_some()
+            && effects.iter().any(|&id| {
+                dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                    style.get_svg().mask_image.0.iter().any(|image| !matches!(image, GenericImage::None))
+                })
+            })
+        {
             return false;
         }
         // The outermost ones: an inner one is painted with its ancestor.
@@ -1017,16 +1087,22 @@ impl ElementCx<'_, '_> {
             (pos.x + subpixel.x as f64) * self.scale,
             (pos.y + subpixel.y as f64 + text_layout.block_offset as f64) * self.scale,
         );
-        let transform = self.transform * Affine::translate(origin);
-        let (text_shift, tops) = self.text_placement(text_layout.block_offset as f64);
-        let visible = self.visible_area() - origin;
+        let line_transform = vertical.map(|block_lr| self.vertical_line_transform(text_layout, pos, block_lr));
+        let (transform, (text_shift, tops), visible) = match vertical {
+            Some(_) => (self.transform, (0.0, None), self.visible_area()),
+            None => (
+                self.transform * Affine::translate(origin),
+                self.text_placement(text_layout.block_offset as f64),
+                self.visible_area() - origin,
+            ),
+        };
 
         // Each element's fragments, line by line.
         let scale = self.scale as f32;
         let length = |v: &LengthPercentage| v.resolve(CSSPixelLength::new(0.0)).px();
         let mut fragments: Vec<Vec<InlineFragment>> = vec![Vec::new(); effects.len()];
         let mut chain: Vec<(blitz_dom::NodeId, u16)> = Vec::new();
-        for line in layout.lines() {
+        for (line_index, line) in layout.lines().enumerate() {
             let metrics = line.metrics();
             // pyro: from the line's start, past the floats before it (`inline_box_fragments`).
             let content_end =
@@ -1127,7 +1203,7 @@ impl ElementCx<'_, '_> {
                 let outline = style.get_outline();
                 let mut reach = match outline.outline_style {
                     style::values::computed::OutlineStyle::BorderStyle(line) if line.none_or_hidden() => 0.0,
-                    _ => outline.outline_width.0.to_f64_px() + outline.outline_offset.to_f64_px().max(0.0),
+                    _ => outline.outline_width.0.to_f64_px() + outline.outline_offset.px(outline.outline_width.0.to_f64_px()).max(0.0),
                 };
                 for shadow in style.get_effects().box_shadow.0.iter().filter(|shadow| !shadow.inset) {
                     let offset = (shadow.base.horizontal.px() as f64).abs().max((shadow.base.vertical.px() as f64).abs());
@@ -1148,7 +1224,7 @@ impl ElementCx<'_, '_> {
                 // border and let a sliver of what lies under it through (WPT
                 // `backdrop-filter-inline-positioning`).
                 let [a, b, c, d, tx, ty] = transform.as_coeffs();
-                let area = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 {
+                let area = if a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 && line_transform.is_none() {
                     let snap = |v: f64, t: f64| ((t + v) / self.scale).round() * self.scale - t;
                     let snapped = Rect::new(
                         snap(border_box.x0, tx),
@@ -1165,6 +1241,14 @@ impl ElementCx<'_, '_> {
                     )
                 } else {
                     area
+                };
+                // pyro: a vertical line's, in this element's space.
+                let (border_box, area) = match &line_transform {
+                    Some(line_transform) => {
+                        let to_element = self.transform.inverse() * line_transform(line_index);
+                        (to_element.transform_rect_bbox(border_box), to_element.transform_rect_bbox(area))
+                    }
+                    None => (border_box, area),
                 };
                 fragments[slot].push(InlineFragment { border_box, area });
             }
@@ -1194,11 +1278,14 @@ impl ElementCx<'_, '_> {
         // (`RunFilter`): drawing every run of the layout clipped to the areas made a paragraph's
         // cost grow with its faded spans times its length.
         let text = &self.context.draw_text_context;
+        // (Not over vertical lines, whose areas are in this element's space, not the layout's.)
         let set_filter = |areas: Option<Vec<Rect>>| {
+            let areas = areas.filter(|_| vertical.is_none());
             text.borrow_mut().run_filter = areas.map(|areas| crate::text::RunFilter { root, areas });
         };
 
         INLINE_EFFECTS.set(true);
+        super::BAND_REACH.with(|cell| cell.set((usize::MAX, 0, 0.0)));
         // The layout without the elements' areas.
         // pyro: cut into pieces that do not overlap, inside the visible area: where two areas
         // overlapped (lines closer than their content is tall) the even-odd rule counted them
@@ -1208,7 +1295,11 @@ impl ElementCx<'_, '_> {
         // faded span 8% more instructions.
         let mut layout = anyrender::Scene::new();
         let recorded = text.borrow().runs.as_ref().map(Vec::len);
-        self.draw_inline_layout(&mut layout, pos);
+        if let Some(budget) = self.capture_budget {
+            self.draw_inline_layout(&mut crate::capture::Recording(&mut layout, budget), pos);
+        } else {
+            self.draw_inline_layout(&mut layout, pos);
+        }
         let mut appended = false;
         if let Some(ink) = crate::bounds::scene_bounds(&layout.commands)
             && transform.determinant().abs() > 1e-12
@@ -1247,7 +1338,12 @@ impl ElementCx<'_, '_> {
             let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
             let single = fragments.len() == 1;
             // The first fragment has the start side, the last the end side (`slice`).
-            let (has_left, has_right) = if rtl { (single, true) } else { (true, single) };
+            let (has_left, has_right) = match (vertical, rtl) {
+                // (Vertical fragments break on their top and bottom.)
+                (Some(_), _) => (true, true),
+                (None, true) => (single, true),
+                (None, false) => (true, single),
+            };
             let edges = |left: bool, right: bool| {
                 (
                     taffy::Rect {
@@ -1312,11 +1408,15 @@ impl ElementCx<'_, '_> {
             // pyro: and its filter, over its fragments as one group too (WPT filter-effects
             // `effect-reference-on-span`).
             let filter = alone.then(|| node.primary_styles()).flatten().and_then(|style| inline_filter(dom, &style, self.scale));
-            let faded = (opacity < 1.0 || filter.is_some()) && alone;
             let areas = path_of(&mut pieces.iter().flatten());
-            if faded {
-                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
-            }
+            // pyro: a filter that moves or spreads what it filters, or an SVG filter graph
+            // ([`layered_filter`]), as `render_element` paints one (`paint_filter_steps`): its
+            // fragments in a group, in the user space of their border boxes' union (its bounding
+            // box), the filter reading past them, and a graph's filter region painted whatever they
+            // hold (WPT filter-effects `empty-element-with-filter-003`: an empty `<span>` filtered
+            // by a flood; `blur-text`), under its clip path (a clip of what the filter made, as CSS
+            // Masking orders them). Not with a mask, painted below.
+            #[cfg(feature = "svg")]
             let box_layout = |rect: Rect, (border, padding): (taffy::Rect<f32>, taffy::Rect<f32>)| taffy::Layout {
                 size: taffy::Size {
                     width: (rect.width() / self.scale) as f32,
@@ -1326,6 +1426,53 @@ impl ElementCx<'_, '_> {
                 padding,
                 ..taffy::Layout::new()
             };
+            if alone && !has_mask {
+                let bounds = fragments.iter().fold(first.border_box, |bounds, fragment| bounds.union(fragment.border_box));
+                let steps = node.primary_styles().and_then(|style| {
+                    let size = ((bounds.width() / self.scale) as f32, (bounds.height() / self.scale) as f32);
+                    layered_filter(dom, node, &style, self.scale, size)
+                });
+                if let Some(steps) = steps {
+                    let mut group = anyrender::Scene::new();
+                    if !pieces.iter().all(Vec::is_empty) {
+                        set_filter(Some(pieces.iter().flatten().copied().collect()));
+                        group.push_clip_layer(Fill::NonZero, transform, &areas);
+                        self.draw_inline_layout(&mut group, pos);
+                        group.pop_layer();
+                        set_filter(None);
+                    }
+                    let painter = self.context;
+                    let viewport = Rect::new(0.0, 0.0, painter.width as f64, painter.height as f64);
+                    // pyro: its clip path, against its first fragment's border box (as below).
+                    let first_transform = transform * Affine::translate(first.border_box.origin().to_vec2());
+                    let first_cx =
+                        self.context.element_cx(node, box_layout(first.border_box, first_edges), first_transform, None);
+                    let clip = first_cx.element_clip();
+                    let first_visible = visible - first.border_box.origin().to_vec2();
+                    with_element_clip(scene, clip.as_ref(), first_transform, self.scale, first_visible, |scene| {
+                        painter.paint_filter_steps(
+                            scene,
+                            group,
+                            super::EffectLayer {
+                                transform,
+                                visible: viewport,
+                                border_box: bounds,
+                                opacity,
+                                filter: None,
+                                backdrop_filter: None,
+                                backdrop_clip: None,
+                                steps: None,
+                            },
+                            steps,
+                        );
+                    });
+                    continue;
+                }
+            }
+            let faded = (opacity < 1.0 || filter.is_some()) && alone;
+            if faded {
+                scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), opacity, transform, &areas, filter, None);
+            }
 
             // The clip path, against the first fragment's border box.
             let first_transform = transform * Affine::translate(first.border_box.origin().to_vec2());
@@ -1387,6 +1534,70 @@ impl ElementCx<'_, '_> {
     }
 }
 
+impl ElementCx<'_, '_> {
+    /// pyro: `paint` under the clip path of the inline element `span` (not atomic), against its
+    /// first fragment's border box as its fragments are clipped (`draw_inline_effects`): the
+    /// out-of-flow boxes it keeps in its stacking context are cut by it too (CSS Masking 1: a clip
+    /// path clips the element's descendants).
+    pub(super) fn with_inline_clip_path<S: PaintScene>(&self, scene: &mut S, span: blitz_dom::NodeId, paint: impl FnOnce(&mut S)) {
+        use style::values::computed::basic_shape::ClipPath as StyloClipPath;
+        let dom = self.context.dom;
+        let Some(node) = dom.get_node(span) else { return paint(scene) };
+        if node.primary_styles().is_none_or(|style| matches!(style.get_clip_path(), StyloClipPath::None)) {
+            return paint(scene);
+        }
+        let Some(mut first) = dom.inline_fragment_rects(span).and_then(|mut rects| rects.next()) else { return paint(scene) };
+        // pyro: the fragment's border box, which its block-axis padding and borders reach past its
+        // content area by (they are not in the line's height, but the box is painted with them;
+        // WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
+        if self.node.vertical_block_axis().is_none()
+            && let Some(style) = node.primary_styles()
+        {
+            let basis = CSSPixelLength::new(self.node.final_layout().size.width);
+            let padding = style.get_padding();
+            let border = style.get_border();
+            let width = |style: style::values::computed::BorderStyle, width: &style::values::computed::BorderSideWidth| {
+                if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() as f64 }
+            };
+            let top = padding.padding_top.0.resolve(basis).px() as f64 + width(border.border_top_style, &border.border_top_width);
+            let bottom =
+                padding.padding_bottom.0.resolve(basis).px() as f64 + width(border.border_bottom_style, &border.border_bottom_width);
+            first.y -= top;
+            first.height += top + bottom;
+        }
+        let scale = self.scale;
+        // (Fragment rects are viewport-relative CSS px: the scene's device space, scaled.)
+        let first_transform = Affine::translate((first.x * scale, first.y * scale));
+        let layout = taffy::Layout {
+            size: taffy::Size { width: first.width as f32, height: first.height as f32 },
+            ..taffy::Layout::new()
+        };
+        let span_cx = self.context.element_cx(node, layout, first_transform, None);
+        let clip = span_cx.element_clip();
+        let visible = Rect::new(-1e7, -1e7, 1e7, 1e7);
+        with_element_clip(scene, clip.as_ref(), first_transform, scale, visible, paint);
+    }
+}
+
+/// pyro: whether the inline element `id` keeps out-of-flow boxes in its stacking context
+/// (blitz-dom `restore_out_of_flow_stacking_owners`).
+pub(crate) fn owns_hoisted(dom: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
+    dom.get_node(id).and_then(|node| node.stacking_context.as_ref()).is_some_and(|sc| {
+        !sc.children.is_empty() || sc.positioned_level().next().is_some()
+    })
+}
+
+/// pyro: the out-of-flow boxes the inline element `id` keeps, in paint order: negative `z-index`,
+/// none, then positive.
+pub(crate) fn owned_hoisted(dom: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> Vec<blitz_dom::HoistedPaintChild> {
+    let Some(sc) = dom.get_node(id).and_then(|node| node.stacking_context.as_ref()) else { return Vec::new() };
+    sc.neg_z_hoisted_children()
+        .chain(sc.positioned_level())
+        .chain(sc.pos_z_hoisted_children())
+        .cloned()
+        .collect()
+}
+
 /// pyro: the filter an inline element (not atomic) with style `style` paints its fragments through:
 /// one that moves nothing out of them (colour functions and colour-matrix SVG filters), else
 /// `None` (left unpainted, as before).
@@ -1401,6 +1612,44 @@ fn inline_filter(
     }
     let filter = crate::filters::convert_filters(list, scale, &style.clone_color(), dom)?;
     (crate::layers::filter_reach(&filter, Affine::IDENTITY) == Rect::ZERO).then(|| std::sync::Arc::new(filter))
+}
+
+/// pyro: the `filter` list of the inline element `node` (of style `style`) as the layers
+/// `paint_filter_steps` paints when [`inline_filter`] cannot: an SVG filter graph (`url()` of a
+/// `<filter>` that is no colour chain, `filters::filter_steps`), or functions that move or spread
+/// what they filter (`blur()`, `drop-shadow()`) as one chain. `size`: the element's bounding box
+/// (CSS px), which a graph's `objectBoundingBox` units are relative to.
+#[cfg(feature = "svg")]
+fn layered_filter(
+    dom: &blitz_dom::BaseDocument,
+    node: &blitz_dom::Node,
+    style: &style::properties::ComputedValues,
+    scale: f64,
+    size: (f32, f32),
+) -> Option<Vec<crate::filters::FilterStep>> {
+    let list = &style.get_effects().filter.0;
+    if list.is_empty() {
+        return None;
+    }
+    let current_color = style.clone_color();
+    let references = node.element_data().map_or(&[][..], |element| &element.reference_images[..]);
+    if let Some(steps) = crate::filters::filter_steps(list, scale, &current_color, dom, size, references, false) {
+        return Some(steps);
+    }
+    let filter = crate::filters::convert_filters(list, scale, &current_color, dom)?;
+    (crate::layers::filter_reach(&filter, Affine::IDENTITY) != Rect::ZERO)
+        .then(|| vec![crate::filters::FilterStep::Chain(std::sync::Arc::new(filter))])
+}
+
+/// pyro: whether [`layered_filter`] has layers for the inline element `node`.
+fn has_layered_filter(dom: &blitz_dom::BaseDocument, node: &blitz_dom::Node, style: &style::properties::ComputedValues) -> bool {
+    #[cfg(feature = "svg")]
+    return layered_filter(dom, node, style, 1.0, (1.0, 1.0)).is_some();
+    #[cfg(not(feature = "svg"))]
+    {
+        let _ = (dom, node, style);
+        false
+    }
 }
 
 /// pyro: rectangles covering what `rects` cover, no two of which overlap (empty ones left out).
@@ -1474,4 +1723,20 @@ fn paints_alone(dom: &blitz_dom::BaseDocument, root: blitz_dom::NodeId, id: blit
         ancestor = node.parent;
     }
     true
+}
+
+/// pyro: whether a basic shape may resolve a percentage against its reference box: an `inset()`
+/// of lengths alone does not; the other shapes are taken to.
+fn shape_has_percentage(shape: &BasicShape) -> bool {
+    match shape {
+        GenericBasicShape::Rect(inset) => {
+            let r = &inset.rect;
+            let round = &inset.round;
+            [&r.0, &r.1, &r.2, &r.3].iter().any(|lp| lp.has_percentage())
+                || [&round.top_left, &round.top_right, &round.bottom_right, &round.bottom_left]
+                    .iter()
+                    .any(|corner| corner.0.width.0.has_percentage() || corner.0.height.0.has_percentage())
+        }
+        _ => true,
+    }
 }

@@ -263,7 +263,8 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             status: 200,
             mime: "text/html".into(),
             charset: None,
-            body: b"<iframe></iframe><script>globalThis.late=true</script>".to_vec(),
+            body: b"<iframe></iframe><script>globalThis.late=true</script>".to_vec().into(),
+            immutable_local: false,
             content_disposition: None,
             header_csp: None,
             refresh: None,
@@ -272,7 +273,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             sent_referrer: None,
             timing: None,
             partial: None,
-                nosniff: false,
+                nosniff: false, opaque: false,
         }),
     );
     settle(&mut t);
@@ -982,4 +983,72 @@ fn first_same_origin_document_reuses_the_initial_window() {
         eval(&root, "f.contentDocument.getElementById('n').textContent + ' ' + String(w.marker)"),
         "next undefined"
     );
+}
+
+/// A frame document is given to the renderer at its own base URL (its `<base href>`), as the top
+/// document's capture is (security review cycle 5, 5).
+#[test]
+fn a_frame_document_is_rendered_at_its_own_base_url() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<base href=\"http://other.test/dir/\"><p>x</p>'; document.body.appendChild(f); 'ok'");
+    settle(&mut t);
+    let p = t.browser.page(page).unwrap();
+    p.update_frame_documents();
+    let dom = p.main_frame.page_dom.clone().unwrap();
+    let table = dom.dom.borrow().frame_table(dom.document());
+    let urls: Vec<String> = table.entries.iter().map(|(_, e)| e.url.clone()).collect();
+    assert_eq!(urls, vec!["http://other.test/dir/".to_string()]);
+}
+
+/// A render snapshot of the top document in markup form (the `capture_only` snapshot), rendered
+/// as a fresh document, paints a scrolled page's `position: sticky` box where the page holds it:
+/// the shift travels in its `data-pyro-sticky` attribute, which the renderer applies (the
+/// renderer lays sticky boxes out as static). Chrome: scrolled 100px, the box's top is 0. (Cycle
+/// 8b: the old top-document path took scroll offsets only and painted it 50px above the
+/// viewport.)
+#[test]
+fn a_markup_snapshot_paints_a_stuck_sticky_box_where_the_page_holds_it() {
+    struct NoFetch;
+    impl pyro_render::Fetcher for NoFetch {
+        fn fetch(&self, _url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            done(Err("none".into()));
+        }
+    }
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "document.body.style.margin = '0'; document.body.innerHTML = \"<div style='height:50px'></div>\
+         <div id=s style='position:sticky;top:0;height:20px;background:rgb(0,128,0)'></div>\
+         <div style='height:2000px;background:rgb(0,0,255)'></div>\"; scrollTo(0, 100); 'ok'",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "[scrollY, document.getElementById('s').getBoundingClientRect().top].join()"), "100,0");
+    let dom = t.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    let s = dom.render_snapshot("about:blank", None);
+    assert!(s.html.contains(&format!("data-pyro-{}-sticky", s.nonce)), "{}", s.html);
+    let snapshot = pyro_render::Snapshot {
+        html: s.html,
+        base_url: "about:blank".into(),
+        sheets: s.sheets,
+        width: s.width,
+        height: s.height,
+        device_scale_factor: 1.0,
+        scroll_x: s.scroll_x,
+        scroll_y: s.scroll_y,
+        // (The nonce its engine attributes are named with, as a `capture_only` snapshot carries it.)
+        frames: std::sync::Arc::new(pyro_render::FrameTableData { nonce: s.nonce, entries: Default::default() }),
+        ..Default::default()
+    };
+    let fetcher: std::sync::Arc<dyn pyro_render::Fetcher> = std::sync::Arc::new(NoFetch);
+    let (image, _, _) =
+        pyro_render::Renderer::new().render(&snapshot, pyro_render::Area::Viewport, pyro_render::Backend::Cpu, &fetcher).unwrap();
+    let at = |x: u32, y: u32| {
+        let i = ((y * image.width + x) * 4) as usize;
+        image.data[i..i + 3].to_vec()
+    };
+    assert_eq!((at(5, 5), at(5, 15), at(5, 30)), (vec![0, 128, 0], vec![0, 128, 0], vec![0, 0, 255]));
 }

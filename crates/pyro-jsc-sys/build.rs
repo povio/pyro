@@ -69,7 +69,7 @@ fn main() {
         if env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "x86_64" {
             println!("cargo:rustc-link-lib=static:-bundle=atomic");
         }
-        cc::Build::new().file("shim/modules_source.c").flag("-Wall").flag("-Werror").compile("pyro_jsc_shim");
+        source_shim(&dir.join("lib"));
         return;
     }
 
@@ -98,7 +98,7 @@ fn main() {
                 println!("cargo:rustc-cfg=pyro_jsc_source");
                 println!("cargo:jsc=source");
             }
-            cc::Build::new().file("shim/modules_source.c").flag("-Wall").flag("-Werror").compile("pyro_jsc_shim");
+            source_shim(&lib);
         }
         None => {
             println!("cargo:rustc-link-lib=framework=JavaScriptCore");
@@ -106,6 +106,19 @@ fn main() {
             cc::Build::new().file("shim/modules.m").flag("-fobjc-arc").flag("-Wall").flag("-Werror").compile("pyro_jsc_shim");
         }
     }
+}
+
+/// Compiles the C module shim for the source-built JavaScriptCore in `lib`,
+/// with patch 0037's module graph phases (JSLoadModuleGraph,
+/// JSLinkAndEvaluateModule) only when that build has them, so a PYRO_JSC_DIR
+/// of an older patch set still links (the shim then reports them missing).
+fn source_shim(lib: &Path) {
+    let mut build = cc::Build::new();
+    build.file("shim/modules_source.c").flag("-Wall").flag("-Werror");
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0037-module-graph-phases.patch").is_file()) {
+        build.define("PYRO_JSC_MODULE_PHASES", None);
+    }
+    build.compile("pyro_jsc_shim");
 }
 
 /// Links `lib/libJavaScriptCore.a` (JavaScriptCore, WTF and bmalloc in one

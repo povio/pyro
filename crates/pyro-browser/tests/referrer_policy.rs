@@ -288,3 +288,59 @@ fn a_srcdoc_document_inherits_its_containers_policy() {
     assert_eq!(loader.referer_of("https://site.test/i.png?inherited"), Some(FULL.map(str::to_owned)));
     assert_eq!(loader.referer_of("https://other.test/i.png?own"), Some(FULL.map(str::to_owned)));
 }
+
+/// A style sheet's requests are sent under the sheet's own `Referrer-Policy` when it was served
+/// with one (as Chrome sends them): its `@import`s carry it from the sheet that imports them, and
+/// the renderer gets it for its `url()`s on the sheet's link in the render snapshot (an engine
+/// attribute), never by looking its URL up (security review cycles 1-4, MEDIUM 6 / S1).
+#[test]
+fn a_sheets_requests_follow_its_referrer_policy() {
+    let (mut thread, page, loader) = setup();
+    let sheet = format!("{SAME}/strict.css");
+    loader.insert(&sheet, "text/css", &format!("@import \"{SAME}/imported.css\"; p {{ color: red }}"), Duration::ZERO);
+    loader.set_referrer_policy(&sheet, "no-referrer");
+    loader.insert(&format!("{SAME}/imported.css"), "text/css", "p { margin: 0 }", Duration::ZERO);
+    loader.insert(PAGE, "text/html", &format!("<!doctype html><link id=l rel=stylesheet href=\"{sheet}\">"), Duration::ZERO);
+    loader.set_referrer_policy(PAGE, "unsafe-url");
+    thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
+    settle(&mut thread);
+    assert_eq!(loader.referer_of(&format!("{SAME}/imported.css")), Some(None), "the import");
+    let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    let s = page_dom.render_snapshot(PAGE, None);
+    // (Under the document's nonce name.)
+    assert!(s.html.contains(&format!("data-pyro-{}-sheet-referrer-policy=\"no-referrer\"", s.nonce)), "{}", s.html);
+}
+
+/// A sheet's `Referrer-Policy` is its current response's: once the link loads a response without
+/// one (or fails), the snapshot gives its sheet none; a page's own attribute of that name is the
+/// page's (written as it is, never under the engine's nonce name: security review cycles 2-4, 2b /
+/// S1, and 8).
+#[test]
+fn a_sheets_referrer_policy_goes_with_its_response() {
+    let (mut thread, page, loader) = setup();
+    let sheet = format!("{SAME}/strict.css");
+    loader.insert(&sheet, "text/css", "p { color: red }", Duration::ZERO);
+    loader.set_referrer_policy(&sheet, "no-referrer");
+    loader.insert(&format!("{SAME}/plain.css"), "text/css", "p { color: blue }", Duration::ZERO);
+    loader.insert(
+        PAGE,
+        "text/html",
+        &format!("<!doctype html><link id=l rel=stylesheet href=\"{sheet}\"><link id=f rel=stylesheet href=\"{SAME}/plain.css\" data-pyro-sheet-referrer-policy=unsafe-url>"),
+        Duration::ZERO,
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
+    settle(&mut thread);
+    let snapshot = |thread: &BrowserThread| {
+        let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+        let s = page_dom.render_snapshot(PAGE, None);
+        (s.html, format!("data-pyro-{}-sheet-referrer-policy", s.nonce))
+    };
+    let (html, engine) = snapshot(&thread);
+    assert_eq!(html.matches(&engine).count(), 1, "{html}");
+    assert!(html.contains(&format!("{engine}=\"no-referrer\"")), "{html}");
+    assert!(html.contains("data-pyro-sheet-referrer-policy=\"unsafe-url\""), "the page's own, as it is: {html}");
+    eval(&thread, page, &format!("document.getElementById('l').href = '{SAME}/plain.css'; 1"));
+    settle(&mut thread);
+    let (html, engine) = snapshot(&thread);
+    assert!(!html.contains(&engine), "{html}");
+}

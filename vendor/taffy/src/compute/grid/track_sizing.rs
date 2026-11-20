@@ -624,31 +624,12 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
                     // If the container size is indefinite and has not yet been resolved then percentage sized
                     // tracks are treated as auto
                     _ if track.min_track_sizing_function.behaves_as_auto(axis_inner_node_size) => {
-                        let space = match axis_available_grid_space {
-                            // QUIRK: The spec says that:
-                            //
-                            //   If the grid container is being sized under a min- or max-content constraint, use the items’ limited
-                            //   min-content contributions in place of their minimum contributions here.
-                            //
-                            // However, in practice browsers only seem to apply this rule if the item is not a scroll container
-                            // (note that overflow:hidden counts as a scroll container), giving the automatic minimum size of scroll
-                            // containers (zero) precedence over the min-content contributions.
-                            AvailableSpace::MinContent | AvailableSpace::MaxContent
-                                if !item.overflow.get(axis).is_scroll_container()
-                                    && !(axis == AbstractAxis::Inline
-                                        && axis_available_grid_space == AvailableSpace::MinContent
-                                        && item.min_size.get(axis) == LengthPercentageAuto::length(0.0)) =>
-                            {
-                                let axis_minimum_size = item_sizer.minimum_contribution(item, axis_tracks);
-                                let axis_min_content_size = item_sizer.min_content_contribution(item, axis_tracks);
-                                let limit = track
-                                    .max_track_sizing_function
-                                    .definite_limit(axis_inner_node_size, |val, basis| item_sizer.calc(val, basis));
-                                axis_min_content_size.maybe_min(limit).max(axis_minimum_size)
-                            }
-                            _ => item_sizer.minimum_contribution(item, axis_tracks),
-                        };
-                        f32_max(track.base_size, space)
+                        // pyro: the spec says that under a min- or max-content constraint the items' limited min-content
+                        // contributions are used in place of their minimum contributions here; Blink never does (its
+                        // intrinsic minimums are the minimum contributions alone, "kForIntrinsicMinimums"), so an item
+                        // with `min-width: 0` (or a scroll container, whose automatic minimum is zero) adds nothing to a
+                        // min-content sized grid (WPT css-sizing `range-percent-intrinsic-size-1`).
+                        f32_max(track.base_size, item_sizer.minimum_contribution(item, axis_tracks))
                     }
                     // Do nothing as it's not an intrinsic track sizing function
                     _ => track.base_size,
@@ -771,7 +752,8 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
                         let excess = f32_max(limited_min_content - inflexible_sizes, 0.0);
                         f32_max(axis_minimum_size, inflexible_sizes + excess * scale)
                     } else {
-                        limited_min_content
+                        // pyro: the minimum contribution alone, as Blink (see the single-span case above)
+                        axis_minimum_size
                     }
                 }
                 _ => item_sizer.minimum_contribution(item, axis_tracks),

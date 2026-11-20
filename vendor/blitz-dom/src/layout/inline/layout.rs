@@ -223,11 +223,56 @@ struct PendingFloat {
     clear: Clear,
 }
 
+impl LayoutPassState<'_> {
+    /// pyro: how many lines the line clamp of an ancestor of `node_id` (in its block formatting
+    /// context) leaves to it: the clamp's count less the lines laid out before it; `None` without
+    /// one (or one without a count, `line-clamp: auto`).
+    fn clamp_lines_left(&self, node_id: NodeId) -> Option<usize> {
+        fn lines_in(nodes: &crate::NodeTree, id: NodeId, depth: u32) -> usize {
+            let node = &nodes[id];
+            if let Some(text) = node.data.downcast_element().and_then(|el| el.inline_layout_data.as_deref()) {
+                return text.counted_lines as usize;
+            }
+            if depth > 32 {
+                return 0;
+            }
+            node.layout_children.borrow().iter().flatten().map(|&c| lines_in(nodes, c, depth + 1)).sum()
+        }
+        let mut used = 0usize;
+        let mut child = node_id;
+        for _ in 0..64 {
+            let parent = self.nodes[child].layout_parent.get()?;
+            let node = &self.nodes[parent];
+            if !node.is_anonymous() && node.taffy_display() != taffy::Display::Block {
+                return None;
+            }
+            if let Some(children) = node.layout_children.borrow().as_ref() {
+                for &sibling in children.iter().take_while(|&&c| c != child) {
+                    if !self.nodes[sibling].is_out_of_flow() {
+                        used += lines_in(&self.nodes, sibling, 0);
+                    }
+                }
+            }
+            if let Some(spec) = self.line_clamp_of(parent) {
+                // (`line-clamp: auto` balances first and clamps after, as Chromium does: WPT
+                // css-overflow `line-clamp-balance-007`, `-010`.)
+                return (spec.lines != u32::MAX).then(|| (spec.lines as usize).saturating_sub(used));
+            }
+            child = parent;
+        }
+        None
+    }
+}
+
 /// pyro: the advance at which the lines of a `text-wrap-style: balance` block wrap: the least
 /// one that breaks `layout` into as many lines as `max_advance` does. `None` when there is
 /// nothing to balance (one line) or too much (more than Blink's six lines).
+/// pyro: the most widths a `text-wrap: balance` search tries (a bisection to a quarter pixel of
+/// widths up to 2^30 px takes about 32).
+const MAX_BALANCE_TRIALS: usize = 40;
+
 fn balanced_wrap_limit(
-    layout: &mut parley::Layout<crate::node::TextBrush>,
+    mut break_at: impl FnMut(f32) -> (usize, usize, usize),
     max_advance: f32,
     scale: f32,
     max_lines: usize,
@@ -236,29 +281,22 @@ fn balanced_wrap_limit(
     if !max_advance.is_finite() || max_advance <= 0.0 {
         return None;
     }
-    // Lines that overflow or end at an emergency break (`overflow-wrap`) are no balance.
-    let breaks = |layout: &parley::Layout<crate::node::TextBrush>, width: f32| {
-        let mut emergency = 0;
-        let mut overflows = 0;
-        for line in layout.lines() {
-            let metrics = line.metrics();
-            emergency += usize::from(line.break_reason() == parley::layout::BreakReason::Emergency);
-            overflows +=
-                usize::from(metrics.indent + metrics.advance - metrics.hanging_advance > width + 0.01 * scale);
-        }
-        (layout.len(), emergency, overflows)
-    };
-    layout.break_all_lines(Some(max_advance));
-    let (lines, emergency, overflows) = breaks(layout, max_advance);
+    let (lines, emergency, overflows) = break_at(max_advance);
     if !(2..=MAX_LINES.min(max_lines)).contains(&lines) {
         return None;
     }
     let (mut low, mut high) = (0.0f32, max_advance);
-    // To a quarter of a CSS pixel.
-    while high - low > 0.25 * scale {
+    // To a quarter of a CSS pixel, and at most `MAX_BALANCE_TRIALS` widths: a midpoint that
+    // rounds to an endpoint (adjacent large f32 widths further apart than the tolerance) ends the
+    // search instead of trying it again forever.
+    let mut trials = 0;
+    while high - low > 0.25 * scale && trials < MAX_BALANCE_TRIALS {
         let middle = (low + high) / 2.0;
-        layout.break_all_lines(Some(middle));
-        let now = breaks(layout, middle);
+        if middle <= low || middle >= high {
+            break;
+        }
+        trials += 1;
+        let now = break_at(middle);
         if now.0 <= lines && now.1 <= emergency && now.2 <= overflows {
             high = middle;
         } else {
@@ -266,6 +304,75 @@ fn balanced_wrap_limit(
         }
     }
     (high < max_advance).then_some(high)
+}
+
+/// pyro: `layout` broken at `width`: its lines, and those that end at an emergency break
+/// (`overflow-wrap`) or overflow it, which are no balance (`balanced_wrap_limit`).
+fn break_counts(layout: &mut parley::Layout<crate::node::TextBrush>, width: f32, scale: f32) -> (usize, usize, usize) {
+    layout.break_all_lines(Some(width));
+    let mut emergency = 0;
+    let mut overflows = 0;
+    for line in layout.lines() {
+        let metrics = line.metrics();
+        emergency += usize::from(line.break_reason() == parley::layout::BreakReason::Emergency);
+        overflows += usize::from(metrics.indent + metrics.advance - metrics.hanging_advance > width + 0.01 * scale);
+    }
+    (layout.len(), emergency, overflows)
+}
+
+/// pyro: `text-wrap: balance` beside floats, as in Blink: every line's room to wrap in is
+/// narrowed by the same amount, the most (to a quarter of a CSS pixel) that keeps the lines'
+/// count, emergency breaks and block size, found by laying the lines out again from the floats
+/// as they were before them (`BlockContext::float_snapshot`) for each width tried.
+#[cfg(feature = "floats")]
+struct FloatBalance {
+    snapshot: taffy::FloatSnapshot,
+    placed_floats: usize,
+    br_clear_floor: f32,
+    max_lines: usize,
+    /// The lines, emergency breaks and bottom of the unbalanced layout.
+    first: Option<(usize, usize, f64)>,
+    /// The bisection: `low` keeps the layout, `high` does not.
+    low: f32,
+    high: f32,
+    /// The reduction the last layout was made with.
+    reduction: f32,
+    /// The widths tried so far (`MAX_BALANCE_TRIALS` at most).
+    trials: usize,
+}
+
+#[cfg(feature = "floats")]
+impl FloatBalance {
+    const MAX_LINES: usize = 6;
+
+    /// The reduction to lay out with next after a layout with `self.reduction` gave `result`
+    /// (lines, emergency breaks, bottom), or `None` when that layout is the one to keep.
+    fn next(&mut self, result: (usize, usize, f64), scale: f32) -> Option<f32> {
+        let Some(first) = self.first else {
+            if !(2..=self.max_lines).contains(&result.0) {
+                return None;
+            }
+            self.first = Some(result);
+            return Some((self.low + self.high) / 2.0);
+        };
+        let keeps = result.0 <= first.0 && result.1 <= first.1 && result.2 <= first.2 + 0.01 * f64::from(scale);
+        if keeps {
+            self.low = self.reduction;
+        } else {
+            self.high = self.reduction;
+        }
+        self.trials += 1;
+        let middle = (self.low + self.high) / 2.0;
+        // (A midpoint that rounds to an endpoint, or too many widths tried, ends the search.)
+        if self.high - self.low > 0.25 * scale
+            && self.trials < MAX_BALANCE_TRIALS
+            && middle > self.low
+            && middle < self.high
+        {
+            return Some(middle);
+        }
+        (self.reduction != self.low).then_some(self.low)
+    }
 }
 
 /// Tolerance (in CSS px) for content fitting into a slot
@@ -325,7 +432,60 @@ fn retry_line_slot(
     narrowed.then_some(narrowed_slot)
 }
 
+/// pyro: the slot to retry a line in that a retry narrowed for a taller attempt, when the
+/// line's own height leaves it more room (the content that made the attempt taller moved on to
+/// the next line): the slot beside the floats over the line's own height, if wider. Taken once
+/// per line, so that the line cannot go back and forth.
+#[cfg(feature = "floats")]
+fn wider_line_slot(block_ctx: &BlockContext, slot: &ContentSlot, line: &LineBreakData, scale: f32) -> Option<ContentSlot> {
+    slot.segment_id?;
+    let line_y = (line.line_y_start / scale as f64) as f32;
+    let line_height = ((line.line_y_end - line.line_y_start) / scale as f64) as f32;
+    let wider = block_ctx.find_content_slot(line_y, line_height, Clear::None, None);
+    let widens = wider.x < slot.x - FIT_TOLERANCE || wider.x + wider.width > slot.x + slot.width + FIT_TOLERANCE;
+    (widens && (wider.y - line_y).abs() <= FIT_TOLERANCE && wider.x <= slot.x + FIT_TOLERANCE && wider.x + wider.width >= slot.x + slot.width - FIT_TOLERANCE).then_some(wider)
+}
+
 impl LayoutPassState<'_> {
+    /// pyro: `::first-line` styles that change layout, for lines broken at `width`: its first line
+    /// ends where it ends with all of the text in those styles (as Chromium lays out the first line
+    /// in them), the text up to there is built in them, and the line may not take the (unstyled)
+    /// text after it (`Layout::set_first_line_limit`). The rest is the root's own.
+    fn plan_first_line(
+        &mut self,
+        node_id: NodeId,
+        inline_layout: &mut crate::node::TextLayout,
+        width: f32,
+        indent: f32,
+        indent_options: IndentOptions,
+    ) {
+        let rebuild = |state: &mut Self, inline_layout: &mut crate::node::TextLayout, end: Option<usize>| {
+            inline_layout.first_line_end = end;
+            let crate::BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = &mut **state;
+            let mut font_ctx = font_ctx.lock().unwrap();
+            super::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, inline_layout, viewport.scale(), node_id);
+            drop(font_ctx);
+            inline_layout.last_break = None;
+            inline_layout.final_lines = None;
+            inline_layout.layout.set_text_indent(indent, indent_options);
+        };
+        if inline_layout.first_line_end.is_some() {
+            rebuild(self, inline_layout, None);
+        }
+        inline_layout.layout.set_first_line_limit(None);
+        inline_layout.layout.break_all_lines(Some(width));
+        let (end, wrapped) = match (inline_layout.layout.len(), inline_layout.layout.lines().next()) {
+            (2.., Some(line)) => (line.text_range().end, line.break_reason() != parley::layout::BreakReason::Explicit),
+            _ => return,
+        };
+        rebuild(self, inline_layout, Some(end));
+        // (A forced break ends it there anyway.)
+        if !wrapped {
+            return;
+        }
+        inline_layout.layout.set_first_line_limit(Some(end));
+    }
+
     /// Place a float laid out by inline layout at or below `min_y` (content-box relative)
     #[cfg(feature = "floats")]
     fn place_inline_float(
@@ -336,6 +496,9 @@ impl LayoutPassState<'_> {
         container_pb: taffy::Rect<f32>,
         oof_candidates: &mut OofCandidates,
         span_offset: taffy::Point<f32>,
+        containing_block_width: f32,
+        containing_block_height: Option<f32>,
+        containing_block_rtl: bool,
     ) {
         let PendingFloat {
             node_id,
@@ -348,10 +511,14 @@ impl LayoutPassState<'_> {
 
         // Note: `pos` is content-box relative
         let margin_box = output.size + margin.sum_axes();
+        let min_y = if self.multicol_strip_depth > 0 { self.spanner_floors.get(&node_id).map_or(min_y, |floor| min_y.max(floor - container_pb.top - margin.top)) } else { min_y };
         // pyro: a float with a `shape-outside` float area (CSS Shapes 1)
-        let bands = self.nodes[node_id]
-            .primary_styles()
-            .and_then(|style| crate::layout::shape_outside::float_bands_for(&style, margin_box, margin));
+        let wm = self.layout_wm;
+        let node = &self.nodes[node_id];
+        let image = node.element_data().and_then(|e| e.shape_images.first()).and_then(Option::as_ref).map(|d| &d.image);
+        let bands = node.primary_styles().and_then(|style| {
+            crate::layout::shape_outside::float_bands_for(&style, margin_box, margin, wm, containing_block_width, image)
+        });
         let id = crate::taffy_node_id(node_id).into();
         let pos = match bands {
             Some(bands) => block_ctx.place_shaped_floated_box(id, margin_box, min_y, direction, clear, false, &bands),
@@ -361,9 +528,37 @@ impl LayoutPassState<'_> {
         // pyro: relatively positioned inline boxes around the float move it as they move the rest
         // of their content (CSS 2.1 § 9.4.3), not where it is placed (WPT
         // `block-in-inline-float-between-001`).
+        // pyro: and its own `position: relative` offset moves it from where it is placed (CSS 2.1
+        // § 9.4.3; WPT css-overflow `line-clamp-with-floats-008`). Its containing block's
+        // direction decides between `left` and `right` (§ 9.4.3); a percentage `top` is against its
+        // containing block's height when that is definite, else `auto` (§ 9.3.2).
+        let cb_rtl = containing_block_rtl;
+        let own = self.nodes[node_id]
+            .primary_styles()
+            .filter(|style| style.clone_position() == style::computed_values::position::T::Relative)
+            .map_or(taffy::Point::ZERO, |style| {
+                let mut own = crate::layout::inline::relative::relative_offset(
+                    &style,
+                    taffy::Size { width: containing_block_width, height: containing_block_height.unwrap_or(0.0) },
+                    cb_rtl,
+                );
+                let percent_y = |inset: &style::values::computed::Inset| {
+                    matches!(inset, style::values::computed::Inset::LengthPercentage(lp) if lp.has_percentage())
+                };
+                let position = style.get_position();
+                let y_inset = if !matches!(position.top, style::values::computed::Inset::Auto) {
+                    &position.top
+                } else {
+                    &position.bottom
+                };
+                if containing_block_height.is_none() && percent_y(y_inset) {
+                    own.y = 0.0;
+                }
+                own
+            });
         let location = taffy::Point {
-            x: pos.x + margin.left + container_pb.left + span_offset.x,
-            y: pos.y + margin.top + container_pb.top + span_offset.y,
+            x: pos.x + margin.left + container_pb.left + span_offset.x + own.x,
+            y: pos.y + margin.top + container_pb.top + span_offset.y + own.y,
         };
         let size = output.size;
         self.nodes[node_id].update_unrounded_layout(|layout| {
@@ -371,6 +566,7 @@ impl LayoutPassState<'_> {
             layout.location = location;
             layout.margin = margin;
         });
+        self.inline_placed_floats.push((node_id, pos.y));
 
         // Translate anchors from item-relative to container-relative
         // coordinates and collect candidates bubbled from the float's subtree
@@ -468,13 +664,30 @@ impl LayoutPassState<'_> {
         {
             return self.compute_initial_letter_box_layout(node_id, inputs);
         }
+        // pyro: the floats this inline layout places (`inline_placed_floats`), apart from those
+        // of the layouts it runs.
+        let outer_floats = core::mem::take(&mut self.inline_placed_floats);
+        let output = self.compute_inline_root_layout(node_id, inputs, block_ctx);
+        self.inline_placed_floats = outer_floats;
+        output
+    }
+
+    fn compute_inline_root_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: taffy::tree::LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> taffy::LayoutOutput {
         let LayoutInput {
             known_dimensions,
             parent_size,
             run_mode,
             ..
         } = inputs;
-        let style = self.nodes[node_id].layout_style();
+        let mut style = self.nodes[node_id].layout_style();
+        // pyro: a box laid out in an orthogonal flow resolves its percentage padding against its
+        // containing block's inline size, not the transposed parent size (`layout::writing_mode`).
+        style.set_percent_basis(self.orthogonal_percent_basis_of(node_id));
 
         // Pull these out earlier to avoid borrowing issues
         let is_scroll_container =
@@ -635,6 +848,26 @@ impl LayoutPassState<'_> {
         None
     }
 
+    /// pyro: whether an in-flow atomic inline of `inline_layout` has a percentage in its width, its minimum or
+    /// maximum width, or its horizontal margins or padding (which resolve against this block's width)
+    fn inline_boxes_resolve_against_width(&self, inline_layout: &crate::node::TextLayout) -> bool {
+        inline_layout.layout.inline_boxes().filter(|ibox| !ibox.kind.is_span_edge()).any(|ibox| {
+            let style = self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
+            if style.position().is_out_of_flow() {
+                return false;
+            }
+            let pct = |raw: taffy::CompactLength| raw.uses_percentage();
+            let (margin, padding) = (style.margin(), style.padding());
+            pct(style.size().width.into_raw())
+                || pct(style.min_size().width.into_raw())
+                || pct(style.max_size().width.into_raw())
+                || pct(margin.left.into_raw())
+                || pct(margin.right.into_raw())
+                || pct(padding.left.into_raw())
+                || pct(padding.right.into_raw())
+        })
+    }
+
     fn compute_inline_layout_inner(
         &mut self,
         node_id: NodeId,
@@ -658,7 +891,9 @@ impl LayoutPassState<'_> {
             .take_inline_layout()
             .unwrap();
 
-        let style = self.nodes[node_id].layout_style();
+        let mut style = self.nodes[node_id].layout_style();
+        // pyro: as in `compute_inline_layout`, an orthogonal box's percentages.
+        style.set_percent_basis(self.orthogonal_percent_basis_of(node_id));
 
         // Note: both horizontal and vertical percentage padding/borders are resolved against the container's inline size (i.e. width).
         // This is not a bug, but is how CSS is specified (see: https://developer.mozilla.org/en-US/docs/Web/CSS/padding#values)
@@ -685,14 +920,16 @@ impl LayoutPassState<'_> {
         // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
         // However, the axis are switched (transposed) because a node that scrolls vertically needs
         // *horizontal* space to be reserved for a scrollbar
-        let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-            Overflow::Scroll => style.scrollbar_width(),
-            _ => 0.0,
-        });
-        // TODO: make side configurable based on the `direction` property
-        let mut content_box_inset = container_pb;
-        content_box_inset.right += scrollbar_gutter.x;
-        content_box_inset.bottom += scrollbar_gutter.y;
+        // pyro: `CoreStyle::scrollbar_gutter`: which edges hold scrollbar space (classic scrollbars:
+        // `overflow: auto` with a scrollbar, `scrollbar-gutter`, the start edge in `direction: rtl`).
+        let gutter_edges = style.scrollbar_gutter();
+        let scrollbar_gutter =
+            taffy::Point { x: gutter_edges.left + gutter_edges.right, y: gutter_edges.top + gutter_edges.bottom };
+        let content_box_inset = container_pb + gutter_edges;
+        // The lines start after the start-edge gutters (logical; `Node::content_box_origin` and
+        // `Node::gutter_insets`, which paint and hit testing read, physical).
+        let container_pb =
+            taffy::Rect { left: container_pb.left + gutter_edges.left, top: container_pb.top + gutter_edges.top, ..container_pb };
 
         let has_styles_preventing_being_collapsed_through = !style.is_block()
             || style.overflow().x.is_scroll_container()
@@ -780,7 +1017,7 @@ impl LayoutPassState<'_> {
                 width: node_size.width.unwrap_or(0.0),
                 height: node_size.height.unwrap_or(0.0),
             }
-            .maybe_max(container_pb.sum_axes().map(Some));
+            .maybe_max(pb_sum.map(Some));
             // pyro: with no line it is empty, and margins collapse through it when it has no
             // height (an empty piece of a split inline between two blocks, a div holding only an
             // empty span), as through an empty block.
@@ -853,7 +1090,11 @@ impl LayoutPassState<'_> {
             available_space: child_available_space,
             sizing_mode: SizingMode::InherentSize,
             parent_size: Size {
-                width: available_space.width.into_option(),
+                // pyro: while this block's own width is unknown (its intrinsic sizes are measured), the inline
+                // boxes' percentage widths have no basis: they behave as `auto` (Blink; an outer definite width
+                // given as the available space is no containing block; WPT css-sizing
+                // `range-percent-intrinsic-size-1`)
+                width: available_space.width.into_option().filter(|_| node_size.width.is_some()),
                 // Anonymous blocks do not establish the containing block for percentages.
                 height: if self.nodes[node_id].is_anonymous() {
                     parent_size.height
@@ -933,6 +1174,24 @@ impl LayoutPassState<'_> {
                 height: inputs.parent_size.height,
             };
             let margin = style.margin().resolve_or_zero(margin_basis, resolve_calc_value);
+            // pyro: a button with no baseline (empty, or layout-contained) has one synthesized at
+            // its block-end content edge (HTML § 15.5.2 "the button element"; Chromium), not at
+            // its bottom margin edge (WPT css-contain `contain-layout-button-001`).
+            let button_content_end = style.flags.intersects(StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT).then(|| {
+                style.border().resolve_or_zero(margin_basis.width, resolve_calc_value).bottom
+                    + style.padding().resolve_or_zero(margin_basis.width, resolve_calc_value).bottom
+            });
+            // pyro: a checkbox or a radio button has its baseline at its block-end border edge,
+            // its margin below it (Chromium; WPT css-writing-modes
+            // `forms/{checkbox,radio}-appearance-native-vertical-*-baseline` in sideways lines).
+            let toggle_border_end = self.nodes[NodeId::from_u64(ibox.id)]
+                .element_data()
+                .is_some_and(|element| {
+                    element.name.local == markup5ever::local_name!("input")
+                        && element
+                            .attr(markup5ever::local_name!("type"))
+                            .is_some_and(|kind| kind.eq_ignore_ascii_case("checkbox") || kind.eq_ignore_ascii_case("radio"))
+                });
 
             #[cfg(feature = "floats")]
             let is_floated = style.float().is_floated();
@@ -1017,6 +1276,19 @@ impl LayoutPassState<'_> {
                 } else {
                     None
                 };
+                let alphabetic = alphabetic.or_else(|| {
+                    // (On alphabetic lines; a central one synthesizes its own, below.)
+                    button_content_end.filter(|_| !vertical_line_kind(self.nodes[node_id].writing_mode()).0).map(|end| (margin.top + (output.size.height - end).max(0.0)) * scale)
+                });
+                let alphabetic = alphabetic.or_else(|| {
+                    // (Its line-under border edge: block-start in inverted sideways lines, whose
+                    // baselines are turned below, `sideways_inverted_lines`.)
+                    let wm = self.nodes[node_id].writing_mode();
+                    (toggle_border_end && !vertical_line_kind(wm).0).then(|| match sideways_inverted_lines(wm) {
+                        true => margin.top * scale,
+                        false => (margin.top + output.size.height) * scale,
+                    })
+                });
                 let (central_line, inverted_line) = vertical_line_kind(self.nodes[node_id].writing_mode());
                 // pyro: on a central baseline (Blink's `PhysicalBoxFragment::BaselineMetrics` with
                 // `kCentralBaseline`): the box's own central baseline, from its line-over side
@@ -1067,8 +1339,12 @@ impl LayoutPassState<'_> {
         let text_indent = self.nodes[node_id]
             .primary_styles()
             .map(|s| s.slow_clone_text_indent())
-            // pyro: not on the lines of an anonymous block after its block's first line.
-            .filter(|indent| indent.hanging || crate::layout::first_line::starts_a_block(self.doc, node_id))
+            // pyro: not on the lines of an anonymous block after its block's first line, unless
+            // each line after a forced break is indented (`each-line`: the line after a block-level
+            // box too, WPT css-text `text-indent-each-line-after-block-level-box`).
+            .filter(|indent| {
+                indent.hanging || indent.each_line || crate::layout::first_line::starts_a_block(self.doc, node_id)
+            })
             .unwrap_or_else(GenericTextIndent::zero);
         // pyro: the first line of an anonymous block is the first formatted line of its parent
         // element only when the block is the parent's first box (CSS Text 3 § 8.1: "the first
@@ -1087,6 +1363,18 @@ impl LayoutPassState<'_> {
                         .is_some_and(|children| children.first().is_some_and(|&first| first != node_id))
                 });
             if later_anonymous_block { GenericTextIndent::zero() } else { text_indent }
+        };
+        // pyro: the element's first formatted line is in this layout (`hanging-punctuation: first`).
+        let has_first_line = crate::layout::first_line::starts_a_block(self.doc, node_id) && {
+            let node = &self.nodes[node_id];
+            !(node.is_anonymous()
+                && node.parent.is_some_and(|parent| {
+                    self.nodes[parent]
+                        .layout_children
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|children| children.first().is_some_and(|&first| first != node_id))
+                }))
         };
         // pyro: an initial letter box (`layout::first_letter`) starts the first line, and holds
         // the line's text indent in its width (Blink's `CalculateInitialLetterBoxInlineSize`): the
@@ -1110,11 +1398,23 @@ impl LayoutPassState<'_> {
             each_line: text_indent.each_line,
             hanging: text_indent.hanging,
         };
+        // pyro: CSS Text 3 `hanging-punctuation: first`: opening punctuation that starts the
+        // element's first line hangs outside its start edge, as a negative indent of its advance
+        // (also in the intrinsic widths), unless a box edge with width comes first.
+        let hang_first = self.nodes[node_id]
+            .primary_styles()
+            .filter(|s| {
+                s.get_inherited_text().hanging_punctuation.contains(style::values::computed::HangingPunctuation::FIRST)
+            })
+            .filter(|_| has_first_line && initial_letter.is_none() && !text_indent.each_line && !text_indent.hanging)
+            .and_then(|_| inline_layout.layout.first_cluster_hang(&inline_layout.text, |ch| parley::hangs_at_edge(ch, true)))
+            .unwrap_or(0.0);
         // Percentage indents do not contribute to intrinsic widths.
-        let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale;
+        let intrinsic_indent = text_indent.length.resolve(CSSPixelLength::new(0.0)).px() * scale - hang_first;
         inline_layout.layout.set_text_indent(intrinsic_indent, indent_options);
 
-        let pbw = container_pb.horizontal_components().sum() * scale;
+        // pyro: and the inline-axis scrollbar gutters (`content_box_inset`).
+        let pbw = content_box_inset.horizontal_components().sum() * scale;
         let width = known_dimensions
             .width
             .map(|w| (w * scale) - pbw)
@@ -1239,6 +1539,19 @@ impl LayoutPassState<'_> {
                     - pbw
             });
 
+        // pyro: a shrink-to-fit block whose inline boxes have percentage widths (or margins or padding) measured
+        // them with no basis (`child_inputs`: they behaved as `auto`); now that its width is known they resolve
+        // against it, as a block laid out at that width (Blink: an inline-block's `width: 50%` input; WPT
+        // css-sizing `range-percent-intrinsic-size-1`).
+        if known_dimensions.width.is_none()
+            && !(inputs.run_mode == taffy::RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal)
+            && self.inline_boxes_resolve_against_width(&inline_layout)
+        {
+            self.nodes[node_id].data.downcast_element_mut().unwrap().inline_layout_data = Some(inline_layout);
+            let known = Size { width: Some((width + pbw) / scale), height: known_dimensions.height };
+            return self.compute_inline_layout_inner(node_id, LayoutInput { known_dimensions: known, ..inputs }, block_ctx);
+        }
+
         #[cfg(not(feature = "floats"))]
         let _ = block_ctx; // Suppress unused variable warning
 
@@ -1281,7 +1594,7 @@ impl LayoutPassState<'_> {
                 .or(node_size)
                 .unwrap_or(measured_size + content_box_inset.sum_axes())
                 .maybe_clamp(node_min_size, node_max_size)
-                .maybe_max(container_pb.sum_axes().map(Some));
+                .maybe_max(pb_sum.map(Some));
 
             return LayoutOutput::from_outer_size(clamped_size);
         }
@@ -1292,29 +1605,13 @@ impl LayoutPassState<'_> {
             .px();
         inline_layout
             .layout
-            .set_text_indent(resolved_text_indent * scale, indent_options);
+            .set_text_indent((resolved_text_indent * scale - hang_first), indent_options);
 
         // pyro: `::first-line` styles that change layout (`TextLayout::first_line_layout`): the
         // build gave them to the text up to where the first line ended last time (all of it at
         // first); a first line that ends elsewhere at this width builds the text again with that end.
         if inline_layout.first_line_layout {
-            for _ in 0..2 {
-                inline_layout.layout.break_all_lines(Some(width));
-                let end = inline_layout.layout.lines().next().map(|line| line.text_range().end);
-                if end.is_none() || end == inline_layout.first_line_end {
-                    break;
-                }
-                inline_layout.first_line_end = end;
-                let crate::BaseDocument { nodes, layout_ctx, font_ctx, viewport, .. } = &mut **self;
-                let mut font_ctx = font_ctx.lock().unwrap();
-                super::build_inline_layout_into(nodes, layout_ctx, &mut font_ctx, &mut inline_layout, viewport.scale(), node_id);
-                drop(font_ctx);
-                inline_layout.last_break = None;
-                inline_layout.final_lines = None;
-                inline_layout
-                    .layout
-                    .set_text_indent(resolved_text_indent * scale, indent_options);
-            }
+            self.plan_first_line(node_id, &mut inline_layout, width, resolved_text_indent * scale - hang_first, indent_options);
         }
 
         // Content sized to fit exactly (e.g. shrink-to-fit) can end up a few ulps wider than
@@ -1322,9 +1619,19 @@ impl LayoutPassState<'_> {
         // advances in a different order to `calculate_content_widths`. Give the line breaker a
         // few ulps of slack in that case so that the content doesn't wrap.
         let max_advance = {
-            let max_content_width = inline_layout.content_widths(resolved_text_indent * scale).max;
+            let max_content_width = inline_layout.content_widths((resolved_text_indent * scale - hang_first)).max;
             let fit_width = width.max(max_content_width);
             let rounding_error = (fit_width + pbw).abs() * 8.0 * f32::EPSILON;
+            // pyro: and the layout unit (1/64 px) each atomic inline's width was rounded up to
+            // (`ceil_layout_unit`): text that fits beside them as Chromium measures it fits here
+            // (WPT css-pseudo `highlight-painting-004-ref*`: `qui` and an inline-block `ck` in a box
+            // as wide as `quick`).
+            let atomics = inline_layout
+                .layout
+                .inline_boxes()
+                .filter(|ibox| ibox.kind == parley::InlineBoxKind::InFlow && ibox.width > 0.0)
+                .count();
+            let rounding_error = rounding_error + atomics as f32 * scale / 64.0;
             if (max_content_width - width).abs() <= rounding_error {
                 fit_width + rounding_error
             } else {
@@ -1404,6 +1711,9 @@ impl LayoutPassState<'_> {
                 let br_clears = std::mem::take(&mut inline_layout.br_clears);
                 let root_id = node_id;
                 let span_cb = taffy::Size { width: width / scale, height: 0.0 };
+                // (The content height of the container, the floats' containing block, when definite.)
+                let float_cb_height = known_dimensions.height.map(|height| (height - container_pb.vertical_axis_sum()).max(0.0));
+                let float_cb_rtl = self.nodes[node_id].layout_style().direction() == Direction::Rtl;
                 let float_span_offset = |nodes: &crate::NodeTree, float_id: NodeId| match nodes[float_id].parent {
                     Some(parent) if relative_spans => {
                         crate::layout::inline::inline_span_flow_offset(nodes, parent, root_id, span_cb)
@@ -1412,25 +1722,51 @@ impl LayoutPassState<'_> {
                 };
                 // pyro: `text-wrap-style: balance` (CSS Text 4 § 6.2): the lines wrap at the least
                 // advance that keeps their count, found by bisection as in Blink, for up to its
-                // six lines. Not beside floats (their lines differ in width).
-                let balance_limit = (wraps
-                    && !floats_involved
+                // six lines. Beside floats (whose lines differ in width) every line's room is
+                // narrowed by the most that keeps the count, as in Blink (see `FloatBalance`).
+                let balance_wanted = wraps
                     && self.nodes[node_id].primary_styles().is_some_and(|s| {
                         s.slow_clone_text_wrap_style() == style::values::computed::TextWrapStyle::Balance
                             // A block-size clamp (`max-height` with `line-clamp`) is not applied
                             // yet: the lines it would cut stay as they are.
                             && matches!(s.slow_clone_max_height(), style::values::computed::MaxSize::None)
-                    }))
-                .then(|| {
-                    // Lines that `line-clamp` would cut off are left as they are.
-                    let clamp = self.nodes[node_id]
+                    });
+                // Lines that `line-clamp` would cut off are left as they are.
+                // pyro: and so are those an ancestor's line clamp cuts: only the lines it leaves
+                // this block balance (WPT css-overflow `line-clamp/line-clamp-balance-002`).
+                let ancestor_left = self.clamp_lines_left(node_id);
+                let balance_clamp = {
+                    self.nodes[node_id]
                         .primary_styles()
                         .and_then(|s| s.slow_clone_line_clamp().max_lines.lines_value().map(|lines| lines.0))
                         .filter(|&lines| lines > 0)
-                        .map_or(usize::MAX, |lines| lines as usize);
-                    balanced_wrap_limit(&mut inline_layout.layout, max_advance, scale, clamp)
-                })
-                .flatten();
+                        .map_or(usize::MAX, |lines| lines as usize)
+                        .min(ancestor_left.unwrap_or(usize::MAX))
+                };
+                let balance_limit = if balance_wanted && !floats_involved {
+                    let clamp = balance_clamp;
+                    // pyro: with layout-changing `::first-line` styles each width tried has its
+                    // own first line, built again for it (`plan_first_line`).
+                    let first_line = inline_layout.first_line_layout;
+                    let indent = resolved_text_indent * scale - hang_first;
+                    let limit = balanced_wrap_limit(
+                        |width| {
+                            if first_line {
+                                self.plan_first_line(node_id, &mut inline_layout, width, indent, indent_options);
+                            }
+                            break_counts(&mut inline_layout.layout, width, scale)
+                        },
+                        max_advance,
+                        scale,
+                        clamp,
+                    );
+                    if first_line {
+                        self.plan_first_line(node_id, &mut inline_layout, limit.unwrap_or(width), indent, indent_options);
+                    }
+                    limit
+                } else {
+                    None
+                };
                 // pyro: CSS `text-fit` (CSS Text 5), not beside floats or with an initial letter,
                 // as in Blink. `consistent` scales every line by what the widest (narrowest) line
                 // needs, measured on the lines broken without it.
@@ -1444,145 +1780,348 @@ impl LayoutPassState<'_> {
                     let scale = inline_layout.layout.text_fit_block_scale();
                     inline_layout.layout.set_text_fit(fit, scale);
                 }
-                let mut breaker = inline_layout.layout.break_lines();
-                let mut line_slot = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None);
-                let mut has_active_floats = line_slot.segment_id.is_some();
-                let mut pending_floats: Vec<PendingFloat> = Vec::new();
-                // pyro: the item of the last float placed in this pass. A line that wraps before
-                // a float it placed meets it again on the next line: it keeps its place. (The
-                // floats before it are all placed: a float met after one left for below its line
-                // is left for below it too.)
-                let mut placed_through: Option<usize> = None;
-                // pyro: the initial letter placed on the first line, until that line ends: its box
-                // and the margin box `place_initial_letter` excluded, which move down with the
-                // line's text when the line's annotations need more room than the letter's raise
-                // left (see `LineMetrics::annotation_shift`).
-                let mut letter_on_line: Option<(NodeId, Point<f32>, Size<f32>, taffy::FloatDirection)> = None;
-                let state = breaker.state_mut();
-                state.set_layout_max_advance(max_advance);
-                if let Some(limit) = balance_limit {
-                    state.set_wrap_limit(limit);
-                }
-                // pyro: a block that starts with an initial letter starts below the initial
-                // letters before it (CSS Inline 3 § 7.6, Blink's `InitialLetterClearanceOffset`).
-                if initial_letter.is_some()
-                    && let Some(clear) = block_ctx.initial_letter_clearance().filter(|&clear| clear > 0.0)
-                {
-                    state.set_line_y(f64::from(clear * scale));
-                    line_slot = block_ctx.find_content_slot(clear, 0.0, Clear::None, None);
-                    has_active_floats = line_slot.segment_id.is_some();
-                }
-                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
-                // Without floats every line after the first gets the same geometry, so breaking
-                // can continue after the lines kept from the last build, when the text changed
-                // after them (parley checks the rest: same width, indent and line geometry, LTR,
-                // no inline boxes). Justified text is broken from the start, conservatively;
-                // `hyphens` and `::first-line` are not supported, so there is nothing to check.
-                let is_justified = self.nodes[node_id].primary_styles().is_some_and(|s| {
-                    stylo_to_parley::text_align(s.clone_text_align()) == parley::Alignment::Justify
-                        || stylo_to_parley::text_align_last(s.clone_text_align_last())
-                            == Some(parley::Alignment::Justify)
+                let mut float_balance = (balance_wanted
+                    && floats_involved
+                    && initial_letter.is_none()
+                    && text_fit.is_none()
+                    && max_advance.is_finite())
+                .then(|| FloatBalance {
+                    snapshot: block_ctx.float_snapshot(),
+                    placed_floats: self.inline_placed_floats.len(),
+                    br_clear_floor,
+                    max_lines: FloatBalance::MAX_LINES.min(balance_clamp),
+                    first: None,
+                    low: 0.0,
+                    high: max_advance,
+                    reduction: 0.0,
+                    trials: 0,
                 });
-                // Lines after the first get x 0 and `max_advance` (see `YieldData::LineBreak`
-                // below).
-                let kept = if !floats_involved && !is_justified && balance_limit.is_none() {
-                    breaker.resume(0.0, max_advance)
-                } else {
-                    0
-                };
-                if kept > 0 {
-                    // The kept lines were counted by the break they come from; the last of them
-                    // ends where the breaker resumes (no floats: nothing was skipped).
-                    line_bottoms[(kept - 1) % 2] = breaker.state().line_y();
-                    line_count_so_far = kept;
-                }
+                let kept = loop {
+                    let mut breaker = inline_layout.layout.break_lines();
+                    let mut line_slot = block_ctx.find_content_slot(0.0, 0.0, Clear::None, None);
+                    let mut has_active_floats = line_slot.segment_id.is_some();
+                    let mut pending_floats: Vec<PendingFloat> = Vec::new();
+                    // pyro: the item of the last float placed in this pass. A line that wraps before
+                    // a float it placed meets it again on the next line: it keeps its place. (The
+                    // floats before it are all placed: a float met after one left for below its line
+                    // is left for below it too.)
+                    let mut placed_through: Option<usize> = None;
+                    // pyro: the initial letter placed on the first line, until that line ends: its box
+                    // and the margin box `place_initial_letter` excluded, which move down with the
+                    // line's text when the line's annotations need more room than the letter's raise
+                    // left (see `LineMetrics::annotation_shift`).
+                    let mut letter_on_line: Option<(NodeId, Point<f32>, Size<f32>, taffy::FloatDirection)> = None;
+                    let state = breaker.state_mut();
+                    state.set_layout_max_advance(max_advance);
+                    if let Some(limit) = balance_limit {
+                        state.set_wrap_limit(limit);
+                    }
+                    if let Some(balance) = &float_balance {
+                        state.set_wrap_reduction(balance.reduction);
+                    }
+                    // pyro: a block that starts with an initial letter starts below the initial
+                    // letters before it (CSS Inline 3 § 7.6, Blink's `InitialLetterClearanceOffset`).
+                    if initial_letter.is_some()
+                        && let Some(clear) = block_ctx.initial_letter_clearance().filter(|&clear| clear > 0.0)
+                    {
+                        state.set_line_y(f64::from(clear * scale));
+                        line_slot = block_ctx.find_content_slot(clear, 0.0, Clear::None, None);
+                        has_active_floats = line_slot.segment_id.is_some();
+                    }
+                    set_line_slot(state, &line_slot, scale, slack, mirror_slots);
+                    // Without floats every line after the first gets the same geometry, so breaking
+                    // can continue after the lines kept from the last build, when the text changed
+                    // after them (parley checks the rest: same width, indent and line geometry, LTR,
+                    // no inline boxes). Justified text is broken from the start, conservatively;
+                    // `hyphens` and `::first-line` are not supported, so there is nothing to check.
+                    let is_justified = self.nodes[node_id].primary_styles().is_some_and(|s| {
+                        stylo_to_parley::text_align(s.clone_text_align()) == parley::Alignment::Justify
+                            || stylo_to_parley::text_align_last(s.clone_text_align_last())
+                                == Some(parley::Alignment::Justify)
+                    });
+                    // Lines after the first get x 0 and `max_advance` (see `YieldData::LineBreak`
+                    // below).
+                    let kept = if !floats_involved && !is_justified && balance_limit.is_none() {
+                        breaker.resume(0.0, max_advance)
+                    } else {
+                        0
+                    };
+                    if kept > 0 {
+                        // The kept lines were counted by the break they come from; the last of them
+                        // ends where the breaker resumes (no floats: nothing was skipped).
+                        line_bottoms[(kept - 1) % 2] = breaker.state().line_y();
+                        line_count_so_far = kept;
+                    }
 
-                // The state at the start of the current line, which is reverted to when the line
-                // needs to be retried lower down (or narrower) to avoid floats.
-                // `None` if the line can't be retried (no floats beside it, or a float was placed
-                // part way through it).
-                let mut line_start_state = has_active_floats.then(|| breaker.state().clone());
+                    // The state at the start of the current line, which is reverted to when the line
+                    // needs to be retried lower down (or narrower) to avoid floats.
+                    // `None` if the line can't be retried (no floats beside it, or a float was placed
+                    // part way through it).
+                    let mut line_start_state = has_active_floats.then(|| breaker.state().clone());
+                    // pyro: whether the current line was retried, and whether in a wider slot
+                    // (`wider_line_slot`).
+                    let (mut line_narrowed, mut line_widened) = (false, false);
 
-                while let Some(yield_data) = breaker.break_next() {
-                    match yield_data {
-                        YieldData::LineBreak(line_break_data) => {
-                            if let Some(saved_state) = line_start_state.take()
-                                && let Some(retry_slot) = retry_line_slot(
-                                    &block_ctx,
-                                    &line_slot,
-                                    &line_break_data,
-                                    wraps,
-                                    scale,
-                                )
-                            {
-                                // Floats queued during this line attempt will be encountered again
-                                pending_floats.clear();
-                                line_slot = retry_slot;
-                                has_active_floats = line_slot.segment_id.is_some();
-                                breaker.revert_to(saved_state);
-                                set_line_slot(breaker.state_mut(), &line_slot, scale, slack, mirror_slots);
+                    while let Some(yield_data) = breaker.break_next() {
+                        match yield_data {
+                            YieldData::LineBreak(line_break_data) => {
+                                if let Some(saved_state) = line_start_state.take()
+                                    && let Some(retry_slot) =
+                                        retry_line_slot(&block_ctx, &line_slot, &line_break_data, wraps, scale).or_else(|| {
+                                            let wider = (line_narrowed && !line_widened)
+                                                .then(|| wider_line_slot(&block_ctx, &line_slot, &line_break_data, scale))
+                                                .flatten();
+                                            line_widened |= wider.is_some();
+                                            wider
+                                        })
+                                {
+                                    line_narrowed = true;
+                                    // Floats queued during this line attempt will be encountered again
+                                    pending_floats.clear();
+                                    line_slot = retry_slot;
+                                    has_active_floats = line_slot.segment_id.is_some();
+                                    breaker.revert_to(saved_state);
+                                    set_line_slot(breaker.state_mut(), &line_slot, scale, slack, mirror_slots);
+                                    line_start_state = has_active_floats.then(|| breaker.state().clone());
+                                    continue;
+                                }
+                                line_bottoms[line_count_so_far % 2] = line_break_data.line_y_end;
+                                line_count_so_far += 1;
+                                line_narrowed = false;
+                                line_widened = false;
+
+                                // pyro: the initial letter's cap height stays on its first line's text
+                                // (Blink places it after the line, `PostPlaceInitialLetterBox`): what
+                                // the line's annotations push the text down by beyond the room the
+                                // letter's raise left moves the letter, and its exclusion, too (WPT
+                                // css-inline `initial-letter-block-position-*-over-ruby*`).
+                                if let Some((letter_id, at, size, direction)) = letter_on_line.take() {
+                                    let metrics = &line_break_data.metrics;
+                                    let extra = (metrics.annotation_overflow[0] - metrics.annotation_shift) / scale;
+                                    if extra > 0.0 {
+                                        self.nodes[letter_id].update_unrounded_layout(|layout| layout.location.y += extra);
+                                        block_ctx.place_initial_letter(
+                                            at,
+                                            Size { width: size.width, height: size.height + extra },
+                                            direction,
+                                        );
+                                    }
+                                }
+
+                                let state = breaker.state_mut();
+
+                                // pyro: a `<br>` with `clear` ended the line: what follows starts
+                                // below the floats it clears.
+                                if line_break_data.reason == BreakReason::Explicit
+                                    && let Some(&(_, br)) = br_clears
+                                        .iter()
+                                        .find(|&&(offset, _)| offset + 1 == line_break_data.text_end)
+                                {
+                                    let clear = self.child_layout_style(&self.nodes[br]).clear();
+                                    let y = state.line_y() as f32 / scale;
+                                    let cleared = block_ctx.find_content_slot(y, 0.0, clear, None).y;
+                                    // The end of the floats beside the line: a trimmed last line
+                                    // (`text-box-trim`) does not end the content above it.
+                                    let line_top = line_break_data.line_y_start as f32 / scale;
+                                    let beside = block_ctx.find_content_slot(line_top, 0.0, clear, None).y;
+                                    if beside > line_top {
+                                        br_clear_floor = br_clear_floor.max(beside * scale);
+                                    }
+                                    if cleared > y {
+                                        let cleared = f64::from(cleared * scale);
+                                        state.set_line_y(cleared);
+                                        line_bottoms[(line_count_so_far - 1) % 2] = cleared;
+                                        br_clear_floor = br_clear_floor.max(cleared as f32);
+                                        has_active_floats = true;
+                                    }
+                                }
+
+                                // pyro: a float met past the point where the line wrapped is met
+                                // again on the next line, and placed after that one (CSS 2.1 §9.5.1
+                                // rule 6; WPT `floats-line-wrap-shifted-001`).
+                                let next_item = state.item_index();
+                                pending_floats.retain(|float| float.item < next_item);
+                                if !pending_floats.is_empty() {
+                                    let min_y = state.line_y() as f32 / scale;
+                                    for float in pending_floats.drain(..) {
+                                        placed_through = placed_through.max(Some(float.item));
+                                        let span_offset = float_span_offset(&self.nodes, float.node_id);
+                                        self.place_inline_float(
+                                            &mut block_ctx,
+                                            float,
+                                            min_y,
+                                            container_pb,
+                                            &mut oof_candidates,
+                                            span_offset,
+                                            width / scale,
+                                            float_cb_height,
+                                            float_cb_rtl,
+                                        );
+                                    }
+                                    has_active_floats = true;
+                                }
+
+                                if has_active_floats {
+                                    let min_y = state.line_y() / scale as f64;
+                                    line_slot =
+                                        block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
+                                    has_active_floats = line_slot.segment_id.is_some();
+                                    set_line_slot(state, &line_slot, scale, slack, mirror_slots);
+                                } else {
+                                    state.set_line_x(0.0);
+                                    state.set_line_max_advance(max_advance);
+                                }
+
                                 line_start_state = has_active_floats.then(|| breaker.state().clone());
                                 continue;
                             }
-                            line_bottoms[line_count_so_far % 2] = line_break_data.line_y_end;
-                            line_count_so_far += 1;
+                            YieldData::MaxHeightExceeded(_data) => {
+                                // TODO
+                                continue;
+                            }
+                            YieldData::InlineBoxBreak(box_break_data) => {
+                                let item = breaker.state().item_index();
+                                let state = breaker.state_mut();
+                                let node_id = NodeId::from_u64(box_break_data.inline_box_id);
 
-                            // pyro: the initial letter's cap height stays on its first line's text
-                            // (Blink places it after the line, `PostPlaceInitialLetterBox`): what
-                            // the line's annotations push the text down by beyond the room the
-                            // letter's raise left moves the letter, and its exclusion, too (WPT
-                            // css-inline `initial-letter-block-position-*-over-ruby*`).
-                            if let Some((letter_id, at, size, direction)) = letter_on_line.take() {
-                                let metrics = &line_break_data.metrics;
-                                let extra = (metrics.annotation_overflow[0] - metrics.annotation_shift) / scale;
-                                if extra > 0.0 {
-                                    self.nodes[letter_id].update_unrounded_layout(|layout| layout.location.y += extra);
-                                    block_ctx.place_initial_letter(
-                                        at,
-                                        Size { width: size.width, height: size.height + extra },
-                                        direction,
+                                // pyro: met again after its line wrapped before it: it keeps its place.
+                                if placed_through.is_some_and(|placed| item <= placed) {
+                                    state.append_inline_box_to_line(
+                                        box_break_data.advance,
+                                        f32::NEG_INFINITY,
+                                        f32::NEG_INFINITY,
                                     );
+                                    continue;
                                 }
-                            }
 
-                            let state = breaker.state_mut();
-
-                            // pyro: a `<br>` with `clear` ended the line: what follows starts
-                            // below the floats it clears.
-                            if line_break_data.reason == BreakReason::Explicit
-                                && let Some(&(_, br)) = br_clears
-                                    .iter()
-                                    .find(|&&(offset, _)| offset + 1 == line_break_data.text_end)
-                            {
-                                let clear = self.child_layout_style(&self.nodes[br]).clear();
-                                let y = state.line_y() as f32 / scale;
-                                let cleared = block_ctx.find_content_slot(y, 0.0, clear, None).y;
-                                // The end of the floats beside the line: a trimmed last line
-                                // (`text-box-trim`) does not end the content above it.
-                                let line_top = line_break_data.line_y_start as f32 / scale;
-                                let beside = block_ctx.find_content_slot(line_top, 0.0, clear, None).y;
-                                if beside > line_top {
-                                    br_clear_floor = br_clear_floor.max(beside * scale);
+                                // pyro: the initial letter box (`layout::first_letter`) is placed by
+                                // the first line, which it starts: at the line's start (after the
+                                // text indent, beside the floats along its whole height), its cap
+                                // height on the line's, its baseline on the sink's line (Blink's
+                                // `PostPlaceInitialLetterBox`), an exclusion from the line's top to
+                                // its margin box's bottom. Raised and sunken letters move the
+                                // line's text down.
+                                if let Some((_, letter)) = initial_letter.filter(|&(box_id, _)| box_id == node_id) {
+                                    let line_top = state.line_y() as f32 / scale;
+                                    let (margin, rtl) = {
+                                        let style = self.child_layout_style(&self.nodes[node_id]);
+                                        (
+                                            style.margin().resolve_or_zero(inputs.parent_size, resolve_calc_value),
+                                            style.float() == Float::Right,
+                                        )
+                                    };
+                                    let output = self.compute_child_layout(crate::taffy_node_id(node_id), float_child_inputs);
+                                    let size = output.size;
+                                    let ascent = output.baselines.first.unwrap_or(size.height);
+                                    let (offset, mut shift) = initial_letter_offset(&letter, ascent, size.height);
+                                    let border_top = offset + margin.top;
+                                    // `text-box-trim` at the start of the first line cancels the text's
+                                    // move (Blink's `ApplyTextBoxTrim`): the box stays where it is drawn
+                                    // over the moved text, its exclusion where it would be.
+                                    let mut drawn_top = border_top;
+                                    if shift > 0.0 && crate::layout::text_box::block_trim(self.doc, root_id).0.is_some() {
+                                        drawn_top -= shift;
+                                        shift = 0.0;
+                                    }
+                                    let extent_top = offset.min(0.0);
+                                    let extent_bottom = border_top + size.height + margin.bottom;
+                                    let slot = block_ctx.find_content_slot(
+                                        line_top,
+                                        extent_bottom.max(letter.line_height),
+                                        Clear::None,
+                                        None,
+                                    );
+                                    let indent = letter_indent.resolve(CSSPixelLength::new((width / scale).max(0.0))).px();
+                                    let margin_box_width = (margin.left + size.width + margin.right).max(0.0);
+                                    let (x, border_x) = if rtl {
+                                        let right = slot.x + slot.width - indent;
+                                        (right - margin_box_width, right - margin.right - size.width)
+                                    } else {
+                                        let left = slot.x + indent;
+                                        (left, left + margin.left)
+                                    };
+                                    let excluded = (
+                                        node_id,
+                                        Point { x, y: line_top + extent_top },
+                                        Size { width: margin_box_width, height: (extent_bottom - extent_top).max(0.0) },
+                                        if rtl { taffy::FloatDirection::Right } else { taffy::FloatDirection::Left },
+                                    );
+                                    block_ctx.place_initial_letter(excluded.1, excluded.2, excluded.3);
+                                    letter_on_line = Some(excluded);
+                                    let location = Point {
+                                        x: border_x + container_pb.left,
+                                        y: line_top + drawn_top + container_pb.top,
+                                    };
+                                    self.nodes[node_id].update_unrounded_layout(|layout| {
+                                        layout.size = size;
+                                        layout.location = location;
+                                        layout.margin = margin;
+                                    });
+                                    placed_through = placed_through.max(Some(item));
+                                    let line_y = line_top + shift;
+                                    state.set_line_y(f64::from(line_y * scale));
+                                    // An annotation over the line's text takes the room the raise
+                                    // leaves before the text moves further (Blink's
+                                    // `BlockStartAnnotationSpace`).
+                                    state.set_annotation_space(shift * scale);
+                                    line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
+                                    has_active_floats = line_slot.segment_id.is_some();
+                                    set_line_slot(state, &line_slot, scale, slack, mirror_slots);
+                                    state.append_inline_box_to_line(
+                                        box_break_data.advance,
+                                        f32::NEG_INFINITY,
+                                        f32::NEG_INFINITY,
+                                    );
+                                    line_start_state = has_active_floats.then(|| breaker.state().clone());
+                                    continue;
                                 }
-                                if cleared > y {
-                                    let cleared = f64::from(cleared * scale);
-                                    state.set_line_y(cleared);
-                                    line_bottoms[(line_count_so_far - 1) % 2] = cleared;
-                                    br_clear_floor = br_clear_floor.max(cleared as f32);
-                                    has_active_floats = true;
-                                }
-                            }
 
-                            // pyro: a float met past the point where the line wrapped is met
-                            // again on the next line, and placed after that one (CSS 2.1 §9.5.1
-                            // rule 6; WPT `floats-line-wrap-shifted-001`).
-                            let next_item = state.item_index();
-                            pending_floats.retain(|float| float.item < next_item);
-                            if !pending_floats.is_empty() {
-                                let min_y = state.line_y() as f32 / scale;
-                                for float in pending_floats.drain(..) {
-                                    placed_through = placed_through.max(Some(float.item));
-                                    let span_offset = float_span_offset(&self.nodes, float.node_id);
+                                let (direction, clear, margin) = {
+                                    let style = self.child_layout_style(&self.nodes[node_id]);
+                                    // We can assume that the box is a float because we only set `break_on_box: true` for floats
+                                    let direction = match style.float() {
+                                        Float::Left => taffy::FloatDirection::Left,
+                                        Float::Right => taffy::FloatDirection::Right,
+                                        Float::None => unreachable!(),
+                                    };
+                                    (
+                                        direction,
+                                        style.clear(),
+                                        style
+                                            .margin()
+                                            .resolve_or_zero(inputs.parent_size, resolve_calc_value),
+                                    )
+                                };
+
+                                let output = self.compute_child_layout(
+                                    crate::taffy_node_id(node_id),
+                                    float_child_inputs,
+                                );
+                                let float_width = (output.size.width + margin.left + margin.right) * scale;
+                                let float = PendingFloat {
+                                    node_id,
+                                    item,
+                                    output,
+                                    margin,
+                                    direction,
+                                    clear,
+                                };
+
+                                // A float that doesn't fit beside the content already on the line is
+                                // placed below the line (CSS 2.1 §9.5.1), as are any floats after it
+                                // (a float may not be higher than an earlier float).
+                                let fits_on_line = pending_floats.is_empty()
+                                    && (box_break_data.advance <= 0.0
+                                        || box_break_data.advance + float_width
+                                            <= state.line_max_advance() + 0.001 * scale);
+                                // pyro: nothing precedes the float on its line.
+                                let leads_line = box_break_data.advance <= 0.0;
+                                if !fits_on_line {
+                                    pending_floats.push(float);
+                                } else {
+                                    let min_y = state.line_y() as f32 / scale;
+                                    placed_through = placed_through.max(Some(item));
+                                    let span_offset = float_span_offset(&self.nodes, node_id);
                                     self.place_inline_float(
                                         &mut block_ctx,
                                         float,
@@ -1590,217 +2129,62 @@ impl LayoutPassState<'_> {
                                         container_pb,
                                         &mut oof_candidates,
                                         span_offset,
+                                        width / scale,
+                                        float_cb_height,
+                                        float_cb_rtl,
                                     );
+
+                                    let min_y = state.line_y() / scale as f64;
+                                    line_slot =
+                                        block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
+                                    has_active_floats = line_slot.segment_id.is_some();
+                                    set_line_slot(state, &line_slot, scale, slack, mirror_slots);
+
+                                    // The float can't be unplaced, so the line can no longer be retried
+                                    line_start_state = None;
                                 }
-                                has_active_floats = true;
-                            }
 
-                            if has_active_floats {
-                                let min_y = state.line_y() / scale as f64;
-                                line_slot =
-                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
-                                has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
-                            } else {
-                                state.set_line_x(0.0);
-                                state.set_line_max_advance(max_advance);
-                            }
-
-                            line_start_state = has_active_floats.then(|| breaker.state().clone());
-                            continue;
-                        }
-                        YieldData::MaxHeightExceeded(_data) => {
-                            // TODO
-                            continue;
-                        }
-                        YieldData::InlineBoxBreak(box_break_data) => {
-                            let item = breaker.state().item_index();
-                            let state = breaker.state_mut();
-                            let node_id = NodeId::from_u64(box_break_data.inline_box_id);
-
-                            // pyro: met again after its line wrapped before it: it keeps its place.
-                            if placed_through.is_some_and(|placed| item <= placed) {
+                                // Floats are out-of-flow and must not contribute to the line's height.
                                 state.append_inline_box_to_line(
                                     box_break_data.advance,
                                     f32::NEG_INFINITY,
                                     f32::NEG_INFINITY,
                                 );
-                                continue;
-                            }
 
-                            // pyro: the initial letter box (`layout::first_letter`) is placed by
-                            // the first line, which it starts: at the line's start (after the
-                            // text indent, beside the floats along its whole height), its cap
-                            // height on the line's, its baseline on the sink's line (Blink's
-                            // `PostPlaceInitialLetterBox`), an exclusion from the line's top to
-                            // its margin box's bottom. Raised and sunken letters move the
-                            // line's text down.
-                            if let Some((_, letter)) = initial_letter.filter(|&(box_id, _)| box_id == node_id) {
-                                let line_top = state.line_y() as f32 / scale;
-                                let (margin, rtl) = {
-                                    let style = self.child_layout_style(&self.nodes[node_id]);
-                                    (
-                                        style.margin().resolve_or_zero(inputs.parent_size, resolve_calc_value),
-                                        style.float() == Float::Right,
-                                    )
-                                };
-                                let output = self.compute_child_layout(crate::taffy_node_id(node_id), float_child_inputs);
-                                let size = output.size;
-                                let ascent = output.baselines.first.unwrap_or(size.height);
-                                let (offset, mut shift) = initial_letter_offset(&letter, ascent, size.height);
-                                let border_top = offset + margin.top;
-                                // `text-box-trim` at the start of the first line cancels the text's
-                                // move (Blink's `ApplyTextBoxTrim`): the box stays where it is drawn
-                                // over the moved text, its exclusion where it would be.
-                                let mut drawn_top = border_top;
-                                if shift > 0.0 && crate::layout::text_box::block_trim(self.doc, root_id).0.is_some() {
-                                    drawn_top -= shift;
-                                    shift = 0.0;
+                                // pyro: a float placed with nothing before it on the line leaves
+                                // the line to be retried from here, after the float: content that does
+                                // not fit beside it moves down, the float stays (CSS 2.1 §9.5.1; WPT
+                                // `floats-placement-004`, `c414-flt-fit-001`).
+                                if fits_on_line && leads_line && has_active_floats {
+                                    line_start_state = Some(breaker.state().clone());
                                 }
-                                let extent_top = offset.min(0.0);
-                                let extent_bottom = border_top + size.height + margin.bottom;
-                                let slot = block_ctx.find_content_slot(
-                                    line_top,
-                                    extent_bottom.max(letter.line_height),
-                                    Clear::None,
-                                    None,
-                                );
-                                let indent = letter_indent.resolve(CSSPixelLength::new((width / scale).max(0.0))).px();
-                                let margin_box_width = (margin.left + size.width + margin.right).max(0.0);
-                                let (x, border_x) = if rtl {
-                                    let right = slot.x + slot.width - indent;
-                                    (right - margin_box_width, right - margin.right - size.width)
-                                } else {
-                                    let left = slot.x + indent;
-                                    (left, left + margin.left)
-                                };
-                                let excluded = (
-                                    node_id,
-                                    Point { x, y: line_top + extent_top },
-                                    Size { width: margin_box_width, height: (extent_bottom - extent_top).max(0.0) },
-                                    if rtl { taffy::FloatDirection::Right } else { taffy::FloatDirection::Left },
-                                );
-                                block_ctx.place_initial_letter(excluded.1, excluded.2, excluded.3);
-                                letter_on_line = Some(excluded);
-                                let location = Point {
-                                    x: border_x + container_pb.left,
-                                    y: line_top + drawn_top + container_pb.top,
-                                };
-                                self.nodes[node_id].update_unrounded_layout(|layout| {
-                                    layout.size = size;
-                                    layout.location = location;
-                                    layout.margin = margin;
-                                });
-                                placed_through = placed_through.max(Some(item));
-                                let line_y = line_top + shift;
-                                state.set_line_y(f64::from(line_y * scale));
-                                // An annotation over the line's text takes the room the raise
-                                // leaves before the text moves further (Blink's
-                                // `BlockStartAnnotationSpace`).
-                                state.set_annotation_space(shift * scale);
-                                line_slot = block_ctx.find_content_slot(line_y, 0.0, Clear::None, None);
-                                has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
-                                state.append_inline_box_to_line(
-                                    box_break_data.advance,
-                                    f32::NEG_INFINITY,
-                                    f32::NEG_INFINITY,
-                                );
-                                line_start_state = has_active_floats.then(|| breaker.state().clone());
-                                continue;
+
+                                // if float.is_floated() {
+                                //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);
+                                //     println!(
+                                //         "w:{} h:{} x:{}, y:{}",
+                                //         layout.size.width, layout.size.height, 0, 0
+                                //     );
+                                // }
                             }
-
-                            let (direction, clear, margin) = {
-                                let style = self.child_layout_style(&self.nodes[node_id]);
-                                // We can assume that the box is a float because we only set `break_on_box: true` for floats
-                                let direction = match style.float() {
-                                    Float::Left => taffy::FloatDirection::Left,
-                                    Float::Right => taffy::FloatDirection::Right,
-                                    Float::None => unreachable!(),
-                                };
-                                (
-                                    direction,
-                                    style.clear(),
-                                    style
-                                        .margin()
-                                        .resolve_or_zero(inputs.parent_size, resolve_calc_value),
-                                )
-                            };
-
-                            let output = self.compute_child_layout(
-                                crate::taffy_node_id(node_id),
-                                float_child_inputs,
-                            );
-                            let float_width = (output.size.width + margin.left + margin.right) * scale;
-                            let float = PendingFloat {
-                                node_id,
-                                item,
-                                output,
-                                margin,
-                                direction,
-                                clear,
-                            };
-
-                            // A float that doesn't fit beside the content already on the line is
-                            // placed below the line (CSS 2.1 §9.5.1), as are any floats after it
-                            // (a float may not be higher than an earlier float).
-                            let fits_on_line = pending_floats.is_empty()
-                                && (box_break_data.advance <= 0.0
-                                    || box_break_data.advance + float_width
-                                        <= state.line_max_advance() + 0.001 * scale);
-                            // pyro: nothing precedes the float on its line.
-                            let leads_line = box_break_data.advance <= 0.0;
-                            if !fits_on_line {
-                                pending_floats.push(float);
-                            } else {
-                                let min_y = state.line_y() as f32 / scale;
-                                placed_through = placed_through.max(Some(item));
-                                let span_offset = float_span_offset(&self.nodes, node_id);
-                                self.place_inline_float(
-                                    &mut block_ctx,
-                                    float,
-                                    min_y,
-                                    container_pb,
-                                    &mut oof_candidates,
-                                    span_offset,
-                                );
-
-                                let min_y = state.line_y() / scale as f64;
-                                line_slot =
-                                    block_ctx.find_content_slot(min_y as f32, 0.0, Clear::None, None);
-                                has_active_floats = line_slot.segment_id.is_some();
-                                set_line_slot(state, &line_slot, scale, slack, mirror_slots);
-
-                                // The float can't be unplaced, so the line can no longer be retried
-                                line_start_state = None;
-                            }
-
-                            // Floats are out-of-flow and must not contribute to the line's height.
-                            state.append_inline_box_to_line(
-                                box_break_data.advance,
-                                f32::NEG_INFINITY,
-                                f32::NEG_INFINITY,
-                            );
-
-                            // pyro: a float placed with nothing before it on the line leaves
-                            // the line to be retried from here, after the float: content that does
-                            // not fit beside it moves down, the float stays (CSS 2.1 §9.5.1; WPT
-                            // `floats-placement-004`, `c414-flt-fit-001`).
-                            if fits_on_line && leads_line && has_active_floats {
-                                line_start_state = Some(breaker.state().clone());
-                            }
-
-                            // if float.is_floated() {
-                            //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);
-                            //     println!(
-                            //         "w:{} h:{} x:{}, y:{}",
-                            //         layout.size.width, layout.size.height, 0, 0
-                            //     );
-                            // }
                         }
                     }
-                }
-                breaker.finish();
+                    breaker.finish();
+                    // pyro: balancing beside floats: the next width to try, from a fresh start.
+                    let Some(balance) = float_balance.as_mut() else { break kept };
+                    let lines = &inline_layout.layout;
+                    let emergency =
+                        lines.lines().filter(|line| line.break_reason() == BreakReason::Emergency).count();
+                    let bottom = line_count_so_far.checked_sub(1).map_or(0.0, |last| line_bottoms[last % 2]);
+                    let Some(reduction) = balance.next((lines.len(), emergency, bottom), scale) else { break kept };
+                    balance.reduction = reduction;
+                    block_ctx.restore_floats(&balance.snapshot);
+                    self.inline_placed_floats.truncate(balance.placed_floats);
+                    br_clear_floor = balance.br_clear_floor;
+                    oof_candidates = OofCandidates::new();
+                    line_bottoms = [0.0; 2];
+                    line_count_so_far = 0;
+                };
                 inline_layout.br_clears = br_clears;
                 inline_layout.last_break = (!floats_involved).then_some(break_key);
                 let resumed_at = match kept {
@@ -1825,7 +2209,12 @@ impl LayoutPassState<'_> {
             .map(|s| {
                 (
                     stylo_to_parley::text_align(s.clone_text_align()),
-                    stylo_to_parley::text_align_last(s.clone_text_align_last()),
+                    // pyro: `text-align: justify-all` justifies the last line too (unless
+                    // `text-align-last` says otherwise).
+                    stylo_to_parley::text_align_last(s.clone_text_align_last()).or(
+                        (s.clone_text_align() == style::values::specified::TextAlignKeyword::JustifyAll)
+                            .then_some(parley::Alignment::Justify),
+                    ),
                 )
             })
             .unwrap_or((parley::layout::Alignment::Start, None));
@@ -1840,13 +2229,27 @@ impl LayoutPassState<'_> {
             inline_layout.hit_reach = None;
         }
         inline_layout.justified = justified;
-        inline_layout.layout.align(
-            alignment,
-            AlignmentOptions {
-                align_when_overflowing: false,
-                last_line_alignment,
-            },
-        );
+        // pyro: CSS Text 4 `text-group-align`: the lines align within the group of them first.
+        let group_left = self.nodes[node_id].primary_styles().and_then(|s| {
+            use style::values::computed::TextGroupAlign as G;
+            let rtl = inline_layout.layout.is_rtl();
+            match s.get_text().text_group_align {
+                G::None => None,
+                G::Left => Some(0.0),
+                G::Right => Some(1.0),
+                G::Center => Some(0.5),
+                G::Start => Some(if rtl { 1.0 } else { 0.0 }),
+                G::End => Some(if rtl { 0.0 } else { 1.0 }),
+            }
+        });
+        let options = AlignmentOptions {
+            align_when_overflowing: false,
+            last_line_alignment,
+        };
+        match group_left {
+            Some(left) => inline_layout.layout.align_in_group(alignment, options, left),
+            None => inline_layout.layout.align(alignment, options),
+        }
 
         // Parley lays out empty text as a single strut-height line (text-editor semantics),
         // but a line box containing no text, inline boxes or other in-flow content is a
@@ -1916,6 +2319,7 @@ impl LayoutPassState<'_> {
         // by that and by what the last line loses under its edge (`layout::text_box`).
         let mut text_box_shift = 0.0;
         let mut text_box_overflows = false;
+        let mut text_box_float_shift = None;
         if has_inline_content {
             let (start, end) = crate::layout::text_box::block_trim(self.doc, node_id);
             let layout = &inline_layout.layout;
@@ -1927,9 +2331,18 @@ impl LayoutPassState<'_> {
                 // An inverted line (`vertical-lr`) has its under side at the block start.
                 text_box_shift = if trim.over { edge - top } else { line.metrics().block_max_coord - edge };
             }
+            // pyro: the last formatted line: not a phantom line holding only floats or empty
+            // boxes (CSS Inline 3 § 4.1), which the end trim passes over.
+            let last_formatted = {
+                let mut last = trailing_empty_line.unwrap_or(line_count);
+                while last > 1 && layout.get(last - 1).is_some_and(|line| line.metrics().invisible) {
+                    last -= 1;
+                }
+                last.checked_sub(1)
+            };
             let mut end_trim = 0.0;
             if let Some(trim) = end
-                && let Some(line) = trailing_empty_line.unwrap_or(line_count).checked_sub(1).and_then(|i| layout.get(i))
+                && let Some(line) = last_formatted.and_then(|i| layout.get(i))
             {
                 let edge = line.span_text_edge(line.root_style(), trim.edge, trim.over);
                 end_trim = if trim.over { edge - line.metrics().block_min_coord } else { line.metrics().block_max_coord - edge };
@@ -1937,11 +2350,43 @@ impl LayoutPassState<'_> {
             // (Not above where a `<br>`'s clearance put the end of the content.)
             height = (height - text_box_shift - end_trim).max((br_clear_floor - text_box_shift).min(height));
             text_box_overflows = text_box_shift > 0.0 || end_trim > 0.0;
+            // pyro: the floats placed among the lines move with them; one placed after the last
+            // line moves up by its trimmed end too, as that line box itself is shorter (Blink).
+            let last_bottom = last_formatted
+                .and_then(|i| layout.get(i))
+                .map_or(f32::INFINITY, |line| line.metrics().block_max_coord / scale);
+            if text_box_shift > 0.0 || end_trim > 0.0 {
+                text_box_float_shift = Some((text_box_shift / scale, end_trim / scale, last_bottom));
+            }
         }
 
         #[cfg(feature = "floats")]
         {
-            if is_bfc_root {
+            // pyro: but for a `line-clamp` container: its height ends with its lines, floats or
+            // not (WPT css-overflow `line-clamp-with-floats-016`).
+            let line_clamp = self.nodes[node_id].primary_styles().is_some_and(|style| {
+                let clamp = &style.get_box().line_clamp;
+                !clamp.webkit_legacy && !clamp.max_lines.is_none()
+            });
+            // pyro: floats moved with the trimmed lines (`text_box_float_shift`) contribute where
+            // they are now.
+            let mut float_height_contribution = float_height_contribution;
+            if let Some((start, end, last_bottom)) = text_box_float_shift {
+                let mut bottom = f32::NEG_INFINITY;
+                for (float_id, top) in core::mem::take(&mut self.inline_placed_floats) {
+                    let shift = if top >= last_bottom { start + end } else { start };
+                    let mut margin_bottom = 0.0;
+                    self.nodes[float_id].update_unrounded_layout(|layout| {
+                        layout.location.y -= shift;
+                        margin_bottom = layout.location.y + layout.size.height + layout.margin.bottom;
+                    });
+                    bottom = bottom.max(margin_bottom - container_pb.top);
+                }
+                if bottom.is_finite() {
+                    float_height_contribution = bottom.max(0.0);
+                }
+            }
+            if is_bfc_root && !line_clamp {
                 height = height.max(float_height_contribution * scale)
             };
         }
@@ -1994,7 +2439,7 @@ impl LayoutPassState<'_> {
                     .unwrap_or(0.0),
             ),
         }
-        .maybe_max(container_pb.sum_axes().map(Some));
+        .maybe_max(pb_sum.map(Some));
 
         let container_direction = self.nodes[node_id].layout_style().direction();
 
@@ -2218,7 +2663,11 @@ impl LayoutPassState<'_> {
                             },
                         });
                     } else if is_floated {
+                        // pyro: its scrollbar gutters (classic scrollbars), as Taffy's layouts carry
+                        // them: clientWidth/Height (`CoreStyle::scrollbar_gutter_size`).
+                        let scrollbar_size = taffy::CoreStyle::scrollbar_gutter_size(&self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]));
                         self.nodes[NodeId::from_u64(ibox.id)].update_unrounded_layout(|layout| {
+                            layout.scrollbar_size = scrollbar_size;
                             layout.padding = padding; //.map(|p| p / scale);
                             layout.border = border; //.map(|p| p / scale);
                             layout.margin = margin;
@@ -2231,6 +2680,10 @@ impl LayoutPassState<'_> {
                         let mut output =
                             self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                         let size = output.size;
+                        // pyro: its scrollbar gutters (classic scrollbars), as Taffy's layouts carry them.
+                        let scrollbar_size = taffy::CoreStyle::scrollbar_gutter_size(
+                            &self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]),
+                        );
                         // pyro: relatively positioned inline boxes around it move it too.
                         let span_offset = match self.nodes[NodeId::from_u64(ibox.id)].parent {
                             Some(parent) if inline_layout.relative_spans => {
@@ -2283,6 +2736,7 @@ impl LayoutPassState<'_> {
                         };
                         node.update_unrounded_layout(|layout| {
                             layout.size = size;
+                            layout.scrollbar_size = scrollbar_size;
                             layout.scrollable_overflow_rect = overflow;
                             layout.location = location;
                             layout.padding = padding; //.map(|p| p / scale);
@@ -2436,12 +2890,7 @@ impl LayoutPassState<'_> {
             .unwrap()
             .inline_layout_data = Some(inline_layout);
 
-        let oof_position_inset = taffy::Rect {
-            left: border.left,
-            right: border.right + scrollbar_gutter.x,
-            top: border.top,
-            bottom: border.bottom + scrollbar_gutter.y,
-        };
+        let oof_position_inset = border + gutter_edges;
 
         LayoutOutput {
             size: final_size,

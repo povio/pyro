@@ -284,7 +284,10 @@
   const endTime = t => Math.max(t.delay + activeDuration(t) + t.endDelay, 0);
 
   // The effect's computed timing at `localTime` for playback `rate`.
-  function computeTiming(t, localTime, rate) {
+  // (`bounds`: on a progress-based timeline, whether its scroll position is at the start and at the
+  // end of its range, where the active interval's boundary on that side is inclusive: Web
+  // Animations 2, "at progress timeline boundary".)
+  function computeTiming(t, localTime, rate, bounds) {
     const active = activeDuration(t);
     const end = endTime(t);
     const fill = t.fill === 'auto' ? 'none' : t.fill;
@@ -293,8 +296,10 @@
     const backwards = rate < 0;
     const beforeActive = Math.max(Math.min(t.delay, end), 0);
     const activeAfter = Math.max(Math.min(t.delay + active, end), 0);
-    if (localTime < beforeActive || (backwards && localTime === beforeActive)) out.phase = 'before';
-    else if (localTime > activeAfter || (!backwards && localTime === activeAfter)) out.phase = 'after';
+    const [atStart, atEnd] = bounds || [false, false];
+    const at = (a, b) => (atStart || atEnd ? Math.abs(a - b) < 1e-9 : a === b);
+    if (localTime < beforeActive || (backwards && at(localTime, beforeActive) && !atStart)) out.phase = 'before';
+    else if (localTime > activeAfter || (!backwards && at(localTime, activeAfter) && !atEnd)) out.phase = 'after';
     else out.phase = 'active';
     let activeTime = null;
     if (out.phase === 'before') {
@@ -328,6 +333,7 @@
       forwards = d === Infinity || d % 2 === 0;
     }
     const directed = forwards ? simple : 1 - simple;
+    out.directed = directed;
     const before = (out.phase === 'before' && !backwards) || (out.phase === 'after' && backwards);
     out.progress = t.easing.fn(directed, before);
     return out;
@@ -636,7 +642,7 @@
   function stateOf(st) {
     const [[sk, sv], [ek, ev]] = st.inset;
     if (st.subject === null && st.source === null) return null;
-    return timelineState(st.subject === null ? st.source : null, st.subject, AXES.indexOf(st.axis), sk, sv, ek, ev);
+    return timelineState(st.subject === null ? st.source : null, st.subject, AXES.indexOf(st.axis), sk, sv, ek, ev, st.subjectPseudo || 0);
   }
   // ----- animation ranges (rangeStart / rangeEnd) -------------------------
 
@@ -817,6 +823,12 @@
       st.timing = updateTimingFrom(st.timing, timing, false);
       if (st.animation) {
         st.animation.scripted = true;
+        // (CSS no longer sets the timing properties script set: CSS Animations 2 § 4.2.)
+        if (isObject(timing)) {
+          for (const f of ['delay', 'endDelay', 'fill', 'iterationStart', 'iterations', 'duration', 'direction', 'easing']) {
+            if (timing[f] !== undefined) override(st.animation, 'timing:' + f);
+          }
+        }
         timingChanged(st.animation);
       }
     }
@@ -845,7 +857,13 @@
     const anim = effect.animation;
     const localTime = anim ? currentTimeOf(anim) : null;
     const rate = anim ? anim.rate : 1;
-    const c = computeTiming(timingOn(effect), localTime, rate);
+    let bounds = null;
+    if (anim && progressBased(anim)) {
+      const st = timelines.get(anim.timeline);
+      const state = stateOf(st);
+      if (state) bounds = [state[0] <= 0, st.subject === null && state[0] >= state[2]];
+    }
+    const c = computeTiming(timingOn(effect), localTime, rate, bounds);
     c.localTime = localTime;
     return c;
   }
@@ -933,6 +951,7 @@
   }
   function pseudoElement(value) {
     const s = String(value);
+    if (/^::view-transition(?:$|-)/i.test(s) && native.validViewPseudo(s)) return s;
     if (/^::?(before|after|marker|first-line|first-letter|placeholder|selection|backdrop)$/i.test(s)) {
       return s.startsWith('::') ? s.toLowerCase() : ':' + s.toLowerCase();
     }
@@ -1101,7 +1120,10 @@
       a.autoAlign = false;
       a.pending = null;
       settle(a.ready, a.self, false);
-      updateFinished(a, false, false);
+      // (The aligned start time places it as a seek would: past its end it holds the time the
+      // timeline gives, not the one it had; Chromium, WPT scroll-animations
+      // `view-timelines/range-boundary`.)
+      updateFinished(a, true, false);
       return;
     }
     if (a.holdTime !== null) {
@@ -1143,8 +1165,13 @@
       if (end === Infinity) throw invalidState('Cannot play reversed Animation with infinite target effect end.');
       seek = end;
     } else if (rate === 0 && ct === null) seek = 0;
-    if (seek !== null) a.holdTime = seek;
-    if (a.holdTime !== null) a.startTime = null;
+    // (An auto-aligned start time leaves the start and hold times unresolved until the pending
+    // play aligns it with an active timeline: on an inactive one the animation shows nothing,
+    // Web Animations 2 "play an animation"; WPT scroll-animations view-timelines/
+    // view-timeline-on-display-none-element.)
+    const aligning = progressBased(a) && a.autoAlign && seek !== null;
+    if (seek !== null) a.holdTime = aligning ? null : seek;
+    if (a.holdTime !== null || aligning) a.startTime = null;
     if (a.pending !== null) {
       cancelPending(a);
       hasPendingReady = true;
@@ -1224,6 +1251,7 @@
   // samples its keyframes into the cascade; `null` once it has no effect and
   // none to come without script.
   function report(a) {
+    if (a.viewRun) return;
     if (a.css !== undefined && !a.scripted) return;
     const e = a.effect;
     if (a.key === undefined) {
@@ -1243,7 +1271,7 @@
     // reported with the element and the pseudo-element (1, 2, 3): the engine samples it into the
     // pseudo-element's style. Other pseudo-elements' effects show nothing.)
     const pseudo = !e || e.pseudo === null ? 0
-      : ({ '::marker': 1, '::before': 2, ':before': 2, '::after': 3, ':after': 3 })[e.pseudo] || -1;
+      : ({ '::marker': 1, '::before': 2, ':before': 2, '::after': 3, ':after': 3, '::backdrop': 4 })[e.pseudo] || -1;
     const target = e && e.keyframe && pseudo >= 0 ? e.target : null;
     const timing = e && computedTimingOf(e);
     const inEffect = timing && timing.activeTime !== null;
@@ -1263,7 +1291,7 @@
     const t = timingOn(e);
     const tst = a.timeline !== null ? timelines.get(a.timeline) : null;
     const scrollRef = tst && tst.scroll
-      ? [tst.subject === null ? tst.source : null, tst.subject, AXES.indexOf(tst.axis), tst.inset[0][0], tst.inset[0][1], tst.inset[1][0], tst.inset[1][1], tst.subject === null && tst.source === null ? 1 : 0]
+      ? [tst.subject === null ? tst.source : null, tst.subject, AXES.indexOf(tst.axis), tst.inset[0][0], tst.inset[0][1], tst.inset[1][0], tst.inset[1][1], tst.subject === null && tst.source === null ? 1 : 0, tst.subjectPseudo || 0]
       : null;
     // A CSS animation's or transition's own effect has no keyframes (the
     // engine's are the CSS ones); one script gave it has.
@@ -1350,6 +1378,9 @@
   // The effect is current or in effect: getAnimations() lists it.
   function isRelevant(a) {
     if (!a.effect || playStateOf(a) === 'idle' || a.replaceState === 'removed') return false;
+    // (On a progress-based timeline it is current while not idle: the timeline moves either way
+    // as the page scrolls; Web Animations 2, Chromium.)
+    if (progressBased(a)) return true;
     const c = computedTimingOf(a.effect);
     if (c.activeTime !== null) return true;
     const rate = a.rate;
@@ -1437,6 +1468,7 @@
       const a = brand(animations, this, 'an Animation');
       a.scripted = true;
       if (v !== null && !effects.has(v)) throw new TypeError("The provided value is not of type 'AnimationEffect'.");
+      override(a, 'effect');
       setEffect(a, v === null ? null : effects.get(v));
     }
     get timeline() { return brand(animations, this, 'an Animation').timeline; }
@@ -1444,6 +1476,7 @@
       const a = brand(animations, this, 'an Animation');
       a.scripted = true;
       if (v !== null && !timelines.has(v)) throw new TypeError("The provided value is not of type 'AnimationTimeline'.");
+      override(a, 'timeline');
       if (v === a.timeline) return;
       const previous = playStateOf(a);
       const ct = currentTimeOf(a);
@@ -1492,12 +1525,14 @@
     set rangeStart(v) {
       const a = brand(animations, this, 'an Animation');
       a.rangeStart = parseRange(v, false, 'rangeStart');
+      override(a, 'rangeStart');
       rangeChanged(a);
     }
     get rangeEnd() { return rangeValue(brand(animations, this, 'an Animation').rangeEnd || 'normal'); }
     set rangeEnd(v) {
       const a = brand(animations, this, 'an Animation');
       a.rangeEnd = parseRange(v, true, 'rangeEnd');
+      override(a, 'rangeEnd');
       rangeChanged(a);
     }
     get playbackRate() { return brand(animations, this, 'an Animation').rate; }
@@ -1525,8 +1560,8 @@
       if (end === Infinity) return 0;
       return Math.min(Math.max(ct / end, 0), 1);
     }
-    play() { play(scripted(brand(animations, this, 'an Animation')), true); }
-    pause() { pause(scripted(brand(animations, this, 'an Animation'))); }
+    play() { play(override(scripted(brand(animations, this, 'an Animation')), 'playState'), true); }
+    pause() { pause(override(scripted(brand(animations, this, 'an Animation')), 'playState')); }
     finish() {
       const a = scripted(brand(animations, this, 'an Animation'));
       const rate = effectiveRate(a);
@@ -1551,7 +1586,7 @@
     }
     cancel() { cancel(scripted(brand(animations, this, 'an Animation'))); }
     reverse() {
-      const a = scripted(brand(animations, this, 'an Animation'));
+      const a = override(scripted(brand(animations, this, 'an Animation')), 'playState');
       if (timelineTime(a.timeline) === null) throw invalidState('Cannot reverse an animation with no active timeline');
       const original = a.pendingRate;
       a.pendingRate = -effectiveRate(a);
@@ -1632,6 +1667,13 @@
     a.scripted = true;
     return a;
   }
+  // Script set one of a CSS animation's properties: CSS no longer overrides that one (CSS
+  // Animations 2 § 4.2: `playState` after play() or pause(), `timeline`, `rangeStart`/`rangeEnd`,
+  // `effect`, a timing property after updateTiming()); its other properties still follow CSS.
+  function override(a, what) {
+    (a.overrides || (a.overrides = new Set())).add(what);
+    return a;
+  }
 
   function setEffect(a, effect) {
     if (a.effect === effect) return;
@@ -1689,7 +1731,11 @@
     m = /^view\((.*)\)$/.exec(t);
     if (m) {
       const args = m[1].replace(/\b(block|inline|x|y)\b/, '').trim();
-      return new ViewTimeline({ subject: target, axis: axisIn(m[1]), inset: args === '' ? 'auto' : args });
+      const timeline = new ViewTimeline({ subject: target, axis: axisIn(m[1]), inset: args === '' ? 'auto' : args });
+      // (A pseudo-element's `view()`: the pseudo-element's box is the subject; 2 `::before`, 3 `::after`.)
+      const code = ({ '::before': 2, ':before': 2, '::after': 3, ':after': 3 })[pseudo];
+      if (code) timelines.get(timeline).subjectPseudo = code;
+      return timeline;
     }
     if (t.startsWith('--')) {
       for (let el = target; el !== null; el = el.parentElement) {
@@ -1712,7 +1758,7 @@
     }
     return null;
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText]) {
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger]) {
     // The engine hands over computed easings; one it could not compute is
     // the initial `ease`, as an easing invalid at computed-value time is.
     let parsed;
@@ -1732,6 +1778,11 @@
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
     a.cssId = id;
+    a.cssTimelineKey = scrollDriven ? JSON.stringify(timelineText) : null;
+    if (trigger !== null && trigger !== undefined && !scrollDriven) {
+      armTrigger(a, trigger, held);
+      return object;
+    }
     if (scrollDriven) {
       a.scrollDriven = true;
       // (Its `animation-range`, as the engine places it.)
@@ -1767,6 +1818,133 @@
     updateFinished(a, true, false);
     return object;
   }
+  // ----- animation triggers (CSS Animations 2 `animation-trigger`, `timeline-trigger`) ----
+  // pyro: a CSS animation with an `animation-trigger` naming a timeline trigger waits, held
+  // just before its start (its backwards fill shows), until the trigger's timeline enters the
+  // trigger's activation range: then its first action runs; leaving the active range (the
+  // `/`-given one, else the activation range) runs its second. Actions: play, play-once (once),
+  // play-forwards, play-backwards, pause, reset, replay, none. Its object controls it from then
+  // on (script's: `playState` overridden). `trigger-scope` is not supported.
+  const triggered = new Set();
+  let triggerListening = false;
+  function parseTriggerRanges(text) {
+    // `<range-start> <range-end>`: each `[<name>] [<length-percentage>]`; a lone name covers it.
+    const tokens = text.trim().split(/\s+/).filter(Boolean);
+    const groups = [];
+    for (const tok of tokens) {
+      const last = groups[groups.length - 1];
+      if (RANGE_NAMES.includes(tok) || last === undefined || last.offset !== null) groups.push({ name: null, offset: null });
+      const g = groups[groups.length - 1];
+      if (RANGE_NAMES.includes(tok)) g.name = tok; else g.offset = tok;
+    }
+    const text1 = g => [g.name, g.offset].filter(x => x !== null).join(' ');
+    if (groups.length === 0) return ['normal', 'normal'];
+    if (groups.length === 1) {
+      const g = groups[0];
+      if (g.offset === null) return [g.name + ' 0%', g.name + ' 100%'];
+      return [text1(g), 'normal'];
+    }
+    return [text1(groups[0]), text1(groups[1])];
+  }
+  function parseTrigger(decl, source) {
+    let rest = decl.trim().replace(/^\S+\s*/, '');
+    let timelineText;
+    const fn = /^(view|scroll)\(/.exec(rest);
+    if (fn) {
+      const close = rest.indexOf(')');
+      timelineText = rest.slice(0, close + 1);
+      rest = rest.slice(close + 1);
+    } else {
+      const m = /^(\S+)\s*/.exec(rest);
+      timelineText = m ? m[1] : 'auto';
+      rest = rest.slice(m ? m[0].length : 0);
+    }
+    const [enter, exit] = rest.split('/');
+    const parse = (pair, isEnd) => {
+      try { return parseRange(pair, isEnd, isEnd ? 'rangeEnd' : 'rangeStart'); } catch { return 'normal'; }
+    };
+    const [es, ee] = parseTriggerRanges(enter || '');
+    const range = [parse(es, false), parse(ee, true)];
+    let exitRange = range;
+    if (exit !== undefined) {
+      const [xs, xe] = parseTriggerRanges(exit);
+      exitRange = [parse(xs, false), parse(xe, true)];
+    }
+    return { timeline: cssTimeline(timelineText, source, null), range, exitRange };
+  }
+  function armTrigger(a, [actionsText, source, decl], held) {
+    const words = actionsText.trim().split(/\s+/).slice(1);
+    let t;
+    try { t = parseTrigger(decl, source); } catch { t = null; }
+    a.trigger = { enter: words[0] || 'play', exit: words[1] || 'none', state: 'idle', spec: t, once: false };
+    a.triggerKey = JSON.stringify([actionsText, decl]);
+    a.triggerSource = source;
+    a.scripted = true;
+    override(a, 'playState');
+    // Untriggered: just before its start (Chromium shows only its backwards fill).
+    a.startTime = null;
+    a.holdTime = held !== null && held < 0 ? held : -1e-6;
+    track(a);
+    updateFinished(a, true, false);
+    triggered.add(a);
+    if (!triggerListening) {
+      triggerListening = true;
+      apply(addListener, globalThis, ['scroll', () => {
+        const later = fn => (requestFrame !== null ? apply(requestFrame, globalThis, [() => schedule(0, fn)]) : schedule(16, fn));
+        later(evaluateTriggers);
+      }, { capture: true, passive: true }]);
+    }
+    // (At the next frame: its timeline has the layout then.)
+    if (requestFrame !== null) apply(requestFrame, globalThis, [() => schedule(0, evaluateTriggers)]); else schedule(16, evaluateTriggers);
+  }
+  function evaluateTriggers() {
+    pushScroll();
+    for (const a of [...triggered]) {
+      if (!a.effect || !isConnected(a.effect.target)) { triggered.delete(a); continue; }
+      const tr = a.trigger;
+      const spec = tr.spec;
+      if (!spec || spec.timeline === null) continue;
+      const now = timelineTime(spec.timeline);
+      if (now === null) continue;
+      const within = ([rs, re]) => {
+        const r = rangeOffsets({ timeline: spec.timeline, rangeStart: rs, rangeEnd: re }) || [0, 100];
+        return now >= r[0] && now <= r[1];
+      };
+      if (tr.state !== 'active' && within(spec.range)) {
+        tr.state = 'active';
+        runTriggerAction(a, tr.enter);
+      } else if (tr.state === 'active' && !within(spec.exitRange)) {
+        tr.state = 'inactive';
+        runTriggerAction(a, tr.exit);
+      }
+    }
+  }
+  function runTriggerAction(a, action) {
+    const tr = a.trigger;
+    switch (action) {
+      case 'play': play(a, false); break;
+      case 'play-once': if (!tr.once) { tr.once = true; play(a, false); } break;
+      case 'play-forwards':
+        if (effectiveRate(a) < 0) a.pendingRate = -effectiveRate(a);
+        play(a, false);
+        break;
+      case 'play-backwards':
+        if (effectiveRate(a) > 0) a.pendingRate = -effectiveRate(a);
+        play(a, false);
+        break;
+      case 'pause': pause(a); break;
+      case 'reset':
+        pause(a);
+        silentlySetCurrentTime(a, effectiveRate(a) < 0 ? endOf(a) : 0);
+        updateFinished(a, true, false);
+        break;
+      case 'replay':
+        silentlySetCurrentTime(a, effectiveRate(a) < 0 ? endOf(a) : 0);
+        play(a, false);
+        break;
+      default: break;
+    }
+  }
   // A frame of the engine's (animation_frame.rs, `FRAME_MS`).
   const FRAME_MS = 16;
   // The engine's runs now ([id, target, transition, name, start, delay,
@@ -1788,12 +1966,164 @@
       if (seen.has(id)) continue;
       cssRuns.delete(id);
       live.delete(object);
+      // (A run the style dropped no longer waits for its trigger.)
+      const gone = animations.get(object);
+      if (gone) triggered.delete(gone);
     }
+  }
+
+  function viewRuns(target, entries) {
+    const objects = new Map();
+    function sync(entries) {
+      const seen = new Set();
+      for (const [box, index, pseudo, name, delay, duration, iterations, direction, fill, easing, paused] of entries) {
+        const key = `${box}:${index}:${name}`;
+        seen.add(key);
+        const existing = objects.get(key);
+        const state = existing && animations.get(existing);
+        const time = now();
+        const held = paused ? (state && currentTimeOf(state)) ?? 0 : null;
+        const start = state ? state.startTime ?? (time - (state.holdTime ?? 0)) : time;
+        const run = [null, target, false, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, null, null];
+        if (existing) {
+          if (playStateOf(state) !== 'idle') cssFollow(existing, run);
+        } else {
+          const object = cssRun(run);
+          animations.get(object).viewRun = true;
+          animations.get(object).viewSlot = [box, index];
+          objects.set(key, object);
+        }
+      }
+      for (const [key, object] of objects) {
+        if (!seen.has(key)) { cancel(animations.get(object)); objects.delete(key); }
+      }
+    }
+    sync(entries);
+    return {
+      sync,
+      sample() {
+        const values = [];
+        for (const object of objects.values()) {
+          const a = animations.get(object);
+          if (!a.effect || playStateOf(a) === 'idle') continue;
+          const progress = computedTimingOf(a.effect).directed;
+          if (progress !== undefined) values.push(a.viewSlot[0], a.viewSlot[1], progress);
+        }
+        return values;
+      },
+      active() { for (const object of objects.values()) { const state = playStateOf(animations.get(object)); if (state !== 'finished' && state !== 'idle') return true; } return false; },
+      release() { for (const object of objects.values()) cancel(animations.get(object)); objects.clear(); },
+    };
   }
   // An object script does not control follows its run's play state
   // (`animation-play-state` paused or running again).
+  // pyro: and the CSS properties script did not override follow their CSS values, script
+  // controlled or not (CSS Animations 2 § 4.2): `animation-timeline` (and range), the timing
+  // properties, `animation-play-state`.
   function cssFollow(object, run) {
     const a = animations.get(object);
+    if (a.css !== CSS_ANIMATION) return cssFollowPlayState(a, run);
+    const ov = a.overrides || new Set();
+    const [, target, , , , delay, duration, iterations, direction, fill, , held, pseudo, timelineText, trigger] = run;
+    // A new `animation-trigger` or timeline trigger (its text, or the element declaring it: the
+    // trigger's timeline follows that element) binds the run to it anew; none, or a run that
+    // became scroll-driven (no trigger applies to it), unbinds it.
+    const wanted = trigger && !timelineText ? trigger : null;
+    const bound = wanted
+      ? a.trigger && a.triggerKey === JSON.stringify([wanted[0], wanted[2]]) && a.triggerSource === wanted[1]
+      : !a.trigger;
+    if (!bound) {
+      if (wanted) {
+        armTrigger(a, wanted, null);
+      } else if (a.trigger) {
+        triggered.delete(a);
+        a.trigger = null;
+        a.triggerKey = null;
+        a.triggerSource = null;
+        if (a.overrides) a.overrides.delete('playState');
+        play(a, false);
+      }
+    }
+    const scrollDriven = timelineText !== null && timelineText !== undefined;
+    // The timeline (Web Animations 2, "setting the timeline of an animation").
+    const key = scrollDriven ? JSON.stringify(timelineText) : null;
+    if (key !== a.cssTimelineKey && !ov.has('timeline')) {
+      const wasProgress = a.scrollDriven === true;
+      a.cssTimelineKey = key;
+      if (scrollDriven) {
+        if (!ov.has('rangeStart')) { try { a.rangeStart = parseRange(timelineText[1], false, 'rangeStart'); } catch { a.rangeStart = 'normal'; } }
+        if (!ov.has('rangeEnd')) { try { a.rangeEnd = parseRange(timelineText[2], true, 'rangeEnd'); } catch { a.rangeEnd = 'normal'; } }
+      }
+      const next = scrollDriven ? cssTimeline(timelineText[0], target, pseudo) : documentTimeline;
+      a.scrollDriven = scrollDriven;
+      if (wasProgress || scrollDriven) setTimelineOf(a, next);
+    } else if (scrollDriven && a.scrollDriven) {
+      // A new `animation-range`.
+      let moved = false;
+      for (const [k, i, isEnd] of [['rangeStart', 1, false], ['rangeEnd', 2, true]]) {
+        if (ov.has(k)) continue;
+        let r;
+        try { r = parseRange(timelineText[i], isEnd, k); } catch { r = 'normal'; }
+        if (JSON.stringify(r) !== JSON.stringify(a[k])) { a[k] = r; moved = true; }
+      }
+      if (moved) rangeChanged(a);
+    }
+    // The timing properties.
+    if (a.effect && !ov.has('effect')) {
+      const want = {
+        delay, iterations, direction, fill,
+        duration: a.scrollDriven && duration === 0 ? 'auto' : duration,
+      };
+      let changed = false;
+      for (const f of Object.keys(want)) {
+        if (ov.has('timing:' + f) || a.effect.timing[f] === want[f]) continue;
+        a.effect.timing = { ...a.effect.timing, [f]: want[f] };
+        changed = true;
+      }
+      if (changed) timingChanged(a);
+    }
+    // `animation-play-state`: the engine's run times one CSS controls alone; script's (or a
+    // progress-based one) is paused or played.
+    if (ov.has('playState')) return;
+    if (!a.scripted && !a.scrollDriven) return cssFollowPlayState(a, run);
+    const state = playStateOf(a);
+    if (held !== null) {
+      if (state !== 'paused' && state !== 'idle' && a.pending !== 'pause') pause(a);
+    } else if (state === 'paused' && a.pending !== 'play') {
+      play(a, false);
+    }
+  }
+  // Web Animations 2, "setting the timeline of an animation" (as CSS sets it: not script's).
+  function setTimelineOf(a, next) {
+    if (next === a.timeline) return;
+    const previous = playStateOf(a);
+    const ct = currentTimeOf(a);
+    const endBefore = endOf(a);
+    const progress = ct === null ? null : endBefore > 0 && endBefore !== Infinity ? ct / endBefore : 0;
+    a.timeline = next;
+    const toFinite = next !== null && timelines.get(next).scroll;
+    if (toFinite) {
+      applyPendingRate(a);
+      a.autoAlign = true;
+      a.startTime = null;
+      a.holdTime = null;
+      if (previous === 'running' || previous === 'finished') {
+        if (a.pending === null) a.ready = deferred();
+        cancelPending(a);
+        schedulePending(a, 'play');
+      } else if (previous === 'paused' && progress !== null) {
+        a.holdTime = progress * endOf(a);
+      }
+    } else if (progress !== null) {
+      a.autoAlign = false;
+      if (a.startTime !== null) a.holdTime = null;
+      silentlySetCurrentTime(a, progress * endOf(a));
+    }
+    track(a);
+    updateFinished(a, false, false);
+  }
+  // A run CSS alone controls: its start or held time from the engine.
+  function cssFollowPlayState(a, run) {
     if (a.scripted || a.pending !== null || a.scrollDriven) return;
     const start = run[4], held = run[11];
     if (held !== null) {
@@ -1877,6 +2207,6 @@
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
     ScrollTimeline, ViewTimeline,
     CSSAnimation, CSSTransition,
-    animate, elementAnimations, rootAnimations, cssSync, timeline: () => documentTimeline,
+    animate, elementAnimations, rootAnimations, cssSync, viewRuns, timeline: () => documentTimeline,
   };
 })

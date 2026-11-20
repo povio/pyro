@@ -10,16 +10,21 @@
 //! embedder attaches the popup's current document to the ticket
 //! (`attach_page`), from which point the stand-in reaches the real page.
 //!
-//! What the stand-in gives the opener:
-//! - always: `closed`, `close()`, `focus()`/`blur()`, `location` (`href`,
-//!   `assign`, `replace`, `toString`, or assigning `location` itself),
-//!   `window`/`self`/`frames`/`top`/`parent` (itself), `opener` (the opener's
-//!   global), `postMessage` (delivered to the popup's document when it
-//!   exists), `fetch`, `localStorage` and `sessionStorage`;
-//! - once the popup page exists and is same-origin: every other Window
-//!   member reads through to the popup's real global (`document`,
-//!   `addEventListener`, ...). Cross-origin reads throw SecurityError, as
-//!   browsers do; before the page exists they are undefined.
+//! The opener gets a WindowProxy (`wrap_popup`): a proxy whose internal
+//! methods follow HTML. Same origin, every property operation (get, set,
+//! has, delete, define, describe, list, prototype) goes to the popup's
+//! global, and functions read through it run with that global as `this`;
+//! cross origin, only CrossOriginProperties are there (`window`, `self`,
+//! `frames`, `top`, `parent`, `location` (settable), `opener`, `closed`,
+//! `length`, `close()`, `focus()`, `blur()`, `postMessage()`) and anything
+//! else, writes and definitions included, throws SecurityError. Behind it
+//! the stand-in (`PopupWindow`) answers what holds whatever the popup's
+//! page: `closed`, `close()`, `focus()`/`blur()`, `location` (`href`,
+//! `assign`, `replace`, `toString`, or assigning `location` itself),
+//! `opener`, `postMessage` (delivered to the popup's document when it
+//! exists), `fetch`, `localStorage` and `sessionStorage`, and, while the
+//! popup has no page, every read (other names undefined; expandos stay on
+//! the proxy).
 //!
 //! Before the page exists, `fetch` runs in the opener's realm (the initial
 //! about:blank document shares the opener's origin and base URL, so the
@@ -199,25 +204,19 @@ impl PopupData {
         crate::storage::document_origin(&self.page)
     }
 
-    /// Whether the opener may reach into the popup: its document is the
-    /// initial about:blank (which inherits the opener's origin) or shares
-    /// the opener's tuple origin.
+    /// Whether the opener may reach into the popup: their documents have the same origin, compared
+    /// by identity (`PageDom::origin_key`: an opaque origin equals only itself, which an about:blank
+    /// document shares with its creator), as postMessage's "/" compares them.
     fn same_origin(&self) -> bool {
         if let Some(page) = self.popup.page() {
-            return match crate::storage::document_origin(&page) {
-                Some(origin) => self.opener_origin() == Some(origin),
-                None => {
-                    let url = page.dom.borrow().document_data(page.document()).ok().map(|d| d.url.to_string());
-                    url.as_deref() == Some("about:blank")
-                }
-            };
+            return page.origin_key() == self.page.origin_key();
         }
+        // No document of its own (yet): only a tuple origin can be compared.
         let url = self.popup.url.borrow();
-        url.as_str() == "about:blank"
-            || pyro_net::Url::parse(&url).is_ok_and(|u| {
-                let origin = u.origin();
-                origin.is_tuple() && self.opener_origin() == Some(origin.ascii_serialization())
-            })
+        pyro_net::Url::parse(&url).is_ok_and(|u| {
+            let origin = u.origin();
+            origin.is_tuple() && self.opener_origin() == Some(origin.ascii_serialization())
+        })
     }
 
     /// The popup's current URL: its document's once the page exists,
@@ -246,6 +245,17 @@ impl PopupData {
             return Err(JsError::dom("SecurityError", "Blocked a frame from accessing a cross-origin frame."));
         }
         Ok(page.main_world_realm().map(|realm| (page, realm)))
+    }
+
+    /// A member of the popup's global read whatever its origin, for the
+    /// cross-origin readable ones whose value the caller reduces to what
+    /// may cross (a number, null or not): never handed out as it is.
+    fn forward_any_origin<'s>(&self, s: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>> {
+        let Some(page) = self.popup.page() else { return Ok(None) };
+        let Some(realm) = page.main_world_realm() else { return Ok(None) };
+        let scope = realm.scope()?;
+        let value = scope.global().get(name)?;
+        Ok(Some(s.rehome(value)))
     }
 
     /// A Window member of the popup's real global, brought into `s`'s realm.
@@ -308,12 +318,14 @@ impl PopupData {
     /// clone in the opener, delivered as a task in the popup's document.
     fn post_message<'s>(&self, s: &Scope<'s>, a: &Args<'s>) -> JsResult<()> {
         let sender = self.opener_origin().unwrap_or_else(|| "null".into());
-        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &sender)?;
+        // Matched by origin key: an opaque opener's "/" reaches only a popup of that same opaque
+        // origin (its initial about:blank), not one that navigated to another opaque origin.
+        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &self.page.origin_key())?;
         // Clone even when the message will be dropped (errors are reported
         // regardless of the target).
         let message = crate::structured_clone::encode_message(s, message, options)?;
         let Some(page) = self.popup.page() else { return Ok(()) };
-        if !wanted.allows(crate::storage::document_origin(&page).as_deref().unwrap_or("null")) {
+        if !wanted.allows(&page.origin_key()) {
             return Ok(());
         }
         deliver_message(&page, message, sender);
@@ -336,13 +348,66 @@ pub(crate) fn deliver_message(page: &Rc<PageDom>, message: crate::structured_clo
 }
 
 /// The opener realm's wrapper of `popup` (one per realm, as a WindowProxy).
+/// The opener's WindowProxy for `popup`: one object per popup and realm, a
+/// proxy (`Scope::window_proxy`) over the stand-in (`PopupWindow`, never
+/// handed to page code) that follows HTML's WindowProxy internal methods:
+/// same origin, every property operation goes to the popup's global;
+/// cross origin, only CrossOriginProperties are there and anything else
+/// throws SecurityError; while the popup has no page, the stand-in's
+/// members and the proxy's own expandos answer.
 pub(crate) fn wrap_popup<'s>(s: &Scope<'s>, page: &Rc<PageDom>, popup: &Rc<PopupState>) -> JsResult<Value<'s>> {
     let key = pyro_js::IdentityKey(page.id() | (1 << 54), Rc::as_ptr(popup) as u64);
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o.value());
+    let stand_in = match s.lookup_identity(key) {
+        Some(o) => o,
+        None => s.wrap::<PopupWindow>(PopupData::new(page, popup.clone()), Some(key))?,
+    };
+    if let Some(proxy) = s.get_hidden(stand_in, PROXY)? {
+        return Ok(proxy);
     }
-    Ok(s.wrap::<PopupWindow>(PopupData::new(page, popup.clone()), Some(key))?.value())
+    let data = PopupData::new(page, popup.clone());
+    let target = s.function("", move |s, _, _| match data.reachable_page() {
+        Ok(Some((_, realm))) => {
+            let scope = realm.scope()?;
+            Ok(s.rehome(scope.global().value()))
+        }
+        Ok(None) => Ok(s.null()),
+        // Cross origin: the popup's origin, which what is handed out is kept by.
+        Err(_) => {
+            // By origin key: two different opaque origins keep different objects.
+            let origin = data.popup.page().map(|p| p.origin_key());
+            Ok(s.string(origin.as_deref().unwrap_or("null")))
+        }
+    })?;
+    let children = PopupData::new(page, popup.clone());
+    let child = s.function("", move |s, _, a| {
+        let key = a.get(0).to_string()?;
+        let Some(page) = children.popup.page() else { return Ok(s.undefined()) };
+        Ok(page.hooks().map(|h| h.foreign_child_window(s, &key)).transpose()?.flatten().unwrap_or_else(|| s.undefined()))
+    })?;
+    let deny = s.function("", |_s, _, a| {
+        let name = a.get(0).to_string().unwrap_or_default();
+        Err(JsError::dom(
+            "SecurityError",
+            format!("Blocked a frame from accessing property \"{name}\" of a cross-origin window."),
+        ))
+    })?;
+    let proxy = s.window_proxy(stand_in, target, child, deny)?;
+    // The stand-in, kept alive by the proxy's handler, keeps the proxy: the
+    // same object for every `window.open` of this popup.
+    s.set_hidden(stand_in, PROXY, proxy.value())?;
+    Ok(proxy.value())
 }
+
+/// The WindowProxy `opener`'s realm `s` has for the popup whose current
+/// document is `popup_page` (a child window's `parent` or `top`, seen from
+/// the opener), if `opener` opened it.
+pub fn popup_window_proxy<'s>(s: &Scope<'s>, opener: &Rc<PageDom>, popup_page: &Rc<PageDom>) -> JsResult<Option<Value<'s>>> {
+    let popup = opener.popups.borrow().iter().find(|(_, p)| p.page().is_some_and(|q| Rc::ptr_eq(&q, popup_page))).map(|(_, p)| p.clone());
+    popup.map(|popup| wrap_popup(s, opener, &popup)).transpose()
+}
+
+/// The stand-in's hidden reference to its WindowProxy.
+const PROXY: &str = "lpWindowProxy";
 
 /// The object `window.open` returns. Not exposed on the global.
 pub struct PopupWindow;
@@ -384,20 +449,36 @@ impl JsClass for PopupWindow {
                 if d.popup.opener_cleared.get() {
                     return Ok(s.null());
                 }
-                Ok(d.forward(s, "opener")?.unwrap_or_else(|| s.global().value()))
+                // Cross origin (readable there): the popup's opener is this
+                // window unless the popup cut it off.
+                if d.reachable_page().is_ok() {
+                    return Ok(d.forward(s, "opener")?.unwrap_or_else(|| s.global().value()));
+                }
+                let cut_off = d.forward_any_origin(s, "opener")?.is_some_and(|v| v.is_null());
+                Ok(if cut_off { s.null() } else { s.global().value() })
             },
             |_s, d, v| {
+                // Checked before any state changes (the proxy refuses a
+                // cross-origin write before it gets here).
+                let reachable = d.reachable_page()?;
                 if v.is_null() {
                     d.popup.opener_cleared.set(true);
                 }
-                if let Some((_, realm)) = d.reachable_page()? {
+                if let Some((_, realm)) = reachable {
                     let scope = realm.scope()?;
                     scope.global().set("opener", scope.rehome(v))?;
                 }
                 Ok(())
             },
         );
-        def.getter("length", |s, d| Ok(d.forward(s, "length")?.unwrap_or_else(|| s.number(0.0))));
+        // Cross origin too (CrossOriginProperties): a number of the popup's.
+        def.getter("length", |s, d| {
+            let length = match d.reachable_page() {
+                Ok(_) => d.forward(s, "length")?,
+                Err(_) => d.forward_any_origin(s, "length")?.map(|v| s.number(v.to_number().unwrap_or(0.0))),
+            };
+            Ok(length.unwrap_or_else(|| s.number(0.0)))
+        });
         def.getter("name", |s, d| Ok(d.forward(s, "name")?.unwrap_or_else(|| s.string(&d.popup.name))));
         def.getter("document", |s, d| Ok(d.forward(s, "document")?.unwrap_or_else(|| s.undefined())));
         def.getter("localStorage", |s, d| d.storage(s, false));
@@ -407,7 +488,8 @@ impl JsClass for PopupWindow {
             d.post_message(s, &a)?;
             Ok(s.undefined())
         });
-        // Everything else reads through to the popup's global once it exists.
+        // Everything else reads through to the popup's global once it exists
+        // (the WindowProxy, `wrap_popup`, does the rest).
         def.named(false, |s, d, name| d.forward(s, name));
     }
 }

@@ -128,16 +128,10 @@ pub(super) fn resolve_baseline_shims(
                     baseline
                 }
             }
-            // pyro: an orthogonal item (vertical in a horizontal grid) without a baseline in the inline
-            // axis synthesizes one at its line-under side, the physical left (WPT css-grid
-            // `grid-self-baseline-changes-grid-area-size-009/012`, `grid-self-baseline-006`)
-            (Some(_), None) if axis == AbstractAxis::Inline => {
-                if direction.is_rtl() {
-                    size
-                } else {
-                    0.0
-                }
-            }
+            // pyro: an orthogonal item without a baseline in the inline axis synthesizes one at its line-under side:
+            // the physical left of a vertical item in a horizontal grid (`synthesis.width`: its start in `ltr`; WPT
+            // css-grid `grid-self-baseline-changes-grid-area-size-009/012`, `grid-self-baseline-006`), the bottom of
+            // a horizontal item in a vertical grid (its end; `subgrid/subgrid-baseline-002`)
             _ => size * synthesis.get(axis),
         };
         let (margin_start, margin_end) = match axis {

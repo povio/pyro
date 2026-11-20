@@ -5652,17 +5652,21 @@ fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
 fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
     // TOS bookkeeping exports (bookkeeping-vat-lines.e2e.ts:65): the table's
     // scroller is `flex h-full grow flex-col overflow-x-auto`. CSS Overflow 3
-    // computes the other axis's `visible` to `auto` (and `clip` to `hidden`),
+    // computes the other axis's `visible` to `auto`,
     // so it scrolls vertically; Rust reported overflowY "" and refused
     // scrollTop = 1000, so the virtualized rows never moved. Chromium
     // (Playwright 1.59.1), 100px boxes with 300px content, scrollTop = 120:
-    // computed x/y/shorthand, scrollTop, scroll events.
+    // computed x/y/shorthand, scrollTop, scroll events. Chrome 158.0.8127.37
+    // preserves clip in both axis orders with scroll, and with auto or hidden.
     let cases = [
         ("xauto", "overflow-x:auto", "auto|auto|auto|120|1"),
         ("yauto", "overflow-y:auto", "auto|auto|auto|120|1"),
         ("xhidden", "overflow-x:hidden", "hidden|auto|hidden auto|120|1"),
         ("xclip", "overflow-x:clip", "clip|visible|clip visible|0|0"),
-        ("xclipyscroll", "overflow-x:clip;overflow-y:scroll", "hidden|scroll|hidden scroll|120|1"),
+        ("xclipyscroll", "overflow-x:clip;overflow-y:scroll", "clip|scroll|clip scroll|120|1"),
+        ("xscrollyclip", "overflow:scroll clip", "scroll|clip|scroll clip|0|0"),
+        ("xclipyauto", "overflow:clip auto", "clip|auto|clip auto|120|1"),
+        ("xclipyhidden", "overflow:clip hidden", "clip|hidden|clip hidden|120|1"),
         ("none", "", "visible|visible|visible|0|0"),
         ("both", "overflow:hidden auto", "hidden|auto|hidden auto|120|1"),
     ];
@@ -5697,6 +5701,19 @@ fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
             ),
         );
         assert_eq!(got, want, "{k}");
+    }
+    e.page.dispose();
+}
+
+#[test]
+fn single_axis_clip_exposes_extent_but_neither_scrolls_nor_extends_hit_testing() {
+    let e = env("<!doctype html><body style='margin:40px'><div id=s style='width:100px;height:100px;padding:6px;overflow:clip scroll'><div id=c style='margin-left:-30px;width:300px;height:300px'></div></div>");
+    for margin in [0, 12] {
+        let got = eval(&e.main, &format!("(()=>{{const box=document.getElementById('s'),child=document.getElementById('c');
+            box.style.overflowClipMargin='{margin}px';const rect=box.getBoundingClientRect();box.scrollLeft=11;
+            const left=box.scrollLeft;box.scrollTo(19,23);return [box.scrollWidth,left,box.scrollLeft,box.scrollTop,
+            ...[-14,-8,-1,2].map(x=>document.elementFromPoint(rect.left+x,rect.top+40)===child)].join('|')}})()"));
+        assert_eq!(got, "282|0|0|23|false|false|false|true", "overflow-clip-margin: {margin}px");
     }
     e.page.dispose();
 }
@@ -6675,17 +6692,19 @@ fn css_rules_parse_lazily_from_the_sheet_and_stay_live() {
         "hidden|visible|1"
     );
 
-    // New text replaces the sheet, edits included.
+    // New text replaces the sheet, edits included: a new sheet object (HTML "update a style
+    // block"), whose rules are the new text's; the old object and its lists are detached and see
+    // none of them (security review cycle 4, 2a).
     assert_eq!(
         eval(
             &e.main,
-            "st.textContent=':nth-child(1n+0){}';[sh.cssRules.length,rs.length,rs[0].selectorText].join('|')"
+            "st.textContent=':nth-child(1n+0){}';[st.sheet===sh,st.sheet.cssRules.length,st.sheet.cssRules[0].selectorText,rs.length,sh.cssRules.length].join('|')"
         ),
-        "1|1|:nth-child(n)"
+        "false|1|:nth-child(n)|0|0"
     );
-    assert_eq!(eval(&e.main, "st.textContent='[x y]{}';sh.cssRules.length"), "0");
+    assert_eq!(eval(&e.main, "st.textContent='[x y]{}';st.sheet.cssRules.length"), "0");
     assert_eq!(
-        eval(&e.main, "st.textContent=\"@namespace x 'a'; [x|foo=''  i]{}\";[...sh.cssRules].map(r=>r.type).join()"),
+        eval(&e.main, "st.textContent=\"@namespace x 'a'; [x|foo=''  i]{}\";[...st.sheet.cssRules].map(r=>r.type).join()"),
         "10,1"
     );
 
@@ -7387,4 +7406,172 @@ fn node_argument_operations_answer_alike_on_both_dispatches() {
         eval(r, "(() => { try { Node.prototype.contains.call({}, c); return 'no'; } catch (x) { return x.name; } })()"),
         "TypeError"
     );
+}
+
+#[test]
+fn scroll_into_view_scrolls_the_slot_of_a_closed_shadow_root() {
+    // The target's parent in the flat tree is the slot, a scroll container, whether the shadow
+    // root is open or closed (script's `assignedSlot` hides a closed root's slot).
+    for mode in ["open", "closed"] {
+        let e = env(
+            "<body><div id=host><div style='height:200px'></div><div id=target style='height:100px;width:100px'></div></div></body>",
+        );
+        let top = eval(
+            &e.main,
+            &format!(
+                "const root=host.attachShadow({{mode:'{mode}'}});const slot=document.createElement('slot');\
+                 slot.style='display:block;overflow:hidden;width:100px;height:100px';root.appendChild(slot);\
+                 target.scrollIntoView();String(slot.scrollTop)"
+            ),
+        );
+        assert_eq!(top, "200", "{mode} shadow root");
+        e.page.dispose();
+    }
+}
+
+#[test]
+fn content_a_line_clamp_discarded_is_neither_hit_nor_scrollable_overflow() {
+    let e = env(
+        "<body style='margin:0;font:20px/20px monospace'>\
+         <div id=clamp style='line-clamp:1;width:200px'>first line<div>second block <button id=btn style='width:80px;height:30px'>B</button></div></div>\
+         <div id=scroller style='line-clamp:1;overflow:auto;width:200px;margin-top:40px'>one<div style='height:300px'>tall</div></div></body>",
+    );
+    let hit = eval(
+        &e.main,
+        "const b=btn.getBoundingClientRect();const el=document.elementFromPoint(b.x+5,b.y+5);String(el&&el.id)",
+    );
+    assert_ne!(hit, "btn", "a discarded button is not hit");
+    assert_eq!(eval(&e.main, "String(scroller.scrollHeight===scroller.clientHeight)"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn a_float_a_line_clamp_discarded_is_neither_hit_nor_scrollable_overflow() {
+    // The float sits on the second line, after the clamp point: hidden with it.
+    let e = env(
+        "<body style='margin:0;font:20px/20px monospace'>\
+         <div style='line-clamp:1;width:200px'>first line<br><span id=fl style='float:left;width:50px;height:300px;background:red'></span>second line</div>\
+         <div id=clamp style='line-clamp:1;width:200px;overflow:auto;margin-top:400px'>first line<br><span style='float:left;width:50px;height:300px'></span>second line</div></body>",
+    );
+    let hit = eval(
+        &e.main,
+        "const b=fl.getBoundingClientRect();const el=document.elementFromPoint(b.x+5,b.y+b.height-5);String(el&&el.id)",
+    );
+    assert_ne!(hit, "fl", "a discarded float is not hit");
+    assert_eq!(eval(&e.main, "String(clamp.scrollHeight===clamp.clientHeight)"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn a_run_in_lets_go_of_its_block_when_it_stops_running_in() {
+    // Each run-in (H*) runs into the block after it until a change; then it is a block of its
+    // own, above its former target. `H6` stays a block: its target starts with a run-in that runs
+    // in (CSS Display 3 § 2.6).
+    let e = env(
+        "<body style='margin:0;font:20px/20px monospace'><style>.r{display:run-in}</style>\
+         <div id=c1><div id=r1 class=r>H1</div><div id=t1>body one</div></div>\
+         <div id=c2><div id=r2 class=r>H2</div><div id=t2>body two</div></div>\
+         <div id=c4><div id=r4 class=r>H4</div><div id=t4>body four</div></div>\
+         <div id=c5><div id=r5 class=r>H5</div><div id=t5>body five</div></div>\
+         <div id=c6><div id=r6 class=r>H6</div><div id=t6><span class=r>I6</span><div>inner</div></div></div>\
+         <div id=c7><div id=r7 class=r>H7</div><div id=t7>body seven</div></div></body>",
+    );
+    let result = eval(
+        &e.main,
+        "const top=e=>Math.round(e.getBoundingClientRect().top);\
+         const before=top(r1)===top(t1)&&top(r7)===top(t7);\
+         r1.style.display='block';\
+         t2.style.display='inline';\
+         r4.appendChild(document.createElement('div')).textContent='blk';\
+         c5.insertBefore(document.createTextNode('text'),t5);\
+         [before,top(r1)<top(t1),top(r2)!==top(t2),top(r4)<top(t4),top(r5)<top(t5),top(r6)<top(t6),top(r7)===top(t7)].join(',')",
+    );
+    assert_eq!(result, "true,true,true,true,true,true,true");
+    e.page.dispose();
+}
+
+#[test]
+fn script_scroll_offsets_of_a_zoomed_element_are_in_its_own_css_px() {
+    // `zoom: 2`: each 100px child is 200px laid out; scrolling to 100 shows the second child at
+    // the top (WPT cssom-view `scrollTo-zoom`).
+    let e = env(
+        "<body style='margin:0'><div id=s style='zoom:2;width:100px;height:100px;overflow:hidden'>\
+         <div id=a style='height:100px'></div><div id=b style='height:100px'></div><div style='height:100px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "s.scrollTo(0,100);String(document.elementFromPoint(10,10).id)"), "b");
+    assert_eq!(eval(&e.main, "String(s.scrollTop)"), "100");
+    assert_eq!(eval(&e.main, "s.scrollTop=0;s.scrollTop=100;String(document.elementFromPoint(10,10).id)"), "b");
+    e.page.dispose();
+}
+
+#[test]
+fn a_dialog_closing_through_an_overlay_transition_stays_laid_out_as_modal() {
+    // css-position-4 § 4.1: an `overlay` and `display` transition keep a closed modal dialog in
+    // the top layer and shown; the UA sheet keeps laying it out as a modal dialog while it is
+    // there (WPT css-position `overlay/overlay-transition-dialog`), and `:modal` no longer matches.
+    let e = env(
+        "<body><style>dialog.animate{transition:overlay 2s allow-discrete, display 2s allow-discrete}</style><dialog>dialog</dialog></body>",
+    );
+    let result = eval(
+        &e.main,
+        "const d=document.querySelector('dialog');d.showModal();d.classList.add('animate');d.close();\
+         const s=getComputedStyle(d);[s.display,s.position,d.matches(':modal')].join(',')",
+    );
+    assert_eq!(result, "block,fixed,false");
+    e.page.dispose();
+}
+
+#[test]
+fn the_viewport_starts_at_the_mandatory_snap_position_of_the_root() {
+    // CSS Scroll Snap 1 § 6.3: the root's `scroll-snap-type` snaps the viewport's initial scroll
+    // position too (review of round 6: only scroll containers snapped).
+    let e = env(
+        "<html style='scroll-snap-type:y mandatory'><body style='margin:0'>\
+         <div style='height:300px;margin-top:150px;scroll-snap-align:start'></div>\
+         <div style='height:3000px'></div></body></html>",
+    );
+    assert_eq!(eval(&e.main, "String(document.scrollingElement.scrollTop)"), "150");
+    e.page.dispose();
+}
+
+#[test]
+fn a_container_styled_to_snap_after_the_first_layout_starts_at_a_snap_position() {
+    // Snapping is looked for once an element was styled with a `scroll-snap-type` (pages without
+    // one pay nothing); a container that gets one later still starts snapped.
+    let e = env(
+        "<body style='margin:0'><div id=s style='overflow:hidden;height:200px'>\
+         <div style='height:300px;margin-top:150px;scroll-snap-align:start'></div>\
+         <div style='height:3000px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "String(s.scrollTop)"), "0");
+    assert_eq!(eval(&e.main, "s.style.scrollSnapType='y mandatory';String(s.scrollTop)"), "150");
+    e.page.dispose();
+}
+
+#[test]
+fn a_zoomed_scroll_offset_read_back_follows_a_zoom_change() {
+    // `scrollTop = 50` at `zoom: 2` keeps 100 layout px; at `zoom: 1` that is 100 CSS px, not the
+    // 50 script wrote (review of round 6).
+    let e = env(
+        "<!doctype html><body style='margin:0'><div id=s style='zoom:2;width:100px;height:100px;overflow:hidden'>\
+         <div style='height:1000px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "s.scrollTop=50;String(s.scrollTop)"), "50");
+    assert_eq!(eval(&e.main, "s.style.zoom='1';String(s.scrollTop)"), "100");
+    e.page.dispose();
+}
+
+#[test]
+fn a_resnap_follows_the_column_it_snapped_to() {
+    // The columns of a multi-column scroll container are snap areas (`::column`); snapped to the
+    // third (200px at 100px columns), it stays on the third when the columns grow to 200px: 400
+    // (review of round 6: the container was recorded, not the column).
+    let e = env(
+        "<!doctype html><style>#s{width:100px;height:100px;overflow:hidden;columns:1;column-gap:0;column-fill:auto;\
+         scroll-snap-type:x mandatory} #s::column{scroll-snap-align:start}</style>\
+         <body style='margin:0'><div id=s><div style='height:1000px'></div></div></body>",
+    );
+    assert_eq!(eval(&e.main, "s.scrollLeft=200;String(s.scrollLeft)"), "200");
+    assert_eq!(eval(&e.main, "s.style.width='200px';String(s.scrollLeft)"), "400");
+    e.page.dispose();
 }

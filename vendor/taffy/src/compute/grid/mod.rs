@@ -156,10 +156,20 @@ fn compute_container_constants<Tree: LayoutGridContainer>(
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
-    let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-        Overflow::Scroll => style.scrollbar_width(),
-        _ => 0.0,
-    });
+    // pyro: `CoreStyle::scrollbar_gutter` (classic scrollbars' `overflow: auto` and `scrollbar-gutter`):
+    // the end-edge gutters (the start edge's in rtl) as before; a gutter at the other edge (`both-edges`)
+    // moves the grid's content box in as padding there does.
+    let gutter_edges = style.scrollbar_gutter();
+    let (end_x, start_x) =
+        if direction.is_rtl() { (gutter_edges.left, gutter_edges.right) } else { (gutter_edges.right, gutter_edges.left) };
+    let scrollbar_gutter = Point { x: end_x, y: gutter_edges.bottom };
+    let padding = Rect {
+        left: padding.left + if direction.is_rtl() { 0.0 } else { start_x },
+        right: padding.right + if direction.is_rtl() { start_x } else { 0.0 },
+        top: padding.top + gutter_edges.top,
+        bottom: padding.bottom,
+    };
+    let padding_border = padding + border;
     #[cfg(feature = "content_size")]
     let is_scroll_container = {
         let overflow = style.overflow();
@@ -702,6 +712,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             subgrid::record_own_columns(tree, node, &columns, width);
         }
     }
+    // pyro: collapsed table columns lose their size once sized (`GridTrack::collapse_sized`)
+    columns.iter_mut().for_each(GridTrack::collapse_sized);
     let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
     inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
 
@@ -749,7 +761,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         &mut rows,
         &mut columns,
         &mut items,
-        |track: &GridTrack, _, _| Some(track.base_size),
+        |track: &GridTrack, _, _| Some(track.measured_size()),
         baseline_params(true),
         table_rows,
         replay.as_ref().map(|replay| replay.affected_tracks.as_slice()),
@@ -927,6 +939,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             None,
             None,
         );
+        columns.iter_mut().for_each(GridTrack::collapse_sized);
         if has_subgrid_items {
             subgrid::update_subgrid_track_sizes(tree, &items[..own_item_count], AbsoluteAxis::Horizontal, &columns, false, &subgrid_parent);
             subgrid::resolve_standalone_widths(tree, &mut items, own_item_count, &columns, &subgrid_parent);
@@ -948,7 +961,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                         &rows,
                         &columns,
                         inner_node_size,
-                        |track: &GridTrack, _| Some(track.base_size),
+                        |track: &GridTrack, _| Some(track.measured_size()),
                         &|val, basis| tree.calc(val, basis),
                     );
                     let available_space = grid_area_size.with(AbstractAxis::Block, None);
@@ -986,7 +999,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             &mut rows,
             &mut columns,
             &mut items,
-            |track: &GridTrack, _, _| Some(track.base_size),
+            |track: &GridTrack, _, _| Some(track.measured_size()),
             baseline_params(true),
             table_rows,
             None,
@@ -1195,8 +1208,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 }
                 item.y_position = old.y_position;
                 item.height = old.height;
+                item.content_bottom = old.height - old.layout.padding.bottom - old.layout.border.bottom;
                 item.baseline = old.baseline;
                 item.last_baseline = old.last_baseline;
+                item.dominant_baseline = old.dominant_baseline;
                 continue;
             }
             Some(Some(moved)) => moved,
@@ -1250,8 +1265,10 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         let overflow_contribution = placed.contribution;
         item.y_position = placed.y_position;
         item.height = placed.height;
+        item.content_bottom = placed.height - placed.layout.padding.bottom - placed.layout.border.bottom;
         item.baseline = placed.baseline;
         item.last_baseline = placed.last_baseline;
+        item.dominant_baseline = placed.dominant_baseline;
         if index < positioned.len() {
             positioned[index] = placed;
         } else if table_rows {
@@ -1382,6 +1399,16 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     let absolute_position_area = container_border_box - padding_box_inset.sum_axes();
     let absolute_position_offset = Point { x: padding_box_inset.left, y: padding_box_inset.top };
+    // pyro: (before the tracks go to the detailed grid info below)
+    #[cfg(feature = "content_size")]
+    // pyro: (an rtl grid's frame starts after its left scrollbar gutter, as its items' overflow does)
+    let grid_area_rect = grid_area_overflow(
+        &columns,
+        &rows,
+        Rect { left: border.left + if direction.is_rtl() { scrollbar_gutter.x } else { 0.0 }, ..border },
+        padding,
+        direction.is_rtl(),
+    );
     // Store the detailed grid info before the out-of-flow positioning pass so that the pass can
     // resolve the grid areas of out-of-flow boxes whose containing block is this grid
     let areas =
@@ -1412,12 +1439,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             let client_width =
                 (container_border_box.width - border.horizontal_axis_sum() - scrollbar_gutter.x).max(0.0);
             let overflow_rect = if is_scroll_container {
-                item_overflow_rect.union(Rect {
-                    left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
-                    right: if direction.is_rtl() { client_width } else { padding.right },
-                    top: 0.0,
-                    bottom: padding.bottom,
-                })
+                item_overflow_rect
+                    .union(Rect {
+                        left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
+                        right: if direction.is_rtl() { client_width } else { padding.right },
+                        top: 0.0,
+                        bottom: padding.bottom,
+                    })
+                    .union(grid_area_rect)
             } else {
                 item_overflow_rect
                     .union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
@@ -1443,8 +1472,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // Determine the grid container baselines
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
-    let (grid_container_baseline, grid_container_last_baseline) = if contain.suppresses_baseline() {
-        (None, None)
+    let (grid_container_baseline, grid_container_last_baseline, grid_container_dominant) = if contain.suppresses_baseline() {
+        (None, None, None)
     } else {
         // Get the row index of the first row containing items
         let first_row = items.iter().map(|item| item.row_indexes.start).min().unwrap();
@@ -1461,7 +1490,24 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         } else {
             first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
         };
-        let first = item.y_position + item.baseline.unwrap_or(item.height);
+        let mut first = item.y_position + item.baseline.unwrap_or(item.height);
+        // pyro: a table's is its first row's: the lowest baseline of its baseline-aligned cells that have one,
+        // else the bottom of the lowest content box of its cells (css-tables-3 § 3.10, CSS 2.1 § 17.5.3).
+        if table_rows {
+            let row_cells = || {
+                items.iter().filter(|item| item.row_indexes.start == first_row && item.span(AbstractAxis::Block) == 1)
+            };
+            let lowest = |values: &mut dyn Iterator<Item = f32>| values.reduce(f32::max);
+            let aligned = lowest(&mut row_cells()
+                .filter(|item| item.table_baseline)
+                .filter_map(|item| item.baseline.map(|baseline| item.y_position + baseline)));
+            if let Some(baseline) = aligned.or_else(|| lowest(&mut row_cells().map(|item| item.y_position + item.content_bottom))) {
+                first = baseline;
+            }
+        }
+        // pyro: and in the item's dominant baseline, where it has one (a cell of a vertical table).
+        // (A grid keeps its alphabetic baseline, as in Blink; a table exports its cells'.)
+        let dominant = item.dominant_baseline.filter(|_| table_rows).map(|baseline| item.y_position + baseline);
 
         // pyro: the last baseline from the last row (css-grid-1 §10.1): its items in a last-baseline group, else
         // its last item in grid order
@@ -1472,7 +1518,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
         let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
         let last = item.y_position + item.last_baseline.unwrap_or(item.height);
-        (Some(first), Some(last))
+        (Some(first), Some(last), dominant)
     };
 
     // A scroll container's own padding at the end of the content is part of its scrollable
@@ -1482,12 +1528,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let scrollable_overflow_rect = {
         let client_width = (container_border_box.width - border.horizontal_axis_sum() - scrollbar_gutter.x).max(0.0);
         let overflow_rect = if is_scroll_container {
-            item_overflow_rect.union(Rect {
-                left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
-                right: if direction.is_rtl() { client_width } else { padding.right },
-                top: 0.0,
-                bottom: padding.bottom,
-            })
+            item_overflow_rect
+                .union(Rect {
+                    left: if direction.is_rtl() { (client_width - padding.left).min(0.0) } else { 0.0 },
+                    right: if direction.is_rtl() { client_width } else { padding.right },
+                    top: 0.0,
+                    bottom: padding.bottom,
+                })
+                .union(grid_area_rect)
         } else {
             item_overflow_rect.union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
         };
@@ -1504,7 +1552,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let mut output = LayoutOutput::from_sizes_and_baselines(
         container_border_box,
         scrollable_overflow_rect,
-        Baselines::new(grid_container_baseline, grid_container_last_baseline),
+        Baselines { dominant_first: grid_container_dominant, ..Baselines::new(grid_container_baseline, grid_container_last_baseline) },
     );
     output.oof_candidates = oof_candidates;
     output.oof_positioning_area = oof_positioning_area;
@@ -2196,5 +2244,35 @@ mod rerun_tests {
         let (beside, _) = layout(vec![auto(), fr(1.0)], &[item, (Leaf::Text, min_width_zero())]);
         assert_eq!(alone, vec![50.0]);
         assert_eq!(beside, vec![50.0, 150.0]);
+    }
+}
+
+/// pyro: what a scroll container's grid adds to its scrollable overflow: its tracks (the grid area,
+/// empty tracks too) and the padding at their end (css-grid-2 § 5.3; WPT css-grid
+/// `grid-overflow-001`), in the padding-box frame of the container (track offsets are from its
+/// border edge).
+#[cfg(feature = "content_size")]
+fn grid_area_overflow(columns: &[GridTrack], rows: &[GridTrack], border: Rect<f32>, padding: Rect<f32>, rtl: bool) -> Rect<f32> {
+    let extent = |tracks: &[GridTrack], start_border: f32| -> Option<(f32, f32)> {
+        let mut range: Option<(f32, f32)> = None;
+        for track in tracks.iter().filter(|track| track.kind == types::GridTrackKind::Track && !track.is_collapsed) {
+            let (a, b) = (track.offset - start_border, track.offset - start_border + track.base_size);
+            range = Some(range.map_or((a, b), |(lo, hi)| (lo.min(a), hi.max(b))));
+        }
+        range
+    };
+    // pyro: an axis without tracks (an empty grid has no implicit rows) is its content edge: the
+    // other axis's tracks still reach (Chromium; WPT scroll-animations
+    // `responsive/repaint-after-finished`).
+    let (left, right) = extent(columns, border.left).unwrap_or((padding.left, padding.left));
+    let (top, bottom) = extent(rows, border.top).unwrap_or((padding.top, padding.top));
+    if left == right && top == bottom {
+        return Rect::ZERO;
+    }
+    Rect {
+        left: if rtl { left - padding.left } else { left },
+        right: if rtl { right } else { right + padding.right },
+        top,
+        bottom: bottom + padding.bottom,
     }
 }

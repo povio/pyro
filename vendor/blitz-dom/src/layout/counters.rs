@@ -303,7 +303,7 @@ impl Walk {
                 }
                 ContentItem::Image(image) => {
                     // pyro: an `image-set()` is the option it selected.
-                    if let Image::Url(ComputedUrl::Valid(url)) = crate::util::unfiltered_image(image) {
+                    if let Image::Url(ComputedUrl::Valid(url, _)) = crate::util::unfiltered_image(image) {
                         pieces.push(Piece::Image(url.as_str().to_string(), crate::util::image_resolution(image).to_bits()));
                     }
                 }
@@ -324,7 +324,7 @@ pub(super) fn quote(style: &ComputedValues, depth: usize, lang: Option<&str>) ->
             let pair = pairs.get(depth).or(pairs.last())?;
             Some((pair.opening.to_string(), pair.closing.to_string()))
         }
-        Quotes::Auto => {
+        Quotes::Auto | Quotes::MatchParent => {
             let [open1, close1, open2, close2] = auto_quotes(lang.unwrap_or(""));
             Some(match depth {
                 0 => (open1.into(), close1.into()),
@@ -448,15 +448,17 @@ impl BaseDocument {
         };
         self.pending_images.insert(url.to_string(), vec![(node_id, ImageType::Image)]);
         let doc_id = self.id();
+        let mut request = self.build_request(parsed);
+        request.options.destination = blitz_traits::net::Destination::Image;
         self.net_provider.fetch(
             doc_id,
-            self.build_request(parsed),
+            request,
             ResourceHandler::boxed(
                 self.tx.clone(),
                 doc_id,
                 None,
                 self.shell_provider.clone(),
-                ImageHandler::new(ImageType::Image),
+                ImageHandler::new(ImageType::Image, &self.raster_budget).document(&self.url),
             ),
         );
     }
@@ -492,6 +494,9 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
                 if let Some(marker) = super::list::marker_pseudo_style(doc, node_id, &style)
                     .filter(|marker| super::list::marker_reads_counters(marker))
                 {
+                    // Its own `counter-reset`, `counter-increment` and `counter-set` first, a reset
+                    // instantiating the counter on the item itself (WPT css-lists `marker-counter`).
+                    walk.apply(&marker, parent, node_id, false, false);
                     let text = walk
                         .content(&marker, node_id)
                         .unwrap_or_default()
@@ -511,7 +516,8 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     // its `::before` and `::after` included (CSS Contain 2 § 3.3); the element's own counter
     // properties (above) are outside it.
     let contains_style = !display.is_contents()
-        && style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE);
+        && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
+            || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
     let saved_quote_depth = walk.quote_depth;
     if contains_style {
         let base = walk.counters.iter().map(|(name, stack)| (name.clone(), stack.len())).collect();
@@ -541,7 +547,7 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
             let value = walk.list_item(scope, pseudo_scope());
             walk.pseudo_items.insert((node_id, true), value);
         }
-        walk.quote_lang = parent_language(doc, node_id);
+        walk.quote_lang = quote_language(doc, node_id);
         texts[1] = walk.content(before, scope);
         walk.leave(pseudo_scope());
     }
@@ -556,7 +562,7 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
             let value = walk.list_item(scope, pseudo_scope());
             walk.pseudo_items.insert((node_id, false), value);
         }
-        walk.quote_lang = parent_language(doc, node_id);
+        walk.quote_lang = quote_language(doc, node_id);
         texts[0] = walk.content(after, scope);
         walk.leave(pseudo_scope());
     }
@@ -585,9 +591,21 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
 /// `counter-reset` wins; and the reversed counters (`reversed(name)`) its style resets.
 fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, list: bool, walk: &mut Walk) {
     for pair in style.get_counters().counter_reset.iter().filter(|pair| pair.is_reversed) {
-        let value = if pair.value == i32::MIN { reversed_initial(doc, node, &pair.name.0) } else { pair.value };
+        let siblings = reversed_scope_has_siblings(walk, &pair.name.0);
+        let value = if pair.value == i32::MIN { reversed_initial(doc, node, &pair.name.0, siblings) } else { pair.value };
+        // pyro: the element's own increment of the counter follows its reset (this runs after
+        // the walk applied it to the instance it reset).
+        let own: i32 = style
+            .get_counters()
+            .counter_increment
+            .iter()
+            .filter(|increment| increment.name.0 == pair.name.0)
+            .fold(0i32, |sum, increment| sum.saturating_add(increment.value));
+        // (A list item increments `list-item` without one, by -1 in a reversed counter.)
+        let explicit = style.get_counters().counter_increment.iter().any(|increment| increment.name.0 == pair.name.0);
+        let own = if !explicit && &*pair.name.0 == "list-item" && style.clone_display().is_list_item() { -1 } else { own };
         if let Some(instance) = walk.counters.get_mut(&pair.name.0).and_then(|stack| stack.last_mut()) {
-            instance.value = value;
+            instance.value = value.saturating_add(own);
             instance.reversed = true;
         }
     }
@@ -608,7 +626,10 @@ fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, lis
     let name = Atom::from("list-item");
     let value = match (reversed, start) {
         (true, Some(start)) => start.saturating_add(1),
-        (true, None) => reversed_initial(doc, node, &name),
+        (true, None) => {
+            let siblings = reversed_scope_has_siblings(walk, &name);
+            reversed_initial(doc, node, &name, siblings)
+        }
         (false, Some(start)) => start.saturating_sub(1),
         (false, None) => return,
     };
@@ -623,24 +644,60 @@ fn list_attributes(doc: &BaseDocument, node: NodeId, style: &ComputedValues, lis
 /// resets the counter again) that increment or set it, in tree order, the negated increments
 /// (list items -1 each unless they increment it themselves) up to the first that sets it, plus
 /// that value, plus the last non-zero negated increment.
-fn reversed_initial(doc: &BaseDocument, node: NodeId, name: &Atom) -> i32 {
+/// pyro: whether the reversed instance of `name` just made is visible to its element's following
+/// siblings: the walk scoped it so, and it is not a `list-item` nested in another (the items after
+/// a nested list are its parent list's, WPT css-lists `li-value-reversed-007a`).
+fn reversed_scope_has_siblings(walk: &Walk, name: &Atom) -> bool {
+    walk.counters.get(name).is_some_and(|stack| {
+        stack.last().is_some_and(|instance| instance.sibling) && (stack.len() == 1 || &**name != "list-item")
+    })
+}
+
+fn reversed_initial(doc: &BaseDocument, node: NodeId, name: &Atom, siblings: bool) -> i32 {
     let (mut num, mut last) = (0i32, 0i32);
-    scan_reversed_scope(doc, node, name, &mut num, &mut last);
+    // pyro: the counter's scope (CSS Lists 3 § 4.4): the element itself, its descendants, and
+    // its following siblings with theirs when the walk made the instance visible to them
+    // (`siblings`: `Walk::reset` scopes a reset inside another instance to its element).
+    let done = scan_reversed_element(doc, node, name, &mut num, &mut last, true)
+        || (siblings && doc.nodes[node].parent.is_some_and(|parent| {
+            let siblings = &doc.nodes[parent].children;
+            let at = siblings.iter().position(|&id| id == node).map_or(siblings.len(), |at| at + 1);
+            siblings[at..]
+                .iter()
+                .any(|&sibling| scan_reversed_element(doc, sibling, name, &mut num, &mut last, false))
+        }));
+    let _ = done;
     num.saturating_add(last)
 }
 
 /// `true` when a box that sets the counter ended the scan.
 fn scan_reversed_scope(doc: &BaseDocument, node: NodeId, name: &Atom, num: &mut i32, last: &mut i32) -> bool {
+    doc.nodes[node]
+        .children
+        .iter()
+        .any(|&child| scan_reversed_element(doc, child, name, num, last, false))
+}
+
+/// One element of a reversed counter's scope and its descendants (`own`: the element that
+/// resets the counter); `true` when a box that sets the counter ended the scan.
+fn scan_reversed_element(
+    doc: &BaseDocument,
+    child: NodeId,
+    name: &Atom,
+    num: &mut i32,
+    last: &mut i32,
+    own: bool,
+) -> bool {
     let list_item = &**name == "list-item";
-    for &child in doc.nodes[node].children.iter() {
-        let Some(style) = doc.nodes[child].primary_styles() else { continue };
+    {
+        let Some(style) = doc.nodes[child].primary_styles() else { return false };
         let display = style.clone_display();
         if display == Display::None {
-            continue;
+            return false;
         }
         let counters = style.get_counters();
-        if counters.counter_reset.iter().any(|pair| pair.name.0 == *name) {
-            continue;
+        if !own && counters.counter_reset.iter().any(|pair| pair.name.0 == *name) {
+            return false;
         }
         if !display.is_contents() {
             let mut increments = counters.counter_increment.iter().filter(|pair| pair.name.0 == *name).peekable();
@@ -668,12 +725,50 @@ fn scan_reversed_scope(doc: &BaseDocument, node: NodeId, name: &Atom, num: &mut 
             }
             *num = num.saturating_add(negated);
         }
-        drop(style);
-        if crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last)) {
-            return true;
+        // pyro: style containment keeps its descendants' counter changes in its subtree
+        // (CSS Contain 2 § 3.3; WPT css-contain `contain-style-ol-ordinal-reversed`).
+        let contains_style = !display.is_contents()
+            && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
+                || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
+        if contains_style {
+            return false;
         }
     }
-    false
+    // pyro: its `::before` and `::after` boxes come before and after its children (as in
+    // `walk_element`; WPT css-lists `counter-reset-reversed-pseudo-001`).
+    let pseudos: [Option<Arc<ComputedValues>>; 2] =
+        match doc.nodes[child].try_stylo_element_data().and_then(|data| data.get()) {
+            Some(data) if !data.styles.pseudos.is_empty() => [
+                data.styles.pseudos.get(&PseudoElement::Before).cloned(),
+                data.styles.pseudos.get(&PseudoElement::After).cloned(),
+            ],
+            _ => [None, None],
+        };
+    let pseudo = |style: Option<&Arc<ComputedValues>>, num: &mut i32, last: &mut i32| -> bool {
+        let Some(style) = style.filter(|style| generates(style)) else { return false };
+        let counters = style.get_counters();
+        if counters.counter_reset.iter().any(|pair| pair.name.0 == *name) {
+            return false;
+        }
+        let increment = counters
+            .counter_increment
+            .iter()
+            .filter(|pair| pair.name.0 == *name)
+            .fold(0i32, |sum, pair| sum.saturating_add(pair.value));
+        let negated = increment.saturating_neg();
+        if negated != 0 {
+            *last = negated;
+        }
+        if let Some(set) = counters.counter_set.iter().filter(|pair| pair.name.0 == *name).map(|pair| pair.value).last() {
+            *num = num.saturating_add(set);
+            return true;
+        }
+        *num = num.saturating_add(negated);
+        false
+    };
+    pseudo(pseudos[0].as_ref(), num, last)
+        || crate::util::ensure_stack(|| scan_reversed_scope(doc, child, name, num, last))
+        || pseudo(pseudos[1].as_ref(), num, last)
 }
 
 /// pyro: the `value` attribute of an `li` (`node`, style `style`), a presentational hint
@@ -735,6 +830,23 @@ fn walk_generated_box(doc: &BaseDocument, scope: NodeId, node: NodeId, walk: &mu
 }
 
 /// pyro: the language of the parent of element `node`, for its pseudo-elements' quotes.
+/// pyro: the language `quotes: auto` chooses quote marks by for `node`'s quotes: its parent's
+/// language, or under `quotes: match-parent` the one its parent's quotes used (WPT css-content
+/// `quotes-match-parent-001`).
+fn quote_language(doc: &BaseDocument, node: NodeId) -> Option<String> {
+    let mut node = node;
+    for _ in 0..1024 {
+        let matches_parent = doc.nodes.get(node).and_then(|n| n.primary_styles()).is_some_and(|style| {
+            matches!(style.get_list().quotes, Quotes::MatchParent)
+        });
+        match doc.nodes.get(node).and_then(|n| n.parent).filter(|_| matches_parent) {
+            Some(parent) => node = parent,
+            None => break,
+        }
+    }
+    parent_language(doc, node)
+}
+
 fn parent_language(doc: &BaseDocument, node: NodeId) -> Option<String> {
     let parent = doc.nodes.get(node)?.parent?;
     crate::lang::language(&doc.nodes[parent]).map(str::to_string)

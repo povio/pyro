@@ -50,7 +50,7 @@ pub use self::flexbox::compute_flexbox_layout;
 pub use self::grid::compute_grid_layout;
 
 #[cfg(feature = "float_layout")]
-pub use self::block::FloatMark;
+pub use self::block::{FloatMark, FloatSnapshot};
 #[cfg(feature = "float_layout")]
 pub use self::float::{BfcSlot, ContentSlot, FloatContext, FloatIntrinsicWidthCalculator};
 
@@ -130,6 +130,7 @@ pub fn compute_root_layout_in(
         let oof::OofBoxLayout { layout, surfaced, .. } = oof::layout_oof_box(
             tree,
             candidate,
+            None,
             area_size,
             Point::ZERO,
             direction,
@@ -175,6 +176,10 @@ pub fn compute_root_layout_in(
 
         let mut hoisted: Vec<NodeId> = Vec::new();
         let mut unclaimed = OofCandidates::new();
+        if root_is_cached {
+            let claims = tree.get_core_container_style(root).is_containing_block();
+            if !claims.absolute && !claims.fixed { tree.clear_anchor_geometry_dependencies(root); }
+        }
         oof::perform_oof_layout(
             tree,
             root,
@@ -188,6 +193,7 @@ pub fn compute_root_layout_in(
             Point { x: direction.is_rtl(), y: false },
             &mut hoisted,
             &mut unclaimed,
+            true,
         );
         debug_assert!(unclaimed.is_empty(), "the root positioning pass must claim all remaining candidates");
         if !root_is_cached {
@@ -298,6 +304,9 @@ fn compute_in_flow_root_layout(
                     width
                 }
             };
+            // pyro: the stretched width is clamped by `min-width` and `max-width` too (WPT
+            // scroll-animations `scroll-timeline-inline-orientation`: `html { min-width: 100% }`).
+            let stretch_width = stretch_width.map(|width| width.maybe_clamp(min_size.width, max_size.width));
             let available_space_based_size = Size { width: stretch_width, height: None };
 
             let styled_based_known_dimensions = known_dimensions
@@ -331,18 +340,31 @@ fn compute_in_flow_root_layout(
         style.border().resolve_or_zero(available_space.width.into_option(), |val, basis| tree.calc(val, basis));
     let margin =
         style.margin().resolve_or_zero(available_space.width.into_option(), |val, basis| tree.calc(val, basis));
-    let scrollbar_size = Size {
-        width: if style.overflow().y == Overflow::Scroll { style.scrollbar_width() } else { 0.0 },
-        height: if style.overflow().x == Overflow::Scroll { style.scrollbar_width() } else { 0.0 },
-    };
+    let scrollbar_size = style.scrollbar_gutter_size();
     let is_rtl = style.direction().is_rtl();
 
     // The root's margin box is placed at the origin of the initial containing block
     // pyro: a root floated right is placed against the right edge (`root_float_is_right`)
     let on_right = style.root_float_is_right().unwrap_or(is_rtl);
+    // pyro: `auto` horizontal margins of an in-flow root narrower than the initial containing
+    // block take the space left (CSS 2.1 § 10.3.3): a root table with `margin: 0 auto` is centred
+    // (WPT CSS2 `box-display/root-box-002`). A floated root's are zero.
+    let auto_margins = {
+        let raw = style.margin();
+        (raw.left.is_auto(), raw.right.is_auto())
+    };
+    let free = available_space
+        .width
+        .into_option()
+        .filter(|_| style.root_float_is_right().is_none())
+        .map(|available| available - output.size.width - margin.left - margin.right)
+        .filter(|free| *free > 0.0);
     let mut location = Point {
-        x: match (on_right, available_space.width.into_option()) {
-            (true, Some(available_width)) => available_width - output.size.width - margin.right,
+        x: match (free, auto_margins, on_right, available_space.width.into_option()) {
+            (Some(free), (true, true), _, _) => margin.left + free / 2.0,
+            (Some(free), (true, false), _, _) => margin.left + free,
+            (Some(_), (false, true), _, _) => margin.left,
+            (_, _, true, Some(available_width)) => available_width - output.size.width - margin.right,
             _ => margin.left,
         },
         y: margin.top,

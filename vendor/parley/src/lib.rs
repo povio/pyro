@@ -128,6 +128,7 @@ mod tests;
 
 pub use linebender_resource_handle::FontData;
 pub use parlance::BaseDirection;
+pub use parley_engine::hangs_at_edge;
 pub use parley_engine::break_overrides::{
     AsciiLineBreakTable, AsciiLineBreakTableBuilder, CHROMIUM_LINE_BREAK_OVERRIDE,
     HYPHEN_DIGIT_LINE_BREAK_OVERRIDE, LineBreakContext, LineBreakOverrideFn,
@@ -140,6 +141,28 @@ pub use inline_box::{InlineBox, InlineBoxKind};
 #[doc(inline)]
 pub use layout::Layout;
 pub use util::BoundingBox;
+
+/// pyro: whether `text-orientation: mixed` stands a character upright in a vertical line (UTR #50
+/// `Vertical_Orientation` other than R, by block), the rule shaping splits runs by
+/// ([`TextStyle::vertical`]) and blitz-paint draws by.
+pub fn upright_in_vertical(c: char) -> bool {
+    // The fullwidth forms that are R in a block that is otherwise U: the hyphen-minus and the
+    // less-than, equals and greater-than signs.
+    if matches!(c as u32, 0xFF0D | 0xFF1C..=0xFF1E) {
+        return false;
+    }
+    matches!(c as u32,
+        0x1100..=0x11FF
+        | 0x2E80..=0x4DBF
+        | 0x4E00..=0xA4CF
+        | 0xAC00..=0xD7FF
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F000..=0x1FAFF
+        | 0x20000..=0x3FFFF)
+}
 
 pub use editing::*;
 pub use layout::*;

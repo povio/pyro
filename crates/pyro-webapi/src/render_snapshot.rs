@@ -46,6 +46,7 @@ pub struct RenderSnapshot {
     /// The current scroll targets (CSS Overflow 5 § 2.1) by render key, each scroll container's
     /// (`u64::MAX`: the viewport's) with its target's, in every form.
     pub scroll_targets: Vec<(u64, u64)>,
+    pub popover_anchors: Vec<(u64, u64)>,
     /// Render keys (`pyro_dom::snapshot::render_key`) of the element under the
     /// pointer and the focused element, in every form.
     pub hovered: Option<u64>,
@@ -62,6 +63,13 @@ pub struct RenderSnapshot {
     /// The document's HTTP `Content-Language`
     /// (`pyro_dom::Dom::content_language`), in every form.
     pub content_language: Option<String>,
+    /// pyro: the nonce the markup was serialised with (its engine attributes' names carry it:
+    /// `pyro_dom::snapshot::engine_name`): a renderer of the markup alone (a `capture_only`
+    /// snapshot) needs it to take them, and takes none otherwise.
+    pub nonce: String,
+    /// The document's `CSS.registerProperty()` registrations, in order, in every form: name,
+    /// syntax, inherits, initial value.
+    pub registered_properties: Vec<(String, String, bool, Option<String>)>,
     /// The document selection as a renderer paints it, in every form: from
     /// the start to the end, each a text node's render key and an offset in
     /// UTF-16 code units of its data (`text_selection`).
@@ -76,6 +84,12 @@ pub struct RenderSnapshot {
     /// The replaced elements (images, video, canvas) the document selection holds, in every
     /// form: their render keys (painted with the selection's tint).
     pub selected_replaced: Vec<u64>,
+    /// The caret in editable content, in every form: the render key of a text node and
+    /// an offset in UTF-16 code units of its data, or of an element with no text at the caret
+    /// and 0 (`caret_point`).
+    pub caret: Option<(u64, u32)>,
+    /// The element `:target` matches (its render key), in every form.
+    pub url_target: Option<u64>,
 }
 
 /// How a snapshot carries the document.
@@ -91,19 +105,47 @@ impl PageDom {
     /// URLs (the frame's base URL); `mark` puts a valueless attribute on one
     /// element (a screenshot clip target).
     pub fn render_snapshot(&self, base_url: &str, mark: Option<(NodeId, &str)>) -> RenderSnapshot {
-        self.snapshot_as(base_url, mark, Form::Html)
+        self.snapshot_as(base_url, mark, Form::Html, &[])
+    }
+
+    /// pyro: a frame's [`PageDom::render_snapshot`] with its animations now: its animated
+    /// elements carry their render keys (`data-pyro-key`) for the renderer to sample them into
+    /// the frame's document.
+    pub fn render_snapshot_frame(self: &std::rc::Rc<Self>, base_url: &str, transitions: &[pyro_dom::geometry::TransitionFrame]) -> (RenderSnapshot, Option<pyro_dom::animation::AnimationFrame>) {
+        let frame = self.animation_frame();
+        if frame.elements.is_empty() && transitions.is_empty() {
+            return (self.snapshot_as(base_url, None, Form::Html, &[]), None);
+        }
+        let mut keys: Vec<u64> = frame.elements.iter().map(|e| e.key).collect();
+        for scope in transitions {
+            keys.push(scope.root);
+            keys.extend(scope.new.iter().map(|item| item.key));
+        }
+        (self.snapshot_as(base_url, None, Form::Html, &keys), (!frame.elements.is_empty()).then_some(frame))
     }
 
     /// As [`PageDom::render_snapshot`], with the document as a keyed node
     /// list (`pyro_dom::Dom::render_tree`) instead of HTML: a renderer can
     /// diff it against the previous one. `mark`'s element is its `mark`.
     pub fn render_snapshot_tree(&self, base_url: &str, mark: Option<NodeId>) -> RenderSnapshot {
-        self.snapshot_as(base_url, mark.map(|m| (m, "")), Form::Tree)
+        self.snapshot_as(base_url, mark.map(|m| (m, "")), Form::Tree, &[])
+    }
+
+    /// The base URL a render snapshot's document resolves URLs against: `frame_base_url` (the
+    /// frame's), or the one a `<base href>` gives the document (HTML "document base URL"; WPT
+    /// css-style-attr `style-attr-urls-002`: `url()` in a style attribute under `<base>`).
+    pub fn render_base_url(&self, frame_base_url: &str) -> String {
+        let dom = self.dom.borrow();
+        let doc = self.document();
+        match (dom.document_base_url(doc), dom.document_fallback_base_url(doc)) {
+            (Ok(base), Ok(fallback)) if base != fallback => base.to_owned(),
+            _ => frame_base_url.to_owned(),
+        }
     }
 
     /// The viewport and scroll of a render snapshot, without the document.
     pub fn render_view(&self) -> RenderSnapshot {
-        self.snapshot_as("", None, Form::None)
+        self.snapshot_as("", None, Form::None, &[])
     }
 
     /// Changes whenever a render snapshot of the document could: the DOM
@@ -115,12 +157,18 @@ impl PageDom {
         (dom.uid(), version, generation)
     }
 
-    fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
+    fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form, keyed: &[u64]) -> RenderSnapshot {
+        // pyro: a mandatory snap container starts at a snap position (CSS Scroll Snap 1 § 6.3),
+        // which a capture shows even when no rendering update ran since the page loaded.
+        if let (Ok(dom), Ok(mut layout)) = (self.dom.try_borrow(), self.layout.try_borrow_mut()) {
+            layout.snap_initial_positions(&dom);
+        }
         let mut canvases = self.canvas_bitmaps();
         canvases.extend(self.video_bitmaps());
         let selection = crate::editing::selection_range(self);
         let dom = self.dom.borrow();
         let selected_replaced = selection.map_or_else(Vec::new, |range| replaced_in(&dom, self.document(), range));
+        let caret = selection.and_then(|range| caret_point(&dom, self.document(), range));
         let selection = selection.and_then(|range| text_selection(&dom, self.document(), range));
         let mut highlights = Vec::new();
         {
@@ -159,7 +207,9 @@ impl PageDom {
             highlights,
             control_selection,
             selected_replaced,
-            ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
+            caret,
+            url_target: dom.url_target_element(self.document()).map(pyro_dom::snapshot::render_key),
+            ..snapshot_of(&dom, &layout, self.document(), base_url, mark, form, keyed)
         }
     }
 }
@@ -171,17 +221,19 @@ fn snapshot_of(
     base_url: &str,
     mark: Option<(NodeId, &str)>,
     form: Form,
+    keyed: &[u64],
 ) -> RenderSnapshot {
     {
         let style = layout.style();
         let base = url::Url::parse(base_url).ok();
         let sheets = std::cell::RefCell::new(HashMap::new());
-        let style_text = |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
+        let style_text = |owner: NodeId| style.sheet_text(&dom, owner).map(str::to_owned);
         let stylesheet_href = |link: NodeId| {
-            let text = style.sheet_text(link)?;
-            let href = dom.get_attribute(link, "href").ok().flatten()?;
-            let url = base.as_ref()?.join(href.trim()).ok()?.to_string();
-            sheets.borrow_mut().insert(url.clone(), text.to_owned());
+            let text = style.sheet_text(&dom, link)?;
+            // pyro: the sheet's own URL, its response's after redirects (its URLs resolve
+            // against it), else its href.
+            let url = style.sheet_base_url(&dom, link, base.as_ref()?.as_str())?;
+            sheets.borrow_mut().insert(dom.sheet_key(link), text.to_owned());
             Some(url)
         };
         let adopted = |scope: NodeId| style.adopted_sheets(scope);
@@ -194,7 +246,7 @@ fn snapshot_of(
         let (html, tree) = match form {
             Form::Html => {
                 (
-                dom.render_html_positioned(document, &opts, &layout.scrolled_elements(), &layout.sticky_offsets(dom))
+                dom.render_html_keyed(document, &opts, &layout.scrolled_elements(), &layout.sticky_offsets(dom), keyed)
                     .unwrap_or_default(),
                 None,
             )
@@ -217,6 +269,7 @@ fn snapshot_of(
             element_scroll: layout.scrolled_elements(),
             sticky_offsets: layout.sticky_offsets(dom),
             scroll_targets: layout.scroll_targets(dom),
+            popover_anchors: dom.popover_anchor_keys(),
             hovered: dom.hovered(document).map(pyro_dom::snapshot::render_key),
             focused: dom.focused(document).ok().flatten().map(pyro_dom::snapshot::render_key),
             canvases: Vec::new(),
@@ -224,12 +277,58 @@ fn snapshot_of(
             quirks_mode: dom.is_quirks_mode(document),
             limited_quirks_mode: dom.is_limited_quirks_mode(document),
             content_language: dom.content_language(document).map(str::to_owned),
+            nonce: dom.frame_table(document).nonce,
+            registered_properties: layout
+                .style()
+                .registered_properties()
+                .iter()
+                .map(|p| (p.name.clone(), p.syntax.clone(), p.inherits, p.initial_value.clone()))
+                .collect(),
             selection: None,
             highlights: Vec::new(),
             control_selection: None,
             selected_replaced: Vec::new(),
+            caret: None,
+            url_target: None,
         }
     }
+}
+
+/// The caret as a renderer paints it ([`RenderSnapshot::caret`]): a collapsed selection in
+/// editable content (while no other element has focus), at the text there (the start of the text after it, else the end
+/// of the text before it), or the element it is in when no text is next to it (an empty host).
+fn caret_point(
+    dom: &pyro_dom::Dom,
+    document: NodeId,
+    (start, end): (crate::editing::Point, crate::editing::Point),
+) -> Option<(u64, u32)> {
+    use crate::editing::{deep_backward, deep_forward, editing_host, is_text};
+    if start != end {
+        return None;
+    }
+    // Chromium paints the caret of a collapsed selection in editable content while no other
+    // element has focus (a script's `collapse()` into an editing host does not focus it).
+    let host = editing_host(dom, start.0)?;
+    let focused = dom.focused(document).ok().flatten();
+    let body = dom.body(document).ok().flatten();
+    let root = dom.document_element(document).ok().flatten();
+    if focused.is_some_and(|focused| focused != host && Some(focused) != body && Some(focused) != root) {
+        return None;
+    }
+    let (node, offset) = if is_text(dom, start.0) {
+        start
+    } else {
+        let forward = deep_forward(dom, start);
+        let backward = deep_backward(dom, start);
+        if is_text(dom, forward.0) {
+            forward
+        } else if is_text(dom, backward.0) {
+            backward
+        } else {
+            (backward.0, 0)
+        }
+    };
+    Some((pyro_dom::snapshot::render_key(node), offset))
 }
 
 /// The document selection as a renderer paints it ([`RenderSnapshot::selection`]): each end in

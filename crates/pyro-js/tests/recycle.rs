@@ -42,6 +42,36 @@ fn use_and_leave(engine: &Engine) {
     realm.dispose();
 }
 
+#[inline(never)]
+fn use_agent_value_and_leave(engine: &Engine) {
+    let realm = engine.create_realm(Default::default()).unwrap();
+    {
+        let scope = realm.scope().unwrap();
+        let map = scope.agent_value("recycle.map", "new WeakMap()").unwrap();
+        scope.global().set("shared", map).unwrap();
+    }
+    eval(&realm, "WeakMap.prototype.set.call(shared, globalThis, 1); 'done'");
+    realm.dispose();
+}
+
+/// A value the agent's realms shared (`Scope::agent_value`) is the last
+/// owner's: it does not keep the engine from being recycled, and the next
+/// owner gets a new one.
+#[test]
+fn agent_values_do_not_keep_an_engine_from_being_recycled() {
+    let (engine, Some(clean)) = engine() else { return };
+    use_agent_value_and_leave(&engine);
+    clear_stack();
+    assert_eq!(engine.recycle(Some(clean)), Ok(()));
+    let realm = engine.create_realm(Default::default()).unwrap();
+    {
+        let scope = realm.scope().unwrap();
+        let map = scope.agent_value("recycle.map", "new WeakMap()").unwrap();
+        scope.global().set("shared", map).unwrap();
+    }
+    assert_eq!(eval(&realm, "String(WeakMap.prototype.has.call(shared, globalThis))"), "false");
+}
+
 #[test]
 fn an_engine_nothing_used_is_accepted_without_a_baseline() {
     let (engine, _) = engine();

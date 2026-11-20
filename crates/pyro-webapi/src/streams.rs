@@ -13,6 +13,53 @@ use crate::window::WindowHost;
 /// a worker's realm has the same names on its global.
 const KEY: &str = "lpStreams";
 
+/// Run in the engine's root context ([`Scope::agent_value`]): the internal
+/// slots of the streams of every realm of the agent, one WeakMap per slot
+/// name and origin. `slot(origin, name)` answers `{ has, get, set }` for
+/// that map, functions of the root context over its own WeakMap and Map
+/// primordials, which no page can reach or replace: page code never runs
+/// with a map as receiver or argument, and only streams.js holds the
+/// functions (they must never be handed to page code, whose realm could
+/// then reach the root context's). Realms of one origin share the maps,
+/// which is what lets a same-origin window's stream pass this realm's brand
+/// checks; a realm of another origin, or of an opaque one (`origin` null:
+/// maps of its own), shares nothing, so it can neither pass off nor touch
+/// another origin's streams. Made there, the maps keep no page's realm alive.
+const SLOTS: &str = r"(() => {
+  'use strict';
+  const apply = Reflect.apply;
+  const freeze = Object.freeze;
+  const WeakMapC = WeakMap;
+  const weakGet = WeakMap.prototype.get;
+  const weakSet = WeakMap.prototype.set;
+  const weakHas = WeakMap.prototype.has;
+  const mapGet = Map.prototype.get;
+  const mapSet = Map.prototype.set;
+  const maps = new Map();
+  const isObject = (o) => (typeof o === 'object' && o !== null) || typeof o === 'function';
+  return (origin, name) => {
+    let map;
+    if (typeof origin === 'string') {
+      const key = origin + ' ' + name;
+      map = apply(mapGet, maps, [key]);
+      if (!map) {
+        map = new WeakMapC();
+        apply(mapSet, maps, [key, map]);
+      }
+    } else {
+      map = new WeakMapC();
+    }
+    return freeze({
+      __proto__: null,
+      has: (o) => isObject(o) && apply(weakHas, map, [o]),
+      get: (o) => (isObject(o) ? apply(weakGet, map, [o]) : undefined),
+      set: (o, v) => {
+        if (isObject(o)) apply(weakSet, map, [o, v]);
+      },
+    });
+  };
+})()";
+
 macro_rules! lazy_globals {
     ($def:ident, $($name:literal),+ $(,)?) => {
         $($def.global_value_accessor(
@@ -84,6 +131,12 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     }
     let natives = s.object();
     natives.set_atom("zlib", crate::compression::zlib_function(s)?.value())?;
+    natives.set_atom("slot", s.agent_value("streams.slot", SLOTS)?)?;
+    let origin = match crate::storage::document_origin(page) {
+        Some(origin) => s.string(&origin),
+        None => s.null(),
+    };
+    natives.set_atom("origin", origin)?;
     let natives = pyro_js::Persistent::new(s, natives.value());
     let factory = s.eval(include_str!("streams.js"), Some("pyro://internal/streams.js"), 1)?;
     let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[natives.get(s)])?;
@@ -91,11 +144,32 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     module.as_object().ok_or_else(unavailable)
 }
 
-/// The module only when this realm already made it: without it, no value can
-/// be a stream.
-fn existing<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Object<'s>>> {
+/// This realm's module when `value` may be a stream: the module when the
+/// realm already made it, else made now only for an object that is a stream
+/// of another realm of this origin (the slots are shared, see [`SLOTS`]), so
+/// a realm that never used streams still tells such a stream apart, at the
+/// cost of three lookups, without making its module for other values.
+fn existing<'s>(s: &Scope<'s>, page: &Rc<PageDom>, value: Value<'s>) -> JsResult<Option<Object<'s>>> {
     let navigator = crate::worker_scope::module_holder(s, page)?;
-    Ok(s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()))
+    if let Some(module) = s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()) {
+        return Ok(Some(module));
+    }
+    if value.as_object().is_none() {
+        return Ok(None);
+    }
+    let slot = s.agent_value("streams.slot", SLOTS)?.as_object().ok_or_else(unavailable)?;
+    let origin = match crate::storage::document_origin(page) {
+        Some(origin) => s.string(&origin),
+        None => return Ok(None),
+    };
+    for name in ["ReadableStream.s", "WritableStream.s", "TransformStream.s"] {
+        let accessor = slot.call(None, &[origin, s.string(name)])?.as_object().ok_or_else(unavailable)?;
+        let has = accessor.get_atom("has")?.as_object().ok_or_else(unavailable)?;
+        if has.call(None, &[value])?.to_bool() {
+            return module(s, page).map(Some);
+        }
+    }
+    Ok(None)
 }
 
 /// Calls module helper `name`.
@@ -104,13 +178,15 @@ pub(crate) fn helper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str, args: &[
     module.get(name)?.as_object().ok_or_else(unavailable)?.call(None, args)
 }
 
-/// `fetch(input, init)` when `init.body` is a ReadableStream of this realm: the
-/// request goes out with the stream's bytes once it ends (no streaming upload).
-/// None for any other call; realms without streams never read `init.body` here.
+/// `fetch(input, init)` when `init.body` is a ReadableStream: the request goes
+/// out with the stream's bytes once it ends (no streaming upload). None for
+/// any other call; realms that never made their streams never read
+/// `init.body` here (a getter would run twice), so they do not take a
+/// stream of another window as a streaming body.
 pub(crate) fn fetch_stream_body<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult<Option<Value<'s>>> {
     let Some(options) = init.as_object() else { return Ok(None) };
     let page = crate::target::page_of(s)?;
-    if existing(s, &page)?.is_none() {
+    if existing(s, &page, s.undefined())?.is_none() {
         return Ok(None);
     }
     let body = options.get_atom("body")?;
@@ -124,15 +200,16 @@ pub(crate) fn fetch_stream_body<'s>(s: &Scope<'s>, input: Value<'s>, init: Value
 }
 
 /// Structured clone's transfer-list check: `"R"`, `"W"` or `"T"` when
-/// `value` is a ReadableStream, WritableStream or TransformStream of this
-/// realm (DataCloneError when it is locked), else `None`. A realm that never
-/// made its streams answers `None` at the cost of one lookup.
+/// `value` is a ReadableStream, WritableStream or TransformStream (of this
+/// realm or another of its origin; DataCloneError when it is locked), else
+/// `None`. A realm that never made its streams answers `None` for other
+/// values at the cost of a few lookups ([`existing`]).
 pub(crate) fn transfer_kind<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Option<Value<'s>>> {
     if value.as_object().is_none() {
         return Ok(None);
     }
     let page = crate::target::page_of(s)?;
-    let Some(module) = existing(s, &page)? else { return Ok(None) };
+    let Some(module) = existing(s, &page, value)? else { return Ok(None) };
     let kind = module.get_atom("transferKind")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?;
     Ok((!kind.is_undefined()).then_some(kind))
 }
@@ -151,13 +228,13 @@ pub(crate) fn transfer_in<'s>(s: &Scope<'s>, kind: Value<'s>, ports: Value<'s>) 
     helper(s, &page, "transferIn", &[kind, ports])
 }
 
-/// `value` is a ReadableStream of this realm. Cheap for primitives and for
-/// realms that have no streams.
+/// `value` is a ReadableStream (of this realm or another of its origin).
+/// Cheap for primitives and for realms that have no streams.
 pub(crate) fn is_stream<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<bool> {
     if value.as_object().is_none() {
         return Ok(false);
     }
     let page = crate::target::page_of(s)?;
-    let Some(module) = existing(s, &page)? else { return Ok(false) };
+    let Some(module) = existing(s, &page, value)? else { return Ok(false) };
     Ok(module.get_atom("isStream")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?.to_bool())
 }

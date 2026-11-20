@@ -36,6 +36,9 @@ pub const SHADOW_HOST_ATTR: &str = "shadow-host";
 /// Name (in [`crate::PYRO_STATE_NS`]) of the marker attribute of a slot whose children are the
 /// nodes assigned to it.
 pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
+/// pyro: the attribute (in [`crate::PYRO_STATE_NS`]) a light child element of a shadow host
+/// carries: its index among the host's element children (pyro-dom `LIGHT_INDEX_ATTR`).
+pub const LIGHT_INDEX_ATTR: &str = "light-index";
 
 /// The styles of a shadow root: the sheets of its tree's `<style>` and `<link>` elements, in
 /// node order, and Stylo's cascade data of them.
@@ -55,6 +58,15 @@ impl Node {
     #[inline]
     pub fn is_shadow_host(&self) -> bool {
         self.flags.contains(NodeFlags::IS_SHADOW_HOST)
+    }
+
+    /// pyro: whether the element is the slot a `<details>` element's content renders in
+    /// (pyro-dom's render tree marks it: `DETAILS_CONTENT_ATTR`): its `::details-content`.
+    pub fn is_details_content_slot(&self) -> bool {
+        self.is_assigned_slot()
+            && self.element_data().is_some_and(|data| {
+                data.attrs.state("details-content").is_some()
+            })
     }
 
     /// Whether the element is a slot whose children are the nodes assigned to it.
@@ -114,6 +126,68 @@ impl Node {
         self.parent.filter(|&p| self.with(p).is_assigned_slot())
     }
 
+    /// pyro: whether `found` holds for one of this slot's flattened slottables (DOM "find
+    /// flattened slottables"): its assigned nodes, or else its fallback children (the flat tree's
+    /// children of a slot are one or the other), an element or text node each, a slot among them
+    /// standing for its own flattened slottables.
+    pub fn any_flattened_slottable(&self, found: &mut impl FnMut(&Node) -> bool) -> bool {
+        self.children.iter().any(|&id| {
+            let child = self.with(id);
+            match child.element_data() {
+                Some(data) if data.name.ns == markup5ever::ns!(html) && &*data.name.local == "slot" => {
+                    crate::util::ensure_stack(|| child.any_flattened_slottable(found))
+                }
+                Some(_) => found(child),
+                None => child.is_text_node() && found(child),
+            }
+        })
+    }
+
+    /// pyro: an assigned node's light-tree sibling element `offset` places away (-1 the previous,
+    /// 1 the next): found by its index among its host's element children (`LIGHT_INDEX_ATTR`)
+    /// among the nodes assigned to the host's slots. `None` for a node that is not assigned (its
+    /// flat-tree siblings are its tree's), `Some(None)` when there is no such sibling assigned.
+    pub fn light_sibling_element(&self, offset: i64) -> Option<Option<&Node>> {
+        self.assigned_slot_id()?;
+        let index_of = |node: &Node| -> Option<i64> {
+            node.element_data()?.attrs.state(LIGHT_INDEX_ATTR).and_then(|value| value.parse().ok())
+        };
+        let index = index_of(self)?;
+        // The flat-tree neighbour in the same slot, when it is the light-tree one (assigned nodes
+        // keep their tree order in a slot): no walk.
+        let mut step = 1;
+        loop {
+            let neighbour = if offset < 0 { self.backward(step) } else { self.forward(step) };
+            let Some(neighbour) = neighbour else { break };
+            if neighbour.is_element() {
+                if index_of(neighbour) == Some(index + offset.signum()) {
+                    return Some(Some(neighbour));
+                }
+                break;
+            }
+            step += 1;
+        }
+        let host = self.dom_parent_element()?;
+        // The host's assigned nodes, by their index (the host's flat subtree, its slots').
+        let mut found: Option<(i64, &Node)> = None;
+        let mut stack: Vec<NodeId> = host.children.iter().copied().collect();
+        while let Some(id) = stack.pop() {
+            let node = self.with(id);
+            if node.assigned_slot_id().is_some() && node.dom_parent_element().is_some_and(|p| p.id == host.id) {
+                if let Some(other) = index_of(node) {
+                    let wanted = if offset < 0 { other < index } else { other > index };
+                    let closer = found.is_none_or(|(best, _)| if offset < 0 { other > best } else { other < best });
+                    if wanted && closer {
+                        found = Some((other, node));
+                    }
+                }
+                continue;
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        Some(found.map(|(_, node)| node))
+    }
+
     /// The cascade data of the shadow root of this host.
     pub(crate) fn shadow_cascade_data(&self) -> Option<&style::stylist::CascadeData> {
         if !self.is_shadow_host() {
@@ -160,21 +234,57 @@ impl BaseDocument {
         host.mark_ancestors_dirty();
     }
 
+    /// pyro: `:has-slotted(<selector>)` matches a slot by its assigned elements (`stylo.rs`), whose
+    /// attributes and states Stylo's invalidation does not relate to the slot: a change of one of
+    /// an element assigned to a slot restyles that slot, and the slots it is assigned to in turn
+    /// (`:has-slotted` takes flattened slottables). Assignment changes restyle the slot as a
+    /// change of its children (`restyle_for_child_list_change`).
+    pub(crate) fn invalidate_has_slotted(&self, node_id: NodeId) {
+        if !self.nodes.has_shadow_hosts {
+            return;
+        }
+        let Some(mut current) = self.nodes.get(node_id).filter(|node| node.is_element()) else { return };
+        while let Some(slot) = current.assigned_slot_id().and_then(|id| self.nodes.get(id)) {
+            if let Some(mut data) = style::dom::TElement::mutate_data(&slot) {
+                data.hint.insert(RestyleHint::RESTYLE_SELF);
+            }
+            slot.mark_ancestors_dirty();
+            current = slot;
+        }
+    }
+
+    /// pyro: Stylo invalidates a change of an element's attributes for its children (`details >
+    /// p`) by the tree's children: for an element whose children render in slots of its user-agent
+    /// shadow tree (a `<details>`, pyro-dom's render tree), the slots. The slots' children, its own
+    /// children, are restyled with their subtrees (a closed `<details>` opened shows its content,
+    /// and its styles change as a restyle, not as new boxes: transitions start).
+    pub(crate) fn invalidate_slotted_children(&self, node_id: NodeId) {
+        if !self.nodes.has_shadow_hosts {
+            return;
+        }
+        let Some(node) = self.nodes.get(node_id).filter(|node| node.is_element()) else { return };
+        for &slot in &node.children {
+            let Some(slot) = self.nodes.get(slot) else { continue };
+            if !slot.flags.contains(NodeFlags::IS_ASSIGNED_SLOT) {
+                continue;
+            }
+            for &child in &slot.children {
+                let Some(child) = self.nodes.get(child).filter(|child| child.is_element()) else { continue };
+                if let Some(mut data) = style::dom::TElement::mutate_data(&child) {
+                    data.hint.insert(RestyleHint::restyle_subtree());
+                }
+                child.mark_ancestors_dirty();
+            }
+        }
+    }
+
     /// Sets the element's shadow flags from its marker attributes.
     pub(crate) fn sync_shadow_markers(&mut self, node_id: NodeId) {
         let Some(node) = self.nodes.get_mut(node_id) else { return };
         let Some(element) = node.element_data() else { return };
-        let mut host = false;
-        let mut slot = false;
-        for attr in element.attrs.iter() {
-            if &*attr.name.ns == crate::PYRO_STATE_NS {
-                match &*attr.name.local {
-                    SHADOW_HOST_ATTR => host = true,
-                    ASSIGNED_SLOT_ATTR => slot = true,
-                    _ => {}
-                }
-            }
-        }
+        // (The engine's store: `Attributes::state`.)
+        let host = element.attrs.state(SHADOW_HOST_ATTR).is_some();
+        let slot = element.attrs.state(ASSIGNED_SLOT_ATTR).is_some();
         node.flags.set(NodeFlags::IS_SHADOW_HOST, host);
         node.flags.set(NodeFlags::IS_ASSIGNED_SLOT, slot);
         if host || slot {
@@ -237,13 +347,15 @@ impl BaseDocument {
         }
         let guard = self.guard.read();
         let mut restyle = Vec::new();
+        let mut changed_rules = Vec::new();
         for (&host, root) in self.nodes.shadow_roots.iter_mut() {
             if root.styles.stylesheets.dirty() {
-                root.styles.flush(&mut self.stylist, &guard);
+                changed_rules.extend(root.styles.flush(&mut self.stylist, &guard).cascade_data_difference.changed_position_try_names);
                 restyle.push(host);
             }
         }
         drop(guard);
+        if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
         for host in restyle {
             // `:host` rules, the shadow tree and `::slotted()` (the assigned nodes are in the
             // host's flat subtree).

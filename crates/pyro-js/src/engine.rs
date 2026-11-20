@@ -197,6 +197,9 @@ pub(crate) struct EngineInner {
     /// the engine keeps their records and code, so a load of one needs
     /// neither from its entry.
     pub(crate) precompiled_from_cache: RefCell<rustc_hash::FxHashSet<crate::bytecode_cache::Key>>,
+    /// [`crate::Scope::agent_value`]'s values by key, made in the root
+    /// context and kept for the engine's lifetime.
+    pub(crate) agent_values: RefCell<rustc_hash::FxHashMap<&'static str, crate::Persistent>>,
 }
 
 /// A script compiled while coverage was on ([`Engine::new_scripts`],
@@ -836,6 +839,7 @@ impl Engine {
             time_zone_set: Cell::new(false),
             bytecode_cache: RefCell::new(crate::bytecode_cache::default()),
             precompiled_from_cache: RefCell::default(),
+            agent_values: RefCell::default(),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
@@ -1446,6 +1450,9 @@ impl Engine {
         // Handles and realms a wrapper's payload holds go with the payload,
         // in the collection below: they are counted after it.
         let clean = clean.ok_or("no clean heap to compare with")?;
+        // The agent's shared values ([`crate::Scope::agent_value`]) are the
+        // last owner's: the next one makes its own on first use.
+        inner.agent_values.borrow_mut().clear();
         if inner.time_zone_set.get() && !self.set_time_zone(None).unwrap_or(false) {
             return Err("the time zone override stays");
         }

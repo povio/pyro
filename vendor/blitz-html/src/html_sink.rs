@@ -63,7 +63,18 @@ pub struct DocumentHtmlParser<'m, 'doc> {
     /// The document's quirks mode.
     pub quirks_mode: Cell<QuirksMode>,
     pub is_xml: bool,
+
+    /// pyro: elements the markup wrote under another name ([`TAG_ATTRIBUTE`]), by the name they
+    /// were parsed as, which the tree builder keeps seeing (their end tag, scope checks).
+    parsed_as: RefCell<std::collections::HashMap<NodeId, QualName>>,
 }
+
+/// pyro: the attribute of a render snapshot's `<pre>` that is an HTML `<xmp>` or `<plaintext>`
+/// (pyro-dom `snapshot::TAG_ATTRIBUTE`): written so that the reparse closes it where the DOM
+/// does (a `<plaintext>` would read the rest of the markup as its text). The element gets its
+/// name back here; the attribute is the engine's (page attributes with its prefix are never
+/// written).
+const TAG_ATTRIBUTE: &str = "data-pyro-tag";
 
 impl<'m, 'doc> DocumentHtmlParser<'m, 'doc> {
     #[track_caller]
@@ -80,6 +91,7 @@ impl<'m, 'doc> DocumentHtmlParser<'m, 'doc> {
             errors: RefCell::new(Vec::new()),
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
             is_xml: false,
+            parsed_as: RefCell::default(),
         }
     }
 
@@ -203,6 +215,9 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
     }
 
     fn elem_name<'a>(&'a self, target: &'a Self::Handle) -> Self::ElemName<'a> {
+        if let Ok(name) = Ref::filter_map(self.parsed_as.borrow(), |names| names.get(target)) {
+            return name;
+        }
         Ref::map(self.document_mutator.borrow(), |docm| {
             docm.element_name(*target)
                 .expect("TreeSink::elem_name called on a node which is not an element!")
@@ -215,8 +230,32 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
         attrs: Vec<html5ever::Attribute>,
         _flags: ElementFlags,
     ) -> Self::Handle {
-        let attrs = attrs.into_iter().map(html5ever_to_blitz_attr).collect();
-        self.mutr().create_element(name, attrs)
+        let mut attrs: Vec<Attribute> = attrs.into_iter().map(html5ever_to_blitz_attr).collect();
+        // pyro: a `<pre>` written for an `<xmp>` or `<plaintext>` is that element.
+        // (Only the engine's attribute, under this document's nonce name: blitz_dom::engine_field.)
+        let nonce = self.mutr().doc.snapshot_nonce().to_owned();
+        let renamed = (!self.is_xml && name.ns == html5ever::ns!(html) && &*name.local == "pre")
+            .then(|| {
+                let at = attrs
+                    .iter()
+                    .position(|a| blitz_dom::engine_field(&nonce, &a.name).as_deref() == Some(TAG_ATTRIBUTE))?;
+                let local = match attrs[at].value.as_str() {
+                    "xmp" => html5ever::local_name!("xmp"),
+                    "plaintext" => html5ever::local_name!("plaintext"),
+                    _ => return None,
+                };
+                attrs.remove(at);
+                Some(QualName::new(name.prefix.clone(), name.ns.clone(), local))
+            })
+            .flatten();
+        match renamed {
+            Some(own) => {
+                let id = self.mutr().create_element(own, attrs);
+                self.parsed_as.borrow_mut().insert(id, name);
+                id
+            }
+            None => self.mutr().create_element(name, attrs),
+        }
     }
 
     fn create_comment(&self, text: StrTendril) -> Self::Handle {

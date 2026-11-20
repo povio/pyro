@@ -92,13 +92,10 @@ impl Node {
     /// `:state(name)`: pyro's custom states attribute (names
     /// separated by U+001F).
     fn has_lp_custom_state(&self, state: &str) -> bool {
-        self.element_data().is_some_and(|e| {
-            e.attrs.iter().any(|a| {
-                &*a.name.ns == "urn:x-pyro:state"
-                    && &*a.name.local == "custom-states"
-                    && a.value.split('\u{1f}').any(|s| s == state)
-            })
-        })
+        // (The engine's store: `Attributes::state`.)
+        self.element_data()
+            .and_then(|e| e.attrs.state("custom-states"))
+            .is_some_and(|value| value.split('\u{1f}').any(|s| s == state))
     }
 }
 
@@ -109,7 +106,7 @@ impl crate::document::BaseDocument {
         // pyro: shadow roots' sheets (`crate::shadow`).
         self.flush_shadow_styles();
 
-        let guard = &self.guard;
+        let guard = self.guard.clone();
         let guards = StylesheetGuards {
             author: &guard.read(),
             ua_or_user: &guard.read(),
@@ -120,9 +117,9 @@ impl crate::document::BaseDocument {
             .as_element()
             .unwrap();
 
-        self.stylist
-            .flush(&guards)
-            .process_style(root, Some(&self.snapshots));
+        let invalidations = self.stylist.flush(&guards);
+        invalidations.process_style(root, Some(&self.snapshots));
+        let changed_rules = invalidations.cascade_data_difference.changed_position_try_names;
 
         // Mark actively animating nodes as dirty
         let mut sets = self.animations.sets.write();
@@ -221,6 +218,9 @@ impl crate::document::BaseDocument {
             if traverser.text_box_trim_styles.into_inner() {
                 self.text_box_trim_styles = true;
             }
+            if traverser.scroll_snap_styles.into_inner() {
+                self.scroll_snap_styles = true;
+            }
             if traverser.column_span_styles.into_inner() {
                 self.column_span_styles = true;
             }
@@ -299,6 +299,8 @@ impl crate::document::BaseDocument {
 
         // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
         self.stylist.rule_tree().maybe_gc();
+        drop(sets);
+        if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
     }
 
     /// Compute the style of an element which the regular style traversal
@@ -353,6 +355,18 @@ impl crate::document::BaseDocument {
     /// With `generated_only`, only a stored eagerly cascaded style (a
     /// generated `::before` / `::after` of a rendered element), and no
     /// work otherwise.
+    /// pyro: the `::backdrop` style with any running animation of it (`Element.animate` with
+    /// `pseudoElement: '::backdrop'`, `ElementData::sampled_backdrop`) cascaded on it.
+    pub fn backdrop_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
+        let base = self.pseudo_element_style(node_id, &style::selector_parser::PseudoElement::Backdrop, false)?;
+        let Some(block) = self.nodes.get(node_id)?.element_data().and_then(|e| e.sampled_backdrop.clone()) else {
+            return Some(base);
+        };
+        let read_guard = self.guard.read();
+        let guards = style::shared_lock::StylesheetGuards::same(&read_guard);
+        Some(self.stylist.compute_for_declarations::<&crate::Node>(&guards, &base, block))
+    }
+
     pub fn pseudo_element_style(
         &self,
         node_id: NodeId,
@@ -443,8 +457,8 @@ impl crate::document::BaseDocument {
                 ua_or_user: &guard.read(),
             };
             // pyro: `::highlight(<name>)` rules share one map; the name must match.
-            let wanted = *pseudo;
-            let matches = move |pe: &PseudoElement| *pe == wanted;
+            let wanted = pseudo.clone();
+            let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe);
             let lazy = self.stylist.lazily_compute_pseudo_element_style(
                 &guards,
                 node,
@@ -452,7 +466,7 @@ impl crate::document::BaseDocument {
                 RuleInclusion::All,
                 &primary,
                 false,
-                pseudo.is_highlight().then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
+                (pseudo.is_highlight() || pseudo.transition_argument().is_some()).then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
             );
             if lazy.is_some() {
                 return lazy;
@@ -711,7 +725,7 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_pseudo_element(&self) -> bool {
-        matches!(self.data, NodeData::AnonymousBlock(_))
+        matches!(self.data, NodeData::AnonymousBlock(_)) || self.is_details_content_slot()
     }
 
     // pyro: a scroll pseudo-element's box originates from the element it names, not from its
@@ -719,6 +733,10 @@ impl selectors::Element for BlitzNode<'_> {
     // nested in another one (a `::first-letter` box inside a `::first-line` box) originates
     // from the outer box, and so on up to an element (`ultimate_originating_element` walks it).
     fn pseudo_element_originating_element(&self) -> Option<Self> {
+        // pyro: a `<details>` element's content slot is its `::details-content`.
+        if self.is_details_content_slot() {
+            return TNode::parent_node(self).filter(|parent| parent.is_element());
+        }
         match self.scroll_pseudo() {
             Some((_, origin)) => Some(self.with(origin)),
             None => match TNode::parent_node(self) {
@@ -731,6 +749,10 @@ impl selectors::Element for BlitzNode<'_> {
     // These methods are implemented naively since we only threaded real nodes and not fake nodes
     // we should try and use `find` instead of this foward/backward stuff since its ugly and slow
     fn prev_sibling_element(&self) -> Option<Self> {
+        // pyro: an assigned node's siblings are its light tree's (`light_sibling_element`).
+        if let Some(sibling) = self.light_sibling_element(-1) {
+            return sibling;
+        }
         let mut n = 1;
         while let Some(node) = self.backward(n) {
             if node.is_element() {
@@ -743,6 +765,9 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn next_sibling_element(&self) -> Option<Self> {
+        if let Some(sibling) = self.light_sibling_element(1) {
+            return sibling;
+        }
         let mut n = 1;
         while let Some(node) = self.forward(n) {
             if node.is_element() {
@@ -832,6 +857,23 @@ impl selectors::Element for BlitzNode<'_> {
                 _ => false,
             },
             NonTSPseudoClass::CustomState(ref state) => self.has_lp_custom_state(&state.0),
+            // pyro: a slot (of a shadow tree) with flattened slottables, one of them an element
+            // matching the argument (CSS Scoping 1 § 3.2.5), which is matched in its own tree.
+            NonTSPseudoClass::HasSlotted(ref argument) => {
+                let is_slot = self.element_data().is_some_and(|data| {
+                    data.name.ns == markup5ever::ns!(html) && &*data.name.local == "slot"
+                }) && self.containing_shadow_host_id().is_some();
+                is_slot
+                    && self.any_flattened_slottable(&mut |node: &Node| match argument {
+                        None => true,
+                        Some(argument) => {
+                            node.is_element()
+                                && context.nest(|context| {
+                                    selectors::matching::matches_selector_list(&argument.0, node, context)
+                                })
+                        }
+                    })
+            }
             // pyro: every link, visited or not, as browsers match `:link` for an element's style
             // (only the colours a visited link paints come from `:visited`).
             // A visited link's highlight styles (`::selection`) take it as visited, as Chromium's
@@ -849,7 +891,9 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::ReadWrite => self.element_state().contains(ElementState::READWRITE),
             NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
-            NonTSPseudoClass::Target => false,
+            NonTSPseudoClass::ScrollbarVertical | NonTSPseudoClass::ScrollbarHorizontal => false,
+            // pyro: the embedder's indicated element (`BaseDocument::set_url_target`).
+            NonTSPseudoClass::Target => self.element_state().contains(ElementState::URLTARGET),
             // pyro: the active scroll marker of its group (`layout::scroll_markers`).
             NonTSPseudoClass::TargetCurrent => {
                 self.element_state().contains(style::selector_parser::TARGET_CURRENT)
@@ -897,7 +941,9 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::MozMeterOptimum => false,
             NonTSPseudoClass::MozMeterSubOptimum => false,
             NonTSPseudoClass::MozMeterSubSubOptimum => false,
-            NonTSPseudoClass::MozTopmostModal => false,
+            // pyro: a dialog in the top layer (modal, or kept there for its `overlay` transition):
+            // the state pyro-dom gives it (Chromium's `:-internal-dialog-in-top-layer`).
+            NonTSPseudoClass::MozTopmostModal => self.element_state().contains(ElementState::TOPMOST_MODAL),
         }
     }
 
@@ -906,6 +952,11 @@ impl selectors::Element for BlitzNode<'_> {
         pe: &PseudoElement,
         _context: &mut MatchingContext<Self::Impl>,
     ) -> bool {
+        // pyro: a `<details>` element's content slot is its `::details-content`, styled or not yet
+        // (its style is what is being computed when the slotted rules match it).
+        if self.is_details_content_slot() {
+            return *pe == PseudoElement::DetailsContent;
+        }
         // pyro: the box of a scroll pseudo-element; a button matches the arguments that select
         // its direction (`layout::scroll_markers`).
         if let Some((pseudo, origin)) = self.scroll_pseudo() {
@@ -1044,6 +1095,11 @@ impl<'a> TElement for BlitzNode<'a> {
     // pyro: the box of an element's `::before` or `::after` is that pseudo-element: the rules of
     // `::before::marker` / `::after::marker` are looked up for it (`layout::list`).
     fn implemented_pseudo_element(&self) -> Option<PseudoElement> {
+        // pyro: the slot a `<details>` element's content renders in (pyro-dom's render tree gives
+        // it the user-agent shadow tree Chromium gives it) is its `::details-content`.
+        if self.is_details_content_slot() {
+            return Some(PseudoElement::DetailsContent);
+        }
         if !matches!(self.data, NodeData::AnonymousBlock(_)) {
             return None;
         }
@@ -1442,6 +1498,10 @@ impl<'a> TElement for BlitzNode<'a> {
         &self.element_data().expect("Not an element").name.ns
     }
 
+    fn query_anchored_fallback(&self) -> Option<style::values::specified::position::PositionTryFallbacksItem> {
+        self.tree().anchor_query_choices.lock().unwrap().entry(self.id).or_default().clone()
+    }
+
     fn query_container_size(
         &self,
         display: &style::values::specified::Display,
@@ -1472,9 +1532,11 @@ impl<'a> TElement for BlitzNode<'a> {
                     let horizontal = values.writing_mode.is_horizontal();
                     entry.axes = euclid::default::Size2D::new(both || (inline && horizontal), both || (inline && !horizontal));
                     let layout = self.final_layout();
+                    // pyro: less its scrollbar gutters (`Node::container_query_gutters`)
+                    let g = self.container_query_gutters();
                     entry.size = euclid::default::Size2D::new(
-                        entry.axes.width.then(|| app_units::Au::from_f32_px(layout.content_box_width())),
-                        entry.axes.height.then(|| app_units::Au::from_f32_px(layout.content_box_height())),
+                        entry.axes.width.then(|| app_units::Au::from_f32_px((layout.content_box_width() - g.width).max(0.0))),
+                        entry.axes.height.then(|| app_units::Au::from_f32_px((layout.content_box_height() - g.height).max(0.0))),
                     );
                 }
             }
@@ -1489,13 +1551,9 @@ impl<'a> TElement for BlitzNode<'a> {
         F: FnMut(&AtomIdent),
     {
         // pyro: pyro-dom's render tree lists them (`has_lp_custom_state`).
-        let value = self.attrs().and_then(|attrs| {
-            attrs
-                .iter()
-                .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "custom-states")
-        });
-        if let Some(attr) = value {
-            for state in crate::has_invalidation::pyro_custom_states(Some(&attr.value)) {
+        let value = self.element_data().and_then(|e| e.attrs.state("custom-states"));
+        if let Some(value) = value {
+            for state in crate::has_invalidation::pyro_custom_states(Some(value)) {
                 callback(AtomIdent::cast(&style::Atom::from(state)));
             }
         }
@@ -2203,6 +2261,8 @@ pub struct RecalcStyle<'a> {
     text_box_trim_styles: std::sync::atomic::AtomicBool,
     /// pyro: an element was styled `column-span: all` (`BaseDocument::column_span_styles`).
     column_span_styles: std::sync::atomic::AtomicBool,
+    /// pyro: an element was styled with a `scroll-snap-type` (`BaseDocument::scroll_snap_styles`).
+    scroll_snap_styles: std::sync::atomic::AtomicBool,
     /// pyro: the document evaluates counters and quotes: restyles note whether they changed
     /// any (`counters_changed`).
     track_counters: bool,
@@ -2227,6 +2287,7 @@ impl<'a> RecalcStyle<'a> {
             generated_counters: std::sync::atomic::AtomicBool::new(false),
             text_box_trim_styles: std::sync::atomic::AtomicBool::new(false),
             column_span_styles: std::sync::atomic::AtomicBool::new(false),
+            scroll_snap_styles: std::sync::atomic::AtomicBool::new(false),
             track_counters: false,
             counters_changed: std::sync::atomic::AtomicBool::new(false),
         }
@@ -2535,6 +2596,9 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                                     | DisplayInside::TableRowGroup
                                     | DisplayInside::TableHeaderGroup
                                     | DisplayInside::TableFooterGroup
+                                    // pyro: or a column or column group (`Style::collapsed_columns`)
+                                    | DisplayInside::TableColumn
+                                    | DisplayInside::TableColumnGroup
                             ) || el.layout_parent.get().or(el.parent).is_some_and(|parent| {
                                 el.tree()[parent]
                                     .primary_styles()
@@ -2581,6 +2645,9 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 }
                 if style.get_column().column_span == style::values::computed::ColumnSpan::All {
                     self.column_span_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                if style.get_box().scroll_snap_type != style::values::computed::ScrollSnapType::none() {
+                    self.scroll_snap_styles.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 // pyro: list items number their markers with the `list-item` counter
                 // (`layout::counters`).
@@ -2843,21 +2910,25 @@ fn needs_style_image_flush(node: &Node, style: &ComputedValues) -> bool {
         std::iter::zip(style_images, stored).any(|(style_image, stored)| {
             // pyro: a `filter()` image loads the image it filters.
             match (crate::util::unfiltered_image(style_image), stored) {
-                (Image::Url(ComputedUrl::Valid(url)), Some(data)) => **url != *data.url,
-                (Image::Url(ComputedUrl::Valid(_)), None) => true,
+                // pyro: or another request for it (its modifiers changed).
+                (Image::Url(ComputedUrl::Valid(url, modifiers)), Some(data)) => {
+                    **url != *data.url || !crate::net::asks_same_request(&data.options, modifiers.as_deref())
+                }
+                (Image::Url(ComputedUrl::Valid(..)), None) => true,
                 (_, Some(_)) => true,
                 (_, None) => false,
             }
         })
     }
 
+    // pyro: with the `url()`s of the layers' `cross-fade()`s (`util::image_slots`).
+    let slots = |images: &[Image]| -> Vec<Image> { crate::util::image_slots(images).into_iter().cloned().collect() };
     node.data.downcast_element().is_some_and(|el| {
-        out_of_sync(
-            &style.get_background().background_image.0,
-            &el.background_images,
-        ) || out_of_sync(&style.get_svg().mask_image.0, &el.mask_images)
+        out_of_sync(&slots(&style.get_background().background_image.0), &el.background_images)
+            || out_of_sync(&slots(&style.get_svg().mask_image.0), &el.mask_images)
             || out_of_sync(&crate::layout::damage::border_image_sources(style), &el.border_images)
             || out_of_sync(std::slice::from_ref(&style.get_list().list_style_image), &el.list_style_images)
+            || out_of_sync(crate::layout::damage::shape_image(style), &el.shape_images)
             // pyro: an element whose `content` is one image shows it (`flush_content_image`).
             || {
                 use style::values::computed::{Content, ContentItem};

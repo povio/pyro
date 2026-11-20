@@ -165,19 +165,16 @@ fn needs_fixup(doc: &BaseDocument, parent: NodeId, level: Level) -> bool {
 /// `None` in the common case, when `parent` lays out its own children (every one a proper child or
 /// generating no box, which the table build passes over).
 ///
-/// A table in a vertical writing mode is built as before the fixup (`None`): its children that are
-/// not its proper children are left out. (Its captions are laid out; the anonymous boxes wait for
-/// `text-combine-upright` on text that is no element's: WPT css-writing-modes
-/// `text-combine-upright-inherit-all-002` has such text in a table without rows, and lays it out
-/// sideways once the table is fixed up.)
+/// (`_vertical`: the table's writing mode is vertical; the fixup is the same. Its bare
+/// `text-combine-upright` text is boxed by `layout::combined_text`.)
 pub(crate) fn fixup_children(
     doc: &mut BaseDocument,
     parent: NodeId,
     level: Level,
-    vertical: bool,
+    _vertical: bool,
     anonymous: &mut Vec<NodeId>,
 ) -> Option<Vec<NodeId>> {
-    if vertical || !needs_fixup(doc, parent, level) {
+    if !needs_fixup(doc, parent, level) {
         return None;
     }
     let mut items = Vec::new();
@@ -288,6 +285,106 @@ pub(crate) fn wrap_misparented_table_parts(
     flush(doc, &mut run, &mut out, anonymous);
     out.extend(hidden);
     *children = out;
+}
+
+/// pyro: whether `node` is an anonymous inline table made by [`wrap_inline_table_parts`].
+pub(crate) fn is_anonymous_inline_table(node: &Node) -> bool {
+    node.is_anonymous()
+        && node.display_style().is_some_and(|display| {
+            display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Table
+        })
+}
+
+/// pyro: the anonymous inline table a table part of an inline box is in
+/// ([`wrap_inline_table_parts`]), and whether the part is its first.
+pub(crate) fn inline_table_of(nodes: &crate::NodeTree, part: NodeId) -> Option<(NodeId, bool)> {
+    // (Constant time: the marker is set for the parts of the tables made now; a table made before is
+    // freed when its inline root is built again (its id no longer resolves), and a part moved since
+    // has another parent than the table, which is in the part's parent inline box.)
+    let table = nodes[part].inline_table.get()?;
+    let table_node = nodes.get(table)?;
+    (is_anonymous_inline_table(table_node) && table_node.parent.is_some() && table_node.parent == nodes[part].parent)
+        .then(|| (table, table_node.children.first() == Some(&part)))
+}
+
+/// pyro: wraps each run of table parts among the children of an inline box in the inline content
+/// of the inline root `root` in an anonymous inline table (CSS 2.1 § 17.2.1: "if a child C of a
+/// table-row-group (etc.) parent ... the parent is an inline box, an anonymous inline-table box
+/// is generated"; WPT css-tables `fixup-dynamic-anonymous-inline-table-001/002`). White space,
+/// comments and `display: none` boxes between two parts stay in the run (the white space
+/// generates no box: [`mark_space_between_inline_table_parts`]). The tables are owned by `root`
+/// (`anonymous`). Whether it made any.
+pub(crate) fn wrap_inline_table_parts(doc: &mut BaseDocument, root: NodeId, anonymous: &mut ThinVec<NodeId>) -> bool {
+    fn visit(doc: &mut BaseDocument, parent: NodeId, anonymous: &mut ThinVec<NodeId>, made: &mut bool) {
+        let children = doc.nodes[parent].children.clone();
+        for child in children {
+            let node = &doc.nodes[child];
+            let Some(element) = node.element_data() else { continue };
+            let Some(display) = node.display_style() else { continue };
+            if display.outside() == DisplayOutside::Inline
+                && display.inside() == DisplayInside::Flow
+                && !super::replaced::is_inline_box(element)
+            {
+                wrap_runs(doc, child, anonymous, made);
+                crate::util::ensure_stack(|| visit(doc, child, anonymous, made));
+            } else if display.outside() == DisplayOutside::None && display.inside() == DisplayInside::Contents {
+                crate::util::ensure_stack(|| visit(doc, child, anonymous, made));
+            }
+        }
+    }
+    fn wrap_runs(doc: &mut BaseDocument, inline: NodeId, anonymous: &mut ThinVec<NodeId>, made: &mut bool) {
+        if !doc.nodes[inline].children.iter().any(|&id| doc.nodes.get(id).is_some_and(is_table_part)) {
+            return;
+        }
+        let children = doc.nodes[inline].children.clone();
+        let mut run: Vec<NodeId> = Vec::new();
+        let mut flush = |doc: &mut BaseDocument, run: &mut Vec<NodeId>| {
+            if run.is_empty() {
+                return;
+            }
+            let parts = std::mem::take(run);
+            let id = create_anonymous_table_box(doc, inline, &PseudoElement::ServoAnonymousTable, parts.clone());
+            // An inline-level table.
+            if let Some(style) = doc.nodes[id].primary_styles().map(|style| style.clone()) {
+                let mut builder = style::properties::StyleBuilder::for_derived_style(
+                    doc.stylist.device(),
+                    Some(&doc.stylist),
+                    &style,
+                    None,
+                );
+                builder.set_display(style::values::specified::box_::Display::InlineTable);
+                let inline_table = builder.build();
+                if let Some(mut data) = doc.nodes[id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                    data.styles.primary = Some(inline_table);
+                }
+                doc.nodes[id].update_layout_styles();
+            }
+            for part in parts {
+                doc.nodes[part].inline_table.set(Some(id));
+            }
+            anonymous.push(id);
+            *made = true;
+        };
+        for child in children {
+            let node = &doc.nodes[child];
+            if is_table_part(node) {
+                run.push(child);
+            } else if node.is_whitespace_node()
+                || node.data.kind() == NodeKind::Comment
+                || node.display_style().is_some_and(|display| {
+                    display.outside() == DisplayOutside::None && display.inside() == DisplayInside::None
+                })
+            {
+                // (In the run, generating no box.)
+            } else {
+                flush(doc, &mut run);
+            }
+        }
+        flush(doc, &mut run);
+    }
+    let mut made = false;
+    visit(doc, root, anonymous, &mut made);
+    made
 }
 
 /// White space between two table parts of an inline box generates no box, as if the parts were in

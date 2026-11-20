@@ -25,6 +25,7 @@ use crate::stylist::Stylist;
 use crate::substitution;
 use crate::substitution::AttrTaint;
 use crate::values::{AtomString, DashedIdent, computed};
+use crate::values::specified::position::PositionTryFallbacksItem;
 use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
 use cssparser::{
     Parser, SourceLocation, SourcePosition, Token, match_ignore_ascii_case, parse_important,
@@ -675,6 +676,8 @@ pub enum QueryCondition {
     InParens(Box<QueryCondition>),
     /// A <style> query.
     Style(StyleQuery),
+    /// A fallback query, optionally comparing against none or a descriptor.
+    Anchored(Option<Option<PositionTryFallbacksItem>>),
     /// A -moz-pref() query.
     MozPref(MozPrefFeature),
     /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
@@ -707,6 +710,17 @@ impl ToCss for QueryCondition {
             Self::Style(ref c) => {
                 dest.write_str("style(")?;
                 c.to_css(dest)?;
+                dest.write_char(')')
+            },
+            Self::Anchored(ref query) => {
+                dest.write_str("anchored(fallback")?;
+                if let Some(value) = query {
+                    dest.write_str(": ")?;
+                    match value {
+                        Some(item) => item.to_css(dest)?,
+                        None => dest.write_str("none")?,
+                    }
+                }
                 dest.write_char(')')
             },
             Self::MozPref(ref c) => {
@@ -755,6 +769,7 @@ impl QueryCondition {
             | Self::Feature(..)
             | Self::GeneralEnclosed(..)
             | Self::Style(..)
+            | Self::Anchored(..)
             | Self::MozPref(..) => {},
             Self::Not(ref cond) => cond.visit(visitor),
             Self::Operation(ref conds, _op) => {
@@ -772,6 +787,7 @@ impl QueryCondition {
         let mut result = FeatureFlags::empty();
         self.visit(&mut |condition| match condition {
             Self::Style(..) => result.insert(FeatureFlags::STYLE),
+            Self::Anchored(..) => result.insert(FeatureFlags::ANCHORED),
             Self::Feature(f) => result.insert(f.feature_flags()),
             Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
             _ => {},
@@ -834,6 +850,9 @@ impl QueryCondition {
             Self::InParens(ref c) => c.matches(context, custom, attribute_tracker),
             Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
             Self::Style(ref c) => c.matches(context, attribute_tracker),
+            Self::Anchored(ref query) => context.container_info.as_ref().map_or(KleeneValue::Unknown, |info| {
+                query.as_ref().map_or_else(|| info.fallback.is_some(), |value| value == &info.fallback).into()
+            }),
             Self::MozPref(ref c) => c.matches(context),
             Self::Operation(ref conditions, op) => {
                 debug_assert!(!conditions.is_empty(), "We never create an empty op");
@@ -962,6 +981,16 @@ impl OperationParser for QueryCondition {
             },
             Token::Function(ref name) => {
                 match_ignore_ascii_case! { name,
+                    "anchored" if feature_type == FeatureType::Container => {
+                        if let Some(query) = try_parse_block(context, input, start, start_location, |input| {
+                            input.expect_ident_matching("fallback")?;
+                            if input.is_exhausted() { return Ok(None); }
+                            input.expect_colon()?;
+                            if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() { return Ok(Some(None)); }
+                            PositionTryFallbacksItem::parse(context, input).map(|item| Some(Some(item)))
+                        }) { return Ok(Self::Anchored(query)); }
+                        flags.insert(FeatureFlags::ANCHORED);
+                    },
                     "style" if StyleQuery::enabled(feature_type) => {
                         let query = try_parse_block(context, input, start, start_location, |input| {
                             StyleQuery::parse(context, input, feature_type)

@@ -804,7 +804,9 @@ impl JsClass for BroadcastChannel {
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
             }
-            let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| format!("opaque:{}", page.id()));
+            // An opaque origin by identity (`PageDom::origin_key`): an about:blank document that inherited
+            // it from its creator shares it, and talks with it.
+            let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| page.origin_key());
             let target = EventTargetData::new(&page);
             let TargetKey::Other(k) = target.key else { unreachable!() };
             let key = page.other_identity(k);

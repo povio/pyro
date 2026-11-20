@@ -16,6 +16,13 @@ impl DocumentUrl {
         UrlExtraData(ServoArc::clone(&self.base_url))
     }
 
+    /// pyro: the URL data the document's own CSS (inline sheets, style attributes) is parsed
+    /// with: a `url()` whose referrer is this very object (by identity, never by URL) was written
+    /// in the document, not in an external sheet that happens to have the same URL.
+    pub(crate) fn inline_url_data(&self) -> &ServoArc<Url> {
+        &self.base_url
+    }
+
     pub(crate) fn resolve_relative(&self, raw: &str) -> Option<url::Url> {
         // Dioxus `asset!()` paths are absolute filesystem paths when not bundled. On Windows
         // these start with a drive letter (`C:\...`), which URL parsing reads as a `c:` scheme.

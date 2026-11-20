@@ -223,8 +223,17 @@ impl Display {
     // Our u16 bits are used as follows: LOOOOOOOIIIIIIII
     pub const LIST_ITEM_MASK: u16 = 0b1000000000000000;
     pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
-    pub const INSIDE_MASK: u16 = 0b0000000011111111;
+    pub const INSIDE_MASK: u16 = 0b0000000001111111;
+    /// pyro: `display: run-in` (CSS 2.1 § 9.2.3), a block (`block flow`) with this bit: where it
+    /// runs in, the next block box lays it out as its first inline box (blitz-dom
+    /// `layout::construct`); everywhere else it is the block box it says.
+    pub const RUN_IN_MASK: u16 = 0b0000000010000000;
     pub const OUTSIDE_SHIFT: u16 = 8;
+
+    /// pyro: `display: run-in` (see [`Self::RUN_IN_MASK`]).
+    pub const RunIn: Self = Self(
+        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUN_IN_MASK,
+    );
 
     /// https://drafts.csswg.org/css-display/#the-display-properties
     /// ::new() inlined so cbindgen can use it
@@ -368,6 +377,12 @@ impl Display {
         self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
     }
 
+    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
+    #[inline]
+    pub const fn is_run_in(&self) -> bool {
+        (self.0 & Self::RUN_IN_MASK) != 0
+    }
+
     /// Returns whether this `display` value is some kind of list-item.
     #[inline]
     pub const fn is_list_item(&self) -> bool {
@@ -436,6 +451,10 @@ impl Display {
     pub fn equivalent_block_display(&self, is_root_element: bool) -> Self {
         // Special handling for `contents` and `list-item`s on the root element.
         if is_root_element && (self.is_contents() || self.is_list_item()) {
+            return Display::Block;
+        }
+        // pyro: a blockified run-in is a block.
+        if self.is_run_in() {
             return Display::Block;
         }
 
@@ -534,6 +553,7 @@ impl DisplayKeyword {
             /// https://drafts.csswg.org/css-display/#typedef-display-outside
             "block" => Outside(DisplayOutside::Block),
             "inline" => Outside(DisplayOutside::Inline),
+            "run-in" => Full(Display::RunIn),
 
             "list-item" => ListItem,
 
@@ -559,6 +579,9 @@ impl ToCss for Display {
     {
         let outside = self.outside();
         let inside = self.inside();
+        if self.is_run_in() {
+            return dest.write_str("run-in");
+        }
         match *self {
             Display::Block | Display::Inline => outside.to_css(dest),
             Display::InlineBlock => dest.write_str("inline-block"),
@@ -811,23 +834,23 @@ pub enum AlignmentBaseline {
     /// Use the text-under baseline.
     TextBottom,
     /// Use the alphabetic baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Alphabetic,
     /// Use the ideographic-under baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Ideographic,
     /// In general, use the x-middle baselines; except under text-orientation: upright
     /// (where the alphabetic and x-height baselines are essentially meaningless) use
     /// the central baseline instead.
     Middle,
     /// Use the central baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Central,
     /// Use the math baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Mathematical,
     /// Use the hanging baseline.
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (blitz-dom aligns by the font's `BASE` baselines).
     Hanging,
     /// Use the text-over baseline.
     TextTop,
@@ -888,16 +911,11 @@ impl ToCss for AlignmentBaseline {
         dest.write_str(match value {
             Self::Baseline => "baseline",
             Self::TextBottom => "text-bottom",
-            #[cfg(feature = "gecko")]
             Self::Alphabetic => "alphabetic",
-            #[cfg(feature = "gecko")]
             Self::Ideographic => "ideographic",
             Self::Middle => "middle",
-            #[cfg(feature = "gecko")]
             Self::Central => "central",
-            #[cfg(feature = "gecko")]
             Self::Mathematical => "mathematical",
-            #[cfg(feature = "gecko")]
             Self::Hanging => "hanging",
             Self::TextTop => "text-top",
             #[cfg(feature = "gecko")]
@@ -1696,7 +1714,7 @@ pub enum ContentVisibility {
 )]
 #[css(bitflags(
     single = "normal",
-    mixed = "size,inline-size,scroll-state",
+    mixed = "size,inline-size,scroll-state,anchored",
     validate_mixed = "Self::validate_mixed_flags",
 ))]
 #[repr(C)]
@@ -1717,6 +1735,8 @@ bitflags! {
         const SIZE = 1 << 1;
         /// The `scroll-state` variant.
         const SCROLL_STATE = 1 << 2;
+        #[allow(missing_docs)]
+        const ANCHORED = 1 << 3;
     }
 }
 
@@ -2427,6 +2447,15 @@ pub enum ScrollBehavior {
 pub enum Isolation {
     Auto,
     Isolate,
+}
+
+/// Which view transition names are scoped to this element.
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum ViewTransitionScope {
+    Auto,
+    All,
 }
 
 /// https://drafts.csswg.org/css-transforms/#backface-visibility-property

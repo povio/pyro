@@ -45,7 +45,10 @@ struct Scroll {
 /// The progress of the animation at `index` of `node`'s style (`style`: the node's, or its
 /// pseudo-element's) through its attachment range: 0 at the range's start, 1 at its end (outside
 /// it below 0 or above 1). `None` when its timeline is `auto` (time-based) or inactive.
-pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues, index: usize) -> Option<f64> {
+/// pyro: and whether the timeline is at its end (its scroll container scrolled to the end of its
+/// range), where an animation's active end is inclusive (Web Animations 2, the "at progress
+/// timeline boundary" of the after phase).
+pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues, index: usize) -> Option<(f64, bool)> {
     let ui = style.get_ui();
     let count = ui.animation_timeline_count();
     if count == 0 {
@@ -74,7 +77,7 @@ pub(crate) fn progress(doc: &BaseDocument, node: NodeId, style: &ComputedValues,
     if !(end - start).is_finite() || end - start <= 0.0 {
         return None;
     }
-    Some((scroll.offset - start) / (end - start))
+    Some(((scroll.offset - start) / (end - start), scroll.offset >= scroll.max))
 }
 
 /// One inset of a script-made view progress timeline (`ViewTimeline` `inset`): `auto`, a length
@@ -153,6 +156,12 @@ pub fn timeline_ranges(
         Some(subject) => {
             let n = doc.get_node(subject)?;
             n.primary_styles()?;
+            // pyro: a subject that generates no box (`display: none`) makes the view timeline
+            // inactive (Scroll-driven Animations § 4.2; WPT scroll-animations
+            // `css/view-timeline-dynamic`), not one measured from its stale layout.
+            if !n.has_boxes() {
+                return None;
+            }
             let source = nearest_scroll_container(doc, n);
             let vertical = vertical(n, axis);
             let lp = |v: InsetValue| match v {
@@ -312,37 +321,75 @@ fn resolve(doc: &BaseDocument, node: NodeId, timeline: &AnimationTimeline) -> Op
 
 /// The nearest ancestor-or-self of `node` declaring timeline `name`: a scroll progress timeline
 /// before a view progress timeline on the same element (Scroll-driven Animations 1 §4.4.1).
+/// pyro: an ancestor whose `timeline-scope` names it (or is `all`) makes the timeline of the one
+/// element in its subtree declaring it visible (§4.5; pseudo-elements count). With none, or more
+/// than one, the name is inactive.
 fn named(doc: &BaseDocument, node: &Node, name: &str) -> Option<Resolved> {
     let mut current = Some(node.id);
     while let Some(id) = current {
         let el = doc.get_node(id)?;
+        if let Some(found) = declared(doc, el, name) {
+            return found;
+        }
         if let Some(style) = el.primary_styles() {
-            let ui = style.get_ui();
-            let axes = ui.scroll_timeline_axis_count().max(1);
-            for i in (0..ui.scroll_timeline_name_count()).rev() {
-                if ui.scroll_timeline_name_at(i).to_css_string() == name {
-                    let axis = ui.scroll_timeline_axis_at(i % axes);
-                    // The element itself is the scroll container (none: inactive).
-                    if !is_scroll_container(el) {
-                        return None;
+            let scope = &style.get_ui().timeline_scope.value;
+            let css = scope.to_css_string();
+            let names = css.split(',').map(str::trim).collect::<Vec<_>>();
+            if !scope.is_none() && names.iter().any(|&scoped| scoped == name || scoped == "all") {
+                let mut found = Vec::new();
+                let mut stack = vec![id];
+                while let Some(id) = stack.pop() {
+                    let Some(n) = doc.get_node(id) else { continue };
+                    if found.len() > 1 {
+                        break;
                     }
-                    return Some(Resolved { kind: Kind::Scroll, source: Some(id), vertical: vertical(el, axis), inset: None });
+                    if n.id != el.id {
+                        if let Some(resolved) = declared(doc, n, name) {
+                            found.push(resolved);
+                        }
+                    }
+                    stack.extend(n.before());
+                    stack.extend(n.after());
+                    stack.extend(n.children.iter().rev().copied().filter(|&c| doc.get_node(c).is_some_and(Node::is_element)));
                 }
-            }
-            let axes = ui.view_timeline_axis_count().max(1);
-            let insets = ui.view_timeline_inset_count().max(1);
-            for i in (0..ui.view_timeline_name_count()).rev() {
-                if ui.view_timeline_name_at(i).to_css_string() == name {
-                    return Some(Resolved {
-                        kind: Kind::View { subject: id },
-                        source: nearest_scroll_container(doc, el),
-                        vertical: vertical(el, ui.view_timeline_axis_at(i % axes)),
-                        inset: Some(ui.view_timeline_inset_at(i % insets)),
-                    });
-                }
+                return match found.len() {
+                    1 => found.pop().flatten(),
+                    _ => None,
+                };
             }
         }
         current = el.parent.filter(|&p| doc.get_node(p).is_some_and(Node::is_element));
+    }
+    None
+}
+
+/// The timeline `name` that `el` declares itself (`Some(None)`: declared, but inactive; `None`:
+/// not declared).
+fn declared(doc: &BaseDocument, el: &Node, name: &str) -> Option<Option<Resolved>> {
+    let style = el.primary_styles()?;
+    let ui = style.get_ui();
+    let axes = ui.scroll_timeline_axis_count().max(1);
+    for i in (0..ui.scroll_timeline_name_count()).rev() {
+        if ui.scroll_timeline_name_at(i).to_css_string() == name {
+            let axis = ui.scroll_timeline_axis_at(i % axes);
+            // The element itself is the scroll container (none: inactive).
+            if !is_scroll_container(el) {
+                return Some(None);
+            }
+            return Some(Some(Resolved { kind: Kind::Scroll, source: Some(el.id), vertical: vertical(el, axis), inset: None }));
+        }
+    }
+    let axes = ui.view_timeline_axis_count().max(1);
+    let insets = ui.view_timeline_inset_count().max(1);
+    for i in (0..ui.view_timeline_name_count()).rev() {
+        if ui.view_timeline_name_at(i).to_css_string() == name {
+            return Some(Some(Resolved {
+                kind: Kind::View { subject: el.id },
+                source: nearest_scroll_container(doc, el),
+                vertical: vertical(el, ui.view_timeline_axis_at(i % axes)),
+                inset: Some(ui.view_timeline_inset_at(i % insets)),
+            }));
+        }
     }
     None
 }
@@ -395,6 +442,8 @@ fn is_viewport_propagated_body(doc: &BaseDocument, node: &Node) -> bool {
 
 /// The scroll state of `source` (`None`: the viewport) along the axis.
 fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Option<Scroll> {
+    // pyro: the root element (the scrolling element) scrolls as the viewport does.
+    let source = source.filter(|&id| doc.try_root_element().is_none_or(|root| root.id != id));
     match source {
         Some(id) => {
             let n = doc.get_node(id)?;
@@ -410,6 +459,10 @@ fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Opti
             } else {
                 (n.client_width() as f64, n.scroll_width() as f64)
             };
+            // pyro: the scroll range `scrollWidth`/`scrollHeight` give (the scrollable overflow
+            // resolved after layout: in-flow children's end margins too), as a scroll timeline's
+            // (WPT scroll-animations `css/scroll-timeline-update-reversed-animation`).
+            let size = size.max(resolved_scroll_size(doc, n, vertical));
             Some(Scroll { offset, max: (size - client).max(0.0), port: client })
         }
         None => {
@@ -417,14 +470,45 @@ fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Opti
             let viewport = doc.viewport();
             let scale = viewport.zoom() as f64;
             let (w, h) = viewport.window_size;
-            let port = if vertical { h as f64 / scale } else { w as f64 / scale };
+            // (Less the viewport's classic scrollbar gutters: its scrollport.)
+            let g = doc.viewport_scrollbars.gutters;
+            let port = if vertical {
+                (h as f64 / scale - (g.top + g.bottom) as f64).max(0.0)
+            } else {
+                (w as f64 / scale - (g.left + g.right) as f64).max(0.0)
+            };
             let page = match &doc.timeline_scroll {
                 Some((_, viewport)) => *viewport,
                 None => (doc.viewport_scroll().x, doc.viewport_scroll().y),
             };
             let offset = if vertical { page.1 } else { page.0 };
-            let size = if vertical { root.scroll_height() as f64 } else { root.scroll_width() as f64 };
+            // pyro: a root whose horizontal scroll origin is at its right edge (`vertical-rl`, or
+            // horizontal with `direction: rtl`) scrolls to negative offsets: progress counts from
+            // that origin (WPT scroll-animations `css/scroll-timeline-default-writing-mode-rl`).
+            // (By the principal writing mode, as the viewport scrolls: `viewport_scrolls_leftward`.)
+            let reversed = !vertical && doc.viewport_scrolls_leftward();
+            let offset = if reversed { -offset } else { offset };
+            // (The document's scroll size, leftward overflow counted where it scrolls from the
+            // right: as `scrollWidth`.)
+            let (dw, dh) = doc.document_scroll_size((w as f64 / scale, h as f64 / scale));
+            let size = if vertical { dh } else { dw }.max(if vertical { root.scroll_height() } else { root.scroll_width() } as f64);
             Some(Scroll { offset, max: (size - port).max(0.0), port })
         }
+    }
+}
+
+/// pyro: the scroll size along an axis from the box's resolved scrollable overflow (device px in
+/// its border box), from its padding box's start edge (as the layout queries' `scrollHeight`).
+fn resolved_scroll_size(doc: &BaseDocument, n: &Node, vertical: bool) -> f64 {
+    let scale = doc.viewport().scale_f64();
+    let o = n.scrollable_overflow().scale_from_origin(1.0 / scale);
+    let l = n.final_layout();
+    let reversed = l.scrollable_overflow_rect.is_reversed();
+    if vertical {
+        if reversed.y { (l.size.height - l.border.bottom) as f64 - o.y0 } else { o.y1 - l.border.top as f64 }
+    } else if reversed.x {
+        (l.size.width - l.border.right) as f64 - o.x0
+    } else {
+        o.x1 - l.border.left as f64
     }
 }

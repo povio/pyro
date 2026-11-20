@@ -158,6 +158,8 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) top_layer: Vec<NodeId>,
     /// The top-layer element being painted as such (not skipped).
     pub(crate) top_layer_root: std::cell::Cell<Option<NodeId>>,
+    pub(crate) transition_children: Option<&'a HashSet<NodeId>>,
+    pub(crate) capture_budget: Option<&'a crate::capture::Budget>,
     /// Scrollbar hover/drag state, resolved once per scene like the root element
     #[cfg(feature = "scrollbars")]
     pub(crate) hovered_scrollbar: Option<blitz_dom::node::ScrollbarRef>,
@@ -177,16 +179,53 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// start, end).
     pub(crate) highlight_layers: Vec<crate::highlight::Layer>,
     pub(crate) highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>>,
+    /// pyro: the caret of the focused editing host, when it is not painted as a highlight (a
+    /// block caret over the character after it is: `Layer::Caret`).
+    pub(crate) caret: Option<crate::caret::CaretPaint>,
+    /// pyro: what `paint_inline_box_fragment` paints of an inline box's outline: 0 all of the
+    /// fragment with its outline, 1 the fragment without it, 2 only the outline (an inline root
+    /// draws its boxes' outlines after its text, CSS 2.1 Appendix E step 10).
+    pub(crate) inline_outlines: std::cell::Cell<u8>,
     /// pyro: the content of positioned inline boxes listed in the paint tree
     /// (`NodeFlags::INLINE_PASS_ENTRY`), left by their inline root for their own entry: the span's id ->
     /// (its inline root, the root's transform, the root's content position), painted in the positioned
-    /// layer in tree order (CSS 2.1 Appendix E step 8; `draw_inline_pass_entry`).
-    pub(crate) inline_pass_entries: RefCell<HashMap<NodeId, (NodeId, Affine, Point)>>,
+    /// layer in tree order (CSS 2.1 Appendix E step 8; `draw_inline_pass_entry`). In a multi-column
+    /// inline root, one per column that shows a line of the box, with the column's strip range
+    /// (CSS px) it is clipped to (`PaintContext::inline_column_range`).
+    pub(crate) inline_pass_entries: RefCell<HashMap<NodeId, Vec<(NodeId, Affine, Point, Option<(f32, f32)>)>>>,
     /// pyro: while a multi-column container paints its children (`ElementCx::draw_columns`): the
     /// container, and whether only its unfragmented children are painted (`true`: the pass after
     /// the columns) or all but them (`false`: each column). Its unfragmented children are the
     /// out-of-flow boxes it is the containing block of, placed against it, not in a column.
     pub(crate) multicol_pass: std::cell::Cell<Option<(NodeId, bool)>>,
+    /// pyro: the clip (screen space) of the element being painted (`render_element`): dotted and
+    /// dashed borders make their marks in it only.
+    pub(crate) paint_clip: std::cell::Cell<Rect>,
+    /// pyro: while a multi-column container paints one of its columns (not a spanner's row): the
+    /// container, whose spanners that pass leaves out (they are painted in their own rows).
+    pub(crate) column_pass_container: std::cell::Cell<Option<NodeId>>,
+    column_inline_origin: std::cell::Cell<Option<(NodeId, f32)>>,
+    column_block_offset: std::cell::Cell<f64>,
+    column_block_rounding_error: std::cell::Cell<f64>,
+    /// pyro: while a multi-column container paints a column without a block-axis clip: the
+    /// container, the column's strip range (CSS px), its transform and its clip rectangle (the
+    /// container's space, device px) for the boxes a break goes through (`draw_paint_child`).
+    pub(crate) column_range: std::cell::Cell<Option<(NodeId, f32, f32, Affine, Rect)>>,
+    /// pyro: while a multi-column container paints a spanner's row: the container, whose boxes
+    /// that carry the spanner do not paint their own box there (the row is no part of them).
+    pub(crate) spanner_row_container: std::cell::Cell<Option<NodeId>>,
+    /// pyro: the spanner that row shows: the row paints it alone (and the boxes it is in, which
+    /// paint no box of their own there), what overflows it below too.
+    pub(crate) spanner_row_spanner: std::cell::Cell<Option<NodeId>>,
+    /// pyro: the spanner a last spanner row's second pass leaves out (that row shows what comes
+    /// after it too, clipped at its start).
+    pub(crate) spanner_row_except: std::cell::Cell<Option<NodeId>>,
+    /// pyro: a box hoisted out of a multi-column container (a stacking context painted by an
+    /// ancestor) is being painted in one of the container's columns (`draw_paint_child`).
+    pub(crate) hoisted_in_column: std::cell::Cell<bool>,
+    /// pyro: while a multi-column inline root paints its lines in a column: the column's strip
+    /// range (CSS px), for the positioned boxes left to their paint-tree entries.
+    pub(crate) inline_column_range: std::cell::Cell<Option<(NodeId, f32, f32)>>,
     /// Paint background colors and images (false: printing without them).
     pub backgrounds: bool,
     /// Print: text at its layout-unit x, not its box's whole-pixel x (Chromium keeps the fraction in the
@@ -200,8 +239,30 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) local_raster_depth: std::cell::Cell<u32>,
     /// pyro: the paint phase the element painted is painted in (`FlowPhase`).
     pub(crate) flow_phase: std::cell::Cell<FlowPhase>,
+    phased_corner: std::cell::Cell<Option<NodeId>>,
     /// pyro: a box painted in the foreground phase had an outline, left for the outline phase.
     pub(crate) deferred_outlines: std::cell::Cell<bool>,
+    /// pyro: the clipping stacking-context root whose content is being painted in its clip: the
+    /// out-of-flow boxes of its context whose containing block lies outside it are left for
+    /// after the clip (`ElementCx::escapes_own_clip`).
+    pub(crate) clip_escapes_of: std::cell::Cell<Option<NodeId>>,
+    /// pyro: a clipping box that is no stacking context painting its children each in its clip
+    /// (`ElementCx::clip_transfer_children`), and the children that take the clip over instead:
+    /// (the box, the children, the clip in device space). The clip is the box's; boxes it does not contain
+    /// escape it inside the child's effect group (Chromium clips by the containing-block chain).
+    /// (Also the box's own culling rect, uncut by its clip, which the child's effect group takes.)
+    pub(crate) handed_clips: RefCell<Option<(NodeId, std::rc::Rc<std::collections::HashSet<NodeId>>, kurbo::BezPath, Rect)>>,
+    /// pyro: the clip handed to the element about to paint: (its owner, the clip in device space).
+    pub(crate) handed_clip: RefCell<Option<(NodeId, kurbo::BezPath)>>,
+    /// pyro: the element painting under a handed clip and the clip's owner, against whose
+    /// containing-block chain its boxes escape (`ElementCx::escapes_own_clip`).
+    pub(crate) escape_owner: std::cell::Cell<Option<(NodeId, NodeId)>>,
+    /// pyro: the element whose negative `z-index` children are painted before its clip, each in
+    /// it unless it escapes it (`ElementCx::escapes_own_clip`).
+    pub(crate) neg_z_outside_clip_of: std::cell::Cell<Option<NodeId>>,
+    /// pyro: the element whose positioned-level children (and those with a positive `z-index`)
+    /// are being left for after its outline (`ElementCx::defers_positioned`).
+    pub(crate) positioned_after_outline_of: std::cell::Cell<Option<NodeId>>,
     /// pyro (lane H2): 3D rendering contexts being recorded (`render/three_d.rs`).
     pub(crate) three_d: three_d::State,
     /// pyro: where the scene's coordinates land in device pixels, when that is known (a
@@ -246,6 +307,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         for (&node_id, &(start, end)) in &selection_ranges {
             highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
         }
+        // pyro: the caret, a block one over the character after it as the top highlight.
+        let mut caret = crate::caret::caret_paint(dom);
+        if let Some(paint) = &caret
+            && let Some(end) = paint.covers
+        {
+            let layer = highlight_layers.len();
+            highlight_layers.push(crate::highlight::Layer::Caret(paint.color, paint.text_color));
+            highlight_ranges.entry(paint.node).or_default().push((layer, paint.byte, end));
+            caret = None;
+        }
 
         let layer_manager = LayerManager::default();
         let effects = crate::layers::document_effects(dom);
@@ -267,6 +338,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 Vec::new()
             },
             top_layer_root: std::cell::Cell::new(None),
+            transition_children: None,
+            capture_budget: None,
             #[cfg(feature = "scrollbars")]
             hovered_scrollbar: dom.hovered_scrollbar(),
             #[cfg(feature = "scrollbars")]
@@ -278,14 +351,34 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             selection_ranges,
             highlight_layers,
             highlight_ranges,
+            caret,
+            inline_outlines: std::cell::Cell::new(0),
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
+            column_pass_container: std::cell::Cell::new(None),
+            column_inline_origin: std::cell::Cell::new(None),
+            column_block_offset: std::cell::Cell::new(0.0),
+            column_block_rounding_error: std::cell::Cell::new(0.0),
+            column_range: std::cell::Cell::new(None),
+            spanner_row_container: std::cell::Cell::new(None),
+            spanner_row_spanner: std::cell::Cell::new(None),
+            spanner_row_except: std::cell::Cell::new(None),
+            hoisted_in_column: std::cell::Cell::new(false),
+            inline_column_range: std::cell::Cell::new(None),
+            paint_clip: std::cell::Cell::new(Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY)),
             backgrounds: true,
             fractional_text_x: false,
             composite_3d: false,
             local_raster_depth: std::cell::Cell::new(0),
             flow_phase: std::cell::Cell::new(FlowPhase::All),
+            phased_corner: std::cell::Cell::new(None),
             deferred_outlines: std::cell::Cell::new(false),
+            clip_escapes_of: std::cell::Cell::new(None),
+            handed_clips: RefCell::new(None),
+            handed_clip: RefCell::new(None),
+            escape_owner: std::cell::Cell::new(None),
+            neg_z_outside_clip_of: std::cell::Cell::new(None),
+            positioned_after_outline_of: std::cell::Cell::new(None),
             three_d: Default::default(),
             device_pixels: None,
             custom_widget_scenes,
@@ -298,6 +391,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     /// This assumes styles are resolved and layout is complete.
     /// Make sure you do those before trying to render
     pub fn paint_scene(&self, scene: &mut impl PaintScene) {
+        #[cfg(feature = "svg")]
+        let _raster_scope = anyrender_svg::PageRasterScope::enter(&self.dom.raster_budget);
         if self.dom.has_pending_critical_resources() {
             return;
         }
@@ -335,6 +430,35 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // scrollports narrow this rectangle further for their descendants.
         let viewport_clip_rect = Rect::new(0.0, 0.0, self.width as f64, self.height as f64);
 
+        // pyro: classic scrollbars: the document is cut to the viewport's scrollport, the
+        // viewport less its scrollbar gutters; the canvas background goes under the gutters.
+        let viewport_bars = self.dom.as_ref().viewport_scrollbars;
+        let scrollport = viewport_bars.any().then(|| {
+            let port = viewport_bars.scrollport(self.width as f32 / self.scale as f32, self.height as f32 / self.scale as f32);
+            port.scale_from_origin(self.scale) + Vec2::new(self.initial_x, self.initial_y)
+        });
+        if let Some(port) = scrollport {
+            if self.backgrounds
+                && let Some(source) = self.canvas_background
+                && let Some(style) = self.dom.get_node(source).and_then(|node| node.primary_styles())
+            {
+                let bg_color =
+                    style.get_background_color().resolve_to_absolute(&style.clone_color()).as_srgb_color();
+                let canvas = Rect::from_origin_size((self.initial_x, self.initial_y), (self.width as f64, self.height as f64));
+                for strip in [
+                    Rect::new(canvas.x0, canvas.y0, port.x0, canvas.y1),
+                    Rect::new(port.x1, canvas.y0, canvas.x1, canvas.y1),
+                    Rect::new(port.x0, canvas.y0, port.x1, port.y0),
+                    Rect::new(port.x0, port.y1, port.x1, canvas.y1),
+                ] {
+                    if strip.width() > 0.0 && strip.height() > 0.0 {
+                        scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &strip);
+                    }
+                }
+            }
+            scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &port);
+        }
+
         self.render_element(
             scene,
             root_id,
@@ -345,8 +469,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             viewport_clip_rect,
         );
 
+        if let Some(root) = self.dom.transition_paint.as_deref().and_then(|state| state.roots.get(&root_id)) {
+            self.render_element(scene, *root, Affine::translate((self.initial_x, self.initial_y)), viewport_clip_rect);
+        }
         if !self.top_layer.is_empty() {
             self.paint_top_layer(scene, root_id, viewport_scroll, viewport_clip_rect);
+        }
+
+        if let Some(port) = scrollport {
+            scene.pop_layer();
+            self.paint_viewport_scrollbars(scene, port, viewport_bars, viewport_scroll);
         }
 
         // Render debug overlay
@@ -379,6 +511,61 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     self.initial_y,
                 );
             }
+        }
+    }
+
+    /// pyro: classic scrollbars: the viewport's scrollbars that show, in its gutters around
+    /// `port` (the scrollport, scene px).
+    fn paint_viewport_scrollbars(
+        &self,
+        scene: &mut impl PaintScene,
+        port: Rect,
+        bars: blitz_dom::ViewportScrollbars,
+        scroll: blitz_dom::Point<f64>,
+    ) {
+        let s = self.scale;
+        let width = f64::from(bars.thickness.width) * s;
+        let height = f64::from(bars.thickness.height) * s;
+        let Some(root) = self.root_element_id.and_then(|id| self.dom.get_node(id)) else { return };
+        let colors = ClassicScrollbarColors::of(root);
+        // The document's extent (CSS px): the root's margin box and its scrollable overflow as
+        // resolved (with transforms: css-transforms transform-translate-001, a translated box
+        // overflowing the viewport), as the document's scrollWidth/scrollHeight.
+        let doc_scale = self.dom.as_ref().viewport().scale_f64();
+        // pyro: and where it starts: a document scrolled from the right
+        // (`viewport_scrolls_leftward`: a vertical-rl or rtl root's, scrolled from x = 0 to
+        // negative offsets) reaches what overflows the viewport's left edge, which is where the
+        // thumb's track starts (Chrome: WPT css-writing-modes `sizing-orthog-htb-in-vrl-001`, the
+        // thumb at the track's right end at first). Overflow above it or, in a document scrolled
+        // from the left, before its left edge is out of reach (WPT css-overflow
+        // `overflow-clip-margin-007`).
+        let leftward = self.dom.as_ref().viewport_scrolls_leftward();
+        let (doc_width, doc_height, doc_left) =
+            self.root_element_id.and_then(|id| self.dom.get_node(id)).map_or((0.0, 0.0, 0.0), |root| {
+                let l = root.final_layout();
+                let overflow = root.scrollable_overflow().scale_from_origin(1.0 / doc_scale);
+                (
+                    ((l.location.x + l.size.width + l.margin.right) as f64).max(l.location.x as f64 + overflow.x1),
+                    ((l.location.y + l.size.height + l.margin.bottom) as f64).max(l.location.y as f64 + overflow.y1),
+                    if leftward { (l.location.x as f64 + overflow.x0).min(0.0) } else { 0.0 },
+                )
+            });
+        let origin = Vec2::new(self.initial_x, self.initial_y);
+        let (port_w, port_h) = (port.width() / s, port.height() / s);
+        let port_origin = ((port.x0 - origin.x) / s, (port.y0 - origin.y) / s);
+        if bars.shown.y {
+            let track = Rect::new(port.x1, port.y0, port.x1 + width, port.y1);
+            let content = (doc_height - port_origin.1).max(port_h);
+            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, true, port_h, content, scroll.y, s);
+        }
+        if bars.shown.x {
+            let track = Rect::new(port.x0, port.y1, port.x1, port.y1 + height);
+            let content = (doc_width - doc_left - port_origin.0).max(port_w);
+            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, false, port_w, content, scroll.x - doc_left, s);
+        }
+        if bars.shown.x && bars.shown.y {
+            let corner = Rect::new(port.x1, port.y1, port.x1 + width, port.y1 + height);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, colors.corner, None, &corner);
         }
     }
 
@@ -415,14 +602,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             y: self.initial_y - (viewport_scroll.y * self.scale),
         });
         // The transform `draw_children` gives the root element's children.
-        let root_children = (root_transform * Affine::translate(Vec2::new(
+        let root_children = self.scrolled_transform(root, root_transform * Affine::translate(Vec2::new(
             root_location.x as f64 * self.scale,
             root_location.y as f64 * self.scale,
-        )) * root.transform().as_deref().copied().unwrap_or_default())
-        .then_translate(Vec2 {
-            x: -root.scroll_offset().x * self.scale,
-            y: -root.scroll_offset().y * self.scale,
-        });
+        )) * root.transform().as_deref().copied().unwrap_or_default());
         for &id in &self.top_layer {
             let node = &tree[id];
             // An element not rendered (its own or an ancestor's `display:
@@ -473,11 +656,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     /// The `::backdrop` of top-layer element `id`: a box filling the painted
     /// area below the element (UA style: `position: fixed; inset: 0`).
     fn paint_backdrop(&self, scene: &mut impl PaintScene, id: NodeId) {
-        use style::selector_parser::PseudoElement;
-        let Some(style) = self
-            .dom
-            .pseudo_element_style(id, &PseudoElement::Backdrop, false)
-        else {
+        let Some(style) = self.dom.backdrop_style(id) else {
             return;
         };
         if style.get_box().display.is_none()
@@ -563,7 +742,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         (opacity, filtered)
     }
 
-    fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
+    pub(crate) fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
         let location = node.final_layout().location;
         // pyro: a `position: sticky` box is painted where its scroll container holds it
         // (`Node::sticky_offset`), with its descendants.
@@ -596,7 +775,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let Some(style) = node.primary_styles() else {
             return Affine::IDENTITY;
         };
-        if style.get_inherited_text().text_combine_upright != style::values::computed::TextCombineUpright::All
+        // (Stylo's box of combined text, or `layout::combined_text`'s, `all` or `digits N`.)
+        if !style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED)
             || style.writing_mode.is_vertical()
         {
             return Affine::IDENTITY;
@@ -723,7 +903,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     }
 
     fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
-        transform.then_translate(Vec2 {
+        transform * Affine::translate(Vec2 {
             x: -node.scroll_offset().x * self.scale,
             y: -node.scroll_offset().y * self.scale,
         })
@@ -736,7 +916,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let is_internal_table_box_other_than_cell = display.outside()
                 == DisplayOutside::InternalTable
                 && display.inside() != DisplayInside::TableCell;
-            !display.is_inline_flow() && !is_internal_table_box_other_than_cell
+            // (A replaced element is an atomic inline: paint containment applies to it. WPT
+            // css-overflow `paint-containment-svg`.)
+            (!display.is_inline_flow() || node.element_data().is_some_and(|e| e.image_data().is_some()))
+                && !is_internal_table_box_other_than_cell
         };
         let element = node.element_data();
         // pyro: an SVG clips its content at its viewport itself, at its content box and only
@@ -804,11 +987,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let transform = self.scrolled_transform(node, transform);
         if node.flags.is_inline_root() {
             if let Some(layout) = &cx.element.inline_layout_data {
-                let layout_box = node.final_layout();
-                let x = (layout_box.padding.left + layout_box.border.left) as f64
-                    - node.scroll_offset().x;
-                let y = (layout_box.padding.top + layout_box.border.top) as f64
-                    - node.scroll_offset().y
+                let origin = node.content_box_origin();
+                let x = origin.x as f64 - node.scroll_offset().x;
+                let y = origin.y as f64 - node.scroll_offset().y
                     + layout.block_offset as f64;
                 let text_transform =
                     transform * Affine::translate((x * self.scale, y * self.scale));
@@ -877,7 +1058,29 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     ///
     /// Approaching rendering this way guarantees we have all the styles we need when rendering text with not having
     /// to traverse back to the parent for its styles, or needing to pass down styles
-    fn render_element(
+    pub(crate) fn render_element(
+        &self,
+        scene: &mut impl PaintScene,
+        node_id: NodeId,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        if self.transition_children.is_some_and(|children| children.contains(&node_id)) && self.top_layer_root.get() != Some(node_id) { return; }
+        if let Some(state) = self.dom.transition_paint.as_deref() && state.suppressed.contains(&node_id) {
+            let node = &self.dom.tree()[node_id];
+            if !node.is_root_element() && let Some(root) = state.roots.get(&node_id) {
+                self.render_element(scene, *root, self.node_transform(node,parent_style_transform), clip_rect);
+            }
+            return;
+        }
+        if self.capture_budget.is_some_and(|budget| !budget.take(1)) { return; }
+        // pyro: the element's clip while it paints (`PaintContext::paint_clip`).
+        let outer_clip = self.paint_clip.replace(clip_rect);
+        self.render_element_clipped(scene, node_id, parent_style_transform, clip_rect);
+        self.paint_clip.set(outer_clip);
+    }
+
+    fn render_element_clipped(
         &self,
         scene: &mut impl PaintScene,
         node_id: NodeId,
@@ -896,6 +1099,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: an atomic inline that does not fit before a line's ellipsis is hidden whole
         // (Blink's `LineTruncator::HideChild`).
         if hidden_by_ellipsis(self.dom.as_ref(), node) {
+            return;
+        }
+        // pyro: nor is a box after a line clamp's clamp point (blitz-dom `layout::line_clamp`).
+        if node.flags.contains(blitz_dom::node::NodeFlags::HIDDEN_BY_CLAMP) {
             return;
         }
 
@@ -971,7 +1178,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             size.height as f64 * self.scale,
         );
         let border_box = Rect::from_origin_size(Point::ORIGIN, box_size);
-        let scaled_pb = (padding + border).map(f64::from);
+        // pyro: and the classic scrollbar gutters (`Node::gutter_insets`): the content box.
+        let scaled_pb = (padding + border + node.gutter_insets()).map(f64::from);
         let content_position = kurbo::Point {
             x: scaled_pb.left,
             y: scaled_pb.top,
@@ -1008,6 +1216,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             self.dom,
             (size.width, size.height),
             node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
+            false,
         );
         #[cfg(not(feature = "svg"))]
         let filter_steps: Option<Vec<()>> = None;
@@ -1053,6 +1262,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 reach > 0.0 && !outside(screen_bbox.inflate(reach, reach))
             })
             && !(node.flags.is_inline_root() && self.dom.inline_root_has_relative_spans(node_id))
+            // pyro: nor one painting boxes that escape its clip (`has_clip_escapes`): they lie
+            // wherever their containing block puts them (a fixed box under a scroller scrolled out
+            // of view; WPT css-position `position-sticky-escape-scroller-002`).
+            && !has_clip_escapes(self.dom.as_ref().tree(), node)
         {
             return;
         }
@@ -1086,6 +1299,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             && overflow_area < 0.01
             && border_box.area() < 0.01
             && filter_steps.is_none()
+            // pyro: what it paints outside its clip still shows (`has_clip_escapes`).
+            && !has_clip_escapes(self.dom.as_ref().tree(), node)
+            // pyro: and so does its outline, around its zero-width box (an empty button's;
+            // WPT css-inline `empty-span-size-001`).
+            && !has_visible_outline(&styles)
         {
             return;
         }
@@ -1126,6 +1344,79 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             source_rect
         };
 
+        // pyro: a flex or grid container painted in its painter's phases (`items_in_phases`): its box
+        // with the block backgrounds, its items whole with the inline content, as inline blocks.
+        if phase != FlowPhase::All && node.items_paint_in_ancestor_phases() {
+            match phase {
+                FlowPhase::Background if !hidden => {
+                    cx.draw_outset_box_shadow(scene);
+                    if cx.context.backgrounds && self.canvas_background != Some(node_id) {
+                        cx.draw_background(scene);
+                    }
+                    cx.draw_inset_box_shadow(scene);
+                    cx.draw_border(scene);
+                }
+                FlowPhase::Foreground => {
+                    let children = node.paint_children.borrow().clone().unwrap_or_default();
+                    for child_id in children {
+                        self.flow_phase.set(FlowPhase::All);
+                        cx.draw_paint_child(scene, child_id, cx.transform, child_clip_rect);
+                    }
+                }
+                FlowPhase::Outline if !hidden => cx.draw_outline(scene),
+                _ => {}
+            }
+            return;
+        }
+
+        // pyro: a scroll container painted in its painter's phases (`scroller_in_phases`): its own
+        // box unclipped, its content clipped by its overflow clip and scrolled, its overlay
+        // scrollbars over its inline content, its classic ones with its box.
+        if phase != FlowPhase::All && should_clip && node.scroller_paints_in_ancestor_phases() {
+            let clip = cx.overflow_clip_path(&styles);
+            let mut shared_background = false;
+            match phase {
+                FlowPhase::Background if !hidden => {
+                    cx.draw_outset_box_shadow(scene);
+                    if cx.context.backgrounds && self.canvas_background != Some(node_id) {
+                        shared_background = cx.background_inside_overflow(&clip);
+                        if !shared_background { cx.draw_background(scene); }
+                    }
+                    cx.draw_inset_box_shadow(scene);
+                    cx.draw_border(scene);
+                    // pyro: and its classic scrollbars, with its box: its content is clipped to
+                    // its scrollport, off them; the boxes painted after its box's phase go over
+                    // them (Chrome: WPT CSS2 normal-flow `overflow-scroll-paint-order`, a later
+                    // sibling's background pulled over the scroller hides its scrollbars).
+                    cx.draw_classic_scrollbars(scene);
+                }
+                FlowPhase::Outline => cx.draw_outline(scene),
+                _ => {}
+            }
+            let unscrolled = cx.transform;
+            scene.push_clip_layer(Fill::NonZero, unscrolled, &clip);
+            if shared_background {
+                self.phased_corner.set(Some(node.id));
+                cx.draw_background_inside_overflow(scene, &clip);
+            }
+            if phase == FlowPhase::Foreground && cx.background_inside_overflow(&clip) {
+                self.phased_corner.set(Some(node.id));
+            }
+            cx.transform = self.scrolled_transform(node, unscrolled);
+            if phase == FlowPhase::Foreground {
+                cx.draw_marker(scene, content_position);
+                cx.draw_inline_layout(scene, content_position);
+            }
+            cx.draw_flow_children(scene, cx.transform, child_clip_rect, phase);
+            cx.transform = unscrolled;
+            scene.pop_layer();
+            #[cfg(feature = "scrollbars")]
+            if phase == FlowPhase::Foreground && !hidden {
+                cx.draw_scrollbars(scene);
+            }
+            return;
+        }
+
         // pyro: a box of the normal flow painted in one of its painter's phases (`FlowPhase`). It
         // makes no layer of its own: no effect, no clip (`Node::paints_in_ancestor_phases`).
         if phase != FlowPhase::All {
@@ -1146,6 +1437,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     // overlaps it (WPT css-pseudo `outside-marker-paint-order`).
                     cx.draw_marker(scene, content_position);
                     cx.draw_inline_layout(scene, content_position);
+                    // pyro: a block-level frame's document, its replaced content
+                    // (`block_level_frame_in_phases`).
+                    let skipped = cx.style.get_box().slow_clone_content_visibility()
+                        == style::values::specified::box_::ContentVisibility::Hidden
+                        || node.flags.contains(blitz_dom::node::NodeFlags::CV_SKIPPED);
+                    if !hidden && !skipped {
+                        cx.draw_sub_document(scene);
+                    }
                     if cx.outline_line().is_some() {
                         self.deferred_outlines.set(true);
                     }
@@ -1181,6 +1480,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             self.dom,
             ((cx.frame.border_box.width() / self.scale) as f32, (cx.frame.border_box.height() / self.scale) as f32),
             node.element_data().map_or(&[][..], |element| &element.reference_images[..]),
+            true,
         )
         .as_deref()
         {
@@ -1268,8 +1568,19 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // `mix-blend-mode-parent-with-3D-transform`). A box with no element in it shares no edge
         // with another: it keeps its own edges, with none of a resampled image's rounding.
         // Its own blend mode applies to that image; its effects, inside, in its plane.
+        // pyro: so is a box turned by a 2D transform (a rotation, a skew) holding a box that blends
+        // (`mix-blend-mode`): Chromium draws it as a surface in its own unturned space, where its
+        // background and its overflow clip are whole pixels, and turns the surface: the blend sees
+        // an opaque backdrop up to the clip's edge, which is anti-aliased once, when the surface is
+        // drawn (WPT compositing `mix-blend-mode-rotated-clip`).
+        let turned_blending = || {
+            node.transform().as_deref().is_some_and(|t| {
+                let [_, b, c, _, _, _] = t.as_coeffs();
+                b.abs() > 1e-9 || c.abs() > 1e-9
+            }) && self.has_blending_descendant(node)
+        };
         let local_raster_pushed = self.composite_3d
-            && node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D)
+            && (node.flags.contains(blitz_dom::node::NodeFlags::FLATTENS_3D) || turned_blending())
             && node.children.iter().any(|&child| self.dom.get_node(child).is_some_and(|child| child.is_element()))
             // pyro (lane H2): a plane drawn through a perspective is rasterized in its plane already.
             && !(self.three_d.depth.get() > 0 && node.plane_3d().is_some_and(|plane| plane.is_projective()));
@@ -1289,7 +1600,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: a split inline's fragments are painted by its pieces' lines (`inline_box_fragments`).
         let paints_own_box = !node.is_inline_with_only_block_children()
             && !node.is_split_inline()
-            && !hides_empty_cell(self.dom.as_ref(), node);
+            && !hides_empty_cell(self.dom.as_ref(), node)
+            && !self
+                .spanner_row_container
+                .get()
+                .is_some_and(|container| self.dom.as_ref().carries_spanners_of(container, node_id));
 
         // pyro: `opacity` and `filter` apply to everything the element paints, as one group
         // (Chromium's effect node): its outset box-shadow, its box, its content and descendants
@@ -1306,6 +1621,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             is_text_input,
             content_position,
             child_clip_rect,
+            clip_rect: source_rect,
         };
 
         // clip-path clip layer (it clips the shadow and the outline too, as in Chromium)
@@ -1325,7 +1641,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
                 if has_effect_layer {
                     let mut group = Scene::new();
-                    self.paint_element(&mut cx, &mut group, &element);
+                    if let Some(budget) = self.capture_budget {
+                        if !budget.take(1) { return; }
+                        self.paint_element(&mut cx, &mut crate::capture::Recording(&mut group, budget), &element);
+                        if budget.exhausted.get() { return; }
+                    } else { self.paint_element(&mut cx, &mut group, &element); }
                     self.paint_effect_group(
                         scene,
                         group,
@@ -1380,9 +1700,27 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             is_text_input,
             content_position,
             child_clip_rect,
+            clip_rect,
         } = *element;
         let unscrolled_transform = cx.transform;
+        // pyro: a clip handed over by an ancestor that clips (`BlitzDomPainter::handed_clips`): it
+        // cuts this element's own box and its content, inside its effect group, except the boxes
+        // its owner does not contain.
+        let handed = self.handed_clip.borrow_mut().take();
+        let own_clip = if is_text_input { cx.frame.text_input_clip_path() } else { cx.overflow_clip_path(&cx.style) };
+        let mut shared_background = false;
+        let outer_escape_owner = self.escape_owner.get();
+        if let Some((owner, device_clip)) = &handed {
+            self.escape_owner.set(Some((node.id, *owner)));
+            scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, device_clip);
+        }
 
+        let wrapper_clip = self.column_range.get().filter(|(container, _, _, _, _)| {
+            self.dom.get_node(*container).and_then(|node| node.columns_with_axes()).is_some_and(|(columns, _)| columns.run_wrappers.contains(&node.id))
+        });
+        if let Some((_, _, _, transform, rect)) = wrapper_clip {
+            scene.push_clip_layer(Fill::NonZero, transform, &rect);
+        }
         if paints_own_box {
             // pyro: the root element paints the canvas background, under its own shadow, in
             // place of its background; the body whose background that is paints none.
@@ -1410,7 +1748,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 cx.draw_positioned_table_part_backgrounds(scene);
             }
             if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
-                cx.draw_background(scene);
+                if should_clip && handed.is_none() && wrapper_clip.is_none() && !is_text_input {
+                    shared_background = cx.background_inside_overflow(&own_clip);
+                }
+                if !shared_background { cx.draw_background(scene); }
             }
             cx.draw_inset_box_shadow(scene);
         }
@@ -1434,15 +1775,77 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if !hidden {
             cx.stroke_devtools(scene);
         }
+        if wrapper_clip.is_some() { scene.pop_layer(); }
+        if handed.is_some() {
+            scene.pop_layer();
+        }
 
-        let clip = if is_text_input {
-            &cx.frame.text_input_clip_path()
-        } else {
-            &cx.overflow_clip_path(&cx.style)
+        // (A handed clip, in this element's space; the element clips nothing itself then.)
+        let handed_local = handed.as_ref().map(|(_, device_clip)| cx.transform.inverse() * device_clip.clone());
+        let should_clip = should_clip || handed.is_some();
+        let clip = handed_local.as_ref().unwrap_or(&own_clip);
+        // pyro: a clipping box that is no stacking context whose child holds boxes it does not
+        // contain clips its children each (a clip layer split is the same clip) and hands the
+        // children its clip (`ElementCx::clip_transfer_children`): each one that holds such boxes.
+        // pyro: and a stacking context handed a clip hands it on to its own such children (nested
+        // effect groups), when every z-ordered box it lifts escapes the clip (those are painted
+        // outside the per-child clips).
+        let hoisted_escape = || {
+            let tree = self.dom.as_ref().tree();
+            let owner = cx.clip_owner();
+            node.stacking_context.as_ref().is_none_or(|sc| {
+                sc.pos_z_hoisted_children().chain(sc.neg_z_hoisted_children()).all(|c| escapes_clip_of(tree, owner, c.node_id))
+            })
         };
+        let transfer = (should_clip && (handed.is_none() || hoisted_escape()) && !is_text_input && !node.flags.is_inline_root())
+            .then(|| cx.clip_transfer_children())
+            .filter(|children| !children.is_empty());
+        let outer_handed_clips = transfer.clone().map(|children| {
+            self.handed_clips.replace(Some((node.id, children, cx.transform * clip.clone(), clip_rect)))
+        });
+        let should_clip = should_clip && transfer.is_none();
 
+        // pyro: the out-of-flow boxes of this clipping stacking context whose containing block
+        // lies outside it are not clipped by it: they are painted after its clip, in its
+        // scrolled space (Chromium clips a box by its containing-block chain; WPT css-position
+        // `position-fixed-scroll-nested-fixed`, `position-absolute-under-non-containing-stacking-context`).
+        // The z-ordered children keep their places in the stacking context's paint order (as hit
+        // testing visits them); only the clip differs: those with a negative `z-index` are
+        // painted before the clip layer, the positioned level and positive `z-index` after it,
+        // each in the clip unless it escapes it.
+        let escapes = should_clip && cx.has_clip_escapes();
+        if (!should_clip || escapes) && shared_background {
+            cx.draw_background(scene);
+            shared_background = false;
+        }
+        let outer_escapes = self.clip_escapes_of.replace(None);
+        // pyro: a box with an outline paints it before its positioned descendants (z-index auto
+        // or 0, and positive), as Chromium paints a layer's outline before its z-order lists
+        // (`PaintLayerPainter`): they go after it, in its clip (WPT css-overflow `clip-005`).
+        let defers = !hidden && (escapes || cx.defers_positioned());
+        let outer_defers = self.positioned_after_outline_of.replace(if defers { Some(node.id) } else { None });
+        let outer_neg = self.neg_z_outside_clip_of.replace(if escapes { Some(node.id) } else { None });
+        if escapes {
+            let content_position = Point {
+                x: content_position.x - node.scroll_offset().x,
+                y: content_position.y - node.scroll_offset().y,
+            };
+            let transform = self.scrolled_transform(node, cx.transform);
+            let saved = cx.transform;
+            cx.transform = transform;
+            cx.register_negative_inline_spans(content_position);
+            cx.transform = saved;
+            if let Some(sc) = &node.stacking_context {
+                for child in sc.neg_z_hoisted_children() {
+                    let clipped = should_clip && !cx.escapes_own_clip(child.node_id);
+                    self.layer_manager.maybe_with_layer(scene, clipped, BlendMode::default(), 1.0, cx.transform, clip, None, None, |scene| {
+                        cx.draw_hoisted_children(scene, std::iter::once(child), transform, child_clip_rect_for(clipped, clip_rect, child_clip_rect));
+                    });
+                }
+            }
+        }
         // Clip layer if box requires clipping. Opacity set to 1.0
-        self.layer_manager.maybe_with_layer(
+        let content_layer = self.layer_manager.maybe_push_layer(
             scene,
             should_clip,
             BlendMode::default(),
@@ -1451,7 +1854,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             clip,
             None,
             None,
-            |scene| {
+        );
+        if shared_background {
+            if content_layer {
+                cx.draw_background_inside_overflow(scene, &own_clip);
+            } else {
+                cx.draw_background(scene);
+            }
+        }
+        'content: {
                 // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
                 let content_position = Point {
                     x: content_position.x - node.scroll_offset().x,
@@ -1462,15 +1873,56 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // pyro: an `<svg>` paints whatever its own visibility: what in it is visible
                 // (`visibility: visible` on a child, a filter's region) is (usvg drops the hidden
                 // shapes; WPT filter-effects `svg-visibility-hidden-element-with-filter-002`).
+                // pyro: `content-visibility: hidden` skips a replaced element's content (its image,
+                // canvas, video frame, inline SVG or document; CSS Contain 2 § 4.1).
+                let skipped = cx.style.get_box().slow_clone_content_visibility()
+                    == style::values::specified::box_::ContentVisibility::Hidden
+                    || node.flags.contains(blitz_dom::node::NodeFlags::CV_SKIPPED);
+                // pyro: a `content: filter(<image>, ...)` image is drawn through its filters, in a
+                // layer over the content box (WPT filter-effects `filter-function-001`).
+                let content_filter = cx.content_image_filter();
+                if let Some(filter) = &content_filter {
+                    scene.push_layer(
+                        Fill::NonZero,
+                        BlendMode::default(),
+                        1.0,
+                        cx.transform,
+                        &cx.frame.content_box,
+                        Some(filter.clone()),
+                        None,
+                    );
+                }
                 #[cfg(feature = "svg")]
-                cx.draw_svg(scene);
-                if !hidden {
+                if !skipped {
+                    cx.draw_svg(scene);
+                }
+                if !hidden && !skipped && content_filter.is_some() {
                     cx.draw_image(scene);
-                    cx.draw_selection_tint(scene);
-                    cx.draw_content_gradient(scene);
+                }
+                if content_filter.is_some() {
+                    scene.pop_layer();
+                }
+                if !hidden {
+                    if !skipped && content_filter.is_none() {
+                        cx.draw_image(scene);
+                        if let Some(image) = self.dom.transition_paint.as_deref().and_then(|state| state.images.get(&node.id)) {
+                            let size = node.final_layout().size;
+                            let [left, top, right, bottom] = image.ink;
+                            let (width, height) = ((right-left) as u32, (bottom-top) as u32);
+                            if width != 0 && height != 0 && image.size.0 > 0. && image.size.1 > 0. {
+                                let brush = peniko::ImageBrush::new(ImageData { data: peniko::Blob::new(image.pixels.clone()), format: peniko::ImageFormat::Rgba8, width, height, alpha_type: peniko::ImageAlphaType::AlphaPremultiplied });
+                                let factor = Affine::scale_non_uniform(size.width as f64 * self.scale / image.size.0, size.height as f64 * self.scale / image.size.1);
+                                scene.draw_image(brush.as_ref(), cx.transform * factor * Affine::translate((left,top)));
+                            }
+                        }
+                        cx.draw_selection_tint(scene);
+                        cx.draw_content_gradient(scene);
+                    }
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
-                    cx.draw_sub_document(scene);
+                    if !skipped {
+                        cx.draw_sub_document(scene);
+                    }
                     cx.draw_input(scene);
                     cx.draw_text_input_text(scene, content_position);
                 }
@@ -1478,7 +1930,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // the content, clipped and scrolled with it, and its content once per column
                 // (`render/multicol.rs`).
                 if paints_own_box {
-                    cx.draw_column_rules(scene);
+                    cx.draw_column_rules(scene, child_clip_rect);
                 }
                 if !cx.draw_columns(scene, content_position, child_clip_rect) {
                     // pyro: floats among the paint children: in the phases of CSS 2.1 Appendix E.
@@ -1495,7 +1947,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                             child_clip_rect,
                             content_position,
                         );
-                        return;
+                        break 'content;
                     }
                     // pyro: the stacking contexts with a negative z-index go under the box's own
                     // inline content (CSS 2.1 Appendix E, step 3 before step 7).
@@ -1506,14 +1958,28 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     }
                     cx.draw_inline_layout(scene, content_position);
                     cx.draw_children_above(scene, cx.transform, child_clip_rect);
+                    if !cx.has_positioned_level_children() {
+                        cx.draw_inline_boxes_over_atomics(scene, content_position);
+                    }
                 }
-            },
-        );
+        }
+        if !node.is_root_element() && let Some(root) = self.dom.transition_paint.as_deref().and_then(|state| state.roots.get(&node.id)) {
+            self.render_element(scene, *root, cx.transform, child_clip_rect);
+        }
+        self.layer_manager.maybe_pop_layer(scene, content_layer);
+        self.clip_escapes_of.set(outer_escapes);
+        self.positioned_after_outline_of.set(outer_defers);
+        self.neg_z_outside_clip_of.set(outer_neg);
         cx.transform = unscrolled_transform;
+        // pyro: the deferred positioned children (below) are drawn each in the clip already.
+        if let Some(outer) = outer_handed_clips {
+            *self.handed_clips.borrow_mut() = outer;
+        }
         // pyro: the borders of a collapsed table with positioned parts, after its last positioned
         // cell (`table_borders_deferred`).
         cx.draw_deferred_table_borders(scene);
         if hidden {
+            self.escape_owner.set(outer_escape_owner);
             return;
         }
         if borders_after_cells {
@@ -1524,6 +1990,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // clipped content.
         #[cfg(feature = "scrollbars")]
         cx.draw_scrollbars(scene);
+        // pyro: classic scrollbars (`blitz_dom::ScrollbarMode::Classic`) in their gutters.
+        cx.draw_classic_scrollbars(scene);
 
         // pyro: and those of a table's rows and row groups, which paint no box.
         cx.draw_table_part_outlines(scene);
@@ -1531,6 +1999,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // in a phase of its own after the foreground): one with a negative
         // `outline-offset` lies inside the box, over its background.
         cx.draw_outline(scene);
+        if defers {
+            let transform = self.scrolled_transform(node, cx.transform);
+            cx.draw_positioned_after_outline(scene, transform, should_clip, clip, clip_rect, child_clip_rect);
+        }
+        self.escape_owner.set(outer_escape_owner);
     }
 
     /// pyro: the layer of an element's opacity and filters around the `group` it painted. The
@@ -1699,6 +2172,22 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         self.layer_manager.maybe_pop_layer(scene, pushed);
     }
 
+    /// pyro: whether a box in `node`'s subtree (`node` left out) has a `mix-blend-mode` other than
+    /// `normal`.
+    fn has_blending_descendant(&self, node: &Node) -> bool {
+        let mut stack: Vec<NodeId> = node.children.to_vec();
+        while let Some(id) = stack.pop() {
+            let Some(child) = self.dom.get_node(id) else { continue };
+            if child.primary_styles().is_some_and(|style| {
+                style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal
+            }) {
+                return true;
+            }
+            stack.extend(child.children.iter().copied());
+        }
+        false
+    }
+
     fn render_node(
         &self,
         scene: &mut impl PaintScene,
@@ -1707,6 +2196,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         clip_rect: Rect,
     ) {
         let node = &self.dom.as_ref().tree()[node_id];
+        // pyro: a table cell in collapsed columns only is not rendered (CSS 2.1 § 17.5.5).
+        if node.hidden_by_anchor() { return; }
+        if let Some(table) = node.layout_parent.get().and_then(|parent| self.dom.as_ref().get_node(parent))
+            && let Some(element) = table.element_data()
+            && let blitz_dom::node::SpecialElementData::TableRoot(context) = &element.special_data
+            && context.cell_in_collapsed_columns(node_id)
+        {
+            return;
+        }
         // pyro: a positioned inline box's entry in the paint tree (`NodeFlags::INLINE_PASS_ENTRY`):
         // its inline root paints its content, after its own in-flow content.
         if node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY) {
@@ -1735,10 +2233,76 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     /// its entry in the paint tree (`inline_pass_entries`): its fragments and text, as the root paints
     /// them. Nothing when the root painted it itself (or was not painted).
     fn draw_inline_pass_entry(&self, scene: &mut impl PaintScene, span_id: NodeId) {
-        let Some((root_id, transform, pos)) = self.inline_pass_entries.borrow_mut().remove(&span_id) else { return };
+        let Some(entries) = self.inline_pass_entries.borrow_mut().remove(&span_id) else { return };
+        for (root_id, transform, pos, column) in entries {
+            // (Each column's lines in its column only.)
+            let range = column.map(|(start, end)| {
+                const UNBOUNDED: f64 = 1e9;
+                Rect::new(-UNBOUNDED, (start as f64 * self.scale).max(-UNBOUNDED), UNBOUNDED, (end as f64 * self.scale).min(UNBOUNDED))
+            });
+            self.draw_inline_pass_entry_in(scene, span_id, root_id, transform, pos, range);
+        }
+    }
+
+
+
+    /// pyro: one entry of `draw_inline_pass_entry`: `span_id`'s content laid out by the inline root
+    /// `root_id` at `transform` and content position `pos`; its lines and atomic inlines clipped to
+    /// `column` (a column's range of a multi-column container, in `transform`'s space), the
+    /// out-of-flow boxes it keeps not (they are placed in the columns themselves: WPT css-break
+    /// `out-of-flow-in-multicolumn-089`).
+    fn draw_inline_pass_entry_in(&self, scene: &mut impl PaintScene, span_id: NodeId, root_id: NodeId, transform: Affine, pos: Point, column: Option<Rect>) {
+        let push_column = |scene: &mut _| {
+            column.map(|range| self.layer_manager.maybe_push_layer(scene, true, peniko::BlendMode::default(), 1.0, transform, &range, None, None))
+        };
+        let pop_column = |scene: &mut _, pushed: Option<_>| {
+            if let Some(pushed) = pushed {
+                self.layer_manager.maybe_pop_layer(scene, pushed);
+            }
+        };
         let Some(root) = self.dom.get_node(root_id) else { return };
         let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
+        // pyro: a faded or filtered inline box (blitz-dom `effect_entry`) paints all it holds in its
+        // effect's group.
+        let effect = self.dom.get_node(span_id).and_then(|span| span.primary_styles()).and_then(|style| {
+            if !blitz_dom::inline_effect_entry(&style) {
+                return None;
+            }
+            let opacity = style.get_effects().opacity;
+            let filter = convert_filters(&style.get_effects().filter.0, self.scale, &style.clone_color(), self.dom).map(Arc::new);
+            Some((opacity, filter))
+        });
+        if let Some((opacity, filter)) = effect.clone() {
+            let viewport = Rect::new(0.0, 0.0, self.width as f64, self.height as f64);
+            scene.push_layer(Fill::NonZero, BlendMode::default(), opacity, Affine::IDENTITY, &viewport, filter, None);
+        }
+        // pyro: an inline stacking context keeping out-of-flow boxes (blitz-dom
+        // `restore_out_of_flow_stacking_owners`) paints them after its fragments, in a group that is
+        // their backdrop root (WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
+        let owned = clip_path::owned_hoisted(self.dom.as_ref(), span_id);
+        if !owned.is_empty() {
+            let viewport = Rect::new(0.0, 0.0, self.width as f64, self.height as f64);
+            scene.push_layer(
+                Fill::NonZero,
+                BlendMode::default(),
+                1.0,
+                Affine::IDENTITY,
+                &viewport,
+                Some(crate::layers::backdrop_root_marker()),
+                None,
+            );
+        }
+        let pushed = push_column(scene);
         cx.draw_inline_pass(scene, pos, span_id);
+        pop_column(scene, pushed);
+        if !owned.is_empty() {
+            let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
+            // pyro: under its clip path (WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
+            cx.with_inline_clip_path(scene, span_id, |scene| {
+                cx.draw_hoisted_children(scene, owned.iter(), transform, everything);
+            });
+            scene.pop_layer();
+        }
         // Then the atomic inline boxes in it (badges), which its root skipped (`draw_paint_child`), moved
         // by the sticky offsets of the inline boxes around them (layout placed them with the relative ones).
         let children: Vec<NodeId> = root.paint_children.borrow().iter().flatten().copied().collect();
@@ -1763,7 +2327,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
             let child_transform = transform.pre_translate(Vec2::new(sticky.0 * self.scale, sticky.1 * self.scale));
             let everything = Rect::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::INFINITY);
+            let pushed = push_column(scene);
             self.render_node(scene, child_id, child_transform, everything);
+            pop_column(scene, pushed);
+        }
+        if effect.is_some() {
+            scene.pop_layer();
         }
     }
 
@@ -1785,6 +2354,36 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             .get_node(span)
             .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
             .then_some(span)
+    }
+
+    /// pyro: how far below a fieldset's border box top its block-start border is drawn: centred on
+    /// its rendered legend's margin box when that is taller than the border.
+    fn fieldset_border_shift(&self, fieldset: NodeId, layout: &Layout) -> Option<f32> {
+        let legend = self.dom.as_ref().fieldset_rendered_legend(fieldset)?;
+        let legend = self.dom.as_ref().get_node(legend)?.final_layout();
+        let outer = legend.size.height + legend.margin.top + legend.margin.bottom;
+        Some(((outer - layout.border.top) / 2.0).max(0.0))
+    }
+
+    /// pyro: a fieldset's rendered legend's border box (in the fieldset's border-box space, CSS px),
+    /// which the fieldset's overflow clip does not cut.
+    pub(crate) fn fieldset_legend_rect(&self, fieldset: NodeId) -> Option<kurbo::Rect> {
+        let legend = self.dom.as_ref().fieldset_rendered_legend(fieldset)?;
+        let layout = self.dom.as_ref().get_node(legend)?.final_layout();
+        Some(kurbo::Rect::new(
+            layout.location.x as f64,
+            layout.location.y as f64,
+            (layout.location.x + layout.size.width) as f64,
+            (layout.location.y + layout.size.height) as f64,
+        ))
+    }
+
+    /// pyro: the part of a fieldset's block-start border its rendered legend leaves out, its
+    /// border box's horizontal extent (in the fieldset's border-box space, CSS px).
+    pub(crate) fn fieldset_legend_gap(&self, fieldset: NodeId) -> Option<(f32, f32)> {
+        let legend = self.dom.as_ref().fieldset_rendered_legend(fieldset)?;
+        let legend = self.dom.as_ref().get_node(legend)?.final_layout();
+        Some((legend.location.x, legend.location.x + legend.size.width))
     }
 
     fn element_cx(
@@ -1814,6 +2413,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // out with (half of its outer collapsed borders) and no padding: its background is positioned
         // in them.
         let mut layout = layout;
+        if let Some((container, origin)) = self.column_inline_origin.get()
+            && node.layout_parent.get() == Some(container)
+        {
+            let exact = node.unrounded_layout();
+            let left = f64::from(origin + exact.location.x) * scale;
+            let right = left + f64::from(exact.size.width) * scale;
+            layout.size.width = ((right.round() - left.round()) / scale) as f32;
+        }
         if let blitz_dom::node::SpecialElementData::TableRoot(table) = &element.special_data
             && table.border_collapse == style::computed_values::border_collapse::T::Collapse
             && !table.cells.is_empty()
@@ -1841,7 +2448,23 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 }
                 None => create_css_rect(&style, &layout, scale),
             },
-            _ => create_css_rect(&style, &layout, scale),
+            // pyro: a fieldset paints its box from its block-start border, which is centred on its
+            // rendered legend when that is taller (HTML § 15.3.13, as Chromium).
+            _ => match self.fieldset_border_shift(node.id, &layout) {
+                Some(shift) if shift > 0.0 => {
+                    let mut shifted = layout;
+                    shifted.size.height = (layout.size.height - shift).max(0.0);
+                    let frame = create_css_rect(&style, &shifted, scale);
+                    CssBox::new(
+                        frame.border_box + Vec2::new(0.0, shift as f64 * scale),
+                        frame.border_width,
+                        frame.padding_width,
+                        frame.outline_width,
+                        frame.border_radii,
+                    )
+                }
+                _ => create_css_rect(&style, &layout, scale),
+            },
         };
 
         ElementCx {
@@ -1863,6 +2486,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             custom_widget_scene,
         }
     }
+}
+
+/// pyro: how a column shares a box of its multi-column container (`ElementCx::column_share`).
+enum ColumnShare {
+    /// It starts in the column: cut at the column's end only.
+    Inside,
+    /// Another column holds it.
+    Outside,
+    /// A break goes through it: each column shows its slice.
+    Cut,
 }
 
 /// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
@@ -1953,6 +2586,64 @@ fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> pe
 }
 
 /// pyro: an `<img>`, `<video>` or `<canvas>`: the elements the UA sheet gives `overflow: clip`.
+/// pyro: whether `child_id`, an out-of-flow box painted in the stacking context of `node_id`,
+/// has a containing block outside that element: its overflow clip does not clip it (it is not in
+/// its containing-block chain).
+fn escapes_clip_of(tree: &blitz_dom::NodeTree, node_id: NodeId, child_id: NodeId) -> bool {
+    let Some(child) = tree.get(child_id) else { return false };
+    if !child.is_out_of_flow() {
+        return false;
+    }
+    let mut cb = child.containing_block();
+    while let Some(id) = cb {
+        if id == node_id {
+            return false;
+        }
+        cb = tree.get(id).and_then(|node| node.containing_block());
+    }
+    true
+}
+
+thread_local! {
+    /// pyro: how far the inline boxes of an inline root reach out of their lines (by root and its
+    /// layout's style count), for the effect passes of one `draw_inline_effects` (which resets it):
+    /// `ElementCx::inline_box_fragments`.
+    pub(crate) static BAND_REACH: std::cell::Cell<(usize, usize, f64)> = const { std::cell::Cell::new((usize::MAX, 0, 0.0)) };
+    /// pyro: how many lines `ElementCx::inline_box_fragments` built fragments for on this thread
+    /// ([`crate::inline_lines_visited`]).
+    pub(crate) static INLINE_LINES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// pyro: and how many items each of its lines has (`Line::items`), for the lines a pass skips.
+    pub(crate) static BAND_ITEMS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// pyro: whether `node` (a clipping box) paints any z-ordered box (negative `z-index`,
+/// positioned level or above) whose containing block lies outside it ([`escapes_clip_of`]).
+fn has_clip_escapes(tree: &blitz_dom::NodeTree, node: &Node) -> bool {
+    has_clip_escapes_of(tree, node, node.id)
+}
+
+/// pyro: [`has_clip_escapes`] for the clip of `owner` (`node` itself, or the box that handed it its
+/// clip: `BlitzDomPainter::handed_clips`).
+fn has_clip_escapes_of(tree: &blitz_dom::NodeTree, node: &Node, owner: NodeId) -> bool {
+    // pyro: a clipping box that is no stacking context too: a box escaping its clip paints among
+    // its positioned children (blitz-dom `restore_out_of_flow_stacking_owners`, `clip_owner_of`).
+    node.stacking_context.as_ref().is_some_and(|sc| {
+        sc.pos_z_hoisted_children()
+            .chain(sc.neg_z_hoisted_children())
+            .any(|child| escapes_clip_of(tree, owner, child.node_id))
+    }) || node
+            .paint_children
+            .borrow()
+            .as_ref()
+            .is_some_and(|children| children.iter().any(|&id| escapes_clip_of(tree, owner, id)))
+}
+
+/// pyro: the culling rect of a child painted in its parent's clip (`clipped`: `inner`, the
+/// parent's clip applied) or escaping it (`outer`, what the parent's ancestors leave visible).
+fn child_clip_rect_for(clipped: bool, outer: Rect, inner: Rect) -> Rect {
+    if clipped { inner } else { outer }
+}
+
 fn is_ua_clipped_replaced(element: &ElementData) -> bool {
     // pyro: not a broken image showing its alt text: a box of text, clipped as any box.
     if element.image_broken {
@@ -2042,11 +2733,17 @@ fn stroke_inline_text(
         }
         let truncation = line_truncation(node, text_layout, &line, index, scale as f32);
         context.cut = truncation.as_ref().map(|truncation| truncation.cut);
+        // pyro: a clamp line laid out again (`LineClamp::relaid`) has the root text it keeps on
+        // the baseline of a line of the ellipsis, at its top (WPT css-overflow `line-clamp-auto-041`).
+        let relaid_shift = clamp
+            .filter(|clamp| clamp.relaid && index + 1 == clamp.lines as usize)
+            .and_then(|clamp| clamp.ellipsis.lines().next().map(|l| l.metrics().baseline))
+            .map_or(0.0, |baseline| (line.metrics().block_min_coord + baseline - line.metrics().baseline) as f64);
         crate::text::stroke_text(
             scene,
             std::iter::once(line.clone()),
             dom,
-            transform,
+            transform * Affine::translate((0.0, relaid_shift)),
             options,
             node.id,
             Some(&text_layout.text),
@@ -2062,7 +2759,11 @@ fn stroke_inline_text(
             let filter = context.run_filter.take();
             let baseline = ellipsis.lines().next().map_or(0.0, |l| l.metrics().baseline);
             let shift = tops.map_or(0.0, |tops| tops.shift(line.metrics()));
-            let offset = (x as f64, (line.metrics().baseline - baseline) as f64 + shift);
+            // pyro: a clamp line laid out again holds the ellipsis alone at its top
+            // (`LineClamp::relaid`).
+            let relaid = clamp.is_some_and(|clamp| clamp.relaid && index + 1 == clamp.lines as usize);
+            let y = if relaid { line.metrics().block_min_coord } else { line.metrics().baseline - baseline };
+            let offset = (x as f64, y as f64 + shift);
             context.line_tops = None;
             // pyro: on the first line, in the `::first-line` colour (the line's root style).
             let mut options = options;
@@ -2122,7 +2823,13 @@ fn hidden_by_ellipsis(dom: &BaseDocument, node: &Node) -> bool {
         let Some(ibox) = ibox else { continue };
         let Some(truncation) = line_truncation(root, text_layout, &line, index, scale) else { return false };
         let cut = truncation.cut;
-        return if cut.keep_left { ibox.x + ibox.width > cut.edge + scale / 64.0 } else { ibox.x < cut.edge - scale / 64.0 };
+        // (A cut at a text offset keeps the start of the line in its direction: its edge is
+        // where that ends, `truncate_line_at_soft_wrap`.)
+        let keeps_left = match cut.split {
+            Some(_) => !line.is_rtl(),
+            None => cut.keep_left,
+        };
+        return if keeps_left { ibox.x + ibox.width > cut.edge + scale / 64.0 } else { ibox.x < cut.edge - scale / 64.0 };
     }
     false
 }
@@ -2156,7 +2863,22 @@ fn line_truncation<'a>(
     // The lines were broken in the unrounded box: a line as wide as the box (a
     // box sized to its text) must not count as overflowing it by a rounding.
     let width = node.unrounded_layout().content_box_width() * scale;
-    line_truncation_at(text_layout, line, index, scale, width)
+    // pyro: the end edge is the scrollport's, where the box is scrolled to (CSS Overflow 4
+    // `text-overflow`: the ellipsis shows at the visible edge; WPT css-overflow `text-overflow-021`).
+    // (Scroll offsets are kept in whole px: one up to half a px short of the fractional maximum
+    // still shows the content's end.)
+    let scroll_x = (node.scroll_offset().x as f32).max(0.0);
+    let scrolled = if scroll_x > 0.0 { (scroll_x + 0.5) * scale } else { 0.0 };
+    line_truncation_scrolled(text_layout, line, index, scale, width, wraps(node), scrolled)
+}
+
+/// pyro: whether the lines of the inline root `node` have soft wrap opportunities: none where
+/// its `text-wrap-mode` is `nowrap` (`white-space: pre`: WPT css-overflow
+/// `line-clamp/block-ellipsis-013`) but at a `<wbr>`.
+fn wraps(node: &Node) -> bool {
+    node.primary_styles().is_none_or(|style| {
+        style.get_inherited_text().text_wrap_mode != style::computed_values::text_wrap_mode::T::Nowrap
+    })
 }
 
 /// pyro: whether `node` is in an editing host (`contenteditable` other than `false`, the
@@ -2182,14 +2904,153 @@ fn line_truncation_at<'a>(
     index: usize,
     scale: f32,
     width: f32,
+    wraps: bool,
 ) -> Option<LineTruncation<'a>> {
-    let rtl = text_layout.layout.is_rtl();
-    let (ellipsis, text, forced) = match text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize) {
+    line_truncation_scrolled(text_layout, line, index, scale, width, wraps, 0.0)
+}
+
+/// pyro: [`line_truncation_at`] in a box scrolled `scrolled` device px along the line: its end
+/// edge that much further, past the line's own end (`LineMetrics::inline_max_coord`).
+fn line_truncation_scrolled<'a>(
+    text_layout: &'a blitz_dom::node::TextLayout,
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    index: usize,
+    scale: f32,
+    width: f32,
+    wraps: bool,
+    scrolled: f32,
+) -> Option<LineTruncation<'a>> {
+    // pyro: the line's paragraph's direction (`unicode-bidi: plaintext`: WPT css-overflow
+    // `line-clamp-with-text-overflow-string-009`).
+    let rtl = line.is_rtl();
+    let clamp = text_layout.clamp.as_ref().filter(|clamp| index + 1 == clamp.lines as usize);
+    // pyro: `block-ellipsis: no-ellipsis` leaves the clamp line whole: nothing makes room on it
+    // (Chromium; WPT css-overflow `line-clamp/block-ellipsis-023`).
+    if clamp.is_some_and(|clamp| clamp.ellipsis.lines().next().is_none()) {
+        return None;
+    }
+    let (ellipsis, text, forced) = match clamp {
         Some(clamp) => (&*clamp.ellipsis, "\u{2026}", true),
         None => (text_layout.ellipsis.as_deref()?, text_layout.ellipsis_text.as_str(), false),
     };
-    let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced)?;
+    // pyro: a standard line clamp's ellipsis after the last soft wrap opportunity that leaves
+    // room for it (CSS Overflow 4 `block-ellipsis`; WPT css-overflow `block-ellipsis-001`).
+    if let Some(clamp) = clamp.filter(|clamp| clamp.at_soft_wraps) {
+        let hyphenated = &*clamp.hyphenated_ellipsis;
+        if let Some((cut, x, at_hyphen)) =
+            truncate_line_at_soft_wrap(line, ellipsis, hyphenated, width, scale, rtl, wraps, &text_layout.text, scrolled)
+        {
+            // (At a soft hyphen, a hyphen shows before the ellipsis.)
+            return Some(match at_hyphen {
+                true => LineTruncation { cut, x, ellipsis: hyphenated, text: "-\u{2026}" },
+                false => LineTruncation { cut, x, ellipsis, text },
+            });
+        }
+    }
+    let (cut, x) = truncate_line(line, ellipsis, width, scale, rtl, forced, scrolled)?;
     Some(LineTruncation { cut, x, ellipsis, text })
+}
+
+/// pyro: a line that ends with a standard line clamp's ellipsis: the line keeps what precedes
+/// (in its paragraph's direction) its last soft wrap opportunity that leaves room for the
+/// ellipsis (less the spaces before it), and nothing when none does: a word too long to fit
+/// beside the ellipsis is displaced by it. Atomic inlines are content without opportunities of
+/// their own. `None` when the whole line fits beside the ellipsis (the cut of [`truncate_line`]
+/// keeps it all). The cut splits the text there; its edge is where the kept content ends (an
+/// atomic inline past it is hidden: `hidden_by_ellipsis`).
+fn truncate_line_at_soft_wrap(
+    line: &parley::Line<'_, blitz_dom::node::TextBrush>,
+    ellipsis: &parley::Layout<blitz_dom::node::TextBrush>,
+    hyphenated: &parley::Layout<blitz_dom::node::TextBrush>,
+    width: f32,
+    scale: f32,
+    rtl: bool,
+    wraps: bool,
+    text: &str,
+    scrolled: f32,
+) -> Option<(crate::text::TextCut, f32, bool)> {
+    let epsilon = scale / 64.0;
+    let metrics = line.metrics();
+    // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
+    let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
+    let hyphenated_width = Some(hyphenated.full_width()).filter(|w| w.is_finite()).map_or(ellipsis_width, |w| w.max(0.0));
+    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width } + scrolled;
+    // The line's atoms: (logical key, x0, x1, whether it is white space, the byte offset a soft
+    // wrap opportunity before it breaks at). A cluster's key is its text offset; an atomic
+    // inline's, that of the cluster before it in the line's direction (it has no text).
+    let mut atoms: Vec<(f64, f32, f32, bool, Option<usize>)> = Vec::new();
+    for item in line.items() {
+        match item {
+            parley::PositionedLayoutItem::GlyphRun(run) => {
+                let mut x = run.offset();
+                for cluster in run.run().visual_clusters() {
+                    let advance = cluster.advance();
+                    let space = cluster.is_space_or_nbsp() || cluster.is_hard_line_break() || advance <= 0.0;
+                    // (Without soft wrapping, a `<wbr>` (U+200B) still is one, as Chromium has it;
+                    // the wrapping of the cluster before the opportunity, the one the line would
+                    // break after, decides: WPT css-overflow `line-clamp/block-ellipsis-027`.)
+                    let start = cluster.text_range().start;
+                    let wraps_here = wraps && cluster.previous_logical().is_none_or(|before| before.wraps());
+                    let opportunity = (cluster.is_soft_wrap_opportunity()
+                        && (wraps_here || text.get(..start).is_some_and(|before| before.ends_with('\u{200B}'))))
+                    .then_some(start);
+                    atoms.push((cluster.text_range().start as f64, x, x + advance, space, opportunity));
+                    x += advance;
+                }
+            }
+            parley::PositionedLayoutItem::InlineBox(ibox) => {
+                if ibox.kind == parley::InlineBoxKind::InFlow {
+                    atoms.push((f64::NAN, ibox.x, ibox.x + ibox.width, false, None));
+                }
+            }
+        }
+    }
+    atoms.sort_by(|a, b| a.1.total_cmp(&b.1));
+    if rtl {
+        atoms.reverse();
+    }
+    let mut previous = line.text_range().start as f64 - 1.0;
+    for atom in atoms.iter_mut() {
+        if atom.0.is_nan() {
+            atom.0 = previous + 0.5;
+        } else {
+            previous = atom.0;
+        }
+    }
+    atoms.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Where the content walked so far ends (its far edge in the line's direction), and whether
+    // the ellipsis fits beyond it.
+    // (The line's items start at its `inline_min_coord`, past a float before it: WPT css-overflow
+    // `line-clamp/block-ellipsis-041`.)
+    let line_start = if rtl { metrics.inline_min_coord + metrics.offset + metrics.advance } else { metrics.inline_min_coord + metrics.offset };
+    let mut far = line_start;
+    let fits_with = |far: f32, w: f32| if rtl { far - w >= -epsilon } else { far + w <= width + epsilon };
+    let fits = |far: f32| fits_with(far, ellipsis_width);
+    // (A break at a soft hyphen shows a hyphen too.)
+    let after_hyphen = |offset: usize| text.get(..offset).is_some_and(|before| before.ends_with('\u{AD}'));
+    // The last break that fits: its byte offset, where the content before it ends, and whether
+    // it is at a soft hyphen.
+    let mut best: Option<(usize, f32, bool)> = None;
+    for (index, &(_, x0, x1, space, opportunity)) in atoms.iter().enumerate() {
+        if index > 0
+            && let Some(offset) = opportunity
+        {
+            let hyphen = after_hyphen(offset);
+            if fits_with(far, if hyphen { hyphenated_width } else { ellipsis_width }) {
+                best = Some((offset, far, hyphen));
+            }
+        }
+        if !space {
+            far = if rtl { far.min(x0) } else { far.max(x1) };
+        }
+    }
+    // (The whole line fits beside it once its trailing spaces and break hang.)
+    if fits(far) {
+        return None;
+    }
+    let (split, end, hyphen) = best.unwrap_or((line.text_range().start, line_start, false));
+    let x = if rtl { end - if hyphen { hyphenated_width } else { ellipsis_width } } else { end };
+    Some((crate::text::TextCut { edge: end, keep_left: true, split: Some(split) }, x, hyphen))
 }
 
 /// pyro: `text-overflow: ellipsis` on one line, as Chromium applies it: a line whose content
@@ -2205,17 +3066,22 @@ fn truncate_line(
     scale: f32,
     rtl: bool,
     forced: bool,
+    scrolled: f32,
 ) -> Option<(crate::text::TextCut, f32)> {
     let epsilon = scale / 64.0;
     let metrics = line.metrics();
-    let ellipsis_width = ellipsis.full_width();
+    // (An empty one, `block-ellipsis: no-ellipsis`, has no lines and no width.)
+    let ellipsis_width = Some(ellipsis.full_width()).filter(|w| w.is_finite()).map_or(0.0, |w| w.max(0.0));
     // pyro: the line's own edges where floats shorten it (Blink truncates at the line box's end).
-    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width };
+    let width = if metrics.inline_max_coord > 0.0 { width.min(metrics.inline_max_coord) } else { width } + scrolled;
     let start = metrics.inline_min_coord.clamp(0.0, width);
     // A line that ends with the ellipsis whether it overflows or not (`forced`: a line
     // clamp's) keeps all of its atoms when the ellipsis fits after them.
     if forced {
-        let (start, end) = (metrics.offset, metrics.offset + metrics.advance);
+        // pyro: the line's items start at its `inline_min_coord`, past a float before it (WPT
+        // css-overflow `line-clamp-with-floats-005`).
+        let line_start = metrics.inline_min_coord + metrics.offset;
+        let (start, end) = (line_start, line_start + metrics.advance);
         if !rtl && end - metrics.hanging_advance + ellipsis_width <= width + epsilon {
             let cut = crate::text::TextCut { edge: f32::INFINITY, keep_left: true, split: None };
             return Some((cut, end - metrics.hanging_advance));
@@ -2237,6 +3103,24 @@ fn truncate_line(
         }
         let cut = crate::text::TextCut { edge: width - ellipsis_width, keep_left: true, split: None };
         let end = runs().filter_map(|run| cut.kept(&run).1).map(|(_, x1)| x1).fold(None, |a: Option<f32>, x| Some(a.map_or(x, |a| a.max(x))));
+        // pyro: a line clamp's ellipsis follows the kept content less the spaces at its end
+        // (Chromium; WPT css-overflow `line-clamp/webkit-line-clamp-024`).
+        if forced && let Some(end) = end {
+            let mut content_end: Option<f32> = None;
+            for run in runs() {
+                let mut x = run.offset();
+                for cluster in run.run().visual_clusters() {
+                    let x1 = x + cluster.advance();
+                    if x1 <= cut.edge + epsilon && !cluster.is_space_or_nbsp() && cluster.advance() > 0.0 {
+                        content_end = Some(content_end.map_or(x1, |e| e.max(x1)));
+                    }
+                    x = x1;
+                }
+            }
+            if let Some(content_end) = content_end.filter(|&e| e < end) {
+                return Some((crate::text::TextCut { edge: content_end, keep_left: true, split: None }, content_end));
+            }
+        }
         if let Some(end) = end {
             return Some((cut, end));
         }
@@ -2278,7 +3162,89 @@ impl ElementCx<'_, '_> {
         if dark != light {
             return dark;
         }
+        // pyro: `normal` is the page's scheme where its `<meta name=color-scheme>` declares one
+        // (WPT css/mediaqueries `prefers-color-scheme-svg-image-normal-with-meta-dark`).
+        if !dark && self.context.dom.page_color_scheme_is_declared() {
+            return self.context.dom.page_color_scheme_is_dark();
+        }
         self.context.dom.viewport().color_scheme == blitz_traits::shell::ColorScheme::Dark
+    }
+
+    /// pyro: paints the box's classic scrollbars ([`Node::classic_scrollbars`]) that show, in
+    /// their gutters over the padding box's edges, unscrolled: the track, the arrow buttons and
+    /// the thumb ([`paint_classic_scrollbar`]). A gutter `scrollbar-gutter` reserves alone paints
+    /// nothing (the background shows), as in Chrome.
+    fn draw_classic_scrollbars(&self, scene: &mut impl PaintScene) {
+        let Some(bars) = self.node.classic_scrollbars() else {
+            return;
+        };
+        if !bars.shown.x && !bars.shown.y {
+            return;
+        }
+        // A box that is not visible paints no scrollbars (Chrome).
+        if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
+            return;
+        }
+        let colors = ClassicScrollbarColors::of(self.node);
+        let layout = self.node.final_layout();
+        let s = self.scale;
+        let g = bars.gutters;
+        let (b, size) = (layout.border, layout.size);
+        // The padding box, CSS px from the border box origin.
+        let (px0, py0) = (b.left as f64, b.top as f64);
+        let (px1, py1) = ((size.width - b.right) as f64, (size.height - b.bottom) as f64);
+        let client = (
+            (self.node.client_width() as f64).max(0.0),
+            (self.node.client_height() as f64).max(0.0),
+        );
+        // The content's extent as the DOM reports it (`scrollWidth`/`scrollHeight`): the resolved
+        // scrollable overflow from the scrollport's start (non-reversed axes).
+        let scroll = {
+            let doc_scale = self.context.dom.as_ref().viewport().scale_f64();
+            let o = self.node.scrollable_overflow().scale_from_origin(1.0 / doc_scale);
+            let reversed = layout.scrollable_overflow_rect.is_reversed();
+            let w = if reversed.x { px1 - g.right as f64 - o.x0 } else { o.x1 - (px0 + g.left as f64) };
+            let h = if reversed.y { py1 - g.bottom as f64 - o.y0 } else { o.y1 - (py0 + g.top as f64) };
+            (w.max(client.0), h.max(client.1))
+        };
+        // The scroll offset from the start of the scroll range (which is negative in a reversed
+        // axis: `direction: rtl`, whose thumb starts at the right).
+        let offset = {
+            let reversed = layout.scrollable_overflow_rect.is_reversed();
+            let o = *self.node.scroll_offset();
+            blitz_dom::Point {
+                x: if reversed.x { o.x + (scroll.0 - client.0) } else { o.x },
+                y: if reversed.y { o.y + (scroll.1 - client.1) } else { o.y },
+            }
+        };
+        // A padding box too small for its gutters shows no scrollbars (Chrome: WPT css-overflow
+        // `overflow-body-propagation-016`, a 0x0 `overflow: scroll` box).
+        if px1 - px0 < (g.left + g.right) as f64 || py1 - py0 < (g.top + g.bottom) as f64 {
+            return;
+        }
+        let bottom_bar = if bars.shown.x { g.bottom as f64 } else { 0.0 };
+        if bars.shown.y {
+            let width = if bars.vertical_on_left { g.left } else { g.right } as f64;
+            let x0 = if bars.vertical_on_left { px0 } else { px1 - width };
+            let track = Rect::new(x0, py0, x0 + width, py1 - bottom_bar);
+            paint_classic_scrollbar(scene, colors, self.transform, track.scale_from_origin(s), true, client.1, scroll.1, offset.y, s);
+        }
+        if bars.shown.x {
+            let height = g.bottom as f64;
+            let (left, right) = if bars.shown.y {
+                if bars.vertical_on_left { (g.left as f64, 0.0) } else { (0.0, g.right as f64) }
+            } else {
+                (0.0, 0.0)
+            };
+            let track = Rect::new(px0 + left, py1 - height, px1 - right, py1);
+            paint_classic_scrollbar(scene, colors, self.transform, track.scale_from_origin(s), false, client.0, scroll.0, offset.x, s);
+            if bars.shown.y {
+                // The corner between the two.
+                let x0 = if bars.vertical_on_left { px0 } else { px1 - right };
+                let corner = Rect::new(x0, py1 - height, x0 + left.max(right), py1).scale_from_origin(s);
+                scene.fill(Fill::NonZero, self.transform, colors.corner, None, &corner);
+            }
+        }
     }
 
     /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
@@ -2519,9 +3485,58 @@ impl ElementCx<'_, '_> {
         let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
         let mut first_line_styles = text_layout.first_line_styles.clone();
         let mut item_index = 0usize;
+        // pyro: a pass that draws this root's layout in some areas only (an inline element's effect
+        // pass, `RunFilter`) needs the fragments of the lines that reach them: the band of the areas,
+        // widened by how far an inline box's block-axis padding, borders and shadows reach out of its
+        // line. Each element's pass costs its own lines, not the whole layout (a paragraph of many
+        // faded spans was quadratic). Lines turned (vertical) are all kept.
+        let band = turned.is_none().then(|| self.context.draw_text_context.borrow().run_filter.as_ref().and_then(|filter| {
+            (filter.root == self.node.id && !filter.areas.is_empty()).then(|| {
+                let y0 = filter.areas.iter().map(|area| area.y0).fold(f64::INFINITY, f64::min);
+                let y1 = filter.areas.iter().map(|area| area.y1).fold(f64::NEG_INFINITY, f64::max);
+                (y0, y1)
+            })
+        })).flatten();
+        let band = band.map(|(y0, y1)| {
+            // (Once per layout, not per pass: a paragraph of many faded spans makes many passes.)
+            let key = (self.node.id.as_u64() as usize, layout.styles().len());
+            let cached = BAND_REACH.with(|cell| cell.get()).0 == key.0 && BAND_REACH.with(|cell| cell.get()).1 == key.1;
+            let reach = if cached { BAND_REACH.with(|cell| cell.get()).2 } else {
+            let reach = layout.styles().iter().filter_map(|style| dom.get_node(style.brush.id)).filter_map(|node| node.primary_styles()).fold(0.0f64, |reach, style| {
+                let basis = style::values::computed::CSSPixelLength::new(0.0);
+                let padding = style.get_padding();
+                let border = style.get_border();
+                let shadow = style.get_effects().box_shadow.0.iter().fold(0.0f64, |r, s| {
+                    r.max((s.base.vertical.px().abs() + s.spread.px().abs() + s.base.blur.px()) as f64)
+                });
+                let sides = (padding.padding_top.0.resolve(basis).px().max(padding.padding_bottom.0.resolve(basis).px())
+                    + border.border_top_width.0.to_f32_px().max(border.border_bottom_width.0.to_f32_px())) as f64;
+                reach.max(sides + shadow)
+            });
+            // (Percentages of padding resolve against the containing block's width: all of it.)
+            let percent = layout.styles().iter().filter_map(|style| dom.get_node(style.brush.id)).filter_map(|node| node.primary_styles()).any(|style| {
+                let padding = style.get_padding();
+                padding.padding_top.0.has_percentage() || padding.padding_bottom.0.has_percentage()
+            });
+            let reach = if percent { f64::INFINITY } else { (reach + 2.0) * self.scale };
+            BAND_REACH.with(|cell| cell.set((key.0, key.1, reach)));
+            BAND_ITEMS.with(|items| *items.borrow_mut() = layout.lines().map(|line| line.items().count()).collect());
+            reach
+            };
+            (y0 - reach, y1 + reach)
+        });
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
+            if let Some((y0, y1)) = band
+                && let shift = f64::from(tops.map_or(0.0, |tops| tops.shift(metrics)))
+                && (f64::from(metrics.block_max_coord.max(metrics.content_block_max_coord)) + shift < y0
+                    || f64::from(metrics.block_min_coord.min(metrics.content_block_min_coord)) + shift > y1)
+            {
+                item_index += BAND_ITEMS.with(|items| items.borrow().get(line_index).copied()).unwrap_or_else(|| line.items().count());
+                continue;
+            }
+            INLINE_LINES_VISITED.with(|visited| visited.set(visited.get() + 1));
             // pyro: the empty inline boxes of an invisible line box have no height: nothing to
             // paint (WPT css-inline `empty-span-size-*`).
             if metrics.invisible {
@@ -2542,11 +3557,42 @@ impl ElementCx<'_, '_> {
                 })
                 .fold(metrics.inline_min_coord + metrics.offset + metrics.advance, f32::max);
             let content_end = items_end - metrics.collapsed_advance;
-            for item in line.items() {
+            // pyro: collapsible spaces that end a line's last text but come before the end edges of spans (`<span>aaa
+            // </span>` broken after it) hang: those edges are drawn before them, as Blink removes the spaces (the
+            // edges' boxes are after them in the line's items). `(run, spaces' advance)`.
+            let hang_before_edges = (!rtl_layout)
+                .then(|| {
+                    let items: Vec<_> = line.items().collect();
+                    let last_run = items.iter().rposition(|item| matches!(item, PositionedLayoutItem::GlyphRun(_)))?;
+                    let only_end_edges_after = last_run + 1 < items.len()
+                        && items[last_run + 1..].iter().all(|item| {
+                            matches!(item, PositionedLayoutItem::InlineBox(ibox) if ibox.kind == InlineBoxKind::SpanEnd)
+                        });
+                    let PositionedLayoutItem::GlyphRun(run) = &items[last_run] else { return None };
+                    let spaces: f32 = run
+                        .run()
+                        .visual_clusters()
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .rev()
+                        .take_while(|cluster| text_layout.text.get(cluster.text_range()) == Some(" "))
+                        .map(|cluster| cluster.advance())
+                        .sum();
+                    (only_end_edges_after && spaces > 0.0).then_some((last_run, spaces))
+                })
+                .flatten();
+            for (line_item, item) in line.items().enumerate() {
+                let hang = match hang_before_edges {
+                    Some((run_index, spaces)) if line_item >= run_index => Some((line_item == run_index, spaces)),
+                    _ => None,
+                };
                 let (style_index, x0, x1, edge) = match &item {
                     PositionedLayoutItem::GlyphRun(run) => {
                         let x0 = run.offset();
                         let mut x1 = x0 + run.advance();
+                        if let Some((true, spaces)) = hang {
+                            x1 = (x1 - spaces).max(x0);
+                        }
                         // pyro: a run of bidi formatting characters alone (U+202E written in the
                         // text, placed at the level before it) is no content of a box: it made a
                         // fragment of its own away from the content it reorders.
@@ -2568,7 +3614,11 @@ impl ElementCx<'_, '_> {
                     PositionedLayoutItem::InlineBox(ibox) => match ibox.kind {
                         InlineBoxKind::InFlow => (ibox.style_index, ibox.x, ibox.x + ibox.width, None),
                         InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd => {
-                            (ibox.style_index, ibox.x, ibox.x + ibox.width, Some((NodeId::from_u64(ibox.id), ibox.kind)))
+                            let shift = match hang {
+                                Some((false, spaces)) => spaces,
+                                _ => 0.0,
+                            };
+                            (ibox.style_index, ibox.x - shift, ibox.x + ibox.width - shift, Some((NodeId::from_u64(ibox.id), ibox.kind)))
                         }
                         _ => continue,
                     },
@@ -2667,7 +3717,10 @@ impl ElementCx<'_, '_> {
         };
         // pyro: relatively positioned elements move their fragments.
         let relative = dom.inline_root_has_relative_spans(root);
-        let mut order: Vec<usize> = (0..fragments.len()).collect();
+        // pyro: the fragments on the lines a line clamp discarded are not painted; the boxes they
+        // continue keep their sides as they were (WPT css-overflow `line-clamp/block-ellipsis-004`).
+        let kept_lines = text_layout.clamp.as_ref().map_or(usize::MAX, |clamp| clamp.lines as usize);
+        let mut order: Vec<usize> = (0..fragments.len()).filter(|&index| fragments[index].line < kept_lines).collect();
         order.sort_by_key(|&index| (fragments[index].line, fragments[index].depth));
 
         // The boxes are where the text is.
@@ -2934,6 +3987,24 @@ impl ElementCx<'_, '_> {
             };
             cx.frame = create_css_rect_with_corners(&cx.style, &layout, self.scale, keep);
         }
+        // pyro: a box painted in a group of its own (a clip path, a mask, opacity) keeps its outline
+        // under the text, in its group (WPT css-masking `clip-path-inline-007`).
+        let grouped = {
+            use style::values::generics::image::GenericImage;
+            !matches!(cx.style.get_svg().clip_path, style::values::computed::basic_shape::ClipPath::None)
+                || cx.style.get_svg().mask_image.0.iter().any(|image| !matches!(image, GenericImage::None))
+                || cx.style.get_effects().opacity < 1.0
+        };
+        let outline_now = match self.context.inline_outlines.get() {
+            0 => true,
+            1 => grouped,
+            _ => {
+                if !grouped {
+                    cx.draw_outline(scene);
+                }
+                return;
+            }
+        };
         // The whole box, for a sliced box's shadows and background images, and the fragment's
         // piece of it: its border box, and for the outer shadows the space past its closed
         // sides and above and below it.
@@ -3003,8 +4074,11 @@ impl ElementCx<'_, '_> {
             None => cx.draw_inset_box_shadow(scene),
         }
         cx.draw_border(scene);
-        // Over the box, as a block's outline is (see `render_element`).
-        cx.draw_outline(scene);
+        // Over the box, as a block's outline is (see `render_element`), unless the inline root
+        // draws it after its text (`inline_outlines`).
+        if outline_now {
+            cx.draw_outline(scene);
+        }
     }
 
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
@@ -3023,7 +4097,7 @@ impl ElementCx<'_, '_> {
                 });
 
             if let Some(block_lr) = self.node.vertical_block_axis() {
-                self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr);
+                self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr, None);
                 return;
             }
 
@@ -3045,6 +4119,8 @@ impl ElementCx<'_, '_> {
             // the first line reaches above its line and no selection, ellipsis or annotation
             // interleaves.
             let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
+            // pyro: the boxes' outlines go over the text (`inline_outlines`), drawn at the end.
+            let outer_outlines = self.context.inline_outlines.replace(1);
             let selection = self.context.selection_ranges.get(&self.node.id).copied();
             let highlighted = self.context.highlight_ranges.get(&self.node.id);
             let by_line = highlighted.is_none()
@@ -3113,6 +4189,11 @@ impl ElementCx<'_, '_> {
                         draw_text_context.cut = outer_cut;
                     }
                 }
+                self.context.inline_outlines.set(2);
+                for fragment in &fragments {
+                    self.paint_inline_box_fragment(scene, fragment, transform, tops);
+                }
+                self.context.inline_outlines.set(outer_outlines);
                 return;
             }
             // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`;
@@ -3201,7 +4282,52 @@ impl ElementCx<'_, '_> {
                         node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
                     })
                 {
-                    self.context.inline_pass_entries.borrow_mut().insert(span, (self.node.id, self.transform, pos_before_offset));
+                    // pyro: in a multi-column inline root, the column that shows the box records it
+                    // (`PaintContext::inline_column_range`).
+                    // (Each column that shows one of its lines. The range is the container's strip's:
+                    // in this root's box when it is below the container.)
+                    let column = self.context.inline_column_range.get().and_then(|(container, start, end)| {
+                        let tree = self.context.dom.as_ref().tree();
+                        let mut top = 0.0f32;
+                        let mut at = Some(self.node.id);
+                        let mut steps = 0;
+                        while let Some(node) = at.filter(|&n| n != container) {
+                            steps += 1;
+                            if steps > 256 {
+                                return None;
+                            }
+                            top += tree[node].final_layout().location.y;
+                            at = tree[node].layout_parent.get();
+                        }
+                        at.map(|_| (start - top, end - top))
+                    });
+                    // (And each column, for one that keeps out-of-flow boxes: they are placed in the
+                    // columns themselves, `draw_inline_pass_entry_in`.)
+                    let shown_here = column.is_none_or(|(start, end)| {
+                        let mut own = fragments.iter().filter(|fragment| fragment.node == span).peekable();
+                        own.peek().is_none()
+                            || !clip_path::owned_hoisted(self.context.dom.as_ref(), span).is_empty()
+                            || own.any(|fragment| {
+                                // (Its line's top in the root's box: the strip.)
+                                let layout = &text_layout.layout;
+                                let line_top = layout.get(fragment.line).map_or(0.0, |line| line.metrics().block_min_coord / layout.scale());
+                                let y = (pos_before_offset.y / self.scale) as f32 + text_layout.block_offset + line_top;
+                                y >= start - 0.5 && y < end - 0.5
+                            })
+                    });
+                    match column {
+                        Some(range) if shown_here => self
+                            .context
+                            .inline_pass_entries
+                            .borrow_mut()
+                            .entry(span)
+                            .or_default()
+                            .push((self.node.id, self.transform, pos_before_offset, Some(range))),
+                        Some(_) => {}
+                        None => {
+                            self.context.inline_pass_entries.borrow_mut().insert(span, vec![(self.node.id, self.transform, pos_before_offset, None)]);
+                        }
+                    }
                     continue;
                 }
                 for fragment in fragments.iter().filter(|fragment| self.fragment_in_pass(fragment.node, Some(pass))) {
@@ -3254,6 +4380,69 @@ impl ElementCx<'_, '_> {
             draw_text_context.text_shift = 0.0;
             draw_text_context.line_tops = None;
             draw_text_context.first_line = None;
+            drop(draw_text_context);
+            // pyro: the caret in this text (`caret`).
+            if let Some(caret) = self.context.caret.as_ref().filter(|caret| caret.node == self.node.id && !caret.empty) {
+                let layout = self.node.final_layout();
+                let content_width = (layout.size.width
+                    - layout.border.left
+                    - layout.border.right
+                    - layout.padding.left
+                    - layout.padding.right) as f64;
+                crate::caret::draw_text_caret(scene, caret, &text_layout.layout, |index| match (tops, text_layout.layout.get(index)) {
+                    (Some(tops), Some(line)) => transform * Affine::translate((0.0, tops.shift(line.metrics()))),
+                    _ => transform,
+                }, content_width, self.scale);
+            }
+            // (A box listed in the paint tree paints its own outline with its entry.)
+            let entries: Vec<NodeId> = passes
+                .iter()
+                .skip(1)
+                .filter_map(|&pass| pass)
+                .filter(|&span| {
+                    self.context.dom.get_node(span).is_some_and(|node| {
+                        node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
+                    })
+                })
+                .collect();
+            self.context.inline_outlines.set(2);
+            for fragment in &fragments {
+                if entries.iter().any(|&span| self.fragment_in_pass(fragment.node, Some(Some(span)))) {
+                    continue;
+                }
+                self.paint_inline_box_fragment(scene, fragment, transform, tops);
+            }
+            self.context.inline_outlines.set(outer_outlines);
+        } else if let Some(caret) = self.context.caret.as_ref().filter(|caret| caret.node == self.node.id && caret.empty) {
+            // pyro: the caret of an empty editing host, at the start of its content box.
+            let layout = self.node.final_layout();
+            let content_width = (layout.size.width
+                - layout.border.left
+                - layout.border.right
+                - layout.padding.left
+                - layout.padding.right) as f64;
+            // (Its line, the first, starts after the `text-indent`: none when `hanging`.)
+            let text_indent = &self.style.get_inherited_text().text_indent;
+            let indent = match text_indent.hanging {
+                true => 0.0,
+                false => text_indent.length.resolve(style::values::computed::Length::new(content_width as f32)).px() as f64,
+            };
+            // pyro: and where its `text-align` puts the empty line's start.
+            let x = {
+                use style::values::specified::text::TextAlignKeyword as A;
+                let rtl = caret.rtl;
+                let align = self.style.clone_text_align();
+                let (left, right) = (indent, content_width - indent);
+                match align {
+                    A::Center | A::MozCenter => content_width / 2.0,
+                    A::Left | A::MozLeft => left,
+                    A::Right | A::MozRight => right,
+                    A::End => if rtl { left } else { right },
+                    A::Start | A::Justify | A::JustifyAll => if rtl { right } else { left },
+                }
+            };
+            let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+            crate::caret::draw_empty_caret(scene, caret, transform, content_width, x, self.scale);
         }
     }
 
@@ -3277,11 +4466,13 @@ impl ElementCx<'_, '_> {
         }
         let (position, layout) = self.context.dom.physical_unrounded_geometry(node.id);
         let painted = node.final_layout();
-        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64;
-        let painted_x = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64;
+        let g = node.start_gutters();
+        let (gx, gy) = (g.x as f64, g.y as f64);
+        let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64 + gx;
+        let painted_x = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64 + gx;
         let tops = crate::text::LineTops {
-            origin: position.y as f64 + (layout.border.top + layout.padding.top) as f64 + block_offset,
-            painted: (position.y as f64).round() + (painted.border.top + painted.padding.top) as f64 + block_offset,
+            origin: position.y as f64 + self.context.column_block_rounding_error.get() + (layout.border.top + layout.padding.top) as f64 + gy + block_offset,
+            painted: (position.y as f64 - self.context.column_block_offset.get()).round() + self.context.column_block_offset.get().round() + (painted.border.top + painted.padding.top) as f64 + gy + block_offset,
             scale: self.scale,
         };
         (((start * 64.0).floor() / 64.0 - painted_x) * self.scale, Some(tops))
@@ -3299,14 +4490,42 @@ impl ElementCx<'_, '_> {
         text_layout: &blitz_dom::node::TextLayout,
         pos: Point,
         block_lr: bool,
+        only_pass: Option<NodeId>,
     ) {
+        let line_transform = self.vertical_line_transform(text_layout, pos, block_lr);
+        self.draw_turned_lines(scene, text_layout, &line_transform, pos, only_pass);
+        // pyro: the caret in this text (`caret`), over its turned lines.
+        if only_pass.is_none()
+            && let Some(caret) = self.context.caret.as_ref().filter(|caret| caret.node == self.node.id && !caret.empty)
+        {
+            let layout = self.node.final_layout();
+            let inline_size = (layout.size.height
+                - layout.border.top
+                - layout.border.bottom
+                - layout.padding.top
+                - layout.padding.bottom) as f64;
+            crate::caret::draw_text_caret(scene, caret, &text_layout.layout, &line_transform, inline_size, self.scale);
+        }
+    }
+
+    /// pyro: the transform from the layout space of each line (by index) of this vertical inline
+    /// layout to the scene, as [`Self::draw_vertical_inline_layout`] paints them.
+    pub(super) fn vertical_line_transform<'t>(
+        &'t self,
+        text_layout: &'t blitz_dom::node::TextLayout,
+        pos: Point,
+        block_lr: bool,
+    ) -> impl Fn(usize) -> Affine + 't {
         let block_offset = text_layout.block_offset as f64;
         let layout = self.node.final_layout();
+        let g = self.node.gutter_insets();
         let content_width = (layout.size.width
             - layout.border.left
             - layout.border.right
             - layout.padding.left
-            - layout.padding.right) as f64;
+            - layout.padding.right
+            - g.left
+            - g.right) as f64;
         let origin = if block_lr { pos.x + block_offset } else { pos.x + content_width - block_offset };
         // Boxes are painted at whole pixels. Chromium rounds text only in the block axis, so a
         // line starts where it was laid out in the inline axis.
@@ -3315,13 +4534,13 @@ impl ElementCx<'_, '_> {
         let top = pos.y + inline_start - inline_start.round();
         // pyro: `sideways-lr` turns its lines the other way, a quarter counterclockwise: they
         // run bottom to top, from the content box's bottom, with their line-over side on the left.
-        if self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
-            let inset = unrounded.border + unrounded.padding;
-            let bottom = top + (unrounded.size.height - inset.top - inset.bottom) as f64;
-            let transform = self.transform * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, bottom * self.scale]);
-            return self.draw_turned_lines(scene, text_layout, |_| transform);
-        }
-        let line_transform = |index: usize| {
+        let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
+        let inset = unrounded.border + unrounded.padding + g;
+        let bottom = top + (unrounded.size.height - inset.top - inset.bottom) as f64;
+        move |index: usize| {
+            if sideways_lr {
+                return self.transform * Affine::new([0.0, -1.0, 1.0, 0.0, origin * self.scale, bottom * self.scale]);
+            }
             let flip = if block_lr {
                 text_layout.layout.get(index).map_or(0.0, |line| {
                     let metrics = line.metrics();
@@ -3332,8 +4551,7 @@ impl ElementCx<'_, '_> {
             };
             self.transform
                 * Affine::new([0.0, 1.0, -1.0, 0.0, origin * self.scale + flip, top * self.scale])
-        };
-        self.draw_turned_lines(scene, text_layout, line_transform);
+        }
     }
 
     /// pyro: paints the content of the positioned inline box `span` of this inline root, as
@@ -3341,6 +4559,12 @@ impl ElementCx<'_, '_> {
     /// the paint tree (`draw_inline_pass_entry`). `pos` is the position `draw_inline_layout` was given.
     fn draw_inline_pass(&self, scene: &mut impl PaintScene, pos: Point, span: NodeId) {
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
+        // pyro: on vertical lines, as `draw_vertical_inline_layout` paints its passes (WPT
+        // css-position `position-sticky-writing-modes`).
+        if let Some(block_lr) = self.node.vertical_block_axis() {
+            self.draw_vertical_inline_layout(scene, text_layout, pos, block_lr, Some(span));
+            return;
+        }
         let subpixel_offset = text_layout.content_box_subpixel_offset;
         let pos = Point {
             x: pos.x + subpixel_offset.x as f64,
@@ -3424,6 +4648,8 @@ impl ElementCx<'_, '_> {
         scene: &mut impl PaintScene,
         text_layout: &blitz_dom::node::TextLayout,
         line_transform: impl Fn(usize) -> Affine,
+        entry_pos: Point,
+        only_pass: Option<NodeId>,
     ) {
         let wm = self.style.writing_mode;
         let sideways = wm.intersects(WritingMode::TEXT_SIDEWAYS | WritingMode::VERTICAL_SIDEWAYS);
@@ -3434,6 +4660,37 @@ impl ElementCx<'_, '_> {
                     .counterclockwise(wm.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR)),
             )
         };
+        // pyro: one positioned inline box's pass: its fragments, then its text.
+        let paint_pass = |scene: &mut _, pass: Option<NodeId>| {
+            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
+                if self.fragment_in_pass(fragment.node, Some(pass)) {
+                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
+                }
+            }
+            let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+            draw_text_context.positioned_pass = Some(pass);
+            for (index, line) in text_layout.layout.lines().enumerate() {
+                let turned = vertical(&line);
+                crate::text::stroke_text(
+                    scene,
+                    std::iter::once(line),
+                    self.context.dom,
+                    line_transform(index),
+                    TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+                    self.node.id,
+                    Some(&text_layout.text),
+                    &mut draw_text_context,
+                    turned,
+                    Some(&text_layout.layout),
+                );
+            }
+            draw_text_context.positioned_pass = None;
+        };
+        // (The pass of a box left for its paint-tree entry: `draw_inline_pass`.)
+        if let Some(span) = only_pass {
+            paint_pass(scene, Some(span));
+            return;
+        }
 
         // pyro: positioned inline boxes paint after the in-flow content (`positioned_passes`; not
         // with highlights or truncated lines).
@@ -3518,7 +4775,7 @@ impl ElementCx<'_, '_> {
             }
             let vertical = vertical(&line);
             let truncation = inline_size.and_then(|width| {
-                line_truncation_at(text_layout, &line, index, self.scale as f32, width)
+                line_truncation_at(text_layout, &line, index, self.scale as f32, width, wraps(self.node))
             });
             draw_text_context.cut = truncation.as_ref().map(|truncation| truncation.cut);
             if highlight.is_none() { crate::text::stroke_text(
@@ -3593,37 +4850,203 @@ impl ElementCx<'_, '_> {
         }
         draw_text_context.positioned_pass = None;
         drop(draw_text_context);
-        // pyro: then each positioned inline box: its fragments, then its text.
+        // pyro: then each positioned inline box: its fragments, then its text; a box listed in the
+        // paint tree (`NodeFlags::INLINE_PASS_ENTRY`) is left for its entry there, as on horizontal
+        // lines (`draw_inline_layout`).
         for &pass in passes.iter().skip(1) {
-            for fragment in self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform)) {
-                if self.fragment_in_pass(fragment.node, Some(pass)) {
-                    self.paint_inline_box_fragment(scene, &fragment, line_transform(fragment.line), None);
-                }
+            if let Some(span) = pass
+                && self
+                    .context
+                    .dom
+                    .get_node(span)
+                    .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
+            {
+                self.context.inline_pass_entries.borrow_mut().insert(span, vec![(self.node.id, self.transform, entry_pos, None)]);
+                continue;
             }
+            paint_pass(scene, pass);
+        }
+    }
+
+    /// pyro: a text control in a vertical writing mode. The editor's layout is logical (laid out at
+    /// the content box's inline size, `layout/mod.rs`): its value, placeholder, selection and caret
+    /// are drawn through the turn of a vertical line (`draw_vertical_inline_layout`), lines running
+    /// from the right in `vertical-rl` and from the left in `vertical-lr` with glyph tops to the
+    /// right (`sideways-lr`: turned the other way, from the bottom), a single line centred in the
+    /// block axis. A focused control's text is scrolled to its caret as a horizontal one's is
+    /// (`TextInputData::scroll_offset`: the inline axis of a single line, the block axis of a
+    /// textarea). Returns `false` when the control is horizontal.
+    fn draw_vertical_text_input_text(&self, scene: &mut impl PaintScene, pos: Point, input_data: &TextInputData) -> bool {
+        // (The control's own writing mode: a horizontal control in a vertical line is not turned.)
+        let wm = self.style.writing_mode;
+        if !wm.is_vertical() {
+            return false;
+        }
+        let block_lr = wm.is_vertical_lr();
+        let Some(layout) = input_data.editor.try_layout() else { return true };
+        let s = self.scale;
+        let unrounded = self.node.unrounded_layout();
+        let content_width = unrounded.content_box_width() as f64;
+        let content_height = unrounded.content_box_height() as f64;
+        let scroll = self.node.scroll_offset();
+        let left = pos.x + scroll.x + input_data.content_box_subpixel_offset.x as f64;
+        let top = pos.y + scroll.y + input_data.content_box_subpixel_offset.y as f64;
+        // The block-axis offset of the first line: a single line is centred.
+        let centred = |height: f32| {
+            if input_data.is_multiline { 0.0 } else { ((content_width - height as f64 / s) / 2.0).max(0.0) }
+        };
+        let block_offset = centred(layout.height());
+        let sideways_lr = self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR);
+        // The editor's scroll, in its logical device pixels.
+        let scroll_offset = if self.node.is_focussed() { input_data.scroll_offset as f64 * s } else { 0.0 };
+        let (scroll_x, scroll_y) = if input_data.is_multiline { (0.0, scroll_offset) } else { (scroll_offset, 0.0) };
+        // Logical (x inline, y block, device px) to physical device px, for shapes (a reflection in
+        // `vertical-lr`, where only glyphs keep their tops to the right).
+        let shapes = |block_offset: f64| -> Affine {
+            let to_physical = if sideways_lr {
+                Affine::new([0.0, -1.0, 1.0, 0.0, (left + block_offset) * s, (top + content_height) * s])
+            } else if block_lr {
+                Affine::new([0.0, 1.0, 1.0, 0.0, (left + block_offset) * s, top * s])
+            } else {
+                Affine::new([0.0, 1.0, -1.0, 0.0, (left + content_width - block_offset) * s, top * s])
+            };
+            self.transform * to_physical * Affine::translate((-scroll_x, -scroll_y))
+        };
+        // One line's glyphs.
+        let line_transform = |metrics: &parley::layout::LineMetrics, block_offset: f64, scroll: (f64, f64)| -> Affine {
+            let base = if sideways_lr {
+                Affine::new([0.0, -1.0, 1.0, 0.0, (left + block_offset) * s, (top + content_height) * s])
+            } else if block_lr {
+                // The line flipped within its slot (whose scrolled position is mirrored with it).
+                let flip = (metrics.block_min_coord + metrics.block_max_coord) as f64 - 2.0 * scroll.1;
+                Affine::new([0.0, 1.0, -1.0, 0.0, (left + block_offset) * s + flip, top * s])
+            } else {
+                Affine::new([0.0, 1.0, -1.0, 0.0, (left + content_width - block_offset) * s, top * s])
+            };
+            self.transform * base * Affine::translate((-scroll.0, -scroll.1))
+        };
+
+        // An empty control shows its placeholder, unscrolled, under the caret.
+        if let Some(placeholder) = input_data.shown_placeholder() {
+            let block_offset = centred(placeholder.layout.height());
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
-            draw_text_context.positioned_pass = Some(pass);
-            for (index, line) in text_layout.layout.lines().enumerate() {
-                let turned = vertical(&line);
+            for line in placeholder.layout.lines() {
                 crate::text::stroke_text(
                     scene,
-                    std::iter::once(line),
+                    std::iter::once(line.clone()),
                     self.context.dom,
-                    line_transform(index),
-                    TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+                    line_transform(line.metrics(), block_offset, (0.0, 0.0)),
+                    TextPaintOptions { scale: s, brush_override: Some(placeholder.color.as_srgb_color()), shadows: true },
                     self.node.id,
-                    Some(&text_layout.text),
+                    Some(&placeholder.text),
                     &mut draw_text_context,
-                    turned,
-                    Some(&text_layout.layout),
+                    None,
+                    None,
                 );
             }
-            draw_text_context.positioned_pass = None;
         }
+
+        if self.node.is_focussed() {
+            let text_color = self.style.get_inherited_text().color.as_srgb_color();
+            let (selection_background, _) =
+                crate::highlight::control_selection_colors(self.context.dom, self.node.id, text_color);
+            for (rect, _line_idx) in input_data.editor.selection_geometry().iter() {
+                scene.fill(Fill::NonZero, shapes(block_offset), selection_background, None, &convert_rect(rect));
+            }
+            if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
+                // (In its `caret-shape`, as a horizontal control's; a block caret's second colour
+                // for the text under it is not drawn here.)
+                let (rect, caret_color, _) = self.control_caret(input_data, &cursor);
+                scene.fill(Fill::NonZero, shapes(block_offset), caret_color, None, &rect);
+            }
+        }
+
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        let options = TextPaintOptions { scale: s, brush_override: None, shadows: true };
+        for line in layout.lines() {
+            crate::text::stroke_text(
+                scene,
+                std::iter::once(line.clone()),
+                self.context.dom,
+                line_transform(line.metrics(), block_offset, (scroll_x, scroll_y)),
+                options,
+                self.node.id,
+                None,
+                &mut draw_text_context,
+                None,
+                None,
+            );
+        }
+        true
+    }
+
+    /// pyro: a text control's caret, in the editor's (logical) coordinates: its rectangle for the
+    /// control's `caret-shape`, its colour, and for a block caret over text the colour that text takes.
+    fn control_caret(&self, input_data: &TextInputData, cursor: &parley::BoundingBox) -> (Rect, peniko::Color, Option<peniko::Color>) {
+        let mut caret_text = None;
+        let color = self.style.get_inherited_text().color;
+        // pyro: the caret in its `caret-shape` (`caret.rs`): a block covers the
+        // character after it (or is the width of `0`), towards the character's side
+        // in right-to-left text, in a translucent text colour for `auto`, the text
+        // under it in `caret-color`'s second colour; an underscore is a line under
+        // that character.
+        use style::values::computed::CaretShape;
+        let shape = self.style.get_inherited_ui().caret_shape;
+        let block = shape == CaretShape::Block;
+        let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
+            ColorOrAuto::Auto if block => {
+                let color = color.as_srgb_color();
+                color.with_alpha(color.components[3] * 0.5)
+            }
+            ColorOrAuto::Auto => color.as_srgb_color(),
+            ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color).as_srgb_color(),
+        };
+        let mut rect = convert_rect(&cursor);
+        if matches!(shape, CaretShape::Block | CaretShape::Underscore)
+            && input_data.editor.raw_selection().is_collapsed()
+        {
+            let index = input_data.editor.raw_selection().focus().index();
+            let cluster = input_data
+                .editor
+                .try_layout()
+                .and_then(|layout| parley::Cluster::from_byte_index(layout, index))
+                .filter(|cluster| !cluster.is_hard_line_break());
+            let width = cluster.as_ref().map_or_else(
+                || self.context.dom.zero_advance(self.node.id) as f64 * self.scale,
+                |cluster| cluster.advance() as f64,
+            );
+            let rtl = cluster.as_ref().map_or_else(
+                || self.style.clone_direction() == style::computed_values::direction::T::Rtl,
+                |cluster| cluster.is_rtl(),
+            );
+            // (The bar's left edge is the caret position.)
+            let x = rect.x0;
+            let (x0, x1) = if rtl { (x - width, x) } else { (x, x + width) };
+            // (At whole device pixels, as a highlight's edges are.)
+            let (x0, x1) = (x0.round(), x1.round());
+            rect = match shape {
+                CaretShape::Block => Rect::new(x0, rect.y0, x1, rect.y1),
+                _ => {
+                    let thickness = ((self.context.dom.zero_advance(self.node.id) as f64 / 5.0).max(1.0)) * self.scale;
+                    Rect::new(x0, rect.y1 - thickness, x1, rect.y1)
+                }
+            };
+            if block
+                && let ColorOrAuto::Color(text) = &self.style.get_inherited_ui().caret_color.1
+            {
+                caret_text = Some(text.resolve_to_absolute(&color).as_srgb_color());
+            }
+        }
+
+        (rect, caret_color, caret_text)
     }
 
     fn draw_text_input_text(&self, scene: &mut impl PaintScene, pos: Point) {
         // Render the text in text inputs
         if let Some(input_data) = self.text_input {
+            if self.draw_vertical_text_input_text(scene, pos, input_data) {
+                return;
+            }
             // For single-line inputs, add an offset to vertically center the text input layout
             // within the content box of it's node.
             let y_offset = self.node.text_input_v_centering_offset(self.scale);
@@ -3719,6 +5142,8 @@ impl ElementCx<'_, '_> {
                 draw_text_context.line_tops = None;
             }
 
+            // pyro: the text a block caret covers, in `caret-color`'s second colour, and the block.
+            let mut caret_text: Option<(Color, Rect)> = None;
             if self.node.is_focussed() {
                 // Render selection/caret
                 // pyro: in the control's `::selection` colours (`control_selection_colors`).
@@ -3735,19 +5160,11 @@ impl ElementCx<'_, '_> {
                     );
                 }
                 if let Some(cursor) = input_data.editor.cursor_geometry(1.5) {
-                    let color = self.style.get_inherited_text().color;
-                    let caret_color = match &self.style.get_inherited_ui().caret_color.0 {
-                        ColorOrAuto::Auto => color,
-                        ColorOrAuto::Color(caret_color) => caret_color.resolve_to_absolute(&color),
-                    };
-
-                    scene.fill(
-                        Fill::NonZero,
-                        transform,
-                        caret_color.as_srgb_color(),
-                        None,
-                        &convert_rect(&cursor),
-                    );
+                    let (rect, caret_color, text) = self.control_caret(input_data, &cursor);
+                    if let Some(text) = text {
+                        caret_text = Some((text, rect));
+                    }
+                    scene.fill(Fill::NonZero, transform, caret_color, None, &rect);
                 };
             }
 
@@ -3807,7 +5224,7 @@ impl ElementCx<'_, '_> {
                 Some((ellipsis, text)) => {
                     let width = self.node.unrounded_layout().content_box_width() * self.scale as f32;
                     for line in layout.lines() {
-                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, layout.is_rtl(), false);
+                        let truncation = truncate_line(&line, ellipsis, width, self.scale as f32, layout.is_rtl(), false, 0.0);
                         draw_text_context.cut = truncation.map(|(cut, _)| cut);
                         crate::text::stroke_text(
                             scene,
@@ -3851,6 +5268,22 @@ impl ElementCx<'_, '_> {
                     inside.extend(rect.path_elements(0.1));
                 }
                 scene.push_clip_layer(Fill::NonZero, transform, &inside);
+                crate::text::stroke_text(
+                    scene,
+                    layout.lines(),
+                    self.context.dom,
+                    transform,
+                    TextPaintOptions { scale: self.scale, brush_override: Some(color), shadows: false },
+                    self.node.id,
+                    None,
+                    &mut draw_text_context,
+                    None,
+                    None,
+                );
+                scene.pop_layer();
+            }
+            if let Some((color, rect)) = caret_text {
+                scene.push_clip_layer(Fill::NonZero, transform, &rect);
                 crate::text::stroke_text(
                     scene,
                     layout.lines(),
@@ -3965,6 +5398,9 @@ impl ElementCx<'_, '_> {
                 self.draw_marker_image(scene, pos, *width, *height, layout);
                 return;
             }
+            if self.draw_combined_outside_marker(scene, pos, layout) {
+                return;
+            }
             let first_line = self
                 .element
                 .inline_layout_data
@@ -3997,7 +5433,7 @@ impl ElementCx<'_, '_> {
             };
 
             let pos = Point {
-                x: pos.x + (content_box_subpixel_offset.x + x_offset + line_x) as f64,
+                x: pos.x + (content_box_subpixel_offset.x + x_offset + line_x) as f64 + self.fractional_text_x_of_node() / self.scale,
                 y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
             };
 
@@ -4046,6 +5482,72 @@ impl ElementCx<'_, '_> {
                 }
             }
         }
+    }
+
+    /// pyro: an outside marker whose `::marker` style combines it (`text-combine-upright: all`) in
+    /// the item's vertical lines: upright in a box one em square (its text squeezed to fit, as
+    /// combined text is), before the start of the item's first line and its inline-start padding
+    /// and border, on the line's baseline (WPT css-pseudo `marker-text-combine-upright*`). `false`
+    /// when the marker is not such a one.
+    fn draw_combined_outside_marker(
+        &self,
+        scene: &mut impl PaintScene,
+        pos: Point,
+        layout: &parley::Layout<blitz_dom::node::TextBrush>,
+    ) -> bool {
+        use style::values::computed::TextCombineUpright;
+        let Some(block_lr) = self.node.vertical_block_axis() else { return false };
+        if self.style.writing_mode.is_sideways() {
+            return false;
+        }
+        let Some(style_node) = self.list_item.and_then(|item| item.style_node) else { return false };
+        let Some(marker_style) = self.context.dom.get_node(style_node).and_then(|node| node.primary_styles()) else {
+            return false;
+        };
+        if marker_style.get_inherited_text().text_combine_upright != TextCombineUpright::All {
+            return false;
+        }
+        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return false };
+        let Some(line) = text_layout.layout.lines().next() else { return false };
+        let Some(marker_line) = layout.lines().next() else { return false };
+        // In the item's line space (device px along the line, then across it).
+        let scale = f64::from(text_layout.layout.scale());
+        let em = f64::from(marker_style.get_font().font_size.used_size.0.px()) * scale;
+        let item = self.node.final_layout();
+        let inline_inset = f64::from(item.padding.top + item.border.top) * scale;
+        // As an inline-block of combined text on the line: one em tall, its text's line (the
+        // marker's) centred in it, on the line's baseline.
+        let metrics = line.metrics();
+        let marker_metrics = marker_line.metrics();
+        let marker_height = f64::from(marker_metrics.block_max_coord - marker_metrics.block_min_coord);
+        let marker_ascent = f64::from(marker_metrics.baseline - marker_metrics.block_min_coord);
+        let top = f64::from(metrics.baseline) - (em - marker_height) / 2.0 - marker_ascent;
+        let start = f64::from(marker_line_x(&line)) - inline_inset - em;
+        let in_line = Rect::new(start, top, start + em, top + em);
+        let line_transform = self.vertical_line_transform(text_layout, pos, block_lr)(0);
+        let local = (self.transform.inverse() * line_transform).transform_rect_bbox(in_line);
+        // The marker's text, upright, squeezed to the em and centred in the box.
+        // (With its trailing space: Blink's outside markers keep their white space.)
+        let width = f64::from(marker_metrics.advance.max(layout.full_width()));
+        let squeeze = if width > em { em / width } else { 1.0 };
+        let line_height = marker_height;
+        let x = local.x0 + (local.width() - width * squeeze) / 2.0;
+        let y = local.y0 + (local.height() - line_height) / 2.0 - f64::from(marker_metrics.block_min_coord);
+        let transform = self.transform * Affine::translate((x, y)) * Affine::scale_non_uniform(squeeze, 1.0);
+        let mut draw_text_context = self.context.draw_text_context.borrow_mut();
+        crate::text::stroke_text(
+            scene,
+            layout.lines(),
+            self.context.dom,
+            transform,
+            TextPaintOptions { scale: self.scale, brush_override: None, shadows: true },
+            self.node.id,
+            None,
+            &mut draw_text_context,
+            None,
+            None,
+        );
+        true
     }
 
     /// pyro: an outside `disc`, `circle` or `square` marker, as Chromium paints one: a shape
@@ -4108,25 +5610,42 @@ impl ElementCx<'_, '_> {
     fn marker_baseline(&self, marker_layout: &parley::Layout<blitz_dom::node::TextBrush>) -> (f32, f32) {
         let layout_scale = marker_layout.scale();
         let item_layout = self.node.final_layout();
-        // The first line, and its box's border box top from the item's.
-        let (mut node, mut top) = (self.node, 0.0);
+        // The first line, and its box's border box top from the item's: depth first, past boxes
+        // with no line (an empty block, or a spanner, before the first line: Chromium puts the
+        // marker on that line; WPT css-multicol `multicol-list-item-003`, `-008`).
         let mut first_line = None;
-        for _ in 0..8 {
-            let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
-            if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
-                first_line = Some((node, text, line));
-                break;
+        let mut top = 0.0;
+        {
+            let mut stack: Vec<(&Node, f32, usize)> = vec![(self.node, 0.0, 0)];
+            let mut visited = 0;
+            while let Some((node, node_top, depth)) = stack.pop() {
+                visited += 1;
+                if visited > 256 {
+                    break;
+                }
+                let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
+                if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
+                    first_line = Some((node, text, line));
+                    top = node_top;
+                    break;
+                }
+                if depth >= 8 {
+                    continue;
+                }
+                let children = node.layout_children.borrow();
+                let in_flow: Vec<&Node> = children
+                    .iter()
+                    .flatten()
+                    .filter_map(|id| self.context.dom.get_node(*id))
+                    .filter(|child| {
+                        child.final_layout().size.height > 0.0
+                            && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
+                    })
+                    .collect();
+                for child in in_flow.into_iter().rev() {
+                    stack.push((child, node_top + child.final_layout().location.y, depth + 1));
+                }
             }
-            let children = node.layout_children.borrow();
-            let child = children.as_ref().and_then(|children| {
-                children.iter().filter_map(|id| self.context.dom.get_node(*id)).find(|child| {
-                    child.final_layout().size.height > 0.0
-                        && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
-                })
-            });
-            let Some(child) = child else { break };
-            top += child.final_layout().location.y;
-            node = child;
         }
         match &first_line {
             Some((node, text, line)) => {
@@ -4198,9 +5717,37 @@ impl ElementCx<'_, '_> {
         let (baseline, line_x) = self.marker_baseline(marker_layout);
         let item_layout = self.node.final_layout();
         let subpixel = self.list_item.map_or(taffy::Point::ZERO, |item| item.content_box_subpixel_offset);
-        let x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
-            - f64::from(width + 7.0);
-        let y = pos.y + f64::from(subpixel.y + baseline - height);
+        // The room after the image (`ListItemLayout::image_gap`).
+        let gap = self.list_item.map_or(7.0, |item| item.image_gap);
+        let mut x = pos.x + (subpixel.x + line_x - item_layout.padding.left - item_layout.border.left) as f64
+            - f64::from(width + gap);
+        let mut y = pos.y + f64::from(subpixel.y + baseline - height);
+        // pyro: in a vertical writing mode the marker goes before the item's inline-start edge
+        // (its top, or its bottom where the inline axis runs upward), centred on its first line.
+        if let Some(block_lr) = self.node.vertical_block_axis() {
+            let content_width = f64::from(item_layout.content_box_width());
+            let content_height = f64::from(item_layout.content_box_height());
+            let center = self
+                .element
+                .inline_layout_data
+                .as_ref()
+                .and_then(|text| {
+                    let line = text.layout.lines().next()?;
+                    let metrics = line.metrics();
+                    Some(f64::from(text.block_offset) + f64::from(metrics.block_min_coord + metrics.block_max_coord) / 2.0 / f64::from(text.layout.scale()))
+                })
+                .unwrap_or(0.0);
+            // (The inline start is the bottom where the inline axis runs upward: `sideways-lr`, or
+            // right-to-left `vertical-*`.)
+            let start_at_bottom = !self.style.writing_mode.is_inline_tb();
+            let block = if block_lr { center } else { content_width - center };
+            x = pos.x + block - f64::from(width) / 2.0;
+            y = if start_at_bottom {
+                pos.y + content_height + f64::from(item_layout.padding.bottom + item_layout.border.bottom) + f64::from(gap)
+            } else {
+                pos.y - f64::from(item_layout.padding.top + item_layout.border.top + height + gap)
+            };
+        }
         let origin = Affine::translate(((x * self.scale).round(), (y * self.scale).round()));
         let Some(image) = image else {
             self.draw_marker_gradient(scene, origin, width, height);
@@ -4248,6 +5795,121 @@ impl ElementCx<'_, '_> {
         self.draw_children_above(scene, parent_style_transform, clip_rect);
     }
 
+    /// pyro: CSS 2.1 Appendix E paints a line's inline-level boxes in tree order: the background
+    /// and borders of an inline box that comes after an atomic inline (an inline-block, a form
+    /// control) go over it where they overlap (a label pulled back over its checkbox by a
+    /// negative margin). The inline content paints its boxes before the atomic inlines, which
+    /// paint after it (`FlowPhase::Foreground`): those later boxes are painted again over them,
+    /// clipped to where they meet.
+    fn draw_inline_boxes_over_atomics(&self, scene: &mut impl PaintScene, pos: Point) {
+        if !self.node.flags.is_inline_root() || !self.context.backgrounds {
+            return;
+        }
+        let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
+        // The atomic inlines of each line, in layout space. Most lines have none: nothing more
+        // is done for them.
+        let line_count = text_layout.layout.len();
+        let mut atomics: Vec<Vec<(NodeId, Rect)>> = Vec::new();
+        for (index, line) in text_layout.layout.lines().enumerate() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::InlineBox(ibox) = item
+                    && ibox.kind == parley::InlineBoxKind::InFlow
+                {
+                    let rect = Rect::new(
+                        ibox.x as f64,
+                        ibox.y as f64,
+                        (ibox.x + ibox.width) as f64,
+                        (ibox.y + ibox.height) as f64,
+                    );
+                    if atomics.is_empty() {
+                        atomics.resize_with(line_count.max(index + 1), Vec::new);
+                    }
+                    atomics[index].push((NodeId::from_u64(ibox.id), rect));
+                }
+            }
+        }
+        if atomics.is_empty() {
+            return;
+        }
+        // Tree order of the root's inline content, numbered once (no child list is searched per
+        // pair): an atomic inline comes before an inline box where its number is the smaller.
+        let order = inline_tree_order(self.context.dom, self.node.id);
+        // `vertical`: the lines run along the device y axis.
+        let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>, vertical: bool| {
+            let along = |rect: Rect| if vertical { (rect.y0, rect.y1) } else { (rect.x0, rect.x1) };
+            let across = |rect: Rect| if vertical { (rect.x0, rect.x1) } else { (rect.y0, rect.y1) };
+            // Per line with atomics: its fragments and its atomics as device boxes along and across
+            // the line with their tree order numbers, and which atomics before each fragment it
+            // meets (`reach::overlapping_atomics`: a sweep, output-sensitive on both axes).
+            let mut by_line: Vec<Vec<&InlineBoxFragment>> = Vec::new();
+            by_line.resize_with(atomics.len(), Vec::new);
+            for fragment in &fragments {
+                if atomics.get(fragment.line).is_some_and(|list| !list.is_empty()) && order.contains_key(&fragment.node) {
+                    by_line[fragment.line].push(fragment);
+                }
+            }
+            let item = |rect: Rect, rank: usize| {
+                let ((start, end), (cross_start, cross_end)) = (along(rect), across(rect));
+                crate::reach::ReachItem { start, end, cross_start, cross_end, rank }
+            };
+            for (line, line_fragments) in by_line.iter().enumerate() {
+                if line_fragments.is_empty() {
+                    continue;
+                }
+                let transform = line_transform(line);
+                let line_atomics: Vec<(crate::reach::ReachItem, Rect)> = atomics[line]
+                    .iter()
+                    .filter_map(|&(atomic, rect)| {
+                        let rect = transform.transform_rect_bbox(rect);
+                        Some((item(rect, *order.get(&atomic)?), rect))
+                    })
+                    .collect();
+                let rects: Vec<Rect> = line_fragments
+                    .iter()
+                    .map(|fragment| fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size)))
+                    .collect();
+                let boxes: Vec<crate::reach::ReachItem> =
+                    line_fragments.iter().zip(&rects).map(|(fragment, &rect)| item(rect, order[&fragment.node])).collect();
+                let atomic_items: Vec<crate::reach::ReachItem> = line_atomics.iter().map(|a| a.0).collect();
+                let (met, _) = crate::reach::overlapping_atomics(&atomic_items, &boxes);
+                // Each fragment over the atomics before it that it meets, in tree order, as the
+                // line paints them.
+                for ((fragment, fragment_rect), met) in line_fragments.iter().zip(&rects).zip(met) {
+                    for atomic in met {
+                        let meet = fragment_rect.intersect(line_atomics[atomic].1);
+                        if meet.width() <= 0.0 || meet.height() <= 0.0 {
+                            continue;
+                        }
+                        PaintScene::push_clip_layer(scene, Fill::NonZero, Affine::IDENTITY, &meet);
+                        match horizontal {
+                            Some((transform, tops)) => self.paint_inline_box_fragment(scene, fragment, transform, tops),
+                            None => self.paint_inline_box_fragment(scene, fragment, line_transform(fragment.line), None),
+                        }
+                        PaintScene::pop_layer(scene);
+                    }
+                }
+            }
+        };
+        if let Some(block_lr) = self.node.vertical_block_axis() {
+            if self.style.writing_mode.contains(WritingMode::WRITING_MODE_SIDEWAYS_LR) {
+                return;
+            }
+            let line_transform = self.vertical_line_transform(text_layout, pos, block_lr);
+            let fragments = self.inline_box_fragments(text_layout, Affine::IDENTITY, None, Some(&line_transform));
+            paint(scene, fragments, &line_transform, None, true);
+        } else {
+            let subpixel_offset = text_layout.content_box_subpixel_offset;
+            let pos = Point {
+                x: pos.x + subpixel_offset.x as f64,
+                y: pos.y + subpixel_offset.y as f64 + text_layout.block_offset as f64,
+            };
+            let transform = self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+            let (_, tops) = self.text_placement(text_layout.block_offset as f64);
+            let fragments = self.inline_box_fragments(text_layout, transform, tops, None);
+            paint(scene, fragments, &|_| transform, Some((transform, tops)), false);
+        }
+    }
+
     /// pyro: [`Self::draw_children`] without the stacking contexts of negative z-index.
     fn draw_children_above(
         &self,
@@ -4265,6 +5927,251 @@ impl ElementCx<'_, '_> {
         self.draw_pos_z_children(scene, parent_style_transform, clip_rect);
     }
 
+    /// pyro: see [`escapes_clip_of`].
+    fn escapes_own_clip(&self, child_id: NodeId) -> bool {
+        escapes_clip_of(self.context.dom.as_ref().tree(), self.clip_owner(), child_id)
+    }
+
+    /// pyro: see [`has_clip_escapes`].
+    fn has_clip_escapes(&self) -> bool {
+        has_clip_escapes_of(self.context.dom.as_ref().tree(), self.node, self.clip_owner())
+    }
+
+    /// pyro: the box whose clip this element applies: itself, or the box that handed it its clip
+    /// (`BlitzDomPainter::escape_owner`).
+    fn clip_owner(&self) -> NodeId {
+        match self.context.escape_owner.get() {
+            Some((node, owner)) if node == self.node.id => owner,
+            _ => self.node.id,
+        }
+    }
+
+    /// pyro: the paint child of this clipping box that takes its clip over
+    /// (`BlitzDomPainter::handed_clips`): a stacking context that does not clip itself and holds
+    /// boxes this box does not contain (their containing block lies outside it): they must escape
+    /// this box's clip inside the child's effect group, which a clip layer around the child would
+    /// hold them in (WPT css-color `clip-opacity-out-of-flow`).
+    fn clip_transfer_children(&self) -> std::rc::Rc<std::collections::HashSet<NodeId>> {
+        let tree = self.context.dom.as_ref().tree();
+        let owner = self.clip_owner();
+        // Whether `child`, a stacking context that does not clip, holds a box escaping `owner`'s
+        // clip, itself or in a stacking context of its own that does not clip either (nested effect
+        // groups: each hands the clip on), however deep: walked with a stack, each box once.
+        fn holds(cx: &ElementCx<'_, '_>, tree: &blitz_dom::NodeTree, owner: NodeId, child: &Node) -> bool {
+            let mut stack = vec![child.id];
+            let mut seen = std::collections::HashSet::new();
+            while let Some(id) = stack.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let Some(node) = tree.get(id) else { continue };
+                let Some(sc) = &node.stacking_context else { continue };
+                if node.primary_styles().is_none_or(|style| cx.context.should_clip_node(node, &style)) {
+                    continue;
+                }
+                let hoisted = sc.pos_z_hoisted_children().chain(sc.neg_z_hoisted_children()).map(|c| c.node_id);
+                let own: Vec<NodeId> = node.paint_children.borrow().iter().flatten().copied().chain(hoisted).collect();
+                if own.iter().any(|&id| escapes_clip_of(tree, owner, id)) {
+                    return true;
+                }
+                stack.extend(own);
+            }
+            false
+        }
+        let children = self.node.paint_children.borrow().clone().unwrap_or_default();
+        std::rc::Rc::new(children.into_iter().filter(|&id| holds(self, tree, owner, &tree[id])).collect())
+    }
+
+    /// pyro: whether `child_id`, one of this element's `paint_children`, paints at the positioned
+    /// level: positioned, or a stacking context (CSS 2.1 Appendix E step 8).
+    fn is_positioned_level(&self, child_id: NodeId) -> bool {
+        let tree = self.context.dom.as_ref().tree();
+        let Some(child) = tree.get(child_id) else { return false };
+        child.element_data().is_some()
+            && (child.primary_styles().is_some_and(|style| style.clone_position() != style::computed_values::position::T::Static)
+                || child.is_stacking_context_root(false))
+    }
+
+    /// pyro: whether this element's outline goes before its positioned-level children and those
+    /// with a positive `z-index` (it has a drawn outline and such children; not a multi-column
+    /// container, which paints them in its columns).
+    fn defers_positioned(&self) -> bool {
+        if self.outline_line().is_none() || self.node.column_fragments().is_some() || self.node.vertical_column_fragments().is_some() {
+            return false;
+        }
+        self.node.stacking_context.as_ref().is_some_and(|sc| sc.pos_z_hoisted_children().len() > 0)
+            || self.node.paint_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().any(|&id| self.is_positioned_level(id))
+            })
+    }
+
+    /// pyro: whether this element paints children at the positioned level or with a positive
+    /// `z-index` (`draw_inline_boxes_over_atomics` would paint over them).
+    fn has_positioned_level_children(&self) -> bool {
+        self.node.stacking_context.as_ref().is_some_and(|sc| sc.pos_z_hoisted_children().len() > 0)
+            || self.node.paint_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().any(|&id| self.is_positioned_level(id))
+            })
+    }
+
+    /// pyro: whether `child_id` is left for after this element's outline (`defers_positioned`).
+    fn skips_positioned(&self, child_id: NodeId) -> bool {
+        self.context.positioned_after_outline_of.get() == Some(self.node.id) && self.is_positioned_level(child_id)
+    }
+
+    /// pyro: the children [`Self::skips_positioned`] left out, after the outline: the positioned
+    /// level in tree order, then those with a positive `z-index`; each in this element's clip
+    /// (`clip`, when `should_clip`) unless its containing block lies outside it.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_positioned_after_outline(
+        &self,
+        scene: &mut impl PaintScene,
+        transform: Affine,
+        should_clip: bool,
+        clip: &kurbo::BezPath,
+        outer_clip_rect: Rect,
+        clip_rect: Rect,
+    ) {
+        let positioned: Vec<NodeId> = self
+            .node
+            .paint_children
+            .borrow()
+            .as_ref()
+            .map(|children| children.iter().copied().filter(|&id| self.is_positioned_level(id)).collect())
+            .unwrap_or_default();
+        let layers = &self.context.layer_manager;
+        for id in positioned {
+            let clipped = should_clip && !self.escapes_own_clip(id);
+            layers.maybe_with_layer(scene, clipped, BlendMode::default(), 1.0, self.transform, clip, None, None, |scene| {
+                self.draw_paint_child(scene, id, transform, child_clip_rect_for(clipped, outer_clip_rect, clip_rect));
+            });
+        }
+        if let Some(sc) = &self.node.stacking_context {
+            for child in sc.pos_z_hoisted_children() {
+                let clipped = should_clip && !self.escapes_own_clip(child.node_id);
+                layers.maybe_with_layer(scene, clipped, BlendMode::default(), 1.0, self.transform, clip, None, None, |scene| {
+                    self.draw_hoisted_children(scene, std::iter::once(child), transform, child_clip_rect_for(clipped, outer_clip_rect, clip_rect));
+                });
+            }
+        }
+    }
+
+    /// pyro: the multi-column container (horizontal, no transform between) below this element
+    /// that `child_id`, which this element paints, is in: the container, its border box's offset
+    /// from this element's (CSS px), and the child's border box range in its strip (its overflow
+    /// below included).
+    fn multicol_between(&self, child_id: NodeId) -> Option<(NodeId, Vec2, f32, f32)> {
+        let (container, origin, top, bottom) = self.node.multicol_between(child_id)?;
+        Some((container, Vec2::new(origin.x as f64, origin.y as f64), top, bottom))
+    }
+
+    /// pyro: the background and borders of `child_id`'s fragment in a column with strip range
+    /// `start..end` of multi-column container `container` (`transform`: the column's), where the
+    /// child is of `box-decoration-break: clone` and a break goes through it there: its border box
+    /// as far as the column shows it, its block-start border and padding repeated above where it is
+    /// cut at the column's start and its block-end ones below where it is cut at its end (the
+    /// column's content is moved down for the first: `Breaks::clones`). Nothing for any other box.
+    /// `after`: the pass after the child's own painting, for borders repeated inside its slice
+    /// (its background there is its own); the one before paints those repeated outside it, with
+    /// the background they enclose.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_clone_fragment(&self, scene: &mut impl PaintScene, container: NodeId, child_id: NodeId, start: f32, end: f32, transform: Affine, after: bool) {
+        let tree = self.context.dom.as_ref().tree();
+        let child = &tree[child_id];
+        let Some(style) = child.primary_styles() else { return };
+        let clone = style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone;
+        // (Of `box-sizing: border-box`, its repeated borders take its content's room, inside the
+        // slice: `Breaks::clones`.)
+        // (So are a nested multi-column container's: its rows leave room for them.)
+        let border_box = style.get_position().box_sizing == style::computed_values::box_sizing::T::BorderBox
+            || child.column_fragments().is_some_and(|columns| columns.nested.is_some());
+        drop(style);
+        let layout = *child.final_layout();
+        // (Not one whose content overflows it: `Breaks::clones`.)
+        if !clone || child.element_data().is_none() || layout.scrollable_overflow_rect.bottom() > layout.size.height + 0.01 {
+            return;
+        }
+        let mut origin = Vec2::new(layout.location.x as f64, layout.location.y as f64);
+        let mut at = child.layout_parent.get();
+        let mut steps = 0;
+        while let Some(parent) = at.filter(|&p| p != container) {
+            steps += 1;
+            if steps > 64 {
+                return;
+            }
+            let location = tree[parent].final_layout().location;
+            origin += Vec2::new(location.x as f64, location.y as f64);
+            at = tree[parent].layout_parent.get();
+        }
+        if at.is_none() {
+            return;
+        }
+        let (top, bottom) = (origin.y as f32, origin.y as f32 + layout.size.height);
+        // (Its border box, not what overflows it, is in the column and a break goes through it.)
+        let (cut_start, cut_end) = (top < start - 0.01, bottom > end + 0.01);
+        if (!cut_start && !cut_end) || bottom <= start + 0.01 || top >= end - 0.01 {
+            return;
+        }
+        let (above, below) = if border_box {
+            (0.0, 0.0)
+        } else {
+            (layout.border.top + layout.padding.top, layout.border.bottom + layout.padding.bottom)
+        };
+        let from = if cut_start { start - above } else { top };
+        let to = if cut_end { end + below } else { bottom };
+        let mut piece = layout;
+        piece.size.height = (to - from).max(0.0);
+        let box_transform = transform.pre_translate(Vec2::new(origin.x * self.scale, from as f64 * self.scale));
+        let cx = self.context.element_cx(child, piece, box_transform, None);
+        if after != border_box {
+            return;
+        }
+        if !border_box {
+            cx.draw_background(scene);
+        }
+        cx.draw_border(scene);
+    }
+
+    /// pyro: how a column with strip range `start..end` of multi-column container `container`
+    /// shares the border box of its paint child `child_id` (see `PaintContext::column_range`).
+    fn column_share(&self, container: NodeId, child_id: NodeId, start: f32, end: f32) -> ColumnShare {
+        let tree = self.context.dom.as_ref().tree();
+        let child = &tree[child_id];
+        let vertical = tree[container].vertical_column_fragments().is_some();
+        let layout = |id: NodeId| if vertical { tree[id].unrounded_layout() } else { tree[id].final_layout() };
+        let size = layout(child_id).size;
+        let mut top = layout(child_id).location.y;
+        let mut at = child.layout_parent.get();
+        let mut steps = 0;
+        while let Some(parent) = at.filter(|&p| p != container) {
+            steps += 1;
+            if steps > 64 {
+                return ColumnShare::Cut;
+            }
+            top += layout(parent).location.y;
+            at = tree[parent].layout_parent.get();
+        }
+        if at.is_none() {
+            return ColumnShare::Cut;
+        }
+        // (What overflows it below counts: it goes on in the columns after.)
+        let overflow = layout(child_id).scrollable_overflow_rect.bottom().abs();
+        // (A nested multi-column container may show content in any later column: its spanners'
+        // overflow is not in its overflow rectangle.)
+        let bottom = if child.column_fragments().is_some() { f32::INFINITY } else { top + size.height.max(overflow) };
+        const EPS: f32 = 0.01;
+        if top >= start - EPS && top < end - EPS {
+            // (Starts in the column.)
+            ColumnShare::Inside
+        } else if top < start - EPS && bottom > start + EPS {
+            ColumnShare::Cut
+        } else if top < start - EPS && size.height <= EPS && start.is_infinite() {
+            ColumnShare::Inside
+        } else {
+            ColumnShare::Outside
+        }
+    }
+
     /// pyro: whether `child_id` is left out of this pass of a multi-column container's children
     /// (`PaintContext::multicol_pass`).
     fn multicol_skips(&self, child_id: NodeId) -> bool {
@@ -4279,6 +6186,10 @@ impl ElementCx<'_, '_> {
         // Its containing block is the container itself, not a positioned (or transformed,
         // contained) inline or box between them, which is fragmented with the columns.
         let mut unfragmented = child.is_out_of_flow() && child.containing_block() == Some(container);
+        // pyro: a fieldset's rendered legend is over its border, in no column.
+        if self.context.dom.as_ref().fieldset_rendered_legend(container) == Some(child_id) {
+            return !only_unfragmented;
+        }
         let mut ancestor = child.parent;
         while unfragmented && let Some(id) = ancestor.filter(|&id| id != container) {
             let node = &tree[id];
@@ -4306,20 +6217,242 @@ impl ElementCx<'_, '_> {
         parent_style_transform: Affine,
         clip_rect: Rect,
     ) {
+        // pyro: this element clips its children each (`BlitzDomPainter::handed_clips`): the child
+        // that takes its clip over gets it, the others are drawn in it.
+        let per_child = self
+            .context
+            .handed_clips
+            .borrow()
+            .clone()
+            .filter(|(parent, _, _, _)| *parent == self.node.id);
+        if let Some((_, transfer, device_clip, outer_rect)) = per_child {
+            // (A box escaping the clip, which a stacking context handed it holds, is drawn outside it.)
+            if escapes_clip_of(self.context.dom.as_ref().tree(), self.clip_owner(), child_id) {
+                self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, outer_rect);
+                return;
+            }
+            if transfer.contains(&child_id) {
+                *self.context.handed_clip.borrow_mut() = Some((self.node.id, device_clip));
+                self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, outer_rect);
+                // (Not left for another element when this one painted nothing.)
+                self.context.handed_clip.borrow_mut().take();
+            } else {
+                scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &device_clip);
+                self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, clip_rect);
+                scene.pop_layer();
+            }
+            return;
+        }
+        self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, clip_rect);
+    }
+
+    fn draw_paint_child_unclipped(
+        &self,
+        scene: &mut impl PaintScene,
+        child_id: NodeId,
+        parent_style_transform: Affine,
+        clip_rect: Rect,
+    ) {
+        // pyro: an inline (not atomic, not listed for its own content) that keeps out-of-flow boxes
+        // in its stacking context stands for them here (blitz-dom
+        // `restore_out_of_flow_stacking_owners`): they paint at this positioned level, placed as this
+        // element's hoisted children are, in a group with its opacity and filter that is their
+        // backdrop root (its own fragments paint with its inline root's content).
+        if let Some(child) = self.context.dom.get_node(child_id)
+            && !child.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY)
+            && child.primary_styles().is_some_and(|style| style.clone_display().is_inline_flow())
+            && clip_path::owns_hoisted(self.context.dom.as_ref(), child_id)
+        {
+            let owned = clip_path::owned_hoisted(self.context.dom.as_ref(), child_id);
+            let style = child.primary_styles().unwrap();
+            let opacity = style.get_effects().opacity;
+            let filter = convert_filters(&style.get_effects().filter.0, self.scale, &style.clone_color(), self.context.dom)
+                .map(Arc::new);
+            drop(style);
+            let viewport = Rect::new(0.0, 0.0, self.context.width as f64, self.context.height as f64);
+            let grouped = opacity < 1.0 || filter.is_some();
+            if grouped {
+                scene.push_layer(Fill::NonZero, BlendMode::default(), opacity, Affine::IDENTITY, &viewport, filter, None);
+            }
+            scene.push_layer(
+                Fill::NonZero,
+                BlendMode::default(),
+                1.0,
+                Affine::IDENTITY,
+                &viewport,
+                Some(crate::layers::backdrop_root_marker()),
+                None,
+            );
+            self.with_inline_clip_path(scene, child_id, |scene| {
+                self.draw_hoisted_children(scene, owned.iter(), parent_style_transform, clip_rect);
+            });
+            scene.pop_layer();
+            if grouped {
+                scene.pop_layer();
+            }
+            return;
+        }
         // Fixed-position children of the root element are positioned against
         // the viewport and do not scroll with it, so cancel out the viewport
         // scroll (applied in `paint_scene`). A fixed box contained by a
         // transformed ancestor scrolls with it like any out-of-flow box.
         // pyro: so does one lifted here from a containing block that is no
         // layer root (a `backdrop-filter` box): it is placed by its offset.
-        if self.multicol_skips(child_id) {
+        if self.multicol_skips(child_id) || self.skips_positioned(child_id) {
+            return;
+        }
+        // pyro: a box this element paints from inside a multi-column container below it (a
+        // stacking context hoisted here, past the container's columns) is painted in each column
+        // it is in, moved and clipped as the column's own content (Chromium; WPT css-multicol
+        // `ancestor-toggle-spanner-002`).
+        if !self.context.hoisted_in_column.get()
+            && let Some((container, origin, child_top, child_bottom)) = self.multicol_between(child_id)
+            && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
+            && columns.fragments.len() > 1
+        {
+            let scale = self.scale;
+            self.context.hoisted_in_column.set(true);
+            // (The columns its range reaches, not spanners' rows: `ColumnFragments::hoisted_columns`.)
+            for fragment in columns.hoisted_columns(child_top, child_bottom) {
+                let range = Rect::new(
+                    -1e7,
+                    ((origin.y + fragment.start as f64) * scale).max(-1e7),
+                    1e7,
+                    ((origin.y + fragment.end as f64) * scale).min(1e7),
+                );
+                let offset = Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale);
+                let moved = parent_style_transform.pre_translate(offset);
+                let pushed = self.context.layer_manager.maybe_push_layer(
+                    scene,
+                    true,
+                    peniko::BlendMode::default(),
+                    1.0,
+                    moved,
+                    &range,
+                    None,
+                    None,
+                );
+                self.draw_paint_child(scene, child_id, moved, clip_rect);
+                self.context.layer_manager.maybe_pop_layer(scene, pushed);
+            }
+            self.context.hoisted_in_column.set(false);
+            return;
+        }
+        // pyro: in a column painted without a block-axis clip (`PaintContext::column_range`), a
+        // child of the container that starts in the column is cut at its end only (what
+        // overflows it above shows, as in Chromium; what runs past its end goes on in the next
+        // column), one that runs in from an earlier column is cut at both edges, and one wholly
+        // in another column is left to it.
+        if let Some((container, start, end, transform, outer_range)) = self.context.column_range.get()
+            && let Some((columns, axes)) = self.context.dom.get_node(container).and_then(|host| host.columns_with_axes())
+            && (container == self.node.id || columns.run_wrappers.contains(&self.node.id))
+            && !columns.run_wrappers.contains(&child_id)
+        {
+            // (A positioned inline box listed in the paint tree paints its lines from the entries
+            // its root recorded, each clipped to its column (`inline_pass_entries`): once, not
+            // sorted by its box: WPT css-position `position-absolute-in-inline-007a`.)
+            // (One whose root is below the container records its entry in each column, without a
+            // range: it is painted in each column, cut at both edges, whatever its box's place:
+            // WPT css-break `out-of-flow-in-multicolumn-048`, `-089`.)
+            let inline_entry = self
+                .context
+                .dom
+                .get_node(child_id)
+                .is_some_and(|node| node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY));
+            // (One with no entries paints its box and what it keeps itself: once, unsorted, as
+            // the out-of-flow boxes it keeps are placed in the columns themselves: WPT css-break
+            // `out-of-flow-in-multicolumn-089`.)
+            let (ranged, unranged) = match self.context.inline_pass_entries.borrow().get(&child_id) {
+                Some(entries) if inline_entry => (entries.iter().any(|entry| entry.3.is_some()), entries.iter().all(|entry| entry.3.is_none())),
+                _ => (inline_entry, false),
+            };
+            if ranged && !unranged {
+                self.context.column_range.set(None);
+                self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                self.context.column_range.set(Some((container, start, end, transform, outer_range)));
+                return;
+            }
+            let range = outer_range;
+            let Some(effective_start) = columns.child_start(child_id, start) else { return };
+            let share = if unranged { ColumnShare::Cut } else { self.column_share(container, child_id, effective_start, end) };
+            match share {
+                ColumnShare::Outside => return,
+                ColumnShare::Inside | ColumnShare::Cut => {
+                    // pyro: a box of `box-decoration-break: clone` a break goes through has its
+                    // fragment's background and borders, all four, here (under its content).
+                    self.draw_clone_fragment(scene, container, child_id, start, end, transform, false);
+                    let range = match share {
+                        ColumnShare::Inside => {
+                            let device_axes = Affine::scale(self.scale) * axes;
+                            let mut logical = device_axes.inverse().transform_rect_bbox(range);
+                            logical.y0 = -1e9;
+                            device_axes.transform_rect_bbox(logical)
+                        }
+                        _ => range,
+                    };
+                    let pushed = self.context.layer_manager.maybe_push_layer(
+                        scene,
+                        true,
+                        peniko::BlendMode::default(),
+                        1.0,
+                        transform,
+                        &range,
+                        None,
+                        None,
+                    );
+                    // (Its own descendants are not sorted again.)
+                    self.context.column_range.set(None);
+                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                    self.context.column_range.set(Some((container, start, end, transform, outer_range)));
+                    self.context.layer_manager.maybe_pop_layer(scene, pushed);
+                    // (Repeated borders inside the slice go over its own painting.)
+                    self.draw_clone_fragment(scene, container, child_id, start, end, transform, true);
+                    return;
+                }
+            }
+        }
+        // pyro: a spanner's row paints that spanner alone, whole (`spanner_row_spanner`), and the
+        // boxes it is in (their own boxes left out: `spanner_row_container`).
+        if let (Some(container), Some(spanner)) =
+            (self.context.spanner_row_container.get(), self.context.spanner_row_spanner.get())
+        {
+            let dom = self.context.dom.as_ref();
+            if child_id == spanner {
+                self.context.spanner_row_container.set(None);
+                self.context.spanner_row_spanner.set(None);
+                self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                self.context.spanner_row_container.set(Some(container));
+                self.context.spanner_row_spanner.set(Some(spanner));
+                return;
+            }
+            let mut at = dom.tree()[spanner].layout_parent.get();
+            let mut on_path = false;
+            while let Some(node) = at.filter(|&n| n != container) {
+                if node == child_id {
+                    on_path = true;
+                    break;
+                }
+                at = dom.tree()[node].layout_parent.get();
+            }
+            if !on_path {
+                return;
+            }
+        }
+        if self.context.spanner_row_except.get() == Some(child_id) {
+            return;
+        }
+        // pyro: a column spanner is painted in its own row, not in a column that reaches it (its
+        // outline over the row's edge would show in the column before it).
+        if let Some(container) = self.context.column_pass_container.get()
+            && self.context.dom.as_ref().is_column_spanner_of(container, child_id)
+        {
             return;
         }
         let child = &self.context.dom.as_ref().tree()[child_id];
         // pyro: an atomic inline box in a positioned inline box this inline root left to its paint-tree
         // entry paints there, with the box's content (`draw_inline_pass_entry`).
         if self.context.inline_entry_owner(child, self.node.id).is_some_and(|span| {
-            self.context.inline_pass_entries.borrow().get(&span).is_some_and(|entry| entry.0 == self.node.id)
+            self.context.inline_pass_entries.borrow().get(&span).is_some_and(|entries| entries.iter().any(|entry| entry.0 == self.node.id))
         }) {
             return;
         }
@@ -4331,9 +6464,11 @@ impl ElementCx<'_, '_> {
             parent_style_transform.pre_translate(kurbo::Vec2 { x: sticky.x as f64 * self.scale, y: sticky.y as f64 * self.scale })
         };
         let lifted = child.lifted_paint_offset(self.node.id);
+        // (pyro: not when the root is the fixed box's containing block itself: `root_contains_fixed`.)
         let child_transform = if child.taffy_position() == taffy::Position::Fixed
             && Some(self.node.id) == self.context.root_element_id
             && lifted.is_none()
+            && !self.node.root_contains_fixed()
         {
             let scroll = self.context.dom.as_ref().viewport_scroll();
             parent_style_transform.pre_translate(kurbo::Vec2 {
@@ -4410,6 +6545,27 @@ impl ElementCx<'_, '_> {
         table_cx.draw_table_borders(scene);
     }
 
+    /// pyro: whether `child` is a scroll container painted in this box's phases, clipped and
+    /// scrolled (`Node::scroller_paints_in_ancestor_phases`): only one whose paint children are
+    /// all in-flow boxes (a float or positioned box needs its layer).
+    fn scroller_in_phases(&self, child: &Node) -> bool {
+        child.scroller_paints_in_ancestor_phases()
+            && child.paint_children.borrow().as_ref().is_some_and(|children| {
+                let tree = self.context.dom.as_ref().tree();
+                children.iter().all(|&id| self.paint_level(&tree[id]) == 0)
+            })
+    }
+
+    /// pyro: whether `child` is a flex or grid container painted in this box's phases
+    /// (`Node::items_paint_in_ancestor_phases`), its paint children all in-flow items.
+    fn items_in_phases(&self, child: &Node) -> bool {
+        // (Shared with hit testing; a box in the top layer is painted there, not as an item.)
+        child.items_in_phases()
+            && child.paint_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().all(|&id| !self.context.dom.is_in_top_layer(id))
+            })
+    }
+
     fn paint_level(&self, child: &Node) -> u8 {
         let Some(style) = child.primary_styles() else {
             return 0;
@@ -4440,12 +6596,57 @@ impl ElementCx<'_, '_> {
         content_position: Point,
     ) {
         self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
-        self.draw_flow_children(
-            scene,
-            parent_style_transform,
-            clip_rect,
-            FlowPhase::Background,
-        );
+        let mut background = Scene::new();
+        let outer_corner = self.context.phased_corner.replace(None);
+        self.draw_flow_children(&mut background, parent_style_transform, clip_rect, FlowPhase::Background);
+        if let Some(owner) = self.context.phased_corner.replace(None) {
+            let mut between = Scene::new();
+            let mut foreground = Scene::new();
+            self.draw_between_flow_phases(&mut between, parent_style_transform, clip_rect, content_position);
+            let outer_outlines = self.context.deferred_outlines.replace(false);
+            self.draw_flow_children(&mut foreground, parent_style_transform, clip_rect, FlowPhase::Foreground);
+            use anyrender::recording::RenderCommand;
+            let edge = match (background.commands.first(), background.commands.last(), foreground.commands.first()) {
+                (Some(RenderCommand::PushClipLayer(first)), Some(RenderCommand::PopLayer), Some(RenderCommand::PushClipLayer(second))) if first == second => Some(first.transform.transform_rect_bbox(first.clip.bounding_box()).inflate(1.0, 1.0)),
+                _ => None,
+            };
+            let single_group = |commands: &[RenderCommand]| {
+                let mut depth = 0;
+                matches!(commands.last(), Some(RenderCommand::PopLayer)) && commands[..commands.len()-1].iter().all(|command| {
+                    match command {
+                        RenderCommand::PushClipLayer(_) | RenderCommand::PushLayer(_) => depth += 1,
+                        RenderCommand::PopLayer => depth -= 1,
+                        _ => {}
+                    }
+                    depth > 0
+                })
+            };
+            let local_paint = |commands: &[RenderCommand]| commands.iter().all(|command| !matches!(command, RenderCommand::PushLayer(layer) if layer.filter.is_some() || layer.backdrop_filter.is_some() || layer.blend != BlendMode::default()));
+            if self.context.phased_corner.get() == Some(owner) && single_group(&background.commands) && single_group(&foreground.commands)
+                && local_paint(&background.commands) && local_paint(&between.commands) && local_paint(&foreground.commands)
+                && edge.is_some_and(|edge| crate::bounds::scene_bounds(&between.commands).is_none_or(|bounds| edge.intersect(bounds).area() == 0.0)) {
+                background.commands.pop();
+                background.commands.extend(foreground.commands.into_iter().skip(1));
+                scene.append_scene(background, Affine::IDENTITY);
+                scene.append_scene(between, Affine::IDENTITY);
+            } else {
+                scene.append_scene(background, Affine::IDENTITY);
+                scene.append_scene(between, Affine::IDENTITY);
+                scene.append_scene(foreground, Affine::IDENTITY);
+            }
+            self.draw_after_flow_foreground(scene, parent_style_transform, clip_rect, content_position, outer_outlines);
+            self.context.phased_corner.set(outer_corner);
+            return;
+        }
+        scene.append_scene(background, Affine::IDENTITY);
+        self.draw_between_flow_phases(scene, parent_style_transform, clip_rect, content_position);
+        let outer_outlines = self.context.deferred_outlines.replace(false);
+        self.draw_flow_children(scene, parent_style_transform, clip_rect, FlowPhase::Foreground);
+        self.draw_after_flow_foreground(scene, parent_style_transform, clip_rect, content_position, outer_outlines);
+        self.context.phased_corner.set(outer_corner);
+    }
+
+    fn draw_between_flow_phases(&self, scene: &mut impl PaintScene, parent_style_transform: Affine, clip_rect: Rect, content_position: Point) {
         // pyro: a collapsed table's borders, over the backgrounds of the blocks in its cells
         // (Blink paints them after its descendants' block backgrounds), under their floats and
         // inline content.
@@ -4455,6 +6656,18 @@ impl ElementCx<'_, '_> {
         {
             self.draw_table_borders(scene);
         }
+        // pyro: a `line-clamp` container's floats are clipped at its block-end content edge, not
+        // at its other edges (CSS Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-*`).
+        let clamp_clip = {
+            let clamp = &self.style.get_box().line_clamp;
+            (!clamp.webkit_legacy && !clamp.max_lines.is_none()).then(|| {
+                const FAR: f64 = 1e7;
+                Rect::new(-FAR, -FAR, FAR, self.frame.content_box.y1)
+            })
+        };
+        if let Some(rect) = &clamp_clip {
+            scene.push_clip_layer(Fill::NonZero, self.transform, rect);
+        }
         if let Some(children) = &*self.node.paint_children.borrow() {
             let tree = self.context.dom.as_ref().tree();
             for &child_id in children {
@@ -4463,15 +6676,19 @@ impl ElementCx<'_, '_> {
                 }
             }
         }
+        if clamp_clip.is_some() {
+            scene.pop_layer();
+        }
         self.draw_marker(scene, content_position);
         self.draw_inline_layout(scene, content_position);
-        let outer_outlines = self.context.deferred_outlines.replace(false);
-        self.draw_flow_children(
-            scene,
-            parent_style_transform,
-            clip_rect,
-            FlowPhase::Foreground,
-        );
+    }
+
+    fn draw_after_flow_foreground(&self, scene: &mut impl PaintScene, parent_style_transform: Affine, clip_rect: Rect, content_position: Point, outer_outlines: bool) {
+        let clamp_clip = {
+            let clamp = &self.style.get_box().line_clamp;
+            (!clamp.webkit_legacy && !clamp.max_lines.is_none()).then(|| Rect::new(-1e7, -1e7, 1e7, self.frame.content_box.y1))
+        };
+        self.draw_inline_boxes_over_atomics(scene, content_position);
         if self.context.deferred_outlines.get() {
             self.draw_flow_children(scene, parent_style_transform, clip_rect, FlowPhase::Outline);
         }
@@ -4480,7 +6697,20 @@ impl ElementCx<'_, '_> {
             let tree = self.context.dom.as_ref().tree();
             for &child_id in children {
                 if self.paint_level(&tree[child_id]) == 2 {
+                    // pyro: a float painted here (positioned, a stacking context) is clipped as
+                    // the others are (WPT css-overflow `line-clamp-with-floats-008`, `-009`).
+                    let clip = clamp_clip.filter(|_| {
+                        tree[child_id]
+                            .primary_styles()
+                            .is_some_and(|style| style.clone_float() != style::computed_values::float::T::None)
+                    });
+                    if let Some(rect) = &clip {
+                        scene.push_clip_layer(Fill::NonZero, self.transform, rect);
+                    }
                     self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
+                    if clip.is_some() {
+                        scene.pop_layer();
+                    }
                 }
             }
         }
@@ -4508,7 +6738,12 @@ impl ElementCx<'_, '_> {
             if self.paint_level(child) != 0 {
                 continue;
             }
-            let child_phase = if child.paints_in_ancestor_phases() || child.paints_in_table_phases() {
+            let child_phase = if child.paints_in_ancestor_phases()
+                || child.paints_in_table_phases()
+                || block_level_frame_in_phases(child)
+                || self.scroller_in_phases(child)
+                || self.items_in_phases(child)
+            {
                 phase
             } else if phase == FlowPhase::Outline {
                 // (A box painted whole paints its outline with it.)
@@ -4536,6 +6771,20 @@ impl ElementCx<'_, '_> {
         position: taffy::Point<f32>,
         parent_style_transform: Affine,
     ) -> Vec<(NodeId, Affine, kurbo::BezPath)> {
+        self.hoisted_child_clips_to(hoisted_child, position, parent_style_transform, false)
+    }
+
+    /// pyro: [`Self::hoisted_child_clips`]; `in_columns`: the child is painted in each column of a
+    /// multi-column container below (`multicol_between`), at its strip position: the clips of the
+    /// boxes between it and that container (in its strip, moved with each column by
+    /// `parent_style_transform`), where the walk otherwise gives none.
+    fn hoisted_child_clips_to(
+        &self,
+        hoisted_child: &blitz_dom::HoistedPaintChild,
+        position: taffy::Point<f32>,
+        parent_style_transform: Affine,
+        in_columns: bool,
+    ) -> Vec<(NodeId, Affine, kurbo::BezPath)> {
         let tree = self.node.tree();
         let mut clips: Vec<(NodeId, Affine, kurbo::BezPath)> = Vec::new();
         let mut between = (0.0f32, 0.0f32);
@@ -4548,6 +6797,10 @@ impl ElementCx<'_, '_> {
             let Some(node) = tree.get(id) else { break };
             // (Out of a multi-column container's strip the walk is not a sum of offsets.)
             if node.column_fragments().is_some() {
+                if in_columns {
+                    clips.reverse();
+                    return clips;
+                }
                 break;
             }
             let location = node.final_layout().location;
@@ -4562,11 +6815,16 @@ impl ElementCx<'_, '_> {
                     f64::from(position.y - between.1 + location.y) * self.scale,
                 );
                 let frame = create_css_rect(&styles, node.final_layout(), self.scale);
-                let clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
+                let mut clip = if node.element_data().is_some_and(|el| el.text_input_data().is_some()) {
                     frame.text_input_clip_path()
                 } else {
                     box_shadow::overflow_clip_path(&frame, &styles, self.scale)
                 };
+                // pyro: a fieldset's clip leaves its rendered legend out (`overflow_clip_path`).
+                if let Some(legend) = self.context.fieldset_legend_rect(id) {
+                    use kurbo::Shape as _;
+                    clip.extend(legend.scale_from_origin(self.scale).path_elements(0.1));
+                }
                 clips.push((id, parent_style_transform.pre_translate(origin), clip));
             }
             current = node.containing_block();
@@ -4619,11 +6877,72 @@ impl ElementCx<'_, '_> {
             });
             let pos = kurbo::Vec2 { x: position.x as f64 * self.scale, y: position.y as f64 * self.scale };
             let transform = parent_style_transform.pre_translate(pos);
+            // pyro: a stacking context hoisted here out of a multi-column container below this
+            // element is painted in each column it is in, moved and clipped as the column's own
+            // content (Chromium; WPT css-multicol `ancestor-toggle-spanner-002`).
+            if clips.is_empty()
+                && let Some((container, origin, child_top, child_bottom)) = self.multicol_between(hoisted_child.node_id)
+                && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
+                && columns.fragments.len() > 1
+            {
+                for &(_, _, pushed) in open.iter().rev() {
+                    self.context.layer_manager.maybe_pop_layer(scene, pushed);
+                }
+                open.clear();
+                let scale = self.scale;
+                // (At its place in the strip, which each column moves: not in the column it starts in.)
+                let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id, container);
+                let child_node = &self.node.tree()[hoisted_child.node_id];
+                let pos = kurbo::Vec2 { x: (strip.x + sticky.x) as f64 * self.scale, y: (strip.y + sticky.y) as f64 * self.scale };
+                // (The columns its range reaches, not spanners' rows: as hit testing finds it.)
+                for fragment in columns.hoisted_columns(child_top, child_bottom) {
+                    let range = Rect::new(
+                        -1e7,
+                        ((origin.y + fragment.start as f64) * scale).max(-1e7),
+                        1e7,
+                        ((origin.y + fragment.end as f64) * scale).min(1e7),
+                    );
+                    // (Its border box where Chromium snaps it: the column's exact edge plus its own
+                    // unrounded place, rounded; not the rounded column edge plus its rounded place,
+                    // which takes a box flush with the last column's end past the container's:
+                    // WPT css-multicol `multicol-gap-fraction-002`.)
+                    let exact = if fragment.exact_x.is_finite() { fragment.exact_x - fragment.x } else { 0.0 };
+                    let unrounded = child_node.unrounded_layout().location.x as f64;
+                    let rounded = child_node.final_layout().location.x as f64;
+                    let along = strip.x as f64 + sticky.x as f64;
+                    let x = (((fragment.offset.x + exact) as f64 + along + unrounded) * scale).round() - (along + rounded) * scale;
+                    let offset = Vec2::new(x, fragment.offset.y as f64 * scale);
+                    let moved = parent_style_transform.pre_translate(offset);
+                    let pushed =
+                        self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, moved, &range, None, None);
+                    // pyro: inside the clips of the boxes between it and the container, moved with
+                    // the column as they are (an `overflow: clip` box broken across the columns:
+                    // painted unclipped, it showed where hit testing, as Chromium, finds nothing).
+                    let strip_at = taffy::Point { x: strip.x + sticky.x, y: strip.y + sticky.y };
+                    let column_clips = self.hoisted_child_clips_to(hoisted_child, strip_at, moved, true);
+                    let clip_layers: Vec<_> = column_clips
+                        .iter()
+                        .map(|(_, clip_transform, clip)| {
+                            self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, *clip_transform, clip, None, None)
+                        })
+                        .collect();
+                    self.render_node(scene, hoisted_child.node_id, moved.pre_translate(pos), clip_rect);
+                    for pushed in clip_layers.into_iter().rev() {
+                        self.context.layer_manager.maybe_pop_layer(scene, pushed);
+                    }
+                    self.context.layer_manager.maybe_pop_layer(scene, pushed);
+                }
+                continue;
+            }
             let mut recorded = None;
             let mut needed = vec![true; clips.len()];
             if let Some(device) = device.filter(|_| !clips.is_empty()) {
                 let mut child = Scene::new();
-                self.render_node(&mut child, hoisted_child.node_id, transform, child_clip_rect);
+                if let Some(budget) = self.capture_budget {
+                    if !budget.take(1) { return; }
+                    self.render_node(&mut crate::capture::Recording(&mut child, budget), hoisted_child.node_id, transform, child_clip_rect);
+                    if budget.exhausted.get() { return; }
+                } else { self.render_node(&mut child, hoisted_child.node_id, transform, child_clip_rect); }
                 if !child.commands.iter().any(reads_backdrop) {
                     match crate::bounds::scene_bounds(&child.commands) {
                         // All of them, or none: a box one clip cuts is painted in all of its clips, as
@@ -4702,7 +7021,7 @@ impl ElementCx<'_, '_> {
                 at = node.parent;
             }
             if root == Some(self.node.id) {
-                self.context.inline_pass_entries.borrow_mut().insert(child.node_id, (self.node.id, self.transform, pos));
+                self.context.inline_pass_entries.borrow_mut().insert(child.node_id, vec![(self.node.id, self.transform, pos, None)]);
             }
         }
     }
@@ -4713,6 +7032,10 @@ impl ElementCx<'_, '_> {
         parent_style_transform: Affine,
         clip_rect: Rect,
     ) {
+        // (pyro: before the clip when some escape it: `neg_z_outside_clip_of`.)
+        if self.context.neg_z_outside_clip_of.get() == Some(self.node.id) {
+            return;
+        }
         if let Some(hoisted) = &self.node.stacking_context {
             self.draw_hoisted_children(scene, hoisted.neg_z_hoisted_children(), parent_style_transform, clip_rect);
         }
@@ -4725,6 +7048,10 @@ impl ElementCx<'_, '_> {
         clip_rect: Rect,
     ) {
         // Positive z_index hoisted nodes
+        // (pyro: after the outline when it defers them: `defers_positioned`.)
+        if self.context.positioned_after_outline_of.get() == Some(self.node.id) {
+            return;
+        }
         if let Some(hoisted) = &self.node.stacking_context {
             self.draw_hoisted_children(scene, hoisted.pos_z_hoisted_children(), parent_style_transform, clip_rect);
         }
@@ -4761,6 +7088,23 @@ impl ElementCx<'_, '_> {
         let clip_rect = Rect::new(-1e9, -1e9, 1e9, 1e9);
         let pb = (layout.padding + layout.border).map(f64::from);
         let content_position = Point { x: pb.left * scale, y: pb.top * scale };
+        // pyro: its `backdrop-filter`, over its box (the capture and the draw markers
+        // `render_element` pushes; anyrender_vello_cpu `backdrop`): WPT filter-effects
+        // `backdrop-filter-svg-foreignObject`.
+        let backdrop = convert_filters(
+            &cx.style.get_effects().backdrop_filter.0,
+            scale,
+            &cx.style.clone_color(),
+            self.context.dom,
+        )
+        .map(Arc::new);
+        if let Some(backdrop) = backdrop {
+            let border_box = Rect::new(0.0, 0.0, width * scale, height * scale).to_path(0.1);
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 0.0, transform, &border_box, None, Some(backdrop.clone()));
+            scene.pop_layer();
+            scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, transform, &border_box, None, Some(backdrop));
+            scene.pop_layer();
+        }
         if cx.style.get_inherited_box().visibility == StyloVisibility::Visible {
             cx.draw_background(scene);
             cx.draw_border(scene);
@@ -4773,6 +7117,9 @@ impl ElementCx<'_, '_> {
             cx.draw_neg_z_children(scene, transform, clip_rect);
             cx.draw_inline_layout(scene, content_position);
             cx.draw_children_above(scene, transform, clip_rect);
+            if !cx.has_positioned_level_children() {
+                cx.draw_inline_boxes_over_atomics(scene, content_position);
+            }
         }
         if clips {
             scene.pop_layer();
@@ -4814,6 +7161,16 @@ impl ElementCx<'_, '_> {
 
         let Some(svg) = self.svg else {
             return;
+        };
+        // pyro: its `prefers-color-scheme` blocks and `light-dark()` colours follow this element's
+        // used colour scheme (blitz-dom `SvgImageData::for_color_scheme`).
+        let schemed;
+        let svg = match svg.for_color_scheme(self.dark_color_scheme()) {
+            Some(dark) => {
+                schemed = dark;
+                &schemed
+            }
+            None => svg,
         };
         // pyro: an SVG image with a `<foreignObject>` drawn as a document (blitz-dom
         // `svg_image_documents`), when it is drawn at the size the document is laid out at.
@@ -4960,6 +7317,7 @@ impl ElementCx<'_, '_> {
         // show in the rest of the box (Chromium draws the image into that rect, clipped). A
         // second cut, only where the content reaches past a rect that leaves some of the box.
         let mut object_clip = None;
+        let mut margin_clip: Option<kurbo::BezPath> = None;
         let (visible_x, visible_y) = {
             let b = self.style.get_box();
             (matches!(b.overflow_x, Overflow::Visible), matches!(b.overflow_y, Overflow::Visible))
@@ -4987,6 +7345,16 @@ impl ElementCx<'_, '_> {
             if reaches_past(ink(), object) {
                 object_clip = Some(object);
             }
+            ReplacedClip::Never
+        } else if inline && !document_root && {
+            use style::values::generics::box_::OverflowClipMarginBox;
+            let margin = &self.style.get_margin().overflow_clip_margin;
+            margin.offset.px() != 0.0 || margin.visual_box != OverflowClipMarginBox::ContentBox
+        } {
+            // pyro: an inline `<svg>` whose author moved its `overflow-clip-margin` off the UA
+            // sheet's `content-box` is cut there (Chromium applies the margin to a replaced
+            // element that `overflow: hidden` clips; WPT css-overflow `overflow-clip-margin-svg`).
+            margin_clip = Some(box_shadow::margin_clip_path(&self.frame, &self.style, self.scale, true, true));
             ReplacedClip::Never
         } else {
             let content = self.frame.content_box;
@@ -5023,6 +7391,9 @@ impl ElementCx<'_, '_> {
                 let isolate = !inline && anyrender_svg::has_blend_modes(&svg.tree);
                 if let Some(object) = object_clip {
                     scene.push_clip_layer(Fill::NonZero, self.transform, &object);
+                }
+                if let Some(clip) = &margin_clip {
+                    scene.push_clip_layer(Fill::NonZero, self.transform, clip);
                 }
                 if isolate {
                     scene.push_layer(
@@ -5068,6 +7439,9 @@ impl ElementCx<'_, '_> {
                 if isolate {
                     scene.pop_layer();
                 }
+                if margin_clip.is_some() {
+                    scene.pop_layer();
+                }
                 if object_clip.is_some() {
                     scene.pop_layer();
                 }
@@ -5110,10 +7484,21 @@ impl ElementCx<'_, '_> {
         let b = (self.frame.border_width, self.frame.padding_width);
         let inset = b.0.x0 + b.1.x0 != 0.0 || b.0.y0 + b.1.y0 != 0.0 || b.0.x1 + b.1.x1 != 0.0 || b.0.y1 + b.1.y1 != 0.0;
         let rounded_content = inset && self.content_edge_is_rounded();
+        // pyro: a raster image the element's own layer clips already (`should_clip_node`), at a
+        // padding box that is its content box: cut once, not twice (two antialiased cuts along
+        // a rounded edge cover its pixels as the square of one; WPT css-overflow
+        // `overflow-img-display-table`).
+        let p = self.frame.padding_width;
+        let clipped_by_element = self.element.raster_image_data().is_some()
+            && !replaced_overflow_is_visible(self.element, &self.style)
+            && p.x0 == 0.0
+            && p.y0 == 0.0
+            && p.x1 == 0.0
+            && p.y1 == 0.0;
         let push = match clip {
             ReplacedClip::Never => false,
             ReplacedClip::Always => true,
-            ReplacedClip::Fit => overflows || rounded_content,
+            ReplacedClip::Fit => (overflows || rounded_content) && !clipped_by_element,
         };
         self.context.layer_manager.maybe_with_layer(
             scene,
@@ -5191,6 +7576,17 @@ impl ElementCx<'_, '_> {
         }
         let rect = self.frame.content_box;
         scene.fill(Fill::NonZero, self.transform, tint, None, &rect);
+    }
+
+    /// pyro: the filters of this element's `content` when it is one `filter()` image whose
+    /// image the element shows (`ElementData::content_image`).
+    fn content_image_filter(&self) -> Option<Arc<anyrender::Filter>> {
+        use style::values::computed::{Content, ContentItem};
+        use style::values::generics::image::GenericImage;
+        self.element.content_image.as_ref()?;
+        let Content::Items(items) = &self.style.get_counters().content else { return None };
+        let [ContentItem::Image(image @ GenericImage::Filter(_))] = &items.items[..] else { return None };
+        crate::filters::image_filter(image, self.scale, &self.style.clone_color(), self.context.dom).1
     }
 
     fn draw_image(&self, scene: &mut impl PaintScene) {
@@ -5341,7 +7737,8 @@ impl ElementCx<'_, '_> {
             // content box.
             let origin = self.frame.content_box.origin();
             let transform = self.transform * Affine::translate((origin.x, origin.y));
-            let painter = BlitzDomPainter::new(
+            if self.capture_budget.is_some_and(|budget| !budget.take(1)) { return; }
+            let mut painter = BlitzDomPainter::new(
                 &sub_doc,
                 scale,
                 width,
@@ -5351,7 +7748,11 @@ impl ElementCx<'_, '_> {
                 self.custom_widget_scenes,
             );
             let mut recording = anyrender::recording::Scene::new();
-            painter.paint_scene(&mut recording);
+            if let Some(budget) = self.capture_budget {
+                painter.capture_budget = Some(budget);
+                painter.paint_scene(&mut crate::capture::Recording(&mut recording, budget));
+                if budget.exhausted.get() { return; }
+            } else { painter.paint_scene(&mut recording); }
             let clip = Rect::new(0.0, 0.0, width as f64, height as f64);
             scene.push_clip_layer(Fill::NonZero, transform, &clip);
             scene.append_scene(recording, transform);
@@ -5382,6 +7783,24 @@ impl<'dom, 'a> std::ops::Deref for ElementCx<'dom, 'a> {
     fn deref(&self) -> &Self::Target {
         self.context
     }
+}
+
+/// pyro: whether `node` is a block-level frame (an element showing a document: an `<iframe>`, or an
+/// `<object>`/`<embed>` given one) of the normal flow that makes no layer of its own, painted in
+/// its painter's phases: its background and borders with the other block backgrounds (CSS 2.1
+/// Appendix E step 4), its document with the inline content (step 7: "if the element is a
+/// block-level replaced element, then: the replaced content, atomically"), so a later block's
+/// background that overlaps it goes under its content (WPT css/CSS2/normal-flow
+/// `cross-domain-iframe-paint-order`). It was painted whole with the backgrounds.
+fn block_level_frame_in_phases(node: &blitz_dom::Node) -> bool {
+    node.element_data().is_some_and(|element| element.sub_doc_data().is_some())
+        && !node.is_inline_level()
+        && !node.is_stacking_context_root(false)
+        && node.primary_styles().is_some_and(|style| {
+            // (Its own overflow clip is the frame's, around its document only.)
+            style.clone_float() == style::values::computed::Float::None
+                && style.clone_position() == style::computed_values::position::T::Static
+        })
 }
 
 /// pyro: whether a recorded command is a layer that reads what lies under it as drawn so far: a
@@ -5456,8 +7875,27 @@ fn create_css_rect_with_corners(style: &ComputedValues, layout: &Layout, scale: 
                 .flags
                 .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
     };
+    // pyro: a menu list of native appearance (the UA sheet's `-moz-default-appearance: menulist`;
+    // not `menulist-button`, drawn with its own CSS border, nor `none`), no author or user border or
+    // background, has Chromium's themed field's 2px corners (WPT css-ui
+    // `appearance-menulist-button-002`: menulist-button is not an alias of auto).
+    let native_menulist = {
+        use style::computed_values::appearance::T as Appearance;
+        let box_style = style.get_box();
+        *box_style.get__moz_default_appearance() == Appearance::Menulist
+            && !matches!(*box_style.get_appearance(), Appearance::None | Appearance::MenulistButton)
+            && !style
+                .flags
+                .contains(style::computed_value_flags::ComputedValueFlags::HAS_AUTHOR_OR_USER_SPECIFIED_BORDER_BACKGROUND)
+    };
     let native = |radius: Vec2| {
-        if native_button && radius == Vec2::ZERO && !border_shape { Vec2::new(scale, scale) } else { radius }
+        if native_button && radius == Vec2::ZERO && !border_shape {
+            Vec2::new(scale, scale)
+        } else if native_menulist && radius == Vec2::ZERO && !border_shape {
+            Vec2::new(2.0 * scale, 2.0 * scale)
+        } else {
+            radius
+        }
     };
     let kept = |keep: bool, radius: Vec2| if keep { native(radius) } else { Vec2::ZERO };
     let border_radii = NonUniformRoundedRectRadii {
@@ -5494,6 +7932,8 @@ struct ElementPaint<'n> {
     is_text_input: bool,
     content_position: Point,
     child_clip_rect: Rect,
+    /// pyro: what the element's ancestors leave visible (its own clip not applied).
+    clip_rect: Rect,
 }
 
 /// pyro: an element's opacity and filter layer ([`BlitzDomPainter::paint_effect_group`]).
@@ -5634,4 +8074,138 @@ fn blend_with_white(color: Color) -> Color {
     }
     let clamp = |v: i32| v.clamp(0, 255) as u8;
     Color::from_rgba8(clamp(out.0), clamp(out.1), clamp(out.2), out.3)
+}
+
+/// pyro: whether `a` comes before `b` in tree order and is not inside it (an inline box paints
+/// before its own content).
+/// pyro: the tree order (pre-order numbers) of the nodes of the inline root `root`'s inline
+/// content: its DOM descendants through inline boxes (and `display: contents`), not descending
+/// into atomic inlines or anything else laid out apart, which are numbered themselves. Nodes not in its child lists (pseudo-elements) are not numbered.
+fn inline_tree_order(doc: &BaseDocument, root: NodeId) -> HashMap<NodeId, usize> {
+    let mut order = HashMap::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        order.insert(id, order.len());
+        let Some(node) = doc.get_node(id) else { continue };
+        if id != root {
+            let Some(style) = node.primary_styles() else { continue };
+            let display = style.get_box().display;
+            let inline_box = display.outside() == style::values::specified::box_::DisplayOutside::Inline
+                && display.inside() == style::values::specified::box_::DisplayInside::Flow;
+            if !(inline_box || display.is_contents()) {
+                continue;
+            }
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    order
+}
+
+/// pyro: a classic scrollbar's colours: Chrome's defaults, or `scrollbar-color`'s (the arrows
+/// in the thumb colour, the corner in the track colour).
+#[derive(Clone, Copy)]
+pub(crate) struct ClassicScrollbarColors {
+    track: Color,
+    thumb: Color,
+    arrow: Color,
+    corner: Color,
+}
+
+impl ClassicScrollbarColors {
+    pub(crate) fn of(node: &Node) -> Self {
+        match node.scrollbar_color() {
+            blitz_dom::node::ScrollbarColor::Auto => Self {
+                track: CLASSIC_SCROLLBAR_TRACK,
+                thumb: CLASSIC_SCROLLBAR_THUMB,
+                arrow: CLASSIC_SCROLLBAR_ARROW,
+                corner: CLASSIC_SCROLLBAR_CORNER,
+            },
+            blitz_dom::node::ScrollbarColor::Colors { thumb, track } => {
+                let (thumb, track) = (thumb.as_srgb_color(), track.as_srgb_color());
+                Self { track, thumb, arrow: thumb, corner: track }
+            }
+        }
+    }
+}
+
+/// pyro: classic scrollbar colours (Chrome's on Linux: `NativeThemeBase`).
+const CLASSIC_SCROLLBAR_TRACK: Color = Color::from_rgba8(0xf1, 0xf1, 0xf1, 0xff);
+const CLASSIC_SCROLLBAR_THUMB: Color = Color::from_rgba8(0xc1, 0xc1, 0xc1, 0xff);
+const CLASSIC_SCROLLBAR_ARROW: Color = Color::from_rgba8(0x50, 0x50, 0x50, 0xff);
+const CLASSIC_SCROLLBAR_CORNER: Color = Color::from_rgba8(0xdc, 0xdc, 0xdc, 0xff);
+
+/// pyro: paints a classic scrollbar over `track` (scene px under `transform`): the track, an arrow
+/// button at each end (as long as the bar is thick) and the thumb, whose length is the track's
+/// (between the buttons) times `client / scroll` (CSS px: the scrollport's and the content's
+/// length) and whose start follows `offset` (the scroll offset) over the scroll range.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_classic_scrollbar(
+    scene: &mut impl PaintScene,
+    colors: ClassicScrollbarColors,
+    transform: Affine,
+    track: Rect,
+    vertical: bool,
+    client: f64,
+    scroll: f64,
+    offset: f64,
+    scale: f64,
+) {
+    if track.width() <= 0.0 || track.height() <= 0.0 {
+        return;
+    }
+    scene.fill(Fill::NonZero, transform, colors.track, None, &track);
+    let (thickness, length) = if vertical { (track.width(), track.height()) } else { (track.height(), track.width()) };
+    // The buttons are as long as the bar is thick, while two of them fit.
+    let button = if length >= 2.0 * thickness { thickness } else { 0.0 };
+    if button > 0.0 {
+        for start in [true, false] {
+            let (cx, cy) = if vertical {
+                (track.center().x, if start { track.y0 + button / 2.0 } else { track.y1 - button / 2.0 })
+            } else {
+                (if start { track.x0 + button / 2.0 } else { track.x1 - button / 2.0 }, track.center().y)
+            };
+            let r = (thickness * 0.2).max(scale);
+            let dir = if start { -1.0 } else { 1.0 };
+            let mut arrow = kurbo::BezPath::new();
+            if vertical {
+                arrow.move_to((cx, cy + dir * r * 0.6));
+                arrow.line_to((cx - r, cy - dir * r * 0.4));
+                arrow.line_to((cx + r, cy - dir * r * 0.4));
+            } else {
+                arrow.move_to((cx + dir * r * 0.6, cy));
+                arrow.line_to((cx - dir * r * 0.4, cy - r));
+                arrow.line_to((cx - dir * r * 0.4, cy + r));
+            }
+            arrow.close_path();
+            scene.fill(Fill::NonZero, transform, colors.arrow, None, &arrow);
+        }
+    }
+    let room = length - 2.0 * button;
+    if scroll <= client + 0.5 || room <= 0.0 || client <= 0.0 {
+        return;
+    }
+    let min_thumb = thickness.min(room);
+    let thumb_len = (room * client / scroll).clamp(min_thumb, room);
+    let range = scroll - client;
+    let progress = (offset / range).clamp(0.0, 1.0);
+    // Whole device pixels, as Chrome paints its scrollbar parts.
+    let thumb_len = thumb_len.round();
+    let start = (button + progress * (room - thumb_len)).round();
+    let inset = (2.0 * scale).min(thickness / 4.0);
+    let thumb = if vertical {
+        Rect::new(track.x0 + inset, track.y0 + start, track.x1 - inset, track.y0 + start + thumb_len)
+    } else {
+        Rect::new(track.x0 + start, track.y0 + inset, track.x0 + start + thumb_len, track.y1 - inset)
+    };
+    scene.fill(Fill::NonZero, transform, colors.thumb, None, &thumb);
+}
+
+/// pyro: whether `style` draws an outline (a width and a style other than `none`).
+fn has_visible_outline(style: &ComputedValues) -> bool {
+    use style::values::computed::OutlineStyle;
+    let outline = style.get_outline();
+    match outline.outline_style {
+        OutlineStyle::Auto => true,
+        OutlineStyle::BorderStyle(border) => !border.none_or_hidden() && outline.outline_width.0.to_f64_px() > 0.0,
+    }
 }

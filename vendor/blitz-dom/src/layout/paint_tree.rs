@@ -35,6 +35,17 @@ use taffy::{Point, Rect};
 /// hoisted by Taffy, otherwise `layout_parent`, which is set for every layout
 /// child by `resolve_layout_children`, anonymous blocks included).
 pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId) -> Point<f32> {
+    hoisted_child_offset(tree, sc_root_id, child_id, None)
+}
+
+/// pyro: [`hoisted_child_position`] in the strip of the multi-column container `container` the
+/// child is in (`Node::multicol_between`), not moved into the column its place is in: paint shows
+/// it in each column it is in, moved as the column's content, and hit testing finds it there.
+pub fn hoisted_child_strip_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, container: NodeId) -> Point<f32> {
+    hoisted_child_offset(tree, sc_root_id, child_id, Some(container))
+}
+
+fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, in_strip_of: Option<NodeId>) -> Point<f32> {
     let child = &tree[child_id];
     let mut position = Point::ZERO;
     let mut current = child.containing_block();
@@ -46,6 +57,7 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
     if child.taffy_position() == taffy::Position::Fixed
         && let Some(cb) = current.and_then(|id| tree.get(id))
         && cb.is_root_element()
+        && !cb.root_contains_fixed()
     {
         let scroll_offset = *cb.scroll_offset();
         let viewport_scroll = tree.viewport_scroll();
@@ -63,7 +75,7 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
             break;
         };
         // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
-        if let Some(columns) = node.column_fragments() {
+        if let Some(columns) = node.column_fragments().filter(|_| in_strip_of != Some(id)) {
             // A relatively positioned box is in the column of its place in the flow, moved from
             // there (Blink): a box moved up over a column break stays in the column after it.
             let own = child.final_layout().location;
@@ -96,7 +108,7 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
             position.y -= location.y - scroll.y as f32;
             let cb = node.containing_block();
             if node.taffy_position() == taffy::Position::Fixed
-                && cb.and_then(|id| tree.get(id)).is_some_and(|n| n.is_root_element())
+                && cb.and_then(|id| tree.get(id)).is_some_and(|n| n.is_root_element() && !n.root_contains_fixed())
             {
                 let root_scroll = tree[cb.unwrap()].scroll_offset();
                 let viewport_scroll = tree.viewport_scroll();
@@ -211,12 +223,24 @@ impl StackingContext {
             }
             let left = position.x + location.x;
             let top = position.y + location.y;
-            Some(Rect {
+            let mut rect = Rect {
                 left: left + (overflow.x0 / scale) as f32,
                 top: top + (overflow.y0 / scale) as f32,
                 right: left + (overflow.x1 / scale) as f32,
                 bottom: top + (overflow.y1 / scale) as f32,
-            })
+            };
+            // pyro: one shown in each column of a multi-column container below (`multicol_between`)
+            // lies anywhere in its columns.
+            if let Some((container, origin, _, _)) = tree.get(sc_root_id).and_then(|root| root.multicol_between(child.node_id))
+                && let Some(columns) = tree.get(container)
+            {
+                let o = *columns.scrollable_overflow();
+                rect.left = rect.left.min(origin.x + (o.x0 / scale) as f32);
+                rect.top = rect.top.min(origin.y + (o.y0 / scale) as f32);
+                rect.right = rect.right.max(origin.x + (o.x1 / scale) as f32);
+                rect.bottom = rect.bottom.max(origin.y + (o.y1 / scale) as f32);
+            }
+            Some(rect)
         };
 
         // Children dropped by a DOM mutation since the last `resolve` yield
@@ -256,6 +280,12 @@ impl StackingContext {
         &self,
     ) -> impl ExactSizeIterator<Item = &HoistedPaintChild> + DoubleEndedIterator {
         self.children[self.pos_z_range()].iter()
+    }
+
+    /// pyro: the out-of-flow boxes without a `z-index` painted at this context's positioned level
+    /// (see the field), in tree order.
+    pub fn positioned_level(&self) -> impl ExactSizeIterator<Item = &HoistedPaintChild> + DoubleEndedIterator {
+        self.positioned_level.iter()
     }
 }
 
@@ -362,14 +392,194 @@ impl BaseDocument {
             }
             root_id
         };
+        // pyro: the nearest ancestor of `node` (itself included) before its stacking context that
+        // clips with the CSS `clip` property, which clips all its descendants (CSS Masking 1 § 5.1),
+        // a fixed one whose containing block lies outside it too: such a descendant paints in it
+        // (WPT css-masking `clip-fixed-pos-transform-descendant-001`).
+        // pyro: and the nearest that clips its overflow (an `overflow` other than `visible`, as the
+        // painter clips it), whose clip applies to a descendant only when it is in the descendant's
+        // containing-block chain (Chromium): such a descendant paints in it, among its positioned
+        // children, its clip escaped (WPT filter-effects `backdrop-filter-fixed-clip`).
+        let clip_owner_of = |doc: &Self, mut node: Option<NodeId>| {
+            while let Some(id) = node {
+                let n = &doc.nodes[id];
+                if n.stacking_context.is_some() { return None; }
+                if n.primary_styles().is_some_and(|style| {
+                    (matches!(style.clone_position(), Position::Absolute | Position::Fixed)
+                        && matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_)))
+                        // (A scroller too: the painter does not cull one with boxes escaping it,
+                        // which lie wherever their containing block puts them; WPT css-position
+                        // `position-sticky-escape-scroller-002`.)
+                        || (!matches!(style.get_box().overflow_x, style::values::computed::Overflow::Visible)
+                            || !matches!(style.get_box().overflow_y, style::values::computed::Overflow::Visible))
+                            && !n.is_root_element()
+                            && !doc.body_overflow_goes_to_viewport(id)
+                            && n.element_data().is_some_and(|e| e.image_data().is_none() && e.sub_doc_data().is_none())
+                }) {
+                    return Some(id);
+                }
+                node = crate::layout::scroll_markers::box_parent(&doc.nodes, id);
+            }
+            None
+        };
+        // pyro: the positioned boxes of normal paint level (and stacking contexts of z-index 0 or
+        // auto) a clip owner `owner` holds deeper than its own paint children, nested in its other
+        // boxes but in no stacking context of their own: once a box escaping `owner`'s clip paints
+        // among `owner`'s positioned children, these go there too, in tree order, so the escaping
+        // box keeps its place among them (CSS 2.1 Appendix E: they are all of one positioned level).
+        fn nested_positioned(doc: &BaseDocument, owner: NodeId, id: NodeId, out: &mut Vec<NodeId>) {
+            let children = doc.nodes[id].paint_children.borrow().clone().unwrap_or_default();
+            for child in children {
+                let node = &doc.nodes[child];
+                let positioned = node.primary_styles().is_some_and(|s| s.clone_position() != Position::Static);
+                let context = node.stacking_context.is_some();
+                if id != owner && (positioned || context) && node.z_index() == 0 {
+                    out.push(child);
+                }
+                if !context {
+                    nested_positioned(doc, owner, child, out);
+                }
+            }
+        }
+        // Whether the clip owner `owner` clips with the CSS `clip` property, which clips all its
+        // descendants: a box escaping its containing block's clips still paints in it.
+        let clips_all = |doc: &Self, owner: NodeId| {
+            doc.nodes[owner].primary_styles().is_some_and(|style| {
+                matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_))
+            })
+        };
+        // Whether the clip owner `owner` paints a positioned box (or a stacking context of z-index 0
+        // or auto) itself, one its clip applies to: not one hoisted past it ([`nested_positioned`]).
+        let holds_positioned = |doc: &Self, owner: NodeId| {
+            let mut nested = Vec::new();
+            nested_positioned(doc, owner, owner, &mut nested);
+            let own = doc.nodes[owner].paint_children.borrow().iter().flatten().any(|&child| {
+                let node = &doc.nodes[child];
+                node.z_index() == 0
+                    && (node.stacking_context.is_some()
+                        || node.primary_styles().is_some_and(|s| s.clone_position() != Position::Static))
+            });
+            own || !nested.is_empty()
+        };
+        // Whether `ancestor` is `id` or one of its containing blocks.
+        let contains = |doc: &Self, ancestor: NodeId, mut id: Option<NodeId>| {
+            while let Some(current) = id {
+                if current == ancestor { return true; }
+                id = doc.nodes[current].containing_block();
+            }
+            false
+        };
         self.oof_hoisted.retain(|id| self.nodes.get(*id).is_some_and(|n| n.oof_containing_block.get().is_some()));
+        // pyro: the inline element (not atomic) around `id` that forms a stacking context, with no
+        // box between them: its out-of-flow descendants paint in it (an inline stacking context
+        // keeps them, its effects and clip over them, as Chromium paints it; WPT css-will-change
+        // `will-change-stacking-context-opacity-2`, filter-effects
+        // `backdrop-filter-backdrop-root-clip-path-2`), with its fragments (blitz-paint
+        // `draw_inline_effects`).
+        let inline_owner_of = |doc: &Self, id: NodeId| {
+            let mut current = doc.nodes[id].parent;
+            while let Some(parent) = current {
+                let node = &doc.nodes[parent];
+                let style = node.primary_styles()?;
+                if !style.clone_display().is_inline_flow() || node.flags.is_inline_root() {
+                    return None;
+                }
+                // (By what applies to an inline box: not a transform, `perspective` or 3D property,
+                // which an inline that is not atomic is not transformable for; WPT css-transforms
+                // `perspective-untransformable-no-stacking-context`.)
+                let box_style = style.get_box();
+                let untransformable = box_style.transform.0.is_empty()
+                    && matches!(box_style.rotate, style::values::computed::Rotate::None)
+                    && matches!(box_style.scale, style::values::computed::Scale::None)
+                    && matches!(box_style.translate, style::values::computed::Translate::None)
+                    && matches!(box_style.perspective, style::values::generics::box_::GenericPerspective::None)
+                    && box_style.transform_style != style::computed_values::transform_style::T::Preserve3d
+                    && box_style.backface_visibility != style::computed_values::backface_visibility::T::Hidden;
+                if node.is_stacking_context_root(false)
+                    && (untransformable
+                        || style.clone_opacity() != 1.0
+                        || node.applies_atomic_paint_effect()
+                        || matches!(style.clone_position(), Position::Fixed | Position::Sticky)
+                        || (style.clone_position() != Position::Static && !style.clone_z_index().is_auto()))
+                {
+                    return Some(parent);
+                }
+                current = node.parent;
+            }
+            None
+        };
+        // (By box: one lookup each, however many boxes and owners there are.)
+        let inline_owners: std::collections::HashMap<NodeId, NodeId> = self
+            .oof_hoisted
+            .iter()
+            .filter(|&&id| self.nodes.get(id).is_some_and(|n| n.flags.is_in_document()))
+            .filter_map(|&id| Some((id, inline_owner_of(self, id)?)))
+            .collect();
+        // (Each owner once, in tree slot order, for the entries below.)
+        let mut owners: Vec<NodeId> = inline_owners.values().copied().collect();
+        owners.sort_unstable_by_key(|id| id.as_u64() as u32);
+        owners.dedup();
+        for &owner in &owners {
+            if self.nodes[owner].stacking_context.is_none() {
+                self.nodes[owner].stacking_context = Some(Box::new(StackingContext::from_children(ThinVec::new())));
+            }
+        }
+        let mut clip_owners: Vec<NodeId> = Vec::new();
+        let mut clip_owner_set: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
         let mut moves: Vec<_> = self.oof_hoisted.iter().filter_map(|&id| {
+            if let Some(&owner) = inline_owners.get(&id) {
+                return Some((id, owner));
+            }
             let node = &self.nodes[id];
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;
-            let target = context_of(self, crate::layout::scroll_markers::box_parent(&self.nodes, id));
+            let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, id);
+            // (Only an owner that paints positioned boxes itself, or clips all it holds (`clip`): the escaping box keeps its place
+            // among them there. With none, it keeps its place among its stacking context's
+            // positioned boxes, which come before and after the owner in tree order; WPT css/CSS2
+            // `abspos/static-inside-inline-001`.)
+            if node.z_index() == 0
+                && let Some(owner) = clip_owner_of(self, box_parent)
+                && !contains(self, owner, Some(cb))
+                && (clips_all(self, owner) || holds_positioned(self, owner))
+            {
+                if clip_owner_set.insert(owner) {
+                    clip_owners.push(owner);
+                }
+                return Some((id, owner));
+            }
+            let target = context_of(self, box_parent);
             (target != context_of(self, Some(cb))).then_some((id, target))
         }).collect();
+        // pyro: an inline that keeps out-of-flow boxes stands for them at the positioned level of
+        // its own enclosing stacking context, in tree order (it is a stacking context of z-index
+        // 0): the painter paints them there (blitz-paint `draw_paint_child`), above the in-flow
+        // content around (WPT filter-effects `filtered-inline-is-container`). A positioned inline
+        // listed in the paint tree is there already.
+        let mut moved: std::collections::HashSet<NodeId> = moves.iter().map(|(id, _)| *id).collect();
+        for &owner in &owners {
+            if self.nodes[owner].flags.contains(NodeFlags::INLINE_PASS_ENTRY) || moved.contains(&owner) {
+                continue;
+            }
+            let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, owner);
+            // (In the box that clips it before its stacking context, a scroller around it, which
+            // paints its positioned descendants in its clip and under its scrollbars: they and the
+            // boxes it keeps are clipped there; WPT filter-effects `filtered-inline-is-container`
+            // with classic scrollbars.)
+            let target = clip_owner_of(self, box_parent).unwrap_or_else(|| context_of(self, box_parent));
+            moves.push((owner, target));
+            moved.insert(owner);
+        }
+        // The positioned boxes nested in the clip owners that took an escaping box join it there.
+        for &owner in &clip_owners {
+            let mut nested = Vec::new();
+            nested_positioned(self, owner, owner, &mut nested);
+            for id in nested {
+                if moved.insert(id) {
+                    moves.push((id, owner));
+                }
+            }
+        }
         if moves.is_empty() { return; }
         // In node slot order, as when every node was scanned (equal z-indices
         // paint in insertion order).
@@ -387,32 +597,28 @@ impl BaseDocument {
                 sc.hoisted_content_bbox.set((0, Rect::ZERO));
             }
         }
+        // Tree order, numbered once (each comparison of the moved boxes is a lookup, not a search of
+        // sibling lists), and the boxes without a `z-index` grouped by their target, each group
+        // merged into its target's positioned level at once (not one insertion scan per box).
+        let order = self.tree_order_indices();
+        let precedes = |doc: &Self, a: NodeId, b: NodeId| match (order.get(&a), order.get(&b)) {
+            (Some(a), Some(b)) => a < b,
+            _ => doc.precedes_in_tree_order(a, b),
+        };
+        let mut by_target: Vec<(NodeId, Vec<NodeId>)> = Vec::new();
+        let mut target_slot: std::collections::HashMap<NodeId, usize> = std::collections::HashMap::new();
         for (id, target) in moves {
             let z = self.nodes[id].z_index();
             // pyro: one without a `z-index` joins the context's positioned level in its
             // `paint_children`, in tree order (CSS 2.1 Appendix E step 8), not after it: a blending
             // box there must see the earlier ones under it (WPT `mix-blend-mode-root-element-group`).
-            if z == 0 && self.nodes[target].stacking_context.is_some() {
-                let mut paint_children = self.nodes[target].paint_children.borrow_mut().take().unwrap_or_default();
-                let flex_or_grid = self.nodes[target]
-                    .display_style()
-                    .is_some_and(|display| matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid));
-                let mut at = paint_children.len();
-                while at > 0 {
-                    let other = &self.nodes[paint_children[at - 1]];
-                    let positioned_level = other.primary_styles().is_some_and(|s| s.clone_position() != Position::Static)
-                        || self.is_paint_stacking_context_root(other.id, flex_or_grid);
-                    if !positioned_level || self.precedes_in_tree_order(other.id, id) {
-                        break;
-                    }
-                    at -= 1;
-                }
-                paint_children.insert(at, id);
-                *self.nodes[target].paint_children.borrow_mut() = Some(paint_children);
-                if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
-                    sc.positioned_level.push(HoistedPaintChild::new(id, 0));
-                    sc.hoisted_content_bbox.set((0, Rect::ZERO));
-                }
+            // (A `clip` owner, `clip_owner_of`, is no stacking context: one joins its children.)
+            if z == 0 {
+                let slot = *target_slot.entry(target).or_insert_with(|| {
+                    by_target.push((target, Vec::new()));
+                    by_target.len() - 1
+                });
+                by_target[slot].1.push(id);
                 continue;
             }
             if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
@@ -421,10 +627,72 @@ impl BaseDocument {
                 sc.hoisted_content_bbox.set((0, Rect::ZERO));
             }
         }
+        for (target, mut ids) in by_target {
+            ids.sort_by(|&a, &b| if precedes(self, a, b) { std::cmp::Ordering::Less } else if precedes(self, b, a) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal });
+            let mut paint_children = self.nodes[target].paint_children.borrow_mut().take().unwrap_or_default();
+            let flex_or_grid = self.nodes[target]
+                .display_style()
+                .is_some_and(|display| matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid));
+            // The trailing run of positioned-level children (in tree order), which the moved boxes
+            // join in tree order.
+            let mut start = paint_children.len();
+            while start > 0 {
+                let other = &self.nodes[paint_children[start - 1]];
+                let positioned_level = other.primary_styles().is_some_and(|s| s.clone_position() != Position::Static)
+                    || self.is_paint_stacking_context_root(other.id, flex_or_grid);
+                if !positioned_level {
+                    break;
+                }
+                start -= 1;
+            }
+            let run = paint_children.split_off(start);
+            let (mut run, mut moved) = (run.into_iter().peekable(), ids.iter().copied().peekable());
+            while let (Some(&a), Some(&b)) = (run.peek(), moved.peek()) {
+                if precedes(self, a, b) {
+                    paint_children.push(a);
+                    run.next();
+                } else {
+                    paint_children.push(b);
+                    moved.next();
+                }
+            }
+            paint_children.extend(run);
+            paint_children.extend(moved);
+            *self.nodes[target].paint_children.borrow_mut() = Some(paint_children);
+            if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
+                sc.positioned_level.extend(ids.iter().map(|&id| HoistedPaintChild::new(id, 0)));
+                sc.hoisted_content_bbox.set((0, Rect::ZERO));
+            }
+        }
+    }
+
+    /// pyro: each node's place in tree order (`::before` first in its element, `::after` last, as
+    /// `precedes_in_tree_order` has them), numbered in one walk of the document.
+    fn tree_order_indices(&self) -> std::collections::HashMap<NodeId, usize> {
+        let mut order = std::collections::HashMap::new();
+        let mut stack = vec![self.root_node().id];
+        while let Some(id) = stack.pop() {
+            order.insert(id, order.len());
+            let node = &self.nodes[id];
+            if let Some(after) = node.after() {
+                stack.push(after);
+            }
+            stack.extend(node.children.iter().rev().copied());
+            if let Some(before) = node.before() {
+                stack.push(before);
+            }
+        }
+        #[cfg(test)]
+        crate::util::TREE_ORDER_WALKS.with(|walks| walks.set(walks.get() + order.len()));
+        order
     }
 
     /// `stacking_context` is the entry list of the nearest ancestor stacking
     /// context, or `None` when `node_id` is itself a stacking-context root.
+    pub(crate) fn build_transition_paint_tree(&mut self, root: NodeId) {
+        self.build_paint_tree_impl(root, None);
+    }
+
     fn build_paint_tree_impl(
         &mut self,
         node_id: NodeId,
@@ -682,7 +950,19 @@ impl BaseDocument {
                 self.order_inline_span_entries(node_id, keyed_base);
             }
             self.scratch.keyed_children[keyed_base..].sort_by_key(|&(paint_order, _)| paint_order);
-            let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), _)| level == 1);
+            // pyro: a `line-clamp` container paints a positioned float in phases too, to clip it
+            // (`is_paint_layer_root`; WPT css-overflow `line-clamp-with-floats-008`).
+            let clamps = self.nodes[node_id].primary_styles().is_some_and(|style| {
+                let clamp = &style.get_box().line_clamp;
+                !clamp.webkit_legacy && !clamp.max_lines.is_none()
+            });
+            let has_floats = self.scratch.keyed_children[keyed_base..].iter().any(|&((level, _), id)| {
+                level == 1
+                    || (clamps
+                        && self.nodes[id]
+                            .primary_styles()
+                            .is_some_and(|style| style.clone_float() != style::computed_values::float::T::None))
+            });
             self.nodes[node_id].flags.set(NodeFlags::HAS_FLOAT_PAINT_CHILDREN, has_floats);
             let lifts_floats = entries.iter().any(|entry| entry.is_float);
             self.nodes[node_id].flags.set(NodeFlags::LIFTS_FLOATS, lifts_floats);
@@ -1071,6 +1351,9 @@ impl BaseDocument {
             match (parent(a), parent(b)) {
                 (Some(pa), Some(pb)) if pa == pb => {
                     let node = &self.nodes[pa];
+                    // (Its sibling list is searched: as long as it is.)
+                    #[cfg(test)]
+                    crate::util::TREE_ORDER_COMPARISONS.with(|work| work.set(work.get() + node.children.len()));
                     let index = |id: NodeId| {
                         if node.before() == Some(id) {
                             0
@@ -1117,6 +1400,9 @@ impl Node {
             // (`layout::multicol`).
             || self.column_fragments().is_some()
             || self.vertical_column_fragments().is_some()
+            // pyro: a `line-clamp` container clips its floats, the positioned ones too (CSS
+            // Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-008`).
+            || (!box_style.line_clamp.webkit_legacy && !box_style.line_clamp.max_lines.is_none())
     }
 
     /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
@@ -1136,6 +1422,14 @@ impl Node {
         };
         if style.clone_float() != Float::None || self.is_paint_layer_root() {
             return false;
+        }
+        // pyro: a `line-clamp` container paints its floats itself, clipped at its block-end
+        // content edge (CSS Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-005`).
+        {
+            let clamp = &style.get_box().line_clamp;
+            if !clamp.webkit_legacy && !clamp.max_lines.is_none() {
+                return false;
+            }
         }
         let display = style.clone_display();
         // (An anonymous block's style, `::-servo-anonymous-box`, keeps the initial `display:
@@ -1161,6 +1455,120 @@ impl Node {
                     local_name!("input") | local_name!("button") | local_name!("select") | local_name!("textarea")
                 )
         }) {
+            return false;
+        }
+        !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
+            parent.primary_styles().is_some_and(|parent_style| {
+                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
+            })
+        })
+    }
+
+    /// pyro: whether this box is a scroll container that, but for its overflow clip, would paint in
+    /// the phases of an ancestor (`paints_in_ancestor_phases`): it is no stacking context, so CSS 2.1
+    /// Appendix E paints its background with the other block backgrounds and its content's inline
+    /// content with the other inline content, each clipped and scrolled (WPT css/CSS2
+    /// `normal-flow/overflow-scroll-paint-order`). The painter phases it only when its paint children
+    /// are all in-flow boxes (`blitz-paint` `draw_flow_children`).
+    pub fn scroller_paints_in_ancestor_phases(&self) -> bool {
+        use style::values::computed::{Contain, Overflow};
+        let Some(style) = self.primary_styles() else {
+            return false;
+        };
+        let box_style = style.get_box();
+        let clips = !matches!(box_style.overflow_x, Overflow::Visible) || !matches!(box_style.overflow_y, Overflow::Visible);
+        if !clips
+            || style.clone_position() != Position::Static
+            || box_style.slow_clone_contain().contains(Contain::PAINT)
+            || self.element_data().is_some_and(|e| {
+                e.raster_image_data().is_some() || e.sub_doc_data().is_some() || e.text_input_data().is_some()
+            })
+            || self.column_fragments().is_some()
+            || self.vertical_column_fragments().is_some()
+            || (!box_style.line_clamp.webkit_legacy && !box_style.line_clamp.max_lines.is_none())
+            || style.clone_float() != Float::None
+        {
+            return false;
+        }
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        let display = style.clone_display();
+        if !(display.outside() == DisplayOutside::Block && matches!(display.inside(), DisplayInside::Flow | DisplayInside::FlowRoot)) {
+            return false;
+        }
+        if style.get_column().is_multicol()
+            || !style.get_effects().backdrop_filter.0.is_empty()
+            || self.is_stacking_context_root(false)
+            || self.plane_3d().is_some()
+            || self.flags.intersects(NodeFlags::HAS_FLOAT_PAINT_CHILDREN | NodeFlags::FLOW_BOXES_OVERLAP)
+        {
+            return false;
+        }
+        if self.element_data().is_some_and(|element| {
+            crate::layout::replaced::is_replaced(element)
+                || matches!(
+                    element.name.local,
+                    local_name!("input") | local_name!("button") | local_name!("select") | local_name!("textarea")
+                )
+        }) {
+            return false;
+        }
+        !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
+            parent.primary_styles().is_some_and(|parent_style| {
+                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
+            })
+        })
+    }
+
+    /// pyro: whether this box is a block-level flex or grid container that paints in the phases of
+    /// an ancestor: its own box with the block backgrounds (CSS 2.1 Appendix E step 4) and its items,
+    /// which paint as inline blocks do (css-flexbox-1 § 4.4, css-grid-1 § 9.4), whole with the inline
+    /// content (step 7; WPT css-flexbox `flexbox-align-self-baseline-horiz-006`, an item overflowing
+    /// onto the next block's border). No layer root, no stacking context, no flex or grid item; the
+    /// painter phases it only when its paint children are all in-flow (`blitz-paint`).
+    /// pyro: whether this flex or grid container's items paint whole with its painter's inline
+    /// content (`items_paint_in_ancestor_phases`, all its paint children in-flow boxes of the normal
+    /// paint level: not positioned, floated or a stacking context), its own box with the block
+    /// backgrounds. The one description the painter (blitz-paint `items_in_phases`) and hit testing
+    /// (`Node::hit_inner`, which tests the items before the boxes painted under them) share.
+    pub fn items_in_phases(&self) -> bool {
+        // (Its layout children: its items, known from layout before the paint tree is built, which
+        // hit testing may read first.)
+        self.items_paint_in_ancestor_phases()
+            && self.layout_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().all(|&id| {
+                    let item = &self.tree()[id];
+                    item.primary_styles().is_none_or(|style| {
+                        style.clone_position() == Position::Static
+                            && style.clone_float() == Float::None
+                            && !item.is_stacking_context_root(false)
+                    })
+                })
+            })
+    }
+
+    pub fn items_paint_in_ancestor_phases(&self) -> bool {
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        let Some(style) = self.primary_styles() else {
+            return false;
+        };
+        let display = style.clone_display();
+        if display.outside() != DisplayOutside::Block || !matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid) {
+            return false;
+        }
+        if style.clone_float() != Float::None
+            || self.is_paint_layer_root()
+            || self.is_stacking_context_root(false)
+            || self.plane_3d().is_some()
+            || !style.get_effects().backdrop_filter.0.is_empty()
+            || self.element_data().is_some_and(|element| {
+                crate::layout::replaced::is_replaced(element)
+                    || matches!(
+                        element.name.local,
+                        local_name!("input") | local_name!("button") | local_name!("select") | local_name!("textarea")
+                            | local_name!("fieldset")
+                    )
+            })
+        {
             return false;
         }
         !self.layout_parent.get().and_then(|id| self.tree().get(id)).is_some_and(|parent| {
@@ -1412,13 +1820,40 @@ impl BaseDocument {
     /// whole document (see [`Self::top_layer_nodes`]), not in its place.
     #[inline]
     pub fn is_in_top_layer(&self, id: NodeId) -> bool {
-        !self.top_layer.is_empty() && self.top_layer.contains(id) && self.renders_in_top_layer(id)
+        !self.top_layer.is_empty()
+            && self.top_layer.contains(id)
+            && self.renders_in_top_layer(id)
+            && !self.skipped_by_content_visibility(id)
+    }
+
+    /// pyro: whether an ancestor of `id` skips its contents with `content-visibility: hidden`
+    /// (CSS Contain 2 § 4.1: a skipped element is not rendered, in the top layer neither; as
+    /// `layout::construct`, on an element containment applies to).
+    pub fn skipped_by_content_visibility(&self, id: NodeId) -> bool {
+        use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
+        let mut current = self.nodes.get(id).and_then(|node| node.parent);
+        while let Some(ancestor) = current {
+            let Some(node) = self.nodes.get(ancestor) else { return false };
+            let hidden = node.primary_styles().is_some_and(|style| {
+                let display = style.get_box().display;
+                (style.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden
+                    || node.flags.contains(crate::node::NodeFlags::CV_SKIPPED))
+                    && !display.is_contents()
+                    && !display.is_none()
+                    && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+            });
+            if hidden {
+                return true;
+            }
+            current = node.parent;
+        }
+        false
     }
 
     /// pyro: whether top-layer element `id` is rendered in the top layer: its `overlay` is `auto`
     /// (css-position-4 §4.1; the UA sheet sets it on `:modal` and `:popover-open`, and a discrete
     /// transition of it keeps it on after the element leaves them, or off after it enters).
-    fn renders_in_top_layer(&self, id: NodeId) -> bool {
+    pub(crate) fn renders_in_top_layer(&self, id: NodeId) -> bool {
         self.nodes.get(id).and_then(|n| n.primary_styles()).is_none_or(|style| {
             style.get_box().overlay == style::values::computed::TopLayer::Auto
         })
@@ -1432,6 +1867,7 @@ impl BaseDocument {
                 .get(id)
                 .is_some_and(|n| n.flags.is_in_document() && n.is_element())
                 && self.renders_in_top_layer(id)
+                && !self.skipped_by_content_visibility(id)
         })
     }
 

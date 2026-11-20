@@ -54,6 +54,7 @@ pub enum DocumentKind {
 
 #[derive(Debug)]
 pub struct DocumentData {
+    pub raster_budget: pyro_raster::PageRasters,
     pub kind: DocumentKind,
     pub quirks: QuirksMode,
     pub content_type: Box<str>,
@@ -127,6 +128,8 @@ pub struct DocumentData {
     /// The referrer policy the last processed `<meta name=referrer>` gave
     /// the document (`Dom::meta_referrer_policy`).
     pub(crate) meta_referrer_policy: Option<&'static str>,
+    pub(crate) header_referrer_policy: Option<&'static str>,
+    pub(crate) layout_client: Option<(String, std::sync::Weak<crate::geometry::SubresourceBodies>)>,
     /// A `<meta name="responsive-embedded-sizing">` was processed before the document had a body: an
     /// iframe of `frame-sizing: content-height` showing it takes its content's height (css-sizing-4
     /// responsive iframes; `Dom::is_responsively_embedded`).

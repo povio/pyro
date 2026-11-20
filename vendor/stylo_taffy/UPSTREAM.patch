@@ -1,22 +1,52 @@
 diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/convert.rs
 --- a/packages/stylo_taffy/src/convert.rs
 +++ b/packages/stylo_taffy/src/convert.rs
-@@ -120,12 +120,40 @@
+@@ -105,24 +105,53 @@
+         stylo::Size::MaxContent => taffy::Dimension::max_content(),
+         stylo::Size::MinContent => taffy::Dimension::min_content(),
+         stylo::Size::FitContent => taffy::Dimension::fit_content(),
+-        stylo::Size::FitContentFunction(val) => match val.0.unpack() {
+-            stylo::UnpackedLengthPercentage::Length(len) => {
+-                taffy::Dimension::fit_content_px(len.px())
+-            }
+-            stylo::UnpackedLengthPercentage::Percentage(percentage) => {
+-                taffy::Dimension::fit_content_percent(percentage.0)
+-            }
+-            stylo::UnpackedLengthPercentage::Calc(calc_ptr) => taffy::Dimension::fit_content_calc(
+-                calc_ptr as *const stylo::CalcLengthPercentage as *const (),
+-            ),
+-        },
++        stylo::Size::FitContentFunction(val) => fit_content_function(&val.0),
+ 
          stylo::Size::Stretch => taffy::Dimension::stretch(),
          stylo::Size::WebkitFillAvailable => taffy::Dimension::stretch(),
  
+-        // Anchor positioning will be flagged off for time being
+-        stylo::Size::AnchorSizeFunction(_) => unreachable!(),
+-        stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
 +        // pyro: `calc-size()` is laid out as its basis; blitz-dom applies the calculation.
 +        stylo::Size::CalcSizeAuto(_) => taffy::Dimension::AUTO,
 +        stylo::Size::CalcSizeFitContent(_) => taffy::Dimension::fit_content(),
 +        stylo::Size::CalcSizeMinContent(_) => taffy::Dimension::min_content(),
 +        stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::max_content(),
 +
-         // Anchor positioning will be flagged off for time being
-         stylo::Size::AnchorSizeFunction(_) => unreachable!(),
-         stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
-     }
- }
- 
++        stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::Dimension::AUTO, dimension),
++        stylo::Size::AnchorContainingCalcFunction(_) => taffy::Dimension::AUTO,
++    }
++}
++
++/// `fit-content(<length-percentage>)`; a `calc()` is a pointer into `val`, which must outlive it.
++#[inline]
++pub fn fit_content_function(val: &stylo::LengthPercentage) -> taffy::Dimension {
++    match val.unpack() {
++        stylo::UnpackedLengthPercentage::Length(len) => taffy::Dimension::fit_content_px(len.px()),
++        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::Dimension::fit_content_percent(percentage.0),
++        stylo::UnpackedLengthPercentage::Calc(calc_ptr) => {
++            taffy::Dimension::fit_content_calc(calc_ptr as *const stylo::CalcLengthPercentage as *const ())
++        }
++    }
++}
++
 +/// pyro: the calculation of a `calc-size()` value, its `size` being a percentage of the size the
 +/// basis gives.
 +#[inline]
@@ -36,13 +66,10 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
 +    match val {
 +        stylo::Size::CalcSizeAuto(calc) => Some(calc_size_function(&calc.0)),
 +        _ => None,
-+    }
-+}
-+
- #[inline]
- pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
-     match val {
-@@ -139,6 +167,12 @@
+     }
+ }
+ 
+@@ -139,10 +168,46 @@
          stylo::Size::FitContentFunction(_) => taffy::LengthPercentageAuto::AUTO,
          stylo::Size::Stretch => taffy::LengthPercentageAuto::AUTO,
          stylo::Size::WebkitFillAvailable => taffy::LengthPercentageAuto::AUTO,
@@ -52,13 +79,15 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
 +        | stylo::Size::CalcSizeFitContent(_)
 +        | stylo::Size::CalcSizeMinContent(_)
 +        | stylo::Size::CalcSizeMaxContent(_) => taffy::LengthPercentageAuto::AUTO,
++
++        stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, min_size),
++        stylo::Size::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
++    }
++}
  
-         // Anchor positioning will be flagged off for time being
-         stylo::Size::AnchorSizeFunction(_) => unreachable!(),
-@@ -146,6 +180,34 @@
-     }
- }
- 
+-        // Anchor positioning will be flagged off for time being
+-        stylo::Size::AnchorSizeFunction(_) => unreachable!(),
+-        stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
 +/// pyro: `min-width`/`min-height` as a sizing keyword (`auto` when it is none): what
 +/// [`min_size`] drops.
 +#[inline]
@@ -83,13 +112,51 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
 +        stylo::MaxSize::MinContent => taffy::Dimension::min_content(),
 +        stylo::MaxSize::FitContent => taffy::Dimension::fit_content(),
 +        stylo::MaxSize::Stretch | stylo::MaxSize::WebkitFillAvailable => taffy::Dimension::stretch(),
++        // pyro: `fit-content(<length-percentage>)` (css-sizing-4), as `min-width` has it (a
++        // `calc()` points into the computed value itself, which outlives the layout)
++        stylo::MaxSize::FitContentFunction(val) => fit_content_function(&val.0),
 +        _ => taffy::Dimension::AUTO,
-+    }
-+}
-+
- #[inline]
- pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
-     match val {
+     }
+ }
+ 
+@@ -160,9 +225,8 @@
+         stylo::MaxSize::Stretch => taffy::LengthPercentageAuto::AUTO,
+         stylo::MaxSize::WebkitFillAvailable => taffy::LengthPercentageAuto::AUTO,
+ 
+-        // Anchor positioning will be flagged off for time being
+-        stylo::MaxSize::AnchorSizeFunction(_) => unreachable!(),
+-        stylo::MaxSize::AnchorContainingCalcFunction(_) => unreachable!(),
++        stylo::MaxSize::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, max_size),
++        stylo::MaxSize::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
+     }
+ }
+ 
+@@ -172,9 +236,8 @@
+         stylo::MarginVal::Auto => taffy::LengthPercentageAuto::AUTO,
+         stylo::MarginVal::LengthPercentage(val) => length_percentage(val).into(),
+ 
+-        // Anchor positioning will be flagged off for time being
+-        stylo::MarginVal::AnchorSizeFunction(_) => unreachable!(),
+-        stylo::MarginVal::AnchorContainingCalcFunction(_) => unreachable!(),
++        stylo::MarginVal::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(zero(), margin),
++        stylo::MarginVal::AnchorContainingCalcFunction(_) => zero(),
+     }
+ }
+ 
+@@ -195,10 +258,9 @@
+         stylo::InsetVal::Auto => taffy::LengthPercentageAuto::AUTO,
+         stylo::InsetVal::LengthPercentage(val) => length_percentage(val).into(),
+ 
+-        // Anchor positioning will be flagged off for time being
+-        stylo::InsetVal::AnchorSizeFunction(_) => unreachable!(),
+-        stylo::InsetVal::AnchorFunction(_) => unreachable!(),
+-        stylo::InsetVal::AnchorContainingCalcFunction(_) => unreachable!(),
++        stylo::InsetVal::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, inset),
++        stylo::InsetVal::AnchorFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, inset),
++        stylo::InsetVal::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
+     }
+ }
+ 
 @@ -211,6 +273,20 @@
      }
  }
@@ -120,7 +187,22 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  
      let box_style = style.get_box();
      if !box_style.transform.0.is_empty()
-@@ -341,12 +417,8 @@
+@@ -335,18 +411,23 @@
+     ) {
+         return true;
+     }
++    // pyro: on a box containment applies to: not a non-atomic inline box (its abspos descendants
++    // keep the containing block they had; WPT css-contain `contain-*-ignored-cases-ib-split-001`),
++    // nor an internal table box other than a cell.
+     if box_style
+         .contain
+         .intersects(Contain::LAYOUT | Contain::PAINT)
++        && {
++            use style::values::specified::box_::{DisplayInside, DisplayOutside};
++            let display = style.clone_display();
++            !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
++                && !(display.outside() == DisplayOutside::InternalTable && display.inside() != DisplayInside::TableCell)
++        }
      {
          return true;
      }
@@ -135,7 +217,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  
      let effects = style.get_effects();
      !effects.filter.0.is_empty() || !effects.backdrop_filter.0.is_empty()
-@@ -473,6 +545,10 @@
+@@ -473,6 +554,10 @@
          stylo::AlignFlags::FLEX_START => taffy::AlignContent::FLEX_START,
          stylo::AlignFlags::STRETCH => taffy::AlignContent::STRETCH,
          stylo::AlignFlags::FLEX_END => taffy::AlignContent::FLEX_END,
@@ -146,7 +228,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
          stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
          stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
-@@ -517,7 +593,10 @@
+@@ -517,7 +602,10 @@
          (_, stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Bottom)) => {
              taffy::AlignContent::END
          }
@@ -158,7 +240,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          _ => return None,
      };
      align.safety = taffy::AlignmentSafety::Safe;
-@@ -582,6 +661,9 @@
+@@ -582,6 +670,9 @@
          stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
          stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
          stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
@@ -168,7 +250,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
          stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
          stylo::AlignFlags::START => taffy::AlignItems::START,
-@@ -591,10 +673,12 @@
+@@ -591,10 +682,12 @@
          stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
          stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
          stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
@@ -184,15 +266,16 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          // Should never be hit. But no real reason to panic here.
          _ => return None,
      };
-@@ -967,6 +1051,7 @@
+@@ -967,6 +1060,8 @@
          display: self::display(display),
          box_sizing: self::box_sizing(style.clone_box_sizing()),
          item_is_table: display.inside() == stylo::DisplayInside::Table,
 +        collapsed_rows: Default::default(),
++        collapsed_columns: Default::default(),
          item_is_replaced: false,
          item_is_compressible_replaced: false,
          position: self::position(style.clone_position()),
-@@ -995,7 +1080,21 @@
+@@ -995,7 +1090,21 @@
              width: self::max_size(&pos.max_width),
              height: self::max_size(&pos.max_height),
          },
@@ -215,6 +298,273 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  
          inset: self::inset_rect(style),
          margin: taffy::Rect {
+diff --git a/packages/stylo_taffy/src/lib.rs b/packages/stylo_taffy/src/lib.rs
+--- a/packages/stylo_taffy/src/lib.rs
++++ b/packages/stylo_taffy/src/lib.rs
+@@ -16,6 +16,8 @@
+ pub use convert::to_taffy_style_in;
+ 
+ pub mod writing_mode;
++
++pub mod scrollbars;
+ pub use style::logical_geometry::WritingMode;
+ pub use writing_mode::WritingModeExt;
+ 
+diff --git a/packages/stylo_taffy/src/scrollbars.rs b/packages/stylo_taffy/src/scrollbars.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/stylo_taffy/src/scrollbars.rs
+@@ -0,0 +1,250 @@
++//! pyro: the scrollbar mode of the process: overlay scrollbars (the default), which take no layout
++//! space, or classic scrollbars, which take a fixed thickness out of the scroll container's padding
++//! box (as Chrome's on Linux, the platform wpt.fyi runs it on: 15 CSS px, 11 for
++//! `scrollbar-width: thin`).
++//!
++//! The mode is set once, at startup (`pyro serve --scrollbars`), before any layout runs.
++
++use std::sync::atomic::{AtomicU8, Ordering};
++
++use style::values::computed::Overflow;
++use style::values::computed::ui::ScrollbarWidth;
++
++/// How scrollbars take space.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
++pub enum ScrollbarMode {
++    /// Scrollbars overlay the content and take no layout space; `scrollbar-gutter` changes nothing.
++    #[default]
++    Overlay,
++    /// Scrollbars take [`CLASSIC_THICKNESS`] (or [`CLASSIC_THIN_THICKNESS`]) CSS px of layout space.
++    Classic,
++}
++
++/// The thickness of a classic scrollbar (Chrome's on Linux and Windows).
++pub const CLASSIC_THICKNESS: f32 = 15.0;
++/// The thickness of a classic `scrollbar-width: thin` scrollbar (Chrome's).
++pub const CLASSIC_THIN_THICKNESS: f32 = 11.0;
++
++static MODE: AtomicU8 = AtomicU8::new(0);
++
++/// Sets the process's scrollbar mode. Call before any layout runs: boxes laid out earlier keep the
++/// mode they were laid out in.
++pub fn set_scrollbar_mode(mode: ScrollbarMode) {
++    MODE.store(mode as u8, Ordering::Relaxed);
++}
++
++/// The process's scrollbar mode.
++#[inline]
++pub fn scrollbar_mode() -> ScrollbarMode {
++    match MODE.load(Ordering::Relaxed) {
++        1 => ScrollbarMode::Classic,
++        _ => ScrollbarMode::Overlay,
++    }
++}
++
++/// The layout thickness of a scrollbar of the given `scrollbar-width` in the given mode: zero for
++/// overlay scrollbars and for `scrollbar-width: none`.
++#[inline]
++pub fn thickness_in(mode: ScrollbarMode, width: ScrollbarWidth) -> f32 {
++    match (mode, width) {
++        (ScrollbarMode::Overlay, _) | (_, ScrollbarWidth::None) => 0.0,
++        (ScrollbarMode::Classic, ScrollbarWidth::Thin) => CLASSIC_THIN_THICKNESS,
++        (ScrollbarMode::Classic, ScrollbarWidth::Auto) => CLASSIC_THICKNESS,
++    }
++}
++
++/// The layout thickness of a scrollbar of the given `scrollbar-width` in the process's mode.
++#[inline]
++pub fn thickness(width: ScrollbarWidth) -> f32 {
++    thickness_in(scrollbar_mode(), width)
++}
++
++/// Which physical scrollbars a scroll container shows and which physical edges of its padding box
++/// hold scrollbar space, in classic mode.
++#[derive(Clone, Copy, Debug, Default, PartialEq)]
++pub struct Gutters {
++    /// The space at each physical edge.
++    pub edges: taffy::Rect<f32>,
++}
++
++impl Gutters {
++    /// Combined nonnegative gutters, saturated to a finite layout length.
++    pub fn total(&self) -> taffy::Size<f32> {
++        self.edges.sum_axes().map(|length| length.min(f32::MAX))
++    }
++}
++
++/// What decides a box's classic scrollbar gutters (physical axes).
++#[derive(Clone, Copy, Debug)]
++pub struct GutterInputs {
++    /// The scrollbar thickness ([`thickness`]); zero means no gutters at all.
++    pub thickness: taffy::Size<f32>,
++    /// Used `overflow-x` and `overflow-y`.
++    pub overflow: taffy::Point<Overflow>,
++    /// Whether an `overflow: auto` axis shows its scrollbar (its content overflows): x is the
++    /// horizontal scrollbar (content overflowing horizontally), y the vertical one.
++    pub auto_shows: taffy::Point<bool>,
++    /// `scrollbar-gutter: stable`.
++    pub stable: bool,
++    /// `scrollbar-gutter: stable both-edges`.
++    pub both_edges: bool,
++    /// The box's inline axis is vertical (a vertical writing mode).
++    pub vertical: bool,
++    /// The box's direction is right-to-left.
++    pub rtl: bool,
++}
++
++impl GutterInputs {
++    pub fn layout_edges(&self, limit: Option<taffy::Size<f32>>) -> taffy::Rect<f32> {
++        let Some(thickness) = limit else { return self.gutters().edges };
++        let mut edges = Self { thickness, ..*self }.gutters().edges;
++        let place = |start: &mut f32, end: &mut f32, requested: f32| {
++            if *start > 0.0 && *end > 0.0 {
++                let shift = (requested - *start).max(0.0).min(*end);
++                *start += shift;
++                *end -= shift;
++            }
++        };
++        place(&mut edges.left, &mut edges.right, self.thickness.width);
++        place(&mut edges.top, &mut edges.bottom, self.thickness.height);
++        edges
++    }
++
++    pub fn bounded_thickness(&self, available: taffy::Size<f32>) -> taffy::Size<f32> {
++        let edges = self.gutters().edges;
++        if edges == taffy::Rect::zero() { return self.thickness; }
++        let width = if edges.left > 0.0 && edges.right > 0.0 { available.width * 0.5 } else { available.width };
++        let height = if edges.top > 0.0 && edges.bottom > 0.0 { available.height * 0.5 } else { available.height };
++        self.thickness.zip_map(taffy::Size { width, height }, f32::min)
++    }
++
++    /// The physical gutters (as Chrome lays them out): the vertical scrollbar on the right (on the
++    /// left for `direction: rtl` in a horizontal writing mode), the horizontal one at the bottom;
++    /// `scrollbar-gutter` reserves the gutter at the inline-end edge (both inline edges with
++    /// `both-edges`) whether or not that scrollbar shows, when the overflow in the axis that
++    /// scrollbar scrolls is `hidden`, `scroll` or `auto`.
++    pub fn gutters(&self) -> Gutters {
++        let t = self.thickness;
++        let mut edges = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
++        if t.width <= 0.0 && t.height <= 0.0 {
++            return Gutters { edges };
++        }
++        let shows = |overflow: Overflow, auto_shows: bool| match overflow {
++            Overflow::Scroll => true,
++            Overflow::Auto => auto_shows,
++            _ => false,
++        };
++        let stable_applies = |overflow: Overflow| {
++            self.stable && matches!(overflow, Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
++        };
++        let vertical_bar = shows(self.overflow.y, self.auto_shows.y);
++        let horizontal_bar = shows(self.overflow.x, self.auto_shows.x);
++        if self.vertical {
++            // The inline axis is vertical: `scrollbar-gutter` is about the horizontal scrollbar.
++            if vertical_bar {
++                edges.right = t.width;
++            }
++            if horizontal_bar || stable_applies(self.overflow.x) {
++                edges.bottom = t.height;
++                if self.both_edges && stable_applies(self.overflow.x) {
++                    edges.top = t.height;
++                }
++            }
++        } else {
++            if vertical_bar || stable_applies(self.overflow.y) {
++                if self.rtl {
++                    edges.left = t.width;
++                } else {
++                    edges.right = t.width;
++                }
++                if self.both_edges && stable_applies(self.overflow.y) {
++                    edges.left = t.width;
++                    edges.right = t.width;
++                }
++            }
++            if horizontal_bar {
++                edges.bottom = t.height;
++            }
++        }
++        Gutters { edges }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use style::values::computed::Overflow::{self, *};
++
++    fn inputs(x: Overflow, y: Overflow) -> GutterInputs {
++        GutterInputs {
++            thickness: taffy::Size { width: CLASSIC_THICKNESS, height: CLASSIC_THICKNESS },
++            overflow: taffy::Point { x, y },
++            auto_shows: taffy::Point { x: false, y: false },
++            stable: false,
++            both_edges: false,
++            vertical: false,
++            rtl: false,
++        }
++    }
++
++    fn edges(g: Gutters) -> [f32; 4] {
++        [g.edges.left, g.edges.right, g.edges.top, g.edges.bottom]
++    }
++
++    #[test]
++    fn thickness_is_zero_for_overlay_and_none() {
++        assert_eq!(thickness_in(ScrollbarMode::Overlay, ScrollbarWidth::Auto), 0.0);
++        assert_eq!(thickness_in(ScrollbarMode::Classic, ScrollbarWidth::Auto), 15.0);
++        assert_eq!(thickness_in(ScrollbarMode::Classic, ScrollbarWidth::Thin), 11.0);
++        assert_eq!(thickness_in(ScrollbarMode::Classic, ScrollbarWidth::None), 0.0);
++    }
++
++    #[test]
++    fn overflow_scroll_always_takes_both_gutters() {
++        assert_eq!(edges(inputs(Scroll, Scroll).gutters()), [0.0, 15.0, 0.0, 15.0]);
++    }
++
++    #[test]
++    fn overflow_auto_takes_a_gutter_only_when_its_scrollbar_shows() {
++        let mut i = inputs(Auto, Auto);
++        assert_eq!(edges(i.gutters()), [0.0; 4]);
++        i.auto_shows.y = true;
++        assert_eq!(edges(i.gutters()), [0.0, 15.0, 0.0, 0.0]);
++    }
++
++    #[test]
++    fn stable_reserves_the_inline_end_gutter_for_auto_and_hidden_not_visible_or_clip() {
++        for (y, reserved) in [(Auto, true), (Hidden, true), (Scroll, true), (Visible, false), (Clip, false)] {
++            let mut i = inputs(Visible, y);
++            i.stable = true;
++            assert_eq!(i.gutters().edges.right, if reserved { 15.0 } else { 0.0 }, "{y:?}");
++        }
++    }
++
++    #[test]
++    fn both_edges_reserves_both_inline_edges() {
++        let mut i = inputs(Hidden, Auto);
++        i.stable = true;
++        i.both_edges = true;
++        assert_eq!(edges(i.gutters()), [15.0, 15.0, 0.0, 0.0]);
++    }
++
++    #[test]
++    fn rtl_puts_the_vertical_scrollbar_on_the_left() {
++        let mut i = inputs(Hidden, Scroll);
++        i.rtl = true;
++        assert_eq!(edges(i.gutters()), [15.0, 0.0, 0.0, 0.0]);
++    }
++
++    #[test]
++    fn vertical_writing_modes_reserve_the_stable_gutter_at_the_bottom() {
++        let mut i = inputs(Auto, Auto);
++        i.vertical = true;
++        i.stable = true;
++        assert_eq!(edges(i.gutters()), [0.0, 0.0, 0.0, 15.0]);
++        // The vertical scrollbar stays on the right (Chrome, vertical-rl `overflow: scroll`).
++        let mut i = inputs(Scroll, Scroll);
++        i.vertical = true;
++        assert_eq!(edges(i.gutters()), [0.0, 15.0, 0.0, 15.0]);
++    }
++}
 diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrapper.rs
 --- a/packages/stylo_taffy/src/wrapper.rs
 +++ b/packages/stylo_taffy/src/wrapper.rs
@@ -227,7 +577,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          /// Whether the node is a replaced element (e.g. an image or form control)
          const IS_REPLACED = 1 << 0;
          /// Whether an inline span laid out by the node (an inline root) is a containing block
-@@ -34,6 +34,25 @@
+@@ -34,6 +34,38 @@
          const IS_BUTTON = 1 << 3;
          /// Whether the node is a button-type input whose label always uses block layout
          const IS_BUTTON_INPUT = 1 << 4;
@@ -250,45 +600,66 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +        /// pyro: the element is an `<input>`: its `overflow` makes it no scroll container for layout (an
 +        /// automatic minimum size of zero; Blink, WPT css-grid `stretch-grid-item-text-input-overflow`).
 +        const IS_INPUT = 1 << 10;
++        /// pyro: classic scrollbars (`crate::scrollbars`): the node's `overflow-x: auto` shows its
++        /// horizontal scrollbar (its content overflowed horizontally the last time it was laid out).
++        const AUTO_SCROLLBAR_X = 1 << 11;
++        /// pyro: classic scrollbars: the node's `overflow-y: auto` shows its vertical scrollbar.
++        const AUTO_SCROLLBAR_Y = 1 << 12;
++        /// pyro: the node is the root element, whose `overflow` and `scrollbar-gutter` are the
++        /// viewport's: its own box takes no scrollbar gutters.
++        const IS_ROOT = 1 << 13;
++        /// pyro: the node never has scrollbars (a `<frameset>`: no scroll container in Chrome).
++        const NO_SCROLLBARS = 1 << 14;
++        /// pyro: the node's document lays out classic scrollbars (`crate::scrollbars`); without
++        /// it scrollbars are overlay scrollbars, which take no space.
++        const CLASSIC_SCROLLBARS = 1 << 15;
      }
  }
  
-@@ -58,6 +77,9 @@
+@@ -58,6 +90,13 @@
      /// `parent_size.width`, i.e. the containing block's block size.
      #[cfg(feature = "writing-mode")]
      pub percent_basis: Option<f32>,
 +    /// pyro: the natural aspect ratio of a replaced element (width over height, physical), set by the
 +    /// tree; `CoreStyle::natural_aspect_ratio` answers it while `aspect-ratio` is `auto`.
 +    pub natural_ratio: Option<f32>,
++    #[allow(missing_docs)]
++    pub custom_scrollbars: Option<taffy::Size<f32>>,
++    #[allow(missing_docs)]
++    pub scrollbar_size_limit: Option<taffy::Size<f32>>,
  }
  
  impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
-@@ -67,6 +89,8 @@
+@@ -67,6 +106,8 @@
          let display = self.style.clone_display();
          if self.flags.contains(StyleFlags::IS_BUTTON_INPUT) {
              convert::button_input_display(display)
-+        } else if self.flags.contains(StyleFlags::IS_FIELDSET) {
++        } else if self.flags.intersects(StyleFlags::IS_FIELDSET | StyleFlags::IS_BUTTON) {
 +            convert::fieldset_display(display)
          } else {
              display
          }
-@@ -86,6 +110,7 @@
+@@ -86,6 +127,9 @@
              align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              percent_basis: None,
 +            natural_ratio: None,
++            custom_scrollbars: None,
++            scrollbar_size_limit: None,
          }
      }
  
-@@ -102,6 +127,7 @@
+@@ -102,6 +146,9 @@
              align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              percent_basis: None,
 +            natural_ratio: None,
++            custom_scrollbars: None,
++            scrollbar_size_limit: None,
          }
      }
  
-@@ -198,6 +224,23 @@
+@@ -198,6 +245,23 @@
          self.flags.contains(StyleFlags::IS_REPLACED)
      }
  
@@ -312,7 +683,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn box_sizing(&self) -> taffy::BoxSizing {
          convert::box_sizing(self.style.get_position().box_sizing)
-@@ -210,6 +253,9 @@
+@@ -210,6 +274,9 @@
  
      #[inline]
      fn overflow(&self) -> taffy::Point<taffy::Overflow> {
@@ -322,16 +693,56 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let box_styles = self.style.get_box();
          let overflow = taffy::Point {
              x: convert::overflow(box_styles.overflow_x),
-@@ -218,6 +264,8 @@
+@@ -218,9 +285,47 @@
          self.layout_wm().logical_point(overflow)
      }
  
-+    // pyro: scrollbars overlay content (as headless Chrome, and Chrome with overlay scrollbars):
-+    // no box reserves scrollbar space, so `scrollbar-gutter` (parsed, computed) changes no layout.
++    // pyro: overlay scrollbars (the default `crate::scrollbars::ScrollbarMode`) take no space, so
++    // `scrollbar-gutter` changes no layout; classic ones take their thickness.
      #[inline]
      fn scrollbar_width(&self) -> f32 {
-         0.0
-@@ -249,6 +297,9 @@
+-        0.0
++        if !self.flags.contains(StyleFlags::CLASSIC_SCROLLBARS) {
++            return 0.0;
++        }
++        crate::scrollbars::thickness_in(crate::scrollbars::ScrollbarMode::Classic, self.style.clone_scrollbar_width())
++    }
++
++    // pyro: the gutters of classic scrollbars (`crate::scrollbars::GutterInputs::gutters`), in the
++    // layout's axes.
++    #[inline]
++    fn scrollbar_gutter(&self) -> taffy::Rect<f32> {
++        let zero = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
++        // (Overlay scrollbars: one flag test, as cheap as the constant it replaced.)
++        if !self.flags.contains(StyleFlags::CLASSIC_SCROLLBARS)
++            || self.flags.intersects(StyleFlags::OVERFLOW_TO_VIEWPORT | StyleFlags::IS_INPUT | StyleFlags::IS_ROOT | StyleFlags::NO_SCROLLBARS | StyleFlags::IS_REPLACED)
++        {
++            return zero;
++        }
++        let thickness = self.scrollbar_width();
++        if thickness <= 0.0 {
++            return zero;
++        }
++        let box_styles = self.style.get_box();
++        let gutter = box_styles.scrollbar_gutter;
++        let own_wm = self.style.writing_mode;
++        let inputs = crate::scrollbars::GutterInputs {
++            thickness: self.custom_scrollbars.unwrap_or(taffy::Size { width: thickness, height: thickness }),
++            overflow: taffy::Point { x: box_styles.overflow_x, y: box_styles.overflow_y },
++            auto_shows: taffy::Point {
++                x: self.flags.contains(StyleFlags::AUTO_SCROLLBAR_X),
++                y: self.flags.contains(StyleFlags::AUTO_SCROLLBAR_Y),
++            },
++            stable: gutter.contains(style::values::computed::ScrollbarGutter::STABLE),
++            both_edges: gutter.contains(style::values::computed::ScrollbarGutter::BOTH_EDGES),
++            vertical: own_wm.is_vertical(),
++            rtl: !own_wm.is_bidi_ltr(),
++        };
++        self.rect(inputs.layout_edges(self.scrollbar_size_limit))
+     }
+ 
+     #[inline]
+@@ -249,6 +354,9 @@
  
      #[inline]
      fn size(&self) -> taffy::Size<taffy::Dimension> {
@@ -341,7 +752,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::dimension(&position_styles.width),
-@@ -256,8 +307,20 @@
+@@ -256,8 +364,20 @@
          })
      }
  
@@ -362,7 +773,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::min_size(&position_styles.min_width),
-@@ -267,6 +330,9 @@
+@@ -267,6 +387,9 @@
  
      #[inline]
      fn max_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
@@ -372,7 +783,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::max_size(&position_styles.max_width),
-@@ -276,12 +342,51 @@
+@@ -276,12 +399,51 @@
  
      #[inline]
      fn aspect_ratio(&self) -> Option<f32> {
@@ -425,7 +836,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let margin_styles = self.style.get_margin();
          self.rect(taffy::Rect {
              left: convert::margin(&margin_styles.margin_left),
-@@ -293,6 +398,9 @@
+@@ -293,6 +455,9 @@
  
      #[inline]
      fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -435,7 +846,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let padding_styles = self.style.get_padding();
          if let Some(basis) = self.percent_basis() {
              let resolve = |value: &stylo::LengthPercentage| {
-@@ -318,6 +426,9 @@
+@@ -318,6 +483,9 @@
  
      #[inline]
      fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -445,10 +856,26 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let border_styles = self.style.get_border();
          self.rect(taffy::Rect {
              left: convert::border(
-@@ -343,12 +454,47 @@
+@@ -343,12 +511,63 @@
  // BlockContainerStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
++    /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
++    /// box is a flow root already) establishes an independent formatting context.
++    #[inline]
++    fn establishes_independent_formatting_context(&self) -> bool {
++        let clamp = &self.style.get_box().line_clamp;
++        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
++        // inline-size`: "causes the box to establish an independent formatting context"; no layout
++        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
++        // `inline-size-bfc-floats`).
++        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
++            || self.style.get_box().container_type.intersects(
++                style::values::specified::box_::ContainerType::SIZE
++                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
++            )
++    }
++
 +    #[inline]
 +    fn own_height_keywords(&self) -> (taffy::Dimension, taffy::Dimension) {
 +        let (min, max) = (
@@ -482,7 +909,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +        let (start, end) = if taffy::CoreStyle::direction(self).is_rtl() { (End, Start) } else { (Start, End) };
 +        let (left, right) = if self.layout_wm().line_left_is_bottom() { (End, Start) } else { (Start, End) };
 +        match self.style.clone_text_align() {
-+            stylo::TextAlign::Start | stylo::TextAlign::Justify => start,
++            stylo::TextAlign::Start | stylo::TextAlign::Justify | stylo::TextAlign::JustifyAll => start,
 +            stylo::TextAlign::End => end,
 +            stylo::TextAlign::Left | stylo::TextAlign::MozLeft => left,
 +            stylo::TextAlign::Right | stylo::TextAlign::MozRight => right,
@@ -493,7 +920,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_content(&self) -> taffy::AlignContent {
          let display = self.effective_display();
-@@ -375,12 +521,27 @@
+@@ -375,12 +594,27 @@
  
      #[inline]
      fn justify_items(&self) -> taffy::AlignItems {
@@ -521,7 +948,28 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
      #[inline]
      fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
-@@ -484,6 +645,40 @@
+@@ -479,11 +713,61 @@
+ // BlockItemStyle impl
+ #[cfg(feature = "block")]
+ impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyle<T> {
++    /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
++    /// box is a flow root already) establishes an independent formatting context.
++    #[inline]
++    fn establishes_independent_formatting_context(&self) -> bool {
++        let clamp = &self.style.get_box().line_clamp;
++        // pyro: so does a size container (css-conditional-5 § 3.1 `container-type: size |
++        // inline-size`: "causes the box to establish an independent formatting context"; no layout
++        // containment, so its baseline stays); it keeps clear of floats (WPT container-queries
++        // `inline-size-bfc-floats`).
++        (!clamp.webkit_legacy && !clamp.max_lines.is_none())
++            || self.style.get_box().container_type.intersects(
++                style::values::specified::box_::ContainerType::SIZE
++                    | style::values::specified::box_::ContainerType::INLINE_SIZE,
++            )
++    }
++
+     #[inline]
+     fn is_table(&self) -> bool {
          convert::is_table(self.effective_display())
      }
  
@@ -562,7 +1010,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.oof_self_alignment(
-@@ -494,10 +689,11 @@
+@@ -494,10 +778,11 @@
  
      #[inline]
      fn justify_self(&self) -> Option<taffy::AlignSelf> {
@@ -578,15 +1026,17 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  
      #[inline]
-@@ -508,14 +704,26 @@
+@@ -508,14 +793,28 @@
      #[cfg(feature = "floats")]
      #[inline]
      fn float(&self) -> taffy::Float {
 -        let float = convert::float(self.style.clone_float());
 +        // pyro: `inline-start` and `inline-end` are sides of the containing block's inline axis:
-+        // in a right-to-left one (the box's inherited direction stands in for it) they trade.
++        // in a right-to-left one they trade. The containing block's direction is that of the
++        // algorithm laying the box out (`layout_wm`), not the box's own (WPT css-logical
++        // `logical-values-float-clear-reftest`).
 +        let value = self.style.clone_float();
-+        let float = match (value, self.style.writing_mode.is_bidi_ltr()) {
++        let float = match (value, self.layout_wm().is_bidi_ltr()) {
 +            (stylo::Float::InlineStart, false) => taffy::Float::Right,
 +            (stylo::Float::InlineEnd, false) => taffy::Float::Left,
 +            _ => convert::float(value),
@@ -599,7 +1049,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      fn clear(&self) -> taffy::Clear {
 -        let clear = convert::clear(self.style.clone_clear());
 +        let value = self.style.clone_clear();
-+        let clear = match (value, self.style.writing_mode.is_bidi_ltr()) {
++        let clear = match (value, self.layout_wm().is_bidi_ltr()) {
 +            (stylo::Clear::InlineStart, false) => taffy::Clear::Right,
 +            (stylo::Clear::InlineEnd, false) => taffy::Clear::Left,
 +            _ => convert::clear(value),
@@ -607,7 +1057,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -523,6 +731,21 @@
+@@ -523,6 +822,21 @@
  // FlexboxContainerStyle impl
  #[cfg(feature = "flexbox")]
  impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffyStyloStyle<T> {
@@ -629,7 +1079,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn flex_direction(&self) -> taffy::FlexDirection {
          convert::flex_direction(self.style.get_position().flex_direction)
-@@ -595,6 +818,26 @@
+@@ -595,6 +909,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -656,7 +1106,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1117,70 @@
+@@ -874,6 +1208,70 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -727,7 +1177,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -922,11 +1229,66 @@
+@@ -922,11 +1320,66 @@
  // GridItemStyle impl
  #[cfg(feature = "grid")]
  impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
@@ -794,7 +1244,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1312,16 @@
+@@ -950,6 +1403,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

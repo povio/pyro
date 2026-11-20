@@ -76,6 +76,10 @@ fn unavailable() -> JsError {
     JsError::Type("Web Animations are unavailable".into())
 }
 
+pub(crate) fn view_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Value<'s>, runs: Value<'s>) -> JsResult<Value<'s>> {
+    call(module(s, page)?, "viewRuns", &[target, runs])
+}
+
 /// This realm's module, made on first use.
 fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     if let Some(module) = existing(s, page)? {
@@ -146,6 +150,11 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(if pyro_dom::stylo::is_property(&name) { s.string(&name) } else { s.null() })
     })?;
     natives.set_atom("cssName", css_name.value())?;
+    let valid_pseudo = s.function("validViewPseudo", |s, _, args| {
+        let text = args.get(0).to_string()?;
+        Ok(s.boolean(text.len() <= 4096 && matches!(pyro_dom::stylo::parse_pseudo_arg(&text), pyro_dom::stylo::PseudoArg::Pseudo(_))))
+    })?;
+    natives.set_atom("validViewPseudo", valid_pseudo.value())?;
     // `report(key, state)`: an Animation object's state after a change, for
     // the values sampled into the cascade (animation_frame.rs); `state` null
     // once it has no effect.
@@ -179,6 +188,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             (a.get(3).to_number()? as u8, a.get(4).to_number()?),
             (a.get(5).to_number()? as u8, a.get(6).to_number()?),
         ];
+        // (2 `::before`, 3 `::after`: the subject's pseudo-element.)
+        let pseudo = if a.len() > 7 { a.get(7).to_number()? as u8 } else { 0 };
         let state = {
             let dom = page.dom.borrow();
             let layout = page.layout();
@@ -186,7 +197,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             layout.push_scroll_if_due(page.timeline_now_ms());
             let Some(geometry) = layout.synced_geometry_source(&dom) else { return Ok(s.null()) };
             let key = |id: pyro_dom::NodeId| pyro_dom::snapshot::render_key(id);
-            let state = geometry.timeline_state(source.map(key), subject.map(key), axis, inset);
+            let state = geometry.timeline_state(source.map(key), subject.map(key), pseudo, axis, inset);
             state.map(|(offset, start, end, src, contain, size)| {
                 (offset, start, end, src.and_then(|k| pyro_dom::geometry::node_of(&dom, k)), contain, size)
             })
@@ -289,6 +300,7 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
                     axis: n(2)? as u8,
                     inset: [(n(3)? as u8, n(4)?), (n(5)? as u8, n(6)?)],
                     inactive: n(7)? != 0.0,
+                    pseudo: if r.get_index(8)?.is_undefined() { 0 } else { n(8)? as u8 },
                 })
             }
         },
@@ -299,6 +311,23 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
 pub(crate) fn animate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: Value<'s>, a: &Args<'s>) -> JsResult<Value<'s>> {
     let module = module(s, page)?;
     call(module, "animate", &[el, a.get(0), a.get(1)])
+}
+
+/// pyro: in a task, hands the page's module (when it has one) the CSS runs again: a run script
+/// controls changed, and its object takes the CSS properties script did not override.
+/// `create`: made when the realm has none (an animation with a trigger needs its object).
+pub(crate) fn push_css_runs(page: &Rc<PageDom>, create: bool) {
+    let weak = Rc::downgrade(page);
+    page.post_task(Box::new(move || {
+        let Some(page) = weak.upgrade().filter(|p| !p.is_disposed()) else { return };
+        let Some(realm) = page.main_world_realm() else { return };
+        let Ok(s) = realm.scope() else { return };
+        if create || matches!(existing(&s, &page), Ok(Some(_))) {
+            if let Err(error) = with_css_runs(&s, &page) {
+                s.report_exception(&error);
+            }
+        }
+    }));
 }
 
 /// Hands this realm's module the CSS animations and transitions the engine
@@ -334,6 +363,12 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                 },
                 match &run.timeline {
                     Some((text, start, end)) => s.array(&[s.string(text), s.string(start), s.string(end)])?.value(),
+                    None => s.null(),
+                },
+                match &run.trigger {
+                    Some((actions, source, decl)) => s
+                        .array(&[s.string(actions), crate::node::wrap_node(s, page, *source)?.value(), s.string(decl)])?
+                        .value(),
                     None => s.null(),
                 },
             ])?

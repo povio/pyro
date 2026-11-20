@@ -86,6 +86,7 @@ pub struct UserAgentStylesheet(DocumentStyleSheet);
 pub(crate) fn init_stylo_prefs() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
+        style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         // pyro: `offset-path: url()` to an SVG shape element (resolve.rs `motion_url_path`).
         style_config::set_pref!("layout.css.motion-path-url.enabled", true);
@@ -96,12 +97,16 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.text-autospace.enabled", true);
         // pyro: `text-combine-upright` (no text-autospace in such upright text; the layout ignores it).
         style_config::set_pref!("layout.css.text-combine-upright.enabled", true);
+        // pyro: `font-variant-emoji` (parley picks a colour or a text font by it).
+        style_config::set_pref!("layout.css.font-variant-emoji.enabled", true);
         // pyro: `initial-letter` on `::first-letter` (`layout::first_letter`).
         style_config::set_pref!("layout.css.initial-letter.enabled", true);
         // pyro: `dominant-baseline` on HTML boxes (`stylo_to_parley::vertical_align`).
         style_config::set_pref!("layout.css.dominant-baseline.enabled", true);
         // pyro: `light-dark()` of images (the computed value is the image of the used scheme).
         style_config::set_pref!("layout.css.light-dark.images.enabled", true);
+        // pyro: `cross-fade()` (blitz-paint draws it).
+        style_config::set_pref!("layout.css.cross-fade.enabled", true);
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
         // pyro: `background-clip: border-area` (blitz-paint clips it to the border's area).
         style_config::set_pref!("layout.css.background-clip.border-area.enabled", true);
@@ -376,11 +381,9 @@ pub struct BaseDocument {
     /// External `<use href>` targets, by href as written: the local id that
     /// replaces it and the definition (SVG source with that id). Added to
     /// each `<svg>` that refers to them when it is rendered.
-    pub svg_sprites: HashMap<String, (String, String)>,
-    /// pyro: external images of SVG `<image href>` and `<feImage href>`, by href as written: `data:`
-    /// URLs of the fetched resource, turned by its EXIF orientation and not, one of which replaces the href in each `<svg>` that has it
-    /// when it is rendered (usvg loads `data:` URLs only).
-    pub svg_images: HashMap<String, (String, String)>,
+    pub svg_sprites: HashMap<String, crate::util::SvgSprite>,
+    /// Fetched SVG image resources accessible to this document's href resolver.
+    pub svg_images: crate::util::SvgResources,
     /// Changes to the stylist [`Device`] that have been requested since the
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
@@ -391,6 +394,19 @@ pub struct BaseDocument {
     pub(crate) meta_nodes: Vec<NodeId>,
     /// pyro: the root's available space in the last layout pass.
     pub(crate) last_layout_space: Option<taffy::Size<taffy::AvailableSpace>>,
+    /// pyro: classic scrollbars (`stylo_taffy::scrollbars`): the viewport's scrollbar gutters (physical
+    /// edges, CSS px), which the initial containing block is smaller by, and which of its scrollbars
+    /// show (x: the horizontal one). All zero with overlay scrollbars.
+    pub viewport_scrollbars: ViewportScrollbars,
+    /// pyro: whether `resolve_layout` laid the document out since `resolve` last checked the
+    /// classic `overflow: auto` scrollbars.
+    pub(crate) layout_ran: bool,
+    /// pyro: this is the document of an `<iframe scrolling=no>`: its viewport shows no scrollbars
+    /// (`viewport_overflow` is `hidden`).
+    pub(crate) frame_no_scrollbars: bool,
+    /// pyro: classic scrollbars: what viewport units see the viewport smaller by (CSS px; the
+    /// root's `scroll`/`stable` gutters, `stylo` `Device::set_viewport_unit_inset`).
+    pub(crate) viewport_unit_inset: (f32, f32),
     /// See [`BaseDocument::set_layout_size`].
     layout_size: Option<(f32, f32)>,
     /// See [`BaseDocument::set_layout_size`].
@@ -406,6 +422,15 @@ pub struct BaseDocument {
     /// How deeply this document is nested within other documents
     /// (0 for a root document). Used to limit `<iframe>` nesting depth.
     pub(crate) subdocument_depth: usize,
+    pub raster_budget: pyro_raster::PageRasters,
+    /// pyro: the id of the frame this is the document of (`DocumentConfig::frame_client`).
+    pub(crate) frame_client: Option<String>,
+    /// pyro: `DocumentConfig::frames`: the documents its frame elements show.
+    pub(crate) frames: crate::FrameTable,
+    /// pyro: its sheets' `Referrer-Policy`, by sheet object (`net::SheetPolicies`).
+    pub(crate) sheet_policies: crate::net::SheetPolicies,
+    /// pyro: the URL data objects of its own CSS (`net::InlineUrls`).
+    pub(crate) inline_urls: crate::net::InlineUrls,
 
     // Events
     pub(crate) tx: Sender<DocumentEvent>,
@@ -513,6 +538,26 @@ pub struct BaseDocument {
     pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
     /// Nodes that contain sub documents
     pub(crate) sub_document_nodes: HashSet<NodeId>,
+    /// pyro: the `content-visibility: auto` elements whose relevance is determined
+    /// (`NodeFlags::CV_DETERMINED`), those a query forced to render (`CV_FORCED`), and the scroll
+    /// position relevance was last determined at (`update_content_visibility`).
+    pub(crate) cv_auto: HashSet<NodeId>,
+    pub(crate) cv_forced: HashSet<NodeId>,
+    pub(crate) cv_scroll: Option<(f64, f64)>,
+    /// pyro: a resolve again for relevance a fresh transform changed is running.
+    pub(crate) cv_resolving: bool,
+    /// pyro: steps the relevance passes took (candidates looked up, chain steps walked): what
+    /// tests bound (`content_visibility_work`).
+    pub(crate) cv_work: std::cell::Cell<u64>,
+    /// pyro: the user-agent sheets it was made with, which the frame documents it makes take too
+    /// (the embedder's: no native CSS animations or transitions in a frame either, as its
+    /// animations are sampled in, `frame_animations`).
+    pub(crate) ua_stylesheets: Vec<UserAgentStylesheet>,
+    /// pyro: the animations of frame documents now, by frame client (`data-pyro-frame-client`):
+    /// sampled into those sub-documents at each resolve, their elements by `data-pyro-key`
+    /// (handed down to nested frames).
+    pub(crate) frame_animations:
+        std::sync::Arc<HashMap<String, std::sync::Arc<Vec<(u64, crate::animation::ElementEffects)>>>>,
     /// Load state (abort controller and in-flight request id) for each
     /// `<iframe>` element whose sub-document is loaded automatically
     pub(crate) iframe_loads: HashMap<NodeId, crate::iframe::IframeLoad>,
@@ -520,6 +565,9 @@ pub struct BaseDocument {
     pub(crate) has_changes: bool,
     /// Set of changed nodes for updating the accessibility tree
     pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
+    /// pyro: the block each `display: run-in` box that runs in runs into, by block
+    /// (`layout::construct::resolve_run_ins`).
+    pub(crate) run_in_targets: std::collections::HashMap<NodeId, NodeId>,
     /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
     /// set), so paint-tree passes visit them instead of every node.
     pub(crate) oof_hoisted: HashSet<NodeId>,
@@ -534,6 +582,10 @@ pub struct BaseDocument {
     /// finds an element's entry, so one restyled twice keeps its first old and
     /// its last new style.
     pub(crate) style_changes: Vec<StyleChange>,
+    /// pyro: the originating elements of the scroll marker groups that scrolled to keep their
+    /// active marker in view since the last [`Self::take_scroll_group_moves`]: the page fires
+    /// `scroll` and `scrollend` at them (`layout::scroll_markers`).
+    pub(crate) scroll_group_moves: Vec<NodeId>,
     /// pyro: the page's scroll offsets for scroll-driven animations (`scroll_timeline`): its
     /// scrolled elements' and the viewport's. Layout queries do not move the nodes' own scroll
     /// offsets (a capture does), so scroll timelines read the page's here.
@@ -610,11 +662,35 @@ pub struct BaseDocument {
     /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
     /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
     pub(crate) scroll_markers_dirty: bool,
+    pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
+    pub(crate) popover_anchors: HashMap<NodeId, NodeId>,
+    anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
+    anchor_rule_users: HashMap<Atom, HashSet<usize>>,
+    anchor_list_users: HashMap<usize, HashSet<NodeId>>,
+    anchor_user_rules: HashMap<NodeId, style::values::specified::position::PositionTryFallbacksList>,
+    pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
+    pub(crate) anchor_geometry_steps: std::cell::Cell<u64>,
+    pub(crate) anchor_transform_sources: RefCell<HashMap<NodeId, HashSet<NodeId>>>,
+    pub(crate) anchor_transform_users: RefCell<HashMap<NodeId, (ServoArc<ComputedValues>, HashSet<NodeId>)>>,
+    pub(crate) anchor_transform_dirty: HashSet<NodeId>,
+    pub(crate) anchor_index: RefCell<crate::layout::anchor_index::AnchorIndex>,
+    pub(crate) anchor_try_visits: std::cell::Cell<u64>,
+    pub(crate) anchor_list_visits: std::cell::Cell<u64>,
+    pub(crate) anchor_try_scrollports: HashMap<Option<NodeId>, HashSet<NodeId>>,
+    pub(crate) anchor_try_sources: HashMap<NodeId, HashSet<Option<NodeId>>>,
+    pub(crate) anchor_scroll_dirty: HashSet<NodeId>,
+    pub(crate) anchor_last_option: HashMap<NodeId, (usize, style::servo_arc::Arc<style::properties::ComputedValues>)>,
+    pub(crate) anchor_flush_choices: HashMap<NodeId, Option<usize>>,
+    pub(crate) anchor_rendered_options: HashMap<NodeId, usize>,
+    pub(crate) anchor_area_snapshots: RefCell<HashMap<NodeId, ((NodeId, NodeId, style::values::specified::position::PositionArea, Option<usize>), taffy::Point<f32>)>>,
+    pub(crate) anchor_pending_options: HashSet<NodeId>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
     /// pyro: the elements with scroll pseudo-element boxes (`ElementData::scroll`).
     pub(crate) scroll_pseudo_owners: std::collections::HashSet<NodeId>,
+    pub(crate) transition_trees: Option<Box<style::FxHashMap<NodeId, crate::view_transition::Tree>>>,
+    pub transition_paint: Option<Box<crate::view_transition::PaintState>>,
     /// pyro: each element with `scroll-target-group: auto` and the links in its group.
     pub(crate) scroll_target_groups: Vec<(NodeId, Vec<NodeId>)>,
     /// pyro: each scroll container's current scroll target (CSS Overflow 5 § 2.1; the viewport's
@@ -628,6 +704,10 @@ pub struct BaseDocument {
     pub(crate) first_line_changed: Vec<NodeId>,
     /// pyro: the embedder's selection, painted in place of `text_selection` (`dom_selection`).
     pub(crate) dom_selection: Option<crate::DomSelection>,
+    /// pyro: the embedder's caret (`dom_caret`), painted in its editing host.
+    pub(crate) dom_caret: Option<(NodeId, usize)>,
+    /// pyro: the element `:target` matches (`set_url_target`).
+    pub(crate) url_target: Option<NodeId>,
     /// pyro: the replaced elements the selection holds (painted with its tint).
     pub(crate) selected_replaced: Vec<NodeId>,
     /// pyro: the embedder's highlights (custom highlights and the target text), bottom first
@@ -646,6 +726,9 @@ pub struct BaseDocument {
     /// container looks for spanners below its children too (`layout::multicol`); without one its
     /// children are all it reads.
     pub(crate) column_span_styles: bool,
+    /// pyro: an element was ever styled with a `scroll-snap-type` (snapping is looked for only
+    /// then: `mandatory_snap_containers`).
+    pub(crate) scroll_snap_styles: bool,
     /// pyro: the generated text of each element's `::after` and `::before` with counters and
     /// quotes evaluated (`layout::counters`), while `generated_counters`.
     pub(crate) generated_text: HashMap<NodeId, crate::layout::counters::GeneratedText>,
@@ -657,6 +740,11 @@ pub struct BaseDocument {
     pub(crate) marker_counters: bool,
     /// pyro: `marker_counters` was just set: the resolve runs one more pass, which evaluates them.
     pub(crate) marker_counters_pending: bool,
+    /// pyro: per size container placed beside floats, the top of the float-avoiding slot it was last
+    /// placed in to be styled at that slot's width: placement goes on from there (css-contain-3
+    /// container queries beside floats move forward only; WPT container-queries
+    /// `inline-size-bfc-floats`). Cleared at each resolve.
+    pub(crate) container_float_floors: std::collections::HashMap<crate::NodeId, f32>,
     /// pyro: the text of each list item's `::marker` `content` that reads counters, evaluated in
     /// tree order (`layout::counters`).
     pub(crate) marker_texts: HashMap<NodeId, String>,
@@ -723,14 +811,35 @@ bitflags! {
     }
 }
 
+/// pyro: the attribute the render snapshot writes on a sheet link: the key of its text in the
+/// snapshot's sheets (by the link, never its URL).
+pub const SHEET_ATTRIBUTE: &str = "data-pyro-sheet";
+
+/// pyro: the attribute the render snapshot writes on a sheet link: its response's `Referrer-Policy`.
+pub const SHEET_POLICY_ATTRIBUTE: &str = "data-pyro-sheet-referrer-policy";
+
 impl BaseDocument {
     /// Create a new (empty) [`BaseDocument`] with the specified configuration
     pub fn new(config: DocumentConfig) -> Self {
+        // pyro: on a grown stack: in a debug build this frame (the document and its Stylist built by
+        // value) is about 256 KB, more than a small thread has (a 256 KB layout thread overflowed).
+        crate::util::ensure_stack(|| Self::new_inner(config))
+    }
+
+    #[inline(never)]
+    fn new_inner(config: DocumentConfig) -> Self {
         init_stylo_prefs();
 
         static ID_GENERATOR: AtomicUsize = AtomicUsize::new(1);
 
         let id = ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+        // pyro: a frame's document names its frame as the client of every request it makes
+        // (`BaseDocument::request_client`), unmodified ones included.
+        if config.subdocument_depth > 0 {
+            if let Some(net) = config.net_provider.as_ref() {
+                net.document_client(id, config.frame_client.clone().unwrap_or_default());
+            }
+        }
 
         let font_ctx = config
             .font_ctx
@@ -763,7 +872,7 @@ impl BaseDocument {
         let device = make_device(&viewport, None, media_type.clone(), font_ctx.clone());
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
-        let mut nodes = Box::new(NodeTree::new());
+        let mut nodes = Box::new(NodeTree::new(config.raster_budget.clone()));
         nodes.xml_document = config.xml_document;
         nodes.quirks_mode = config.quirks_mode;
         nodes.line_height_quirk = config.line_height_quirk;
@@ -777,6 +886,7 @@ impl BaseDocument {
             .base_url
             .and_then(|url| DocumentUrl::from_str(&url).ok())
             .unwrap_or_default();
+        nodes.base_url = without_fragment(base_url.as_str()).to_owned();
 
         let net_provider = config
             .net_provider
@@ -808,17 +918,26 @@ impl BaseDocument {
             viewport,
             media_type,
             svg_sprites: HashMap::new(),
-            svg_images: HashMap::new(),
+            svg_images: Default::default(),
             pending_device_changes: DeviceChanges::empty(),
             page_color_scheme: style::values::specified::color::ColorSchemeFlags::empty(),
             meta_nodes: Default::default(),
             last_layout_space: None,
+            viewport_scrollbars: ViewportScrollbars::default(),
+            layout_ran: false,
+            frame_no_scrollbars: false,
+            viewport_unit_inset: (0.0, 0.0),
             layout_size: None,
             layout_available: None,
             flags: DocumentFlags::empty(),
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
             subdocument_depth: config.subdocument_depth,
+            raster_budget: config.raster_budget,
+            frame_client: config.frame_client.clone(),
+            frames: config.frames.clone(),
+            sheet_policies: Default::default(),
+            inline_urls: std::sync::Arc::new(std::sync::Mutex::new(vec![base_url.inline_url_data().clone()])),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
@@ -848,6 +967,13 @@ impl BaseDocument {
             subdoc_is_animating: false,
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
+            cv_auto: HashSet::new(),
+            cv_forced: HashSet::new(),
+            cv_scroll: None,
+            cv_resolving: false,
+            cv_work: std::cell::Cell::new(0),
+            ua_stylesheets: config.ua_stylesheets.clone(),
+            frame_animations: Default::default(),
             iframe_loads: HashMap::new(),
 
             #[cfg(feature = "custom-widget")]
@@ -857,9 +983,11 @@ impl BaseDocument {
 
             has_changes: false,
             deferred_construction_nodes: Vec::new(),
+            run_in_targets: std::collections::HashMap::new(),
             oof_hoisted: HashSet::new(),
             sticky_nodes: HashSet::new(),
             style_changes: Vec::new(),
+            scroll_group_moves: Vec::new(),
             timeline_scroll: Default::default(),
             style_change_index: HashMap::new(),
             track_style_changes: false,
@@ -880,23 +1008,51 @@ impl BaseDocument {
             first_letter_changed: Vec::new(),
             marker_items_restyled: Vec::new(),
             scroll_markers_dirty: true,
+            named_anchor_nodes: HashMap::new(),
+            popover_anchors: HashMap::new(),
+            anchor_node_names: HashMap::new(),
+            anchor_rule_users: HashMap::new(),
+            anchor_list_users: HashMap::new(),
+            anchor_user_rules: HashMap::new(),
+            anchor_lookup_visits: Default::default(),
+            anchor_geometry_steps: Default::default(),
+            anchor_transform_sources: Default::default(),
+            anchor_transform_users: Default::default(),
+            anchor_transform_dirty: Default::default(),
+            anchor_index: Default::default(),
+            anchor_try_visits: Default::default(),
+            anchor_list_visits: Default::default(),
+            anchor_try_scrollports: Default::default(),
+            anchor_try_sources: Default::default(),
+            anchor_scroll_dirty: Default::default(),
+            anchor_last_option: Default::default(),
+            anchor_flush_choices: Default::default(),
+            anchor_rendered_options: Default::default(),
+            anchor_area_snapshots: Default::default(),
+            anchor_pending_options: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
+            transition_trees: None,
+            transition_paint: None,
             scroll_target_groups: Vec::new(),
             scroll_targets: Default::default(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
+            dom_caret: None,
+            url_target: None,
             selected_replaced: Vec::new(),
             dom_highlights: Vec::new(),
             first_line_reparented: Default::default(),
             generated_counters: false,
             text_box_trim_styles: false,
             column_span_styles: false,
+            scroll_snap_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
             marker_counters: false,
             marker_counters_pending: false,
+            container_float_floors: Default::default(),
             marker_texts: HashMap::new(),
             list_item_numbers: Default::default(),
             top_layer: Default::default(),
@@ -994,6 +1150,8 @@ impl BaseDocument {
     /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub fn set_base_url(&mut self, url: &str) {
         self.url = DocumentUrl::from(Url::parse(url).unwrap());
+        crate::net::adopt_inline(&self.inline_urls, self.url.inline_url_data());
+        self.nodes.base_url = without_fragment(self.url.as_str()).to_owned();
     }
 
     /// The base url used for resolving linked resources (stylesheets, images, fonts, etc)
@@ -1320,6 +1478,7 @@ impl BaseDocument {
     /// (hover/active/focus/mousedown/selection/drag/scrollbar) that references
     /// it so that stale NodeIds are never dereferenced after the slot is freed.
     pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
+        if self.transition_trees.is_some() { self.clear_transition_tree(node_id); }
         self.clear_interaction_state_for_removed_node(node_id);
         // pyro: a dropped element leaves the top layer.
         if !self.top_layer.is_empty() {
@@ -1342,7 +1501,158 @@ impl BaseDocument {
                 }
             }
         }
+        self.update_anchor_names(node_id, None);
+        self.update_anchor_rule_users(node_id, None);
+        self.clear_anchor_try_sources(node_id);
+        self.clear_anchor_transform_sources(node_id);
+        if let Some((_, blocks)) = self.anchor_transform_users.get_mut().remove(&node_id) {
+            for block in blocks { if let Some(sources) = self.anchor_transform_sources.get_mut().get_mut(&block) { sources.remove(&node_id); } }
+        }
+        self.anchor_transform_dirty.remove(&node_id);
+        self.anchor_last_option.remove(&node_id);
+        self.anchor_area_snapshots.get_mut().remove(&node_id);
+        self.anchor_rendered_options.remove(&node_id);
+        self.anchor_pending_options.remove(&node_id);
+        self.anchor_scroll_dirty.remove(&node_id);
+        if let Some(blocks) = self.anchor_try_scrollports.remove(&Some(node_id)) {
+            for block in blocks { if let Some(sources) = self.anchor_try_sources.get_mut(&block) { sources.remove(&Some(node_id)); } }
+        }
         self.nodes.remove(node_id)
+    }
+
+    pub(crate) fn update_anchor_names(&mut self, node_id: NodeId, names: Option<(Option<NodeId>, style::values::specified::position::AnchorNameIdent)>) {
+        if names.is_none() && self.anchor_node_names.is_empty() { return; }
+        if self.anchor_node_names.get(&node_id) == names.as_ref() { return; }
+        self.anchor_index.get_mut().clear();
+        if let Some((scope, old)) = self.anchor_node_names.remove(&node_id) {
+            for name in old.0.iter() {
+                let key = (scope, name.clone());
+                if let Some(ids) = self.named_anchor_nodes.get_mut(&key) {
+                    ids.remove(&node_id);
+                    if ids.is_empty() { self.named_anchor_nodes.remove(&key); }
+                }
+            }
+        }
+        if let Some((scope, names)) = names {
+            for name in names.0.iter() { self.named_anchor_nodes.entry((scope, name.clone())).or_default().insert(node_id); }
+            self.anchor_node_names.insert(node_id, (scope, names));
+        }
+    }
+
+    pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
+
+    pub fn anchor_query_samples(&self) -> u64 { self.nodes.anchor_query_samples.load(std::sync::atomic::Ordering::Relaxed) }
+    pub fn anchor_geometry_steps(&self) -> u64 { self.anchor_geometry_steps.get() }
+
+    pub(crate) fn clear_anchor_transform_sources(&mut self, block: NodeId) {
+        if self.anchor_transform_sources.get_mut().is_empty() { return; }
+        if let Some(sources) = self.anchor_transform_sources.get_mut().remove(&block) {
+            let users = self.anchor_transform_users.get_mut();
+            for source in sources {
+                if let Some((_, blocks)) = users.get_mut(&source) {
+                    blocks.remove(&block);
+                    if blocks.is_empty() { users.remove(&source); }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn update_anchor_rule_users(&mut self, id: NodeId, rules: Option<style::values::specified::position::PositionTryFallbacksList>) {
+        use style::values::specified::position::{PositionTryFallbacksList, PositionTryFallbacksItem};
+        fn names(list: &PositionTryFallbacksList) -> impl Iterator<Item=&Atom> {
+            list.0.iter().filter_map(|item| match item {
+                PositionTryFallbacksItem::IdentAndOrTactic(item) if !item.ident.is_empty() => Some(&item.ident.0),
+                _ => None,
+            })
+        }
+        if rules.is_none() && self.anchor_user_rules.is_empty() { return; }
+        if self.anchor_user_rules.get(&id).map(|list| list.0.as_ptr()) == rules.as_ref().map(|list| list.0.as_ptr()) { return; }
+        if let Some(old) = self.anchor_user_rules.remove(&id) {
+            self.anchor_area_snapshots.get_mut().remove(&id);
+            self.anchor_rendered_options.remove(&id);
+            self.anchor_last_option.remove(&id);
+            self.anchor_pending_options.remove(&id);
+            let key = old.0.as_ptr() as usize;
+            if let Some(users) = self.anchor_list_users.get_mut(&key) {
+                users.remove(&id);
+                if users.is_empty() {
+                    self.anchor_list_users.remove(&key);
+                    for name in names(&old) {
+                        if let Some(lists) = self.anchor_rule_users.get_mut(name) {
+                            lists.remove(&key);
+                            if lists.is_empty() { self.anchor_rule_users.remove(name); }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(list) = rules {
+            let key = list.0.as_ptr() as usize;
+            let users = self.anchor_list_users.entry(key).or_default();
+            if users.is_empty() {
+                for name in names(&list) { self.anchor_rule_users.entry(name.clone()).or_default().insert(key); }
+            }
+            users.insert(id);
+            self.anchor_user_rules.insert(id, list);
+        }
+    }
+
+    pub(crate) fn invalidate_anchor_rule_users(&mut self, names: impl IntoIterator<Item=Atom>) {
+        if self.anchor_rule_users.is_empty() { return; }
+        let mut blocks = HashSet::new();
+        let lists: HashSet<_> = names.into_iter().filter_map(|name| self.anchor_rule_users.get(&name)).flatten().copied().collect();
+        for key in lists {
+            if let Some(users) = self.anchor_list_users.get(&key) {
+                for id in users {
+                    if let Some(node) = self.nodes.get(*id).filter(|node| node.flags.is_in_document()) {
+                        blocks.extend(node.containing_block());
+                        self.anchor_last_option.remove(id);
+                        self.anchor_area_snapshots.get_mut().remove(id);
+                        self.anchor_rendered_options.remove(id);
+                        self.anchor_pending_options.remove(id);
+                    }
+                }
+            }
+        }
+        for id in blocks { self.nodes[id].insert_damage(crate::layout::damage::ONLY_RELAYOUT); }
+    }
+    pub fn commit_anchor_frame(&mut self) {
+        if self.anchor_pending_options.is_empty() { return; }
+        for id in self.anchor_pending_options.drain() {
+            if let Some((index,_)) = self.anchor_last_option.get(&id) { self.anchor_rendered_options.insert(id,*index); }
+            else { self.anchor_rendered_options.remove(&id); }
+        }
+    }
+    pub fn anchor_index_work(&self) -> u64 { self.anchor_index.borrow().work.get() }
+    pub fn anchor_boundary_entries(&self) -> usize { self.anchor_index.borrow().boundary_entries() }
+    pub fn has_anchor_sources(&self) -> bool { !self.named_anchor_nodes.is_empty() || !self.popover_anchors.is_empty() }
+
+    pub fn set_popover_anchors(&mut self, anchors: HashMap<NodeId, NodeId>) {
+        if self.popover_anchors == anchors { return; }
+        let old = std::mem::replace(&mut self.popover_anchors, anchors);
+        for id in old.keys().chain(self.popover_anchors.keys()) {
+            if old.get(id) == self.popover_anchors.get(id) { continue; }
+            if let Some(node) = self.nodes.get_mut(*id) {
+                let block = node.containing_block();
+                node.insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+                if let Some(block) = block.and_then(|id| self.nodes.get_mut(id)) { block.insert_damage(crate::layout::damage::ONLY_RELAYOUT); }
+            }
+        }
+    }
+    pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }
+    pub fn anchor_list_visits(&self) -> u64 { self.anchor_list_visits.get() }
+    pub fn anchor_clip_steps(&self) -> u64 { self.nodes.anchor_clip_steps.load(std::sync::atomic::Ordering::Relaxed) }
+
+    pub(crate) fn clear_anchor_try_sources(&mut self, block: NodeId) {
+        if self.anchor_try_sources.is_empty() { return; }
+        if let Some(sources) = self.anchor_try_sources.remove(&block) {
+            for source in sources {
+                if let Some(blocks) = self.anchor_try_scrollports.get_mut(&source) {
+                    blocks.remove(&block);
+                    if blocks.is_empty() { self.anchor_try_scrollports.remove(&source); }
+                }
+            }
+        }
     }
 
     /// pyro: takes `id` out of the hoisted list of `containing_block` and lays that box out
@@ -1770,9 +2080,14 @@ impl BaseDocument {
                     if href == href_to_reload
                         && let Some(resolved_href) = self.resolve_url(href)
                     {
+                        let mut request = self.build_request(resolved_href.clone());
+                        request.options.destination = blitz_traits::net::Destination::Style;
+                        let marked = crate::engine_marked(&self.frames.nonce, element);
+                        request.options.sheet =
+                            element.reserved_attr(SHEET_ATTRIBUTE).filter(|_| marked).map(str::to_owned);
                         self.net_provider.fetch(
                             self.id(),
-                            self.build_request(resolved_href.clone()),
+                            request,
                             ResourceHandler::boxed(
                                 self.tx.clone(),
                                 self.id,
@@ -1783,6 +2098,12 @@ impl BaseDocument {
                                     guard: self.guard.clone(),
                                     net_provider: self.net_provider.clone(),
                                     abort_signal: self.abort_signal.clone(),
+                                    client: self.request_client(),
+                                    policy: element
+                                        .reserved_attr(SHEET_POLICY_ATTRIBUTE)
+                                        .filter(|_| marked)
+                                        .map(str::to_owned),
+                                    policies: self.sheet_policies.clone(),
                                 },
                             ),
                         );
@@ -1802,11 +2123,55 @@ impl BaseDocument {
         // pyro: a `media` attribute is the sheet's media list (HTML `<style media>`): a sheet
         // whose media do not match applies nothing. Parsed apart (not the shared sheet of its
         // text, whose media list is empty).
-        let sheet = match self.node_media_list(target_id) {
-            Some(media) => DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(&css, Origin::Author, media))),
-            None => self.make_stylesheet_in(&css, Origin::Author, host),
+        // pyro: a sheet with `@scope` rules is parsed for its element alone, with the implicit
+        // scope root of its prelude-less ones (CSS Cascade 6 § 2.5: the element's parent, or the
+        // shadow host when the element is at its shadow tree's top), not shared with other
+        // elements or shadow trees (WPT css-cascade `scope-part`, `scope-shadow-sharing`).
+        let implicit_scope_root = sheet_has_scope_rules(&css).then(|| self.implicit_scope_root_of(target_id));
+        let sheet = match (self.node_media_list(target_id), implicit_scope_root) {
+            (media, Some(root)) => {
+                let mut sheet =
+                    self.parse_stylesheet_with_media(&css, Origin::Author, media.unwrap_or_else(MediaList::empty));
+                sheet.implicit_scope_root = root;
+                DocumentStyleSheet(ServoArc::new(sheet))
+            }
+            (Some(media), None) => {
+                DocumentStyleSheet(ServoArc::new(self.parse_stylesheet_with_media(&css, Origin::Author, media)))
+            }
+            (None, None) => self.make_stylesheet_in(&css, Origin::Author, host),
         };
         self.add_stylesheet_for_node(sheet, target_id);
+    }
+
+    /// pyro: the implicit scope root of the `@scope` rules in the sheet of `owner` (a `<style>`):
+    /// its parent element (`InLightTree`/`InShadowTree`), the host of the shadow tree whose top
+    /// it is in (`ShadowHost`), or none (a `<style>` that is no element's child).
+    fn implicit_scope_root_of(&self, owner: NodeId) -> Option<style::stylesheets::scope_rule::ImplicitScopeRoot> {
+        use style::stylesheets::scope_rule::ImplicitScopeRoot;
+        let opaque = |id: NodeId| {
+            selectors::OpaqueElement::from_ptr(
+                std::ptr::NonNull::new((id.as_u64() as usize).wrapping_add(1) as *mut ()).unwrap(),
+            )
+        };
+        let node = &self.nodes[owner];
+        let parent = node.parent?;
+        if node.parent_is_shadow_root() {
+            return Some(ImplicitScopeRoot::ShadowHost(opaque(parent)));
+        }
+        // A node assigned to a slot is the slot's child here: its parent in its node tree is the
+        // host of the slot's shadow tree.
+        let parent = if self.nodes[parent].is_assigned_slot() {
+            self.nodes[parent].containing_shadow_host_id()?
+        } else {
+            parent
+        };
+        if !self.nodes[parent].is_element() {
+            return None;
+        }
+        Some(match self.nodes[parent].containing_shadow_host_id() {
+            Some(_) => ImplicitScopeRoot::InShadowTree(opaque(parent)),
+            None => ImplicitScopeRoot::InLightTree(opaque(parent)),
+        })
     }
 
     /// pyro: a `<link>`'s `media` changed: its sheet (each fetch parses its own) takes the new
@@ -1851,9 +2216,98 @@ impl BaseDocument {
         }
     }
 
+    fn image_owners(&self) -> impl Iterator<Item = &ElementData> {
+        self.nodes.iter().filter_map(|(_, node)| {
+            node.flags.is_in_document().then(|| node.element_data()).flatten()
+        }).flat_map(|element| {
+            let styles = [element.first_letter, element.first_line, element.marker_style];
+            std::iter::once(element).chain(styles.into_iter().flatten().filter_map(|id| self.nodes.get(id)?.element_data()))
+        })
+    }
+
+    /// pyro: the URLs of the images the document's elements reference now (their CSS image slots:
+    /// backgrounds, masks, border images, references, list markers, shapes), in the document only.
+    /// An image no element references any more is no longer the document's to wait for.
+    /// The requests (URL and request options) of those images, not only their URLs: a variant of
+    /// the same URL made otherwise is another request.
+    pub fn referenced_images(&self) -> Vec<(String, blitz_traits::net::FetchOptions)> {
+        let mut out = Vec::new();
+        for element in self.image_owners() {
+            out.extend(element.source_image_request.as_deref().cloned());
+            if element.name.ns == markup5ever::ns!(svg) && matches!(&*element.name.local, "image" | "feImage" | "use") {
+                for attr in element.attrs() {
+                    if &*attr.name.local == "href" && !attr.value.trim().starts_with('#') {
+                        if let Some(mut url) = self.resolve_url(attr.value.trim()) {
+                            if &*element.name.local == "use" { url.set_fragment(None); }
+                            out.push((url.to_string(), Default::default()));
+                        }
+                    }
+                }
+            }
+            if let Some((url, _)) = &element.content_image {
+                out.push((url.clone(), Default::default()));
+            }
+            for slot in element
+                .background_images
+                .iter()
+                .chain(element.mask_images.iter())
+                .chain(element.border_images.iter())
+                .chain(element.reference_images.iter())
+                .chain(element.list_style_images.iter())
+                .chain(element.shape_images.iter())
+                .flatten()
+            {
+                out.push((slot.url.as_str().to_owned(), slot.options.clone()));
+            }
+        }
+        out
+    }
+
+    pub fn referenced_image_urls(&self) -> std::collections::HashSet<String> {
+        let mut urls = std::collections::HashSet::new();
+        for element in self.image_owners() {
+            for slot in element
+                .background_images
+                .iter()
+                .chain(element.mask_images.iter())
+                .chain(element.border_images.iter())
+                .chain(element.reference_images.iter())
+                .chain(element.list_style_images.iter())
+                .chain(element.shape_images.iter())
+                .flatten()
+            {
+                urls.insert(slot.url.as_str().to_owned());
+            }
+        }
+        urls
+    }
+
     /// The document's base URL
     pub fn url(&self) -> &url::Url {
         &self.url
+    }
+
+    /// pyro: `options` for a request this document makes, with this document's frame as the
+    /// request's client when it is a frame's (`FetchOptions::client`, the frame's id, never its
+    /// URL): a CORS check compares the response with that frame's origin, not the page's.
+    /// Requests with the defaults stay the page's.
+    pub(crate) fn request_options(
+        &self,
+        mut options: blitz_traits::net::FetchOptions,
+    ) -> blitz_traits::net::FetchOptions {
+        // pyro: (an inline sheet's `url()` has the document as its referrer already:
+        // `net::url_fetch_options`, by the sheet's identity, never by comparing URLs.)
+        if !options.is_default() {
+            options.client = self.request_client();
+        }
+        options
+    }
+
+    /// pyro: the client this document's requests with other than the defaults name: its frame's
+    /// id in a frame's document (one without an id names `""`, which no frame has, so its
+    /// requests fail rather than go out as the page's), `None` in the page's document.
+    pub(crate) fn request_client(&self) -> Option<String> {
+        (self.subdocument_depth > 0).then(|| self.frame_client.clone().unwrap_or_default())
     }
 
     /// pyro: what a link's `href` resolves against, and the document's own URL (without a
@@ -1912,6 +2366,9 @@ impl BaseDocument {
                     }
                 };
                 if !taken {
+                    // pyro: its URL data (the first document's object) is this document's own CSS's.
+                    let url_data = sheet.0.contents.read_with(&sheet.0.shared_lock.read()).url_data.0.clone();
+                    crate::net::adopt_inline(&self.inline_urls, &url_data);
                     return sheet;
                 }
                 return self.parse_stylesheet(css, origin);
@@ -1943,6 +2400,9 @@ impl BaseDocument {
                 shell_provider: self.shell_provider.clone(),
                 abort_signal: self.abort_signal.clone(),
                 import_depth: 0,
+                client: self.request_client(),
+                inline: Some(self.inline_urls.clone()),
+                policies: self.sheet_policies.clone(),
             }),
             None,
             QuirksMode::NoQuirks,
@@ -2063,8 +2523,30 @@ impl BaseDocument {
     /// and after-change styles. An element styled for the first time, or whose
     /// styles were dropped, is no change. O(elements restyled), not a scan.
     /// pyro: the page's scroll offsets that scroll-driven animations follow (`timeline_scroll`).
-    pub fn set_timeline_scroll(&mut self, elements: std::collections::HashMap<NodeId, (f64, f64)>, viewport: (f64, f64)) {
+    pub fn set_timeline_scroll(&mut self, elements: std::collections::HashMap<NodeId, (f64, f64)>, viewport: (f64, f64)) -> bool {
+        let mut invalidated = false;
+        if !self.anchor_try_scrollports.is_empty() {
+            let old = self.timeline_scroll.as_ref().map(|(elements, _)| elements);
+            let changed = elements.keys().chain(old.into_iter().flat_map(|map| map.keys()).filter(|id| !elements.contains_key(id)))
+                .filter(|id| elements.get(id).copied().unwrap_or_default() != old.and_then(|map| map.get(id)).copied().unwrap_or_default()).copied().map(Some);
+            let viewport_changed = self.timeline_scroll.as_ref().map(|(_, offset)| *offset).unwrap_or_default() != viewport;
+            for source in changed.chain(viewport_changed.then_some(None)) {
+                if let Some(blocks) = self.anchor_try_scrollports.get(&source) {
+                    for block in blocks {
+                        self.nodes[*block].insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+                        if source != Some(*block) { self.anchor_scroll_dirty.insert(*block); }
+                    }
+                    invalidated = true;
+                }
+            }
+        }
         self.timeline_scroll = Some((elements, viewport));
+        invalidated
+    }
+
+    /// pyro: see [`Self::scroll_group_moves`].
+    pub fn take_scroll_group_moves(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.scroll_group_moves)
     }
 
     pub fn take_style_changes(&mut self) -> Vec<StyleChange> {
@@ -2197,11 +2679,24 @@ impl BaseDocument {
                             self.show_image_alt_text(*node_id);
                         }
                     }
-                    // pyro: a list item whose image fails keeps its `list-style-type` marker.
+                    // pyro: a layer image that fails is no longer loading: a list item keeps its
+                    // `list-style-type` marker, and a mask or a referenced document that failed is
+                    // not waited for (a mask still loading hides its element).
                     for (node_id, image_type) in &waiting_nodes {
-                        if let (ImageType::ListStyle(idx), Some(node)) = (image_type, self.nodes.get_mut(*node_id)) {
-                            if let Some(Some(image)) =
-                                node.element_data_mut().and_then(|el| el.list_style_images.get_mut(*idx))
+                        let Some(el) = self.nodes.get_mut(*node_id).and_then(|node| node.element_data_mut()) else {
+                            continue;
+                        };
+                        let slot = match *image_type {
+                            ImageType::ListStyle(idx) => el.list_style_images.get_mut(idx),
+                            ImageType::Background(idx) => el.background_images.get_mut(idx),
+                            ImageType::Mask(idx) => el.mask_images.get_mut(idx),
+                            ImageType::BorderImage(idx) => el.border_images.get_mut(idx),
+                            ImageType::Reference(idx) => el.reference_images.get_mut(idx),
+                            ImageType::Image | ImageType::Shape(_) => None,
+                        };
+                        if let Some(Some(image)) = slot {
+                            if image.status == Status::Loading
+                                && (matches!(image_type, ImageType::ListStyle(_)) || image.request_key() == *url)
                             {
                                 image.status = Status::Error;
                             }
@@ -2263,8 +2758,7 @@ impl BaseDocument {
             }
             Resource::Image(_kind, width, height, image_data, orientation) => {
                 // Create the ImageData and cache it
-                let mut raster = RasterImageData::new(width, height, image_data);
-                raster.orientation = orientation;
+                let raster = RasterImageData { width, height, data: image_data, orientation };
                 let image = ImageData::Raster(raster);
 
                 let Some(url) = res.resolved_url.as_ref() else {
@@ -2293,6 +2787,11 @@ impl BaseDocument {
                 self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
             }
             Resource::Font(bytes, overrides) => {
+                // pyro: SVG text draws with it too (usvg's font database).
+                #[cfg(feature = "svg")]
+                if let Some(family) = &overrides.family_name {
+                    crate::util::add_web_svg_font(&bytes, family);
+                }
                 let font = crate::util::intern_font_blob(bytes, overrides.family_name.as_deref());
 
                 // Build a `FontInfoOverride` from the `@font-face` descriptors
@@ -2442,15 +2941,42 @@ impl BaseDocument {
                 }
                 // pyro: a document an element's `clip-path`, `filter` or `mask` references an
                 // element of: the box is painted, and an inline `<svg>` written, with it.
+                // pyro: into the slot only while it still holds this request (a late completion of
+                // a request the slot no longer names is not its image).
                 ImageType::Reference(idx) => {
-                    if let Some(Some(reference)) =
-                        node.element_data_mut().and_then(|el| el.reference_images.get_mut(idx))
+                    if let Some(Some(reference)) = node
+                        .element_data_mut()
+                        .and_then(|el| el.reference_images.get_mut(idx))
+                        .filter(|slot| slot.as_ref().is_some_and(|slot| slot.request_key() == url))
                     {
                         reference.status = Status::Ok;
                         reference.image = image.clone();
                     }
                     #[cfg(feature = "svg")]
                     self.damage_inline_svg_root(node_id);
+                }
+                // pyro: a float's `shape-outside` image is its float area: the boxes around
+                // it are laid out again.
+                ImageType::Shape(idx) => {
+                    // Only into the slot of the image the shape still names (`url` is its URL, or
+                    // its CORS key): an image it named before finishing late is not its shape.
+                    let Some(Some(shape)) = node.element_data_mut().and_then(|el| el.shape_images.get_mut(idx)) else {
+                        continue;
+                    };
+                    if shape.request_key() != url {
+                        continue;
+                    }
+                    shape.status = Status::Ok;
+                    shape.image = image.clone();
+                    node.clear_layout_cache();
+                    node.insert_damage(ALL_DAMAGE);
+                    let mut ancestor = node.layout_parent.get().or(node.parent);
+                    while let Some(id) = ancestor {
+                        let Some(parent) = self.nodes.get_mut(id) else { break };
+                        parent.clear_layout_cache();
+                        parent.insert_damage(ALL_DAMAGE);
+                        ancestor = parent.layout_parent.get().or(parent.parent);
+                    }
                 }
                 ImageType::Background(idx)
                 | ImageType::Mask(idx)
@@ -2462,10 +2988,12 @@ impl BaseDocument {
                             ImageType::Mask(_) => &mut el.mask_images,
                             ImageType::BorderImage(_) => &mut el.border_images,
                             ImageType::ListStyle(_) => &mut el.list_style_images,
-                            ImageType::Image | ImageType::Reference(_) => unreachable!(),
+                            ImageType::Image | ImageType::Reference(_) | ImageType::Shape(_) => unreachable!(),
                         };
                         images.get_mut(idx)
                     });
+                    // pyro: into the slot only while it still holds this request.
+                    let layer_image = layer_image.filter(|slot| slot.as_ref().is_some_and(|slot| slot.request_key() == url));
                     if let Some(Some(layer_image)) = layer_image {
                         layer_image.status = Status::Ok;
                         layer_image.image = image.clone();
@@ -3149,7 +3677,33 @@ impl BaseDocument {
     /// Puts `:hover` on `node` and its ancestors (and off the previous
     /// ones), as a pointer over it would: for an embedder that tracks the
     /// pointer itself. `None` clears hover.
-    pub fn set_hover_node(&mut self, node: Option<NodeId>) -> bool {
+    /// pyro: the element `:target` matches from now on (the embedder's indicated element, from
+    /// the document URL's fragment): its `URLTARGET` state. Whether it changed.
+    pub fn set_url_target(&mut self, node: Option<NodeId>) -> bool {
+        if node == self.url_target {
+            return false;
+        }
+        if let Some(old) = self.url_target.filter(|&id| self.nodes.get(id).is_some_and(Node::is_element)) {
+            self.snapshot_node_and(old, ElementState::URLTARGET, |node| {
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.remove(ElementState::URLTARGET);
+                }
+                node.mark_ancestors_dirty();
+            });
+        }
+        if let Some(new) = node.filter(|&id| self.nodes.get(id).is_some_and(Node::is_element)) {
+            self.snapshot_node_and(new, ElementState::URLTARGET, |node| {
+                if let Some(data) = node.element_data_mut() {
+                    data.element_state.insert(ElementState::URLTARGET);
+                }
+                node.mark_ancestors_dirty();
+            });
+        }
+        self.url_target = node;
+        true
+    }
+
+        pub fn set_hover_node(&mut self, node: Option<NodeId>) -> bool {
         let node = node.and_then(|id| self.nearest_non_anonymous_ancestor(id));
         if node == self.hover_node_id {
             return false;
@@ -3256,30 +3810,6 @@ impl BaseDocument {
         self.queue_device_changes(changes);
     }
 
-    /// `svg` (an `<svg>` element's source) with its external `<use>`
-    /// references pointing at local copies of their targets
-    /// ([`BaseDocument::svg_sprites`]), put in a `<defs>` first in it.
-    /// pyro: `svg` (the source of the `<svg>` element `root`) with its external `<image>` and
-    /// `<feImage>` hrefs replaced by the `data:` URLs of [`Self::svg_images`]: turned as their EXIF
-    /// orientation says, or not under `image-orientation: none`.
-    pub(crate) fn with_svg_images(&self, mut svg: String, root: NodeId) -> String {
-        if self.svg_images.is_empty() {
-            return svg;
-        }
-        let unturned = self
-            .get_node(root)
-            .and_then(|node| node.primary_styles())
-            .is_some_and(|style| crate::util::image_unoriented(&style));
-        for (href, (turned, raw)) in &self.svg_images {
-            let attr = format!("href=\"{}\"", href.replace('&', "&amp;").replace('"', "&quot;"));
-            if svg.contains(&attr) {
-                let data = if unturned { raw } else { turned };
-                svg = svg.replace(&attr, &format!("href=\"{data}\""));
-            }
-        }
-        svg
-    }
-
     /// pyro: an inline `<svg>` whose source depends on its laid-out size (`SvgImageData::viewport_dependent`),
     /// serialized and parsed again for a content box of `width` x `height` CSS px (kept until the size
     /// changes); `None` when that fails.
@@ -3293,10 +3823,10 @@ impl BaseDocument {
         }
         let node = self.get_node(node_id)?;
         let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
-        let source = self.with_cross_svg_references(self.with_svg_sprites(self.with_svg_images(source, node_id)));
-        let svg = crate::util::parse_svg_image(source.as_bytes()).ok().map(|mut svg| {
+        let source = self.with_cross_svg_references(self.with_svg_sprites(source));
+        let svg = crate::util::parse_svg_resources(source.as_bytes(), Some(&self.svg_images), &self.raster_budget).ok().map(|mut svg| {
             if svg.intrinsic_dimensions.view_box.is_none() {
-                svg.inline_source = Some(source.as_str().into());
+                svg.inline_source = crate::util::SvgSource::copy(&source, &self.raster_budget);
             }
             Arc::new(svg)
         });
@@ -3309,12 +3839,21 @@ impl BaseDocument {
             return svg;
         }
         let mut defs = String::new();
-        for (href, (local, definition)) in &self.svg_sprites {
+        const MAX_EXPANDED: usize = 8 << 20;
+        for (href, sprite) in &self.svg_sprites {
             let attr = format!("href=\"{}\"", href.replace('&', "&amp;").replace('"', "&quot;"));
-            if svg.contains(&attr) {
-                svg = svg.replace(&attr, &format!("href=\"#{local}\""));
-                defs.push_str(definition);
-            }
+            let count = svg.matches(&attr).count();
+            if count == 0 { continue; }
+            let replacement = format!("href=\"#{}\"", sprite.local);
+            let needed = svg.len().saturating_add(replacement.len().saturating_sub(attr.len()).saturating_mul(count))
+                .saturating_add(defs.len()).saturating_add(sprite.prefix.len()).saturating_add(sprite.suffix.len())
+                .saturating_add(sprite.local.len()).saturating_add(13);
+            if needed > MAX_EXPANDED { continue; }
+            let Ok(text) = std::str::from_utf8(&sprite.source.bytes) else { continue };
+            svg = svg.replace(&attr, &replacement);
+            defs.push_str(&text[sprite.prefix.clone()]);
+            defs.push_str(&sprite.local);
+            defs.push_str(&text[sprite.suffix.clone()]);
         }
         if let (false, Some(end)) = (defs.is_empty(), svg.find('>')) {
             svg.insert_str(end + 1, &format!("<defs>{defs}</defs>"));
@@ -3371,10 +3910,14 @@ impl BaseDocument {
                         "filter" | "clipPath" | "mask" | "linearGradient" | "radialGradient" | "pattern" | "marker"
                     )
             });
-            if !resource {
+            // pyro: nor one in contents `content-visibility: hidden` skips (CSS Contain 2 § 4.1:
+            // not rendered, its resources neither; WPT css-contain
+            // `content-visibility/content-visibility-svg-gradient`).
+            if !resource || self.skipped_by_content_visibility(node.id) {
                 continue;
             }
             let source = node.svg_source();
+            if svg.len().saturating_add(defs.len()).saturating_add(source.len()).saturating_add(13) > 8 << 20 { continue; }
             referenced(&source, &mut ids);
             defs.push_str(&source);
         }
@@ -3556,6 +4099,28 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: the rendered legend of fieldset `fieldset` (HTML § 15.3.13): its first layout child when
+    /// that is a `<legend>` (`layout::construct::place_rendered_legend` puts it first), laid out over
+    /// the fieldset's block-start border.
+    pub fn fieldset_rendered_legend(&self, fieldset: NodeId) -> Option<NodeId> {
+        let node = self.nodes.get(fieldset)?;
+        if !node.is_fieldset() || node.flags.is_inline_root() {
+            return None;
+        }
+        let first = node.layout_children.borrow().as_ref()?.first().copied()?;
+        let legend = self.nodes.get(first)?;
+        (legend.data.downcast_element().is_some_and(|el| el.name.local == markup5ever::local_name!("legend"))
+            && legend.primary_styles().is_some_and(|style| {
+                !style.get_box().float.is_floating() && !crate::node::style_is_out_of_flow(&style)
+            }))
+        .then_some(first)
+    }
+
+    /// pyro: whether the page declares its color schemes (a `<meta name=color-scheme>`).
+    pub fn page_color_scheme_is_declared(&self) -> bool {
+        !self.page_color_scheme.is_empty()
+    }
+
     /// pyro: whether the page's color scheme (its `<meta name=color-scheme>`, with the user's
     /// preference when it supports both) is dark: the canvas is painted dark then.
     pub fn page_color_scheme_is_dark(&self) -> bool {
@@ -3586,6 +4151,7 @@ impl BaseDocument {
 
         let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.font_ctx.clone());
         device.set_page_color_scheme(self.page_color_scheme);
+        device.set_viewport_unit_inset(self.viewport_unit_inset);
         self.set_stylist_device(device);
         self.scroll_viewport_by(0.0, 0.0); // Clamp scroll offset
         // pyro: shadow roots' cascade data holds their sheets' media query results.
@@ -3634,7 +4200,8 @@ impl BaseDocument {
         drop(root_styles);
 
         let old_device = self.stylist.device();
-        let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
+        let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size()
+            || old_device.au_viewport_unit_size() != device.au_viewport_unit_size();
         let styles_use_viewport_units = old_device.used_viewport_size();
 
         // Percentage/auto boxes can resize without a computed-style change.
@@ -3982,6 +4549,9 @@ impl BaseDocument {
         };
         let (start, end) = (byte_of(start), byte_of(end));
         self.with_text_input(node_id, |mut driver| driver.select_byte_range(start, end));
+        // pyro: a control scrolls its text to keep the caret in view (as browsers do when the
+        // selection moves).
+        self.clamp_text_input_scroll(node_id);
     }
 
     pub fn with_text_input(
@@ -4007,12 +4577,22 @@ impl BaseDocument {
     /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
     /// remains visible within the input's content box.
     pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
-        let Some(node) = self.nodes.get_mut(node_id) else {
+        if self.nodes.get(node_id).is_none() {
             return;
-        };
-
-        let content_box_width = node.final_layout().content_box_width();
-        let content_box_height = node.final_layout().content_box_height();
+        }
+        // pyro: the content box's physical size, unrounded (text that fits it exactly is not
+        // scrolled by a rounding remainder): `unrounded_layout` is in the axes of the box that
+        // placed the control, which a vertical parent swaps.
+        let (_, layout) = self.physical_unrounded_geometry(node_id);
+        let mut content_box_width = layout.content_box_width();
+        let mut content_box_height = layout.content_box_height();
+        let node = &mut self.nodes[node_id];
+        // pyro: the editor's layout is logical: in a vertical writing mode its inline size (the
+        // single line's scroll axis) is the content box's height. (The control's own writing
+        // mode, from its style: a horizontal control in a vertical line is not turned.)
+        if node.primary_styles().is_some_and(|style| style.writing_mode.is_vertical()) {
+            core::mem::swap(&mut content_box_width, &mut content_box_height);
+        }
 
         if let Some(text_input) = node
             .element_data_mut()
@@ -5264,8 +5844,9 @@ mod change_tracking_tests {
 
 /// pyro: an SVG image drawn as a document (see [`BaseDocument::svg_image_documents`]).
 pub struct SvgImageDocument {
+    storage: pyro_raster::Reservation,
     /// The image's source (to tell a new image from the one the document was made of).
-    pub source: std::sync::Arc<str>,
+    pub source: std::sync::Arc<crate::util::SvgSource<str>>,
     /// The size it is laid out at, in CSS px.
     pub size: (u32, u32),
     pub document: Box<dyn Document>,
@@ -5280,7 +5861,7 @@ impl BaseDocument {
         if !self.has_svg_image_documents {
             return;
         }
-        let mut wanted: Vec<(NodeId, std::sync::Arc<str>, (u32, u32))> = Vec::new();
+        let mut wanted = Vec::new();
         for (id, node) in self.nodes.iter() {
             if !node.flags.is_in_document() {
                 continue;
@@ -5310,22 +5891,41 @@ impl BaseDocument {
                 self.viewport.color_scheme,
             );
             if !current {
+                self.svg_image_documents.remove(&id);
                 if self.subdocument_depth >= crate::iframe::MAX_SUBDOCUMENT_DEPTH {
                     continue;
                 }
+                let mut minimum = std::mem::size_of::<BaseDocument>() + std::mem::size_of::<NodeTree>() + source.len();
+                let Ok(xml) = usvg::roxmltree::Document::parse(&source) else { continue };
+                for node in xml.descendants() {
+                    minimum = minimum.saturating_add(std::mem::size_of::<(Node, u32)>());
+                    if node.is_element() {
+                        minimum = minimum.saturating_add(std::mem::size_of::<ElementData>()).saturating_add(node.attributes().len() * std::mem::size_of::<crate::node::Attribute>());
+                    }
+                }
+                drop(xml);
+                let Ok(storage) = self.raster_budget.reserve(minimum) else { continue };
                 let config = crate::DocumentConfig {
                     viewport: Some(viewport.clone()),
                     base_url: None,
                     font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
                     media_type: Some(self.media_type.clone()),
                     subdocument_depth: self.subdocument_depth + 1,
+                    raster_budget: self.raster_budget.clone(),
                     xml_document: true,
+                    // pyro: an SVG image's document is no render snapshot: nothing legitimate gives
+                    // it engine attributes, so every one is rejected (a nonce no parsed attribute
+                    // value can hold: `engine_marked`), and its frame elements load nothing.
+                    frames: std::sync::Arc::new(crate::FrameTableData {
+                        nonce: crate::REJECT_ALL_NONCE.to_owned(),
+                        entries: Default::default(),
+                    }),
                     ..Default::default()
                 };
                 let Some(document) = self.html_parser_provider.clone().parse_svg_document(&source, config) else {
                     continue;
                 };
-                self.svg_image_documents.insert(id, SvgImageDocument { source, size, document });
+                self.svg_image_documents.insert(id, SvgImageDocument { source, size, document, storage });
             }
             let entry = self.svg_image_documents.get_mut(&id).unwrap();
             let mut doc = entry.document.inner_mut();
@@ -5334,6 +5934,58 @@ impl BaseDocument {
             }
             doc.resolve(0.0);
             doc.ensure_paint_tree();
+            let mut bytes = std::mem::size_of::<Self>() + std::mem::size_of::<NodeTree>() + doc.nodes.slot_bytes();
+            for (_, node) in doc.nodes.iter() {
+                bytes = bytes.saturating_add(node.children.capacity() * std::mem::size_of::<NodeId>());
+                if let Some(element) = node.element_data() {
+                    bytes = bytes.saturating_add(std::mem::size_of::<ElementData>() + element.attrs.capacity() * std::mem::size_of::<crate::node::Attribute>());
+                    for attr in element.attrs() { bytes = bytes.saturating_add(attr.value.capacity()); }
+                } else if let Some(text) = node.text_data() { bytes = bytes.saturating_add(text.content.capacity()); }
+            }
+            drop(doc);
+            if entry.storage.grow_to(&self.raster_budget, bytes).is_err() { self.svg_image_documents.remove(&id); }
         }
+    }
+}
+
+/// pyro: `url` without its fragment.
+pub(crate) fn without_fragment(url: &str) -> &str {
+    url.split_once('#').map_or(url, |(before, _)| before)
+}
+
+/// pyro: whether a sheet's text may hold `@scope` rules (at-rule names are ASCII case-insensitive).
+pub(crate) fn sheet_has_scope_rules(css: &str) -> bool {
+    css.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"@scope"))
+}
+
+/// pyro: the viewport's classic scrollbars ([`BaseDocument::viewport_scrollbars`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewportScrollbars {
+    /// The gutter at each physical edge of the viewport (CSS px): the scrollport and the initial
+    /// containing block are the viewport less these.
+    pub gutters: taffy::Rect<f32>,
+    /// Whether the horizontal (x) and vertical (y) scrollbars show (`overflow: scroll`, or `auto`
+    /// with the document overflowing); a `scrollbar-gutter: stable` gutter alone shows none.
+    pub shown: taffy::Point<bool>,
+    /// The thickness a shown scrollbar has.
+    pub thickness: taffy::Size<f32>,
+}
+
+impl ViewportScrollbars {
+    /// The viewport less the gutters: the scrollport, in viewport coordinates (CSS px).
+    pub fn scrollport(&self, width: f32, height: f32) -> kurbo::Rect {
+        let g = self.gutters;
+        kurbo::Rect::new(
+            g.left as f64,
+            g.top as f64,
+            (width - g.right).max(g.left) as f64,
+            (height - g.bottom).max(g.top) as f64,
+        )
+    }
+
+    /// Whether any edge has a gutter.
+    pub fn any(&self) -> bool {
+        let g = self.gutters;
+        g.left > 0.0 || g.right > 0.0 || g.top > 0.0 || g.bottom > 0.0
     }
 }

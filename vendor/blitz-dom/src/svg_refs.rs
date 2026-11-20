@@ -259,6 +259,75 @@ pub(crate) fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// pyro: `source` with each `light-dark(a, b)` (which usvg does not parse: the paint fell back to
 /// black) replaced by `a`, or by `b` when `dark`. `None` when there is none.
+/// pyro: the `<style>` sheets of an SVG image as usvg can apply them (its CSS has neither media
+/// queries nor `:root`): a `@media (prefers-color-scheme: …)` block is unwrapped when it matches the
+/// preferred scheme (`dark` or light) and dropped when it does not, and `:root` is the root `svg`
+/// (WPT css/mediaqueries `prefers-color-scheme-svg-as-image`). Other `@media` blocks stay as they are.
+/// `None`: nothing to change.
+pub(crate) fn resolve_scheme_media(source: &[u8], dark: bool) -> Option<Vec<u8>> {
+    if find_bytes(source, b"prefers-color-scheme").is_none() && find_bytes(source, b":root").is_none() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(at) = find_bytes(rest, b"@media") {
+        out.extend_from_slice(&rest[..at]);
+        let after = &rest[at + b"@media".len()..];
+        let Some(open) = after.iter().position(|&b| b == b'{' || b == b';') else {
+            out.extend_from_slice(&rest[at..]);
+            rest = &[];
+            break;
+        };
+        let condition: Vec<u8> =
+            after[..open].iter().filter(|b| !b.is_ascii_whitespace()).map(|b| b.to_ascii_lowercase()).collect();
+        let scheme = match condition.as_slice() {
+            b"(prefers-color-scheme:dark)" => Some(true),
+            b"(prefers-color-scheme:light)" => Some(false),
+            _ => None,
+        };
+        let (Some(scheme), b'{') = (scheme, after[open]) else {
+            out.extend_from_slice(&rest[at..at + b"@media".len()]);
+            rest = after;
+            continue;
+        };
+        // The block's closing brace.
+        let body = &after[open + 1..];
+        let mut depth = 0usize;
+        let mut end = None;
+        for (i, &b) in body.iter().enumerate() {
+            match b {
+                b'{' => depth += 1,
+                b'}' if depth == 0 => {
+                    end = Some(i);
+                    break;
+                }
+                b'}' => depth -= 1,
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            out.extend_from_slice(&rest[at..]);
+            rest = &[];
+            break;
+        };
+        if scheme == dark {
+            out.extend_from_slice(&body[..end]);
+        }
+        rest = &body[end + 1..];
+    }
+    out.extend_from_slice(rest);
+    // `:root` is the root element, the outermost `svg`.
+    let mut replaced = Vec::with_capacity(out.len());
+    let mut rest = out.as_slice();
+    while let Some(at) = find_bytes(rest, b":root") {
+        replaced.extend_from_slice(&rest[..at]);
+        replaced.extend_from_slice(b"svg");
+        rest = &rest[at + b":root".len()..];
+    }
+    replaced.extend_from_slice(rest);
+    Some(replaced)
+}
+
 pub(crate) fn resolve_light_dark(source: &[u8], dark: bool) -> Option<Vec<u8>> {
     const NAME: &[u8] = b"light-dark(";
     find_bytes(source, NAME)?;

@@ -29,9 +29,10 @@ antialiased edge of opaque content over another colour divides `bg * (255 - m) +
 
 What uses it: source-over and the other Porter-Duff composites, masked and unmasked (`fill`, `alpha_fill`,
 `compose`), a layer's opacity and its mask (`apply_mask`), tints, the separable blend modes (`blend.rs`), and the
-product of a fill's coverage with a mask layer's. Left with upstream's division: the bilinear image painter
-(`lowp/image.rs`), vello_common's clip-path intersections and its premultiplication of images (no reftest was
-found to depend on them).
+product of a fill's coverage with a mask layer's. The bilinear image painter (`lowp/image.rs`) instead uses
+8-bit fractional coordinates, retains both horizontal sums at full precision and rounds only after vertical
+interpolation. Rounding the intermediate rows amplified one-level JPEG differences under magnification.
+vello_common's clip-path intersections and premultiplication of images keep upstream's division.
 
 Cost (pyro PR #373, 4K = 1920x1080 CSS px at DSF 2, single-threaded raster): a screenshot of an effects-heavy page
 (a drop-shadow card, an opacity card with a 40 px box shadow, a 6000 px spread ring at opacity .95, text shadow, a

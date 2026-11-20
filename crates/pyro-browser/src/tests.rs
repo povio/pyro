@@ -1496,7 +1496,9 @@ fn secure_context_follows_potentially_trustworthy_urls_of_the_frame_chain() {
     for url in ["http://app.localhost/", "http://[::1]/", "http://localhost.evil.test/"] {
         loader.insert(url, "text/html", "<p>x</p>", Duration::ZERO);
     }
-    let child = "<script>console.log('child', location.protocol, isSecureContext)</script>";
+    // Its [SecureContext] members follow isSecureContext: absent in an https frame of an http page.
+    let child = "<script>console.log('child', location.protocol, isSecureContext, 'locks' in navigator, \
+                 'mediaDevices' in navigator, 'paintWorklet' in CSS, 'LockManager' in window)</script>";
     loader.insert("https://secure.test/", "text/html", child, Duration::ZERO);
     loader.insert("http://insecure.test/", "text/html", "<iframe src='https://secure.test/'></iframe>", Duration::ZERO);
     t.browser.set_loader(Some(loader));
@@ -1510,7 +1512,64 @@ fn secure_context_follows_potentially_trustworthy_urls_of_the_frame_chain() {
     t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
     assert_eq!(eval_string(&t, page, "String(isSecureContext)"), "false");
     // An https frame of an http page is not secure (Chrome).
-    assert!(rec.console.borrow().contains(&"log:child https: false".to_owned()), "{:?}", rec.console.borrow());
+    assert!(
+        rec.console.borrow().contains(&"log:child https: false false false false false".to_owned()),
+        "{:?}",
+        rec.console.borrow()
+    );
+}
+
+/// A popup's initial about:blank document has its creator's origin, which decides its secure context
+/// (not its trustworthy about:blank URL): an http page's popup gets no [SecureContext] members. A
+/// same-origin child without `allowfullscreen` may use fullscreen (the default allowlist, 'self',
+/// as in Chrome), also the about:blank child of a top-level blank popup, whose origin is inherited.
+#[test]
+fn a_blank_popup_takes_its_creators_secure_context_and_origin() {
+    let (mut t, rec, page) = setup();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://insecure.test/", "text/html", "<p>opener</p>", Duration::ZERO);
+    loader.insert("https://secure.test/", "text/html", "<p>opener</p>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    let probe = "const w = window.open(); \
+                 console.log('popup', w.isSecureContext, 'locks' in w.navigator, 'paintWorklet' in w.CSS, 'LockManager' in w); \
+                 w.document.body.innerHTML = '<iframe></iframe>'; document.body.innerHTML = '<iframe></iframe>'; \
+                 console.log('page', document.querySelector('iframe').contentDocument.fullscreenEnabled); \
+                 console.log('fullscreen', w.document.fullscreenEnabled, w.document.querySelector('iframe').contentDocument.fullscreenEnabled);";
+    goto(&mut t, page, "http://insecure.test/");
+    eval(&t, page, probe);
+    goto(&mut t, page, "https://secure.test/");
+    eval(&t, page, probe);
+    assert_eq!(
+        *rec.console.borrow(),
+        [
+            "log:popup false false false false",
+            "log:page true",
+            "log:fullscreen true true",
+            "log:popup true true true true",
+            "log:page true",
+            "log:fullscreen true true",
+        ]
+    );
+}
+
+/// A popup's initial about:blank document takes its creator's secure-context state, not one computed
+/// as a top-level window: an https frame of an http page is not a secure context, and neither is the
+/// blank popup it opens (though it inherits the frame's https origin), nor a frame inside that popup
+/// (its ancestor chain ends in the popup, whose state is its creator's).
+#[test]
+fn a_blank_popup_takes_its_creators_secure_context_state() {
+    let (mut t, rec, page) = setup();
+    let loader = Rc::new(StaticLoader::default());
+    let child = "<script>const w = window.open(); \
+                 console.log('popup', isSecureContext, w.isSecureContext, 'locks' in w.navigator, w.origin); \
+                 w.document.body.innerHTML = '<iframe></iframe>'; \
+                 console.log('popup frame', w.frames[0].isSecureContext, 'locks' in w.frames[0].navigator);</script>";
+    loader.insert("https://secure.test/", "text/html", child, Duration::ZERO);
+    loader.insert("http://insecure.test/", "text/html", "<iframe src='https://secure.test/'></iframe>", Duration::ZERO);
+    t.browser.set_loader(Some(loader));
+    goto(&mut t, page, "http://insecure.test/");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(*rec.console.borrow(), ["log:popup false false false https://secure.test", "log:popup frame false false"]);
 }
 
 #[test]

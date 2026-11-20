@@ -87,6 +87,17 @@ pub struct FloatMark {
     right: usize,
 }
 
+/// pyro: the floats of a Block Formatting Context and a block's float state at one point.
+/// See [`BlockContext::float_snapshot`].
+#[cfg(feature = "float_layout")]
+#[derive(Debug, Clone)]
+pub struct FloatSnapshot {
+    float_context: FloatContext,
+    float_content_contribution: f32,
+    adjoining_floats: [bool; 2],
+    top_adjoining_floats: Option<[bool; 2]>,
+}
+
 /// Context for each individual Block within a Block Formatting Context
 ///
 /// Contains a mutable reference to the BlockFormattingContext + block-specific data
@@ -247,6 +258,27 @@ impl BlockContext<'_> {
     pub fn float_mark(&self) -> FloatMark {
         let float_context = &self.bfc.float_context;
         FloatMark { left: float_context.left_floats().len(), right: float_context.right_floats().len() }
+    }
+
+    /// pyro: the floats placed in this Block Formatting Context so far and this block's float
+    /// state, to lay content out again from this point (see [`Self::restore_floats`]).
+    #[cfg(feature = "float_layout")]
+    pub fn float_snapshot(&self) -> FloatSnapshot {
+        FloatSnapshot {
+            float_context: self.bfc.float_context.clone(),
+            float_content_contribution: self.float_content_contribution,
+            adjoining_floats: self.adjoining_floats,
+            top_adjoining_floats: self.top_adjoining_floats,
+        }
+    }
+
+    /// pyro: takes the floats back to a [`Self::float_snapshot`] of this block.
+    #[cfg(feature = "float_layout")]
+    pub fn restore_floats(&mut self, snapshot: &FloatSnapshot) {
+        self.bfc.float_context = snapshot.float_context.clone();
+        self.float_content_contribution = snapshot.float_content_contribution;
+        self.adjoining_floats = snapshot.adjoining_floats;
+        self.top_adjoining_floats = snapshot.top_adjoining_floats;
     }
 
     /// The id and position of each floated box placed since `mark` was taken: left floats in the
@@ -432,8 +464,8 @@ struct BlockItem {
     overflow: Point<Overflow>,
     /// The contain style of the item
     contain: Contain,
-    /// The width of the item's scrollbars (if it has scrollbars)
-    scrollbar_width: f32,
+    /// pyro: the space the item's scrollbar gutters take in each axis (`CoreStyle::scrollbar_gutter_size`)
+    scrollbar_size: Size<f32>,
 
     /// The position style of the item
     position: Position,
@@ -580,7 +612,8 @@ pub fn compute_block_layout(
     // <https://drafts.csswg.org/css-contain-2/#containment-layout>
     let establishes_new_bfc = is_scroll_container
         || style.align_content().keyword != AlignContentKeyword::Normal
-        || contain.establishes_independent_formatting_context();
+        || contain.establishes_independent_formatting_context()
+        || style.establishes_independent_formatting_context();
     let aspect_ratio = style.aspect_ratio();
     let padding = style.padding().resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
     let border = style.border().resolve_or_zero(parent_size.width, |val, basis| tree.calc(val, basis));
@@ -712,14 +745,14 @@ fn compute_inner(
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
+    // pyro: `CoreStyle::scrollbar_gutter` (which edges, and classic scrollbars' `overflow: auto` and
+    // `scrollbar-gutter`).
     let scrollbar_gutter = {
-        let offsets = style.overflow().transpose().map(|overflow| match overflow {
-            Overflow::Scroll => style.scrollbar_width(),
-            _ => 0.0,
-        });
-        match direction {
-            Direction::Ltr => Rect { top: 0.0, left: 0.0, right: offsets.x, bottom: offsets.y },
-            Direction::Rtl => Rect { top: 0.0, left: offsets.x, right: 0.0, bottom: offsets.y },
+        let gutter = style.scrollbar_gutter();
+        // The vertical scrollbar of a box laid out in its containing block's direction (an anonymous box).
+        match (direction, style.direction()) {
+            (Direction::Ltr, Direction::Rtl) | (Direction::Rtl, Direction::Ltr) => Rect { left: gutter.right, right: gutter.left, ..gutter },
+            _ => gutter,
         }
     };
     let padding_border = padding + border;
@@ -827,7 +860,10 @@ fn compute_inner(
     let is_scroll_container = overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
     let establishes_new_bfc = is_scroll_container
         || style.align_content().keyword != AlignContentKeyword::Normal
-        || style.contain().establishes_independent_formatting_context();
+        || style.contain().establishes_independent_formatting_context()
+        || style.establishes_independent_formatting_context();
+    // pyro: a `line-clamp` container (see below).
+    let own_formatting_context = style.establishes_independent_formatting_context();
 
     // Determine margin collapsing behaviour
     //
@@ -951,6 +987,109 @@ fn compute_inner(
     let resolved_border =
         raw_border.resolve_or_zero(Some(percentage_resolution_width), |val, basis| tree.calc(val, basis));
     let resolved_content_box_inset = resolved_padding + resolved_border + scrollbar_gutter;
+
+    // pyro: a fieldset's rendered legend (HTML § 15.3.13) is out of the flow of its content: laid out
+    // shrink-to-fit at the start of its inline axis (its auto margins align it), its margin box centred
+    // on the block-start border; the content starts below whichever of the border and the legend is
+    // taller (as Chromium: the anonymous fieldset content box). Put back among the items once they are
+    // laid out, its layout set (`block_child_is_rendered_legend`).
+    let mut content_box_inset = content_box_inset;
+    let mut resolved_content_box_inset = resolved_content_box_inset;
+    let mut rendered_legend: Option<(usize, BlockItem)> = None;
+    if let Some(index) = items
+        .iter()
+        .position(|item| !item.position.is_out_of_flow() && item.float == Float::None)
+        .filter(|&index| tree.block_child_is_rendered_legend(items[index].node_id))
+    {
+        let mut legend = items.remove(index);
+        let inner_width = (container_outer_width - resolved_content_box_inset.horizontal_axis_sum()).max(0.0);
+        let margin: Rect<Option<f32>> = Rect {
+            left: legend.margin.left.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+            right: legend.margin.right.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+            top: legend.margin.top.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+            bottom: legend.margin.bottom.maybe_resolve(Some(inner_width), |val, basis| tree.calc(val, basis)),
+        };
+        let (margin_left, margin_right) = (margin.left.unwrap_or(0.0), margin.right.unwrap_or(0.0));
+        let available = (inner_width - margin_left - margin_right).max(0.0);
+        let parent = Size { width: Some(inner_width), height: None };
+        let width = match legend.size.width {
+            Some(width) => width,
+            None => {
+                let mut measure = |space: AvailableSpace| {
+                    tree.measure_child_size(
+                        legend.node_id,
+                        Size::NONE,
+                        parent,
+                        Size { width: space, height: AvailableSpace::MaxContent },
+                        SizingMode::InherentSize,
+                        crate::AbsoluteAxis::Horizontal,
+                        Line::FALSE,
+                    )
+                };
+                let min_content = measure(AvailableSpace::MinContent);
+                let max_content = measure(AvailableSpace::MaxContent);
+                max_content.min(available).max(min_content)
+            }
+        }
+        .maybe_clamp(legend.min_size.width, legend.max_size.width)
+        .max(legend.padding_border_sum.width);
+        let mut output = tree.compute_child_layout(
+            legend.node_id,
+            LayoutInput {
+                run_mode,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size { width: Some(width), height: None },
+                known_dimensions_are_definite: Size { width: true, height: false },
+                parent_size: parent,
+                available_space: Size { width: AvailableSpace::Definite(width), height: AvailableSpace::MaxContent },
+                vertical_margins_are_collapsible: Line::FALSE,
+            },
+        );
+        let (margin_top, margin_bottom) = (margin.top.unwrap_or(0.0), margin.bottom.unwrap_or(0.0));
+        let outer_height = output.size.height + margin_top + margin_bottom;
+        let free = (inner_width - width - margin_left - margin_right).max(0.0);
+        let rtl = direction == Direction::Rtl;
+        let justify = legend.justify_self.map(|justify| justify.keyword);
+        let start_offset = match (justify, margin.left.is_none(), margin.right.is_none()) {
+            // (`justify-self`, which a legend's `align` gives it)
+            (Some(AlignItemsKeyword::Center), _, _) => free / 2.0,
+            (Some(AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::SelfEnd), _, _) => {
+                if rtl { 0.0 } else { free }
+            }
+            (Some(AlignItemsKeyword::Start | AlignItemsKeyword::FlexStart | AlignItemsKeyword::SelfStart), _, _) => {
+                if rtl { free } else { 0.0 }
+            }
+            (_, left_auto, right_auto) => match (left_auto, right_auto) {
+            (true, true) => free / 2.0,
+            (true, false) => free,
+            (false, true) => 0.0,
+            (false, false) if rtl => free,
+            (false, false) => 0.0,
+            },
+        };
+        let location = Point {
+            x: resolved_border.left + resolved_padding.left + margin_left + start_offset,
+            y: ((resolved_border.top - outer_height) / 2.0).max(0.0) + margin_top,
+        };
+        legend.final_layout = Some(Layout {
+            order: legend.order,
+            size: output.size,
+            #[cfg(feature = "content_size")]
+            scrollable_overflow_rect: output.scrollable_overflow_rect,
+            scrollbar_size: legend.scrollbar_size,
+            location,
+            padding: legend.padding,
+            border: legend.border,
+            margin: Rect { left: margin_left, right: margin_right, top: margin_top, bottom: margin_bottom },
+        });
+        legend.oof_candidates = output.oof_candidates.take();
+        let extra = (outer_height - resolved_border.top).max(0.0);
+        content_box_inset.top += extra;
+        resolved_content_box_inset.top += extra;
+        rendered_legend = Some((index, legend));
+    }
+
     #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
     let (
         mut inflow_overflow_rect,
@@ -982,11 +1121,17 @@ fn compute_inner(
         is_scroll_container,
         block_ctx,
     );
+    if let Some((index, legend)) = rendered_legend.take() {
+        let index = index.min(items.len());
+        items.insert(index, legend);
+    }
 
     // Root BFCs contain floats: the content height extends to the bottom margin edge of any
     // floated descendant, and the container's bottom padding and border sit below that
+    // pyro: but for a `line-clamp` container: its height ends with its lines, floats or not (WPT
+    // css-overflow `line-clamp-with-floats-016`).
     #[cfg(feature = "float_layout")]
-    if block_ctx.is_bfc_root() || establishes_new_bfc {
+    if (block_ctx.is_bfc_root() || establishes_new_bfc) && !own_formatting_context {
         intrinsic_outer_height = intrinsic_outer_height
             .max(block_ctx.floated_content_height_contribution() + resolved_content_box_inset.bottom);
     }
@@ -1022,10 +1167,13 @@ fn compute_inner(
     // in-flow child's bottom margin only if the box's `min-height` is less than the box's
     // used height. When `min-height` determines the used height, the last child's bottom
     // margin no longer adjoins the box's bottom edge, so it stays inside the box instead of
-    // collapsing with the box's own bottom margin. (`max-height` has no such effect.)
+    // collapsing with the box's own bottom margin.
     let height_constrained_by_min_height = matches!(min_size.height, Some(h) if h > 0.0 && h >= container_outer_height);
+    let max_height_separates_bottom_edge = max_size.height.is_some_and(|max_height| {
+        container_outer_height == max_height && intrinsic_outer_height > container_outer_height
+    });
     let own_bottom_margin_collapses_with_children =
-        own_margins_collapse_with_children.end && !height_constrained_by_min_height;
+        own_margins_collapse_with_children.end && !height_constrained_by_min_height && !max_height_separates_bottom_edge;
 
     // Apply `align-content` to in-flow non-floated items if requested. The per-item layouts were
     // held back in `item.final_layout` so that this step can shift `location.y` before tree commit.
@@ -1035,7 +1183,7 @@ fn compute_inner(
     // `space-evenly`, `stretch`) must invoke the single-subject fallback unconditionally —
     // which is what passing `num_items = 1` to `apply_alignment_fallback` does. The whole
     // group then shifts by one offset, with zero inter-item gap.
-    if align_content.keyword != AlignContentKeyword::Normal {
+    if align_content.keyword != AlignContentKeyword::Normal && !tree.block_container_is_fragmented(node_id) {
         let container_inner_height = container_outer_height - resolved_content_box_inset.vertical_axis_sum();
         let inflow_content_height = intrinsic_outer_height - resolved_content_box_inset.vertical_axis_sum();
         let free_space = container_inner_height - inflow_content_height;
@@ -1354,6 +1502,7 @@ fn generate_item_list(
                 && !contain.establishes_independent_formatting_context()
                 && child_style.align_content().keyword == AlignContentKeyword::Normal
                 // pyro
+                && !child_style.establishes_independent_formatting_context()
                 && !tree.block_child_establishes_formatting_context(child_node_id);
 
             BlockItem {
@@ -1368,7 +1517,8 @@ fn generate_item_list(
                 #[cfg(feature = "float_layout")]
                 float,
                 #[cfg(feature = "float_layout")]
-                clear: child_style.clear(),
+                // pyro: see `LayoutBlockContainer::block_child_clears_floats`.
+                clear: if tree.block_child_clears_floats(child_node_id) { Clear::Both } else { child_style.clear() },
                 size_style: child_style.size(),
                 // pyro: a height the aspect ratio gives is the item's own layout's to settle
                 // (its content can make it taller): it is not handed down as known.
@@ -1398,7 +1548,7 @@ fn generate_item_list(
                 .map(|ratio| (ratio, box_sizing_adjustment + aspect_ratio_inset(&child_style, pb_sum))),
                 overflow,
                 contain,
-                scrollbar_width: child_style.scrollbar_width(),
+                scrollbar_size: child_style.scrollbar_gutter_size(),
                 position,
                 direction: child_style.direction(),
                 align_self: child_style.align_self(),
@@ -1494,6 +1644,11 @@ fn determine_content_based_container_width(
     #[cfg(feature = "float_layout")]
     let mut float_contribution = FloatIntrinsicWidthCalculator::new(available_width);
     for item in items.iter().filter(|item| !item.position.is_out_of_flow()) {
+        // pyro: see `LayoutPartialTree::block_item_intrinsic_width_override`.
+        if let Some(width) = tree.block_item_intrinsic_width_override(item.node_id) {
+            max_child_width = f32::max(max_child_width, width);
+            continue;
+        }
         let mut known_dimensions = item.size.maybe_clamp(item.min_size, item.max_size);
         // pyro
         if let (true, Some(width)) = (item.min_width_is_content, known_dimensions.width) {
@@ -1548,7 +1703,10 @@ fn determine_content_based_container_width(
                 (Some(cap), AvailableSpace::Definite(available)) => {
                     width.min(cap.max(available)).maybe_max(item.min_size.width)
                 }
-                _ => width,
+                // pyro: its `min-width` as resolved here (a percentage in `calc()` against zero:
+                // `calc(160px + 0%)` is 160px; css-sizing-3 § 5.2.1c), which its own layout, where
+                // the percentage has no basis, drops (WPT css-sizing `intrinsic-percent-non-replaced-001`)
+                _ => width.maybe_max(item.min_size.width),
             }
         });
         // pyro: keyword `min-width`/`max-width` bound an automatic width's contribution too
@@ -1636,8 +1794,8 @@ fn clamp_width_by_keywords(
     if item.min_size_keyword.width.is_auto() && item.max_size_keyword.width.is_auto() {
         return width;
     }
-    let mut resolve = |keyword: Dimension| -> Option<f32> {
-        let resolution = resolve_sizing_keyword(keyword, stretch_width, container_width, |val, basis| tree.calc(val, basis))?;
+    let mut resolve = |keyword: Dimension, basis: Option<f32>| -> Option<f32> {
+        let resolution = resolve_sizing_keyword(keyword, stretch_width, basis, |val, basis| tree.calc(val, basis))?;
         Some(match resolution {
             SizingKeywordResolution::Exact(width) => width,
             SizingKeywordResolution::Measure(available_width) => {
@@ -1679,8 +1837,17 @@ fn clamp_width_by_keywords(
             }
         })
     };
-    let max = resolve(item.max_size_keyword.width);
-    let min = resolve(item.min_size_keyword.width);
+    // pyro: in an intrinsic sizing pass a percentage in `fit-content(<percentage>)` is cyclic
+    // (css-sizing-3 § 5.2.1): in `max-width` it is as if `none`, the max-content width is left; in
+    // `min-width` it counts as zero, the min-content width is left (WPT css-sizing
+    // `fit-content-length-percentage-012`, `-013`).
+    // (A calculation is not resolved against an infinite basis: `calc(200px - 10%)` would be
+    // negative there and give the min-content width.)
+    let max_keyword = item.max_size_keyword.width;
+    let cyclic = container_width.is_none()
+        && (max_keyword.into_raw().tag() == crate::style::CompactLength::FIT_CONTENT_PERCENT_TAG || max_keyword.into_raw().is_fit_content_calc());
+    let max = if cyclic { resolve(Dimension::max_content(), None) } else { resolve(max_keyword, container_width) };
+    let min = resolve(item.min_size_keyword.width, container_width.or(Some(0.0)));
     width.maybe_min(max).maybe_max(min)
 }
 
@@ -1981,10 +2148,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             let item_non_auto_margin = item_margin.map(|m| m.unwrap_or(0.0));
             let item_non_auto_x_margin_sum = item_non_auto_margin.horizontal_axis_sum();
 
-            let scrollbar_size = Size {
-                width: if item.overflow.y == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
-                height: if item.overflow.x == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
-            };
+            let scrollbar_size = item.scrollbar_size;
 
             // Handle floated boxes
             #[cfg(feature = "float_layout")]
@@ -2041,7 +2205,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 };
 
                 // pyro: a float with a `shape-outside` float area
-                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin) {
+                let mut location = match tree.float_shape_bands(item.node_id, margin_box, item_non_auto_margin, container_inner_width) {
                     Some(bands) => block_ctx.place_shaped_floated_box(
                         item.node_id.into(),
                         margin_box,
@@ -2178,6 +2342,13 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                             active_collapsible_margin_set.collapse_with_margin(item_non_auto_margin.top).resolve();
                     };
                     let min_y = committed_y_offset + y_margin_offset;
+                    // pyro: a container query container beside floats is placed no higher than the slot
+                    // it was last placed in to be styled at its width (`block_child_float_floor`).
+                    let cq_width = tree.block_child_container_query_width(item.node_id);
+                    let min_y = match cq_width.and(tree.block_child_float_floor(item.node_id)) {
+                        Some(floor) => min_y.max(floor),
+                        None => min_y,
+                    };
 
                     // In addition to the running flag, check the float context directly:
                     // floats placed by the subtree of a preceding in-flow sibling (in the same
@@ -2210,7 +2381,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                             && item.size_style.width.is_auto()
                             && !item.is_table
                             && !item.is_compressible_replaced
-                            && non_stretch_justify_self.is_none();
+                            && non_stretch_justify_self.is_none()
+                            // pyro: an orthogonal box's width is its block size, set by its
+                            // content: it is as wide as it is laid out in the slot.
+                            && !tree.block_child_is_orthogonal(item.node_id);
                         let mut slot_segment = None;
                         let mut height_retries = 0;
                         let slot = loop {
@@ -2249,6 +2423,20 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                             if width.max(item.padding_border_sum.width) > slot.border_width + FIT_TOLERANCE {
                                 slot_segment = Some(segment_id);
                                 continue;
+                            }
+                            // pyro: a container query container in a slot of another width than it was
+                            // styled at takes the slot for now: it is styled at the slot's width, and
+                            // placed again from here (css-contain-3 § 2.1; the queries may change what
+                            // fits: WPT container-queries `inline-size-bfc-floats`).
+                            if let Some(styled) = cq_width {
+                                // (the width it gets there: the slot's for an auto width, which stretches to it,
+                                // else its own; a fixed-width container in a wider slot is styled already)
+                                let item_width =
+                                    if plain_auto { slot.border_width } else { width.max(item.padding_border_sum.width) };
+                                if styled.is_none_or(|styled| (styled - item_width).abs() > FIT_TOLERANCE) {
+                                    tree.set_block_child_float_floor(item.node_id, slot.y);
+                                    break slot;
+                                }
                             }
                             // pyro: the item must not overlap the floats beside any of its height,
                             // which it has once laid out in the slot: taller than the slot stays as
@@ -2566,7 +2754,9 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
 
             // A block container's first baseline is the first baseline of its first in-flow child
             // that has one. The child's relative offset does not affect it.
-            if first_baseline.is_none() {
+            // pyro: an orthogonal child contributes no baseline set (css-align-3 §9.1).
+            let orthogonal = tree.block_child_is_orthogonal(item.node_id);
+            if first_baseline.is_none() && !orthogonal && !tree.block_child_is_rendered_legend(item.node_id) {
                 let child_baseline =
                     child_first_baseline(item_layout.baselines.first, item_layout.size.height, item.overflow.y);
                 first_baseline = child_baseline.map(|baseline| location.y - inset_offset.y + baseline);
@@ -2583,7 +2773,7 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
             // tables sits on its bottom margin edge whatever their rows hold; WPT
             // `position-relative-table-*`).
             // A block container gives its own: none when it holds no line box (but tables).
-            let child_last_baseline = if item.is_table {
+            let child_last_baseline = if item.is_table || orthogonal {
                 None
             } else if item.overflow.y.is_scroll_container() && item.is_block_container {
                 // (A flex or grid scroll container gives its contents' baseline, as Blink: WPT
@@ -2621,6 +2811,13 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 }
                 margin
             };
+
+            // pyro: see `LayoutBlockContainer::block_child_min_top`.
+            if let Some(floor) = tree.block_child_min_top(item.node_id) {
+                if location.y < floor {
+                    location.y = floor;
+                }
+            }
 
             // Defer `set_unrounded_layout` to the post-loop pass in `compute_inner` so that
             // `align-content` can shift `location.y` before the layout is committed to the tree.

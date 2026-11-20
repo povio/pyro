@@ -54,6 +54,9 @@ impl Page {
             device_scale_factor: 1.0,
             resource_scope: "doc".into(),
             live: Some(Live { page, tree, clip: None, interaction: None }),
+            // (The document's frame table, with the nonce its engine attributes are named with, as
+            // pyro-cdp and pyro-layout pass it.)
+            frames: Arc::new(FrameTableData { nonce: self.dom.borrow().frame_table(self.doc).nonce, entries: Default::default() }),
             ..Default::default()
         }
     }
@@ -79,6 +82,332 @@ fn convert(t: RenderTree) -> Tree {
 
 fn paint(r: &mut Renderer, s: &Snapshot) -> Painted {
     r.paint(s, Area::Viewport, &fetcher()).unwrap()
+}
+
+#[test]
+fn first_line_and_letter_image_requests_follow_the_originating_element() {
+    let page = Page::new("<!doctype html><style>div::first-line{background-image:url(line.png)}div::first-letter{background-image:url(letter.png)}</style><body><div>Text</div></body>");
+    let mut renderer = Renderer::new();
+    paint(&mut renderer, &page.snapshot(1, page.tree()));
+    let urls = renderer.referenced_images(1).unwrap().into_iter().map(|(url, _)| url).collect::<Vec<_>>();
+    assert!(urls.iter().any(|url| url == "http://test/line.png"));
+    assert!(urls.iter().any(|url| url == "http://test/letter.png"));
+    let (body, div) = (page.find("body"), page.find("div"));
+    page.dom.borrow_mut().remove_child(body, div).unwrap();
+    paint(&mut renderer, &page.snapshot(1, page.tree()));
+    assert!(renderer.referenced_images(1).unwrap().is_empty());
+}
+
+#[test]
+fn view_transition_collection_bounds_work_before_visiting_children() {
+    for (body, valid, visited) in [
+        ("<div style='view-transition-name: item'></div>".repeat(2), false, 3),
+        ("<div style='view-transition-name:item'></div><div style='view-transition-scope:all'><i style='view-transition-name:item'></i></div>".into(), true, 3),
+        ("<div style='view-transition-name: match-element'></div>".repeat(256), true, 257),
+        ("<div style='view-transition-name: match-element'></div>".repeat(512), false, 258),
+        ("<i></i>".repeat(16_384), false, 1),
+    ] {
+        let page = Page::new(&format!("<!doctype html><body>{body}"));
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        assert_eq!(renderer.view_transition_names(1, pyro_dom::snapshot::render_key(page.find("body"))), (valid, visited));
+    }
+}
+
+#[test]
+fn view_transition_old_paints_in_styled_group_and_suppresses_original() {
+    use pyro_dom::{geometry::{TransitionBox, TransitionFrame}, snapshot::render_key};
+    let page = Page::new("<!doctype html><style>*{margin:0}main{position:relative;width:80px;height:80px}b{display:block;background:red;width:20px;height:20px;view-transition-name:tile}main::view-transition-new(tile){display:none}main::view-transition-group(tile){transform:translateX(40px)}main::view-transition-old(tile){animation:none}</style><main><b></b></main>");
+    let mut snap = page.snapshot(1, page.tree());
+    let image = TransitionBox { key: render_key(page.find("b")), name: "tile".into(), size: (20.,20.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,20.,20.], rgba: Some(Arc::new([0,128,0,255].repeat(400))) };
+    snap.transition_frames.push(TransitionFrame { document: snap.frames.nonce.clone(), root: render_key(page.find("main")), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(),  job: None, reservation: Arc::new(()) });
+    let mut renderer = Renderer::new();
+    for (original, shifted) in [([255,255,255,255],[0,128,0,255]), ([255,0,0,255],[255,255,255,255])] {
+        let scene = paint(&mut renderer, &snap);
+        let (bitmap, _) = renderer.raster(scene, Backend::Cpu);
+        for (x, expected) in [(5, original),(45, shifted)] {
+            let offset = (5 * bitmap.width as usize + x) * 4;
+            assert_eq!(&bitmap.data[offset..offset+4], &expected, "x={x}");
+        }
+        snap.transition_frames.clear();
+    }
+}
+
+#[test]
+fn view_transition_live_samples_current_pixels_after_admission() {
+    use pyro_dom::geometry::{TransitionAllowance, TransitionBox, TransitionFrame, TransitionJob};
+    use pyro_dom::snapshot::render_key;
+    let page = Page::new("<!doctype html><style>*{margin:0}main{position:relative;width:80px;height:80px}b{display:block;width:20px;height:20px;view-transition-name:tile}main::view-transition-group(tile){transform:translateX(40px)}main::view-transition-new(tile){animation:none}</style><main><b></b></main>");
+    let target = page.find("b");
+    let mut renderer = Renderer::new();
+    for (pixels, css, expected, count) in [(399,"red",[255,255,255,255],0), (400,"green",[0,128,0,255],1), (400,"blue",[0,0,255,255],1)] {
+        page.dom.borrow_mut().set_attribute(target,"style",&format!("background:{css}")).unwrap();
+        let mut snap = page.snapshot(1,page.tree());
+        let image = TransitionBox { key: render_key(target), name:"tile".into(), size:(20.,20.), transform:[1.,0.,0.,1.,0.,0.], ink:[0.,0.,20.,20.], rgba:None };
+        let job = Arc::new(TransitionJob {remaining: std::sync::Mutex::new(TransitionAllowance{pixels,work:8192}),lease:Arc::new(())});
+        snap.transition_frames.push(TransitionFrame {document:snap.frames.nonce.clone(),root:render_key(page.find("main")),old:Default::default(),new:vec![image].into(),samples:Default::default(),job:Some(job),reservation:Arc::new(())});
+        let scene = paint(&mut renderer,&snap);
+        assert_eq!(scene.timings.transition_live_recordings,count);
+        let (bitmap,_) = renderer.raster(scene,Backend::Cpu);
+        let offset = (5 * bitmap.width as usize + 45) * 4;
+        assert_eq!(&bitmap.data[offset..offset+4],&expected);
+    }
+}
+
+#[test]
+fn view_transition_recycled_document_has_fresh_snapshot_identity() {
+    let mut dom = Dom::new();
+    let old = dom.create_document(pyro_dom::DocumentKind::Html, "about:blank");
+    let nonce = dom.frame_table(old).nonce.clone();
+    dom.set_document_active(old, false).unwrap();
+    assert_eq!(dom.collect_garbage(), 1);
+    let new = dom.create_document(pyro_dom::DocumentKind::Html, "about:blank");
+    assert_eq!(old.index(), new.index());
+    assert_ne!(nonce, dom.frame_table(new).nonce);
+}
+
+#[test]
+fn view_transition_worker_resolves_only_the_snapshot_document_and_generation() {
+    use pyro_dom::{geometry::{TransitionBox, TransitionFrame}, snapshot::render_key};
+    let page = Page::new("<!doctype html><body><b></b></body>");
+    let body = page.find("body");
+    let original = page.find("b");
+    let mut queued = page.snapshot(1, page.tree());
+    let image = TransitionBox { key: render_key(original), name: "item".into(), size: (1.,1.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,1.,1.], rgba: Some(Arc::new(vec![0;4])) };
+    queued.transition_frames.push(TransitionFrame { document: queued.frames.nonce.clone(), root: render_key(body), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(),  job: None, reservation: Arc::new(()) });
+    {
+        let mut dom = page.dom.borrow_mut();
+        dom.add_ref(page.doc).unwrap();
+        dom.remove_node(original).unwrap();
+        dom.collect_garbage();
+        let replacement = dom.create_element(page.doc, "b").unwrap();
+        assert_eq!(replacement.index(), original.index());
+        assert_ne!(replacement.generation(), original.generation());
+        dom.append_child(body, replacement).unwrap();
+    }
+    let mut replaced = page.snapshot(1,page.tree());
+    replaced.transition_frames = queued.transition_frames.clone();
+    let next = Page::new("<!doctype html><body><b></b></body>");
+    let mut navigated = next.snapshot(1,next.tree());
+    navigated.transition_frames = queued.transition_frames.clone();
+    let mut worker = Renderer::new();
+    for (snap, counts) in [(&replaced,(1,0)),(&navigated,(0,0)),(&queued,(1,1))] {
+        let stats = paint(&mut worker,snap).timings;
+        assert_eq!((stats.transition_old_images, stats.transition_live_targets), counts);
+    }
+}
+
+#[test]
+fn view_transition_worker_resolves_child_keys_only_in_their_frame() {
+    use blitz_dom::{ns, QualName};
+    use pyro_dom::{geometry::{TransitionBox, TransitionFrame}, snapshot::render_key};
+    let page = Page::new("<!doctype html><body><iframe></iframe></body>");
+    let key = render_key(page.find("iframe"));
+    let mut tree = page.tree();
+    for node in &mut Arc::make_mut(&mut tree).nodes {
+        if node.key != key { continue; }
+        if let TreeKind::Element { attrs, .. } = &mut node.kind {
+            attrs.push((QualName::new(None, ns!(), "data-pyro-n-frame".into()), "n:1:0000000000000001".into()));
+        }
+    }
+    let child = FrameContent { html: format!("<!doctype html><body data-pyro-child-key='{key}'><b data-pyro-child-key='77'></b><b data-pyro-key='88'></b></body>"), frames: Arc::new(FrameTableData { nonce: "child".into(), ..Default::default() }), url: "http://test/child".into(), client: "F#L".into(), version: 1, ..Default::default() };
+    let mut snap = page.snapshot(1,tree);
+    snap.frames = Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".into(), child)].into_iter().collect() });
+    let image = |key| TransitionBox { key, name: "item".into(), size: (1.,1.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,1.,1.], rgba: None };
+    snap.transition_frames.push(TransitionFrame { document: "child".into(), root: key, new: vec![image(77),image(88)].into(), old: Default::default(), samples: Default::default(),  job: None, reservation: Arc::new(()) });
+    let mut worker = Renderer::new();
+    assert_eq!(paint(&mut worker,&snap).timings.transition_live_targets,1);
+    snap.transition_frames[0].document = "n".into();
+    assert_eq!(paint(&mut worker,&snap).timings.transition_live_targets,0);
+}
+
+#[test]
+fn view_transition_captures_inline_opacity_on_generated_text() {
+    let page = Page::new("<!doctype html><style>section::first-letter{opacity:0} p{view-transition-name:paragraph}</style><section><p>Text</p></section>");
+    let root = pyro_dom::snapshot::render_key(page.find("section"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    for old in [false, true] {
+        let mut work = 1 << 18;
+        let mut recordings = 0;
+        let boxes = renderer.capture_transition_budgeted(1, root, old, 1 << 24, &mut work, &mut recordings)
+            .unwrap_or_else(|| panic!("old={old}, recordings={recordings}, remaining={work}"));
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0].key, pyro_dom::snapshot::render_key(page.find("p")));
+        assert_eq!(recordings, usize::from(old));
+    }
+}
+
+#[test]
+fn view_transition_animations_end_when_origin_is_hidden() {
+    let page = Page::new("<!doctype html><style>::view-transition-group(*){animation-duration:500s}</style><p>Text</p>");
+    let origin = page.find("html");
+    let root = pyro_dom::snapshot::render_key(origin);
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1, root, false, 0).unwrap();
+    renderer.set_transition_boxes(1, root, &boxes, &boxes).unwrap();
+    assert!(!renderer.transition_animation_styles(1, root).unwrap().is_empty());
+    page.dom.borrow_mut().set_attribute(origin, "style", "display:none").unwrap();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    assert!(renderer.transition_animation_styles(1, root).is_none());
+}
+
+#[test]
+fn view_transition_selector_probes_release_names_before_fresh_capture() {
+    use pyro_dom::stylo::{parse_pseudo_arg, PseudoArg};
+    for index in 0..100_000 {
+        let PseudoArg::Pseudo(pseudo) = parse_pseudo_arg(&format!("::view-transition-group(fill{index})")) else { panic!("rejected name {index}") };
+        assert!(pseudo.transition_argument().unwrap().is_unique());
+    }
+    let page = Page::new("<!doctype html><div style='view-transition-name:fresh'>x</div>");
+    let root = pyro_dom::snapshot::render_key(page.find("html"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1, root, true, 1 << 24).unwrap();
+    assert!(boxes.iter().any(|item| item.name == "fresh"));
+    assert!(renderer.set_transition_boxes(1, root, &boxes, &boxes).is_some());
+}
+
+#[test]
+fn view_transition_boxes_cascade_and_charge_created_nodes() {
+    use style::properties::{LonghandId, PropertyDeclarationId};
+    use style::selector_parser::PseudoElement::*;
+    let page = Page::new("<!doctype html><style>#scope::view-transition-group(target){animation-duration:8s} #scope::view-transition-old(target){animation:none;opacity:.25}</style><div id=scope><div style='view-transition-name:target;width:30px;height:10px'></div></div>");
+    let root = pyro_dom::snapshot::render_key(page.find("#scope"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1,page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1,root,false,0).unwrap();
+    assert_eq!(boxes.len(),1);
+    assert_eq!(renderer.set_transition_boxes(1,root,&boxes,&boxes),Some(5));
+    let arg = style::selector_parser::PseudoElement::transition_box_argument("target", &[]).unwrap();
+    let value = |pseudo, prop| renderer.element_pseudo_style(1,root,&pseudo,true).unwrap().computed_value_to_string(PropertyDeclarationId::Longhand(prop));
+    assert_eq!(value(ViewTransitionGroup(arg.clone()),LonghandId::Width),"30px");
+    assert_eq!(value(ViewTransitionPair(arg.clone()),LonghandId::Isolation),"isolate");
+    assert_eq!(value(ViewTransitionNew(arg.clone()),LonghandId::AnimationDuration),"8s");
+    assert_eq!(value(ViewTransitionOld(arg.clone()),LonghandId::AnimationName),"none");
+    assert_eq!(value(ViewTransitionOld(arg.clone()),LonghandId::Opacity),"0.25");
+    let runs = renderer.transition_animation_styles(1,root).unwrap();
+    let index = runs.iter().find(|(_,pseudo,_)| pseudo == "::view-transition-new(target)").unwrap().0;
+    assert!(!renderer.set_transition_samples(1,root,&vec![(index,0,0.5);1025]));
+    assert!(renderer.set_transition_samples(1,root,&[(index,0,0.0),(index,1,0.0)]));
+    let style = renderer.element_pseudo_style(1,root,&ViewTransitionNew(arg.clone()),true).unwrap();
+    assert_eq!(style.computed_value_to_string(PropertyDeclarationId::Longhand(LonghandId::Opacity)),"0");
+    assert_eq!(style.computed_value_to_string(PropertyDeclarationId::Longhand(LonghandId::MixBlendMode)),"plus-lighter");
+    renderer.clear_transition_boxes(1,root);
+    assert!(renderer.element_pseudo_style(1,root,&ViewTransitionGroup(arg.clone()),true).is_none());
+    assert_eq!(renderer.set_transition_boxes(1,root,&[],&boxes),Some(4));
+    renderer.clear_transition_boxes(1,root);
+    assert_eq!(renderer.set_transition_boxes(1,root,&vec![boxes[0].clone();257],&[]),None);
+}
+
+#[test]
+fn view_transition_rejects_excess_keyframe_work_before_sampling() {
+    let frames = "50%{opacity:0}".repeat(4097);
+    let page = Page::new(&format!("<!doctype html><style>@keyframes crowded{{{frames}}}#scope::view-transition-new(target){{animation:crowded 1s both}}</style><div id=scope><div style='view-transition-name:target;width:10px;height:10px'></div></div>"));
+    let root = pyro_dom::snapshot::render_key(page.find("#scope"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1, root, false, 0).unwrap();
+    assert_eq!(renderer.set_transition_boxes(1, root, &[], &boxes), Some(4));
+    let runs = renderer.transition_animation_styles(1, root).unwrap();
+    let index = runs.iter().find(|(_, pseudo, _)| pseudo == "::view-transition-new(target)").unwrap().0;
+    assert!(!renderer.set_transition_samples(1, root, &[(index, 0, 0.5)]));
+}
+
+#[test]
+fn view_transition_capture_charges_frame_tree_before_recording() {
+    use blitz_dom::{ns, QualName};
+    let page = Page::new("<!doctype html><html style='view-transition-name:root'><i style='display:block;width:1px;height:1px;view-transition-name:item'></i><iframe style='width:32px;height:32px;border:0'></iframe></html>");
+    let root = pyro_dom::snapshot::render_key(page.find("html"));
+    let frame = pyro_dom::snapshot::render_key(page.find("iframe"));
+    let mut tree = page.tree();
+    for node in &mut Arc::make_mut(&mut tree).nodes {
+        if node.key != frame { continue; }
+        if let TreeKind::Element { attrs, .. } = &mut node.kind {
+            attrs.push((QualName::new(None, ns!(), "data-pyro-n-frame".into()), "n:1:0000000000000001".into()));
+        }
+    }
+    let child = FrameContent { html: "<div></div>".repeat(256), url: "http://test/child".into(), client: "F#L".into(), version: 1, ..Default::default() };
+    let mut snapshot = page.snapshot(1, tree);
+    snapshot.frames = Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".into(), child)].into_iter().collect() });
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&snapshot, &fetcher()).unwrap();
+    let mut recordings = 0;
+    for (pixels, mut work) in [(1 << 24, 200), (640 * 480, 1 << 18), (640 * 480 + 32 * 32 + 1, 1 << 18)] {
+        assert!(renderer.capture_transition_budgeted(1, root, true, pixels, &mut work, &mut recordings).is_none());
+        assert_eq!(recordings, 0);
+    }
+    let mut work = 1 << 18;
+    assert!(renderer.capture_transition_budgeted(1, root, true, 1 << 24, &mut work, &mut recordings).is_some());
+    assert_eq!(recordings, 2);
+    assert!((1 << 18) - work >= 2 * 256);
+    use pyro_dom::geometry::{TransitionAllowance, TransitionBox, TransitionFrame, TransitionJob};
+    let image = TransitionBox { key:root, name:"root".into(),size:(640.,480.),transform:[1.,0.,0.,1.,0.,0.],ink:[0.,0.,640.,480.],rgba:None };
+    for (pixels,work,expected) in [(0,8192,0),(1<<24,200,0),(640*480,1<<18,0),(1<<24,1<<18,1)] {
+        let job = Arc::new(TransitionJob {remaining:std::sync::Mutex::new(TransitionAllowance{pixels,work}),lease:Arc::new(())});
+        snapshot.transition_frames = vec![TransitionFrame {document:"n".into(),root,old:Default::default(),new:vec![image.clone()].into(),samples:Default::default(),reservation:Arc::new(()),job:Some(job)}];
+        assert_eq!(paint(&mut renderer,&snapshot).timings.transition_live_recordings,expected);
+    }
+}
+
+#[test]
+fn view_transition_capture_restores_layout_scroll() {
+    let page = Page::new("<!doctype html><div id='scroll' style='height:40px;overflow:auto'><div id='item' style='height:180px;view-transition-name:item'></div></div>");
+    let key = |selector| pyro_dom::snapshot::render_key(page.find(selector));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    renderer.set_timeline_scroll(1, vec![(key("#scroll"), (0., 25.))], (0., 0.));
+    let before = renderer.element_box(1, key("#item")).unwrap();
+    for (pixels, expected) in [(1 << 24, true), (1, false)] {
+        let captured = renderer.capture_transition_budgeted(1, key("html"), true, pixels, &mut (1 << 18), &mut 0);
+        assert_eq!(captured.is_some(), expected);
+        assert_eq!(renderer.element_box(1, key("#item")).unwrap(), before);
+    }
+}
+
+#[test]
+fn view_transition_denies_raster_scratch_before_pixel_decode() {
+    let side = 257;
+    let bytes = encode_png(&RgbaImage { width: side, height: side, data: [5, 13, 49, 255].repeat((side * side) as usize) });
+    let mut work = ((bytes.len().div_ceil(64) * 64) + 4) as u64;
+    let page = pyro_raster::PageRasters::default();
+    let (result, decodes) = pyro_raster::with_test_budget(1 << 24, || {
+        pyro_raster::capture::scope(&mut work, |_| page.decode(&bytes))
+    });
+    assert!(result.is_none());
+    assert_eq!((work, decodes), (0, 0));
+    let mut work = 1 << 18;
+    let (result, decodes) = pyro_raster::with_test_budget(1 << 24, || {
+        pyro_raster::capture::scope(&mut work, |_| page.decode(&bytes))
+    });
+    assert!(result.unwrap().is_ok());
+    assert_eq!(decodes, 1);
+}
+
+#[test]
+fn view_transition_capture_counts_pixels_and_excludes_nested_participants() {
+    let page = Page::new("<!doctype html><body style='opacity:0.2'><div id='parent' style='background:red;width:10px;height:10px;view-transition-name:parent'><div style='background:blue;width:4px;height:4px;view-transition-name:child'></div></div>");
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let root = pyro_dom::snapshot::render_key(page.find("#parent"));
+    let mut recordings = 0;
+    for (pixels, mut work) in [(0, 200), (115, 200), (116, 0), (116, 4)] {
+        assert!(renderer.capture_transition_budgeted(1, root, true, pixels, &mut work, &mut recordings).is_none());
+        assert_eq!(recordings, 0);
+    }
+    let captured = renderer.capture_transition_boxes(1, root, true, 116).unwrap();
+    assert_eq!(captured.iter().map(|item| item.image.as_ref().unwrap().data.len()).sum::<usize>(), 464);
+    assert_eq!(&captured[0].image.as_ref().unwrap().data[..4], &[255, 0, 0, 255]);
+    assert_eq!(&captured[1].image.as_ref().unwrap().data[..4], &[0, 0, 255, 255]);
+    assert!(renderer.capture_transition_boxes(1, root, false, 0).unwrap().iter().all(|item| item.image.is_none()));
+
+    let tall = Page::new("<!doctype html><html style='view-transition-name:root'><body style='height:100000px;background:red'></body></html>");
+    renderer.sync_layout(&tall.snapshot(2, tall.tree()), &fetcher()).unwrap();
+    let root = pyro_dom::snapshot::render_key(tall.find("html"));
+    assert!(renderer.capture_transition_boxes(2, root, true, 640 * 480 - 1).is_none());
+    let captured = renderer.capture_transition_boxes(2, root, true, 640 * 480).unwrap();
+    assert_eq!(captured[0].image.as_ref().unwrap().data.len(), 640 * 480 * 4);
 }
 
 /// Renders the page with the persistent renderer and with a fresh one;
@@ -562,7 +891,7 @@ fn scroll_offsets_told_for_timelines_survive_a_document_rebuild() {
     let key = pyro_dom::snapshot::render_key(page.find("#s"));
     let mut r = Renderer::new();
     let s = page.snapshot(1, page.tree());
-    let offset = |r: &Renderer| r.timeline_state(1, Some(key), None, 0, [(0, 0.0); 2]).map(|t| (t.0, t.1, t.2));
+    let offset = |r: &Renderer| r.timeline_state(1, Some(key), None, 0, 0, [(0, 0.0); 2]).map(|t| (t.0, t.1, t.2));
     r.sync_layout(&s, &fetcher()).unwrap();
     assert_eq!(offset(&r), Some((0.0, 0.0, 900.0)));
     r.set_timeline_scroll(1, vec![(key, (0.0, 450.0))], (0.0, 0.0));
@@ -635,9 +964,12 @@ fn linked_sheet_edits_reach_the_persistent_document() {
                 .unwrap(),
         ))
     };
+    // (The sheet's key, as the snapshot wrote it on its link.)
+    let link = page.dom.borrow().query_selector(page.doc, &pyro_dom::select::parse_selectors("link").unwrap()).unwrap().unwrap();
+    let sheet = page.dom.borrow().sheet_key(link);
     let snap = |css: &str| {
         let mut s = page.snapshot(1, tree.clone());
-        s.sheets.insert(url.clone(), css.into());
+        s.sheets.insert(sheet.clone(), css.into());
         s
     };
     let mut r = Renderer::new();
@@ -764,11 +1096,14 @@ fn page_layout_reports_words_and_hits() {
     let words: Vec<(u64, u32, u32)> =
         words_out.iter().map(|(k, w)| (*k, w.edges[0].0, w.edges.last().unwrap().0)).collect();
     let (p0, b0, p2) = (text_key("#p", 0), text_key("#b", 0), text_key("#p", 2));
-    assert_eq!(words, vec![(p0, 2, 7), (p0, 10, 15), (b0, 0, 4), (p2, 1, 3), (p2, 3, 4)]);
+    assert_eq!(words, vec![(p0, 2, 7), (p0, 7, 10), (p0, 10, 15), (b0, 0, 4), (p2, 0, 1), (p2, 1, 3), (p2, 3, 4)]);
+    let collapsed = &words_out[1].1;
+    let space = &words_out[4].1;
+    assert!(space.width > 0.0 && (collapsed.width - space.width).abs() < 0.02);
     let hello = &words_out[0].1;
     assert!(hello.width > 20.0 && hello.height > 10.0 && hello.edges.len() == 6, "{hello:?}");
     assert!(hello.edges.windows(2).all(|e| e[0].1 < e[1].1));
-    let bold = &words_out[2].1;
+    let bold = &words_out[3].1;
     let hit = r.elements_from_point(1, bold.x + 2.0, bold.y + 2.0);
     let dom = page.dom.borrow();
     assert_eq!(hit[0], pyro_dom::snapshot::render_key(page.find("#b")));
@@ -862,6 +1197,12 @@ fn textarea_attribute_deltas_match_whole_tree_value_geometry_and_paint() {
         let mut tree = (*parsed.tree()).clone();
         for node in &mut tree.nodes {
             if let TreeKind::Element { attrs, .. } = &mut node.kind {
+                // (Each reparse is a page of its own nonce: the engine state's namespace names it.)
+                for (name, _) in attrs.iter_mut() {
+                    if name.ns.starts_with(pyro_dom::snapshot::STATE_NS) {
+                        *name = blitz_dom::QualName::new(name.prefix.clone(), blitz_dom::Namespace::from(pyro_dom::snapshot::STATE_NS), name.local.clone());
+                    }
+                }
                 attrs.sort_by_key(|(name, _)| {
                     (name.ns.to_string(), name.local.to_string(), name.prefix.as_ref().map(ToString::to_string))
                 });

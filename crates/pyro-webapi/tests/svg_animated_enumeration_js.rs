@@ -509,7 +509,7 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
               return out.join("|");
             })()"#
         ),
-        "TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|ok|true|true|true|true|true|true|true|TypeError|true|true|false|false||true"
+        "TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|TypeError|ok|true|true|true|true|true|true|true|TypeError|true|true|true|false||true"
     );
     assert_eq!(
         env.eval(
@@ -524,6 +524,199 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
     );
     env.until("globalThis.fsOut !== undefined");
     assert_eq!(env.eval("fsOut"), "TypeError|TypeError");
+}
+
+/// Fullscreen API: a request with transient activation (trusted input) is granted (in a task; this
+/// environment runs tasks at once):
+/// `fullscreenchange` at the element, the document's fullscreen element, the promise resolves,
+/// and the activation is consumed; exitFullscreen() undoes it. A detached element is denied
+/// (`fullscreenerror`, TypeError) even with activation.
+#[test]
+fn fullscreen_is_granted_with_transient_activation() {
+    let env = Env::new("http://fullscreen.test/");
+    env.eval(r#"document.body.innerHTML = "<div id=t></div>"; globalThis.log = []; "ok""#);
+    let k = pyro_webapi::input::KeyInput { key: "a".into(), code: "KeyA".into(), text: "a".into(), ..Default::default() };
+    pyro_webapi::input::dispatch_key(&env.page, pyro_webapi::input::KeyKind::KeyDown, &k);
+    pyro_webapi::input::dispatch_key(&env.page, pyro_webapi::input::KeyKind::KeyUp, &k);
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const t = document.getElementById("t");
+              document.addEventListener("fullscreenchange", (e) => log.push("change " + e.target.id + " " + e.bubbles + " " + e.composed));
+              document.addEventListener("fullscreenerror", (e) => log.push("error " + (e.target.id || e.target.nodeName)));
+              const p = t.requestFullscreen();
+              await p;
+              log.push("granted " + (document.fullscreenElement === t) + " " + document.fullscreen);
+              try { await document.createElement("p").requestFullscreen(); } catch (e) { log.push(e.name); }
+              await document.exitFullscreen();
+              log.push("exited " + document.fullscreenElement);
+              try { await t.requestFullscreen(); } catch (e) { log.push("again " + e.name); }
+              globalThis.fsDone = log.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.fsDone !== undefined");
+    assert_eq!(
+        env.eval("fsDone"),
+        "change t true true|granted true true|error #document|TypeError|change t true true|exited null|error t|again TypeError"
+    );
+}
+
+/// One mouse click is one activation: mousedown triggers it and the release does not, so a
+/// `mousedown` handler's granted request consumes it and the `click` handler's request of the
+/// same click is denied (HTML activation-triggering input events).
+#[test]
+fn one_click_grants_fullscreen_activation_once() {
+    let env = Env::new("http://fullscreen.test/");
+    env.eval(
+        r#"document.body.style.margin = "0";
+           document.body.innerHTML = "<div id=a style='width:200px;height:200px'></div><div id=b></div>";
+           globalThis.log = [];
+           a.addEventListener("mousedown", () => a.requestFullscreen().then(() => log.push("down granted"), (e) => log.push("down " + e.name)));
+           a.addEventListener("click", () => b.requestFullscreen().then(() => log.push("click granted"), (e) => log.push("click " + e.name)));
+           "ok""#,
+    );
+    use pyro_webapi::input;
+    let m = input::MouseInput { x: 50.0, y: 50.0, button: input::MouseButton::Left, buttons: 1, click_count: 1, ..Default::default() };
+    input::dispatch_mouse(&env.page, input::MouseKind::Pressed, &m).unwrap();
+    input::dispatch_mouse(&env.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+    env.until("log.length === 2");
+    assert_eq!(env.eval("log.join('|')"), "down granted|click TypeError");
+}
+
+/// Web Locks: an exclusive lock queues the next request until its callback's promise settles;
+/// query() reports held and pending requests; steal takes the lock (the holder's promise rejects
+/// with AbortError); the API exists only in a secure context.
+#[test]
+fn web_locks_queue_query_and_steal() {
+    let env = Env::new("https://locks.test/");
+    assert_eq!(env.eval(r#"['locks' in navigator, 'LockManager' in globalThis, 'Lock' in globalThis].join()"#), "true,true,true");
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const log = [];
+              let release;
+              const first = navigator.locks.request("a", (lock) => { log.push("first " + lock.name + " " + lock.mode); return new Promise((r) => { release = r; }); });
+              const second = navigator.locks.request("a", { mode: "shared" }, () => { log.push("second"); return "two"; });
+              await new Promise((r) => setTimeout(r, 0));
+              const q = await navigator.locks.query();
+              log.push("query " + q.held.map((h) => h.name + ":" + h.mode).join() + " / " + q.pending.map((h) => h.name + ":" + h.mode).join());
+              release("one");
+              log.push(await first, await second);
+              let hold;
+              const held = navigator.locks.request("b", () => new Promise((r) => { hold = r; }));
+              await new Promise((r) => setTimeout(r, 0));
+              const stole = navigator.locks.request("b", { steal: true }, () => "stolen");
+              log.push(await held.then(() => "kept", (e) => e.name), await stole);
+              log.push(await navigator.locks.request("-x", () => {}).then(() => "ok", (e) => e.name));
+              log.push(await navigator.locks.request("c", { ifAvailable: true }, (lock) => lock === null ? "null" : "got"));
+              hold();
+              globalThis.locksDone = log.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.locksDone !== undefined");
+    assert_eq!(
+        env.eval("locksDone"),
+        "first a exclusive|query a:exclusive / a:shared|second|one|two|AbortError|stolen|NotSupportedError|got"
+    );
+}
+
+/// Web Locks, MediaDevices and the paint worklet are `[SecureContext]`: absent, not undefined, in a
+/// window that is not secure.
+#[test]
+fn web_locks_absent_in_insecure_contexts() {
+    let env = Env::new("http://locks.test/");
+    assert_eq!(env.eval(r#"['locks' in navigator, 'LockManager' in globalThis, 'Lock' in globalThis].join()"#), "false,false,false");
+    assert_eq!(
+        env.eval(r#"['mediaDevices' in navigator, 'MediaDevices' in globalThis, 'Worklet' in globalThis, 'paintWorklet' in CSS].join()"#),
+        "false,false,false,false"
+    );
+}
+
+/// A lock request's signal aborts it through the signal's abort algorithm, not an `abort`
+/// listener: a listener stopping the event cannot keep an aborted request queued, and a synthetic
+/// `abort` event does not cancel a request whose signal did not abort.
+#[test]
+fn web_locks_abort_uses_the_signal_algorithm() {
+    let env = Env::new("https://locks.test/");
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const out = [];
+              let release;
+              navigator.locks.request("x", () => new Promise((r) => { release = r; }));
+              await new Promise((r) => setTimeout(r, 0));
+              // 1. a listener stops the abort event before ours could run
+              const c1 = new AbortController();
+              c1.signal.addEventListener("abort", (e) => e.stopImmediatePropagation());
+              let ran1 = false;
+              const p1 = navigator.locks.request("x", { signal: c1.signal }, () => { ran1 = true; });
+              c1.abort();
+              out.push(await p1.then(() => "resolved", (e) => e.name));
+              // 2. a synthetic abort event on a signal that did not abort
+              const c2 = new AbortController();
+              let ran2 = false;
+              const p2 = navigator.locks.request("x", { signal: c2.signal }, () => { ran2 = true; return "two"; });
+              c2.signal.dispatchEvent(new Event("abort"));
+              release();
+              out.push(await p2, ran1, ran2);
+              globalThis.abortDone = out.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.abortDone !== undefined");
+    assert_eq!(env.eval("abortDone"), "AbortError|two|false|true");
+}
+
+/// A range slider follows the pointer along its inline axis: x in a horizontal writing mode (from
+/// the right for `direction: rtl`), y in a vertical one.
+#[test]
+fn range_slider_drags_along_its_inline_axis() {
+    let env = Env::new("http://range.test/");
+    env.eval(
+        r#"document.body.style.margin = "0";
+           document.body.innerHTML = "<input type=range id=h style='position:absolute;left:0;top:0;width:200px;height:30px;margin:0'>" +
+             "<input type=range id=r dir=rtl style='position:absolute;left:0;top:40px;width:200px;height:30px;margin:0;direction:rtl'>" +
+             "<input type=range id=v style='position:absolute;left:300px;top:0;width:30px;height:200px;margin:0;writing-mode:vertical-lr'>";
+           "ok""#,
+    );
+    use pyro_webapi::input;
+    let press = |x: f64, y: f64| {
+        let m = input::MouseInput { x, y, button: input::MouseButton::Left, buttons: 1, click_count: 1, ..Default::default() };
+        input::dispatch_mouse(&env.page, input::MouseKind::Pressed, &m).unwrap();
+        input::dispatch_mouse(&env.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+    };
+    press(150.0, 15.0);
+    press(150.0, 55.0);
+    press(315.0, 150.0);
+    assert_eq!(env.eval("[h.value, r.value, v.value].join()"), "75,25,75");
+}
+
+/// navigator.mediaDevices: pyro has no capture device, so none is listed and getUserMedia() finds
+/// none; constraints are still checked.
+#[test]
+fn media_devices_list_no_device() {
+    let env = Env::new("https://media.test/");
+    assert_eq!(
+        env.eval(
+            r#"(async () => {
+              const md = navigator.mediaDevices;
+              const out = [md === navigator.mediaDevices, md instanceof EventTarget, Object.prototype.toString.call(md)];
+              out.push(JSON.stringify(await md.enumerateDevices()));
+              out.push(await md.getUserMedia({ video: true }).then(() => "ok", (e) => e.name));
+              out.push(await md.getUserMedia({}).then(() => "ok", (e) => e.name));
+              out.push(typeof CSS.paintWorklet.addModule, 'Worklet' in globalThis);
+              globalThis.mediaDone = out.join("|");
+            })(), "started""#
+        ),
+        "started"
+    );
+    env.until("globalThis.mediaDone !== undefined");
+    assert_eq!(env.eval("mediaDone"), "true|true|[object MediaDevices]|[]|NotFoundError|TypeError|function|true");
 }
 
 /// A class change on an element above a `:has()` anchor restyles the anchor when a complex selector

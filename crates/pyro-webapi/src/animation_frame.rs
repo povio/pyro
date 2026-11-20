@@ -108,7 +108,19 @@ pub(crate) struct Progress {
 /// without a backwards fill while it plays forwards (a "current" effect in Web Animations 1;
 /// not when `settled`), none ([`Level::Current`]: the progress is not read).
 fn in_effect_or_current(timing: &Timing, local: f64, rate: f64, settled: bool) -> Option<(Progress, Level)> {
-    if let Some(p) = progress(timing, local, rate) {
+    in_effect_or_current_bounded(timing, local, rate, settled, (false, false))
+}
+
+/// [`in_effect_or_current`] on a progress-based timeline at (start, end) of its range
+/// ([`progress_bounded`]).
+fn in_effect_or_current_bounded(
+    timing: &Timing,
+    local: f64,
+    rate: f64,
+    settled: bool,
+    bounds: (bool, bool),
+) -> Option<(Progress, Level)> {
+    if let Some(p) = progress_bounded(timing, local, rate, bounds) {
         return Some((p, Level::Animation));
     }
     let duration = timing.duration.max(0.0);
@@ -124,14 +136,23 @@ fn in_effect_or_current(timing: &Timing, local: f64, rate: f64, settled: bool) -
 /// animations.js's `computeTiming` without the easing). `None`: not in
 /// effect.
 pub(crate) fn progress(timing: &Timing, local: f64, rate: f64) -> Option<Progress> {
+    progress_bounded(timing, local, rate, (false, false))
+}
+
+/// [`progress`] on a progress-based timeline whose scroll position is at the start or the end of its
+/// range (`bounds`): there the active interval's boundary on that side is inclusive (Web Animations 2,
+/// "at progress timeline boundary"; WPT scroll-animations `view-timelines/range-boundary.tentative`).
+pub(crate) fn progress_bounded(timing: &Timing, local: f64, rate: f64, (at_start, at_end): (bool, bool)) -> Option<Progress> {
     let duration = timing.duration.max(0.0);
     let active = if duration == 0.0 || timing.iterations == 0.0 { 0.0 } else { duration * timing.iterations };
     let end = (timing.delay + active + timing.end_delay).max(0.0);
     let backwards = rate < 0.0;
     let before_active = timing.delay.min(end).max(0.0);
     let active_after = (timing.delay + active).min(end).max(0.0);
-    let phase_before = local < before_active || (backwards && local == before_active);
-    let phase_after = !phase_before && (local > active_after || (!backwards && local == active_after));
+    let at = |a: f64, b: f64| if at_start || at_end { (a - b).abs() < 1e-9 } else { a == b };
+    let phase_before = local < before_active || (backwards && at(local, before_active) && !at_start);
+    let phase_after =
+        !phase_before && (local > active_after || (!backwards && at(local, active_after) && !at_end));
     let active_time = if phase_before {
         match timing.fill {
             Fill::Backwards | Fill::Both => (local - timing.delay).max(0.0),
@@ -219,6 +240,8 @@ pub(crate) struct ScrollRef {
     pub inset: [(u8, f64); 2],
     /// A scroll timeline whose source is null: never active.
     pub inactive: bool,
+    /// A view timeline's subject's pseudo-element: 2 `::before`, 3 `::after` (0: the element).
+    pub pseudo: u8,
 }
 
 /// A progress-based timeline's current time now (a percentage), from the engine's last layout;
@@ -228,7 +251,7 @@ fn scroll_time(page: &PageDom, r: &ScrollRef) -> Option<f64> {
         return None;
     }
     let layout = page.try_layout()?;
-    let (offset, start, end) = layout.style().timeline_state(r.source, r.subject, r.axis, r.inset)?;
+    let (offset, start, end) = layout.style().timeline_state(r.source, r.subject, r.pseudo, r.axis, r.inset)?;
     if end > start {
         Some((offset - start) / (end - start) * 100.0)
     } else if r.subject.is_some() {
@@ -236,6 +259,19 @@ fn scroll_time(page: &PageDom, r: &ScrollRef) -> Option<f64> {
     } else {
         None
     }
+}
+
+/// Whether the scroll position of `r`'s timeline is at the start or the end of its scroll range
+/// (a view progress timeline's end is not known here: false).
+fn scroll_bounds(page: &PageDom, r: &ScrollRef) -> (bool, bool) {
+    if r.inactive {
+        return (false, false);
+    }
+    let Some(layout) = page.try_layout() else { return (false, false) };
+    let Some((offset, _, end)) = layout.style().timeline_state(r.source, r.subject, r.pseudo, r.axis, r.inset) else {
+        return (false, false);
+    };
+    (offset <= 0.0, r.subject.is_none() && offset >= end)
 }
 
 impl Scripted {
@@ -260,15 +296,18 @@ pub(crate) enum Pseudo {
     Marker,
     Before,
     After,
+    /// pyro: a top-layer element's `::backdrop`.
+    Backdrop,
 }
 
 impl Pseudo {
-    /// animations.js's code: 0 none, 1 `::marker`, 2 `::before`, 3 `::after`.
+    /// animations.js's code: 0 none, 1 `::marker`, 2 `::before`, 3 `::after`, 4 `::backdrop`.
     pub(crate) fn from_code(code: f64) -> Pseudo {
         match code as i32 {
             1 => Pseudo::Marker,
             2 => Pseudo::Before,
             3 => Pseudo::After,
+            4 => Pseudo::Backdrop,
             _ => Pseudo::None,
         }
     }
@@ -482,6 +521,7 @@ impl Builder {
             Level::Animation => e.animations.push(effect),
             Level::Current => e.current.push(effect),
             Level::Marker => e.marker.push(effect),
+            Level::Backdrop => e.backdrop.push(effect),
             Level::PseudoTransition(i) => e.pseudos[i].transitions.push(effect),
             Level::PseudoAnimation(i) => e.pseudos[i].animations.push(effect),
         }
@@ -497,6 +537,8 @@ enum Level {
     Current,
     /// pyro: in effect on the element's `::marker` (`ElementAnimations::marker`).
     Marker,
+    /// pyro: in effect on the element's `::backdrop` (`ElementAnimations::backdrop`).
+    Backdrop,
     /// In effect on the element's `::before` (0) or `::after` (1), at the transitions or the
     /// animations level (`ElementAnimations::pseudos`).
     PseudoTransition(usize),
@@ -650,7 +692,8 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             None => (t.local_ms(now), 1.0, own_timing, t.is_paused()),
         };
         let Some(local) = clock.local(&timing, local, rate) else { continue };
-        let Some((p, level)) = in_effect_or_current(&timing, local, rate, settled) else { continue };
+        let bounds = overrides.get(&t.id()).and_then(|s| s.scroll.as_ref()).map_or((false, false), |r| scroll_bounds(page, r));
+        let Some((p, level)) = in_effect_or_current_bounded(&timing, local, rate, settled, bounds) else { continue };
         moving |= p.moving && !held;
         let effect = match overrides.get(&t.id()) {
             // An effect script gave the object replaces the `@keyframes`.
@@ -697,7 +740,8 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         let Some(el) = s.el else { continue };
         let Some(local) = s.current_on(page, now) else { continue };
         let Some(local) = clock.local(&s.timing, local, s.rate) else { continue };
-        let Some((p, level)) = in_effect_or_current(&s.timing, local, s.rate, settled) else { continue };
+        let bounds = s.scroll.as_ref().map_or((false, false), |r| scroll_bounds(page, r));
+        let Some((p, level)) = in_effect_or_current_bounded(&s.timing, local, s.rate, settled, bounds) else { continue };
         // (One on a progress-based timeline moves with scrolling: the stamp follows the scroll.)
         moving |= p.moving && s.hold.is_none() && s.rate != 0.0 && s.scroll.is_none();
         let effect = Effect {
@@ -712,6 +756,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         let level = match (s.pseudo, level) {
             (Pseudo::None, level) => level,
             (Pseudo::Marker, Level::Animation) => Level::Marker,
+            (Pseudo::Backdrop, Level::Animation) => Level::Backdrop,
             (pseudo, Level::Animation) if pseudo.generated_index().is_some() => {
                 Level::PseudoAnimation(pseudo.generated_index().unwrap())
             }

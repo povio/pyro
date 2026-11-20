@@ -26,6 +26,9 @@ mod render;
 mod util;
 
 pub use error::Error;
+#[cfg(feature = "image")]
+pub use util::PageRasterScope;
+pub use render::with_text_threshold;
 /// pyro: SVG filters as anyrender filter graphs (see `filter`).
 pub use filter::{FilterGraph, FilterNotes, PrimitiveNotes};
 pub use usvg;
@@ -135,6 +138,8 @@ pub fn render_svg_tree_with_notes<S: PaintScene>(
 /// bounds the offscreen rasters in place of the tree's viewport. For a `<mask>` in user units a
 /// CSS box references, whose content may lie above or left of the box's corner (the origin).
 pub fn render_svg_tree_within<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine, visible: kurbo::Rect) {
+    #[cfg(feature = "image")]
+    let _resources = util::RasterScope::enter();
     let ctx = render::Ctx { cull: visible };
     render::render_group(
         scene,
@@ -156,6 +161,8 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     error_handler: &mut F,
 ) {
     // pyro: the tree's viewport in the scene bounds offscreen rasters.
+    #[cfg(feature = "image")]
+    let _resources = util::RasterScope::enter();
     let size = svg.size();
     let viewport = kurbo::Rect::new(0.0, 0.0, size.width() as f64, size.height() as f64);
     let ctx = render::Ctx {

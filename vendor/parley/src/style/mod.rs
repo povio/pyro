@@ -61,16 +61,15 @@ impl Default for TabSize {
 
 /// pyro: what a soft hyphen (U+00AD) does where a line could end at it (CSS `hyphens` and
 /// `hyphenate-character`).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum SoftHyphen {
     /// The line may end there and then shows the hyphen of the font (U+2010, else U+002D).
     #[default]
     Auto,
     /// The line may end there and then shows this character, if the font has it.
     Char(char),
-    /// The line may end there and then shows the first `.1` of these characters, if the font has
-    /// them all (a `hyphenate-character` string of two to four characters).
-    Chars([char; 4], u8),
+    /// The line may end there and then shows the shaped replacement string.
+    Chars(alloc::sync::Arc<str>),
     /// The line may end there and shows nothing.
     Hidden,
     /// No line ends there.
@@ -306,6 +305,30 @@ pub enum AlignmentBaseline {
     /// pyro: css-inline-3 `alignment-baseline: middle`: align the span's x-middle baseline (half
     /// its x-height above its baseline) with the parent's. A box stays on the baseline.
     XMiddle,
+    /// pyro: css-inline-3 `alignment-baseline: alphabetic`.
+    Alphabetic,
+    /// pyro: css-inline-3 `alignment-baseline: ideographic` (the ideographic under baseline).
+    Ideographic,
+    /// pyro: css-inline-3 `alignment-baseline: central`.
+    Central,
+    /// pyro: css-inline-3 `alignment-baseline: mathematical`.
+    Mathematical,
+    /// pyro: css-inline-3 `alignment-baseline: hanging`.
+    Hanging,
+}
+
+/// pyro: CSS `font-variant-emoji`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FontVariantEmoji {
+    /// Each emoji's default presentation (`Emoji_Presentation`).
+    #[default]
+    Normal,
+    /// Text presentation.
+    Text,
+    /// Emoji presentation.
+    Emoji,
+    /// As `normal` (the Unicode default presentation).
+    Unicode,
 }
 
 /// A shift applied to a span (or [`InlineBox`]) after [`AlignmentBaseline`] alignment. Mirrors
@@ -321,6 +344,10 @@ pub enum AlignmentBaseline {
 pub enum BaselineShift {
     /// Raise the box by the given distance (in layout units). Negative values lower it.
     Length(f32),
+    /// pyro: like [`Length`](Self::Length), resolved from a percentage of the box's own line
+    /// height (`vertical-align: <percentage>`): a line that CSS `text-fit` scales scales it with
+    /// that line height.
+    LineHeight(f32),
     /// Lower the box to the proper position for subscripts of the parent span.
     Sub,
     /// Raise the box to the proper position for superscripts of the parent span.
@@ -389,7 +416,8 @@ impl VerticalAlign {
     pub(crate) fn nearly_eq(self, other: Self) -> bool {
         self.alignment == other.alignment
             && match (self.shift, other.shift) {
-                (BaselineShift::Length(a), BaselineShift::Length(b)) => nearly_eq(a, b),
+                (BaselineShift::Length(a), BaselineShift::Length(b))
+                | (BaselineShift::LineHeight(a), BaselineShift::LineHeight(b)) => nearly_eq(a, b),
                 (a, b) => a == b,
             }
     }
@@ -398,6 +426,10 @@ impl VerticalAlign {
         match self.shift {
             BaselineShift::Length(value) => Self {
                 shift: BaselineShift::Length(value * scale),
+                ..self
+            },
+            BaselineShift::LineHeight(value) => Self {
+                shift: BaselineShift::LineHeight(value * scale),
                 ..self
             },
             _ => self,
@@ -466,6 +498,14 @@ pub enum StyleProperty<'a, B: Brush> {
     SoftHyphen(SoftHyphen),
     /// pyro: whether lines may break inside words where dictionaries find boundaries.
     DictionaryBreaks(bool),
+    /// pyro: how many `wrap-inside: avoid` boxes hold the span ([`TextStyle::wrap_avoid_depth`]).
+    WrapAvoidDepth(u8),
+    /// pyro: CSS `hanging-punctuation` ([`TextStyle::hanging_punctuation`]).
+    HangingPunctuation(u8),
+    /// pyro: [`TextStyle::full_width_space`].
+    FullWidthSpace(bool),
+    /// pyro: whether the span is a bidi isolate ([`TextStyle::isolates`]).
+    Isolates(bool),
     /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
     PhraseBreaks(bool),
     /// pyro: whether the font size is set by `font-size-adjust` (a face's `size-adjust` is then
@@ -481,6 +521,10 @@ pub enum StyleProperty<'a, B: Brush> {
     TextAutospace(TextAutospace),
     /// pyro: upright glyphs in a vertical line (`text-orientation: upright`).
     Upright(bool),
+    /// pyro: text in a vertical line (`TextStyle::vertical`).
+    Vertical(bool),
+    /// pyro: emoji or text presentation (`TextStyle::font_variant_emoji`).
+    FontVariantEmoji(FontVariantEmoji),
     /// pyro: where justification adds space.
     TextJustify(TextJustify),
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -549,6 +593,19 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: whether lines may break inside words where dictionaries find boundaries (Thai, Lao,
     /// Khmer, Burmese). `false` for CSS `word-break: manual`.
     pub dictionary_breaks: bool,
+    /// pyro: how many inline boxes with `wrap-inside: avoid` hold the span (CSS Text 4): a line
+    /// breaks inside fewer of them first.
+    pub wrap_avoid_depth: u8,
+    /// pyro: CSS `hanging-punctuation`: `FORCE_END` (2), `ALLOW_END` (4) and `LAST` (8) bits (the
+    /// line breaker's; `first` is the caller's, a negative indent).
+    pub hanging_punctuation: u8,
+    /// pyro: a collapsed space of the span is U+3000 (CSS `text-transform: full-width`, which
+    /// applies after white space collapsing).
+    pub full_width_space: bool,
+    /// pyro: whether the span is a bidi isolate (CSS `unicode-bidi: isolate`, `isolate-override`
+    /// or `plaintext`): shaping breaks at its edges (CSS Text 3 § 7.3). Not inherited: set on the
+    /// span's own style.
+    pub isolates: bool,
     /// pyro: CSS `word-break: auto-phrase`: with `word_break` [`WordBreak::KeepAll`], lines also
     /// break between Japanese phrases, and a line whose phrase does not fit breaks as under
     /// [`WordBreak::Normal`].
@@ -571,6 +628,13 @@ pub struct TextStyle<'family, 'settings, B: Brush> {
     /// pyro: this style's glyphs stand upright in vertical lines (CSS `text-orientation:
     /// upright`): a glyph without a vertical advance (`vmtx`) advances by the font's height.
     pub upright: bool,
+    /// pyro: this style's text is in a vertical line, not sideways (CSS `writing-mode: vertical-*`
+    /// with `text-orientation: mixed` or `upright`): shaping runs split where a character's
+    /// vertical orientation (UTR #50, [`crate::upright_in_vertical`]) changes.
+    pub vertical: bool,
+    /// pyro: CSS `font-variant-emoji`: the presentation emoji take where no variation selector
+    /// chooses one (a colour font for emoji presentation, a text font for text presentation).
+    pub font_variant_emoji: FontVariantEmoji,
     /// pyro: where justification adds space in this style's text (CSS `text-justify`).
     pub text_justify: TextJustify,
     /// pyro: which of this style's letter and word spacing scale with its font size (CSS
@@ -660,6 +724,10 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             tab_size: TabSize::default(),
             soft_hyphen: SoftHyphen::default(),
             dictionary_breaks: true,
+            wrap_avoid_depth: 0,
+            hanging_punctuation: 0,
+            full_width_space: false,
+            isolates: false,
             phrase_breaks: false,
             font_size_adjusted: false,
             auto_optical_size: false,
@@ -667,6 +735,8 @@ impl<B: Brush> Default for TextStyle<'static, 'static, B> {
             text_spacing_trim: TextSpacingTrim::default(),
             text_autospace: TextAutospace::default(),
             upright: false,
+            vertical: false,
+            font_variant_emoji: FontVariantEmoji::Normal,
             text_justify: TextJustify::default(),
             spacing_scales: SpacingScales::default(),
             annotation_space: AnnotationSpace::default(),

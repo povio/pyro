@@ -132,8 +132,11 @@ impl Whitespace {
                 Self::OtherSpaceSeparator
             }
             '\t' => Self::Tab,
-            // Newline, carriage return, line separator, paragraph separator.
-            '\n' | '\r' | '\u{2028}' | '\u{2029}' => Self::Newline,
+            // Newline, carriage return.
+            '\n' | '\r' => Self::Newline,
+            // pyro: the line and paragraph separators are displayed as a space, without a forced
+            // break, as in Chromium (WPT css-fonts `separators`).
+            '\u{2028}' | '\u{2029}' => Self::Space,
             // Vertical tab, form feed, next line. These are `White_Space` that CSS says to render
             // as control characters.
             '\u{000b}' | '\u{000c}' | '\u{0085}' => Self::ControlWhitespace,
@@ -434,8 +437,12 @@ impl CharCluster {
 
             // Variation selectors don't impact font coverage, and are default ignorable.
             // TODO: Is there a default ignorable flag we should be using instead?
-            let contributes_to_shaping =
-                info.contributes_to_shaping() && !is_emoji_presentation_selector;
+            // pyro: a tab is shaped as a space (`shaper.rs`), so a font is chosen for it as for
+            // a space: one without a space would draw its missing glyph (WPT css-text
+            // `tab-size-integer-005`).
+            // pyro: and the line and paragraph separators, shaped as a space (`shaper.rs`).
+            let contributes_to_shaping = (info.contributes_to_shaping() || matches!(ch, '\t' | '\u{2028}' | '\u{2029}'))
+                && !is_emoji_presentation_selector;
             if contributes_to_shaping {
                 map_len = map_len.saturating_add(1);
             }
@@ -535,7 +542,7 @@ impl<'a> Mapper<'a> {
     fn coverage(&self, covers: &impl Fn(char) -> bool) -> Coverage {
         let mut mapped: u8 = 0;
         for c in self.chars.iter() {
-            if c.contributes_to_shaping && covers(c.ch) {
+            if c.contributes_to_shaping && covers(if matches!(c.ch, '\t' | '\u{2028}' | '\u{2029}') { ' ' } else { c.ch }) {
                 mapped = mapped.saturating_add(1);
             }
         }

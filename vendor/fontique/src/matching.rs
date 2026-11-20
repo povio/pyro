@@ -51,7 +51,6 @@ pub fn match_font(
         width: i32,
         style: FontStyle,
         weight: f32,
-        has_slnt: bool,
     }
     // pyro: a face with `@font-face` ranges is a candidate at the values of its ranges nearest
     // the ones asked for (CSS Fonts 4 §5.2).
@@ -63,7 +62,6 @@ pub fn match_font(
             width: font.matched_width(width.percentage()) as i32,
             style: font.matched_style(style),
             weight: font.matched_weight(weight.value()),
-            has_slnt: font.has_slant_axis(),
         })
         .collect();
     let width = (width.ratio() * 100.0) as i32;
@@ -124,7 +122,6 @@ pub fn match_font(
     // the current value of 20deg in the spec.
     // See: https://github.com/w3c/csswg-drafts/issues/2295
     let mut use_style = style;
-    let mut _use_slnt = false;
     if !set.iter().any(|f| f.style == use_style) {
         // If the value of font-style is italic:
         if style == FontStyle::Italic {
@@ -183,16 +180,12 @@ pub fn match_font(
                     // value with the specified oblique value; otherwise, a fallback
                     // match is produced by geometric shearing to the specified
                     // oblique value.
-                    if synthesize_style {
-                        if set.iter().any(|f| f.has_slnt) {
-                            _use_slnt = true;
-                        } else {
-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
-                                FontStyle::Normal
-                            } else {
-                                set[0].style
-                            };
-                        }
+                    // pyro: a face to slant or shear is a normal one; without one, the
+                    // fallback order follows as for no synthesis (the style kept here
+                    // matched no face, leaving none; WPT css-fonts
+                    // `stretch-distance-over-weight-distance`, as Blink).
+                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
+                        use_style = FontStyle::Normal;
                     } else {
                         // Choose an italic style
                         if set.iter().any(|f| f.style == FontStyle::Italic) {
@@ -236,16 +229,12 @@ pub fn match_font(
                     // value with the specified oblique value; otherwise, a fallback
                     // match is produced by geometric shearing to the specified
                     // oblique value.
-                    if synthesize_style {
-                        if set.iter().any(|f| f.has_slnt) {
-                            _use_slnt = true;
-                        } else {
-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
-                                FontStyle::Normal
-                            } else {
-                                set[0].style
-                            };
-                        }
+                    // pyro: a face to slant or shear is a normal one; without one, the
+                    // fallback order follows as for no synthesis (the style kept here
+                    // matched no face, leaving none; WPT css-fonts
+                    // `stretch-distance-over-weight-distance`, as Blink).
+                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
+                        use_style = FontStyle::Normal;
                     } else {
                         // Choose an italic style
                         if set.iter().any(|f| f.style == FontStyle::Italic) {
@@ -288,16 +277,12 @@ pub fn match_font(
                     // value with the specified oblique value; otherwise, a fallback
                     // match is produced by geometric shearing to the specified
                     // oblique value.
-                    if synthesize_style {
-                        if set.iter().any(|f| f.has_slnt) {
-                            _use_slnt = true;
-                        } else {
-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
-                                FontStyle::Normal
-                            } else {
-                                set[0].style
-                            };
-                        }
+                    // pyro: a face to slant or shear is a normal one; without one, the
+                    // fallback order follows as for no synthesis (the style kept here
+                    // matched no face, leaving none; WPT css-fonts
+                    // `stretch-distance-over-weight-distance`, as Blink).
+                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
+                        use_style = FontStyle::Normal;
                     } else {
                         // Choose an italic style
                         if set.iter().any(|f| f.style == FontStyle::Italic) {
@@ -340,16 +325,12 @@ pub fn match_font(
                     // value with the specified oblique value; otherwise, a fallback
                     // match is produced by geometric shearing to the specified
                     // oblique value.
-                    if synthesize_style {
-                        if set.iter().any(|f| f.has_slnt) {
-                            _use_slnt = true;
-                        } else {
-                            use_style = if set.iter().any(|f| f.style == FontStyle::Normal) {
-                                FontStyle::Normal
-                            } else {
-                                set[0].style
-                            };
-                        }
+                    // pyro: a face to slant or shear is a normal one; without one, the
+                    // fallback order follows as for no synthesis (the style kept here
+                    // matched no face, leaving none; WPT css-fonts
+                    // `stretch-distance-over-weight-distance`, as Blink).
+                    if synthesize_style && set.iter().any(|f| f.style == FontStyle::Normal) {
+                        use_style = FontStyle::Normal;
                     } else {
                         // Choose an italic style
                         if set.iter().any(|f| f.style == FontStyle::Italic) {

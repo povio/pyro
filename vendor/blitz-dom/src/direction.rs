@@ -57,10 +57,8 @@ pub(crate) fn is_rtl(node: &Node) -> bool {
 
 /// The directionality pyro-dom's render tree gives an element (`Some(true)`: right to left).
 fn state_direction(node: &Node) -> Option<bool> {
-    let state = node.element_data()?.attrs.iter().find(|a| {
-        &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state"
-    })?;
-    state.value.split_ascii_whitespace().find_map(|token| match token {
+    let state = node.element_data()?.attrs.state("state")?;
+    state.split_ascii_whitespace().find_map(|token| match token {
         "dir=rtl" => Some(true),
         "dir=ltr" => Some(false),
         _ => None,

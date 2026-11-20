@@ -31,6 +31,10 @@ type Hits = Arc<Mutex<Vec<(String, String)>>>;
 /// origin for origin-form requests and, for absolute-form ones, as a proxy
 /// that never forwards (what it answers never reaches the origin).
 fn server() -> (String, Hits) {
+    recording_server("user-agent")
+}
+
+fn recording_server(header: &'static str) -> (String, Hits) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
     let hits = Hits::default();
@@ -57,12 +61,19 @@ fn server() -> (String, Hits) {
                 };
                 let agent = head
                     .lines()
-                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("user-agent")))
+                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case(header)))
                     .map(|(_, v)| v.trim().to_owned())
                     .unwrap_or_default();
+                let no_referrer = agent.is_empty();
                 record.lock().unwrap().push((path.clone(), agent));
                 let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
-                let (kind, body): (&str, Vec<u8>) = if path.ends_with("/page") {
+                let (kind, body): (&str, Vec<u8>) = if path == "/image-policy" {
+                    ("text/html", b"<!doctype html><meta name=referrer content=unsafe-url><img src='/explicit.png' referrerpolicy=no-referrer>".to_vec())
+                } else if path == "/changing-policy" {
+                    ("text/html", b"<!doctype html><meta name=referrer content=unsafe-url><style>body{margin:0}img{display:block;width:8px;height:8px}</style><img src='/varies.png'>".to_vec())
+                } else if path == "/varies.png" && no_referrer {
+                    ("image/png", pyro_render::encode_png(&pyro_render::RgbaImage { width: 1, height: 1, data: vec![0,0,255,255] }))
+                } else if path.ends_with("/page") {
                     ("text/html", page(&dir, "").into_bytes())
                 } else if path.ends_with("/pdf-page") {
                     ("text/html", page(&dir, "pdf-").into_bytes())
@@ -140,6 +151,36 @@ fn navigate(h: &mut Harness, session: &str, url: &str) {
     h.until_event(|m| m["method"] == "Page.loadEventFired" && m["sessionId"] == session);
 }
 
+#[test]
+fn image_policy_is_preserved_by_layout_and_capture() {
+    let (origin, hits) = recording_server("referer");
+    let mut harness = Harness::new();
+    let session = open(&mut harness, None, &format!("{origin}/image-policy"));
+    let result = harness.call(Some(&session), "Runtime.evaluate", json!({"expression": "document.images[0].getBoundingClientRect().width", "returnByValue": true}));
+    assert_eq!(result["result"]["result"]["value"], 2);
+    let screenshot = harness.call(Some(&session), "Page.captureScreenshot", json!({}));
+    assert!(screenshot["result"]["data"].is_string());
+    let seen = paths(&hits, "/explicit.png");
+    assert!(!seen.is_empty());
+    assert_eq!(seen.iter().filter(|(_, header)| !header.is_empty()).count(), 0, "{seen:?}");
+}
+
+#[test]
+fn changing_document_image_policy_replaces_renderer_bytes() {
+    let (origin, hits) = recording_server("referer");
+    let mut harness = Harness::new();
+    let session = open(&mut harness, None, &format!("{origin}/changing-policy"));
+    let pixel = |harness: &mut Harness| {
+        let capture = harness.call(Some(&session), "Page.captureScreenshot", json!({}));
+        let bytes = pyro_cdp::fetch_protocol::base64_decode(capture["result"]["data"].as_str().unwrap()).unwrap();
+        pyro_render::decode_png(&bytes).unwrap().data[..4].to_vec()
+    };
+    assert_eq!(pixel(&mut harness), [255,0,0,255]);
+    harness.call(Some(&session), "Runtime.evaluate", json!({"expression":"document.querySelector('meta').content='no-referrer'; document.images[0].getBoundingClientRect().width"}));
+    harness.run_for(60);
+    assert_eq!(pixel(&mut harness), [0,0,255,255], "{:?}", paths(&hits, "/varies.png"));
+}
+
 /// A layout query (which starts what the layout misses loading).
 fn lay_out(h: &mut Harness, session: &str) {
     let r = h.call(Some(session), "Runtime.evaluate", json!({"expression": LAYOUT_QUERY, "returnByValue": true}));
@@ -183,12 +224,13 @@ fn layout_and_render_loads_go_through_the_context_proxy_with_its_user_agent() {
     let want: Vec<String> = ENGINE_LOADS.iter().chain(&PAGE_LOADS).map(|name| format!("/id/{name}")).collect();
     lay_out_until(&mut h, &session, &proxied, &want);
 
-    // A screenshot: the render thread loads what it paints again (the
-    // responses are not stored).
+    // A screenshot paints what the document's layout fetched (images, the
+    // font, the imported sheet) as it is: it loads none of it again.
     let before: Vec<usize> = ENGINE_LOADS.iter().map(|name| count(&proxied, &format!("/id/{name}"))).collect();
     let r = h.call(Some(&session), "Page.captureScreenshot", json!({}));
     assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
-    assert!(count(&proxied, "/id/bg.png") > before[0], "the screenshot loaded its own: {:?}", paths(&proxied, "/id/"));
+    let after: Vec<usize> = ENGINE_LOADS.iter().map(|name| count(&proxied, &format!("/id/{name}"))).collect();
+    assert_eq!(after, before, "the screenshot reused the document's own: {:?}", paths(&proxied, "/id/"));
 
     // A PDF of a document nothing laid out yet: its layout loads what it
     // prints, and the PDF waits for them.
@@ -204,11 +246,12 @@ fn layout_and_render_loads_go_through_the_context_proxy_with_its_user_agent() {
     assert_eq!(paths(&direct, "/id/"), vec![], "nothing of the page reached the origin directly");
 }
 
-/// The bodies layout loaded serve the pages of one network identity: a page
+/// The bodies layout loaded serve only the document that loaded them: a page
 /// in a context with its own proxy and agent loads everything through them
 /// although a default context's page loaded the same URLs straight from the
-/// origin before, which it still does; another page of that context reuses
-/// what the first one loaded.
+/// origin before, which it still does; another page of that context loads its
+/// own, through the same proxy (bodies are per document: security review
+/// cycle 3, layout body cache).
 #[test]
 fn layout_bodies_serve_only_their_network_identity() {
     let (origin, direct) = server();
@@ -236,18 +279,17 @@ fn layout_bodies_serve_only_their_network_identity() {
     let seen = paths(&proxied, "/shared/");
     assert!(seen.iter().all(|(_, agent)| agent == IDENTITY), "{seen:?}");
 
-    // Another page of the same context lays out with what the first loaded.
+    // Another page of the same context loads its own, through the same proxy.
     let loads: Vec<usize> = want.iter().map(|path| count(&proxied, path)).collect();
     let second = open(&mut h, Some(&ctx), &url);
-    lay_out(&mut h, &second);
-    h.run_for(300);
-    lay_out(&mut h, &second);
-    assert_eq!(
-        want.iter().map(|path| count(&proxied, path)).collect::<Vec<_>>(),
-        loads,
-        "{:?}",
-        paths(&proxied, "/shared/")
-    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while want.iter().zip(&loads).any(|(path, before)| count(&proxied, path) <= *before) {
+        assert!(Instant::now() < deadline, "the second page's own loads: {:?}", paths(&proxied, "/shared/"));
+        lay_out(&mut h, &second);
+        h.run_for(30);
+    }
+    assert_eq!(paths(&direct, "/shared/").len(), direct_before, "{:?}", paths(&direct, "/shared/"));
+    assert!(paths(&proxied, "/shared/").iter().all(|(_, agent)| agent == IDENTITY));
 }
 
 /// A page's Fetch interception pauses its layout's loads too; one it fails

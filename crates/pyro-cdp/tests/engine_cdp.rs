@@ -3915,7 +3915,13 @@ fn window_open_returns_a_minimal_popup_object() {
         value(&mut h, "(() => { try { w.location = 'http://[' } catch (e) { return e.name } })()"),
         json!("SyntaxError")
     );
-    value(&mut h, "w.location.assign('data:text/html,<title>third</title>'); 1");
+    // Of a cross-origin Location only the href setter and replace() are reachable (HTML
+    // CrossOriginProperties, Chrome): assign() throws, replace() navigates.
+    assert_eq!(
+        value(&mut h, "(() => { try { w.location.assign('data:text/html,<title>x</title>') } catch (e) { return e.name } })()"),
+        json!("SecurityError")
+    );
+    value(&mut h, "w.location.replace('data:text/html,<title>third</title>'); 1");
     h.until_event(|m| {
         m["method"] == "Page.frameNavigated"
             && m["params"]["frame"]["url"] == json!("data:text/html,<title>third</title>")
@@ -7364,6 +7370,401 @@ mod screenshot {
         }
     }
 
+    /// A server for load gate tests: `/` answers `page`; a request `stall` picks (by its whole
+    /// head) waits that long, then answers 404 (images) or `font` bytes; others 404 at once.
+    fn gate_server(page: &'static str, stall: fn(&str) -> Option<u64>) -> std::net::SocketAddr {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&request).to_string();
+                    let (status, kind, body) = if head.starts_with("GET / ") {
+                        ("200 OK", "text/html", page)
+                    } else {
+                        if let Some(ms) = stall(&head) {
+                            std::thread::sleep(Duration::from_millis(ms));
+                        }
+                        ("404 Not Found", "text/plain", "")
+                    };
+                    let out = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(out.as_bytes());
+                });
+            }
+        });
+        address
+    }
+
+    #[test]
+    fn animation_frame_starts_a_changed_content_image_without_a_geometry_read() {
+        let address = gate_server("<!doctype html><div id='target'></div>", |_| None);
+        let mut harness = Harness::new();
+        harness.page("Page.enable", json!({}));
+        harness.page("Network.enable", json!({}));
+        harness.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        harness.until_event(|event| event["method"] == "Page.loadEventFired");
+        harness.page("Runtime.evaluate", json!({"expression":
+            "requestAnimationFrame(() => document.getElementById('target').style.content = 'url(/replacement.svg)')"}));
+        let url = format!("http://{address}/replacement.svg");
+        harness.until_event(|event| event["method"] == "Network.requestWillBeSent" && event["params"]["request"]["url"] == url);
+    }
+
+    /// Author CSS cannot see the engine's reserved attributes in the geometry mirror: attribute
+    /// selectors on each reserved name and on every one-character prefix or suffix of the
+    /// snapshot nonce, inside `:is()`/`:has()` too, match nothing, and `attr()` of them is empty,
+    /// so no geometry a page script reads depends on the nonce (security review cycle 7, 1).
+    #[test]
+    fn author_css_cannot_see_the_engines_attributes() {
+        let mut rules = String::from(
+            "iframe { border: 0; display: block; width: 50px; height: 20px } link { display: inline-block }\
+             link::before { content: attr(data-pyro-sheet) attr(data-pyro-n) attr(data-pyro-frame) }\
+             iframe[data-pyro-frame] { height: 31px } iframe[data-pyro-n] { height: 32px }\
+             :is(iframe[data-pyro-n], iframe[data-pyro-frame]) { height: 33px } body:has([data-pyro-n]) iframe { margin-left: 9px }\
+             link[data-pyro-sheet], link[data-pyro-n], link[data-pyro-sheet-referrer-policy] { width: 40px }",
+        );
+        for (i, c) in "0123456789abcdef".chars().enumerate() {
+            rules.push_str(&format!(
+                "iframe[data-pyro-n^=\"{c}\"] {{ width: {w}px }} iframe[data-pyro-n$=\"{c}\"] {{ height: {w}px }} \
+                 iframe[data-pyro-n*=\"{c}{c}\"] {{ padding-left: {w}px }} iframe[data-pyro-frame^=\"{c}\"] {{ margin-top: {w}px }} \
+                 iframe[data-pyro-n|=\"{c}\"], iframe[data-pyro-n~=\"{c}\"] {{ padding-top: {w}px }}",
+                w = i + 1
+            ));
+        }
+        let page = format!(
+            "<!doctype html><style>{rules}</style><link id=l rel=stylesheet href=/s.css><iframe id=f srcdoc=\"<p>x</p>\"></iframe>"
+        );
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let page = page.clone();
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&request).to_string();
+                    let (kind, body) = if head.starts_with("GET /s.css") { ("text/css", "q { }".to_owned()) } else { ("text/html", page) };
+                    let out = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(out.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(100);
+        // (A capture gives the frame its document, whose marker the mirror then carries.)
+        let shot = h.page("Page.captureScreenshot", json!({}));
+        assert!(shot["result"]["data"].is_string(), "{shot}");
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": "const f = document.getElementById('f').getBoundingClientRect(), l = document.getElementById('l').getBoundingClientRect(); [f.left, f.top, f.width, f.height, l.width, getComputedStyle(document.getElementById('f')).paddingLeft].join()", "returnByValue": true}),
+        );
+        let top = |r: &Value| r["result"]["result"]["value"].as_str().unwrap_or_default().to_owned();
+        let got = top(&r);
+        let fields: Vec<&str> = got.split(',').collect();
+        assert_eq!((fields.get(2).copied(), fields.get(3).copied(), fields.get(4).copied(), fields.get(5).copied()), (Some("50"), Some("20"), Some("0"), Some("0px")), "{got}");
+        assert_eq!(fields.first().copied(), Some("8"), "{got}");
+    }
+
+    /// The page's own `data-pyro-*` attributes are ordinary attributes in the geometry mirror: an
+    /// author `data-pyro-theme` styles by selector and by `attr()`, and an author-forged
+    /// `data-pyro-n`/`data-pyro-frame` (no nonce) styles like any attribute while the engine ignores
+    /// it (security review cycle 8, 2; the engine's own travel under nonce names).
+    #[test]
+    fn author_data_pyro_attributes_style_as_ordinary_attributes() {
+        let page = "<!doctype html><style>div, iframe { display: block; border: 0; width: 10px; height: 10px }\
+             [data-pyro-theme=dark] { width: 33px } span { display: inline-block } span::before { content: attr(data-pyro-theme) }\
+             iframe[data-pyro-frame] { height: 44px } iframe[data-pyro-n^=\"0\"] { width: 55px }</style>\
+             <div id=t data-pyro-theme=dark></div><span id=s data-pyro-theme=dark></span>\
+             <iframe id=f data-pyro-n=0123456789abcdef0123456789abcdef data-pyro-frame=\"0123456789abcdef0123456789abcdef:1:0000000000000000\"></iframe>";
+        let address = gate_server(page, |_| None);
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(50);
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": "const r = id => document.getElementById(id).getBoundingClientRect(); [r('t').width, r('s').width > 0, r('f').width, r('f').height].join()", "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"].as_str(), Some("33,true,55,44"), "{r}");
+    }
+
+    /// The engine's private state (`urn:x-pyro:state`: pseudo-class tokens, top layer, markers) is
+    /// invisible to author CSS in the geometry mirror: `[*|state]` and value selectors on it match
+    /// nothing, while the pseudo-classes it feeds still match; a page's own `state` attribute, in
+    /// no namespace or in `urn:x-pyro:state` itself, is an ordinary attribute (security review
+    /// cycle 9, 2).
+    #[test]
+    fn engine_state_is_invisible_to_author_css() {
+        let page = "<!doctype html><style>input { appearance: none; display: block; margin: 0; border: 0; padding: 0; width: 10px; height: 10px }\
+             input:checked { width: 44px } [*|state] { height: 33px } input[*|state*=\"c\"] { margin-left: 22px }\
+             div { width: 10px; height: 10px } div[*|state=mine] { width: 55px } div[state=plain] { height: 66px }\
+             span { display: inline-block } span::before { content: attr(state) }</style>\
+             <input id=c type=checkbox><div id=a></div><div id=b state=plain></div><span id=s></span>\
+             <script>c.checked = true; a.setAttributeNS('urn:x-pyro:state', 'state', 'mine');</script>";
+        let address = gate_server(page, |_| None);
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(50);
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": "const r = id => document.getElementById(id).getBoundingClientRect(); [r('c').width, r('c').height, r('c').left, r('a').width, r('a').height, r('b').height, r('s').width].join()", "returnByValue": true}),
+        );
+        // (The page's own `state` attributes match `[*|state]` too: 33px high, 66px by the more
+        // specific `div[state=plain]`.)
+        assert_eq!(r["result"]["result"]["value"].as_str(), Some("44,10,8,55,33,66,0"), "{r}");
+    }
+
+    /// How long `load` took from navigating to the gate server.
+    fn load_time(address: std::net::SocketAddr) -> Duration {
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        let started = Instant::now();
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        started.elapsed()
+    }
+
+    /// A face first made applicable by a style change before load (its fetch starts with the
+    /// gate's own layout pass) delays load: fonts are checked again after that pass (security
+    /// review cycle 4, S3a). The face's request is the document's (by key), recorded as loading
+    /// from the moment its layout asks, never confused with a failed one (cycle 5, 6).
+    #[test]
+    fn a_face_the_gates_layout_starts_delays_load() {
+        let address = gate_server(
+            // (A family no other test registers in the thread's font context.)
+            "<!doctype html><style>@font-face { font-family: GateRecheckFace; src: url(/slow.woff2) }</style>\
+             <p id=p>text</p><script>addEventListener('DOMContentLoaded', () => document.getElementById('p').style.fontFamily = 'GateRecheckFace')</script>",
+            |head| head.starts_with("GET /slow.woff2").then_some(1500),
+        );
+        let waited = load_time(address);
+        assert!(waited >= Duration::from_millis(1200), "load did not wait for the face: {waited:?}");
+    }
+
+    /// `replaceSync()` on an adopted sheet that drops the last use of a stalled image releases
+    /// load (the gate looked at the DOM version only: S3b).
+    #[test]
+    fn an_adopted_sheet_change_releases_load() {
+        let address = gate_server(
+            "<!doctype html><div style='width:20px;height:20px'></div><script>\
+             const sheet = new CSSStyleSheet(); sheet.replaceSync('div { background-image: url(/stall.png) }');\
+             document.adoptedStyleSheets = [sheet]; setTimeout(() => sheet.replaceSync(''), 300);</script>",
+            |head| head.starts_with("GET /stall.png").then_some(4000),
+        );
+        let waited = load_time(address);
+        assert!(waited < Duration::from_millis(2500), "load waited for an image nothing uses: {waited:?}");
+    }
+
+    /// The gate waits by request, not URL: removing the stalled CORS variant of a URL releases
+    /// load though the plain variant of that URL, which answered, is still used (S3c).
+    #[test]
+    fn the_gate_waits_by_request_not_url() {
+        let address = gate_server(
+            "<!doctype html><div style='width:20px;height:20px;background-image:url(/v.png)'></div>\
+             <div id=c style='width:20px;height:20px;mask-image:url(/v.png)'></div>\
+             <script>setTimeout(() => document.getElementById('c').remove(), 300)</script>",
+            // (A mask's request is a CORS one.)
+            |head| (head.starts_with("GET /v.png") && head.to_ascii_lowercase().contains("sec-fetch-mode: cors")).then_some(4000),
+        );
+        let waited = load_time(address);
+        assert!(waited < Duration::from_millis(2500), "load waited for a variant nothing uses: {waited:?}");
+    }
+
+    /// A PDF waits for a frame's fetch that the frame's own geometry has in flight (the page's
+    /// geometry, meeting it pending, did not count it, and the PDF painted before it arrived:
+    /// security review cycle 5, 4).
+    #[test]
+    fn a_pdf_waits_for_a_frames_fetch_another_geometry_made() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&request).to_string();
+                    let (status, body) = if head.starts_with("GET /slow.png") {
+                        std::thread::sleep(Duration::from_millis(1200));
+                        ("404 Not Found", "")
+                    } else if head.starts_with("GET /child") {
+                        // After load, the child's own layout (a geometry read) asks for the image.
+                        ("200 OK", "<!doctype html><div id=d style='width:20px;height:20px'></div><script>\
+                         addEventListener('load', () => setTimeout(() => { const d = document.getElementById('d');\
+                         d.style.backgroundImage = 'url(/slow.png)'; d.getBoundingClientRect(); }, 0))</script>")
+                    } else {
+                        ("200 OK", "<!doctype html><iframe src=/child style='width:50px;height:50px;border:0'></iframe>")
+                    };
+                    let out = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(out.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(150);
+        let session = h.session.clone();
+        let started = Instant::now();
+        let r = h.call(Some(&session), "Page.printToPDF", json!({}));
+        assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
+        assert!(started.elapsed() >= Duration::from_millis(600), "the PDF did not wait: {:?}", started.elapsed());
+        // It parked on the pending fetch, woken when a fetch ended, not again and again while only
+        // the frame's fetch was pending (security review cycle 6, 5: thousands of parks). (The end
+        // of any layout fetch in the process wakes every waiting PDF, other tests' too: a few.)
+        let parks = h.browser.host().pdf_parks();
+        assert!((1..=200).contains(&parks), "the PDF wait parked {parks} times");
+    }
+
+    /// One failure state: a CSS image the document's layout failed to fetch is a failure for its
+    /// capture too, which neither fetches it again nor paints what the document never got
+    /// (geometry and capture kept apart failure sets: security review cycle 4, 3c).
+    #[test]
+    fn a_capture_takes_the_layouts_failure_as_its_own() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let counter = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let counter = counter.clone();
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let (status, body) = if request.starts_with(b"GET /missing.png") {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        // (Answered late: a capture taken meanwhile meets the layout's fetch in flight.)
+                        std::thread::sleep(Duration::from_millis(600));
+                        ("404 Not Found", "")
+                    } else {
+                        ("200 OK", "<!doctype html><div style='width:20px;height:20px;background-image:url(/missing.png)'></div>")
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        let session = h.session.clone();
+        // The layout asks (its load gate's pass); a capture taken while that fetch is in flight
+        // waits for it instead of sending the request again.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while hits.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "the layout never asked");
+            h.run_for(10);
+        }
+        let r = h.call(Some(&session), "Page.captureScreenshot", json!({}));
+        assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the capture met the layout's fetch in flight");
+        // Once it failed (the 404 answered), a capture takes the failure as its own.
+        h.run_for(800);
+        let r = h.call(Some(&session), "Page.captureScreenshot", json!({}));
+        assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the capture took the layout's failure");
+    }
+
+    /// The load event waits for the CSS images the document still references: once the only
+    /// element using a stalled image is removed, load fires without it (it waited out the image or
+    /// the 10 s cap: security review cycle 3, D).
+    #[test]
+    fn removing_the_only_user_of_a_stalled_css_image_releases_load() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let (kind, body) = if request.starts_with(b"GET /slow.png") {
+                        std::thread::sleep(Duration::from_secs(4));
+                        ("image/png", "")
+                    } else {
+                        (
+                            "text/html",
+                            "<!doctype html><div id=d style='width:20px;height:20px;background-image:url(/slow.png)'></div>\
+                             <script>setTimeout(() => document.getElementById('d').remove(), 300)</script>",
+                        )
+                    };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        let started = Instant::now();
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        let waited = started.elapsed();
+        assert!(waited < Duration::from_millis(2500), "load waited for an image nothing uses: {waited:?}");
+    }
+
     /// A layout sub-resource still downloading delays the PDF, not the
     /// browser thread: commands sent after printToPDF answer first.
     #[test]
@@ -7383,7 +7784,7 @@ mod screenshot {
                             _ => return,
                         }
                     }
-                    let (kind, body) = if request.starts_with(b"GET /slow.svg") {
+                    let (kind, body) = if request.starts_with(b"GET /slow.svg") || request.starts_with(b"GET /later.svg") {
                         std::thread::sleep(Duration::from_millis(400));
                         (
                             "image/svg+xml",
@@ -7409,6 +7810,13 @@ mod screenshot {
         h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
         h.until_event(|m| m["method"] == "Page.loadEventFired");
         let session = h.session.clone();
+        // pyro: a CSS image asked for after load (the page's own image was fetched by layout
+        // while it loaded): the PDF's layout starts its fetch and the PDF waits for it.
+        h.call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression": "document.body.style.background = 'url(/later.svg)'; 1", "returnByValue": true}),
+        );
         let started = Instant::now();
         let pdf = h.send(Some(&session), "Page.printToPDF", json!({}));
         let eval = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "1 + 1", "returnByValue": true}));
@@ -10939,4 +11347,630 @@ fn devtools_evaluation_is_exempt_from_trusted_types() {
             "awaitPromise": true, "returnByValue": true}),
     );
     assert_eq!(r["result"]["result"]["value"], "EvalError", "a timer the call scheduled is page code: {r}");
+}
+
+/// postMessage's "/" target is the poster's origin, compared as an origin, not as its serialization:
+/// an opaque opener (a data: URL page) reaches its popup's initial about:blank (which inherits that
+/// very opaque origin), but once the popup is a document of another opaque origin its "/" does not
+/// reach the opener, though both serialize as "null"; "*" does.
+#[test]
+fn post_message_slash_matches_opaque_origins_by_identity() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>");
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    // The initial about:blank popup shares the opener's opaque origin: "/" reaches it.
+    assert_eq!(
+        value(&mut h, "globalThis.w = window.open(); w.received = []; w.addEventListener('message', (e) => w.received.push(e.data)); w.postMessage('same', '/'); 1"),
+        json!(1)
+    );
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.run_for(50);
+    assert_eq!(value(&mut h, "w.received.join()"), json!("same"));
+    // A document of another opaque origin: its "/" does not reach the opener, "*" does.
+    let page = "data:text/html,<script>opener.postMessage('slash', '/'); opener.postMessage('star', '*')</script>";
+    value(&mut h, &format!("w.location.href = {}; 1", json!(page)));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let events = h.until_response(id);
+    let popup_session = popup.clone();
+    if !events.iter().any(|m| m["method"] == "Page.loadEventFired" && m["sessionId"] == json!(popup_session)) {
+        h.until_event(move |m| m["method"] == "Page.loadEventFired" && m["sessionId"] == json!(popup));
+    }
+    h.run_for(200);
+    assert_eq!(value(&mut h, "got.join()"), json!("star"));
+}
+
+/// A closed page's document leaves the DOM store it shares with its popups (or opener): closing the
+/// opener while its popup lives frees the opener's tree (Performance.getMetrics' `Nodes` counts the
+/// shared store's live nodes), after a garbage collection as a removed iframe's is.
+#[test]
+fn closing_the_opener_frees_its_document_in_the_shared_store() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><script>document.write('<div><span>x</span></div>'.repeat(300))</script>");
+    let opener = h.frame_id.clone();
+    h.page("Runtime.evaluate", json!({"expression": "window.open(); 1"}));
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    h.until_response(id);
+    let nodes = |h: &mut Harness, popup: &str| {
+        let r = h.call(Some(popup), "Performance.getMetrics", json!({}));
+        r["result"]["metrics"].as_array().unwrap_or_else(|| panic!("{r}")).iter().find(|m| m["name"] == "Nodes").unwrap()["value"].as_f64().unwrap()
+    };
+    let before = nodes(&mut h, &popup);
+    assert!(before > 600.0, "the opener's nodes are in the shared store: {before}");
+    let target = h.frame_id.clone();
+    h.call(None, "Target.closeTarget", json!({ "targetId": target }));
+    h.run_for(200);
+    h.call(Some(&popup), "Pyro.jscMemory", json!({"action": "collect"}));
+    h.call(Some(&popup), "Runtime.evaluate", json!({"expression": "1"}));
+    h.run_for(100);
+    let after = nodes(&mut h, &popup);
+    assert!(after < 100.0, "the closed opener's document is freed: before {before}, after {after}");
+}
+
+/// The DOM store a popup shares with its opener holds one queue of resource events: one page's
+/// checkpoint drains its peers' events too and hands them to their pages. An opener adding a style
+/// sheet to its same-origin popup gets the sheet's `load` event and the sheet applied there.
+#[test]
+fn an_opener_adding_a_style_sheet_to_its_popup_loads_it() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><p>opener</p>");
+    let opener = h.frame_id.clone();
+    h.page("Runtime.evaluate", json!({"expression": "globalThis.w = window.open(); 1"}));
+    // A client resumes the popup (Playwright does), which makes it a page of its own.
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    h.until_response(id);
+    h.run_for(50);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"new Promise((done) => {
+            const link = w.document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'data:text/css,p{color:rgb(1,2,3)}';
+            link.onload = () => done(['load', w.getComputedStyle(w.document.querySelector('p')).color]);
+            link.onerror = () => done(['error']);
+            w.document.body.innerHTML = '<p>popup</p>';
+            w.document.head.append(link);
+            setTimeout(() => done(['timeout']), 2000);
+          })"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!(["load", "rgb(1, 2, 3)"]), "{r}");
+}
+
+/// A server answering a few paths (a thread that stops once the test ends): `/` an empty page,
+/// `/worklet.js` a redirect to `/final/worklet.js`, a module that imports `./dep.js` and checks its
+/// own URL, and `/final/dep.js`, which registers a painter.
+fn serve_worklet_modules() -> std::net::SocketAddr {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let line = String::from_utf8_lossy(&request).lines().next().unwrap_or("").to_owned();
+            let path = line.split_whitespace().nth(1).unwrap_or("/").to_owned();
+            let (status, ty, body, location) = match path.as_str() {
+                "/worklet.js" => ("302 Found", "text/plain", String::new(), Some("/final/worklet.js")),
+                "/final/worklet.js" => (
+                    "200 OK",
+                    "text/javascript",
+                    "import './dep.js'; if (!import.meta.url.endsWith('/final/worklet.js')) throw new Error('evaluated at ' + import.meta.url);".to_owned(),
+                    None,
+                ),
+                "/final/dep.js" => ("200 OK", "text/javascript", "registerPaint('dep', class { paint() {} });".to_owned(), None),
+                _ => ("200 OK", "text/html", "<!doctype html><p>page</p>".to_owned(), None),
+            };
+            let location = location.map(|l| format!("Location: {l}\r\n")).unwrap_or_default();
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nAccess-Control-Allow-Origin: *\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    address
+}
+
+/// CSS.paintWorklet.addModule() loads the module's static imports (as the page's module scripts load
+/// theirs) and evaluates the module under its response URL, after redirects: `import.meta.url` and
+/// relative imports follow it.
+#[test]
+fn paint_worklet_modules_load_their_imports_at_the_final_url() {
+    let addr = serve_worklet_modules();
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"CSS.paintWorklet.addModule('/worklet.js').then(() => 'loaded', (e) => 'rejected: ' + e)"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!("loaded"), "{r}");
+}
+
+/// CSS.paintWorklet.addModule()'s credentials mode applies to the whole module graph: with "omit",
+/// neither the module nor its static imports carry the page's cookies, even a module the page itself
+/// imported with them (the worklet graph has a module map of its own).
+#[test]
+fn paint_worklet_imports_use_the_graph_credentials_mode() {
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+    let log: Arc<Mutex<Vec<String>>> = Arc::default();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let served = log.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+            let cookie = text
+                .lines()
+                .find_map(|l| l.strip_prefix("Cookie: ").or_else(|| l.strip_prefix("cookie: ")))
+                .unwrap_or("-")
+                .to_owned();
+            let (ty, body) = match path.as_str() {
+                "/m/root.js" => ("text/javascript", "import './dep.js'; import './shared.js';".to_owned()),
+                "/m/dep.js" | "/m/shared.js" => ("text/javascript", "export {};".to_owned()),
+                "/log" => ("text/plain", { let mut l = served.lock().unwrap().clone(); l.sort(); l.join(" ") }),
+                _ => ("text/html", "<!doctype html><p>page</p>".to_owned()),
+            };
+            if path.starts_with("/m/") {
+                served.lock().unwrap().push(format!("{path}:{cookie}"));
+            }
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"document.cookie = 'c=1'; import('/m/shared.js').then(() => CSS.paintWorklet.addModule('/m/root.js', { credentials: 'omit' })).then(() => fetch('/log')).then((r) => r.text(), (e) => 'rejected: ' + e)"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(
+        r["result"]["result"]["value"],
+        json!("/m/dep.js:- /m/root.js:- /m/shared.js:- /m/shared.js:c=1"),
+        "{r}"
+    );
+}
+
+/// The paint worklet's module map is consulted before fetching: addModule() of a URL that already
+/// loaded resolves without a new fetch (here the server fails every later request for it).
+#[test]
+fn paint_worklet_add_module_of_a_loaded_url_does_not_fetch_again() {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let fetched = Arc::new(AtomicUsize::new(0));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = fetched.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+            let (status, ty, body) = match path.as_str() {
+                "/w.js" if count.fetch_add(1, Ordering::SeqCst) == 0 => ("200 OK", "text/javascript", "registerPaint('once', class { paint() {} });"),
+                "/w.js" => ("500 Internal Server Error", "text/plain", "gone"),
+                _ => ("200 OK", "text/html", "<!doctype html><p>page</p>"),
+            };
+            let head = format!("HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"(async () => {
+            const add = () => CSS.paintWorklet.addModule('/w.js').then(() => 'loaded', (e) => e.name);
+            const first = await add();
+            const [second, third] = await Promise.all([add(), add()]);
+            return [first, second, third].join();
+          })()"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!("loaded,loaded,loaded"), "{r}");
+    assert_eq!(fetched.load(Ordering::SeqCst), 1);
+}
+
+/// The paint worklet's module map holds every module of its graphs, imports included: after a graph
+/// whose entry imports B loaded, addModule(B) resolves without fetching B again (here the server fails
+/// every later request for it); an import that failed is fetched again when added on its own.
+#[test]
+fn paint_worklet_add_module_of_a_loaded_import_does_not_fetch_again() {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let fetched = Arc::new(AtomicUsize::new(0));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = fetched.clone();
+    let failed_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+            let (status, ty, body) = match path.as_str() {
+                "/g/a.js" => ("200 OK", "text/javascript", "import './b.js';"),
+                "/g/c-entry.js" => ("200 OK", "text/javascript", "import './c.js';"),
+                // Fails the first time (in c-entry's graph), loads when added on its own.
+                "/g/c.js" if !failed_once.swap(true, Ordering::SeqCst) => ("500 Internal Server Error", "text/plain", "busy"),
+                "/g/c.js" => ("200 OK", "text/javascript", "registerPaint('c', class { paint() {} });"),
+                "/g/b.js" if count.fetch_add(1, Ordering::SeqCst) == 0 => ("200 OK", "text/javascript", "registerPaint('b', class { paint() {} });"),
+                "/g/b.js" => ("500 Internal Server Error", "text/plain", "gone"),
+                _ => ("200 OK", "text/html", "<!doctype html><p>page</p>"),
+            };
+            let head = format!("HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": r#"(async () => {
+            const add = (u) => CSS.paintWorklet.addModule(u).then(() => 'loaded', (e) => e.name);
+            const a = await add('/g/a.js');
+            const b = await add('/g/b.js');
+            const entry = await add('/g/c-entry.js');
+            const c = await add('/g/c.js');
+            return [a, b, entry === 'loaded' ? 'loaded' : 'rejected', c].join();
+          })()"#, "awaitPromise": true, "returnByValue": true}),
+    );
+    // A module whose fetch failed in another graph leaves the map: added on its own, it is fetched.
+    assert_eq!(r["result"]["result"]["value"], json!("loaded,loaded,rejected,loaded"), "{r}");
+    assert_eq!(fetched.load(Ordering::SeqCst), 1);
+}
+
+/// Serves a worklet graph a.js -> b.js -> c.js where each request for c.js waits for the test's word
+/// (true: serve it, false: fail it with a 500).
+fn serve_gated_worklet_graph() -> (std::net::SocketAddr, std::sync::mpsc::Sender<bool>) {
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
+    let rx = Arc::new(Mutex::new(rx));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let rx = rx.clone();
+            std::thread::spawn(move || {
+                stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                        _ => break,
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).into_owned();
+                let path = text.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_owned();
+                let (status, ty, body) = match path.as_str() {
+                    "/s/a.js" => ("200 OK", "text/javascript", "import './b.js';"),
+                    "/s/b.js" => ("200 OK", "text/javascript", "import './c.js';"),
+                    "/s/c.js" => match rx.lock().unwrap().recv_timeout(Duration::from_secs(10)) {
+                        Ok(true) => ("200 OK", "text/javascript", "registerPaint('c', class { paint() {} });"),
+                        _ => ("500 Internal Server Error", "text/plain", "failed"),
+                    },
+                    _ => ("200 OK", "text/html", "<!doctype html><p>page</p>"),
+                };
+                let head = format!("HTTP/1.1 {status}\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+            });
+        }
+    });
+    (addr, tx)
+}
+
+/// addModule(B), where B is an import of a graph already loading or loaded (A -> B -> C), settles as
+/// B's own graph completes (B and its imports fetched and evaluated, or failed), as HTML's "fetch a
+/// worklet script graph" does, not when B's source alone has been fetched: added while C is still
+/// loading it waits for C; when C fails (during A's load or before) it rejects.
+#[test]
+fn paint_worklet_add_module_of_an_import_settles_with_its_graph() {
+    add_module_of_an_import_settles_with_its_graph();
+}
+
+/// The same with an engine that cannot load a registered module's graph (JavaScriptCore without
+/// patch 0037; forced here): addModule(B) settles as the graph that imports B does, its rejection
+/// included.
+#[test]
+fn paint_worklet_add_module_of_an_import_settles_with_its_graph_without_graph_phases() {
+    pyro_webapi::test_hooks::force_graph_fallback_for_tests(true);
+    add_module_of_an_import_settles_with_its_graph();
+    pyro_webapi::test_hooks::force_graph_fallback_for_tests(false);
+}
+
+fn add_module_of_an_import_settles_with_its_graph() {
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    let open = |addr: std::net::SocketAddr| {
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        let events = h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/") }));
+        if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+            h.until_event(|m| m["method"] == "Page.loadEventFired");
+        }
+        value(&mut h, "globalThis.st = {}; globalThis.add = (name, u) => { st[name] = 'pending'; CSS.paintWorklet.addModule(u).then(() => st[name] = 'loaded', (e) => st[name] = 'rejected'); }; 1");
+        h
+    };
+    // Added while A's graph waits for C, which then loads: B waits for C.
+    for c_loads in [true, false] {
+        let (addr, c) = serve_gated_worklet_graph();
+        let mut h = open(addr);
+        value(&mut h, "add('a', '/s/a.js'); 1");
+        h.run_for(300);
+        value(&mut h, "add('b', '/s/b.js'); 1");
+        h.run_for(300);
+        assert_eq!(value(&mut h, "[st.a, st.b].join()"), json!("pending,pending"), "C not served yet (c_loads {c_loads})");
+        for _ in 0..3 {
+            c.send(c_loads).unwrap();
+        }
+        h.run_for(500);
+        let want = if c_loads { "loaded,loaded" } else { "rejected,rejected" };
+        assert_eq!(value(&mut h, "[st.a, st.b].join()"), json!(want), "c_loads {c_loads}");
+    }
+    // Added after A's graph failed on C: B's graph failed too.
+    let (addr, c) = serve_gated_worklet_graph();
+    let mut h = open(addr);
+    for _ in 0..3 {
+        c.send(false).unwrap();
+    }
+    value(&mut h, "add('a', '/s/a.js'); 1");
+    h.run_for(500);
+    assert_eq!(value(&mut h, "st.a"), json!("rejected"));
+    value(&mut h, "add('b', '/s/b.js'); 1");
+    h.run_for(500);
+    assert_eq!(value(&mut h, "st.b"), json!("rejected"));
+}
+
+/// A `<frameset>` is the viewport's size wherever it is and whatever its author size (Chrome 158:
+/// 800x513 in an 800x513 viewport, in `<body>`, in a 200px `<div>`, with `height: 50px`), so a click at
+/// its centre reaches it (WPT fullscreen/crashtests/frameset-crash clicks a frameset in `<body>`).
+#[test]
+fn a_frameset_is_the_viewports_size() {
+    let mut h = Harness::new();
+    // (The parser drops a <frameset> in <body>: script makes them, as the WPT page does.)
+    load_html(&mut h, "<!doctype html><body><div style='height:200px'></div><script>const a = document.createElement('frameset'); a.style.height = '50px'; document.querySelector('div').append(a); document.body.append(document.createElement('frameset'));</script>");
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    assert_eq!(
+        value(&mut h, "[...document.querySelectorAll('frameset')].map((f) => { const r = f.getBoundingClientRect(); return [r.width === innerWidth, r.height === innerHeight, r.height > 0]; }).flat().join()"),
+        json!("true,true,true,true,true,true")
+    );
+    // The second frameset's centre hits it.
+    assert_eq!(
+        value(&mut h, "(() => { const f = document.querySelectorAll('frameset')[1]; const r = f.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + Math.min(r.height / 2, innerHeight - r.y - 1)) === f; })()"),
+        json!(true)
+    );
+}
+
+/// The opener's WindowProxy for a popup targets the browsing context, not a document: once the popup
+/// navigated (here to a document of another origin), the opener's postMessage reaches the popup's
+/// current document.
+#[test]
+fn post_message_reaches_a_navigated_popup() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><title>opener</title><script>window.got = []; onmessage = (e) => got.push(e.data);</script>");
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    value(&mut h, "globalThis.w = window.open(); 1");
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    let page = "data:text/html,<script>onmessage = (e) => opener.postMessage('echo:' + e.data, '*')</script>";
+    value(&mut h, &format!("w.location.href = {}; 1", json!(page)));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let events = h.until_response(id);
+    // Wait for the navigation to the data: document (the initial about:blank reports a load of its own).
+    let session = popup.clone();
+    let navigated = |m: &Value| {
+        m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(session) && m["params"]["frame"]["url"].as_str().is_some_and(|u| u.starts_with("data:"))
+    };
+    if !events.iter().any(navigated) {
+        h.until_event(navigated);
+    }
+    h.run_for(100);
+    value(&mut h, "w.postMessage('one', '*'); 1");
+    h.run_for(200);
+    assert_eq!(value(&mut h, "got.join()"), json!("echo:one"));
+}
+
+/// A popup opened by a sandboxed (opaque) child of an opaque top-level document has the child's
+/// origin, not the top-level opener's: its later about:blank documents inherit that same origin, so
+/// the child's property access and its postMessage("/") agree about the popup (both reach it).
+#[test]
+fn a_popup_takes_the_origin_of_the_document_that_opened_it() {
+    let mut h = Harness::new();
+    let child = r#"<script>
+let w;
+onmessage = (e) => {
+  const say = (v) => parent.postMessage(v, '*');
+  if (e.data === 'open') { w = window.open(); say('opened'); }
+  else if (e.data === 'blank') { w.location.href = 'about:blank'; say('navigating'); }
+  else if (e.data === 'check') {
+    let access;
+    try { access = typeof w.document.body; w.got = []; w.onmessage = (m) => w.got.push(m.data); } catch (err) { access = err.name; }
+    w.postMessage('slash', '/');
+    say('access:' + access);
+  } else if (e.data === 'got') {
+    let got; try { got = w.got.join(); } catch (err) { got = err.name; }
+    say('got:' + got);
+  }
+};
+</script>"#;
+    let top = format!(
+        "<!doctype html><script>window.log = []; onmessage = (e) => log.push(e.data);</script><iframe sandbox='allow-scripts allow-popups' srcdoc=\"{}\"></iframe>",
+        child.replace('"', "&quot;")
+    );
+    load_html(&mut h, &top);
+    let opener = h.frame_id.clone();
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    h.run_for(50);
+    value(&mut h, "frames[0].postMessage('open', '*'); 1");
+    let attached = h.until_event(move |m| {
+        m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != json!(opener)
+    });
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&popup), "Page.enable", json!({}));
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    h.until_response(id);
+    h.run_for(100);
+    value(&mut h, "frames[0].postMessage('blank', '*'); 1");
+    let session = popup.clone();
+    h.until_event(move |m| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(session));
+    h.run_for(100);
+    value(&mut h, "frames[0].postMessage('check', '*'); 1");
+    h.run_for(100);
+    value(&mut h, "frames[0].postMessage('got', '*'); 1");
+    h.run_for(100);
+    assert_eq!(value(&mut h, "log.join(' ')"), json!("opened navigating access:object got:slash"));
+}
+
+/// BroadcastChannel matches opaque origins by identity: an about:blank iframe inherits its opaque
+/// parent's origin and the two talk; a sandboxed frame (an opaque origin of its own) hears neither.
+#[test]
+fn broadcast_channel_matches_opaque_origins_by_identity() {
+    let mut h = Harness::new();
+    let sandboxed = "<script>new BroadcastChannel('c').onmessage = (e) => parent.postMessage('sandboxed:' + e.data, '*')</script>";
+    load_html(
+        &mut h,
+        &format!(
+            "<!doctype html><script>window.log = []; onmessage = (e) => log.push(e.data); new BroadcastChannel('c').onmessage = (e) => log.push('top:' + e.data);</script><iframe id=blank></iframe><iframe sandbox=allow-scripts srcdoc=\"{sandboxed}\"></iframe>"
+        ),
+    );
+    h.run_for(100);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({ "expression": "blank.contentWindow.eval(\"new BroadcastChannel('c').postMessage('hi')\"); 1", "returnByValue": true }),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!(1), "{r}");
+    h.run_for(100);
+    let r = h.page("Runtime.evaluate", json!({ "expression": "log.join(' ')", "returnByValue": true }));
+    assert_eq!(r["result"]["result"]["value"], json!("top:hi"));
+}
+
+/// A closed popup's document leaves the DOM store it shares with its opener and is freed, even while
+/// the opener keeps its WindowProxy (and a function it read through it): after close the proxy answers
+/// `closed` and holds nothing that keeps the popup's realm or DOM alive. Freeing takes two garbage
+/// collections (the first frees the popup's realm, whose finalizers release its node wrappers), as the
+/// Performance.getMetrics `Nodes` count of the shared store shows.
+#[test]
+fn closing_a_popup_frees_its_document_while_the_opener_keeps_its_handle() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><p>opener</p>");
+    let nodes = |h: &mut Harness| {
+        let r = h.page("Performance.getMetrics", json!({}));
+        r["result"]["metrics"].as_array().unwrap_or_else(|| panic!("{r}")).iter().find(|m| m["name"] == "Nodes").unwrap()["value"].as_f64().unwrap()
+    };
+    h.run_for(50);
+    let before = nodes(&mut h);
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression": "globalThis.w = window.open(); w.eval(\"document.body.innerHTML = '<div><span>x</span></div>'.repeat(300)\"); w.document.title; globalThis.f = w.eval; 1"}),
+    );
+    h.run_for(50);
+    assert!(nodes(&mut h) > before + 600.0, "the popup's nodes are in the shared store");
+    h.page("Runtime.evaluate", json!({"expression": "w.close(); 1"}));
+    h.run_for(300);
+    for _ in 0..2 {
+        h.page("Pyro.jscMemory", json!({"action": "collect"}));
+        for _ in 0..3 {
+            h.page("Runtime.evaluate", json!({"expression": "1"}));
+            h.run_for(30);
+        }
+    }
+    let after = nodes(&mut h);
+    assert!(after < before + 100.0, "the closed popup's document is freed: before {before}, after {after}");
+    let r = h.page("Runtime.evaluate", json!({"expression": "[w.closed, typeof w.document].join()", "returnByValue": true}));
+    assert_eq!(r["result"]["result"]["value"], json!("true,undefined"), "{r}");
 }

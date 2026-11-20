@@ -87,6 +87,8 @@ fn render_highlighted(body: &str, selection: Option<Ends>, highlights: &[(Option
         highlights,
         control_selection: None,
         selected_replaced: Vec::new(),
+        caret: None,
+        url_target: None,
         ..Default::default()
     };
     let fetcher: Arc<dyn Fetcher> = Arc::new(AhemFetch);
@@ -141,11 +143,14 @@ fn decorations_of_the_text_colour_take_the_selection_colour() {
         ("a", 0, "a", 10),
         "<p style='text-decoration:underline;color:#0a0'>Underlined</p>",
     );
-    // A decoration of its own colour stays one line in it.
+    // A decoration of its own colour takes the selection's over the selected part too when the
+    // decorating element has a `::selection` style of its own (Chrome 158: the #00f underline
+    // turns #0a0 under the selection; WPT css-text-decor
+    // `selection-pseudo-with-decoration-invalidation-001`).
     matches(
         &format!("{style}<p id=a style='text-decoration:underline #00f'>Underlined</p>"),
         ("a", 2, "a", 6),
-        "<p style='text-decoration:underline #00f'>Un<span style='color:#0a0'>derl</span>ined</p>",
+        "<p style='text-decoration:underline #00f'>Un<span style='color:#0a0;text-decoration:underline #0a0'>derl</span>ined</p>",
     );
     // A line-through of its own colour takes the selection's over the selected part (Blink; WPT
     // css-pseudo `selection-originating-decoration-color`).

@@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
 
     /// Compute the specified node's size or full layout given the specified constraints
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput;
+
+    /// pyro: a width that replaces the block-level item `node_id`'s own in its parent block
+    /// container's intrinsic (content-based) width, whatever its style says: a column spanner
+    /// while a multi-column container measures its columns without them.
+    #[inline(always)]
+    fn block_item_intrinsic_width_override(&self, node_id: NodeId) -> Option<f32> {
+        let _ = node_id;
+        None
+    }
 }
 
 /// Extends [`LayoutPartialTree`] with the operations needed by the out-of-flow positioning pass
@@ -221,12 +230,42 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     /// Interpreted in the containing block's axes (see [`LayoutPartialTree::get_core_container_style`]).
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_>;
 
+    fn position_try_options(&self, _node: NodeId) -> ([usize; 5], usize, Option<bool>) { ([0; 5],0,None) }
+    fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
+    fn selected_option_this_flush(&self, _node: NodeId) -> Option<Option<usize>> { None }
+    fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
+    fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
+    fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
+    fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
+
+    fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
+
+    fn set_position_overflow(&mut self, _node: NodeId, _overflows: bool) {}
+
+    fn set_position_try_option(&mut self, _node: NodeId, _index: Option<usize>) -> bool { false }
+
+    /// Anchor-dependent preferred, minimum and maximum dimensions, and margins.
+    fn oof_anchor_sizes(&self, _node: NodeId, _container: NodeId, _basis: Size<f32>) -> Option<([Size<Option<f32>>; 3], crate::Rect<Option<f32>>)> { None }
+
+    /// Used lengths supplied by anchor functions in the physical insets.
+    fn oof_anchor_insets(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>) -> crate::Rect<Option<f32>> {
+        crate::Rect::NONE
+    }
+
+    /// Resolve the position-area rectangle and its normal alignment in the containing block.
+    fn oof_anchor_area(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>, _trial: bool) -> Option<(Size<f32>, crate::Point<f32>, crate::Point<crate::AlignSelf>)> {
+        None
+    }
+
     /// Clear the list of out-of-flow (absolute/fixed) boxes whose containing block is `node_id`.
     ///
     /// This is called (exactly once) for each node laid out with `RunMode::PerformLayout`, before
     /// the boxes it lays out are recorded with [`add_hoisted_children`](Self::add_hoisted_children),
     /// so that lists recorded by previous layout runs do not persist.
     fn clear_hoisted_children(&mut self, node_id: NodeId);
+
+    #[allow(missing_docs)]
+    fn clear_anchor_geometry_dependencies(&mut self, _node_id: NodeId) {}
 
     /// Append to the list of out-of-flow boxes whose containing block is `node_id`.
     ///
@@ -246,6 +285,15 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     #[inline(always)]
     fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
         let _ = node_id;
+        false
+    }
+
+    /// pyro: whether `container`, a containing block by its style, is not that of out-of-flow box
+    /// `candidate` all the same (a column spanner between them: the spanner's row is no part of
+    /// the container's fragments).
+    #[inline(always)]
+    fn containing_block_passes_over(&self, container: NodeId, candidate: NodeId) -> bool {
+        let _ = (container, candidate);
         false
     }
 
@@ -488,15 +536,17 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
 
     /// pyro: the float area of a floated child with the given margin box size and margins, from
     /// its `shape-outside`, as rows of the margin box with the area's horizontal extent in each
-    /// (see `FloatContext::shape_float`); `None` when it is the margin box.
+    /// (see `FloatContext::shape_float`); `None` when it is the margin box. `containing_block_width`
+    /// is the containing block's inline size (percentages of `shape-margin` and paddings).
     #[allow(clippy::type_complexity)]
     fn float_shape_bands(
         &self,
         child_node_id: NodeId,
         margin_box: crate::geometry::Size<f32>,
         margin: crate::geometry::Rect<f32>,
+        containing_block_width: f32,
     ) -> Option<Vec<(f32, f32, Option<(f32, f32)>)>> {
-        let _ = (child_node_id, margin_box, margin);
+        let _ = (child_node_id, margin_box, margin, containing_block_width);
         None
     }
 
@@ -504,6 +554,47 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
     /// formatting context of its own all the same (a multi-column container in browsers), so
     /// that this container keeps it clear of floats, as a `flow-root`.
     fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
+    }
+
+    /// pyro: the least position (its border box's top in this container's coordinates) of a
+    /// block-level child: a column spanner after content that overflows the boxes before it.
+    fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
+        let _ = child_node_id;
+        None
+    }
+
+    /// pyro: whether a block-level child clears every float before it whatever its `clear` (a
+    /// column spanner: the floats before it are in the row of columns it ends).
+    fn block_child_clears_floats(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
+    }
+
+    /// pyro: for a block-level child that is an inline-size container query container, the border-box
+    /// width it was last styled at (its container query width; `Some(None)` before any), else `None`.
+    fn block_child_container_query_width(&self, child_node_id: NodeId) -> Option<Option<f32>> {
+        let _ = child_node_id;
+        None
+    }
+
+    /// pyro: the top below which a container query container beside floats is placed
+    /// (`set_block_child_float_floor`): placement beside floats moves forward only.
+    fn block_child_float_floor(&self, child_node_id: NodeId) -> Option<f32> {
+        let _ = child_node_id;
+        None
+    }
+
+    /// pyro: records that a container query container is placed in the float-avoiding slot at `y` to
+    /// be styled at that slot's width (the container is laid out again once its queries see it).
+    fn set_block_child_float_floor(&mut self, child_node_id: NodeId, y: f32) {
+        let _ = (child_node_id, y);
+    }
+
+    /// pyro: whether a block-level child is laid out in a writing mode orthogonal to this
+    /// container's: it contributes no baseline set to it (css-align-3 §9.1).
+    fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
         let _ = child_node_id;
         false
     }
@@ -523,6 +614,21 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
         let _ = node_id;
         None
+    }
+
+    /// pyro: whether the container is laid out in a fragmentation context (a multi-column
+    /// container's strip), where its `align-content` does not shift its content: fragmented
+    /// alignment is undefined, and browsers lay the content out unaligned (css-align-3 § 5.1.1).
+    fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
+        let _ = node_id;
+        false
+    }
+
+    /// pyro: whether the block child is a fieldset's rendered legend, which gives the fieldset no
+    /// first baseline: that is its content's (HTML § 15.3.13; Chromium).
+    fn block_child_is_rendered_legend(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
     }
 
     /// pyro: whether a percentage-height scroll container among the container's children whose

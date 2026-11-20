@@ -308,6 +308,7 @@ fn line_with_only_empty_inline_boxes_is_invisible() {
             vertical_align: VerticalAlign::BASELINE,
             rtl: false,
             central: false,
+            glue: false,
         });
         let (mut layout, _) = builder.build();
         layout.break_all_lines(None);
@@ -340,6 +341,7 @@ fn quantized_inline_box_extents_are_not_rounded_separately() {
         vertical_align: VerticalAlign::BASELINE,
         rtl: false,
         central: false,
+        glue: false,
     });
     let (mut layout, _) = builder.build();
     layout.break_all_lines(None);
@@ -365,6 +367,7 @@ fn line_with_negative_height_inline_box_is_not_invisible() {
         vertical_align: VerticalAlign::BASELINE,
         rtl: false,
         central: false,
+        glue: false,
     });
     let (mut layout, _) = builder.build();
     layout.break_all_lines(None);

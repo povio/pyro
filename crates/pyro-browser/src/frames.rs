@@ -185,6 +185,18 @@ pub(crate) struct FrameHost {
     /// For such a popup, the ticket through which the opener's document
     /// reaches it (its `window.open` result is `event.source` there).
     pub(crate) popup: RefCell<Option<Rc<pyro_webapi::PopupTicket>>>,
+    /// For a popup made by `window.open` (`prebuild_popup`): its creator document's secure-context
+    /// state when it was made, which its about:blank documents (the initial one, and later ones that
+    /// inherit the creator's origin) take as theirs (HTML: a new top-level browsing context's
+    /// initial document's environment comes from its creator's), not one computed as top-level.
+    pub(crate) creator_secure: Cell<Option<bool>>,
+    /// The other pages sharing this page's DOM store: the popups it opened, and its opener's group
+    /// (a popup takes its opener's store, see `prebuild_popup`). Their realms are siblings of this
+    /// page's for node wrappers (`sibling_realms`).
+    pub(crate) dom_peers: RefCell<Vec<std::rc::Weak<FrameHost>>>,
+    /// Containers whose frame was removed while that frame's document was dispatching its window
+    /// `load` (Chrome: re-inserted during that dispatch, the iframe gets a frame that does not navigate).
+    pub(crate) quiet_reinserts: RefCell<Vec<(NodeId, std::rc::Weak<pyro_webapi::PageDom>)>>,
     /// Each child frame's WindowProxy: its first main-world realm's global
     /// proxy, which every later document's realm adopts (`make_realm`), so
     /// that `iframe.contentWindow` stays one object that follows the frame.
@@ -222,6 +234,7 @@ impl FrameHost {
         name: String,
     ) -> Result<PrebuiltPopup, JsError> {
         let from = self.frame(opener).ok_or(JsError::ContextDestroyed)?;
+        let creator_secure = crate::window::frame_chain_secure(self, opener, &from.url);
         let id = PageId(self.next() as u32);
         let frame = Frame {
             id: FrameId(format!("{:032X}", self.next())),
@@ -230,6 +243,7 @@ impl FrameHost {
             name,
             base_url: from.base_url.clone(),
             sandbox: Default::default(),
+            fullscreen_container: Default::default(),
             url: "about:blank".into(),
             loader_id: LoaderId(format!("{:032X}", self.next())),
             realms: Vec::new(),
@@ -253,7 +267,10 @@ impl FrameHost {
             children: RefCell::new(BTreeMap::new()),
             root: RefCell::new(frame.clone()),
             root_nav: nav.clone(),
-            dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
+            // The opener's DOM store, as its frames share it: a node of the opener's documents can be
+            // adopted into the popup's (`w.document.body.appendChild(node)`), which a store of its
+            // own could not hold (HTML: one browsing context group, one event loop).
+            dom: self.dom.clone(),
             settings: RefCell::new(settings),
             page: id,
             context: self.context,
@@ -268,12 +285,19 @@ impl FrameHost {
             // Its `window.opener` from the start (`Browser::adopt_popup` sets it again).
             opener: RefCell::new(Some(Rc::downgrade(self))),
             popup: RefCell::new(None),
+            creator_secure: Cell::new(None),
+            dom_peers: RefCell::new(Vec::new()),
+            quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
+        host.creator_secure.set(Some(creator_secure));
+        // One DOM store: each reaches the other's realms for node wrappers.
+        self.dom_peers.borrow_mut().push(Rc::downgrade(&host));
+        host.dom_peers.borrow_mut().push(Rc::downgrade(self));
         let key: FrameKey = id.into();
         let dom = bindings::create(&host, key, "about:blank", &frame.loader_id)?;
         // Nothing loads into it: it is complete as made (as in browsers).
@@ -335,6 +359,9 @@ impl FrameHost {
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
             popup: RefCell::new(None),
+            creator_secure: Cell::new(None),
+            dom_peers: RefCell::new(Vec::new()),
+            quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
@@ -700,6 +727,7 @@ impl FrameHost {
             dom_content_loaded: false,
             loaded: false,
             sandbox,
+            fullscreen_container: fullscreen_container(&self.dom.borrow(), node, (ancestor.origin != "null").then_some(ancestor.origin.as_str())),
             unreachable: None,
         };
         self.dom.borrow_mut().add_ref(node).map_err(|e| JsError::type_error(format!("{e:?}")))?;
@@ -752,13 +780,46 @@ impl FrameHost {
                 timestamp: self.started.elapsed().as_secs_f64(),
                 unreachable_url: None,
             });
-            self.queue_attributes(key, lid);
+            // Chrome: an iframe re-inserted while the document of its previous frame is still
+            // dispatching its window `load` (moved from that document's own load listener) gets a
+            // frame that stays on its initial about:blank: it does not navigate, fires no `load` and
+            // does not hold its parent's load (else a load listener that moves its iframe loops).
+            let quiet = {
+                let mut quiet = self.quiet_reinserts.borrow_mut();
+                quiet.retain(|(_, page)| page.upgrade().is_some_and(|p| p.is_dispatching_load()));
+                quiet.iter().position(|(n, _)| *n == node).map(|i| quiet.remove(i)).is_some()
+            };
+            if quiet {
+                let mut children = self.children.borrow_mut();
+                if let Some(child) = children.get_mut(&id) {
+                    if let Some(dom) = &child.main_frame.page_dom {
+                        dom.set_ready_state(dom.document(), "complete");
+                    }
+                    child.main_frame.dom_content_loaded = true;
+                    child.main_frame.loaded = true;
+                }
+            } else {
+                self.queue_attributes(key, lid);
+            }
             Ok(())
         })();
         if result.is_err() {
             self.detach(key);
         }
         result
+    }
+
+    /// The documents of frame `key` and its descendants, the frame's first (pre-order).
+    pub fn subtree_documents(&self, key: FrameKey) -> Vec<Rc<pyro_webapi::PageDom>> {
+        let mut out = Vec::new();
+        let mut stack = vec![key];
+        while let Some(k) = stack.pop() {
+            out.extend(self.page_dom(k));
+            let mut children: Vec<FrameKey> = self.child_keys(k).into_iter().collect();
+            children.reverse();
+            stack.extend(children);
+        }
+        out
     }
     pub fn queue_attributes(&self, key: FrameKey, loader: LoaderId) {
         self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| b.process_iframe_attributes(key, &loader));
@@ -807,6 +868,8 @@ impl FrameHost {
         let retired = std::mem::take(&mut *self.retired.borrow_mut());
         for state in retired {
             let frame = state.main_frame;
+            // pyro: what its layout loaded or waits for goes with it (`forget_document`).
+            self.layout_bodies.forget_document(&crate::document_client(&frame));
             if let Some(dom) = &frame.page_dom {
                 dom.dispose();
             }
@@ -832,6 +895,42 @@ impl FrameHost {
             }
         }
     }
+}
+
+/// A frame container's policy inputs for `fullscreen` as a navigation began
+/// (`Frame::fullscreen_container`): `allowfullscreen`, the `allow` attribute, and the container's
+/// declared origin, which the `'src'` allowlist token (the default of `allow`) stands for.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub(crate) struct FullscreenContainer {
+    pub allowfullscreen: bool,
+    pub allow: Option<String>,
+    /// Permissions Policy "declared origin": opaque (`None`) for a `sandbox` without
+    /// `allow-same-origin`; the container document's origin with `srcdoc` or without `src`; else the
+    /// origin of the `src` URL, resolved against the container document.
+    pub declared_origin: Option<String>,
+}
+
+/// `parent_origin`: the container document's origin as its frame has it (an about:blank or
+/// about:srcdoc document's is the origin it inherited, which its URL does not tell), `None` if opaque.
+pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId, parent_origin: Option<&str>) -> FullscreenContainer {
+    let attr = |name: &str| dom.get_attribute(owner, name).ok().flatten().map(str::to_owned);
+    let tuple = |url: &url::Url| {
+        let origin = url.origin();
+        origin.is_tuple().then(|| origin.ascii_serialization())
+    };
+    let parent_origin = || parent_origin.map(str::to_owned);
+    let sandboxed = attr("sandbox").is_some_and(|v| !v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("allow-same-origin")));
+    let declared_origin = if sandboxed {
+        None
+    } else if attr("srcdoc").is_some() {
+        parent_origin()
+    } else {
+        match attr("src").filter(|v| !v.trim().is_empty()) {
+            Some(src) => url::Url::parse(&pyro_webapi::html::resolve_url(dom, owner, &src)).ok().as_ref().and_then(tuple),
+            None => parent_origin(),
+        }
+    };
+    FullscreenContainer { allowfullscreen: attr("allowfullscreen").is_some(), allow: attr("allow"), declared_origin }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -985,7 +1084,32 @@ impl FrameHost {
         for doc in retired.iter() {
             realms.extend(of(&doc.main_frame).filter(|r| r.id() != realm && !r.is_disposed()));
         }
+        drop(retired);
+        // The pages sharing the DOM store (opener and popups): all their frames' realms of the world.
+        for peer in self.dom_group() {
+            realms.extend(of(&peer.root.borrow()));
+            for doc in peer.children.borrow().values() {
+                realms.extend(of(&doc.main_frame));
+            }
+            for doc in peer.retired.borrow().iter() {
+                realms.extend(of(&doc.main_frame).filter(|r| !r.is_disposed()));
+            }
+        }
         realms
+    }
+
+    /// The other live pages sharing this page's DOM store, through openers and popups.
+    pub(crate) fn dom_group(&self) -> Vec<Rc<FrameHost>> {
+        let mut out: Vec<Rc<FrameHost>> = Vec::new();
+        let mut todo: Vec<Rc<FrameHost>> = self.dom_peers.borrow().iter().filter_map(std::rc::Weak::upgrade).collect();
+        while let Some(host) = todo.pop() {
+            if host.page == self.page || out.iter().any(|h| h.page == host.page) || !Rc::ptr_eq(&host.dom, &self.dom) {
+                continue;
+            }
+            todo.extend(host.dom_peers.borrow().iter().filter_map(std::rc::Weak::upgrade));
+            out.push(host);
+        }
+        out
     }
     pub fn document_value<'s>(
         self: &Rc<Self>,
@@ -1019,7 +1143,7 @@ impl FrameHost {
             let value = pyro_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target };
+        let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target, foreign: false };
         Ok(s.wrap::<CrossWindow>(data, Some(pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
             .value())
     }
@@ -1083,6 +1207,96 @@ impl FrameHost {
 
 /// The cross-origin stand-in for `opener`'s top-level window (one per
 /// realm), as frame `from` (the popup's top-level frame) sees it.
+/// Whether frames `a` and `b` (of any pages) are same origin.
+fn frames_same_origin(a: &Frame, b: &Frame) -> bool {
+    if a.origin == "null" || b.origin == "null" {
+        a.origin == b.origin && a.opaque_origin == b.opaque_origin
+    } else {
+        a.origin == b.origin
+    }
+}
+
+impl FrameHost {
+    /// Frame `target` of this page as window `accessor` of another page (a
+    /// popup's opener) sees it: its global when the two are same origin,
+    /// else a cross-origin window (`CrossWindowData::foreign`), one object
+    /// per frame and accessing realm.
+    pub(crate) fn foreign_window<'s>(
+        self: &Rc<Self>,
+        s: &pyro_js::Scope<'s>,
+        target: FrameKey,
+        accessor: (&Rc<FrameHost>, FrameKey),
+    ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        let (Some(theirs), Some(mine)) = (self.frame(target), accessor.0.frame(accessor.1)) else {
+            return Err(JsError::ContextDestroyed);
+        };
+        if frames_same_origin(&theirs, &mine) {
+            let realm = self.realm(target, None)?;
+            let scope = realm.scope()?;
+            let value = pyro_js::Persistent::new(&scope, scope.global().value());
+            return Ok(value.get(s));
+        }
+        let key = pyro_js::IdentityKey(
+            0x464f_5245_4947_4e00 ^ u64::from(self.page.0),
+            target.child.unwrap_or(u64::MAX),
+        );
+        if let Some(o) = s.lookup_identity(key) {
+            return Ok(o.value());
+        }
+        let data = CrossWindowData {
+            host: Rc::downgrade(self),
+            source: None,
+            from: Some((Rc::downgrade(accessor.0), accessor.1)),
+            target,
+            foreign: true,
+        };
+        Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+    }
+
+    /// The child window of frame `parent` with index `key` (`"0"`) or with
+    /// the target name `key`, as `foreign_window` gives it; `None` for none.
+    pub(crate) fn foreign_child<'s>(
+        self: &Rc<Self>,
+        s: &pyro_js::Scope<'s>,
+        parent: FrameKey,
+        key: &str,
+        accessor: (&Rc<FrameHost>, FrameKey),
+    ) -> pyro_js::JsResult<Option<pyro_js::Value<'s>>> {
+        let children = self.child_keys(parent);
+        let index = key.parse::<u32>().ok().filter(|i| i.to_string() == key);
+        let child = match index {
+            Some(i) => children.get(i as usize).copied(),
+            None if key.is_empty() => None,
+            None => children.iter().copied().find(|c| self.frame(*c).is_some_and(|f| f.name == key)),
+        };
+        child.map(|child| self.foreign_window(s, child, accessor)).transpose()
+    }
+
+    /// The `parent` or `top` of a `foreign` window, as its accessor sees it:
+    /// the popup's WindowProxy for the popup's top-level frame.
+    fn foreign_ancestor<'s>(
+        self: &Rc<Self>,
+        s: &pyro_js::Scope<'s>,
+        w: &CrossWindowData,
+        target: FrameKey,
+    ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        let Some((from, key)) = w.from.as_ref().and_then(|(h, k)| Some((h.upgrade()?, *k))) else {
+            return Err(JsError::ContextDestroyed);
+        };
+        if target != FrameKey::from(self.page) {
+            return self.foreign_window(s, target, (&from, key));
+        }
+        let opener = from.frame(key).and_then(|f| f.page_dom);
+        let popup = self.frame(target).and_then(|f| f.page_dom);
+        match (opener, popup) {
+            (Some(opener), Some(popup)) => {
+                Ok(pyro_webapi::popup_window_proxy(s, &opener, &popup)?.unwrap_or_else(|| s.null()))
+            }
+            _ => Ok(s.null()),
+        }
+    }
+}
+
 fn opener_proxy<'s>(
     s: &pyro_js::Scope<'s>,
     opener: &Rc<FrameHost>,
@@ -1092,7 +1306,8 @@ fn opener_proxy<'s>(
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into() };
+    let data =
+        CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into(), foreign: false };
     Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
 }
 
@@ -1153,14 +1368,21 @@ pub(crate) fn post_message<'s>(
 ) -> pyro_js::JsResult<()> {
     let (source_host, source) = source.unwrap_or_else(|| (host.clone(), target));
     let incumbent = source_host.with_frame(source, |f| f.origin.clone()).unwrap_or_else(|| "null".into());
-    let (message, target_origin, options) = pyro_webapi::window_message::post_message_args(s, a, &incumbent)?;
-    let found = host.with_frame(target, |f| Some((f.page_dom.clone()?, f.main_realm()?.clone(), f.origin.clone())));
+    // Origins compared by key: an opaque origin ("null" serialized) equals only itself.
+    let incumbent_key = source_host.with_frame(source, frame_origin_key).unwrap_or_else(|| "opaque:gone".into());
+    let (message, target_origin, options) = pyro_webapi::window_message::post_message_args(s, a, &incumbent_key)?;
+    let found = host.with_frame(target, |f| Some((f.page_dom.clone()?, f.main_realm()?.clone(), frame_origin_key(f))));
     // A window whose document is gone receives nothing.
-    let Some((page, realm, origin)) = found.flatten() else { return Ok(()) };
-    let deliver = target_origin.allows(&origin);
+    let Some((page, realm, origin_key)) = found.flatten() else { return Ok(()) };
+    let deliver = target_origin.allows(&origin_key);
     let window = (!Rc::ptr_eq(&source_host, host) || source != target)
         .then(|| message_source(host, target, &source_host, source));
     pyro_webapi::window_message::send_window_message(s, message, options, &page, &realm, incumbent, window, deliver)
+}
+
+/// A frame's origin key (`PageDom::origin_key`'s): its tuple origin, or `opaque:<token>`.
+fn frame_origin_key(f: &Frame) -> String {
+    if f.origin == "null" { format!("opaque:{}", f.opaque_origin) } else { f.origin.clone() }
 }
 
 pub(crate) struct CrossWindow;
@@ -1171,8 +1393,12 @@ pub(crate) struct CrossWindowData {
     /// cross-origin and whose target is its own top and parent.
     source: Option<FrameKey>,
     /// For a popup's view of its opener: the popup's frame host and frame.
+    /// For a `foreign` window: the accessing window's.
     from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
     target: FrameKey,
+    /// A child window of a popup as its opener (`from`, another page) sees
+    /// it (`FrameHost::foreign_window`), rather than the popup's opener.
+    foreign: bool,
 }
 
 impl CrossWindowData {
@@ -1254,6 +1480,14 @@ impl pyro_js::JsClass for CrossWindow {
                 return if name == "closed" { Ok(Some(s.boolean(true))) } else { Err(JsError::ContextDestroyed) };
             };
             let value = match (name, w.source) {
+                ("window" | "self" | "frames", None) if w.foreign => {
+                    let Some((from, key)) = w.from.as_ref().and_then(|(h, k)| Some((h.upgrade()?, *k))) else {
+                        return Err(JsError::ContextDestroyed);
+                    };
+                    host.foreign_window(s, w.target, (&from, key))?
+                }
+                ("parent", None) if w.foreign => host.foreign_ancestor(s, w, host.parent_key(w.target))?,
+                ("top", None) if w.foreign => host.foreign_ancestor(s, w, host.page.into())?,
                 ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host, w.from.clone())?,
                 ("window" | "self" | "frames", Some(source)) => host.window_value(s, source, w.target)?,
                 ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
@@ -1291,9 +1525,16 @@ impl pyro_js::JsClass for CrossWindow {
         // `frames[i]` of a cross-origin window: its child windows, as the
         // accessing frame sees them.
         def.indexed(|s, w, index| {
-            let (Some(host), Some(source)) = (w.host.upgrade(), w.source) else { return Ok(None) };
+            let Some(host) = w.host.upgrade() else { return Ok(None) };
             let child = host.child_keys(w.target).get(index as usize).copied();
-            child.map(|child| host.window_value(s, source, child)).transpose()
+            match (w.source, &w.from) {
+                (Some(source), _) => child.map(|child| host.window_value(s, source, child)).transpose(),
+                (None, Some((from, key))) if w.foreign => {
+                    let Some(from) = from.upgrade() else { return Ok(None) };
+                    child.map(|child| host.foreign_window(s, child, (&from, *key))).transpose()
+                }
+                _ => Ok(None),
+            }
         });
         def.named_setter(|s, w, name, value| {
             // `w.location = url` navigates it, as `w.location.href = url` does.
@@ -1614,7 +1855,8 @@ impl Browser {
                 status: 200,
                 mime: "text/html".into(),
                 charset: None,
-                body: html.into_bytes(),
+                body: html.into_bytes().into(),
+                immutable_local: false,
                 content_disposition: None,
                 header_csp: None,
                 refresh: None,
@@ -1623,7 +1865,7 @@ impl Browser {
                 sent_referrer: None,
                 timing: None,
                 partial: None,
-                nosniff: false,
+                nosniff: false, opaque: false,
             },
             history,
         )?;

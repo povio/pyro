@@ -45,6 +45,10 @@ pub struct TableTreeWrapper<'a, 'doc> {
     pub(crate) definite_height: bool,
     /// pyro: whether the table's `height` is not `auto` (`LayoutPassState::restricted_cell`).
     pub(crate) restricted: bool,
+    /// pyro: the inline size of the grid (the table's content box, its outer border spacing
+    /// aside) in the grid layout running, when the table's width is known
+    /// (`Self::layout_grid`): what its cells' percentage padding resolves against.
+    pub(crate) grid_width: Option<f32>,
 }
 
 impl TableTreeWrapper<'_, '_> {
@@ -72,8 +76,13 @@ impl TableTreeWrapper<'_, '_> {
         if !ctx.is_fixed && n > 0 && self.has_percent_cell(&ctx) {
             return self.percent_column_widths(inputs, &ctx);
         }
-        if ctx.is_fixed || n == 0 || !(all_auto || all_hinted) {
+        if ctx.is_fixed || n == 0 {
             return None;
+        }
+        // pyro: columns of mixed kinds (a `<col>` width beside auto columns, say) get the automatic
+        // table layout's widths too (`percent_column_widths`, Blink's distribution), not the grid's.
+        if !all_auto {
+            return self.percent_column_widths(inputs, &ctx);
         }
         // The new hinted-track path inspects physical widths. Keep vertical
         // and orthogonal cells on the existing logical-axis grid fallback.
@@ -129,7 +138,9 @@ impl TableTreeWrapper<'_, '_> {
                 axis: taffy::RequestedAxis::Horizontal,
                 known_dimensions: taffy::Size::NONE,
                 known_dimensions_are_definite: taffy::Size { width: true, height: true },
-                parent_size: taffy::Size { width: Some(inner), height: None },
+                // pyro: a cell's percentage padding resolves against zero in the column widths
+                // (CSS Tables 3, as Blink and Gecko; `TableTreeWrapper::grid_inline_size`).
+                parent_size: taffy::Size { width: Some(0.0), height: None },
                 available_space: taffy::Size { width: space, height: taffy::AvailableSpace::MaxContent },
                 vertical_margins_are_collapsible: taffy::Line::FALSE,
             };
@@ -191,7 +202,9 @@ impl TableTreeWrapper<'_, '_> {
             let spacing = gap * (end.saturating_sub(column + 1)) as f32;
             let sum = |w: &[f32]| w[column.min(end)..end].iter().sum::<f32>() + spacing;
             if lo > sum(&min) + 0.01 || (hi > sum(&max) + 0.01 && !at_min) {
-                return None;
+                // pyro: distributed as Blink does (`percent_column_widths`), not by the grid, which
+                // shares a spanning cell's excess over fixed columns too (WPT css-tables `colspan-004`).
+                return self.percent_column_widths(inputs, &ctx);
             }
         }
         let (sum_min, sum_max) = (min.iter().sum::<f32>(), max.iter().sum::<f32>());
@@ -303,13 +316,21 @@ impl TableTreeWrapper<'_, '_> {
         let mut max = vec![0.0f32; n];
         let mut percent: Vec<Option<f32>> = (0..n).map(|c| ctx.column_percents.get(c).copied().flatten()).collect();
         let mut fixed = vec![false; n];
-        // `<col>` and first-row lengths.
+        // `<col>` and first-row lengths (pyro: also as the `fit-content(<length>)` hint tracks of
+        // columns with cells, `build_table_context`).
         for (c, track) in style.grid_template_columns.iter().enumerate() {
             if let taffy::GridTemplateComponent::Single(track) = track {
-                if track.max.into_raw().tag() == taffy::CompactLength::LENGTH_TAG {
+                if matches!(track.max.into_raw().tag(), taffy::CompactLength::LENGTH_TAG | taffy::CompactLength::FIT_CONTENT_PX_TAG) {
                     let len = track.max.into_raw().value();
                     max[c] = len;
                     fixed[c] = len > 0.0;
+                }
+                // pyro: a `<col>`'s length `min-width` (`push_columns`: `minmax(<length>, auto)`)
+                // is a floor of the column (WPT css-tables `col-definite-min-size-001`).
+                if track.min.into_raw().tag() == taffy::CompactLength::LENGTH_TAG {
+                    let len = track.min.into_raw().value();
+                    min[c] = min[c].max(len);
+                    max[c] = max[c].max(len);
                 }
             }
         }
@@ -331,9 +352,26 @@ impl TableTreeWrapper<'_, '_> {
         let mut spanning = Vec::new();
         for (idx, cell) in ctx.cells.iter().enumerate() {
             let column = cell.column as usize;
-            let lo = measure(self, idx, taffy::AvailableSpace::MinContent);
+            // (Its own `min-width` floors both, as `compute_child_layout` does for the grid path.)
+            let lo = measure(self, idx, taffy::AvailableSpace::MinContent).max(cell_own_min_width(&cell.style, None).unwrap_or(0.0));
             let hi = measure(self, idx, taffy::AvailableSpace::MaxContent).max(lo);
             if cell.colspan > 1 || column >= n {
+                // pyro: a spanning cell's length `width` is its max-content contribution (its
+                // border box), as a single cell's is its column's.
+                let hi = match self.cell_width(cell) {
+                    Some(width) if width.tag() == taffy::CompactLength::LENGTH_TAG => {
+                        let box_extra = match cell.style.box_sizing {
+                            taffy::BoxSizing::ContentBox => {
+                                let p = cell.style.padding.resolve_or_zero(None, resolve_calc_value);
+                                let b = cell.style.border.resolve_or_zero(None, resolve_calc_value);
+                                (p + b).horizontal_axis_sum()
+                            }
+                            taffy::BoxSizing::BorderBox => 0.0,
+                        };
+                        hi.max(cell.min_width.or(cell.length_width).unwrap_or(width.value() + box_extra))
+                    }
+                    _ => hi,
+                };
                 spanning.push((column, (cell.colspan as usize).max(1), lo, hi));
                 continue;
             }
@@ -356,8 +394,15 @@ impl TableTreeWrapper<'_, '_> {
                         taffy::BoxSizing::BorderBox => 0.0,
                     };
                     fixed[column] = true;
-                    max[column] = max[column].max(width.value() + box_extra);
+                    // (`min_width`: its border box with its halves of collapsed borders, no wider
+                    // than a length `max-width` says, `length_width` before the collapsed borders)
+                    max[column] = max[column]
+                        .max(cell.min_width.or(cell.length_width).unwrap_or(width.value() + box_extra));
                 }
+                // pyro: a column with a length width (its `<col>`'s) keeps it as its max-content
+                // width: its auto cells' content widens it only to their min-content width (Blink;
+                // WPT CSS2 `vertical-align-baseline-003`'s reference).
+                taffy::CompactLength::AUTO_TAG if fixed[column] => {}
                 taffy::CompactLength::AUTO_TAG => max[column] = max[column].max(hi),
                 _ => return None,
             }
@@ -365,25 +410,29 @@ impl TableTreeWrapper<'_, '_> {
         for c in 0..n {
             max[c] = max[c].max(min[c]);
         }
-        // A spanning cell wider than the columns it spans widens those without a percentage,
-        // in proportion to their max-content widths (all of them when each has one).
+        // pyro: a spanning cell's min-content and max-content widths are distributed over the columns
+        // it spans as Blink's `DistributeColspanCellToColumnsAuto` does: with the table's own width
+        // distribution (`blink_distribute_auto`), its min-content width as a constrained target (WPT
+        // css-tables `table-colspan-percent-auto`, `colspan-004`).
         for (column, span, lo, hi) in spanning {
             let end = (column + span).min(n);
-            let columns = column.min(end)..end;
-            let spacing = gap * columns.len().saturating_sub(1) as f32;
-            let free: Vec<usize> = columns.clone().filter(|&c| percent[c].is_none()).collect();
-            let group = if free.is_empty() { columns.collect() } else { free };
-            let total: f32 = group.iter().map(|&c| max[c]).sum();
-            let snapshot = max.clone();
-            let max_share = |c: usize, total: f32| snapshot[c] / total;
-            for (want, sizes) in [(lo, &mut min), (hi, &mut max)] {
-                let have = (column.min(end)..end).map(|c| sizes[c]).sum::<f32>() + spacing;
-                if want > have {
-                    for &c in &group {
-                        let part = if total > 0.0 { max_share(c, total) } else { 1.0 / group.len() as f32 };
-                        sizes[c] += (want - have) * part;
-                    }
-                }
+            let start = column.min(end);
+            if start == end {
+                continue;
+            }
+            let spacing = gap * (end - start).saturating_sub(1) as f32;
+            let columns_of = |min: &[f32], max: &[f32]| -> Vec<DistColumn> {
+                (start..end)
+                    .map(|c| DistColumn { min: min[c], max: max[c].max(min[c]), percent: percent[c], constrained: fixed[c] })
+                    .collect()
+            };
+            let sizes = blink_distribute_auto((lo - spacing).max(0.0), &columns_of(&min, &max), true);
+            for (i, c) in (start..end).enumerate() {
+                min[c] = min[c].max(sizes[i]);
+            }
+            let sizes = blink_distribute_auto((hi - spacing).max(0.0), &columns_of(&min, &max), false);
+            for (i, c) in (start..end).enumerate() {
+                max[c] = max[c].max(min[c]).max(sizes[i]);
             }
         }
         for c in 0..n {
@@ -429,14 +478,16 @@ impl TableTreeWrapper<'_, '_> {
             })
         };
         let min_width = border_box(style.min_size.width.maybe_resolve(parent, resolve_calc_value)).unwrap_or(0.0);
+        // (No wider than its `max-width` says, which its `min-width` beats: CSS 2.1 § 10.4.)
+        let max_width = border_box(style.max_size.width.maybe_resolve(parent, resolve_calc_value)).unwrap_or(f32::INFINITY);
         let inner = match inputs.known_dimensions.width {
             Some(w) => w - spacing,
             None => match border_box(style.size.width.maybe_resolve(parent, resolve_calc_value)) {
-                Some(w) => w.max(min_width) - spacing,
+                Some(w) => w.min(max_width).max(min_width) - spacing,
                 None => match inputs.available_space.width {
                     // A table shrinks to fit its columns.
                     taffy::AvailableSpace::Definite(a) => {
-                        (a.max(min_width) - spacing).min(grid_max.max(min_width - spacing))
+                        (a.min(max_width).max(min_width) - spacing).min(grid_max.max(min_width - spacing))
                     }
                     taffy::AvailableSpace::MinContent => sum_min.max(min_width - spacing),
                     taffy::AvailableSpace::MaxContent => grid_max.max(min_width - spacing),
@@ -596,7 +647,7 @@ impl TableContext {
     /// resolved (a vertical table: the first cell's borders are the gutters' then).
     pub fn gutter_border_color(&self) -> Option<Option<style::color::AbsoluteColor>> {
         let edges = self.spare_edges.as_ref()?;
-        Some(edges.vertical.iter().chain(&edges.horizontal).find(|edge| edge.width > 0.0).map(|edge| edge.color))
+        Some(edges.edges().find(|edge| edge.width > 0.0).map(|edge| edge.color))
     }
 
     /// pyro: each row's hit-test extent (parallel to `rows`): the union of its cells'
@@ -861,7 +912,7 @@ impl CellWidths {
 // }
 
 /// One segment of a collapsed border; width 0 when no border wins.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollapsedEdge {
     pub width: f32,
     pub color: style::color::AbsoluteColor,
@@ -872,9 +923,11 @@ pub struct CollapsedEdge {
 
 impl CollapsedEdge {
     /// pyro: whether this edge beats `other` where collapsed borders meet (wider, or as wide with a
-    /// style that wins): the winner of a junction paints it (`blitz-paint`'s `draw_collapsed_edges`).
+    /// style that wins, then the box it comes from: a cell's over a row's, ... a column group's,
+    /// as along an edge): the winner of a junction paints it (`blitz-paint`'s `draw_collapsed_edges`;
+    /// WPT css-tables `tentative/paint/collapsed-border-large-cell`).
     pub fn outranks(&self, other: &CollapsedEdge) -> bool {
-        (self.width, self.rank) > (other.width, other.rank)
+        (self.width, self.rank, self.priority) > (other.width, other.rank, other.priority)
     }
 
     /// pyro: whether the winning border is `double` (painted as two lines).
@@ -910,23 +963,131 @@ pub struct CollapsedEdges {
     sides: [u8; 4],
     /// The table's writing mode (the one its grid runs in).
     wm: WritingMode,
-    /// `rows * (columns + 1)`: the segment of each row on each column line.
-    pub vertical: Vec<CollapsedEdge>,
-    /// `(rows + 1) * columns`: the segment of each column on each row line.
-    pub horizontal: Vec<CollapsedEdge>,
+    /// `columns + 1` column lines: the segment of each row on each (pyro: runs, `EdgeLine`).
+    vertical: Vec<EdgeLine>,
+    /// `rows + 1` row lines: the segment of each column on each.
+    horizontal: Vec<EdgeLine>,
+}
+
+/// pyro: the segments of one grid line, as runs of equal segments (the ones no border reaches are
+/// gaps), so that a table's collapsed borders cost its lines and runs, not rows x columns: one
+/// `colspan="1000" rowspan="10000"` cell over empty rows allocated 20 million segments.
+#[derive(Debug, Clone, Default)]
+struct EdgeLine {
+    /// Sorted, disjoint `(start, end, edge)`, no edge `CollapsedEdge::NONE`.
+    runs: Vec<(u32, u32, CollapsedEdge)>,
+}
+
+impl EdgeLine {
+    fn get(&self, at: usize) -> &CollapsedEdge {
+        let at = at as u32;
+        let i = self.runs.partition_point(|run| run.1 <= at);
+        match self.runs.get(i) {
+            Some(run) if run.0 <= at => &run.2,
+            _ => &CollapsedEdge::NONE,
+        }
+    }
+
+    /// Replaces each segment of `range` by `f` of it, in time proportional to the runs it meets.
+    fn update(&mut self, range: Range<usize>, f: impl Fn(CollapsedEdge) -> CollapsedEdge) {
+        if range.is_empty() {
+            return;
+        }
+        let (a, b) = (range.start as u32, range.end as u32);
+        let first = self.runs.partition_point(|run| run.1 <= a);
+        let last = self.runs.partition_point(|run| run.0 < b);
+        let mut pieces: Vec<(u32, u32, CollapsedEdge)> = Vec::new();
+        let mut push = |pieces: &mut Vec<(u32, u32, CollapsedEdge)>, s: u32, e: u32, edge: CollapsedEdge| {
+            if s >= e || edge == CollapsedEdge::NONE {
+                return;
+            }
+            match pieces.last_mut() {
+                Some(prev) if prev.1 == s && prev.2 == edge => prev.1 = e,
+                _ => pieces.push((s, e, edge)),
+            }
+        };
+        let mut at = a;
+        for &(s, e, edge) in &self.runs[first..last] {
+            // The part of the run before the range stays as it is.
+            if s < a {
+                push(&mut pieces, s, a, edge);
+            }
+            let (s2, e2) = (s.max(a), e.min(b));
+            push(&mut pieces, at, s2, f(CollapsedEdge::NONE));
+            push(&mut pieces, s2, e2, f(edge));
+            at = e2;
+            if e > b {
+                push(&mut pieces, b, e, edge);
+            }
+        }
+        push(&mut pieces, at, b, f(CollapsedEdge::NONE));
+        let count = pieces.len();
+        self.runs.splice(first..last, pieces);
+        // Runs equal to their neighbours outside the range join them: only at the range's two
+        // edges (joining over the whole line made per-segment offers quadratic).
+        let join = |runs: &mut Vec<(u32, u32, CollapsedEdge)>, i: usize| {
+            if i > 0 && i < runs.len() && runs[i - 1].1 == runs[i].0 && runs[i - 1].2 == runs[i].2 {
+                runs[i - 1].1 = runs[i].1;
+                runs.remove(i);
+                true
+            } else {
+                false
+            }
+        };
+        // (The end first: joining at the start shifts the end's index.)
+        join(&mut self.runs, first + count);
+        join(&mut self.runs, first);
+    }
+
+    /// Replaces the segments `range` by `len` without borders, moving those after.
+    fn splice(&mut self, range: Range<usize>, len: usize) {
+        self.update(range.clone(), |_| CollapsedEdge::NONE);
+        let (b, shift) = (range.end as i64, len as i64 - range.len() as i64);
+        for run in &mut self.runs {
+            if i64::from(run.0) >= b {
+                run.0 = (i64::from(run.0) + shift) as u32;
+                run.1 = (i64::from(run.1) + shift) as u32;
+            }
+        }
+    }
+
+    fn edges(&self) -> impl Iterator<Item = &CollapsedEdge> {
+        self.runs.iter().map(|run| &run.2)
+    }
+
+    /// Whether every one of the line's `len` segments is `width` wide.
+    fn all_width(&self, len: usize, width: f32) -> bool {
+        let covered: u32 = self.runs.iter().map(|run| run.1 - run.0).sum();
+        (covered as usize >= len || width == 0.0) && self.runs.iter().all(|run| run.2.width == width)
+    }
 }
 
 impl CollapsedEdges {
     pub fn vertical_at(&self, row: usize, line: usize) -> &CollapsedEdge {
-        &self.vertical[row * (self.columns + 1) + line]
+        self.vertical[line].get(row)
     }
     pub fn horizontal_at(&self, line: usize, column: usize) -> &CollapsedEdge {
-        &self.horizontal[line * self.columns + column]
+        self.horizontal[line].get(column)
+    }
+
+    /// pyro: every edge some border reaches (the segments without one are `CollapsedEdge::NONE`).
+    fn edges(&self) -> impl Iterator<Item = &CollapsedEdge> {
+        self.vertical.iter().chain(&self.horizontal).flat_map(EdgeLine::edges)
+    }
+
+    /// pyro: the runs of equal segments on row line `line`: `(first column, end column, edge)`,
+    /// the columns between them without a border (`blitz-paint`'s `draw_collapsed_edges`).
+    pub fn horizontal_runs(&self, line: usize) -> impl Iterator<Item = (usize, usize, &CollapsedEdge)> {
+        self.horizontal[line].runs.iter().map(|run| (run.0 as usize, run.1 as usize, &run.2))
+    }
+
+    /// pyro: the runs of equal segments on column line `line`: `(first row, end row, edge)`.
+    pub fn vertical_runs(&self, line: usize) -> impl Iterator<Item = (usize, usize, &CollapsedEdge)> {
+        self.vertical[line].runs.iter().map(|run| (run.0 as usize, run.1 as usize, &run.2))
     }
 
     fn new(rows: usize, columns: usize, wm: WritingMode) -> Self {
         use stylo_taffy::WritingModeExt as _;
-        let none = CollapsedEdge::NONE;
         // Taffy's top and bottom are the grid's row-start and row-end sides; its left is the
         // column-start side unless the columns run from its right (`direction`).
         let taffy = wm.logical_rect(taffy::Rect { top: 0u8, right: 1, bottom: 2, left: 3 });
@@ -939,8 +1100,8 @@ impl CollapsedEdges {
             columns,
             sides: [taffy.top, column_end, taffy.bottom, column_start],
             wm,
-            vertical: vec![none; rows * (columns + 1)],
-            horizontal: vec![none; (rows + 1) * columns],
+            vertical: vec![EdgeLine::default(); columns + 1],
+            horizontal: vec![EdgeLine::default(); rows + 1],
         }
     }
 
@@ -980,29 +1141,32 @@ impl CollapsedEdges {
 
     /// Uniform: every vertical segment one width, every horizontal one width, one color.
     fn uniform(&self) -> Option<(f32, f32)> {
-        let (x, y) = (self.vertical.first()?.width, self.horizontal.first()?.width);
-        let visible = self.vertical.iter().chain(&self.horizontal).find(|e| e.width > 0.0)?;
-        let same_color = self.vertical.iter().chain(&self.horizontal).all(|e| e.width == 0.0 || e.color == visible.color);
+        if self.rows == 0 || self.columns == 0 {
+            return None;
+        }
+        let (x, y) = (self.vertical_at(0, 0).width, self.horizontal_at(0, 0).width);
+        let visible = self.edges().find(|e| e.width > 0.0)?;
+        let same_color = self.edges().all(|e| e.width == 0.0 || e.color == visible.color);
         (same_color
-            && self.vertical.iter().all(|e| e.width == x)
-            && self.horizontal.iter().all(|e| e.width == y))
+            && self.vertical.iter().all(|line| line.all_width(self.rows, x))
+            && self.horizontal.iter().all(|line| line.all_width(self.columns, y)))
         .then_some((x, y))
     }
 
     fn is_empty(&self) -> bool {
-        self.vertical.iter().chain(&self.horizontal).all(|e| e.width == 0.0)
+        self.edges().all(|e| e.width == 0.0)
     }
 }
 
 /// Conflict resolution (css-tables-3 §11): `hidden` wins, then the wider, then by style, then
 /// the inner box; among equals the first offered (left and top) stays.
 fn offer_edge(
-    edge: &mut CollapsedEdge,
+    mut edge: CollapsedEdge,
     border: &Border,
     side: usize,
     current_color: &style::color::AbsoluteColor,
     priority: u8,
-) {
+) -> CollapsedEdge {
     use style::values::computed::BorderStyle as B;
     let (width, border_style, color) = match side {
         0 => (border.border_top_width.0, border.border_top_style, &border.border_top_color),
@@ -1011,16 +1175,16 @@ fn offer_edge(
         _ => (border.border_left_width.0, border.border_left_style, &border.border_left_color),
     };
     if edge.hidden || border_style == B::None {
-        return;
+        return edge;
     }
     if border_style == B::Hidden {
         edge.hidden = true;
         edge.width = 0.0;
-        return;
+        return edge;
     }
     let width = width.to_f32_px();
     if width == 0.0 {
-        return;
+        return edge;
     }
     let rank = match border_style {
         B::Double => 8,
@@ -1033,14 +1197,15 @@ fn offer_edge(
         _ => 1,
     };
     if (width, rank, priority) > (edge.width, edge.rank, edge.priority) {
-        *edge = CollapsedEdge { width, color: color.resolve_to_absolute(current_color), rank, priority, hidden: false };
+        edge = CollapsedEdge { width, color: color.resolve_to_absolute(current_color), rank, priority, hidden: false };
     }
+    edge
 }
 
-/// The grid area (rows, columns) each cell ends up in: the first free columns of its row,
-/// which is how the grid's dense auto placement places it.
+/// The grid area (rows, columns) each cell ends up in: the column the HTML table model gives it
+/// (`ColumnCursor`, `TableCell::column`: the first slot of its row no cell covers), which is where
+/// `place_cells` puts it, overlapping or not.
 fn cell_areas(cells: &[TableCell], nrows: usize, ncols: usize) -> Vec<(usize, usize, usize, usize)> {
-    let mut taken = vec![false; nrows * ncols];
     cells
         .iter()
         .map(|cell| {
@@ -1050,15 +1215,8 @@ fn cell_areas(cells: &[TableCell], nrows: usize, ncols: usize) -> Vec<(usize, us
             };
             let r0 = cell.row as usize;
             let r1 = (r0 + rowspan).min(nrows);
-            let colspan = cell.colspan as usize;
-            let free = |c: usize| (c..(c + colspan).min(ncols)).all(|c| !taken[r0 * ncols + c]);
-            let c0 = if r0 < nrows { (0..ncols).find(|&c| free(c)).unwrap_or(ncols) } else { ncols };
-            let c1 = (c0 + colspan).min(ncols);
-            for r in r0..r1 {
-                for c in c0..c1 {
-                    taken[r * ncols + c] = true;
-                }
-            }
+            let c0 = if r0 < nrows { (cell.column as usize).min(ncols) } else { ncols };
+            let c1 = (c0 + cell.colspan as usize).min(ncols);
             (r0, c0, r1, c1)
         })
         .collect()
@@ -1097,17 +1255,12 @@ fn clear_spanned(edges: &mut CollapsedEdges, (r0, c0, r1, c1): (usize, usize, us
     if r1 > edges.rows || c1 > ncols {
         return;
     }
-    for line in (r0 + 1)..r1 {
-        if range.lines.contains(&line) {
-            for c in c0..c1 {
-                edges.horizontal[line * ncols + c] = CollapsedEdge::NONE;
-            }
-        }
+    for line in ((r0 + 1)..r1).filter(|line| range.lines.contains(line)) {
+        edges.horizontal[line].update(c0..c1, |_| CollapsedEdge::NONE);
     }
-    for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
-        for line in (c0 + 1)..c1 {
-            edges.vertical[r * (ncols + 1) + line] = CollapsedEdge::NONE;
-        }
+    let rows = r0.max(range.rows.start)..r1.min(range.rows.end);
+    for line in (c0 + 1)..c1 {
+        edges.vertical[line].update(rows.clone(), |_| CollapsedEdge::NONE);
     }
 }
 
@@ -1148,19 +1301,15 @@ fn offer_box(
         }
     }
     let color = styles.clone_color();
-    let ncols = edges.columns;
     let [row_start, column_end, row_end, column_start] = edges.sides.map(usize::from);
     for (line, side) in [(r0, row_start), (r1, row_end)] {
         if range.lines.contains(&line) {
-            for c in c0..c1 {
-                offer_edge(&mut edges.horizontal[line * ncols + c], border, side, &color, priority);
-            }
+            edges.horizontal[line].update(c0..c1, |edge| offer_edge(edge, border, side, &color, priority));
         }
     }
-    for r in r0.max(range.rows.start)..r1.min(range.rows.end) {
-        offer_edge(&mut edges.vertical[r * (ncols + 1) + c0], border, column_start, &color, priority);
-        offer_edge(&mut edges.vertical[r * (ncols + 1) + c1], border, column_end, &color, priority);
-    }
+    let rows = r0.max(range.rows.start)..r1.min(range.rows.end);
+    edges.vertical[c0].update(rows.clone(), |edge| offer_edge(edge, border, column_start, &color, priority));
+    edges.vertical[c1].update(rows, |edge| offer_edge(edge, border, column_end, &color, priority));
 }
 
 /// Offers the borders of `rows[span]`, of the row groups they are in (each whole) and of the table
@@ -1252,7 +1401,7 @@ fn place_cells(cells: &[TableCell]) -> Option<CellPlacement> {
         let (Line(start), Span(rowspan)) = (&cell.style.grid_row.start, &cell.style.grid_row.end) else {
             return None;
         };
-        let (Auto, Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
+        let (Auto | Line(_), Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
             return None;
         };
         let (start, rowspan, colspan) = (start.as_i16(), *rowspan, *colspan);
@@ -1261,7 +1410,17 @@ fn place_cells(cells: &[TableCell]) -> Option<CellPlacement> {
         }
         let r0 = (start - 1) as u16;
         let r1 = r0.checked_add(rowspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
-        let columns = occupied.place(r0..r1, colspan)?;
+        // pyro: the HTML table model places a cell in the first slot of its row that no cell covers
+        // (`ColumnCursor`, `TableCell::column`), whatever its span then overlaps (a table model error
+        // browsers lay out overlapping; WPT css-tables `tentative/border-collapse-spanning-cells-004`).
+        // Without overlaps that is where the grid's `row dense` placement puts it.
+        let columns = if r0 == cell.row {
+            let c1 = cell.column.checked_add(colspan).filter(|end| *end <= PLACEMENT_LINE_LIMIT)?;
+            occupied.occupy(r0..r1, cell.column..c1);
+            cell.column..c1
+        } else {
+            occupied.place(r0..r1, colspan)?
+        };
         extent.width = extent.width.max(columns.end);
         extent.height = extent.height.max(r1);
         areas.push(taffy::Size {
@@ -1280,7 +1439,7 @@ fn unspanned_cell_area(cell: &TableCell) -> Option<taffy::Size<taffy::Line<u16>>
     let (Line(start), Span(1)) = (&cell.style.grid_row.start, &cell.style.grid_row.end) else {
         return None;
     };
-    let (Auto, Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
+    let (Auto | Line(_), Span(colspan)) = (&cell.style.grid_column.start, &cell.style.grid_column.end) else {
         return None;
     };
     if start.as_i16() != cell.row as i16 + 1 || *colspan == 0 {
@@ -1301,6 +1460,25 @@ struct OccupiedColumns {
 }
 
 impl OccupiedColumns {
+    /// pyro: occupies `columns` in `rows`, whatever they overlap (`place_cells`).
+    fn occupy(&mut self, rows: Range<u16>, columns: Range<u16>) {
+        if self.rows.len() < rows.end as usize {
+            self.rows.resize_with(rows.end as usize, Vec::new);
+        }
+        for row in &mut self.rows[rows.start as usize..rows.end as usize] {
+            row.push(columns.clone());
+            row.sort_by_key(|range| range.start);
+            let mut merged: Vec<Range<u16>> = Vec::with_capacity(row.len());
+            for range in row.drain(..) {
+                match merged.last_mut() {
+                    Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+                    _ => merged.push(range),
+                }
+            }
+            *row = merged;
+        }
+    }
+
     /// Occupies, in `rows`, the first `colspan` columns from the first that are free in all of them, and
     /// returns them; `None` past [`PLACEMENT_LINE_LIMIT`].
     fn place(&mut self, rows: Range<u16>, colspan: u16) -> Option<Range<u16>> {
@@ -1336,6 +1514,20 @@ impl OccupiedColumns {
             }
         }
         Some(c0..c1)
+    }
+}
+
+impl TableContext {
+    /// pyro: whether cell `node_id` lies in collapsed columns only (`visibility: collapse` on its
+    /// columns): such a cell is not rendered (CSS 2.1 § 17.5.5; WPT CSS2 `tables/column-visibility-004`).
+    pub fn cell_in_collapsed_columns(&self, node_id: NodeId) -> bool {
+        if self.style.collapsed_columns.is_empty() {
+            return false;
+        }
+        self.cells.iter().find(|cell| cell.node_id == node_id).is_some_and(|cell| {
+            let span = cell.colspan.max(1);
+            (cell.column..cell.column.saturating_add(span)).all(|column| self.style.collapsed_columns.contains(&column))
+        })
     }
 }
 
@@ -1400,9 +1592,12 @@ impl ColumnCursor {
 
     /// Advance past occupied columns, returning the column of the next cell
     fn next_free(&mut self) -> u16 {
-        while self.rowspans.get(self.col as usize).is_some_and(|r| *r > 0) {
+        // pyro: never past the last column a cell can start in (`PLACEMENT_LINE_LIMIT`): cells
+        // beyond it share that column.
+        while self.col < PLACEMENT_LINE_LIMIT - 1 && self.rowspans.get(self.col as usize).is_some_and(|r| *r > 0) {
             self.col += 1;
         }
+        self.col = self.col.min(PLACEMENT_LINE_LIMIT - 1);
         self.col
     }
 
@@ -1412,15 +1607,17 @@ impl ColumnCursor {
     }
 
     fn place(&mut self, colspan: u16, rowspan: u16) {
-        let end = self.col + colspan;
+        let end = self.col.saturating_add(colspan).min(PLACEMENT_LINE_LIMIT).max(self.col);
         if self.rowspans.len() < end as usize {
             self.rowspans.resize(end as usize, 0);
         }
         // pyro: `start_row` counts a row down before the next row looks: the rows after this one
         // that the cell still occupies are `rowspan - 1`, so `rowspan` before that count (a cell
         // after a two-row cell went into its column).
+        // pyro: a cell overlapping a slot a cell from an earlier row still covers (an HTML table
+        // model error) leaves that cell its rows (`place_cells`).
         for remaining in &mut self.rowspans[self.col as usize..end as usize] {
-            *remaining = rowspan;
+            *remaining = (*remaining).max(rowspan);
         }
         self.col = end;
         self.num_columns = self.num_columns.max(end);
@@ -1727,11 +1924,9 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     };
     // Trailing `<col>` columns which contain no cells and have no definite width
     // (i.e. would be zero-width) are dropped, so they don't add border-spacing.
-    while column_sizes.len() > cursor.num_columns as usize
-        && column_sizes
-            .last()
-            .is_some_and(|c| c.min.into_raw().tag() == taffy::CompactLength::AUTO_TAG)
-    {
+    // pyro: those with a width too, past the last cell (Chromium; WPT css-tables
+    // `table_grid_size_col_colspan`: the grid is no wider than its cells).
+    while column_sizes.len() > cursor.num_columns as usize && cursor.num_columns > 0 {
         column_sizes.pop();
         columns.pop();
     }
@@ -1963,6 +2158,31 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     style.grid_template_rows = row_tracks(&rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
     style.collapsed_rows = rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    style.collapsed_columns = collapsed_columns(doc, &columns);
+    // pyro: a `<col>`'s width has the halves of the collapsed borders beside its column in it (CSS 2.1
+    // § 17.6.2, as Chromium): in uniform gutters, which hold the borders whole, the track is that much
+    // narrower (WPT css-tables `table_grid_size_col_colspan`).
+    if border_collapse == BorderCollapse::Collapse && collapsed_edges.is_none() && collapse_gap.0 > 0.0 {
+        let gap = collapse_gap.0;
+        for (column, track) in style.grid_template_columns.iter_mut().enumerate() {
+            if !col_widths.get(column).copied().unwrap_or(false) {
+                continue;
+            }
+            if let taffy::GridTemplateComponent::Single(track) = track {
+                let raw = track.max.into_raw();
+                match raw.tag() {
+                    taffy::CompactLength::FIT_CONTENT_PX_TAG => {
+                        track.max = taffy::MaxTrackSizingFunction::fit_content_px((raw.value() - gap).max(0.0));
+                    }
+                    taffy::CompactLength::LENGTH_TAG => {
+                        let width = (raw.value() - gap).max(0.0);
+                        *track = style_helpers::length(width);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     if let Some(edges) = &collapsed_edges {
         let zero = style_helpers::length(0.0);
         style.gap = taffy::Size { width: zero, height: zero };
@@ -2179,9 +2399,11 @@ fn apply_collapsed_borders(
     };
     // pyro: a column's width (`<col>`'s, in `min_width_base` when larger than the cell's own) has
     // the halves of the collapsed borders in it, the cell's own `width` does not (CSS 2.1 §17.6.2,
-    // as Chromium).
+    // as Chromium), but for a `border-box` cell, whose `width` is its border box with them.
+    let content_box = cell.style.box_sizing == taffy::BoxSizing::ContentBox;
     let min_width = cell.min_width_base.map(|width| match cell.length_width {
-        Some(own) => width.max(own + left + right),
+        Some(own) if content_box => width.max(own + left + right),
+        Some(own) => width.max(own.max(left + right)),
         None => width,
     });
     let changed = cell.style.border != border || cell.min_height != min_height || cell.min_width != min_width;
@@ -2715,9 +2937,11 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
             }
         }
         if let Some(edges) = ctx.collapsed_edges.as_mut().or(ctx.spare_edges.as_mut()) {
-            let none = CollapsedEdge::NONE;
-            edges.vertical.splice(a * (ncols + 1)..b * (ncols + 1), std::iter::repeat_n(none, new_rows * (ncols + 1)));
-            edges.horizontal.splice(a * ncols..(b + 1) * ncols, std::iter::repeat_n(none, (new_rows + 1) * ncols));
+            debug_assert_eq!(edges.vertical.len(), ncols + 1);
+            for line in &mut edges.vertical {
+                line.splice(a..b, new_rows);
+            }
+            edges.horizontal.splice(a..b + 1, std::iter::repeat_n(EdgeLine::default(), new_rows + 1));
             edges.rows = edges.rows + new_rows - (b - a);
         }
     }
@@ -2864,6 +3088,7 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
     ctx.style.grid_template_rows = row_tracks(&ctx.rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
     ctx.style.collapsed_rows = ctx.rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    ctx.style.collapsed_columns = collapsed_columns(doc, &ctx.columns);
     if boxes_changed {
         let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
         let layout_children = before
@@ -2945,6 +3170,21 @@ fn collect_columns(
 
 /// The columns of a column (or of a column group without columns): `span` of them, as wide as its
 /// `width` says (its `min-width` and `max-width` too).
+/// pyro: the columns whose `<col>` (or column group) is `visibility: collapse` (CSS 2.1 § 17.5.5):
+/// sized with the others, then taking no width (taffy `Style::collapsed_columns`).
+fn collapsed_columns(doc: &BaseDocument, columns: &[TableColumn]) -> Vec<u16> {
+    columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| {
+            doc.nodes[column.node_id].primary_styles().is_some_and(|style| {
+                style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
+            })
+        })
+        .map(|(i, _)| i as u16)
+        .collect()
+}
+
 fn push_columns(
     node: &crate::Node,
     wm: WritingMode,
@@ -3268,9 +3508,16 @@ fn collect_table_cells(
             *row += 1;
             cursor.start_row();
 
-            let height = physical_size(node).and_then(|size| {
+            // (Its block size in the table's writing mode: a vertical table's row is as wide as its
+            // `width`; WPT css-tables `paint/col-paint-vrl-rtl`.)
+            let height = if wm.is_vertical() {
+                let size = table_taffy_style(node, wm).size;
                 (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value())
-            });
+            } else {
+                physical_size(node).and_then(|size| {
+                    (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value())
+                })
+            };
             let collapsed = node.primary_styles().is_some_and(|style| {
                 style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
             });
@@ -3330,7 +3577,7 @@ fn collect_table_cells(
             let node = &mut doc.nodes[node_id];
             let rowspan: u16 = node
                 .attr(local_name!("rowspan"))
-                .and_then(|val| val.parse::<u16>().ok())
+                .and_then(|val| val.trim().parse::<u32>().ok().map(|v| v.min(65534) as u16))
                 // pyro: `rowspan="0"` spans the rest of the row group (HTML § 4.9.11; cut at
                 // the group's end below), WPT `css-tables/zero-rowspan-001/002`.
                 .map(|v| if v == 0 { 65534 } else { v.clamp(1, 65534) })
@@ -3345,10 +3592,12 @@ fn collect_table_cells(
             }
             let stylo_style = &node.primary_styles().unwrap();
             let percent_width = stylo_taffy::convert::dimension(stylo_style.get_width()).tag() == taffy::CompactLength::PERCENT_TAG;
+            // pyro: HTML § 4.9.11: `colspan` is 1 to 1000 (0 and junk are 1); `rowspan` 0 to
+            // 65534 (0: the rest of the row group, above).
             let colspan: u16 = node
                 .attr(local_name!("colspan"))
-                .and_then(|val| val.parse().ok())
-                .unwrap_or(1);
+                .and_then(|val| val.trim().parse::<u32>().ok())
+                .map_or(1, |v| v.clamp(1, 1000) as u16);
             let mut style = table_taffy_style(node, wm);
             // pyro: a cell `width` that stays a `calc()` (a length and a percentage) is `auto` in
             // table layout, as in Blink (WPT css-values `calc-width-table-auto-1`, `-fixed-1`).
@@ -3359,6 +3608,9 @@ fn collect_table_cells(
                 style.size.width = taffy::Dimension::auto();
             }
             let col = cursor.next_free();
+            // pyro: no cell reaches past the table's last column line (`PLACEMENT_LINE_LIMIT`):
+            // 66 cells of `colspan="1000"` overflowed the cursor's `u16` arithmetic.
+            let colspan = colspan.min(PLACEMENT_LINE_LIMIT - col).max(1);
             // pyro: relative positioning of the cell, its row and its row group, which move the
             // cell (`table_cell_relative_offset`).
             if let Some(offset) = relative.filter(|_| !wm.is_vertical()) {
@@ -3446,15 +3698,17 @@ fn collect_table_cells(
             // The margin properties do not apply to table-internal elements
             style.margin = taffy::Rect::ZERO.map(style_helpers::length);
 
-            // Let Taffy auto-place the column. Combined with
-            // `grid_auto_flow: RowDense` set on the table root, each cell
-            // scans from the first track in its row for a free position,
-            // which makes cells automatically skip columns occupied by
-            // rowspan cells from earlier rows.
-            style.grid_column = taffy::Line {
-                start: style_helpers::auto(),
-                end: style_helpers::span(colspan),
+            // pyro: the column the HTML table model gives the cell (`ColumnCursor`: the first slot of
+            // its row that no cell covers), whatever its span then overlaps (WPT css-tables
+            // `tentative/border-collapse-spanning-cells-004`). The grid's `row dense` auto-placement
+            // moved such a cell past the cells it would overlap. (`colspan` 0, which is no span the
+            // table places, is left to it.)
+            let start = if colspan > 0 && col < PLACEMENT_LINE_LIMIT {
+                style_helpers::line(col as i16 + 1)
+            } else {
+                style_helpers::auto()
             };
+            style.grid_column = taffy::Line { start, end: style_helpers::span(colspan) };
             style.grid_row = taffy::Line {
                 start: style_helpers::line(*row as i16),
                 end: style_helpers::span(rowspan),
@@ -3622,7 +3876,16 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
         let index = usize::from(node_id);
         self.ctx.placed.borrow_mut().placed(index, self.ctx.cells.len());
         let node_id = crate::taffy_node_id(self.ctx.cells[index].node_id);
-        self.doc.set_unrounded_layout(node_id, layout)
+        // pyro: the cell's scrollbars are those of its own style (its classic scrollbar gutters,
+        // which its content was laid out in), not of the grid item style the table made of it.
+        // Chrome: an `overflow: scroll` 100px cell has clientWidth 85 (WPT css-backgrounds
+        // `table-cell-background-local-003`).
+        let mut layout = *layout;
+        layout.scrollbar_size = {
+            use taffy::CoreStyle as _;
+            self.doc.nodes[self.ctx.cells[index].node_id].layout_style().scrollbar_gutter_size()
+        };
+        self.doc.set_unrounded_layout(node_id, &layout)
     }
 
     fn compute_child_layout(
@@ -3636,7 +3899,20 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
         // pyro: unless the table's height or the row's is definite, the cell's height (stretched to
         // its row) is no basis for its children's percentages, nor the table for the cell's own
         // (`Self::definite_height`).
-        let (inputs, own_basis) = self.cell_basis_inputs(cell, inputs);
+        let (mut inputs, own_basis) = self.cell_basis_inputs(cell, inputs);
+        // pyro: a cell's percentage padding resolves against the table's width less its outer
+        // border spacing (the grid's), once that is known (CSS Tables 3, as Blink and Gecko; it
+        // resolved against the cell's columns; WPT css-tables `tentative/padding-percentage`).
+        // In the column widths it resolves against zero (`percent_lengths`).
+        if inputs.known_dimensions.width.is_some() && inputs.parent_size.width.is_some() {
+            if let Some(grid_width) = self.grid_inline_size().filter(|_| self.has_percent_padding(cell)) {
+                inputs.parent_size.width = Some(grid_width);
+                // (Taffy's layout cache does not key on `parent_size`: a layout of the cell
+                // against its area's width would come back.)
+                use taffy::CacheTree as _;
+                self.doc.cache_clear(node_id);
+            }
+        }
         let outer_basis = std::mem::replace(&mut self.doc.cell_percent_height, own_basis);
         let outer_restricted = std::mem::replace(&mut self.doc.restricted_cell, self.restricted.then_some(cell.node_id));
         let output = self.lay_out_cell(cell, node_id, inputs);
@@ -3647,6 +3923,61 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
 }
 
 impl TableTreeWrapper<'_, '_> {
+    /// pyro: the table's grid layout at `inputs`, with `grid_width` known while it runs.
+    pub(crate) fn layout_grid(&mut self, node_id: taffy::NodeId, inputs: taffy::tree::LayoutInput) -> taffy::LayoutOutput {
+        let grid_width = {
+            use taffy::MaybeResolve as _;
+            let style = self.style.as_ref().unwrap_or(&self.ctx.style);
+            let parent = inputs.parent_size.width;
+            let inset = style.padding.resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum()
+                + style.border.resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum();
+            // Its known width, else a fixed table's own length `width` (the grid's then; an auto
+            // table's columns may make it wider: `grid_inline_size` sums them).
+            match inputs.known_dimensions.width {
+                Some(width) => Some((width - inset).max(0.0)),
+                None if !self.ctx.is_fixed => None,
+                None => style.size.width.maybe_resolve(parent, resolve_calc_value).map(|width| match style.box_sizing {
+                    taffy::BoxSizing::ContentBox => width.max(0.0),
+                    taffy::BoxSizing::BorderBox => (width - inset).max(0.0),
+                }),
+            }
+        };
+        let outer = std::mem::replace(&mut self.grid_width, grid_width);
+        let output = taffy::compute_grid_layout(self, node_id, inputs);
+        self.grid_width = outer;
+        output
+    }
+
+    /// pyro: the width of the table's grid (its columns and the spacing between them): the one
+    /// the running layout knows (`grid_width`: a fixed table's columns are `minmax(W, W fr)`
+    /// tracks), else when every column has a length width.
+    fn grid_inline_size(&self) -> Option<f32> {
+        if let Some(width) = self.grid_width {
+            return Some(width);
+        }
+        let style = self.style.as_ref().unwrap_or(&self.ctx.style);
+        let mut width = 0.0;
+        let mut n = 0;
+        for column in &style.grid_template_columns {
+            let taffy::GridTemplateComponent::Single(track) = column else { return None };
+            let (min, max) = (track.min.into_raw(), track.max.into_raw());
+            if min.tag() != taffy::CompactLength::LENGTH_TAG || max.tag() != taffy::CompactLength::LENGTH_TAG {
+                return None;
+            }
+            width += max.value().max(min.value());
+            n += 1;
+        }
+        let gap = style.gap.width.into_raw();
+        let gap = if gap.tag() == taffy::CompactLength::LENGTH_TAG { gap.value() } else { 0.0 };
+        (n > 0).then(|| width + gap * (n - 1) as f32)
+    }
+
+    /// pyro: whether the cell's padding has a percentage (in `calc()` too).
+    fn has_percent_padding(&self, cell: &TableCell) -> bool {
+        let padding = &cell.style.padding;
+        [padding.left, padding.right, padding.top, padding.bottom].iter().any(|p| p.into_raw().uses_percentage())
+    }
+
     /// The inputs `cell` is laid out with, and the basis of its children's percentage heights
     /// (`Self::definite_height`, `LayoutPassState::cell_percent_height`).
     fn cell_basis_inputs(
@@ -3689,18 +4020,7 @@ impl TableTreeWrapper<'_, '_> {
             // Its own `min-width` still applies (and wins over `max-width`).
             let style = &cell.style;
             let parent = inputs.parent_size.width;
-            let own_min = {
-                use taffy::MaybeResolve as _;
-                style.min_size.width.maybe_resolve(parent, resolve_calc_value).map(|w| {
-                    let padding = style.padding.resolve_or_zero(parent, resolve_calc_value);
-                    let border = style.border.resolve_or_zero(parent, resolve_calc_value);
-                    let extra = padding.left + padding.right + border.left + border.right;
-                    match style.box_sizing {
-                        taffy::BoxSizing::ContentBox => w + extra,
-                        taffy::BoxSizing::BorderBox => w.max(extra),
-                    }
-                })
-            };
+            let own_min = cell_own_min_width(style, parent);
             output.size.width = output.size.width.max(min_width).max(own_min.unwrap_or(0.0));
             output.size.height = output.size.height.max(cell.min_height.unwrap_or(0.0));
             return output;
@@ -3813,7 +4133,25 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
         if let Some(baseline) = output.baselines.first {
             return Some(baseline - offset);
         }
-        // No line box: the bottom of its content box, when it has content.
+        // No line box: the bottom of its content box, when it has in-flow content (a cell without any,
+        // however tall, takes no part in its row's baseline, as in Chromium; WPT css-align
+        // `baseline-rules/synthesized-baseline-table-cell-001`).
+        // (Its line boxes count: a layout-contained cell with text has no baseline but has content,
+        // WPT css-contain `contain-layout-baseline-004`.)
+        let has_lines = node
+            .element_data()
+            .and_then(|element| element.inline_layout_data.as_ref())
+            .is_some_and(|layout| layout.layout.lines().next().is_some());
+        let has_content = has_lines
+            || node.layout_children.borrow().as_ref().is_some_and(|children| {
+                children.iter().any(|&child| {
+                    let child = &self.doc.nodes[child];
+                    !child.is_out_of_flow() && !child.is_whitespace_node()
+                })
+            });
+        if !has_content {
+            return None;
+        }
         use taffy::CoreStyle as _;
         let style = node.layout_style();
         let parent = inputs.parent_size.width;
@@ -3895,7 +4233,7 @@ pub(crate) mod tests {
         ])]),
         // A vertical table
         ("writing-mode:vertical-rl", &[], &[("table-row-group", &[&[(1, 2, ""), (2, 1, "")], &[(1, 1, ""), (1, 1, "")]])]),
-        // colspan=0 is not a span the table places: the grid places the cells
+        // colspan=0 is colspan=1 (HTML § 4.9.11)
         ("", &[], &[("table-row-group", &[&[(0, 1, ""), (1, 1, "")], &[(1, 1, ""), (1, 1, "")]])]),
     ];
 
@@ -4119,6 +4457,45 @@ pub(crate) mod tests {
     /// cells itself. Covers rowspan holes beside colspans, rowspans clamped to their group, thead/tfoot
     /// reordering, `<col span>`, out-of-flow and `display:none` cells, a vertical table, and the fallback
     /// to the grid for a span the table does not place. (Debug builds also assert it on every grid layout.)
+    /// pyro: a grid line's segments as runs (`EdgeLine`): offers over ranges split and join runs,
+    /// clearing a span costs its runs, not its length, and a splice moves the runs after it.
+    #[test]
+    fn edge_line_runs() {
+        use super::{CollapsedEdge, EdgeLine};
+        let edge = |width: f32| CollapsedEdge { width, ..CollapsedEdge::NONE };
+        let mut line = EdgeLine::default();
+        line.update(0..1_000_000, |_| edge(2.0));
+        assert_eq!(line.runs.len(), 1);
+        line.update(10..20, |e| if e.width < 5.0 { edge(5.0) } else { e });
+        assert_eq!(line.runs.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(), [(0, 10), (10, 20), (20, 1_000_000)]);
+        assert_eq!(line.get(15).width, 5.0);
+        assert_eq!(line.get(25).width, 2.0);
+        line.update(10..20, |_| edge(2.0));
+        assert_eq!(line.runs.len(), 1, "equal neighbours join");
+        line.update(1..999_999, |_| CollapsedEdge::NONE);
+        assert_eq!(line.runs.len(), 2);
+        assert_eq!(line.get(500).width, 0.0);
+        line.splice(0..1, 3);
+        assert_eq!(line.get(2).width, 0.0);
+        assert_eq!(line.get(1_000_001).width, 2.0);
+        assert!(line.all_width(1_000_002, 2.0) == false);
+    }
+
+    /// pyro: offers of alternating edges, segment by segment, cost linear time: runs join only at
+    /// the edges of the range offered (the whole line was walked per offer).
+    #[test]
+    fn edge_line_alternating_offers_are_linear() {
+        use super::{CollapsedEdge, EdgeLine};
+        let edge = |width: f32| CollapsedEdge { width, ..CollapsedEdge::NONE };
+        let mut line = EdgeLine::default();
+        let start = std::time::Instant::now();
+        for c in 0..100_000 {
+            line.update(c..c + 1, |_| edge(if c % 2 == 0 { 1.0 } else { 2.0 }));
+        }
+        assert_eq!(line.runs.len(), 100_000);
+        assert!(start.elapsed().as_secs_f64() < 2.0, "took {:?}", start.elapsed());
+    }
+
     #[test]
     fn table_cell_placement_is_the_grids() {
         let (own, grid) = (build(false), build(true));
@@ -4158,8 +4535,8 @@ pub(crate) mod tests {
                 }
             }
         }
-        // The colspan=0 table is left to the grid
-        assert_eq!(placed, TABLES.len() - 1);
+        // Every table is placed (colspan=0 is colspan=1)
+        assert_eq!(placed, TABLES.len());
         assert_eq!(own.nodes.len(), grid.nodes.len());
         for ((id, own_node), (_, grid_node)) in own.nodes.iter().zip(grid.nodes.iter()) {
             if !(own_node.is_element() || own_node.is_anonymous()) {
@@ -4341,4 +4718,128 @@ fn raise_max_width_to_columns(style: &mut taffy::Style<Atom>, content: f32, extr
     if style.max_size.width.maybe_resolve(parent, resolve_calc_value).is_some_and(|max: f32| max < grown) {
         style.max_size.width = style_helpers::length(grown);
     }
+}
+
+/// pyro: a cell's own `min-width` as the width of its border box.
+fn cell_own_min_width(style: &taffy::Style<Atom>, parent: Option<f32>) -> Option<f32> {
+    use taffy::MaybeResolve as _;
+    style.min_size.width.maybe_resolve(parent, resolve_calc_value).map(|w| {
+        let padding = style.padding.resolve_or_zero(parent, resolve_calc_value);
+        let border = style.border.resolve_or_zero(parent, resolve_calc_value);
+        let extra = padding.left + padding.right + border.left + border.right;
+        match style.box_sizing {
+            taffy::BoxSizing::ContentBox => w + extra,
+            taffy::BoxSizing::BorderBox => w.max(extra),
+        }
+    })
+}
+
+/// pyro: a column as Blink's table width distribution sees it (`TableTypes::Column`): its
+/// min-content and max-content widths, its percentage (a fraction) and whether it is constrained
+/// (has a length width).
+#[derive(Clone, Copy)]
+struct DistColumn {
+    min: f32,
+    max: f32,
+    percent: Option<f32>,
+    constrained: bool,
+}
+
+/// pyro: Blink's `DistributeInlineSizeToComputedInlineSizeAuto` (css-tables-3 width distribution:
+/// the min, percentage, specified and max guesses): the widths `columns` get of `target`.
+fn blink_distribute_auto(target: f32, columns: &[DistColumn], constrained_target: bool) -> Vec<f32> {
+    let resolve_percent = |c: &DistColumn, target: f32| c.min.max(c.percent.unwrap_or(0.0) * target);
+    let (mut min_guess, mut percent_guess, mut specified_guess, mut max_guess) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let (mut percent_increase, mut fixed_increase, mut auto_increase) = (0.0f32, 0.0f32, 0.0f32);
+    let (mut percent_count, mut fixed_count, mut auto_count) = (0usize, 0usize, 0usize);
+    let (mut total_percent, mut total_auto_max, mut total_fixed_max) = (0.0f32, 0.0f32, 0.0f32);
+    for c in columns {
+        if c.percent.is_some() {
+            percent_count += 1;
+            total_percent += c.percent.unwrap_or(0.0);
+            let size = resolve_percent(c, target);
+            min_guess += c.min;
+            percent_guess += size;
+            specified_guess += size;
+            max_guess += size;
+            percent_increase += size - c.min;
+        } else if c.constrained {
+            fixed_count += 1;
+            total_fixed_max += c.max;
+            min_guess += c.min;
+            percent_guess += c.min;
+            specified_guess += c.max;
+            max_guess += c.max;
+            fixed_increase += c.max - c.min;
+        } else {
+            auto_count += 1;
+            total_auto_max += c.max;
+            min_guess += c.min;
+            percent_guess += c.min;
+            specified_guess += c.min;
+            max_guess += c.max;
+            auto_increase += c.max - c.min;
+        }
+    }
+    let target = target.max(min_guess);
+    let n = columns.len();
+    let mut sizes = vec![0.0f32; n];
+    // Spreads `amount` over the columns `pick` selects, by `weight`, from `base`; the last one takes
+    // what rounding leaves (none here: f32 math).
+    let mut spread = |sizes: &mut Vec<f32>,
+                      pick: &dyn Fn(&DistColumn) -> bool,
+                      weight: &dyn Fn(&DistColumn) -> f32,
+                      total_weight: f32,
+                      count: usize,
+                      base: &dyn Fn(&DistColumn) -> f32,
+                      amount: f32| {
+        for (i, c) in columns.iter().enumerate() {
+            if pick(c) {
+                let delta = if total_weight > 0.0 { amount * weight(c) / total_weight } else { amount / count.max(1) as f32 };
+                sizes[i] = base(c) + delta;
+            }
+        }
+    };
+    if min_guess >= target {
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = c.min;
+        }
+    } else if percent_guess >= target {
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = c.min;
+        }
+        spread(&mut sizes, &|c| c.percent.is_some(), &|c| resolve_percent(c, target) - c.min, percent_increase, percent_count, &|c| c.min, target - min_guess);
+    } else if specified_guess >= target {
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = if c.percent.is_some() { resolve_percent(c, target) } else { c.min };
+        }
+        spread(&mut sizes, &|c| c.percent.is_none() && c.constrained, &|c| c.max - c.min, fixed_increase, fixed_count, &|c| c.min, target - percent_guess);
+    } else if max_guess >= target {
+        let exact = (target - max_guess).abs() < 0.001;
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = if c.percent.is_some() {
+                resolve_percent(c, target)
+            } else if c.constrained || exact {
+                c.max
+            } else {
+                c.min
+            };
+        }
+        if !exact {
+            spread(&mut sizes, &|c| c.percent.is_none() && !c.constrained, &|c| c.max - c.min, auto_increase, auto_count, &|c| c.min, target - specified_guess);
+        }
+    } else {
+        let extra = target - max_guess;
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = if c.percent.is_some() { resolve_percent(c, target) } else { c.max };
+        }
+        if auto_count > 0 {
+            spread(&mut sizes, &|c| c.percent.is_none() && !c.constrained, &|c| c.max, total_auto_max, auto_count, &|c| c.max, extra);
+        } else if fixed_count > 0 && constrained_target {
+            spread(&mut sizes, &|c| c.percent.is_none() && c.constrained, &|c| c.max, total_fixed_max, fixed_count, &|c| c.max, extra);
+        } else if percent_count > 0 {
+            spread(&mut sizes, &|c| c.percent.is_some(), &|c| c.percent.unwrap_or(0.0), total_percent, percent_count, &|c| resolve_percent(c, target), extra);
+        }
+    }
+    sizes
 }

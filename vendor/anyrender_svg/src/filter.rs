@@ -81,8 +81,50 @@ pub(crate) fn with_notes<R>(notes: FilterNotes, f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// pyro: the id prefix of a filter whose result is tainted (blitz-dom's SVG writer puts one after
+/// a `drop-shadow()` coloured from `currentcolor`, which usvg resolves). An author's filter of
+/// such an id taints too: taint can only keep pixels from moving.
+pub(crate) const TAINT_MARK: &str = "__pyro_taint";
+
+/// pyro: whether what `group` draws may be tainted: a filter of it or of a group in it has a
+/// tainted primitive (or is a taint mark, `TAINT_MARK`), or an `feImage`, mask, pattern or nested
+/// SVG image in it draws such content. Conservative: a tainted primitive taints the whole filter's
+/// output whether or not it reaches it. A filter reading what such a group draws as its source
+/// graphic reads a tainted source (Filter Effects, "tainted filter primitives").
+pub(crate) fn group_tainted(group: &usvg::Group) -> bool {
+    group.filters().iter().any(|filter| filter_tainted(filter))
+        || group.mask().is_some_and(|mask| group_tainted(mask.root()))
+        || group.children().iter().any(node_tainted)
+}
+
+pub(crate) fn node_tainted(node: &usvg::Node) -> bool {
+    match node {
+        usvg::Node::Group(group) => group_tainted(group),
+        usvg::Node::Path(path) => {
+            let pattern = |paint: &usvg::Paint| matches!(paint, usvg::Paint::Pattern(pattern) if group_tainted(pattern.root()));
+            path.fill().is_some_and(|fill| pattern(fill.paint())) || path.stroke().is_some_and(|stroke| pattern(stroke.paint()))
+        }
+        usvg::Node::Image(image) => match image.kind() {
+            usvg::ImageKind::SVG(tree) => group_tainted(tree.root()),
+            _ => false,
+        },
+        usvg::Node::Text(text) => group_tainted(text.flattened()),
+    }
+}
+
+fn filter_tainted(filter: &usvg::filter::Filter) -> bool {
+    filter.id().starts_with(TAINT_MARK)
+        || filter.primitives().iter().enumerate().any(|(index, primitive)| {
+            notes(filter.id(), index).tainted
+                || matches!(primitive.kind(), Kind::Image(image) if group_tainted(image.root()))
+        })
+}
+
 /// What the document knows of primitive `index` of the filter `id` (nothing when it was not told).
 pub(crate) fn notes(id: &str, index: usize) -> PrimitiveNotes {
+    if id.starts_with(TAINT_MARK) {
+        return PrimitiveNotes { tainted: true, ..Default::default() };
+    }
     NOTES.with(|n| {
         n.borrow()
             .as_ref()
@@ -121,9 +163,10 @@ impl FilterGraph {
         filter: &Arc<svg::Filter>,
         notes: &dyn Fn(usize) -> PrimitiveNotes,
         source_tainted: bool,
+        bbox: Option<usvg::Rect>,
     ) -> Option<Self> {
         let region = filter.rect();
-        let (graph, images, tainted) = convert(filter, notes, source_tainted)?;
+        let (graph, images, tainted) = convert(filter, notes, source_tainted, bbox)?;
         Some(Self {
             filter: Arc::new(graph),
             region: Rect::new(
@@ -175,6 +218,8 @@ impl FilterGraph {
     /// draws what its `feImage`s show, each in a layer of its own that only the graph reads (see
     /// anyrender_vello_cpu's `FILTER_IMAGE_SOURCE`). The content to filter follows, then a pop.
     pub fn push_layer<S: PaintScene>(&self, scene: &mut S, transform: Affine) {
+        #[cfg(feature = "image")]
+        let _resources = crate::util::RasterScope::enter();
         scene.push_layer(
             Fill::NonZero,
             BlendMode::default(),
@@ -351,25 +396,57 @@ fn in_space([r, g, b]: [f32; 3], space: Space) -> [f32; 3] {
     }
 }
 
+/// pyro: the `result` of the marker primitive blitz-dom writes first in a `<filter>` with
+/// `primitiveUnits="objectBoundingBox"` (an `feOffset` of nothing, which passes the source on).
+pub const OBB_MARK: &str = "__pyro_obb";
+
+/// pyro: the subregion of `primitive` in a filter with `primitiveUnits="objectBoundingBox"`, on the
+/// element's bounding box `bbox`: usvg (`resolve_primitive_region`) applied the fractions to the
+/// filter region the wrong way round (`region.bbox_transform(fractions)`: the fractions' corner
+/// moved by the region's), which is undone here. `feFlood` and `feImage` it resolves right, and
+/// fractions it was not given (all of 0, 0, 1, 1) leave the filter region.
+fn bounding_box_subregion(primitive: &svg::Primitive, region: usvg::NonZeroRect, bbox: Option<usvg::Rect>) -> usvg::NonZeroRect {
+    let given = primitive.rect();
+    let Some(bbox) = bbox.filter(|_| !matches!(primitive.kind(), Kind::Flood(_) | Kind::Image(_))) else {
+        return given;
+    };
+    let (w, h) = (given.width() / region.width(), given.height() / region.height());
+    let (x, y) = (given.x() - region.x() * w, given.y() - region.y() * h);
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+    if near(x, 0.0) && near(y, 0.0) && near(w, 1.0) && near(h, 1.0) {
+        return given;
+    }
+    usvg::NonZeroRect::from_xywh(bbox.x() + x * bbox.width(), bbox.y() + y * bbox.height(), w * bbox.width(), h * bbox.height())
+        .unwrap_or(given)
+}
+
 /// `filter` as an anyrender filter graph, the `feImage` primitives it reads (their indices) and
 /// whether its result is tainted; `None` when a primitive is one anyrender_vello_cpu does not do.
 fn convert(
     filter: &svg::Filter,
     notes: &dyn Fn(usize) -> PrimitiveNotes,
     source_tainted: bool,
+    bbox: Option<usvg::Rect>,
 ) -> Option<(Filter, Vec<usize>, bool)> {
     let region = filter.rect();
+    // pyro: a filter whose primitive subregions are fractions of the element's bounding box starts
+    // with blitz-dom's marker primitive ([`OBB_MARK`]), left out here.
+    let obb = filter.primitives().first().is_some_and(|primitive| primitive.result() == OBB_MARK);
     let whole = [region.left(), region.top(), region.right(), region.bottom()];
     let mut b =
         Builder { filter: Filter::empty(), converted: HashMap::new(), origins: HashMap::new(), floods: HashMap::new() };
     let mut results: Vec<(&str, Read)> = Vec::new();
     let mut images: Vec<usize> = Vec::new();
     for (index, primitive) in filter.primitives().iter().enumerate() {
+        if obb && index == 0 {
+            continue;
+        }
         let space = match primitive.color_interpolation() {
             ColorInterpolation::SRGB => Space::Srgb,
             ColorInterpolation::LinearRGB => Space::Linear,
         };
-        let note = notes(index);
+        // (The document's notes number its own primitives, without the marker.)
+        let note = notes(if obb { index - 1 } else { index });
         let source =
             Read { value: Value::Pixels(Key::Source, Some(Space::Srgb)), subregion: whole, tainted: source_tainted };
         // A name refers to the latest result of that name before the primitive (usvg makes a
@@ -382,7 +459,7 @@ fn convert(
             }
         };
         // The subregion, where it leaves part of the filter region out.
-        let sub = primitive.rect();
+        let sub = if obb { bounding_box_subregion(primitive, region, bbox) } else { primitive.rect() };
         let subregion = [sub.left(), sub.top(), sub.right(), sub.bottom()];
         let crop = (sub.left() > region.left() + 1e-3
             || sub.top() > region.top() + 1e-3
@@ -650,7 +727,9 @@ fn convert(
                 );
                 Value::Pixels(b.cropped(node, crop), Some(space))
             }
-            Kind::Image(_) => {
+            Kind::Image(image) => {
+                // pyro: what it draws may be tainted (`group_tainted`).
+                tainted |= group_tainted(image.root());
                 let k = images.len();
                 images.push(index);
                 let node = b.op(IMAGE_SOURCE, [k as f32, 0.0, 0.0, 0.0, 0.0, 0.0], FilterInputs::NONE);
@@ -859,7 +938,7 @@ mod tests {
 
     /// The graph alone, with nothing known of the primitives.
     fn graph(filter: &std::sync::Arc<svg::Filter>) -> Option<Filter> {
-        convert(filter, &|_| PrimitiveNotes::default(), false).map(|(filter, ..)| filter)
+        convert(filter, &|_| PrimitiveNotes::default(), false, None).map(|(filter, ..)| filter)
     }
 
     /// The kinds of a graph's nodes, by short names.
@@ -923,11 +1002,11 @@ mod tests {
         let moved = graph(&filter).unwrap();
         assert!(kinds(&moved).contains(&"displace"), "{:?}", kinds(&moved));
         let tainted_flood = |index: usize| PrimitiveNotes { tainted: index == 0, ..Default::default() };
-        let (unmoved, _, tainted) = convert(&filter, &tainted_flood, false).unwrap();
+        let (unmoved, _, tainted) = convert(&filter, &tainted_flood, false, None).unwrap();
         assert!(!kinds(&unmoved).contains(&"displace"), "{:?}", kinds(&unmoved));
         assert!(tainted, "the result of a tainted map is tainted, as Blink's");
         // A tainted source (a filter list's `drop-shadow(currentcolor)` before it) taints the result.
-        let (_, _, tainted) = convert(&filter, &|_| PrimitiveNotes::default(), true).unwrap();
+        let (_, _, tainted) = convert(&filter, &|_| PrimitiveNotes::default(), true, None).unwrap();
         assert!(tainted);
     }
 
@@ -955,7 +1034,7 @@ mod tests {
                 </filter>
                 <rect width="100" height="100" fill="red" filter="url(#f)"/></svg>"##,
         );
-        let (filter, images, _) = convert(&first_filter(&tree), &|_| PrimitiveNotes::default(), false).unwrap();
+        let (filter, images, _) = convert(&first_filter(&tree), &|_| PrimitiveNotes::default(), false, None).unwrap();
         assert_eq!(kinds(&filter), ["image", "turbulence", "flood", "diffuse"]);
         assert_eq!(images, [0]);
     }
@@ -1031,7 +1110,7 @@ mod tests {
         let filter = first_filter(&tree);
         assert!(graph(&filter).is_none());
         let no_light = |_| PrimitiveNotes { no_light: true, ..Default::default() };
-        let (graph, ..) = convert(&filter, &no_light, false).unwrap();
+        let (graph, ..) = convert(&filter, &no_light, false, None).unwrap();
         let FilterEffect::Flood(color) = &graph.nodes()[0].effect else { panic!() };
         assert_eq!(color.components[3], 0.0);
     }

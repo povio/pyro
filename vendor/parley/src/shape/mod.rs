@@ -107,6 +107,18 @@ pub(crate) fn shape_text<'a, B: Brush>(
             }
         })
         .collect();
+    // pyro: upright glyphs in a vertical line take the font's vertical alternates (`vert`, as
+    // HarfBuzz enables it shaping top to bottom, CSS Fonts 4 § 7.1 default features); the
+    // style's own settings come after it, so `"vert" 0` turns it off (WPT css-fonts
+    // `font-default-04`).
+    let upright_features: &'_ Vec<SmallVec<[FontFeature; 8]>> = &style_features
+        .iter()
+        .map(|features| {
+            core::iter::once(FontFeature::new(Tag::new(b"vert"), 1))
+                .chain(features.iter().copied())
+                .collect()
+        })
+        .collect();
 
     // pyro: the layout's scale (set before shaping), to shape with the unscaled size as the point size.
     let scale = layout.data.scale;
@@ -134,7 +146,9 @@ pub(crate) fn shape_text<'a, B: Brush>(
 
             // Items are at least one character long, therefore the item's own first character is
             // never a split point.
-            chars.next();
+            // pyro: in a vertical line (not upright throughout) an item keeps one vertical
+            // orientation, which paint draws a run by (`upright_in_vertical`).
+            let item_upright = chars.next().map(|(_, (_, c))| crate::upright_in_vertical(c));
 
             let char_end = 'item: loop {
                 let Some(&(char_index, (byte_index, _))) = chars.peek() else {
@@ -153,7 +167,12 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         // split a run and we were not called, such as at a bidi boundary).
                         inline_box_iter.next();
                     } else if inline_box.index == byte_index {
-                        atomic |= inline_box.kind == InlineBoxKind::InFlow;
+                        // pyro: an atomic inline, or the edge of an inline box with a margin,
+                        // border or padding, breaks the shaping context: no joining across it
+                        // (CSS Text 3 § 7.3, WPT css-text `shaping-009`).
+                        atomic |= inline_box.kind == InlineBoxKind::InFlow
+                            || (matches!(inline_box.kind, InlineBoxKind::SpanStart | InlineBoxKind::SpanEnd)
+                                && inline_box.width > 0.0);
                         inline_box_iter.next();
                         split = true;
                     } else {
@@ -180,7 +199,24 @@ pub(crate) fn shape_text<'a, B: Brush>(
                         || spacing_trim(style) != spacing_trim(item_style)
                         // pyro: and where a span shifted by `vertical-align` starts or ends
                         // (CSS Text 3 § 7.3, WPT css-text `boundary-shaping-002/006`).
-                        || shifted_span(styles, style_index) != shifted_span(styles, item_style_index);
+                        || shifted_span(styles, style_index) != shifted_span(styles, item_style_index)
+                        // pyro: and at the edges of a bidi isolate (CSS Text 3 § 7.3, WPT css-text
+                        // `boundary-shaping-008`), where HarfBuzz would ligate across.
+                        || isolating_span(styles, style_index) != isolating_span(styles, item_style_index)
+                        // pyro: and where `white-space` starts or stops preserving segment breaks
+                        // (`ShapeOptions::preserved_breaks`).
+                        || preserves_breaks(style) != preserves_breaks(item_style);
+                }
+
+                // (Only at a grapheme cluster's start: a cluster takes its base's orientation,
+                // UTR #50, so a ZWJ sequence or a variation selector stays with it.)
+                if !split
+                    && item_style.vertical
+                    && !item_style.upright
+                    && analysis.char_info().get(char_index).is_some_and(|info| info.is_grapheme_start())
+                    && let Some(&(_, (_, c))) = chars.peek()
+                {
+                    split = Some(crate::upright_in_vertical(c)) != item_upright;
                 }
 
                 if split {
@@ -200,7 +236,11 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     font_size: item_style.font_size,
                     // pyro: tracking follows the unscaled size (styles hold sizes times the scale).
                     point_size: if scale > 0.0 { item_style.font_size / scale } else { item_style.font_size },
-                    features: &style_features[item_style_index as usize],
+                    features: if item_style.vertical && (item_style.upright || item_upright == Some(true)) {
+                        &upright_features[item_style_index as usize]
+                    } else {
+                        &style_features[item_style_index as usize]
+                    },
                     variations: rcx.variations(item_style.font_variations).unwrap_or(&[]),
                     face_size_adjust: !item_style.font_size_adjusted,
                     auto_opsz: item_style.auto_optical_size,
@@ -208,6 +248,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
                     spacing_trim: spacing_trim(item_style),
                     isolated_before,
                     isolated_after,
+                    vertical_upright: item_style.vertical && (item_style.upright || item_upright == Some(true)),
+                    preserved_breaks: preserves_breaks(item_style),
                 },
             })
         })
@@ -236,6 +278,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
         let run_text_byte_start = shaped_run.range.byte_range.start;
         let run_style_index = char_style_indices[shaped_run.range.char_range.start];
         let run_style = &styles[usize::from(run_style_index)];
+        let run_chars = shaped_run.range.char_range.clone();
 
         // Push inline boxes positioned before the start of this item. pyro: each with its
         // own bidi level (`inline_box_levels`).
@@ -256,8 +299,17 @@ pub(crate) fn shape_text<'a, B: Brush>(
             // we probably shouldn't itemize on them; we should just ensure we don't ligate if
             // they're non-zero).
             run_style,
-            Spacing::new(run_style.word_spacing, run_style.letter_spacing)
-                .with_scales(run_style.spacing_scales),
+            // pyro: no letter-spacing in a run of a cursive script (CSS Text 3 § 8.2: it would
+            // break the letters' joins), as in Blink. A run is of one script; its own letters say
+            // which (characters of no script take their neighbours').
+            Spacing::new(
+                run_style.word_spacing,
+                match analysis.char_info()[run_chars].iter().find_map(|info| info.cursive_script()) {
+                    Some(true) => 0.0,
+                    _ => run_style.letter_spacing,
+                },
+            )
+            .with_scales(run_style.spacing_scales),
             char_style_indices,
         );
     }
@@ -268,11 +320,30 @@ pub(crate) fn shape_text<'a, B: Brush>(
     }
 
     // pyro: CSS `text-orientation: upright`.
-    upright::apply(layout, styles);
+    upright::apply(layout, styles, text);
     // pyro: CSS `text-autospace`.
     autospace::apply(layout, text, styles, inline_boxes);
     // pyro: CSS `text-justify`.
-    justify::apply(layout, text, styles);
+    justify::apply(layout, text, styles, inline_boxes);
+    // pyro: CSS `hanging-punctuation` (the line breaker's `end_hang`).
+    layout.data.hang_classes.clear();
+    if styles.iter().any(|style| style.hanging_punctuation != 0) {
+        layout.data.hang_classes.extend(text.chars().map(|ch| {
+            let stop = matches!(
+                ch,
+                ',' | '.' | '\u{060C}' | '\u{06D4}' | '\u{3001}' | '\u{3002}' | '\u{FF0C}' | '\u{FF0E}' | '\u{FE50}'
+                    | '\u{FE51}' | '\u{FE52}' | '\u{FF61}' | '\u{FF64}'
+            );
+            u8::from(parley_engine::hangs_at_edge(ch, true))
+                | (u8::from(parley_engine::hangs_at_edge(ch, false)) << 1)
+                | (u8::from(stop) << 2)
+        }));
+        let clusters = layout.data.shaped_text.shaped_clusters();
+        layout.data.last_content_cluster = clusters
+            .iter()
+            .rposition(|cluster| cluster.whitespace() == parley_engine::shape::Whitespace::None)
+            .unwrap_or(0) as u32;
+    }
 }
 
 /// pyro: how the shaper trims a style's fullwidth punctuation (CSS `text-spacing-trim`): the
@@ -458,7 +529,10 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
         cluster: &mut CharCluster,
     ) -> Option<FontInstanceRef<'_>> {
         let style_index = cluster.style_index();
-        let is_emoji = cluster.is_emoji();
+        // pyro: the presentation the cluster asks for: a variation selector's (U+FE0F emoji,
+        // U+FE0E text), else `font-variant-emoji`'s, else its default (CSS Fonts 4 § 6.13).
+        let presentation = emoji_presentation(cluster, self.styles[style_index as usize].font_variant_emoji);
+        let is_emoji = cluster.is_emoji() || presentation == Some(true);
 
         if style_index != self.style_index || is_emoji || self.fonts_id.is_none() {
             self.style_index = style_index;
@@ -565,6 +639,16 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
 
         let mut selected_font = None;
         let mut best_coverage = Coverage::NONE;
+        // pyro: the first font covering the cluster whose kind (colour or not) is the presentation's.
+        let mut presented_font = None;
+        // pyro: a variation sequence in the cluster: the first font that maps it wins (CSS Fonts 4
+        // § 5.4 cluster matching), else its base character is matched as before.
+        let sequence = {
+            let chars = cluster.chars();
+            chars.iter().position(|c| parley_engine::is_variation_selector(c.ch)).and_then(|i| {
+                (i > 0).then(|| (chars[0].ch, chars[i].ch))
+            })
+        };
 
         self.query.matches_with(|font| {
             let Some(charmap) = font.charmap() else {
@@ -579,15 +663,39 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
                     // default-ignorable handling), so as Blink keeps them in the font: U+2011 drawn
                     // as the font's U+2010, and default-ignorable code points hidden (WPT css-text
                     // `line-break-anywhere-overrides-uax-behavior-011/013/014`).
-                    has(ch) || (ch == '\u{2011}' && has('\u{2010}')) || hidden_default_ignorable(ch)
+                    // pyro: and a variation selector, which no nominal cmap maps: the sequence is
+                    // looked up in the font's `cmap` format 14 below, else the base character
+                    // is drawn alone.
+                    has(ch)
+                        || (ch == '\u{2011}' && has('\u{2010}'))
+                        || hidden_default_ignorable(ch)
+                        || parley_engine::is_variation_selector(ch)
                 },
                 self.analysis_data_sources,
             );
+            if let Some((base, selector)) = sequence
+                && coverage.is_complete()
+                && parley_engine::maps_variation_sequence(font.blob.as_ref(), font.index, base, selector)
+            {
+                presented_font = Some(font);
+                return fontique::QueryStatus::Stop;
+            }
+            if let Some(want_color) = presentation
+                && coverage.is_complete()
+            {
+                if is_color_font(font) == want_color {
+                    presented_font = Some(font);
+                    return fontique::QueryStatus::Stop;
+                }
+                if best_coverage.is_complete() {
+                    return fontique::QueryStatus::Continue;
+                }
+            }
             if coverage > best_coverage {
                 selected_font = Some(font);
                 best_coverage = coverage;
 
-                if coverage.is_complete() {
+                if coverage.is_complete() && presentation.is_none() && sequence.is_none() {
                     fontique::QueryStatus::Stop
                 } else {
                     fontique::QueryStatus::Continue
@@ -600,12 +708,42 @@ impl<'a, 'b, B: Brush> parley_engine::FontSelector for FontSelector<'a, 'b, B> {
             }
         });
 
-        selected_font.map(|font| FontInstanceRef {
+        presented_font.or(selected_font).map(|font| FontInstanceRef {
             data: &font.blob,
             index: font.index,
             synthesis: &font.synthesis,
         })
     }
+}
+
+/// pyro: whether `cluster` asks for emoji presentation (`Some(true)`), text presentation
+/// (`Some(false)`) or neither: a variation selector in it decides, else `font-variant-emoji`
+/// (`text`, `emoji`, and `unicode`: the default presentation), else none (`normal`: each font's
+/// own glyph, as before).
+fn emoji_presentation(cluster: &CharCluster, variant: crate::style::FontVariantEmoji) -> Option<bool> {
+    use crate::style::FontVariantEmoji;
+    if cluster.chars().iter().any(|c| c.ch == '\u{FE0F}') {
+        return Some(true);
+    }
+    if cluster.chars().iter().any(|c| c.ch == '\u{FE0E}') {
+        return Some(false);
+    }
+    // Only for emoji: other text has no presentation to choose.
+    let is_emoji_char = cluster.chars().first().is_some_and(|c| parley_engine::is_emoji_char(c.ch));
+    match variant {
+        FontVariantEmoji::Emoji if is_emoji_char => Some(true),
+        FontVariantEmoji::Text if is_emoji_char => Some(false),
+        // The Unicode default presentation (`Emoji_Presentation`).
+        FontVariantEmoji::Unicode if is_emoji_char => {
+            Some(cluster.chars().first().is_some_and(|c| parley_engine::is_emoji_presentation_char(c.ch)))
+        }
+        _ => None,
+    }
+}
+
+/// pyro: whether `font` draws colour glyphs (`parley_engine::is_color_font`).
+fn is_color_font(font: &QueryFont) -> bool {
+    parley_engine::is_color_font(font.blob.as_ref(), font.index)
 }
 
 /// Just query for any generic family's font from the font collection.
@@ -642,6 +780,20 @@ fn any_font(query: &mut Query<'_>) -> Option<QueryFont> {
 
 /// pyro: the nearest span around the text of style `index` (itself included) that `vertical-align`
 /// shifts, if any: text on either side of the edge of such a span is shaped apart.
+/// pyro: the nearest span at or above `index` that is a bidi isolate, if any.
+fn isolating_span<B: Brush>(styles: &[ResolvedStyle<B>], mut index: u16) -> Option<u16> {
+    loop {
+        let style = &styles[usize::from(index)];
+        if style.isolates {
+            return Some(index);
+        }
+        if style.parent == index {
+            return None;
+        }
+        index = style.parent;
+    }
+}
+
 fn shifted_span<B: Brush>(styles: &[ResolvedStyle<B>], mut index: u16) -> Option<u16> {
     loop {
         let style = &styles[usize::from(index)];
@@ -679,4 +831,10 @@ fn hidden_default_ignorable(ch: char) -> bool {
             | 0xE0000..=0xE00FF
             | 0xE01F0..=0xE0FFF
     )
+}
+
+/// pyro: whether `style`'s `white-space` preserves segment breaks (`pre`, `pre-wrap`, `pre-line`,
+/// `break-spaces`), where a line or paragraph separator breaks the line.
+fn preserves_breaks<B: Brush>(style: &crate::resolve::ResolvedStyle<B>) -> bool {
+    style.white_space_collapse != crate::WhiteSpaceCollapse::Collapse
 }

@@ -26,6 +26,14 @@ pub trait BlockContainerStyle: CoreStyle {
         Style::<Self::CustomIdent>::DEFAULT.align_content
     }
 
+    /// pyro: whether the box establishes an independent formatting context for a reason
+    /// `overflow`, `contain` and `align-content` do not say (a `line-clamp` container: CSS
+    /// Overflow 4 § 5.2).
+    #[inline(always)]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        false
+    }
+
     /// The default inline-axis alignment of this block container's children (`justify-items`).
     /// Out-of-flow children with `justify-self: auto` are aligned within their static-position
     /// rectangle according to this value.
@@ -116,6 +124,14 @@ pub trait BlockItemStyle: CoreStyle {
     #[inline(always)]
     fn align_content(&self) -> AlignContent {
         AlignContent::NORMAL
+    }
+
+    /// pyro: whether the box establishes an independent formatting context for a reason
+    /// `overflow`, `contain` and `align-content` do not say (a `line-clamp` container: CSS
+    /// Overflow 4 § 5.2).
+    #[inline(always)]
+    fn establishes_independent_formatting_context(&self) -> bool {
+        false
     }
 
     /// Whether the item is a floated

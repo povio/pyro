@@ -111,6 +111,9 @@ pub struct ElementAnimations {
     /// Script animations in effect on the element's `::marker` (`pseudoElement: '::marker'`), in
     /// composite order: their values go into the marker's style.
     pub marker: Vec<Effect>,
+    /// Script animations in effect on a top-layer element's `::backdrop`: their values go into
+    /// the backdrop's style.
+    pub backdrop: Vec<Effect>,
     /// Effects on the element's `::before` (`[0]`) and `::after` (`[1]`): their values go into
     /// the pseudo-element's style.
     pub pseudos: [PseudoAnimations; 2],

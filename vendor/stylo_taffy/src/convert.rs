@@ -105,17 +105,7 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::MaxContent => taffy::Dimension::max_content(),
         stylo::Size::MinContent => taffy::Dimension::min_content(),
         stylo::Size::FitContent => taffy::Dimension::fit_content(),
-        stylo::Size::FitContentFunction(val) => match val.0.unpack() {
-            stylo::UnpackedLengthPercentage::Length(len) => {
-                taffy::Dimension::fit_content_px(len.px())
-            }
-            stylo::UnpackedLengthPercentage::Percentage(percentage) => {
-                taffy::Dimension::fit_content_percent(percentage.0)
-            }
-            stylo::UnpackedLengthPercentage::Calc(calc_ptr) => taffy::Dimension::fit_content_calc(
-                calc_ptr as *const stylo::CalcLengthPercentage as *const (),
-            ),
-        },
+        stylo::Size::FitContentFunction(val) => fit_content_function(&val.0),
 
         stylo::Size::Stretch => taffy::Dimension::stretch(),
         stylo::Size::WebkitFillAvailable => taffy::Dimension::stretch(),
@@ -126,9 +116,20 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::CalcSizeMinContent(_) => taffy::Dimension::min_content(),
         stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::max_content(),
 
-        // Anchor positioning will be flagged off for time being
-        stylo::Size::AnchorSizeFunction(_) => unreachable!(),
-        stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::Dimension::AUTO, dimension),
+        stylo::Size::AnchorContainingCalcFunction(_) => taffy::Dimension::AUTO,
+    }
+}
+
+/// `fit-content(<length-percentage>)`; a `calc()` is a pointer into `val`, which must outlive it.
+#[inline]
+pub fn fit_content_function(val: &stylo::LengthPercentage) -> taffy::Dimension {
+    match val.unpack() {
+        stylo::UnpackedLengthPercentage::Length(len) => taffy::Dimension::fit_content_px(len.px()),
+        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::Dimension::fit_content_percent(percentage.0),
+        stylo::UnpackedLengthPercentage::Calc(calc_ptr) => {
+            taffy::Dimension::fit_content_calc(calc_ptr as *const stylo::CalcLengthPercentage as *const ())
+        }
     }
 }
 
@@ -174,9 +175,8 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
         | stylo::Size::CalcSizeMinContent(_)
         | stylo::Size::CalcSizeMaxContent(_) => taffy::LengthPercentageAuto::AUTO,
 
-        // Anchor positioning will be flagged off for time being
-        stylo::Size::AnchorSizeFunction(_) => unreachable!(),
-        stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, min_size),
+        stylo::Size::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
 }
 
@@ -204,6 +204,9 @@ pub fn max_size_keyword(val: &stylo::MaxSize) -> taffy::Dimension {
         stylo::MaxSize::MinContent => taffy::Dimension::min_content(),
         stylo::MaxSize::FitContent => taffy::Dimension::fit_content(),
         stylo::MaxSize::Stretch | stylo::MaxSize::WebkitFillAvailable => taffy::Dimension::stretch(),
+        // pyro: `fit-content(<length-percentage>)` (css-sizing-4), as `min-width` has it (a
+        // `calc()` points into the computed value itself, which outlives the layout)
+        stylo::MaxSize::FitContentFunction(val) => fit_content_function(&val.0),
         _ => taffy::Dimension::AUTO,
     }
 }
@@ -222,9 +225,8 @@ pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
         stylo::MaxSize::Stretch => taffy::LengthPercentageAuto::AUTO,
         stylo::MaxSize::WebkitFillAvailable => taffy::LengthPercentageAuto::AUTO,
 
-        // Anchor positioning will be flagged off for time being
-        stylo::MaxSize::AnchorSizeFunction(_) => unreachable!(),
-        stylo::MaxSize::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::MaxSize::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, max_size),
+        stylo::MaxSize::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
 }
 
@@ -234,9 +236,8 @@ pub fn margin(val: &stylo::MarginVal) -> taffy::LengthPercentageAuto {
         stylo::MarginVal::Auto => taffy::LengthPercentageAuto::AUTO,
         stylo::MarginVal::LengthPercentage(val) => length_percentage(val).into(),
 
-        // Anchor positioning will be flagged off for time being
-        stylo::MarginVal::AnchorSizeFunction(_) => unreachable!(),
-        stylo::MarginVal::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::MarginVal::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(zero(), margin),
+        stylo::MarginVal::AnchorContainingCalcFunction(_) => zero(),
     }
 }
 
@@ -257,10 +258,9 @@ pub fn inset(val: &stylo::InsetVal) -> taffy::LengthPercentageAuto {
         stylo::InsetVal::Auto => taffy::LengthPercentageAuto::AUTO,
         stylo::InsetVal::LengthPercentage(val) => length_percentage(val).into(),
 
-        // Anchor positioning will be flagged off for time being
-        stylo::InsetVal::AnchorSizeFunction(_) => unreachable!(),
-        stylo::InsetVal::AnchorFunction(_) => unreachable!(),
-        stylo::InsetVal::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::InsetVal::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, inset),
+        stylo::InsetVal::AnchorFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, inset),
+        stylo::InsetVal::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
 }
 
@@ -411,9 +411,18 @@ pub fn establishes_fixed_containing_block(style: &stylo::ComputedValues) -> bool
     ) {
         return true;
     }
+    // pyro: on a box containment applies to: not a non-atomic inline box (its abspos descendants
+    // keep the containing block they had; WPT css-contain `contain-*-ignored-cases-ib-split-001`),
+    // nor an internal table box other than a cell.
     if box_style
         .contain
         .intersects(Contain::LAYOUT | Contain::PAINT)
+        && {
+            use style::values::specified::box_::{DisplayInside, DisplayOutside};
+            let display = style.clone_display();
+            !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+                && !(display.outside() == DisplayOutside::InternalTable && display.inside() != DisplayInside::TableCell)
+        }
     {
         return true;
     }
@@ -1052,6 +1061,7 @@ pub fn to_taffy_style(style: &stylo::ComputedValues) -> taffy::Style<Atom> {
         box_sizing: self::box_sizing(style.clone_box_sizing()),
         item_is_table: display.inside() == stylo::DisplayInside::Table,
         collapsed_rows: Default::default(),
+        collapsed_columns: Default::default(),
         item_is_replaced: false,
         item_is_compressible_replaced: false,
         position: self::position(style.clone_position()),

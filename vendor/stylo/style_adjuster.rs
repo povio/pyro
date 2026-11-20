@@ -512,6 +512,9 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             return;
         }
         let em = self.style.get_font().slow_clone_font_size().computed_size();
+        // pyro: the box of combined text (blitz-dom: no letter spacing, width variants, one glued
+        // letter in the line).
+        self.style.add_flags(ComputedValueFlags::IS_TEXT_COMBINED);
         self.style.mutate_inherited_box().set_writing_mode(WritingModeProperty::HorizontalTb);
         self.style.writing_mode = crate::logical_geometry::WritingMode::new(self.style.get_inherited_box());
         let text = self.style.mutate_inherited_text();
@@ -539,16 +542,14 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         }
 
         if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
-            // pyro: `clip` beside `hidden` stays `clip`, as in Blink: that axis neither scrolls nor
-            // keeps a scroll offset (WPT css-overflow `single-axis-overflow-scroll-to-clip`)
             use crate::values::computed::Overflow;
-            let adjust = |own: Overflow, other: Overflow| match (own, other) {
-                (Overflow::Clip, Overflow::Hidden) => Overflow::Clip,
+            let adjust = |own: Overflow| match own {
+                Overflow::Clip => Overflow::Clip,
                 _ => own.to_scrollable(),
             };
             let box_style = self.style.mutate_box();
-            box_style.set_overflow_x(adjust(overflow_x, overflow_y));
-            box_style.set_overflow_y(adjust(overflow_y, overflow_x));
+            box_style.set_overflow_x(adjust(overflow_x));
+            box_style.set_overflow_y(adjust(overflow_y));
         }
     }
 
@@ -1248,6 +1249,31 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         }
     }
 
+    /// pyro: `backface-visibility: hidden` on an element participating in a 3D rendering context
+    /// (its layout parent `preserve-3d`) makes it the containing block of its absolutely and
+    /// fixed positioned descendants, as in Chromium (WPT css-transforms
+    /// `backface-visibility-hidden-003`, `-004`): marked as `will-change` of such a property
+    /// marks it (`WillChangeBits::FIXPOS_CB_NON_SVG`), which every containing block check reads.
+    /// Not on a non-atomic inline box, to which `backface-visibility` does not apply.
+    #[cfg(feature = "servo")]
+    fn adjust_for_backface_in_3d_context(&mut self, layout_parent_style: &ComputedValues) {
+        use crate::computed_values::backface_visibility::T as BackfaceVisibility;
+        use crate::computed_values::transform_style::T as TransformStyle;
+        use crate::values::specified::box_::WillChangeBits;
+        let box_style = self.style.get_box();
+        if box_style.backface_visibility != BackfaceVisibility::Hidden
+            || layout_parent_style.get_box().transform_style != TransformStyle::Preserve3d
+            || box_style.will_change.bits.contains(WillChangeBits::FIXPOS_CB_NON_SVG)
+        {
+            return;
+        }
+        let display = *box_style.get_display();
+        if display.is_none() || display.is_contents() || display.is_inline_flow() {
+            return;
+        }
+        self.style.mutate_box().will_change.bits |= WillChangeBits::FIXPOS_CB_NON_SVG;
+    }
+
     /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
     #[allow(unused_variables)]
     pub fn adjust<E>(
@@ -1326,6 +1352,7 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             self.adjust_for_content_visibility();
             self.adjust_for_scroll_marker_group();
             self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
+            self.adjust_for_backface_in_3d_context(layout_parent_style);
         }
         if !try_tactic.is_empty() {
             self.adjust_for_try_tactic(try_tactic);

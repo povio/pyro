@@ -51,7 +51,7 @@ pub enum DisplayOuter {
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq)]
-    pub struct NodeFlags: u32 {
+    pub struct NodeFlags: u64 {
         /// Whether the node is the root node of an Inline Formatting Context
         const IS_INLINE_ROOT = 0b00000001;
         /// Whether the node is the root node of an Table formatting context
@@ -120,6 +120,12 @@ bitflags! {
         /// pyro: during the construction of an inline formatting context, an inline box one of whose
         /// children is a table part (`IS_SPACE_BETWEEN_TABLE_PARTS`); cleared as the box is done.
         const ENCLOSES_TABLE_PARTS = 1 << 24;
+        /// pyro: classic scrollbars (`stylo_taffy::scrollbars`): the node's `overflow-x: auto`
+        /// shows its horizontal scrollbar (its content overflowed horizontally when last laid out),
+        /// which takes a gutter (`stylo_taffy::StyleFlags::AUTO_SCROLLBAR_X`).
+        const AUTO_SCROLLBAR_X = 1 << 32;
+        /// pyro: classic scrollbars: the node's `overflow-y: auto` shows its vertical scrollbar.
+        const AUTO_SCROLLBAR_Y = 1 << 33;
         /// pyro: a table cell whose content is laid out lower in its box, by its
         /// `LayoutData::table_baseline_offset` (a cell aligned on its row's baseline; set by its
         /// table's layout, `layout::table::shift_cell_content`).
@@ -173,6 +179,25 @@ bitflags! {
         /// paints there, in tree order with the other positioned boxes (CSS 2.1 Appendix E step 8).
         /// Hit testing passes over it (its inline root hit-tests its text).
         const INLINE_PASS_ENTRY = 1 << 29;
+        /// pyro: a box after the clamp point of a line clamp (`layout::line_clamp`): not painted.
+        const HIDDEN_BY_CLAMP = 1 << 30;
+        /// pyro: a `display: run-in` box that runs in: the next block box lays it out as its
+        /// first inline box, its parent has no box for it, and its style says `inline`
+        /// (`layout::construct::resolve_run_ins`).
+        const RUNS_IN = 1 << 31;
+        /// pyro: a `content-visibility: auto` element that is not relevant to the user: its
+        /// contents are skipped as `hidden` skips them, with size containment
+        /// (`BaseDocument::update_content_visibility`).
+        const CV_SKIPPED = 1 << 35;
+        /// pyro: a `content-visibility: auto` element whose relevance was determined once (a new
+        /// one is skipped until then).
+        const CV_DETERMINED = 1 << 36;
+        /// pyro: a `content-visibility: auto` element a query needs rendered: relevant at the next
+        /// determination (`BaseDocument::force_content_visibility`).
+        const CV_FORCED = 1 << 37;
+        const POSITION_TRY_OPTIONS = 1 << 38;
+        const POSITION_VISIBILITY_CHECK = 1 << 39;
+        const ANCHOR_QUERIES = 1 << 40;
     }
 }
 
@@ -195,6 +220,8 @@ pub struct TransformContext {
     pub cb_border: [f64; 4],
     pub cb_padding: [f64; 4],
     pub cb_radii: [kurbo::Vec2; 4],
+    /// pyro: its corners' superellipse exponents (`corner-shape`), as `MotionContainingBlock` has them.
+    pub cb_corner_exponents: [f64; 4],
 }
 
 /// pyro: a 3D rendering context as an element of it gives it to its children
@@ -393,6 +420,9 @@ pub struct Node {
     /// is a box of the current layout when it equals `layout_parent` (which
     /// inline content of an inline root also has, without being listed).
     pub layout_child_of: Cell<Option<NodeId>>,
+    /// pyro: the anonymous inline table a table part of an inline box is wrapped in
+    /// (`layout::table_fixup::wrap_inline_table_parts`); read with `inline_table_of`, which checks it.
+    pub inline_table: Cell<Option<NodeId>>,
     /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
     /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
     /// `Layout.location` of these boxes is relative to this node's border box.
@@ -402,6 +432,10 @@ pub struct Node {
     /// block). The box's `Layout.location` is relative to this node rather than
     /// to its `layout_parent`. `None` for in-flow boxes.
     pub oof_containing_block: Cell<Option<NodeId>>,
+    pub(crate) anchor_scroll_axes: Cell<(Option<NodeId>, Option<NodeId>)>,
+    pub anchor_hidden: Cell<bool>,
+    pub(crate) anchor_visibility_target: Cell<Option<NodeId>>,
+    pub(crate) anchor_invalid: Cell<bool>,
     /// Anonymous block boxes created for this node during layout construction.
     ///
     /// Anonymous blocks live only in the slab (they are not part of the DOM
@@ -439,7 +473,15 @@ unsafe impl Sync for Node {}
 /// (element / anonymous block nodes) and [`DocumentData`] (the document node).
 macro_rules! universal_accessors {
     ($($(#[$meta:meta])* $field:ident / $field_mut:ident : $ty:ty),* $(,)?) => {
-        impl Node {
+        std::thread_local! {
+    /// pyro: set while a flex or grid container is hit for its items alone (`Node::hit_inner`).
+    static ITEMS_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// pyro: set while a flex or grid container is hit for its own box and content, its items (hit
+    /// for its parent already, `ITEMS_ONLY`) left out (`Node::hit_inner`).
+    static NO_ITEMS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl Node {
             $(
                 $(#[$meta])*
                 #[inline]
@@ -582,20 +624,129 @@ impl Node {
 
     #[inline]
     pub fn scroll_offset_mut(&mut self) -> &mut crate::Point<f64> {
+        self.tree().bump_geometry_generation();
         &mut self.layout_data_mut().scroll_offset
     }
 
     /// pyro: the offset of a `position: sticky` box from its laid-out place
     /// (`LayoutData::sticky_offset`).
     #[inline]
+    /// pyro: where paint places this box in its containing block's coordinates (CSS px): at its
+    /// location moved by its sticky offset, then its own transform (Blitz keeps the transform's
+    /// translation in device px, `scale` per CSS px), as blitz-paint's `node_transform` draws it
+    /// (less its device-pixel snapping). Composed up the containing blocks (with their scroll
+    /// offsets) it places the box in the document.
+    pub fn paint_placement(&self, scale: f64) -> kurbo::Affine {
+        let l = self.final_layout();
+        let sticky = self.sticky_offset();
+        let own = self.transform().as_deref().copied().map_or(kurbo::Affine::IDENTITY, |t| {
+            let [a, b, c, d, e, f] = t.as_coeffs();
+            kurbo::Affine::new([a, b, c, d, e / scale, f / scale])
+        });
+        kurbo::Affine::translate((l.location.x as f64 + sticky.x, l.location.y as f64 + sticky.y)) * own
+    }
+
     pub fn sticky_offset(&self) -> crate::Point<f64> {
-        self.layout_data().sticky_offset
+        let sticky = self.layout_data().sticky_offset;
+        let delta = self.anchor_scroll_offset();
+        crate::Point { x:sticky.x+delta.x, y:sticky.y+delta.y }
+    }
+
+    pub fn anchor_scroll_offset(&self) -> crate::Point<f64> {
+        if self.anchor_scroll_axes.get() == (None,None) { return crate::Point::ZERO; }
+        let tree = self.tree();
+        let generation = tree.geometry_generation();
+        let mut offsets = tree.anchor_offsets.lock().unwrap();
+        if offsets.0 != generation { offsets.1.clear(); offsets.0 = generation; }
+        *offsets.1.entry(self.id).or_insert_with(|| self.anchor_scroll_offset_with(|id| match id {
+            Some(id) => *tree[id].scroll_offset(),
+            None => tree.viewport_scroll(),
+        }))
+    }
+
+    pub fn anchor_scroll_offset_with(&self, scroll: impl Fn(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
+        if self.anchor_scroll_axes.get() == (None, None) { return crate::Point::ZERO; }
+        self.anchor_scroll_offset_in(self.containing_block(), scroll)
+    }
+
+    fn anchor_scrollable_axes(&self) -> (bool, bool) {
+        self.primary_styles().map_or((false, false), |style| {
+            let box_style = style.get_box();
+            (box_style.overflow_x.is_scrollable(), box_style.overflow_y.is_scrollable())
+        })
+    }
+
+    pub(crate) fn nearest_anchor_scrollport(&self, horizontal: bool) -> Option<NodeId> {
+        let tree = self.tree();
+        let mut cursor = self.containing_block();
+        for _ in 0..tree.len() {
+            let node = tree.get(cursor?)?;
+            let (x, y) = node.anchor_scrollable_axes();
+            if if horizontal { x } else { y } { return Some(node.id); }
+            cursor = node.containing_block();
+        }
+        None
+    }
+
+    pub(crate) fn anchor_scroll_offset_in(&self, container: Option<NodeId>, scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
+        self.anchor_adjustment(container, scroll, |node| node.layout_data().sticky_offset)
+    }
+
+    pub fn live_anchor_scroll_offset(&self, scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>, mut sticky: impl FnMut(NodeId) -> crate::Point<f64>) -> crate::Point<f64> {
+        if self.anchor_scroll_axes.get() == (None,None) { return crate::Point::ZERO; }
+        self.anchor_adjustment(self.containing_block(), scroll, |node| {
+            if node.primary_styles().is_some_and(|style| style.clone_position() == Position::Sticky) { sticky(node.id) } else { crate::Point::ZERO }
+        })
+    }
+
+    fn anchor_adjustment(&self, container: Option<NodeId>, mut scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>, mut sticky_of: impl FnMut(&Self) -> crate::Point<f64>) -> crate::Point<f64> {
+        let (anchor_x, anchor_y) = self.anchor_scroll_axes.get();
+        if anchor_x.is_none() && anchor_y.is_none() { return crate::Point::ZERO; }
+        let tree = self.tree();
+        let mut sum = |id: NodeId| {
+            let mut offset = crate::Point::ZERO;
+            let mut cursor = Some(id);
+            for _ in 0..tree.len() {
+                let Some(node) = cursor.and_then(|id| tree.get(id)) else { break };
+                if cursor == container {
+                    if self.taffy_position() == taffy::Position::Fixed && node.is_root_element() && !node.root_contains_fixed() {
+                        let viewport = scroll(None);
+                        offset.x -= viewport.x;
+                        offset.y -= viewport.y;
+                    }
+                    break;
+                }
+                if node.id != id {
+                    let (x, y) = node.anchor_scrollable_axes();
+                    if x || y {
+                        let actual = scroll(Some(node.id));
+                        if x { offset.x -= actual.x; }
+                        if y { offset.y -= actual.y; }
+                    }
+                }
+                if (offset.x != 0.0 || offset.y != 0.0) && node.has_transform_style() {
+                    if let Some(transform) = node.transform().as_deref() {
+                        let [xx, yx, xy, yy, _, _] = transform.as_coeffs();
+                        offset = crate::Point { x: xx * offset.x + xy * offset.y, y: yx * offset.x + yy * offset.y };
+                    }
+                }
+                let sticky = sticky_of(node);
+                offset.x += sticky.x;
+                offset.y += sticky.y;
+                if node.taffy_position() == taffy::Position::Fixed && node.containing_block().and_then(|cb| tree.get(cb)).is_some_and(|cb| cb.is_root_element() && !cb.root_contains_fixed()) { break; }
+                cursor = node.containing_block();
+            }
+            offset
+        };
+        if anchor_x == anchor_y { return anchor_x.map_or(crate::Point::ZERO,sum); }
+        crate::Point { x:anchor_x.map_or(0.0,|id|sum(id).x), y:anchor_y.map_or(0.0,|id|sum(id).y) }
     }
 
     /// pyro: sets [`Self::sticky_offset`].
     #[inline]
     pub fn set_sticky_offset(&mut self, offset: crate::Point<f64>) {
         if self.layout_data().sticky_offset != offset {
+            self.tree().bump_geometry_generation();
             self.layout_data_mut().sticky_offset = offset;
         }
     }
@@ -737,7 +888,12 @@ impl Node {
             children: ThinVec::new(),
             layout_parent: Cell::new(None),
             layout_child_of: Cell::new(None),
+            inline_table: Cell::new(None),
             oof_containing_block: Cell::new(None),
+            anchor_scroll_axes: Cell::new((None,None)),
+            anchor_hidden: Cell::new(false),
+            anchor_visibility_target: Cell::new(None),
+            anchor_invalid: Cell::new(false),
             layout_children: RefCell::new(None),
             hoisted_children: RefCell::new(ThinVec::new()),
             anonymous_blocks: ThinVec::new(),
@@ -785,8 +941,11 @@ impl Node {
         &self,
         transform_box: style::values::computed::TransformBox,
     ) -> euclid::default::Rect<CSSPixelLength> {
+        Self::layout_transform_reference_box(self.final_layout(), transform_box)
+    }
+
+    pub(crate) fn layout_transform_reference_box(layout: &Layout, transform_box: style::values::computed::TransformBox) -> euclid::default::Rect<CSSPixelLength> {
         use style::values::computed::TransformBox;
-        let layout = self.final_layout();
         let (origin, size) = match transform_box {
             TransformBox::ContentBox | TransformBox::FillBox => (
                 (
@@ -912,6 +1071,13 @@ impl Node {
                 r(&b.border_bottom_right_radius),
                 r(&b.border_bottom_left_radius),
             ];
+            let exponent = |k: f32| if k.is_nan() { 2.0 } else { 2f64.powf(f64::from(k).clamp(-20.0, 20.0)) };
+            context.cb_corner_exponents = [
+                exponent(b.corner_top_left_shape.k),
+                exponent(b.corner_top_right_shape.k),
+                exponent(b.corner_bottom_right_shape.k),
+                exponent(b.corner_bottom_left_shape.k),
+            ];
         }
         let box_styles = s.get_box();
         // pyro: an anonymous box (a table wrapper, row group or row around a cell) passes on the
@@ -963,6 +1129,7 @@ impl Node {
                     border: parent.cb_border,
                     padding: parent.cb_padding,
                     radii: parent.cb_radii,
+                    corner_exponents: parent.cb_corner_exponents,
                 });
             let previous = crate::stylo_to_kurbo::MOTION_CONTAINING_BLOCK.with(|c| c.replace(motion));
             let resolved = crate::stylo_to_kurbo::resolve_transform(box_styles, reference_box);
@@ -1232,7 +1399,7 @@ impl Node {
         Some(
             if self.element_data().is_some_and(|el| el.is_button_input()) {
                 stylo_taffy::convert::button_input_display(display)
-            } else if self.is_fieldset() {
+            } else if self.is_fieldset() || crate::layout::multicol::uses_anonymous_content_box(self) {
                 stylo_taffy::convert::fieldset_display(display)
             } else {
                 display
@@ -1297,6 +1464,17 @@ impl Node {
         }
         let display = self.display_style().unwrap_or(StyloDisplay::inline());
         match display.outside() {
+            // pyro: a `display: contents` element's children (and `::before`/`::after`) are its
+            // parent's for box generation, so a block among them is a block in that parent (an
+            // inline holding one is split around it).
+            DisplayOutside::None if display.inside() == DisplayInside::Contents => {
+                self.has_block_level_pseudo_element()
+                    || self
+                        .children
+                        .iter()
+                        .copied()
+                        .any(|child_id| crate::util::ensure_stack(|| self.tree()[child_id].is_or_contains_block()))
+            }
             DisplayOutside::None => false,
             DisplayOutside::Block => true,
             _ => {
@@ -1865,6 +2043,11 @@ impl NodeData {
         self.downcast_element()?.attr(name)
     }
 
+    /// pyro: [`crate::node::ElementData::reserved_attr`].
+    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
+        self.downcast_element()?.reserved_attr(local)
+    }
+
     pub fn has_attr(&self, name: impl PartialEq<LocalName>) -> bool {
         self.downcast_element()
             .is_some_and(|elem| elem.has_attr(name))
@@ -1885,11 +2068,14 @@ impl NodeData {
 pub struct TextNodeData {
     /// The textual content of the text node
     pub content: String,
+    /// pyro: the box of this text when it is combined text no inline element holds
+    /// (`layout::combined_text`), which its inline root places in its stead.
+    pub combined_box: Option<NodeId>,
 }
 
 impl TextNodeData {
     pub fn new(content: String) -> Self {
-        Self { content }
+        Self { content, combined_box: None }
     }
 }
 
@@ -2073,6 +2259,11 @@ impl Node {
         Some(&attr.value)
     }
 
+    /// pyro: [`crate::node::ElementData::reserved_attr`].
+    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
+        self.element_data()?.reserved_attr(local)
+    }
+
     pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
         self.try_stylo_element_data()
             .and_then(|stylo| stylo.primary_styles())
@@ -2105,7 +2296,9 @@ impl Node {
                     natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }
             }
-            if el.name.local == local_name!("button") {
+            // pyro: not the box of a `::scroll-button()` (an anonymous `button` node), laid out as
+            // any box is (WPT css-overflow `scroll-markers/scroll-buttons-disabled-snapping`).
+            if el.name.local == local_name!("button") && !matches!(self.data, NodeData::AnonymousBlock(_)) {
                 flags |= stylo_taffy::StyleFlags::IS_BUTTON;
             }
             if el.is_button_input() {
@@ -2118,6 +2311,9 @@ impl Node {
             if el.name.local == local_name!("input") {
                 flags |= stylo_taffy::StyleFlags::IS_INPUT;
             }
+            if el.name.local == local_name!("frameset") {
+                flags |= stylo_taffy::StyleFlags::NO_SCROLLBARS;
+            }
             if let Some(inline_layout) = el.inline_layout_data.as_deref() {
                 flags |= inline_layout.span_cb_flags;
             }
@@ -2129,18 +2325,34 @@ impl Node {
         if self.flags.contains(NodeFlags::OVERFLOW_TO_VIEWPORT) {
             flags |= stylo_taffy::StyleFlags::OVERFLOW_TO_VIEWPORT;
         }
+        if self.flags.contains(NodeFlags::AUTO_SCROLLBAR_X) {
+            flags |= stylo_taffy::StyleFlags::AUTO_SCROLLBAR_X;
+        }
+        if self.flags.contains(NodeFlags::AUTO_SCROLLBAR_Y) {
+            flags |= stylo_taffy::StyleFlags::AUTO_SCROLLBAR_Y;
+        }
+        if self.is_root_element() {
+            flags |= stylo_taffy::StyleFlags::IS_ROOT;
+        }
+        if self.tree().classic_scrollbars {
+            flags |= stylo_taffy::StyleFlags::CLASSIC_SCROLLBARS;
+        }
 
         #[cfg(feature = "writing-mode")]
         {
             // Own-layout_wm by default: the node's own algorithm reads its style in its own axes
             let layout_wm = styles.writing_mode;
             let mut style = stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm);
+            style.custom_scrollbars = self.custom_scrollbar_size();
+            style.scrollbar_size_limit = self.layout_data().scrollbar_size_limit;
             style.natural_ratio = natural_ratio;
             style
         }
         #[cfg(not(feature = "writing-mode"))]
         {
             let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
+            style.custom_scrollbars = self.custom_scrollbar_size();
+            style.scrollbar_size_limit = self.layout_data().scrollbar_size_limit;
             style.natural_ratio = natural_ratio;
             style
         }
@@ -2280,9 +2492,8 @@ impl Node {
     /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
     /// for nodes without computed styles (e.g. text nodes).
     pub fn taffy_display(&self) -> taffy::Display {
-        self.primary_styles()
-            .map(|style| {
-                let display = style.clone_display();
+        self.display_style()
+            .map(|display| {
                 if self.element_data().is_some_and(|el| el.is_button_input())
                     && !matches!(
                         display.inside(),
@@ -2370,8 +2581,47 @@ impl Node {
             .unwrap_or(0)
     }
 
+    /// pyro: whether this element participates in a 3D rendering context: its parent (in the
+    /// flat tree, through no `display: contents` element) has `transform-style: preserve-3d`.
+    pub fn participates_in_3d_context(&self) -> bool {
+        let tree = self.tree();
+        let mut parent = self.layout_parent.get().or(self.parent);
+        while let Some(id) = parent {
+            let node = &tree[id];
+            let Some(style) = node.primary_styles() else {
+                return false;
+            };
+            if style.clone_display().is_contents() {
+                parent = node.layout_parent.get().or(node.parent);
+                continue;
+            }
+            return style.get_box().transform_style == style::computed_values::transform_style::T::Preserve3d;
+        }
+        false
+    }
+
     // https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Stacking_context#features_creating_stacking_contexts
-    pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
+    /// pyro: whether this (root) element is itself the containing block of its fixed-position
+    /// descendants (a transform, perspective, `contain: layout` or `paint`, or `will-change` of
+    /// those): they then scroll with the document, not stay with the viewport (WPT css-contain
+    /// `contain-layout-021`). A filter or backdrop filter on the root makes none (Filter Effects 1
+    /// § 5; WPT filter-effects `filtered-html-is-not-container`).
+    pub fn root_contains_fixed(&self) -> bool {
+        use style::values::computed::{Perspective, Rotate, Scale, Translate};
+        use style::values::specified::box_::{Contain, WillChangeBits};
+        self.primary_styles().is_some_and(|style| {
+            let b = style.get_box();
+            !b.transform.0.is_empty()
+                || !matches!(b.translate, Translate::None)
+                || !matches!(b.rotate, Rotate::None)
+                || !matches!(b.scale, Scale::None)
+                || !matches!(b.perspective, Perspective::None)
+                || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+                || b.will_change.bits.intersects(WillChangeBits::TRANSFORM | WillChangeBits::PERSPECTIVE | WillChangeBits::CONTAIN)
+        })
+    }
+
+        pub fn is_stacking_context_root(&self, is_flex_or_grid_item: bool) -> bool {
         let Some(style) = self.primary_styles() else {
             return false;
         };
@@ -2379,7 +2629,7 @@ impl Node {
         let position = style.clone_position();
         let has_z_index = !style.clone_z_index().is_auto();
 
-        if style.clone_opacity() != 1.0 {
+        if style.clone_opacity() != 1.0 || &**style.get_view_transition_name().value.as_atom() != "none" {
             return true;
         }
 
@@ -2407,6 +2657,16 @@ impl Node {
             box_style.perspective,
             style::values::generics::box_::GenericPerspective::None
         ) || box_style.transform_style == style::computed_values::transform_style::T::Preserve3d
+        {
+            return true;
+        }
+
+        // pyro: so does `backface-visibility: hidden` on an element participating in a 3D
+        // rendering context (its parent `preserve-3d`), as in Chromium: its fixed positioned
+        // descendants then paint (and hide) with it (WPT css-transforms
+        // `backface-visibility-hidden-004`).
+        if box_style.backface_visibility == style::computed_values::backface_visibility::T::Hidden
+            && self.participates_in_3d_context()
         {
             return true;
         }
@@ -2441,8 +2701,18 @@ impl Node {
                     | WillChangeBits::PERSPECTIVE
                     // pyro: `contain` too (some of its values make one; WPT css-contain
                     // `contain-paint-stacking-context-001b`).
-                    | WillChangeBits::CONTAIN,
+                    | WillChangeBits::CONTAIN
+                    // pyro: and `view-transition-name` (CSS View Transitions 1 § 3.2: a value
+                    // other than `none` makes one; WPT css-will-change).
+                    | WillChangeBits::VIEW_TRANSITION_NAME,
             ) {
+                return true;
+            }
+            // pyro: `z-index` where a `z-index` other than `auto` would make one: a positioned box,
+            // a flex or grid item (WPT css-will-change `will-change-stacking-context-z-index-*`).
+            if box_style.will_change.bits.intersects(WillChangeBits::Z_INDEX)
+                && (position != Position::Static || is_flex_or_grid_item)
+            {
                 return true;
             }
         }
@@ -2525,12 +2795,29 @@ impl Node {
         scale: f64,
         scrollbar: &mut Option<crate::node::ScrollbarRef>,
     ) -> Option<HitResult> {
+        self.hit_inner_in_run(x, y, scale, scrollbar, None)
+    }
+
+    fn hit_inner_in_run(
+        &self, x: f32, y: f32, scale: f64, scrollbar: &mut Option<crate::node::ScrollbarRef>,
+        inherited_run: Option<(&crate::ColumnFragments, f32)>,
+    ) -> Option<HitResult> {
         use style::computed_values::pointer_events::T as PointerEvents;
         use style::computed_values::visibility::T as Visibility;
+        #[cfg(test)]
+        crate::util::HIT_CALLS.with(|calls| calls.set(calls.get() + 1));
+        // pyro: the item modes this visit is for (`ITEMS_ONLY`, `NO_ITEMS`), taken at once so that no
+        // other box visited from here sees them.
+        let items_only = ITEMS_ONLY.replace(false);
+        let no_items = NO_ITEMS.replace(false);
 
         // pyro: a positioned inline box listed in the paint tree for its paint order alone: its
         // inline root hit-tests its text (`NodeFlags::INLINE_PASS_ENTRY`).
         if self.flags.contains(NodeFlags::INLINE_PASS_ENTRY) {
+            return None;
+        }
+        // pyro: nor is a box a line clamp discarded (`layout::line_clamp`): it is not painted.
+        if self.flags.contains(NodeFlags::HIDDEN_BY_CLAMP) || self.hidden_by_anchor() {
             return None;
         }
 
@@ -2622,7 +2909,25 @@ impl Node {
             && y >= (overflow.y0 / scale) as f32
             && y <= (overflow.y1 / scale) as f32;
 
-        if !matches_self && !matches_content && !matches_hoisted_content && !matches_overflow {
+        // pyro: a paint child that escapes this box's clip (its containing block lies outside this
+        // box: `restore_out_of_flow_stacking_owners`) may lie anywhere: it is hit wherever it is.
+        let escaping_children = || {
+            self.paint_children.borrow().iter().flatten().any(|&id| {
+                let Some(child) = self.tree().get(id) else { return false };
+                if !child.taffy_position().is_out_of_flow() {
+                    return false;
+                }
+                let mut cb = child.containing_block();
+                while let Some(c) = cb {
+                    if c == self.id {
+                        return false;
+                    }
+                    cb = self.tree().get(c).and_then(|n| n.containing_block());
+                }
+                true
+            })
+        };
+        if !matches_self && !matches_content && !matches_hoisted_content && !matches_overflow && !escaping_children() {
             return None;
         }
 
@@ -2636,6 +2941,7 @@ impl Node {
         {
             *scrollbar = Some(sb);
         }
+        let column_point = taffy::Point { x, y };
         let (x, y) = (strip_x, strip_y);
 
         // Text clusters and callers of the returned coordinates work in the
@@ -2645,10 +2951,7 @@ impl Node {
         // padded inline root are hit one padding down and right of where
         // they are painted.
         let content_box_offset = if self.flags.is_inline_root() {
-            taffy::Point {
-                x: self.final_layout().padding.left + self.final_layout().border.left,
-                y: self.final_layout().padding.top + self.final_layout().border.top,
-            }
+            self.content_box_origin()
         } else {
             taffy::Point { x: 0.0, y: 0.0 }
         };
@@ -2660,24 +2963,34 @@ impl Node {
                     let Some(child) = self.tree().get(hoisted_child.node_id) else {
                         continue;
                     };
-                    let pos = hoisted_child.position(self.tree(), self.id);
-                    let x = x - pos.x;
-                    let y = y - pos.y;
-                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
-                        return Some(hit);
+                    for (x, y) in self.hoisted_hit_points(hoisted_child, x, y) {
+                        if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
+                            return Some(hit);
+                        }
                     }
                 }
             }
         }
 
-        // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).
-        for child_id in self.paint_children.borrow().iter().flatten().rev() {
-            let Some(child) = self.tree().get(*child_id) else {
-                continue;
-            };
+        // A paint child hit in its turn, placed as painted.
+        let hit_child = |child: &Node, scrollbar: &mut Option<_>| -> Option<HitResult> {
             let child_position = child.taffy_position();
             let mut child_x = x;
             let mut child_y = y;
+            let mut run = inherited_run;
+            if let Some(columns) = self.column_fragments() && columns.run_wrappers.contains(&child.id) {
+                run = columns.fragment_at(child_y).map(|fragment| (columns, fragment.start));
+            }
+            if let Some((columns, start)) = inherited_run { columns.child_start(child.id, start)?; }
+            if let Some(columns) = self.column_fragments() && let Some(&index) = columns.first_after_spanner.get(&child.id) {
+                let first = &columns.fragments[index];
+                if column_point.y < first.top {
+                    child_x = column_point.x - first.offset.x;
+                    child_y = column_point.y - first.offset.y;
+                } else if let Some(fragment) = columns.fragment_at(child_y) {
+                    columns.child_start(child.id, fragment.start)?;
+                }
+            }
             // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
             // (a fixed box at its stacking context's positioned level) is placed as painted.
             let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
@@ -2689,7 +3002,7 @@ impl Node {
                 // against the viewport and do not scroll with it. (A fixed box
                 // whose containing block is a transformed ancestor scrolls with
                 // that ancestor like any other out-of-flow box.)
-                if child_position == taffy::Position::Fixed && self.is_root_element() {
+                if child_position == taffy::Position::Fixed && self.is_root_element() && !self.root_contains_fixed() {
                     child_x -= self.scroll_offset().x as f32;
                     child_y -= self.scroll_offset().y as f32;
                     let viewport_scroll = self.tree().viewport_scroll();
@@ -2700,25 +3013,93 @@ impl Node {
                 child_x -= offset.x;
                 child_y -= offset.y;
             }
-            if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar)) {
-                return Some(hit);
-            }
-        }
+            let run = run.filter(|(columns, _)| columns.run_wrappers.contains(&child.id));
+            crate::util::ensure_stack(|| child.hit_inner_in_run(child_x, child_y, scale, scrollbar, run))
+        };
 
-        // Negative z_index hoisted children
-        if matches_hoisted_content {
-            if let Some(hoisted) = &self.stacking_context {
-                for hoisted_child in hoisted.neg_z_hoisted_children().rev() {
-                    let Some(child) = self.tree().get(hoisted_child.node_id) else {
-                        continue;
-                    };
-                    let pos = hoisted_child.position(self.tree(), self.id);
-                    let x = x - pos.x;
-                    let y = y - pos.y;
-                    if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
+        // pyro: the items of a flex or grid child painted with the inline content of this box's
+        // painter (`Node::items_in_phases`) lie over every child's own box painted with the block
+        // backgrounds: they are hit first, as they paint (a later empty block's background does not
+        // take the hit from an item overflowing onto it).
+        // (The positioned-level children painted after that content, a positioned sibling over
+        // an item, go before the items: hit in reverse paint order with them.)
+        let has_items = || {
+            self.paint_children.borrow().iter().flatten().any(|&id| {
+                self.tree().get(id).is_some_and(|c| !c.taffy_position().is_out_of_flow() && c.items_in_phases())
+            })
+        };
+        // (The positioned-level children tested here, which the ordinary pass below skips: each
+        // child is tested once per visit of this box, or nested ones would be tested 2^depth times.)
+        let mut tested: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        // (The children whose items were tested here: the ordinary pass tests their own boxes alone.)
+        let mut items_done: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        if !items_only && !no_items && has_items() {
+            for child_id in self.paint_children.borrow().iter().flatten().rev() {
+                let Some(child) = self.tree().get(*child_id) else { continue };
+                let positioned_level = child.element_data().is_some()
+                    && (child.stacking_context.is_some()
+                        || child.primary_styles().is_some_and(|s| s.clone_position() != Position::Static));
+                if positioned_level {
+                    if let Some(hit) = hit_child(child, scrollbar) {
                         return Some(hit);
                     }
+                    tested.insert(*child_id);
+                    continue;
                 }
+                if child.taffy_position().is_out_of_flow() || !child.items_in_phases() {
+                    continue;
+                }
+                let (mut child_x, mut child_y) = (x, y);
+                if let Some(offset) = child.lifted_paint_offset(self.id) {
+                    child_x -= offset.x;
+                    child_y -= offset.y;
+                }
+                ITEMS_ONLY.set(true);
+                let hit = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar));
+                ITEMS_ONLY.set(false);
+                if let Some(hit) = hit {
+                    return Some(hit);
+                }
+                items_done.insert(*child_id);
+            }
+        }
+        // pyro: hit for its items alone (see above): its own box and content come in their turn.
+        if items_only {
+            for child_id in self.paint_children.borrow().iter().flatten().rev() {
+                let Some(child) = self.tree().get(*child_id) else { continue };
+                if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
+                    return Some(hit);
+                }
+            }
+            return None;
+        }
+
+        let item_set: Option<std::collections::HashSet<NodeId>> = no_items.then(|| {
+            let items = self.layout_children.borrow();
+            #[cfg(test)]
+            crate::util::HIT_STEPS.with(|steps| steps.set(steps.get() + items.as_ref().map_or(0, |items| items.len())));
+            items.iter().flatten().copied().collect()
+        });
+        // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).
+        for child_id in self.paint_children.borrow().iter().flatten().rev() {
+            let Some(child) = self.tree().get(*child_id) else {
+                continue;
+            };
+            if tested.contains(child_id) {
+                continue;
+            }
+            // pyro: its items, tested for the parent already, are not tested again (a set of them,
+            // made once per visit: not a search of the item list per child).
+            #[cfg(test)]
+            crate::util::HIT_STEPS.with(|steps| steps.set(steps.get() + 1));
+            if no_items && item_set.as_ref().is_some_and(|items| items.contains(child_id)) {
+                continue;
+            }
+            NO_ITEMS.set(items_done.contains(child_id));
+            let hit = hit_child(child, scrollbar);
+            NO_ITEMS.set(false);
+            if let Some(hit) = hit {
+                return Some(hit);
             }
         }
 
@@ -2747,6 +3128,24 @@ impl Node {
                             y,
                             is_text: true,
                         });
+                    }
+                }
+            }
+        }
+
+        // Negative z_index hoisted children
+        // pyro: after the inline content, which paints over them (CSS 2.1 Appendix E: step 3 before
+        // step 7): text in front of a `z-index: -1` box takes the hit.
+        if matches_hoisted_content {
+            if let Some(hoisted) = &self.stacking_context {
+                for hoisted_child in hoisted.neg_z_hoisted_children().rev() {
+                    let Some(child) = self.tree().get(hoisted_child.node_id) else {
+                        continue;
+                    };
+                    for (x, y) in self.hoisted_hit_points(hoisted_child, x, y) {
+                        if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
+                            return Some(hit);
+                        }
                     }
                 }
             }
@@ -3098,14 +3497,14 @@ impl Node {
     /// borders and scrollbar)
     pub fn client_width(&self) -> f32 {
         let layout = self.final_layout();
-        layout.size.width - layout.border.left - layout.border.right - layout.scrollbar_size.width
+        (layout.size.width - layout.border.left - layout.border.right - layout.scrollbar_size.width).max(0.0)
     }
 
     /// CSSOM View's `clientHeight`: the height of the padding box (border box minus
     /// borders and scrollbar)
     pub fn client_height(&self) -> f32 {
         let layout = self.final_layout();
-        layout.size.height - layout.border.top - layout.border.bottom - layout.scrollbar_size.height
+        (layout.size.height - layout.border.top - layout.border.bottom - layout.scrollbar_size.height).max(0.0)
     }
 
     /// CSSOM View's `scrollWidth`: the width of the node's content, including

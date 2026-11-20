@@ -16,10 +16,41 @@ index bbcd0d2..340dbb7 100644
              Component::ID(..) => {
                  specificity.id_selectors += 1;
              },
+diff --git a/context.rs b/context.rs
+index 4dffd8f..a3ae4f8 100644
+--- a/context.rs
++++ b/context.rs
+@@ -171,6 +171,9 @@ where
+     #[allow(clippy::type_complexity)]
+     pub pseudo_element_matching_fn: Option<&'a dyn Fn(&Impl::PseudoElement) -> bool>,
+ 
++    /// The state of the pseudo-element itself, not its originating element.
++    pub pseudo_element_state: Option<Impl::NonTSPseudoClass>,
++
+     /// Extra implementation-dependent matching data.
+     pub extra_data: Impl::ExtraMatchingData<'a>,
+ 
+@@ -287,6 +290,7 @@ where
+             nesting_level: 0,
+             in_negation: false,
+             pseudo_element_matching_fn: None,
++            pseudo_element_state: None,
+             extra_data: Default::default(),
+             current_relative_selector_anchor: None,
+             selector_caches,
 diff --git a/matching.rs b/matching.rs
-index 475e776..103d140 100644
+index 475e776..d290442 100644
 --- a/matching.rs
 +++ b/matching.rs
+@@ -475,7 +475,7 @@ where
+             },
+         }
+ 
+-        if !iter.matches_for_stateless_pseudo_element() {
++        if !iter.matches_for_stateless_pseudo_element(context.pseudo_element_state.as_ref()) {
+             return KleeneValue::False;
+         }
+ 
 @@ -620,6 +620,7 @@ fn match_relative_selectors<E: Element>(
      element: E,
      context: &mut MatchingContext<E::Impl>,
@@ -211,7 +242,7 @@ index 475e776..103d140 100644
              anchor.is_none_or(|a| a == element.opaque())
          },
 diff --git a/parser.rs b/parser.rs
-index cac3c1d..4dd4971 100644
+index cac3c1d..565c3f0 100644
 --- a/parser.rs
 +++ b/parser.rs
 @@ -1331,6 +1331,13 @@ impl<Impl: SelectorImpl> Selector<Impl> {
@@ -228,6 +259,38 @@ index cac3c1d..4dd4971 100644
                  NthOf(ref data) => {
                      let selectors = replace_parent_on_selector_list(
                          data.selectors(),
+@@ -1515,26 +1522,26 @@ impl<'a, Impl: 'a + SelectorImpl> SelectorIter<'a, Impl> {
+     }
+ 
+     #[inline]
+-    pub(crate) fn matches_for_stateless_pseudo_element(&mut self) -> bool {
++    pub(crate) fn matches_for_stateless_pseudo_element(&mut self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
+         let first = match self.next() {
+             Some(c) => c,
+             // Note that this is the common path that we keep inline: the
+             // pseudo-element not having anything to its right.
+             None => return true,
+         };
+-        self.matches_for_stateless_pseudo_element_internal(first)
++        self.matches_for_stateless_pseudo_element_internal(first, state)
+     }
+ 
+     #[inline(never)]
+-    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>) -> bool {
+-        if !first.matches_for_stateless_pseudo_element() {
++    fn matches_for_stateless_pseudo_element_internal(&mut self, first: &Component<Impl>, state: Option<&Impl::NonTSPseudoClass>) -> bool {
++        if !first.matches_for_stateless_pseudo_element(state) {
+             return false;
+         }
+         for component in self {
+             // The only other parser-allowed Components in this sequence are
+             // state pseudo-classes, or one of the other things that can contain
+             // them.
+-            if !component.matches_for_stateless_pseudo_element() {
++            if !component.matches_for_stateless_pseudo_element(state) {
+                 return false;
+             }
+         }
 @@ -2144,6 +2151,9 @@ pub enum Component<Impl: SelectorImpl> {
      ///
      /// See https://github.com/w3c/csswg-drafts/issues/2158
@@ -247,7 +310,31 @@ index cac3c1d..4dd4971 100644
      }
  
      /// Returns the value as a combinator if applicable, None otherwise.
-@@ -2234,7 +2244,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
+@@ -2201,18 +2211,19 @@ impl<Impl: SelectorImpl> Component<Impl> {
+     /// Whether a given selector (to the right of a pseudo-element) should match for stateless
+     /// pseudo-elements. Note that generally nothing matches for those, but since we have :not(),
+     /// we still need to traverse nested selector lists.
+-    fn matches_for_stateless_pseudo_element(&self) -> bool {
++    fn matches_for_stateless_pseudo_element(&self, state: Option<&Impl::NonTSPseudoClass>) -> bool {
+         match *self {
+-            Component::Negation(ref selectors) => !selectors.slice().iter().all(|selector| {
++            Component::NonTSPseudoClass(ref class) => state == Some(class),
++            Component::Negation(ref selectors) => !selectors.slice().iter().any(|selector| {
+                 selector
+                     .iter_raw_match_order()
+-                    .all(|c| c.matches_for_stateless_pseudo_element())
++                    .all(|c| c.matches_for_stateless_pseudo_element(state))
+             }),
+             Component::Is(ref selectors) | Component::Where(ref selectors) => {
+                 selectors.slice().iter().any(|selector| {
+                     selector
+                         .iter_raw_match_order()
+-                        .all(|c| c.matches_for_stateless_pseudo_element())
++                        .all(|c| c.matches_for_stateless_pseudo_element(state))
+                 })
+             },
+             _ => false,
+@@ -2234,7 +2245,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
                      return false;
                  }
              },
@@ -256,7 +343,7 @@ index cac3c1d..4dd4971 100644
                  if !selector.visit(visitor) {
                      return false;
                  }
-@@ -2664,6 +2674,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
+@@ -2664,6 +2675,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
                  }
                  Ok(())
              },
@@ -268,7 +355,7 @@ index cac3c1d..4dd4971 100644
              Nth(ref nth_data) => {
                  nth_data.write_start(dest)?;
                  if nth_data.is_function {
-@@ -2806,8 +2821,27 @@ where
+@@ -2806,8 +2822,27 @@ where
          }
      }
      loop {
@@ -296,7 +383,7 @@ index cac3c1d..4dd4971 100644
          if empty {
              return Err(ParseError::custom(if builder.has_combinators() {
                  SelectorParseErrorKind::DanglingCombinator
-@@ -3375,7 +3409,7 @@ where
+@@ -3375,7 +3410,7 @@ where
              let ignore_default_ns = state.intersects(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
                  || matches!(
                      result,
@@ -305,7 +392,7 @@ index cac3c1d..4dd4971 100644
                  );
              if !ignore_default_ns {
                  builder.push_simple_selector(Component::DefaultNamespace(url));
-@@ -3505,6 +3539,12 @@ where
+@@ -3505,6 +3540,12 @@ where
              }
              return Ok(Component::Host(Some(parse_inner_compound_selector(parser, input, state)?)));
          },

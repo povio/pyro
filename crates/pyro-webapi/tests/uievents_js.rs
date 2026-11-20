@@ -176,9 +176,9 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
         eval(r, "[document.execCommand('insertText', false, 'a'), document.execCommand('bold'), log.length].join()"),
         "false,false,0"
     );
-    // The input's caret starts at the end of its value; execCommand types there.
-    assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'a') + ':' + i.value"), "true:xa");
-    assert_eq!(eval(r, "ta.focus(); document.execCommand('InsertText', false, 'b') + ':' + ta.value"), "true:yb");
+    // A fresh control's caret starts at the start of its value (as in Chromium); execCommand types there.
+    assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'a') + ':' + i.value"), "true:ax");
+    assert_eq!(eval(r, "ta.focus(); document.execCommand('InsertText', false, 'b') + ':' + ta.value"), "true:by");
     assert_eq!(eval(r, "ce.focus(); document.execCommand('insertText', false, 'c') + ':' + ce.textContent"), "true:c");
     assert_eq!(
         eval(r, "log.join(' ')"),
@@ -201,20 +201,22 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
             "i.addEventListener('beforeinput', ev => ev.preventDefault(), { once: true }); i.focus(); \
              [document.execCommand('insertText', false, 'd'), i.value].join('|')"
         ),
-        "true|xa"
+        // (The value the first insertion left: "a" went before the default value's "x".)
+        "true|ax"
     );
     // A focused text control wins over the selection still inside the host;
     // with a checkbox focused that selection is the target, as in Chromium.
     assert_eq!(
         eval(r, "i.focus(); document.execCommand('insertText', false, 'e'); i.value + ':' + ce.textContent"),
-        "xae:c"
+        // (Focus keeps the control's selection: after the "a" it typed at the start.)
+        "aex:c"
     );
     assert_eq!(
         eval(
             r,
             "cb.focus(); [document.execCommand('insertText', false, 'z'), cb.checked, i.value, ce.textContent].join()"
         ),
-        "true,false,xae,cz"
+        "true,false,aex,cz"
     );
 }
 

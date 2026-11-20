@@ -25,6 +25,7 @@ mod geometry;
 mod hash;
 mod hit;
 mod mirror;
+mod transition_frame;
 mod net;
 mod page_box;
 pub mod pdf;
@@ -57,7 +58,8 @@ pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use hit::{HitProbe, HitVisit};
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
-pub use net::Fetcher;
+pub use blitz_traits::net::{CorsCredentials, Destination, FetchOptions};
+pub use net::{is_plain_cors, Fetched, Fetcher};
 
 /// Whether the diagnostic timers run (`Pyro.geometryStats`,
 /// `Performance.getMetrics` durations): off until a client asks for them, so
@@ -184,10 +186,15 @@ pub const MAX_WIDTH: u32 = 16_384;
 /// What the browser thread hands to the renderer: plain data, `Send`.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    pub raster_budget: pyro_raster::PageRasters,
+    pub transition_frames: Vec<pyro_dom::geometry::TransitionFrame>,
     /// The document as HTML: current DOM, form state written into
     /// attributes, `<style>` text from the style engine (CSSOM edits
     /// included), no scripts.
     pub html: String,
+    /// pyro: the frame table: the documents the snapshot's frame elements show, by the index
+    /// their `data-pyro-frame` names (`pyro_layout::frame_table`). Markup holds no frame content or client.
+    pub frames: blitz_dom::FrameTable,
     /// Document URL; relative URLs resolve against it.
     pub base_url: String,
     /// Texts of `<link rel=stylesheet>` sheets by absolute URL, served to
@@ -224,6 +231,7 @@ pub struct Snapshot {
     /// selection): each scroll container's key (`u64::MAX` for the viewport) and its target's.
     /// `None` leaves the document's.
     pub scroll_targets: Option<Vec<(u64, u64)>>,
+    pub popover_anchors: Vec<(u64, u64)>,
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
@@ -233,6 +241,12 @@ pub struct Snapshot {
     /// The animated values of a [`Live`] document's elements now
     /// ([`Renderer::set_animations`]); `None` leaves the document's.
     pub animations: Option<Arc<AnimationFrame>>,
+    /// pyro: the animations of the frames' documents now, by frame client (`srcdoc` frames'
+    /// `data-pyro-frame-client`; their elements by `data-pyro-key`).
+    pub frame_animations: Vec<(String, Arc<AnimationFrame>)>,
+    /// pyro: the `content-visibility: auto` elements' state as the layout engine determined it
+    /// (by key: skipped, last remembered size); `None` leaves the document's.
+    pub content_visibility: Option<Vec<(u64, bool, Option<(f32, f32)>)>>,
     /// An XML document (XHTML, SVG, other XML): selectors match element and
     /// attribute names case-sensitively. A [`Live`] document whose value
     /// changes is built anew.
@@ -248,6 +262,10 @@ pub struct Snapshot {
     /// fallback for `:lang()`. A [`Live`] document whose value changes is
     /// built anew.
     pub content_language: Option<String>,
+    /// The document's `CSS.registerProperty()` registrations, in order: name, syntax, inherits,
+    /// initial value. Registered on the document before it is styled (a registration made since
+    /// a [`Live`] document's last frame restyles it).
+    pub registered_properties: Vec<(String, String, bool, Option<String>)>,
     /// The page's selection, painted highlighted in screenshots of a [`Live`]
     /// document ([`Renderer::paint`]; PDFs show none).
     pub selection: Option<TextSelection>,
@@ -259,6 +277,12 @@ pub struct Snapshot {
     pub control_selection: Option<(u64, u32, u32)>,
     /// The replaced elements the selection holds (their node keys), painted with its tint.
     pub selected_replaced: Vec<u64>,
+    /// The caret of the focused editing host: a text node's key and an offset in UTF-16 code
+    /// units of its data, or an element's key and 0 (no text at the caret), painted in
+    /// screenshots of a [`Live`] document.
+    pub caret: Option<(u64, u32)>,
+    /// The element `:target` matches (its key).
+    pub url_target: Option<u64>,
 }
 
 /// A highlight of a page ([`Snapshot::highlights`]): a custom highlight's name (`None`: the
@@ -279,6 +303,7 @@ pub struct TextSelection {
 }
 
 pub use blitz_dom::animation;
+pub use blitz_dom::{FrameContent, FrameTable, FrameTableData};
 
 /// The animated values of a persistent document's elements at one moment,
 /// by element key (`blitz_dom::animation`): elements left out have none.
@@ -569,6 +594,9 @@ pub enum Backend {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Timings {
+    pub transition_old_images: usize,
+    pub transition_live_targets: usize,
+    pub transition_live_recordings: usize,
     /// Sub-resources Blitz waited for.
     pub fetch: Duration,
     /// Parse, style and layout (fetch excluded).
@@ -609,6 +637,16 @@ pub struct RgbaImage {
     pub width: u32,
     pub height: u32,
     pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TransitionBox {
+    pub key: u64,
+    pub name: String,
+    pub size: (f64, f64),
+    pub transform: [f64; 6],
+    pub ink: [f64; 4],
+    pub image: Option<RgbaImage>,
 }
 
 /// Stages 1 and 2: the display list, not rasterized yet.
@@ -744,6 +782,18 @@ pub fn text_antialiasing() -> bool {
     TEXT_ANTIALIASING.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Sets how scrollbars take space in this process (`serve --scrollbars`): overlay scrollbars
+/// (the default) take none; classic ones (`classic: true`, as Chrome's on Linux, where wpt.fyi
+/// runs it) take 15 CSS px of their scroll container's padding box, and `scrollbar-gutter`
+/// reserves that space. Call at startup, before any layout.
+pub fn set_classic_scrollbars(classic: bool) {
+    blitz_dom::set_scrollbar_mode(if classic {
+        blitz_dom::ScrollbarMode::Classic
+    } else {
+        blitz_dom::ScrollbarMode::Overlay
+    });
+}
+
 /// Adds the font file at `path` (TTF/OTF/TTC) to the fonts of every page and
 /// inline SVG in this process, as if it were installed (`serve --font`; WPT's
 /// runner installs Ahem). Reads the file now and loads nothing else: call it
@@ -800,10 +850,10 @@ pub struct Renderer {
     geometry: HashMap<u64, geometry::Geometry>,
     /// External SVG sprite files of persistent documents, by resource
     /// scope and URL.
-    sprites: HashMap<(String, String), Arc<String>>,
+    sprites: HashMap<(String, String), Arc<blitz_dom::util::SvgResource>>,
     /// External SVG `<image>`/`<feImage>` resources as `data:` URLs (`svg_use::resolve_images`),
     /// by resource scope and URL.
-    svg_images: HashMap<(String, String), Arc<(String, String)>>,
+    svg_images: HashMap<(String, String), Arc<blitz_dom::util::SvgResource>>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -824,6 +874,7 @@ pub struct Renderer {
     /// WPT reftests are judged with. Other drawing is antialiased either way,
     /// and PDFs are not rasterized. Defaults to [`text_antialiasing`].
     pub text_antialiasing: bool,
+    pub subpixel_text_positioning: bool,
 }
 
 impl Default for Renderer {
@@ -832,8 +883,126 @@ impl Default for Renderer {
     }
 }
 
+/// The alpha of an SVG image's tree drawn at `width` by `height` (each pixel's, row by row), for
+/// blitz-dom's `shape-outside` image shapes: as the image paints, strokes, clips, masks and
+/// opacity included.
+fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32, page: &pyro_raster::PageRasters) -> Option<Vec<u8>> {
+    let size = tree.size();
+    // pyro: and no more pixels than an SVG canvas image (a float laid out huge keeps its box).
+    if width == 0
+        || height == 0
+        || width > u16::MAX as u32
+        || height > u16::MAX as u32
+        || f64::from(width) * f64::from(height) > SVG_CANVAS_MAX_PIXELS
+        || !(size.width() > 0.0 && size.height() > 0.0)
+    {
+        return None;
+    }
+    let _scope = anyrender_svg::PageRasterScope::enter(page);
+    let _rgba_charge = page.reserve(width as usize * height as usize * 4).ok()?;
+    let scale = kurbo::Affine::scale_non_uniform(width as f64 / size.width() as f64, height as f64 / size.height() as f64);
+    let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(width, height);
+    let mut rgba = Vec::new();
+    anyrender::ImageRenderer::render_to_vec(&mut renderer, |scene| anyrender_svg::render_svg_tree(scene, tree, scale), &mut rgba);
+    Some(rgba.chunks_exact(4).map(|px| px[3]).collect())
+}
+
+/// pyro-canvas's SVG images (`drawImage` of an `<img>` showing an SVG): the image at its natural
+/// size (a dimension it lacks from its `viewBox` ratio, else 300 by 150), as an `<img>` paints it.
+fn svg_canvas_image(bytes: &[u8], page: &pyro_raster::PageRasters) -> Option<(Vec<u8>, u32, u32, pyro_raster::Reservation)> {
+    let _scope = anyrender_svg::PageRasterScope::enter(page);
+    let svg = blitz_dom::util::parse_svg_image_for_page(bytes, page).ok()?;
+    let ratio = svg.viewbox_aspect_ratio().filter(|r| r.is_finite() && *r > 0.0);
+    let (width, height) = match (svg.intrinsic_width(), svg.intrinsic_height(), ratio) {
+        (Some(w), Some(h), _) => (w, h),
+        (Some(w), None, Some(r)) => (w, w / r),
+        (None, Some(h), Some(r)) => (h * r, h),
+        (Some(w), None, None) => (w, 150.0),
+        (None, Some(h), None) => (300.0, h),
+        (None, None, Some(r)) => (300.0, 300.0 / r),
+        (None, None, None) => (300.0, 150.0),
+    };
+    if !(width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0) {
+        return None;
+    }
+    // pyro: never more pixels than [`SVG_CANVAS_MAX_PIXELS`] (nor sides past the canvas's): an
+    // image of a huge natural size is drawn smaller, and the canvas maps its source rectangle
+    // onto the pixels (`drawImage`). The limit is checked before anything is allocated.
+    let fit = (SVG_CANVAS_MAX_PIXELS / (f64::from(width) * f64::from(height))).sqrt().min(1.0);
+    let fit = fit
+        .min(f64::from(pyro_canvas::MAX_SIDE) / f64::from(width))
+        .min(f64::from(pyro_canvas::MAX_SIDE) / f64::from(height));
+    let (w, h) = (
+        (f64::from(width) * fit).round().max(1.0) as u32,
+        (f64::from(height) * fit).round().max(1.0) as u32,
+    );
+    if !pyro_canvas::valid_size(w, h) || f64::from(w) * f64::from(h) > SVG_CANVAS_MAX_PIXELS * 1.01 {
+        return None;
+    }
+    let charge = page.reserve(w as usize * h as usize * 4).ok()?;
+    let _scratch = page.reserve(w as usize * h as usize * 4).ok()?;
+    let sized = svg.sized(width, height);
+    let svg = sized.as_ref().unwrap_or(&svg);
+    let viewport = svg.viewport_transform(width, height);
+    let viewport = kurbo::Affine::new([viewport.sx, viewport.ky, viewport.kx, viewport.sy, viewport.tx, viewport.ty].map(f64::from));
+    // Recorded, then replayed as a page is (the replay applies filter graphs and backdrops).
+    let mut scene = Scene::new();
+    if let Some(c) = svg.intrinsic_dimensions.root_background {
+        let color = peniko::Color::from_rgba8(c.red, c.green, c.blue, c.alpha);
+        let rect = kurbo::Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+        anyrender::PaintScene::fill(&mut scene, peniko::Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+    }
+    anyrender_svg::render_svg_tree(&mut scene, &svg.tree, viewport);
+    let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(w, h);
+    let mut rgba = Vec::new();
+    let fit = kurbo::Affine::scale_non_uniform(f64::from(w) / f64::from(width), f64::from(h) / f64::from(height));
+    anyrender::ImageRenderer::render_to_vec(&mut renderer, |p| p.append_scene(scene, fit), &mut rgba);
+    Some((rgba, w, h, charge))
+}
+
+/// pyro: the most pixels an SVG image is rasterized at for a canvas (16 Mi: 64 MiB of RGBA).
+const SVG_CANVAS_MAX_PIXELS: f64 = (1u64 << 24) as f64;
+
+/// pyro-canvas's `filter`: the draw's output as the image of an SVG document holding the
+/// referenced `<filter>`s, filtered by the value, as the canvas's pixels (user units are its
+/// pixels, as Chromium filters a canvas in its bitmap's space).
+/// pyro: registers the process's rasterizers other crates draw through: blitz-dom's for
+/// `shape-outside` SVG images, pyro-canvas's for SVG images and canvas filters. Idempotent; done
+/// by [`Renderer::new`] and by whoever installs layout before a page's scripts draw (pyro-layout).
+pub fn register_hooks() {
+    blitz_dom::set_svg_rasterizer(svg_shape_alpha);
+    pyro_canvas::codec::set_svg_decoder(svg_canvas_image);
+    pyro_canvas::set_filter_renderer(canvas_filter);
+}
+
+fn canvas_filter(source: &pyro_canvas::Pixmap, filter: &pyro_canvas::CanvasFilter) -> Option<pyro_canvas::Pixmap> {
+    let _scope = anyrender_svg::PageRasterScope::enter(&filter.page);
+    let (w, h) = (u32::from(source.width()), u32::from(source.height()));
+    let _scratch = filter.page.reserve(w as usize * h as usize * 12).ok()?;
+    let mut straight = source.data_as_u8_slice().to_vec();
+    pyro_canvas::unpremultiply(&mut straight);
+    let png = blitz_dom::util::SvgResource::new(pyro_canvas::codec::encode(&straight, w, h, pyro_canvas::Encoding::Png)?, false, &filter.page)?;
+    let resources = blitz_dom::util::SvgResources::default();
+    resources.write().ok()?.insert("pyro-canvas-source".into(), Arc::new(png));
+    let attr = |s: &str| s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    let source = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\"><defs>{}</defs>\
+         <image width=\"{w}\" height=\"{h}\" href=\"pyro-canvas-source\" filter=\"{}\"/></svg>",
+        filter.defs,
+        attr(&filter.value),
+    );
+    let svg = blitz_dom::util::parse_svg_resources(source.as_bytes(), Some(&resources), &filter.page).ok()?;
+    let mut scene = Scene::new();
+    anyrender_svg::render_svg_tree(&mut scene, &svg.tree, kurbo::Affine::IDENTITY);
+    let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(w, h);
+    let mut rgba = Vec::new();
+    anyrender::ImageRenderer::render_to_vec(&mut renderer, |p| p.append_scene(scene, kurbo::Affine::IDENTITY), &mut rgba);
+    pyro_canvas::pixmap_from_premultiplied(rgba, w, h)
+}
+
 impl Renderer {
     pub fn new() -> Self {
+        register_hooks();
         Self {
             font_ctx: process_fonts(),
             blob_hashes: HashMap::new(),
@@ -853,6 +1022,7 @@ impl Renderer {
             first_layout_wait: Duration::from_secs(3),
             hyphen_digit_breaks: hyphen_digit_breaks(),
             text_antialiasing: text_antialiasing(),
+            subpixel_text_positioning: std::env::var_os("PYRO_SUBPIXEL_TEXT_POSITIONING").is_none_or(|mode| mode != "off"),
         }
     }
 
@@ -891,15 +1061,60 @@ impl Renderer {
     /// the elements whose values changed at its next resolve.
     /// The page's scroll offsets for its scroll-driven animations (`BaseDocument::set_timeline_scroll`),
     /// applied at its next sync or render.
-    pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
+    /// pyro: the column boxes of the multi-column container `key` (its border box's coordinates:
+    /// x, y, width, height), spanners left out; empty for any other element.
+    pub fn column_boxes(&self, page: u64, key: u64) -> Vec<[f64; 4]> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        let Some(id) = m.node(key) else { return Vec::new() };
+        m.doc
+            .column_fragments(id)
+            .map(|columns| {
+                columns
+                    .fragments
+                    .iter()
+                    .filter(|f| !f.spanner)
+                    .map(|f| [f.x as f64, f.top as f64, f.width as f64, f.height as f64])
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// pyro: the keys of the page's scroll containers that snap mandatorily
+    /// (blitz-dom `BaseDocument::mandatory_snap_containers`).
+    pub fn mandatory_snap_containers(&self, page: u64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        m.doc.mandatory_snap_containers().into_iter().filter_map(|id| m.key_of(id)).collect()
+    }
+
+    /// pyro: the target of the scroll marker at the document point (`x`, `y`) of `page`: its
+    /// element's key, or its multi-column container's and the column's index.
+    pub fn scroll_marker_at(&self, page: u64, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
+        let m = self.mirrors.get(&page)?;
+        let (id, column) = m.doc.scroll_marker_at(x as f32, y as f32)?;
+        Some((m.key_of(id)?, column))
+    }
+
+    /// pyro: whether an element of the page's document was ever styled with a `scroll-snap-type`.
+    pub fn uses_scroll_snap(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_snap())
+    }
+
+    /// pyro: whether the page's document has scroll markers or buttons (their states follow the
+    /// scroll offsets).
+    pub fn uses_scroll_markers(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_markers())
+    }
+
+    pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) -> bool {
         // A document that exists takes them now: the animated values of the next sync are computed
         // (from its scroll timelines) before that sync applies anything.
-        if let Some(m) = self.mirrors.get_mut(&page) {
+        let invalidated = self.mirrors.get_mut(&page).is_some_and(|m| {
             let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
-            m.doc.set_timeline_scroll(map, viewport);
-        }
+            m.doc.set_timeline_scroll(map, viewport)
+        });
         // (Applied again at the next sync: an element scrolled before the document has it.)
         self.timeline_scroll.insert(page, TimelineScroll { elements, viewport, applied: false });
+        invalidated
     }
 
     fn apply_animations(&mut self, page: u64) {
@@ -950,6 +1165,17 @@ impl Renderer {
         out
     }
 
+    /// pyro: the image URLs `page`'s persistent document references now
+    /// (`BaseDocument::referenced_image_urls`); `None` when it has none.
+    pub fn referenced_image_urls(&self, page: u64) -> Option<std::collections::HashSet<String>> {
+        self.mirrors.get(&page).map(|m| m.doc.referenced_image_urls())
+    }
+
+    /// pyro: the image requests (URL and options) `page`'s persistent document references now.
+    pub fn referenced_images(&self, page: u64) -> Option<Vec<(String, FetchOptions)>> {
+        self.mirrors.get(&page).map(|m| m.doc.referenced_images())
+    }
+
     /// The markup of `page`'s persistent document (tests, diagnostics).
     #[doc(hidden)]
     pub fn mirrored_html(&self, page: u64) -> Option<String> {
@@ -958,6 +1184,7 @@ impl Renderer {
 
     fn config(&self, snap: &Snapshot, provider: Arc<dyn blitz_traits::net::NetProvider>) -> DocumentConfig {
         let mut config = DocumentConfig {
+            raster_budget: snap.raster_budget.clone(),
             base_url: Some(snap.base_url.clone()),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
@@ -970,6 +1197,7 @@ impl Renderer {
             line_height_quirk: snap.quirks_mode || snap.limited_quirks_mode,
             content_language: snap.content_language.clone(),
             html_parser_provider: Some(Arc::new(SvgImageParser)),
+            frames: snap.frames.clone(),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation
@@ -1003,6 +1231,7 @@ impl Renderer {
                     m.doc.set_media_type(media_type(snap.print));
                     m.viewport = key;
                 }
+                m.doc.set_frame_table(snap.frames.clone());
                 match m.apply(&live.tree, &snap.sheets) {
                     Ok(mutations) => return MirrorStats { rebuilt: None, mutations, pages: self.mirrors.len() as u32 },
                     Err(reason) => Some(reason),
@@ -1044,10 +1273,12 @@ impl Renderer {
         fresh: &'a mut Option<(blitz_dom::BaseDocument, net::Bridge)>,
         timings: &mut Timings,
         selection: bool,
-    ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>), RenderError> {
+    ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>, Vec<transition_frame::Resolved>), RenderError> {
         let started = Instant::now();
         // The focused text control's selection, set once laid out (its editor is made then).
         let mut control = None;
+        let mut transitions = Vec::new();
+        let mut pseudo_scrolls: Vec<(blitz_dom::NodeId, u8, (f64, f64))> = Vec::new();
         let (doc, bridge, clip) = match &snap.live {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
@@ -1062,6 +1293,16 @@ impl Renderer {
                     self.animations.insert(live.page, frame.clone());
                 }
                 self.apply_animations(live.page);
+                if let Some(m) = self.mirrors.get_mut(&live.page) {
+                    m.doc.set_frame_animations(snap.frame_animations.iter().cloned().collect());
+                    // pyro: the `content-visibility: auto` state the layout engine determined (which
+                    // contents it skips, the remembered sizes), so this document paints what the page's
+                    // queries saw.
+                    if let Some(state) = &snap.content_visibility {
+                        let state = state.iter().filter_map(|&(key, skipped, size)| Some((m.node(key)?, skipped, size))).collect();
+                        m.doc.set_content_visibility_state(state);
+                    }
+                }
                 let images = mirror::take_svg_image_hrefs();
                 if let (false, Some(m)) = (images.is_empty(), self.mirrors.get_mut(&live.page)) {
                     svg_use::resolve_images(
@@ -1094,6 +1335,13 @@ impl Renderer {
                     Some(m) => {
                         if let Some(offsets) = &snap.element_scroll {
                             m.set_element_scroll(offsets);
+                            // pyro: a `::before` / `::after` box may be made anew by the settle
+                            // below: its offset is given again after it.
+                            pseudo_scrolls = offsets
+                                .iter()
+                                .filter(|(key, _)| key >> 62 != 0)
+                                .filter_map(|&(key, o)| Some((m.node(key & !(3 << 62))?, (key >> 62) as u8, o)))
+                                .collect();
                         }
                         if let Some(offsets) = &snap.sticky_offsets {
                             m.set_sticky_offsets(offsets);
@@ -1102,6 +1350,7 @@ impl Renderer {
                             m.set_scroll_targets(targets);
                         }
                         m.set_canvases(&snap.canvases);
+                        m.set_popover_anchors(&snap.popover_anchors);
                         // The selection's text nodes, both in the document.
                         let selection_paint = selection;
                         let selection = snap.selection.filter(|_| selection).and_then(|s| {
@@ -1118,6 +1367,13 @@ impl Renderer {
                             .filter_map(|&key| m.node(key))
                             .collect();
                         m.doc.set_selected_replaced(replaced);
+                        let caret = snap
+                            .caret
+                            .filter(|_| selection_paint)
+                            .and_then(|(key, offset)| Some((m.node(key)?, offset as usize)));
+                        m.doc.set_dom_caret(caret);
+                        let target = snap.url_target.and_then(|key| m.node(key));
+                        m.doc.set_url_target(target);
                         // The focused text control's selection.
                         control = snap
                             .control_selection
@@ -1147,6 +1403,9 @@ impl Renderer {
                             .collect();
                         m.doc.set_dom_highlights(highlights);
                         let clip = live.clip.and_then(|k| m.node(k));
+                        if !snap.transition_frames.is_empty() {
+                            transition_frame::resolve_document(&snap.transition_frames, m.doc.snapshot_nonce(), |key| m.node(key), &mut transitions);
+                        }
                         (&mut m.doc, &m.bridge, clip)
                     }
                     None => return Err(RenderError::BadArea("the page's tree has a repeated key".into())),
@@ -1156,18 +1415,14 @@ impl Renderer {
                 let bridge = net::Bridge::new(snap, fetcher.clone(), self.resources.scoped(&snap.resource_scope));
                 let doc = blitz_html::HtmlDocument::from_html(&snap.html, self.config(snap, bridge.provider()));
                 let mut doc = doc.into_inner();
-                for id in doc.query_selector_all("[data-pyro-scroll-left],[data-pyro-scroll-top]").unwrap_or_default() {
-                    if let Some(node) = doc.get_node_mut(id) {
-                        let offset = |name| {
-                            node.attr(name).and_then(|s| s.parse::<f64>().ok()).filter(|v| v.is_finite()).unwrap_or(0.0)
-                        };
-                        let point = blitz_dom::Point {
-                            x: offset("data-pyro-scroll-left".into()),
-                            y: offset("data-pyro-scroll-top".into()),
-                        };
-                        *node.scroll_offset_mut() = point;
-                    }
-                }
+                // pyro: the scrolled elements and stuck sticky boxes, by their engine attributes
+                // (with this snapshot's nonce: `engine_nodes`; selectors never see the reserved
+                // family). Sticky shifts too: this markup path has no other source of them (the
+                // live path's `Snapshot::sticky_offsets` go to the mirror), and the renderer lays
+                // sticky boxes out as static; without them a scrolled page's stuck box painted at
+                // its static place, unlike Chrome (cycle 8b test
+                // `a_markup_snapshot_paints_a_stuck_sticky_box_where_the_page_holds_it`).
+                apply_engine_offsets(&mut doc);
 
                 svg_use::resolve(&mut doc, &snap.base_url, fetcher, self.fetch_timeout)
                     .map_err(RenderError::Resource)?;
@@ -1184,10 +1439,14 @@ impl Renderer {
                     );
                 }
                 let (doc, bridge) = fresh.insert((doc, bridge));
-                let clip = doc.query_selector(&format!("[{CLIP_ATTRIBUTE}]")).ok().flatten();
+                let clip = doc.engine_nodes(CLIP_ATTRIBUTE).into_iter().next();
                 (doc, &*bridge, clip)
             }
         };
+        // `CSS.registerProperty()` registrations (one registered already is left as it is).
+        for (name, syntax, inherits, initial) in &snap.registered_properties {
+            doc.register_custom_property(name, syntax, *inherits, initial.as_deref());
+        }
         let profiling = profiling::on();
         let mirrored = profiling.then(|| started.elapsed());
         let (fetch, passes, resolved_latest) =
@@ -1200,24 +1459,52 @@ impl Renderer {
         if let Some((id, start, end)) = control {
             doc.set_text_input_selection(id, start, end);
         }
+        for (element, pseudo, (x, y)) in pseudo_scrolls {
+            let Some(node) = doc.get_node(element) else { continue };
+            let Some(id) = (if pseudo == 1 { node.before() } else { node.after() }) else { continue };
+            if let Some(node) = doc.get_node_mut(id) {
+                let offset = blitz_dom::Point { x, y };
+                if *node.scroll_offset() != offset {
+                    *node.scroll_offset_mut() = offset;
+                    node.scroll_offset_changed();
+                }
+            }
+        }
         if let (Some(mirrored), Some(resolving)) = (mirrored, resolving) {
             let resolved = resolving.elapsed();
             sync_profile::record(mirrored, started.elapsed().saturating_sub(mirrored + resolved), resolved);
         }
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
-        Ok((doc, clip))
+        if snap.transition_frames.iter().any(|frame| frame.document != doc.snapshot_nonce()) {
+            transition_frame::resolve_children(doc, &snap.transition_frames, &mut transitions, &mut 16_384, 0);
+        }
+        for scope in &transitions {
+            timings.transition_old_images += scope.frame.old.iter().filter(|item| item.rgba.is_some()).count();
+            timings.transition_live_targets += scope.targets.iter().flatten().count();
+        }
+        Ok((doc, clip, transitions))
     }
 
     /// Stages 1 and 2.
     pub fn paint(&mut self, snap: &Snapshot, area: Area, fetcher: &Arc<dyn Fetcher>) -> Result<Painted, RenderError> {
+        let threshold = (!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD);
+        let subpixel = self.subpixel_text_positioning;
         let mut timings = Timings::default();
         let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
         let (vw, vh) = (snap.width.max(1), snap.height.max(1));
         let physical = |css: f64| (css * dpr).round() as u32;
 
         let mut fresh = None;
-        let (doc, clip) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
+        // pyro: a frame determines `content-visibility: auto` relevance anew: what queries
+        // forced to render since the last one is no longer (CSS Contain 2 § 4.1).
+        if let Some(live) = &snap.live {
+            if let Some(m) = self.mirrors.get_mut(&live.page) {
+                m.doc.clear_content_visibility_forcing();
+            }
+        }
+        let (doc, clip, mut transitions) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
+        doc.commit_anchor_frame();
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
@@ -1316,10 +1603,32 @@ impl Renderer {
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
-        blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+        anyrender_svg::with_text_threshold(threshold, || {
+            blitz_paint::with_glyph_grid(transform, subpixel, || {
+                for transition in &mut transitions { transition.capture(doc, &mut timings.transition_live_recordings, threshold); }
+                for transition in &mut transitions { transition.install(doc); }
+                blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+            });
+        });
+        for transition in &transitions { transition.clear(doc); }
         doc.set_dom_selection(None);
         doc.set_dom_highlights(Vec::new());
-        scene.append_scene(page, transform);
+        // pyro: a backdrop filter's output takes the place of its backdrop where the page painted
+        // nothing (anyrender_vello_cpu `draw_backdrop`, a source copy): the page goes in a layer
+        // over the canvas's base colour, which it cannot clear, as Chromium's base background lies
+        // under the page (WPT filter-effects `backdrop-filter-svg-displacement`). Only then: a
+        // layer over the whole frame costs every frame.
+        let backdrops = page.commands.iter().any(|command| {
+            matches!(command, anyrender::recording::RenderCommand::PushLayer(layer) if layer.backdrop_filter.is_some())
+        });
+        if backdrops {
+            let frame = Rect::new(0.0, 0.0, w as f64, h as f64);
+            scene.push_layer(Fill::NonZero, peniko::BlendMode::default(), 1.0, Affine::IDENTITY, &frame, None, None);
+            scene.append_scene(page, transform);
+            scene.pop_layer();
+        } else {
+            scene.append_scene(page, transform);
+        }
         let hash = scene_hash(&scene, w, h, &mut self.blob_hashes);
         timings.scene = t.elapsed();
         Ok(Painted { scene, opaque: a == 255, hash, width: w, height: h, timings })
@@ -1333,6 +1642,10 @@ impl Renderer {
             snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout queries need a live snapshot".into()))?;
         let mut timings = Timings::default();
         let mut fresh = None;
+        // pyro: a new state of the page determines `content-visibility: auto` relevance anew.
+        if let Some(m) = self.mirrors.get_mut(&live.page) {
+            m.doc.clear_content_visibility_forcing();
+        }
         self.prepare(snap, fetcher, &mut fresh, &mut timings, false)?;
         self.geometry.entry(live.page).or_default();
         Ok(timings)
@@ -1343,12 +1656,32 @@ impl Renderer {
     /// (nothing applied) when the page has no document at this viewport or
     /// the delta does not fit it: sync the whole tree instead. The returned
     /// [`Timings::layout`] is measured only while [`profiling`] is on.
+    /// pyro: `page`'s frame table now ([`Snapshot::frames`]), for a [`Renderer::sync_delta`]
+    /// that follows.
+    pub fn set_frame_table(&mut self, page: u64, frames: blitz_dom::FrameTable) {
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            m.bridge.set_frames(&frames);
+            m.doc.set_frame_table(frames);
+        }
+    }
+
     pub fn sync_delta(
         &mut self,
         page: u64,
         ops: &[DeltaOp],
         viewport: (u32, u32, f64, bool, bool),
         style_only: bool,
+    ) -> Result<Timings, RenderError> {
+        self.sync_delta_with_anchors(page, ops, viewport, style_only, &[])
+    }
+
+    pub fn sync_delta_with_anchors(
+        &mut self,
+        page: u64,
+        ops: &[DeltaOp],
+        viewport: (u32, u32, f64, bool, bool),
+        style_only: bool,
+        anchors: &[(u64, u64)],
     ) -> Result<Timings, RenderError> {
         let started = Instant::now();
         let mut timings = Timings::default();
@@ -1359,6 +1692,9 @@ impl Renderer {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
+        m.set_popover_anchors(anchors);
+        // pyro: a new state of the page determines `content-visibility: auto` relevance anew.
+        m.doc.clear_content_visibility_forcing();
         self.apply_animations(page);
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let profiling = profiling::on();
@@ -1466,6 +1802,195 @@ impl Renderer {
         changed
     }
 
+    /// Validate names in a transition scope. The second result counts nodes examined.
+    pub fn view_transition_names(&self, page: u64, root: u64) -> (bool, usize) {
+        self.collect_transition_boxes(page, root, |_, _, _| true)
+    }
+
+    fn collect_transition_boxes(&self, page: u64, root: u64, mut accept: impl FnMut(blitz_dom::NodeId, u64, &str) -> bool) -> (bool, usize) {
+        use style::properties::generated::longhands::visibility::computed_value::T as Visibility;
+        use style::values::specified::box_::ContentVisibility;
+        const MAX_NODES: usize = 16_384;
+        const MAX_NAMES: usize = 256;
+        let Some(mirror) = self.mirrors.get(&page) else { return (false, 0) };
+        let Some(root) = mirror.node(root) else { return (false, 0) };
+        let mut pending = vec![root];
+        let mut names = std::collections::HashSet::new();
+        let mut count = 0;
+        let mut visited = 0;
+        while let Some(id) = pending.pop() {
+            visited += 1;
+            let Some(node) = mirror.doc.get_node(id) else { continue };
+            let Some(style) = node.primary_styles() else { continue };
+            let display = style.clone_display();
+            if display.is_none() { continue }
+            if id != root && *style.get_view_transition_scope() == style::values::computed::ViewTransitionScope::All { continue }
+            let name = style.get_view_transition_name().value.as_atom();
+            if !display.is_contents() && style.get_inherited_box().visibility == Visibility::Visible && &**name != "none" {
+                count += 1;
+                if count > MAX_NAMES || (&**name != "match-element" && !names.insert(name.clone())) {
+                    return (false, visited);
+                }
+                if !mirror.key_of(id).is_some_and(|key| accept(id, key, name)) { return (false, visited); }
+            }
+            if style.get_box().slow_clone_content_visibility() != ContentVisibility::Hidden {
+                if node.children.len() > MAX_NODES - visited - pending.len() { return (false, visited) }
+                pending.extend(node.children.iter().rev().copied());
+            }
+        }
+        (true, visited)
+    }
+
+    pub fn capture_transition_boxes(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64) -> Option<Vec<TransitionBox>> {
+        self.capture_transition_budgeted(page, root, old, remaining_pixels, &mut (1 << 18), &mut 0)
+    }
+
+    pub fn set_transition_boxes(&mut self, page: u64, root: u64, old: &[TransitionBox], new: &[TransitionBox]) -> Option<usize> {
+        use blitz_dom::view_transition::{Geometry, Participant};
+        if old.len() > 256 || new.len() > 256 { return None; }
+        let mirror = self.mirrors.get_mut(&page)?;
+        let origin = mirror.node(root)?;
+        let mut indices = HashMap::new();
+        let mut groups = Vec::<Participant>::new();
+        for (items, before) in [(old,true),(new,false)] {
+            for item in items {
+                if item.name.len() > 1024 { return None; }
+                let auto = item.name == "match-element";
+                let index = *indices.entry((item.name.as_str(), auto.then_some(item.key))).or_insert_with(|| {
+                    let index = groups.len();
+                    groups.push(Participant { name: if auto { format!("-ua-vt-{}",item.key) } else { item.name.clone() }, target: None, old: None, new: None });
+                    index
+                });
+                let group = &mut groups[index];
+                group.target = mirror.node(item.key);
+                let geometry = Some(Geometry { size: item.size, transform: item.transform });
+                if before { group.old = geometry; } else { group.new = geometry; }
+            }
+        }
+        mirror.doc.create_transition_tree(origin, &groups)
+    }
+
+    pub fn set_transition_samples(&mut self, page: u64, root: u64, values: &[(usize,usize,f64)]) -> bool {
+        self.mirrors.get_mut(&page).and_then(|mirror| Some(mirror.doc.set_transition_samples(mirror.node(root)?,values))).unwrap_or(false)
+    }
+
+    pub fn transition_animation_styles(&self, page: u64, root: u64) -> Option<Vec<(usize,String, style::servo_arc::Arc<style::properties::ComputedValues>)>> {
+        if self.element_displayed(page, root) == Some(false) { return None; }
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.transition_animation_styles(mirror.node(root)?)
+    }
+
+    pub fn clear_transition_boxes(&mut self, page: u64, root: u64) {
+        if let Some(mirror) = self.mirrors.get_mut(&page) { if let Some(origin) = mirror.node(root) { mirror.doc.clear_transition_tree(origin); } }
+    }
+
+    pub fn capture_transition_budgeted(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64, work: &mut u64, recordings: &mut usize) -> Option<Vec<TransitionBox>> {
+        if *work == 0 || (old && remaining_pixels == 0) { return None; }
+        let mirror = self.mirrors.get_mut(&page)?;
+        if mirror.doc.tree().len() > 16_384 { return None; }
+        let mut saved = Vec::new();
+        if let Some(scroll) = self.timeline_scroll.get(&page) {
+            *work = work.checked_sub(2 * scroll.elements.len() as u64)?;
+            for &(key,(x,y)) in &scroll.elements {
+                if let Some(node) = mirror.node(key).and_then(|id|mirror.doc.get_node_mut(id)) {
+                    saved.push((node.id, *node.scroll_offset()));
+                    *node.scroll_offset_mut() = blitz_dom::Point { x,y };
+                }
+            }
+        }
+        let result = self.capture_scrolled_transition(page, root, old, remaining_pixels, work, recordings);
+        let mirror = self.mirrors.get_mut(&page)?;
+        for (id, offset) in saved.into_iter().rev() {
+            if let Some(node) = mirror.doc.get_node_mut(id) { *node.scroll_offset_mut() = offset; }
+        }
+        result
+    }
+
+    fn capture_scrolled_transition(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64, work: &mut u64, recordings: &mut usize) -> Option<Vec<TransitionBox>> {
+        let mut ids = Vec::new();
+        let mut boxes = Vec::new();
+        let mirror = self.mirrors.get(&page)?;
+        let doc = &mirror.doc;
+        let scale = doc.viewport().scale_f64();
+        let mut remaining = remaining_pixels.min(SVG_CANVAS_MAX_PIXELS as u64);
+        if *work == 0 || (old && remaining == 0) { return None; }
+        let document_root = doc.try_root_element().map(|node| node.id);
+        let (viewport_width, viewport_height) = doc.viewport().window_size;
+        let viewport_size = (f64::from(viewport_width), f64::from(viewport_height));
+        let scope = mirror.node(root).filter(|id| Some(*id) != document_root);
+        *work = work.checked_sub(doc.tree().len() as u64)?;
+        let (valid, _) = self.collect_transition_boxes(page, root, |id, key, name| {
+            if name.len() > 1024 { return false; }
+            let Some(node) = doc.get_node(id) else { return false; };
+            let size = node.final_layout().size;
+            let mut transform = Affine::IDENTITY;
+            let mut current = Some(id);
+            while let Some(ancestor) = current.and_then(|id| doc.get_node(id)) {
+                if Some(ancestor.id) == scope { break; }
+                let Some(left) = work.checked_sub(1) else { return false; };
+                *work = left;
+                let location = ancestor.final_layout().location;
+                let scroll = ancestor.scroll_offset();
+                let offset = if ancestor.id == id { Affine::IDENTITY } else { Affine::translate((-scroll.x * scale, -scroll.y * scale)) };
+                transform = Affine::translate((location.x as f64 * scale, location.y as f64 * scale)) * ancestor.transform().as_deref().copied().unwrap_or_default() * offset * transform;
+                current = ancestor.containing_block();
+            }
+            let scroll = doc.viewport_scroll();
+            if scope.is_none() {
+                let (x,y) = self.timeline_scroll.get(&page).map_or((scroll.x,scroll.y), |state|state.viewport);
+                transform = Affine::translate((-x * scale, -y * scale)) * transform;
+            }
+            if !transform.is_finite() { return false; }
+            let size = if Some(id) == document_root { viewport_size } else { (size.width as f64 * scale, size.height as f64 * scale) };
+            boxes.push(TransitionBox { key, name: name.to_owned(), size, transform: transform.as_coeffs(), ink: [0.0, 0.0, size.0, size.1], image: None });
+            ids.push(id);
+            true
+        });
+        if !valid { return None; }
+        if old && !ids.is_empty() {
+            let initial_work = *work;
+            let initial_pixels = remaining;
+            charge_transition_tree(doc, 1, &mut 16_384, work, &mut remaining)?;
+            let repeats = ids.len() as u64 - 1;
+            *work = work.checked_sub((initial_work - *work).checked_mul(repeats)?)?;
+            remaining = remaining.checked_sub((initial_pixels - remaining).checked_mul(repeats)?)?;
+            let minimum_area = |item: &TransitionBox| {
+                let (width, height) = item.size;
+                if !width.is_finite() || !height.is_finite() || width < 0.0 || height < 0.0 { return None; }
+                (width.ceil() as u64).checked_mul(height.ceil() as u64)
+            };
+            let reserved = boxes.iter().try_fold(0u64, |sum, item| sum.checked_add(minimum_area(item)?))?;
+            remaining = remaining.checked_sub(reserved)?;
+            let phases: Vec<_> = boxes.iter().map(|item| transition_phase(item.transform)).collect();
+            let mut records = boxes.iter_mut().zip(&phases);
+            let doc = &mut self.mirrors.get_mut(&page)?.doc;
+            let threshold = (!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD);
+            anyrender_svg::with_text_threshold(threshold, || blitz_paint::with_glyph_grid(Affine::IDENTITY,self.subpixel_text_positioning, || blitz_paint::record_transition_boxes(doc, &ids, &phases, recordings, work, |id, scene, ink| {
+                let (record, phase) = records.next()?;
+                let minimum = minimum_area(record)?;
+                remaining += minimum;
+                let ink = if Some(id) == document_root {
+                    let [_, _, _, _, left, top] = record.transform;
+                    kurbo::Rect::new(-left, -top, viewport_size.0 - left, viewport_size.1 - top)
+                } else { ink };
+                record.ink = [ink.x0-phase.0, ink.y0-phase.1, ink.x1-phase.0, ink.y1-phase.1];
+                if !ink.is_finite() { return None; }
+                let (width, height) = (ink.width() as u32, ink.height() as u32);
+                if width == 0 || height == 0 { return Some(()); }
+                if !pyro_canvas::valid_size(width, height) { return None; }
+                remaining = remaining.checked_sub(u64::from(width) * u64::from(height))?;
+                if !pyro_raster::capture::surface(width.into(), height.into(), 2) { return None; }
+                let mut renderer = VelloCpuImageRenderer::new(width, height);
+                renderer.set_text_aliasing_threshold(threshold);
+                let mut data = Vec::new();
+                renderer.render_to_vec(|out| out.append_scene(scene, Affine::translate((-ink.x0, -ink.y0))), &mut data);
+                record.image = Some(RgbaImage { width, height, data });
+                Some(())
+            })))?;
+        }
+        Some(boxes)
+    }
+
     /// The resolved value of `property` of the element keyed `key` in `page`'s persistent document as of
     /// the last sync (Blink's `getComputedStyle` value: used track sizes, a subgrid's line names; blitz-dom's
     /// `resolved_style_value`). `None`: not mirrored.
@@ -1473,6 +1998,28 @@ impl Renderer {
         let m = self.mirrors.get(&page)?;
         let id = m.node(key)?;
         Some(m.doc.resolved_style_value(id, property))
+    }
+
+    pub fn anchor_scroll_shift(&self, page: u64, key: u64, scroll: &dyn Fn(Option<u64>) -> (f64, f64), sticky: &dyn Fn(u64) -> (f64, f64)) -> Option<(f64, f64)> {
+        let mirror = self.mirrors.get(&page)?;
+        if !mirror.doc.has_anchor_sources() { return None; }
+        let mut node = mirror.doc.get_node(mirror.node(key)?)?;
+        let mut shift = (0.0, 0.0);
+        for _ in 0..node.tree().len() {
+            let live = node.live_anchor_scroll_offset(|id| {
+                let value = match id { Some(id) => mirror.key_of(id).map(|key| scroll(Some(key))).unwrap_or_default(), None => scroll(None) };
+                blitz_dom::Point { x: value.0, y: value.1 }
+            }, |id| {
+                let (x,y) = mirror.key_of(id).map(sticky).unwrap_or_default();
+                blitz_dom::Point { x,y }
+            });
+            let applied = node.anchor_scroll_offset();
+            shift.0 += live.x - applied.x;
+            shift.1 += live.y - applied.y;
+            let Some(parent) = node.containing_block().and_then(|id| mirror.doc.get_node(id)) else { break };
+            node = parent;
+        }
+        Some(shift)
     }
 
     /// Resolves a sampled transform against the mirrored element's layout,
@@ -1605,6 +2152,14 @@ impl Renderer {
     /// the last call (while tracked), by render key, with the styles before
     /// and after (`BaseDocument::take_style_changes`); elements no longer
     /// mirrored are left out.
+    /// pyro: the keys of the elements whose scroll marker group scrolled to keep its active marker
+    /// in view since the last call (blitz-dom `BaseDocument::take_scroll_group_moves`).
+    pub fn take_scroll_group_moves(&mut self, page: u64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
+        let moves = m.doc.take_scroll_group_moves();
+        moves.into_iter().filter_map(|id| m.key_of(id)).collect()
+    }
+
     pub fn take_style_changes(
         &mut self,
         page: u64,
@@ -1633,6 +2188,7 @@ impl Renderer {
         page: u64,
         source: Option<u64>,
         subject: Option<u64>,
+        pseudo: u8,
         axis: u8,
         inset: [(u8, f64); 2],
     ) -> Option<(f64, f64, f64, Option<u64>, (f64, f64), f64)> {
@@ -1646,6 +2202,12 @@ impl Renderer {
         let subject = match subject {
             Some(key) => Some(m.node(key)?),
             None => None,
+        };
+        // (A pseudo-element subject: its box; none generated, inactive.)
+        let subject = match (subject, pseudo) {
+            (Some(id), 2) => Some(m.doc.get_node(id)?.before()?),
+            (Some(id), 3) => Some(m.doc.get_node(id)?.after()?),
+            (subject, _) => subject,
         };
         let axis = match axis {
             1 => ScrollAxis::Inline,
@@ -1666,6 +2228,60 @@ impl Renderer {
         Some((r.offset, r.start, r.end, src, r.contain, r.subject_size))
     }
 
+    /// pyro: the steps `page`'s `content-visibility: auto` relevance passes took so far
+    /// (`BaseDocument::content_visibility_work`; tests bound it).
+    #[doc(hidden)]
+    pub fn content_visibility_work(&self, page: u64) -> u64 {
+        self.mirrors.get(&page).map_or(0, |m| m.doc.content_visibility_work())
+    }
+
+    /// pyro: whether `page`'s viewport scrolls from its right edge (`BaseDocument::viewport_scrolls_leftward`).
+    pub fn viewport_scrolls_leftward(&self, page: u64) -> Option<bool> {
+        Some(self.mirrors.get(&page)?.doc.viewport_scrolls_leftward())
+    }
+
+    /// pyro: the `content-visibility: auto` elements of `page`'s persistent document, by key:
+    /// whether they skip their contents, and their last remembered size.
+    pub fn content_visibility_state(&self, page: u64) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        m.doc
+            .content_visibility_state()
+            .into_iter()
+            .filter_map(|(id, skipped, size)| Some((m.key_of(id)?, skipped, size)))
+            .collect()
+    }
+
+    /// pyro: renders the contents `content-visibility: auto` skips around the element keyed `key`
+    /// in `page`'s persistent document, laying it out again (`BaseDocument::force_content_visibility`).
+    /// pyro: a rendering frame of `page` starts: what queries forced to render since the last one
+    /// is rendered as relevance gives it now, determined on the current layout before the
+    /// frame's callbacks change anything (Chrome determines it at every frame: WPT css-contain
+    /// `content-visibility-vs-scrollIntoView-002`). Whether anything was forced.
+    pub fn content_visibility_frame(&mut self, page: u64) -> bool {
+        let Some(m) = self.mirrors.get_mut(&page) else { return false };
+        m.doc.commit_anchor_frame();
+        // (Also when the page scrolled since relevance was last determined: nothing else lays the
+        // document out for a scroll alone. The time is the mirror's, 0: animations are sampled in.)
+        if !m.doc.has_content_visibility_forcing() && !m.doc.content_visibility_stale() {
+            return false;
+        }
+        m.doc.clear_content_visibility_forcing();
+        m.doc.resolve(0.0);
+        self.geometry.remove(&page);
+        self.geometry.entry(page).or_default();
+        true
+    }
+
+    pub fn force_content_visibility(&mut self, page: u64, key: u64) -> bool {
+        let Some(m) = self.mirrors.get_mut(&page) else { return false };
+        let Some(node) = m.node(key) else { return false };
+        if !m.doc.force_content_visibility(node) {
+            return false;
+        }
+        m.doc.resolve(0.0);
+        true
+    }
+
     pub fn element_pseudo_style(
         &self,
         page: u64,
@@ -1674,7 +2290,11 @@ impl Renderer {
         generated_only: bool,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         let m = self.mirrors.get(&page)?;
-        m.doc.pseudo_element_style(m.node(key)?, pseudo, generated_only)
+        let origin = m.node(key)?;
+        if pseudo.transition_argument().is_some() || *pseudo == style::selector_parser::PseudoElement::ViewTransition {
+            if let Some(style) = m.doc.transition_box_style(origin, pseudo) { return Some(style); }
+        }
+        m.doc.pseudo_element_style(origin, pseudo, generated_only)
     }
 
     /// `false` while no element of `page`'s persistent document has been
@@ -1700,9 +2320,16 @@ impl Renderer {
         self.geometry.get(&page)?.element_quads(&m.doc, m.node(key)?)
     }
 
-    /// pyro: the pieces of the border box of the element keyed `key` in `page`'s persistent
-    /// document when column breaks split it, each where its column shows it (document CSS px:
-    /// x, y, width, height), as of the last [`Renderer::sync_layout`]; `None` when it is whole.
+    pub fn overflowing_text_hits(&self, page: u64, key: u64, border: [f64; 4]) -> Vec<[f64; 4]> {
+        let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
+        let (Some(geometry), Some(id)) = (self.geometry.get(&page), mirror.node(key)) else { return Vec::new() };
+        let [left, top, width, height] = border;
+        geometry.overflowing_text_hits(&mirror.doc, id, kurbo::Rect::new(left, top, left + width, top + height))
+            .into_iter().map(|rect| [rect.x0, rect.y0, rect.width(), rect.height()]).collect()
+    }
+
+    /// Hit regions of a fragmented box in document CSS pixels. Unlike CSSOM border rects,
+    /// these only include the part reachable through the owning fragment's hit traversal.
     pub fn element_fragments(&self, page: u64, key: u64) -> Option<Vec<[f64; 4]>> {
         let m = self.mirrors.get(&page)?;
         let (g, id) = (self.geometry.get(&page)?, m.node(key)?);
@@ -1711,8 +2338,8 @@ impl Renderer {
         if !g.in_layout_tree(&m.doc, id) || g.projective(&m.doc, id).is_some() {
             return None;
         }
-        let pieces = g.columns_pieces(&m.doc, id)?;
-        (pieces.len() > 1).then(|| pieces.iter().map(|r| [r.x0, r.y0, r.width(), r.height()]).collect())
+        let pieces = g.column_rects(&m.doc, id, true)?;
+        Some(pieces.into_iter().map(|r| [r.x0, r.y0, r.width(), r.height()]).collect())
     }
 
     /// pyro: whether `page`'s persistent document may have boxes split by column breaks (a
@@ -1877,16 +2504,32 @@ impl Renderer {
         }
     }
 
+    /// pyro: the space `page`'s viewport's shown classic scrollbars take (the vertical one's width,
+    /// the horizontal one's height), as last laid out: the root's `clientWidth`/`clientHeight`
+    /// are the viewport less these (Chrome: a `scrollbar-gutter: stable` gutter alone takes none).
+    pub fn viewport_scrollbar_sizes(&self, page: u64) -> (f64, f64) {
+        let Some(m) = self.mirrors.get(&page) else { return (0.0, 0.0) };
+        let bars = m.doc.viewport_scrollbars;
+        (if bars.shown.y { bars.thickness.width.into() } else { 0.0 }, if bars.shown.x { bars.thickness.height.into() } else { 0.0 })
+    }
+
+    /// pyro: `page`'s viewport's classic scrollbar gutters (left, top, right, bottom; CSS px), as
+    /// last laid out; `None` when it has none.
+    pub fn viewport_gutters(&self, page: u64) -> Option<[f64; 4]> {
+        let bars = self.mirrors.get(&page)?.doc.viewport_scrollbars;
+        let g = bars.gutters;
+        bars.any().then(|| [g.left, g.top, g.right, g.bottom].map(f64::from))
+    }
+
     /// `page`'s document scroll size (at least the viewport), as last synced.
     pub fn document_size(&self, page: u64) -> Option<(f64, f64)> {
         let m = self.mirrors.get(&page)?;
         let doc = &m.doc;
-        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
-        // Without a document element the document is as large as the viewport.
-        let Some(root) = doc.try_root_element() else { return Some((vw, vh)) };
-        let (size, overflow) =
-            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
-        Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
+        // pyro: less the viewport's shown classic scrollbars (Chrome's root `scrollWidth`).
+        let (width, height) = self.viewport_scrollbar_sizes(page);
+        let (vw, vh) = (m.viewport.0 as f64 - width, m.viewport.1 as f64 - height);
+        // (`BaseDocument::document_scroll_size`, which its viewport's scroll timelines use too.)
+        Some(doc.document_scroll_size((vw, vh)))
     }
 
     /// Whether a style rule of `page`'s document depends on `:active`
@@ -1934,7 +2577,7 @@ impl Renderer {
         let mut fresh = None;
         let mut cache = std::mem::take(&mut self.pdf_cache);
         let out = match self.prepare(snap, fetcher, &mut fresh, &mut timings, false) {
-            Ok((doc, _)) => print_document(doc, (snap.width, snap.height), dpr, opts, timings, &mut cache),
+            Ok((doc, _, _)) => print_document(doc, (snap.width, snap.height), dpr, opts, timings, &mut cache),
             Err(e) => Err(e),
         };
         self.pdf_cache = cache;
@@ -2032,6 +2675,28 @@ impl Renderer {
 }
 
 /// Premultiplied RGBA8 (the rasterizers' output) to straight alpha.
+fn transition_phase(matrix:[f64;6]) -> (f64,f64) {
+    let [a,b,c,d,x,y] = matrix;
+    if [a,b,c,d] == [1.,0.,0.,1.] {(x-x.floor(),y-y.floor())} else {(0.,0.)}
+}
+
+fn charge_transition_tree(doc: &blitz_dom::BaseDocument, depth: u64, nodes_left: &mut usize, work: &mut u64, pixels: &mut u64) -> Option<()> {
+    if depth > 64 { return None; }
+    let nodes = doc.tree().len().max(1);
+    *nodes_left = nodes_left.checked_sub(nodes)?;
+    *work = work.checked_sub(nodes as u64 * depth)?;
+    for (_, node) in doc.tree().iter() {
+        if let Some(text) = node.text_data() { *work = work.checked_sub(text.content.len() as u64)?; }
+    }
+    for id in doc.sub_document_node_ids() {
+        let child = doc.get_node(id)?.subdoc()?.inner();
+        let (width, height) = child.viewport().window_size;
+        *pixels = pixels.checked_sub(u64::from(width) * u64::from(height))?;
+        charge_transition_tree(&child, depth + 1, nodes_left, work, pixels)?;
+    }
+    Some(())
+}
+
 fn unpremultiply(data: &mut [u8]) {
     for p in data.chunks_exact_mut(4) {
         let a = p[3] as u32;
@@ -3534,6 +4199,10 @@ mod settle_resolution_tests {
             self.0.lock().unwrap().push(url);
             done(Err("offline asset guard".into()));
         }
+        // (A mask image is fetched in CORS mode.)
+        fn fetch_cors(&self, url: String, done: Delivery) {
+            self.fetch(url, done)
+        }
     }
 
     #[test]
@@ -3873,24 +4542,69 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
         config.html_parser_provider = Some(Arc::new(SvgImageParser));
         let mut doc = blitz_html::HtmlDocument::from_html(html, config);
         // The frame's scrolled elements and moved sticky boxes, as the page has them.
-        for id in doc.query_selector_all("[data-pyro-scroll-left],[data-pyro-sticky]").unwrap_or_default() {
-            let Some(node) = doc.get_node_mut(id) else { continue };
-            let number = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
-            let scroll = (
-                node.attr("data-pyro-scroll-left".into()).and_then(number),
-                node.attr("data-pyro-scroll-top".into()).and_then(number),
-            );
-            let sticky = node.attr("data-pyro-sticky".into()).and_then(|value| {
-                let mut parts = value.split(' ').map(number);
-                Some((parts.next()??, parts.next()??))
-            });
-            if let (Some(x), Some(y)) = scroll {
-                *node.scroll_offset_mut() = blitz_dom::Point { x, y };
-            }
-            if let Some((x, y)) = sticky {
-                node.set_sticky_offset(blitz_dom::Point { x, y });
-            }
-        }
+        // The frame's scrolled elements and moved sticky boxes, as the page has them (by their
+        // engine attributes, with the frame document's nonce).
+        apply_engine_offsets(&mut doc);
         Box::new(doc)
+    }
+}
+
+#[cfg(test)]
+mod svg_shape_alpha_tests {
+    use super::svg_shape_alpha;
+    use anyrender_svg::usvg;
+
+    fn alpha(svg: &str, w: u32, h: u32) -> Vec<u8> {
+        let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).expect("svg");
+        svg_shape_alpha(&tree, w, h, &Default::default()).expect("alpha")
+    }
+
+    /// A stroke-only SVG is opaque along its stroke (the filled paths alone gave nothing), and
+    /// a masked fill transparent where the mask is.
+    #[test]
+    fn strokes_and_masks_count() {
+        let a = alpha(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect x="10" y="10" width="80" height="80" fill="none" stroke="black" stroke-width="10"/></svg>"#,
+            100,
+            100,
+        );
+        assert!(a[50 * 100 + 10] > 200, "on the stroke");
+        assert_eq!(a[50 * 100 + 50], 0, "inside the stroke");
+        let a = alpha(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><mask id="m"><rect width="50" height="100" fill="white"/></mask><rect width="100" height="100" fill="black" mask="url(#m)"/></svg>"#,
+            200,
+            100,
+        );
+        assert!(a[50 * 200 + 40] > 200, "left half, scaled to 200px wide");
+        assert_eq!(a[50 * 200 + 150], 0, "masked out");
+    }
+}
+
+/// pyro: the scroll offsets (`data-pyro-scroll-left`/`-top`) and sticky offsets
+/// (`data-pyro-sticky="x y"`) the snapshot wrote, applied to their elements: only elements with
+/// the document's nonce (`BaseDocument::engine_attr`), found by an engine walk (no selector sees
+/// the reserved family).
+fn apply_engine_offsets(doc: &mut blitz_dom::BaseDocument) {
+    let mut ids = doc.engine_nodes("data-pyro-scroll-left");
+    ids.extend(doc.engine_nodes("data-pyro-scroll-top"));
+    ids.extend(doc.engine_nodes("data-pyro-sticky"));
+    ids.sort_unstable();
+    ids.dedup();
+    let number = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
+    for id in ids {
+        let left = doc.engine_attr(id, "data-pyro-scroll-left").map(|s| number(s));
+        let top = doc.engine_attr(id, "data-pyro-scroll-top").map(|s| number(s));
+        let sticky = doc.engine_attr(id, "data-pyro-sticky").and_then(|value| {
+            let mut parts = value.split(' ').map(number);
+            Some((parts.next()??, parts.next()??))
+        });
+        let Some(node) = doc.get_node_mut(id) else { continue };
+        if left.is_some() || top.is_some() {
+            *node.scroll_offset_mut() =
+                blitz_dom::Point { x: left.flatten().unwrap_or(0.0), y: top.flatten().unwrap_or(0.0) };
+        }
+        if let Some((x, y)) = sticky {
+            node.set_sticky_offset(blitz_dom::Point { x, y });
+        }
     }
 }

@@ -182,7 +182,7 @@ struct = "box"
 servo_pref = "layout.css.anchor-positioning.enabled"
 animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-anchor-position-1/#propdef-anchor-name"
-affects = ""
+affects = "layout"
 
 [anchor-scope]
 type = "ScopedName"
@@ -191,7 +191,7 @@ struct = "box"
 servo_pref = "layout.css.anchor-positioning.enabled"
 animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-anchor-position-1/#propdef-scope"
-affects = ""
+affects = "layout"
 
 [animation-delay]
 type = "Time"
@@ -525,8 +525,20 @@ affects = "layout"
 type = "color::CaretColor"
 initial = "generics::color::CaretColor::auto()"
 struct = "inherited_ui"
+# pyro: two colours (the second for the text under a block caret).
+boxed = true
 spec = "https://drafts.csswg.org/css-ui/#caret-color"
 ignored_when_colors_disabled = true
+servo_restyle_damage = "repaint"
+affects = "paint"
+
+# pyro: CSS UI 4 caret-shape (the caret is painted in blitz-paint).
+[caret-shape]
+type = "CaretShape"
+initial = "computed::CaretShape::Auto"
+struct = "inherited_ui"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-ui/#caret-shape"
 servo_restyle_damage = "repaint"
 affects = "paint"
 
@@ -1513,8 +1525,9 @@ servo_restyle_damage = "rebuild_box"
 affects = "layout"
 
 [outline-color]
-type = "Color"
-initial = "computed_value::T::currentcolor()"
+# pyro: `auto | <color>` (CSS UI 4).
+type = "color::OutlineColor"
+initial = "generics::color::OutlineColor::auto()"
 struct = "outline"
 ignored_when_colors_disabled = true
 spec = "https://drafts.csswg.org/css-ui/#propdef-outline-color"
@@ -1522,8 +1535,9 @@ servo_restyle_damage = "repaint"
 affects = "paint"
 
 [outline-offset]
-type = "BorderSideOffset"
-initial = "app_units::Au(0)"
+# pyro: and `inset` (CSS UI 4).
+type = "OutlineOffset"
+initial = "computed::OutlineOffset::Length(computed::Length::zero())"
 struct = "outline"
 spec = "https://drafts.csswg.org/css-ui/#propdef-outline-offset"
 servo_restyle_damage = "repaint"
@@ -1774,7 +1788,7 @@ affects = "layout"
 
 [position-visibility]
 type = "PositionVisibility"
-initial = "computed::PositionVisibility::ANCHORS_VISIBLE"
+initial = "computed::PositionVisibility::ANCHOR_VISIBLE"
 struct = "position"
 servo_pref = "layout.css.anchor-positioning.enabled"
 animation_type = "discrete"
@@ -2359,6 +2373,16 @@ animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-class-prop"
 affects = ""
 
+[view-transition-scope]
+type = "ViewTransitionScope"
+initial = "computed::ViewTransitionScope::Auto"
+struct = "ui"
+engine = "servo"
+servo_pref = "layout.css.view-transitions.enabled"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-scope-prop"
+affects = ""
+
 [view-transition-name]
 type = "ViewTransitionName"
 initial = "computed::ViewTransitionName::none()"
@@ -2605,6 +2629,56 @@ initial = "generics::length::LengthOrNumber::Number(From::from(8.0))"
 struct = "inherited_text"
 spec = "https://drafts.csswg.org/css-text-3/#tab-size-property"
 extra_gecko_aliases = ["-moz-tab-size"]
+affects = "layout"
+
+[hanging-punctuation]
+type = "HangingPunctuation"
+initial = "computed::text::HangingPunctuation::NONE"
+struct = "inherited_text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-3/#hanging-punctuation-property"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
+[text-group-align]
+type = "TextGroupAlign"
+initial = "computed::text::TextGroupAlign::None"
+struct = "text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-4/#text-group-align-property"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
+[wrap-inside]
+type = "WrapInside"
+initial = "computed::text::WrapInside::Auto"
+struct = "text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-4/#wrap-inside"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
+[white-space-trim]
+type = "WhiteSpaceTrim"
+initial = "computed::text::WhiteSpaceTrim::NONE"
+struct = "text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-4/#white-space-trim"
+servo_restyle_damage = "rebuild_box"
+affects = "layout"
+
+[word-space-transform]
+type = "WordSpaceTransform"
+initial = "computed::text::WordSpaceTransform::NONE"
+struct = "inherited_text"
+animation_type = "discrete"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-text-4/#word-space-transform"
+servo_restyle_damage = "rebuild_box"
 affects = "layout"
 
 [text-autospace]

@@ -69,7 +69,7 @@ pub enum RequestMode {
     Cors,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Credentials {
     Omit,
     SameOrigin,
@@ -130,6 +130,7 @@ pub struct Request {
     /// Frame / loader identifiers for CDP correlation.
     pub frame_id: Option<String>,
     pub loader_id: Option<String>,
+    pub parser_priority: bool,
     /// Upper bound on the decoded body; exceeded => `NetError::TooLarge`.
     pub max_body: Option<usize>,
     /// Fetch "cache mode" for the context's HTTP cache.
@@ -192,6 +193,7 @@ impl Request {
             referrer_policy: Default::default(),
             frame_id: None,
             loader_id: None,
+            parser_priority: false,
             max_body: None,
             cache: CacheMode::Default,
             skip_interception: false,

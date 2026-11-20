@@ -48,7 +48,155 @@ pub enum ScrollbarColor {
     },
 }
 
+/// pyro: a box's classic scrollbars ([`Node::classic_scrollbars`]), physical, in CSS px.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClassicScrollbars {
+    /// The gutter at each edge of the padding box.
+    pub gutters: taffy::Rect<f32>,
+    /// Whether the horizontal (x) and vertical (y) scrollbars show (a gutter `scrollbar-gutter`
+    /// reserves alone shows none).
+    pub shown: taffy::Point<bool>,
+    /// Whether the vertical scrollbar is on the left (`direction: rtl`).
+    pub vertical_on_left: bool,
+}
+
 impl Node {
+    pub(crate) fn custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
+        use style::selector_parser::PseudoElement;
+        use style::values::computed::{CSSPixelLength, Display, MaxSize, Size};
+        if !self.tree().classic_scrollbars {
+            return None;
+        }
+        let data = self.try_stylo_element_data()?.get()?;
+        let base = data.styles.pseudos.get(&PseudoElement::WebkitScrollbar)?;
+        if data.styles.get_primary()?.clone_scrollbar_width() != ScrollbarWidth::Auto {
+            return None;
+        }
+        let length = |vertical: bool| {
+            let axis = if vertical { PseudoElement::WebkitScrollbarVertical } else { PseudoElement::WebkitScrollbarHorizontal };
+            let pseudo = data.styles.pseudos.get(&axis).unwrap_or(base);
+            if pseudo.clone_display() == Display::None { return 0.0; }
+            let position = pseudo.get_position();
+            let value = if vertical { &position.width } else { &position.height };
+            let minimum = if vertical { &position.min_width } else { &position.min_height };
+            let maximum = if vertical { &position.max_width } else { &position.max_height };
+            let resolve = |value: &Size, default| match value {
+                Size::LengthPercentage(value) => value.0.resolve(CSSPixelLength::new(0.0)).px(),
+                _ => default,
+            };
+            let maximum = match maximum {
+                MaxSize::LengthPercentage(value) => value.0.resolve(CSSPixelLength::new(0.0)).px(),
+                _ => f32::MAX,
+            };
+            resolve(value, stylo_taffy::scrollbars::CLASSIC_THICKNESS).min(maximum).max(resolve(minimum, 0.0)).max(0.0).min(app_units::MAX_AU.to_f32_px())
+        };
+        Some(taffy::Size { width: length(true), height: length(false) })
+    }
+
+    /// pyro: the box's classic scrollbars, when the process has classic scrollbars
+    /// (`stylo_taffy::scrollbars`) and the box has any gutter; as layout reserved them
+    /// (`TaffyStyloStyle::scrollbar_gutter`).
+    pub fn classic_scrollbars(&self) -> Option<ClassicScrollbars> {
+        use style::values::computed::Overflow;
+        let mut inputs = self.classic_gutter_inputs()?;
+        if let Some(limit) = self.layout_data().scrollbar_size_limit { inputs.thickness = limit; }
+        let gutters = inputs.gutters().edges;
+        if gutters.left == 0.0 && gutters.right == 0.0 && gutters.top == 0.0 && gutters.bottom == 0.0 {
+            return None;
+        }
+        let (overflow, auto_shows) = (inputs.overflow, inputs.auto_shows);
+        let shows = |overflow: Overflow, auto: bool| overflow == Overflow::Scroll || (overflow == Overflow::Auto && auto);
+        Some(ClassicScrollbars {
+            gutters,
+            shown: taffy::Point {
+                x: inputs.thickness.height > 0.0 && shows(overflow.x, auto_shows.x),
+                y: inputs.thickness.width > 0.0 && shows(overflow.y, auto_shows.y),
+            },
+            vertical_on_left: inputs.rtl && !inputs.vertical,
+        })
+    }
+
+    /// pyro: the space the box's classic scrollbar gutters take out of its content box in each
+    /// axis for container query lengths and conditions: an `overflow: scroll` scrollbar's and a
+    /// `scrollbar-gutter` reservation, not an `overflow: auto` scrollbar's (its showing depends
+    /// on the layout those lengths give). Chrome: WPT css-conditional
+    /// `container-queries/scrollbar-container-units-block`, `100cqh` in a 100px tall
+    /// `overflow-x: scroll` size container is 85px, in an `overflow-x: auto` one 100px.
+    pub fn container_query_gutters(&self) -> taffy::Size<f32> {
+        let Some(mut inputs) = self.classic_gutter_inputs() else { return taffy::Size { width: 0.0, height: 0.0 } };
+        inputs.auto_shows = taffy::Point { x: false, y: false };
+        if let Some(limit) = self.layout_data().scrollbar_size_limit { inputs.thickness = limit; }
+        inputs.gutters().total()
+    }
+
+    /// What decides the box's classic scrollbar gutters, when the process has classic scrollbars
+    /// and the box can have them.
+    pub(crate) fn classic_gutter_inputs(&self) -> Option<stylo_taffy::scrollbars::GutterInputs> {
+        use style::values::computed::ScrollbarGutter;
+        use stylo_taffy::scrollbars::{GutterInputs, ScrollbarMode, thickness_in};
+        let thickness = |w| thickness_in(ScrollbarMode::Classic, w);
+        if !self.tree().classic_scrollbars
+            || self.is_root_element()
+            || self.flags.contains(super::NodeFlags::OVERFLOW_TO_VIEWPORT)
+        {
+            return None;
+        }
+        let el = self.element_data()?;
+        // (A replaced element is no scroll container: Chrome paints no scrollbars on an
+        // `overflow: scroll` image, WPT css-overflow `overflow-img-scroll-replaced`.)
+        if el.name.local == crate::local_name!("input")
+            || el.name.local == crate::local_name!("frameset")
+            || crate::layout::replaced::is_replaced(el)
+        {
+            return None;
+        }
+        let style = self.primary_styles()?;
+        let thickness = thickness(style.clone_scrollbar_width());
+        if thickness <= 0.0 {
+            return None;
+        }
+        let box_styles = style.get_box();
+        let overflow = taffy::Point { x: box_styles.overflow_x, y: box_styles.overflow_y };
+        let auto_shows = taffy::Point {
+            x: self.flags.contains(super::NodeFlags::AUTO_SCROLLBAR_X),
+            y: self.flags.contains(super::NodeFlags::AUTO_SCROLLBAR_Y),
+        };
+        let wm = style.writing_mode;
+        let inputs = GutterInputs {
+            thickness: self.custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness }),
+            overflow,
+            auto_shows,
+            stable: box_styles.scrollbar_gutter.contains(ScrollbarGutter::STABLE),
+            both_edges: box_styles.scrollbar_gutter.contains(ScrollbarGutter::BOTH_EDGES),
+            vertical: wm.is_vertical(),
+            rtl: !wm.is_bidi_ltr(),
+        };
+        Some(inputs)
+    }
+
+    /// pyro: the box's classic scrollbar gutters at each physical edge of its padding box (zero
+    /// without classic scrollbars): its content box is its padding box less them and its
+    /// padding, which every reader of where its inline content goes takes them from.
+    pub fn gutter_insets(&self) -> taffy::Rect<f32> {
+        self.classic_gutter_inputs().map_or(taffy::Rect::zero(), |inputs| {
+            inputs.layout_edges(self.layout_data().scrollbar_size_limit)
+        })
+    }
+
+    /// pyro: the gutters at the left and top edges ([`Self::gutter_insets`]).
+    pub fn start_gutters(&self) -> taffy::Point<f32> {
+        let g = self.gutter_insets();
+        taffy::Point { x: g.left, y: g.top }
+    }
+
+    /// pyro: where the node's content box starts in its border box: its border, its padding and
+    /// [`Self::start_gutters`] (the one place the inline content origin is read from).
+    pub fn content_box_origin(&self) -> taffy::Point<f32> {
+        let l = self.final_layout();
+        let g = self.start_gutters();
+        taffy::Point { x: l.padding.left + l.border.left + g.x, y: l.padding.top + l.border.top + g.y }
+    }
+
     /// The node's computed `scrollbar-width`.
     pub fn scrollbar_width(&self) -> ScrollbarWidth {
         self.primary_styles()

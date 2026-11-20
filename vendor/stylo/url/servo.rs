@@ -45,6 +45,10 @@ pub struct CssUrlData {
     /// The resolved value for the url, if valid.
     #[ignore_malloc_size_of = "Arc"]
     resolved: Option<Arc<Url>>,
+
+    /// pyro: the request URL modifiers written in the `url()` (CSS Values 5 § 4.5.4), if any.
+    #[ignore_malloc_size_of = "Arc"]
+    modifiers: Option<Arc<super::RequestUrlModifiers>>,
 }
 
 impl ToShmem for CssUrl {
@@ -79,10 +83,36 @@ impl CssUrl {
             .then(|| context.url_data.0.join(&serialization))
             .and_then(Result::ok)
             .map(Arc::new);
+        // pyro: every `url()` remembers the style sheet it was written in, its request's referrer
+        // (Blink `CSSImageValue::PrepareFetch`; the fetch decides for inline style), with no
+        // modifier of its own.
+        let modifiers = resolved.is_some().then(|| {
+            Arc::new(super::RequestUrlModifiers {
+                cross_origin: None,
+                integrity: None,
+                referrer_policy: None,
+                referrer: Some(context.url_data.0.clone()),
+            })
+        });
         CssUrl(Arc::new(CssUrlData {
             original: Some(serialization),
             resolved: resolved,
+            modifiers,
         }))
+    }
+
+    /// pyro: this URL with the request URL modifiers `modifiers`.
+    pub(super) fn with_modifiers(self, modifiers: super::RequestUrlModifiers) -> Self {
+        CssUrl(Arc::new(CssUrlData {
+            original: self.0.original.clone(),
+            resolved: self.0.resolved.clone(),
+            modifiers: Some(Arc::new(modifiers)),
+        }))
+    }
+
+    /// pyro: the request URL modifiers written in the `url()`, if any.
+    pub fn modifiers(&self) -> Option<&Arc<super::RequestUrlModifiers>> {
+        self.modifiers.as_ref()
     }
 
     /// Returns true if the URL is definitely invalid. For Servo URLs, we can
@@ -123,6 +153,7 @@ impl CssUrl {
         CssUrl(Arc::new(CssUrlData {
             original: None,
             resolved: Some(url),
+            modifiers: None,
         }))
     }
 
@@ -134,6 +165,7 @@ impl CssUrl {
                 .then(|| ::url::Url::parse(url))
                 .and_then(Result::ok)
                 .map(Arc::new),
+            modifiers: None,
         }))
     }
 }
@@ -142,7 +174,7 @@ impl PartialEq for CssUrl {
     fn eq(&self, other: &Self) -> bool {
         // TODO(emilio): maybe we care about equality of the specified values if
         // present? Seems not.
-        self.resolved == other.resolved
+        self.resolved == other.resolved && self.modifiers == other.modifiers
     }
 }
 
@@ -166,6 +198,9 @@ impl ToCss for CssUrl {
 
         dest.write_str("url(")?;
         string.to_css(dest)?;
+        if let Some(ref modifiers) = self.0.modifiers {
+            modifiers.to_css(dest)?;
+        }
         dest.write_char(')')
     }
 }
@@ -180,7 +215,7 @@ impl ToComputedValue for SpecifiedUrl {
     // but still return it as a ComputedUrl::Invalid
     fn to_computed_value(&self, _: &Context) -> Self::ComputedValue {
         match self.resolved {
-            Some(ref url) => ComputedUrl::Valid(url.clone()),
+            Some(ref url) => ComputedUrl::Valid(url.clone(), self.modifiers.clone()),
             None => match self.original {
                 Some(ref url) => ComputedUrl::Invalid(url.clone()),
                 None => {
@@ -192,13 +227,15 @@ impl ToComputedValue for SpecifiedUrl {
 
     fn from_computed_value(computed: &ComputedUrl) -> Self {
         let data = match *computed {
-            ComputedUrl::Valid(ref url) => CssUrlData {
+            ComputedUrl::Valid(ref url, ref modifiers) => CssUrlData {
                 original: None,
                 resolved: Some(url.clone()),
+                modifiers: modifiers.clone(),
             },
             ComputedUrl::Invalid(ref url) => CssUrlData {
                 original: Some(url.clone()),
                 resolved: None,
+                modifiers: None,
             },
         };
         CssUrl(Arc::new(data))
@@ -210,15 +247,27 @@ impl ToComputedValue for SpecifiedUrl {
 pub enum ComputedUrl {
     /// The `url()` was invalid or it wasn't specified by the user.
     Invalid(#[ignore_malloc_size_of = "Arc"] Arc<String>),
-    /// The resolved `url()` relative to the stylesheet URL.
-    Valid(#[ignore_malloc_size_of = "Arc"] Arc<Url>),
+    /// The resolved `url()` relative to the stylesheet URL, and (pyro) its request URL
+    /// modifiers, if any (CSS Values 5 § 4.5.4).
+    Valid(
+        #[ignore_malloc_size_of = "Arc"] Arc<Url>,
+        #[ignore_malloc_size_of = "Arc"] Option<Arc<super::RequestUrlModifiers>>,
+    ),
 }
 
 impl ComputedUrl {
     /// Returns the resolved url if it was valid.
     pub fn url(&self) -> Option<&Arc<Url>> {
         match *self {
-            ComputedUrl::Valid(ref url) => Some(url),
+            ComputedUrl::Valid(ref url, _) => Some(url),
+            _ => None,
+        }
+    }
+
+    /// pyro: the request URL modifiers of a valid `url()`, if any.
+    pub fn modifiers(&self) -> Option<&Arc<super::RequestUrlModifiers>> {
+        match *self {
+            ComputedUrl::Valid(_, ref modifiers) => modifiers.as_ref(),
             _ => None,
         }
     }
@@ -230,12 +279,15 @@ impl ToCss for ComputedUrl {
         W: Write,
     {
         let string = match *self {
-            ComputedUrl::Valid(ref url) => url.as_str(),
+            ComputedUrl::Valid(ref url, _) => url.as_str(),
             ComputedUrl::Invalid(ref invalid_string) => invalid_string,
         };
 
         dest.write_str("url(")?;
         string.to_css(dest)?;
+        if let Some(modifiers) = self.modifiers() {
+            modifiers.to_css(dest)?;
+        }
         dest.write_char(')')
     }
 }

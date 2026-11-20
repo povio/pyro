@@ -144,7 +144,7 @@
 +}
 --- a/src/shape/shaped_text.rs
 +++ b/src/shape/shaped_text.rs
-@@ -52,6 +52,77 @@
+@@ -52,6 +52,86 @@
  }
  
  impl FontMetrics {
@@ -176,6 +176,12 @@
 +    pub face_under: Option<f32>,
 +    /// `icft`: the top of the ideographic character face.
 +    pub face_over: Option<f32>,
++    /// pyro: `romn`: the alphabetic baseline (most fonts: 0, the glyph origin).
++    pub alphabetic: Option<f32>,
++    /// pyro: `hang`: the hanging baseline.
++    pub hanging: Option<f32>,
++    /// pyro: `math`: the mathematical baseline.
++    pub math: Option<f32>,
 +}
 +
 +impl IdeographicBaselines {
@@ -211,6 +217,9 @@
 +                b"idtp" => out.ideographic_over = value,
 +                b"icfb" => out.face_under = value,
 +                b"icft" => out.face_over = value,
++                b"romn" => out.alphabetic = value,
++                b"hang" => out.hanging = value,
++                b"math" => out.math = value,
 +                _ => {}
 +            }
 +        }
@@ -222,7 +231,7 @@
      /// Metrics to use when no font is available at all.
      ///
      /// These roughly match common Latin fonts, so that a layout without fonts still has plausible
-@@ -92,17 +163,43 @@
+@@ -92,17 +172,43 @@
                          .map(|v| (skrifa::Tag::new(&v.tag.to_bytes()), v.value)),
                  ),
          );
@@ -274,7 +283,7 @@
          // Default values from HarfBuzz: https://github.com/harfbuzz/harfbuzz/blob/12ee77ee00514c442bcd28f9aa9d56b708c37382/src/hb-ot-metrics.cc#L355-L372
          let fallback_decoration_size = font_size / 18.0;
  
-@@ -119,7 +216,7 @@
+@@ -119,7 +225,7 @@
          };
  
          Self {
@@ -283,14 +292,10 @@
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -128,10 +225,125 @@
-             strikethrough_size,
-             x_height: metrics.x_height,
-             cap_height: metrics.cap_height,
-+        }
-+    }
-+}
-+
+@@ -132,6 +238,121 @@
+     }
+ }
+ 
 +/// pyro: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -382,10 +387,10 @@
 +            font_metrics: FontMetrics::from_skrifa_metrics(&font_ref, &metrics, font_size)
 +                .with_face_metrics(font.synthesis.face_metrics(), font_size),
 +            hyphen,
-         }
-     }
- }
- 
++        }
++    }
++}
++
 +/// The metrics of the runs of one font at one size and variation location in a [`ShapedText`].
 +#[derive(Clone, Debug, PartialEq)]
 +struct RunMetricsEntry {
@@ -409,7 +414,7 @@
  /// The result of shaping.
  ///
  /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
-@@ -152,6 +364,9 @@
+@@ -152,6 +373,9 @@
      glyphs: Vec<Glyph>,
      fonts: Vec<FontInstance>,
      normalized_coords: Vec<NormalizedCoord>,
@@ -419,7 +424,7 @@
  }
  
  impl ShapedText {
-@@ -179,6 +394,7 @@
+@@ -179,6 +403,7 @@
          self.glyphs.clear();
          self.fonts.clear();
          self.normalized_coords.clear();
@@ -427,13 +432,10 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -215,9 +431,252 @@
+@@ -218,6 +443,288 @@
          }
-         for shaped_cluster in self.shaped_clusters.iter_mut() {
-             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
-+        }
-+    }
-+
+     }
+ 
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
@@ -455,6 +457,35 @@
 +            skrifa::instance::LocationRef::default(),
 +        );
 +        Some(metrics.ascent - metrics.descent)
++    }
++
++    /// pyro: the vertical advance of the shaped cluster at `index` standing upright in the font
++    /// at `font_index` at `font_size`: the sum of its glyphs' advance heights in the font's
++    /// vertical metrics (`vmtx`), as HarfBuzz advances glyphs shaping top to bottom. `None` for a
++    /// font without them.
++    pub fn cluster_vertical_advance(&self, index: u32, font_index: usize, font_size: f32) -> Option<f32> {
++        use skrifa::raw::TableProvider;
++        let cluster = self.shaped_clusters.get(index as usize)?;
++        let font = self.fonts.get(font_index)?;
++        let font_ref = skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
++        let vmtx = font_ref.vmtx().ok()?;
++        let units_per_em = f32::from(font_ref.head().ok()?.units_per_em());
++        if units_per_em == 0.0 {
++            return None;
++        }
++        let advance = |glyph: u32| vmtx.advance(skrifa::GlyphId::new(glyph)).map(f32::from);
++        let units = if cluster.has_inline_glyph() {
++            advance(cluster.glyph_offset)?
++        } else {
++            let start = cluster.glyph_offset as usize;
++            let glyphs = self.glyphs.get(start..start + usize::from(cluster.glyph_len()))?;
++            let mut sum = 0.0;
++            for glyph in glyphs {
++                sum += advance(glyph.id)?;
++            }
++            sum
++        };
++        Some(units * font_size / units_per_em)
 +    }
 +
 +    /// pyro: makes the run at `run_index` upright with glyphs advancing by `advance`
@@ -489,7 +520,7 @@
 +        let cluster = self.shaped_clusters.get_mut(index as usize)?;
 +        if cluster.glyph_len() != 1 || (cluster.has_inline_glyph() && dx != 0.0) {
 +            return None;
-         }
++        }
 +        let advance = cluster.advance;
 +        cluster.advance += d_advance;
 +        if cluster.has_inline_glyph() {
@@ -500,8 +531,8 @@
 +        glyph.x += dx;
 +        glyph.advance += d_advance;
 +        Some((x, advance))
-     }
- 
++    }
++
 +    /// pyro: sets the justification opportunities of the character at `index` (see
 +    /// [`CharacterFlags::with_justification`](super::CharacterFlags)).
 +    #[inline]
@@ -657,6 +688,16 @@
 +        }
 +    }
 +
++    /// Reserve the width of a separately shaped discretionary fragment.
++    pub fn set_fragment_placeholder(&mut self, index: u32, advance: f32) -> ClusterGlyphs {
++        let cluster = &mut self.shaped_clusters[index as usize];
++        let old = ClusterGlyphs { glyph_offset: cluster.glyph_offset, flags: cluster.flags.bits(), advance: cluster.advance };
++        cluster.flags = cluster.flags.with_inline_glyph(true).with_glyph_len(1);
++        cluster.glyph_offset = 0;
++        cluster.advance = advance;
++        old
++    }
++
 +    /// pyro: gives the one-glyph shaped cluster at `index` the glyph `id` with `advance`, and
 +    /// returns what it had (a soft hyphen at the end of a line shows a hyphen; one inside a line
 +    /// gets its own glyph back).
@@ -680,18 +721,21 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +732,9 @@
+@@ -273,7 +780,12 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
 -    ) {
 +        metrics: Option<RunMetrics>,
 +        trim: Option<&super::han_kerning::RunTrim>,
++        // pyro: the glyphs' positions shaped top to bottom (`ShapeOptions::vertical_upright`),
++        // in place of `glyph_buffer`'s.
++        vertical: Option<&[harfrust::GlyphPosition]>,
 +    ) -> RunMetrics {
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,18 +763,36 @@
+@@ -302,42 +814,71 @@
                  index
              });
  
@@ -738,7 +782,13 @@
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
-@@ -324,20 +803,23 @@
+ 
+-        let glyph_positions = glyph_buffer.glyph_positions();
++        let glyph_positions = vertical
++            .filter(|positions| positions.len() == glyph_buffer.glyph_positions().len())
++            .unwrap_or(glyph_buffer.glyph_positions());
+         let scale_factor = options.font_size / units_per_em;
+         let shaped_clusters_start = self.shaped_clusters.len();
  
          // Push all characters.
          let characters_start = self.characters.len();
@@ -754,12 +804,19 @@
              self.characters.push(Character {
                  text_byte_start: (range.byte_range.start + byte_offset) as u32,
                  style_index: *style_index,
-                 whitespace: Whitespace::from_char(ch),
+-                whitespace: Whitespace::from_char(ch),
 -                flags: CharacterFlags::new(
 -                    ch,
 -                    info.is_word_boundary(),
 -                    info.is_soft_wrap_opportunity(),
 -                ),
++                // pyro: a line or paragraph separator breaks the line where `white-space`
++                // preserves segment breaks (WPT CSS2 `bidi-breaking-003`); elsewhere it is a space.
++                whitespace: if options.preserved_breaks && matches!(ch, '\u{2028}' | '\u{2029}') {
++                    Whitespace::Newline
++                } else {
++                    Whitespace::from_char(ch)
++                },
 +                // pyro: and how its fullwidth punctuation is trimmed (`han_kerning`).
 +                flags: match trim.and_then(|trim| trim.flags.get(index)) {
 +                    Some(&trim) if trim != 0 => flags.with_trim(trim),
@@ -768,18 +825,35 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +877,10 @@
+@@ -386,6 +927,7 @@
+ 
+         self.runs.push(ShapedRun {
+             range,
++            segment_start: segment.range.byte_range.start,
+             font_size: options.font_size,
+             font_index,
+             characters_range: characters_start as u32..self.characters.len() as u32,
+@@ -395,13 +937,19 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
 +            hyphen: metrics.hyphen,
 +            upright_advance: None,
++            vertical_shaped: vertical.is_some_and(|positions| positions.len() == glyph_buffer.glyph_positions().len()),
          });
 +        metrics
      }
  }
  
-@@ -423,6 +908,12 @@
+ /// One shaped run, belonging to a [`ShapedText`].
+ #[derive(Clone, Debug, PartialEq)]
+ pub struct ShapedRun {
++    /// Source offset of the shaping segment shared by its fallback font runs.
++    pub segment_start: usize,
+     /// The range of text this run corresponds to.
+     pub range: TextRange,
+     /// Font size.
+@@ -423,6 +971,14 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -789,10 +863,48 @@
 +    /// pyro: the advance of every glyph of an upright run in a font without vertical metrics
 +    /// (parley's `shape::upright`): the hyphens the line breaker shows advance by it too.
 +    pub upright_advance: Option<f32>,
++    /// pyro: its advances are the ones shaping it top to bottom gives (`ShapeOptions::vertical_upright`).
++    pub vertical_shaped: bool,
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +1025,15 @@
+@@ -486,8 +1042,12 @@
+             )
+         };
+ 
++        let mut breaks = (cluster.characters_start..char_end.saturating_sub(1))
++            .filter(|&index| characters[index].flags.is_soft_hyphen())
++            .map(|index| index + 1);
++        let split = breaks.next();
+         shaped_clusters.push(ShapedCluster {
+-            chars_range: (cluster.characters_start as u32, char_end as u32),
++            chars_range: (cluster.characters_start as u32, split.unwrap_or(char_end) as u32),
+             style_index: first_character.style_index,
+             flags: ShapedClusterFlags::new(glyph_len)
+                 .with_grapheme_start(first_character.grapheme_start)
+@@ -501,6 +1061,21 @@
+             glyph_offset,
+             advance,
+         });
++        let mut next = split;
++        while let Some(start) = next {
++            next = breaks.next();
++            let first = characters[start];
++            shaped_clusters.push(ShapedCluster {
++                chars_range: (start as u32, next.unwrap_or(char_end) as u32),
++                style_index: first.style_index,
++                flags: ShapedClusterFlags::new(0)
++                    .discretionary_continuation()
++                    .with_grapheme_start(true)
++                    .with_first_char(first.flags.is_soft_wrap_opportunity(), first.whitespace),
++                glyph_offset: 0,
++                advance: 0.,
++            });
++        }
+     }
+ 
+     let mut cluster = Cluster {
+@@ -534,7 +1109,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -809,7 +921,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1146,16 @@
+@@ -647,9 +1230,18 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -821,12 +933,24 @@
 +                auto_opsz: false,
 +                language_override: None,
 +                spacing_trim: Default::default(),
++                vertical_upright: false,
 +                isolated_before: false,
 +                isolated_after: false,
++                preserved_breaks: false,
              },
          }];
          shaper.shape_text(
-@@ -805,18 +1311,32 @@
+@@ -765,7 +1357,8 @@
+ 
+     #[test]
+     fn newlines_removed() {
+-        for newline in ["\n", "\r", "\u{2028}", "\u{2029}"] {
++        // pyro: not U+2028 or U+2029, which are shown as a space (`Whitespace::from_char`).
++        for newline in ["\n", "\r"] {
+             let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
+ 
+             let index = shaped
+@@ -805,18 +1398,36 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -838,8 +962,10 @@
 +                    auto_opsz: false,
 +                    language_override: None,
 +                    spacing_trim: Default::default(),
++                    vertical_upright: false,
 +                    isolated_before: false,
 +                    isolated_after: false,
++                    preserved_breaks: false,
                  },
              },
              Item {
@@ -854,8 +980,10 @@
 +                    auto_opsz: false,
 +                    language_override: None,
 +                    spacing_trim: Default::default(),
++                    vertical_upright: false,
 +                    isolated_before: false,
 +                    isolated_after: false,
++                    preserved_breaks: false,
                  },
              },
          ];
@@ -907,7 +1035,7 @@
      /// The language to shape the item with.
      pub language: Option<Language>,
      /// The font features to shape the item with.
-@@ -34,6 +62,23 @@
+@@ -34,6 +62,31 @@
      pub features: &'a [FontFeature],
      /// The font variations that are constant over an item.
      pub variations: &'a [FontVariation],
@@ -923,15 +1051,40 @@
 +    pub language_override: Option<[u8; 4]>,
 +    /// pyro: how the item's fullwidth punctuation is trimmed (CSS `text-spacing-trim`).
 +    pub spacing_trim: SpacingTrim,
-+    /// pyro: whether an atomic inline sits right before the item: its first character has no
-+    /// punctuation before it to be trimmed against.
++    /// pyro: whether an atomic inline (or an inline box edge with width) sits right before the
++    /// item: its first character has no punctuation before it to be trimmed against, and no text
++    /// before it to join with.
 +    pub isolated_before: bool,
 +    /// pyro: whether an atomic inline sits right after the item.
 +    pub isolated_after: bool,
++    /// pyro: the item stands upright in a vertical line: in a font with vertical metrics its
++    /// advances and offsets along the line are the ones shaping it top to bottom gives
++    /// (`vmtx`, with `vhal`/`vchw`/`vpal`/`vkrn` for `halt`/`chws`/`palt`/`kern`).
++    pub vertical_upright: bool,
++    /// pyro: the item's `white-space` preserves segment breaks: a line or paragraph separator
++    /// (U+2028, U+2029) breaks the line there, where elsewhere it is shown as a space.
++    pub preserved_breaks: bool,
  }
  
  /// The font instance to shape an item with.
-@@ -85,24 +130,34 @@
+@@ -48,6 +101,16 @@
+ }
+ 
+ impl FontInstance {
++    /// Horizontal advance of the face's space at the specified CSS size and variations.
++    pub fn space_advance(&self, size: f32, variations: &[FontVariation]) -> Option<f32> {
++        use skrifa::MetadataProvider as _;
++        let face = skrifa::FontRef::from_index(self.font.data.as_ref(), self.font.index).ok()?;
++        let location = face.axes().location(variations_iter(&self.synthesis, variations).map(|setting| (setting.tag, setting.value)));
++        let glyph = face.charmap().map(' ')?;
++        face.glyph_metrics(skrifa::instance::Size::new(size * self.synthesis.size_adjust()), &location)
++            .advance_width(glyph)
++    }
++
+     /// Borrow this font instance.
+     #[inline]
+     pub fn as_ref(&self) -> FontInstanceRef<'_> {
+@@ -85,24 +148,34 @@
  
  /// Reusable scratch to shape text using [`Self::shape_text`].
  pub struct Shaper {
@@ -966,7 +1119,7 @@
          }
      }
  }
-@@ -170,6 +225,7 @@
+@@ -170,6 +243,7 @@
                  "items must not span past the text"
              );
  
@@ -974,7 +1127,7 @@
              loop {
                  let segment = itemizer
                      .next(
-@@ -178,10 +234,15 @@
+@@ -178,10 +252,15 @@
                      )
                      .expect("A segment must be yielded, given items tile the full text exactly");
  
@@ -990,7 +1143,7 @@
                      &item.options,
                      &mut select_font,
                      analysis.char_info(),
-@@ -228,6 +289,7 @@
+@@ -228,6 +307,7 @@
      scx: &mut Shaper,
      text: &str,
      segment: &Segment,
@@ -998,7 +1151,7 @@
      options: &ShapeOptions<'_>,
      select_font: &mut impl FontSelector,
      char_info: &[CharInfo],
-@@ -258,10 +320,21 @@
+@@ -258,10 +338,21 @@
          harfrust::Direction::LeftToRight
      };
      let hb_script = script_to_harfrust(segment.script);
@@ -1024,7 +1177,7 @@
      scx.features.clear();
      scx.features.extend(options.features.iter().map(|feature| {
          harfrust::Feature::new(
-@@ -272,15 +345,85 @@
+@@ -272,15 +363,87 @@
      }));
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
@@ -1079,6 +1232,8 @@
 +                spacing_trim: options.spacing_trim,
 +                isolated_before: options.isolated_before,
 +                isolated_after: options.isolated_after,
++                vertical_upright: options.vertical_upright,
++                preserved_breaks: options.preserved_breaks,
 +            };
 +            &adjusted
 +        } else {
@@ -1113,7 +1268,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +434,104 @@
+@@ -291,12 +454,125 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -1126,8 +1281,16 @@
  
 +        // Use the entire run text including newlines.
 +        let run_text = &text[range.byte_range.clone()];
-+        let pre_context = context_before(&text[..range.byte_range.start]);
-+        let post_context = context_after(&text[range.byte_range.end..]);
++        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
++            ""
++        } else {
++            &text[..range.byte_range.start]
++        };
++        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
++            ""
++        } else {
++            &text[range.byte_range.end..]
++        };
 +
 +        // pyro: fullwidth punctuation next to punctuation is shaped with the font's `halt`
 +        // (CSS `text-spacing-trim`); the plan takes the feature without its ranges.
@@ -1180,6 +1343,18 @@
 +            _ => (features, features),
 +        };
 +
++        // pyro: an upright item in a font with vertical metrics, shaped top to bottom too.
++        let vertical = (options.vertical_upright && !segment.bidi_level.is_rtl())
++            .then(|| {
++                use skrifa::raw::TableProvider as _;
++                let font_ref = font_ref();
++                font_ref.vmtx().ok()?;
++                let data = harfrust::ShaperData::new(&font_ref);
++                let shaper = data.shaper(&font_ref).instance(Some(instance)).build();
++                vertical_positions(&shaper, run_text, pre, post, hb_script, language.as_ref(), run_features, options.point_size)
++            })
++            .flatten();
++
 +        let glyph_key = cache::GlyphKey {
 +            font_blob_id: font.font.data.id(),
 +            font_index: font.font.index,
@@ -1192,8 +1367,8 @@
 +            font_size: options.font_size,
 +            point_size: options.point_size,
 +            text: run_text,
-+            pre_context,
-+            post_context,
++            pre_context: context_before(pre),
++            post_context: context_after(post),
 +        };
 +        let cached = with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| {
 +            let (glyphs, metrics) = cache.get(&glyph_key)?;
@@ -1209,6 +1384,7 @@
 +                instance.coords(),
 +                Some(metrics),
 +                trim.as_ref(),
++                vertical.as_deref(),
 +            );
 +            Some(())
 +        });
@@ -1219,7 +1395,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -309,7 +544,7 @@
+@@ -309,7 +585,7 @@
                  direction,
                  hb_script,
                  language.clone(),
@@ -1228,7 +1404,7 @@
                  Some(options.variations),
              ),
              || {
-@@ -318,7 +553,7 @@
+@@ -318,7 +594,7 @@
                      direction,
                      Some(hb_script),
                      language.as_ref(),
@@ -1237,7 +1413,7 @@
                  )
              },
          );
-@@ -328,8 +563,6 @@
+@@ -328,11 +604,13 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -1246,7 +1422,14 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,6 +573,19 @@
++            if ch == '\u{ad}' && i != 0 && segment.bidi_level.is_rtl()
++                && font_ref.table_data(skrifa::Tag::new(b"morx")).is_some() {
++                continue;
++            }
+             // Ensure that each cluster's index matches the index into `infos`. This is required
+             // for efficient cluster lookup within `data.rs`.
+             //
+@@ -340,11 +618,26 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -1259,14 +1442,23 @@
 +            // pyro: a no-break space is shaped as a space, as Blink normalizes it before shaping:
 +            // it kerns as the space does (macOS Times kerns space-T, not no-break-space-T).
 +            let ch = match ch {
-+                '\t' | '\u{a0}' => ' ',
++                // pyro: and so are the line and paragraph separators, which CSS displays as a
++                // space (WPT css-fonts `separators`): in the space's font, not a fallback's.
++                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
 +                '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'..='\u{84}' | '\u{86}'..='\u{9f}' => '\u{FFFF}',
 +                ch => ch,
 +            };
              buffer.add(ch, i as u32);
          }
  
-@@ -356,11 +602,11 @@
+-        buffer.set_pre_context(&text[..range.byte_range.start]);
+-        buffer.set_post_context(&text[range.byte_range.end..]);
++        buffer.set_pre_context(pre);
++        buffer.set_post_context(post);
+         buffer.set_direction(direction);
+         buffer.set_script(hb_script);
+ 
+@@ -356,11 +649,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1281,12 +1473,13 @@
              text,
              range,
              segment,
-@@ -370,15 +616,24 @@
+@@ -370,15 +663,25 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
 +            None,
 +            trim.as_ref(),
++            vertical.as_deref(),
          );
  
 -        // Replace buffer to reuse allocation in the next run.
@@ -1308,19 +1501,51 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -395,6 +650,8 @@
+@@ -395,12 +698,23 @@
      // The end of the previous grapheme.
      let mut byte_end = text_range.start;
      let mut char_end = char_range.start;
 +    // pyro: per font of the segment, whether it shapes word by word (`shapes_word_by_word`).
 +    let mut word_fonts: Vec<(u64, u32, bool)> = Vec::new();
  
++    // pyro: a grapheme of joiners alone (U+200D, U+200C: at the start of the text, after a space)
++    // and its font, held to be shaped with the grapheme after it: a joiner is no glyph of its own
++    // but tells the letter after it how to join, which a font shaping with `morx` (macOS's Geeza
++    // Pro) reads only from its own buffer, not the context (WPT css-text `word-break-break-all-004`).
++    // A soft hyphen too (a grapheme of its own, in a word): in the run of the letters around it
++    // when they share a font, so it does not cut the word's shaping in two (WPT css-text
++    // `hyphenate-character-005`).
++    let mut pending_joiner: Option<(FontInstance, TextRange)> = None;
++
      for grapheme_length in grapheme_lengths {
          let (byte_start, char_start) = (byte_end, char_end);
-@@ -409,26 +666,152 @@
+         char_cluster.fill(chars.by_ref().take(grapheme_length), &mut byte_end);
+         char_end += grapheme_length;
+-        let grapheme = TextRange {
++        let mut grapheme = TextRange {
+             byte_range: byte_start..byte_end,
+             char_range: char_start..char_end,
+         };
+@@ -409,26 +723,249 @@
              .select_font(segment, options, char_cluster)
              .ok_or(())?;
  
++        if text[grapheme.byte_range.clone()].chars().all(|c| matches!(c, '\u{ad}' | '\u{200c}' | '\u{200d}')) {
++            if let Some((held_font, held)) = pending_joiner.take() {
++                grapheme.byte_range.start = held.byte_range.start;
++                grapheme.char_range.start = held.char_range.start;
++                pending_joiner = Some((held_font, grapheme));
++            } else {
++                pending_joiner = Some((font.into(), grapheme));
++            }
++            continue;
++        }
++        let joined = pending_joiner.take();
++        if let Some((_, held)) = &joined {
++            grapheme.byte_range.start = held.byte_range.start;
++            grapheme.char_range.start = held.char_range.start;
++        }
++
 +        // pyro: Blink shapes word by word (a space or no-break space alone, each word between
 +        // them alone) when the font's OpenType lookups never involve the space glyph, so a font
 +        // with only legacy `kern`/`morx` tables (Times, among the macOS fonts) never kerns
@@ -1352,6 +1577,16 @@
              run = Some((font.into(), grapheme));
          }
      }
++    // Joiners at the end of the segment go with the run before them.
++    if let Some((held_font, held)) = pending_joiner.take() {
++        match &mut run {
++            Some((_, run_range)) => {
++                run_range.byte_range.end = held.byte_range.end;
++                run_range.char_range.end = held.char_range.end;
++            }
++            None => run = Some((held_font, held)),
++        }
++    }
      if let Some((run_font, run_range)) = run {
 -        shape_run(&run_font, run_range);
 +        shape_run(&run_font, run_range, before_font.as_ref(), None);
@@ -1378,8 +1613,8 @@
 +    });
 +    fonts.push((id, index, answer));
 +    answer
- }
- 
++}
++
 +/// pyro: the trimming data of `font` in `language` (`han_font_data`), from `fonts` or probed
 +/// and kept there.
 +fn han_data<'a>(
@@ -1409,8 +1644,8 @@
 +        fonts.len() - 1
 +    });
 +    &fonts[index].3
-+}
-+
+ }
+ 
 +/// pyro: what fullwidth punctuation trimming needs to know about `font` in `language`: whether
 +/// it has `halt`, and what `halt` does to the punctuation whose kind depends on the glyph, each
 +/// shaped alone in Han script (for which CJK fonts' `locl` picks the language's form).
@@ -1457,6 +1692,77 @@
 +    })
 +}
 +
++/// pyro: the positions of `run_text`'s glyphs shaped top to bottom: each advance the vertical
++/// one, each offset along the line the one the positioning features give it (the difference to
++/// shaping without them, which leaves the glyph's vertical origin). `features` take their
++/// vertical counterparts (`halt` `vhal`, `chws` `vchw`, `palt` `vpal`, `kern` `vkrn`), so the
++/// metrics and the features that change advances combine (CSS Text 4 `text-spacing-trim` in
++/// vertical lines).
++fn vertical_positions(
++    shaper: &harfrust::Shaper<'_>,
++    run_text: &str,
++    pre: &str,
++    post: &str,
++    script: harfrust::Script,
++    language: Option<&harfrust::Language>,
++    features: &[harfrust::Feature],
++    point_size: f32,
++) -> Option<alloc::vec::Vec<harfrust::GlyphPosition>> {
++    use alloc::vec::Vec;
++    const POSITIONING: [&[u8; 4]; 4] = [b"vhal", b"vchw", b"vpal", b"vkrn"];
++    let vertical_tag = |tag: harfrust::Tag| match &tag.to_be_bytes() {
++        b"halt" => harfrust::Tag::new(b"vhal"),
++        b"chws" => harfrust::Tag::new(b"vchw"),
++        b"palt" => harfrust::Tag::new(b"vpal"),
++        b"kern" => harfrust::Tag::new(b"vkrn"),
++        _ => tag,
++    };
++    let with: Vec<harfrust::Feature> =
++        features.iter().map(|f| harfrust::Feature { tag: vertical_tag(f.tag), ..*f }).collect();
++    let mut without = with.clone();
++    without.retain(|f| !POSITIONING.iter().any(|t| f.tag == harfrust::Tag::new(t)));
++    without.extend(POSITIONING.iter().map(|t| harfrust::Feature::new(harfrust::Tag::new(t), 0, ..)));
++    let shape = |features: &[harfrust::Feature]| {
++        let mut buffer = harfrust::UnicodeBuffer::new();
++        buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
++        #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
++        for (i, ch) in run_text.chars().enumerate() {
++            let ch = match ch {
++                '\t' | '\u{a0}' | '\u{2028}' | '\u{2029}' => ' ',
++                ch => ch,
++            };
++            buffer.add(ch, i as u32);
++        }
++        buffer.set_pre_context(pre);
++        buffer.set_post_context(post);
++        buffer.set_direction(harfrust::Direction::TopToBottom);
++        buffer.set_script(script);
++        if let Some(language) = language {
++            buffer.set_language(language.clone());
++        }
++        shaper.shape(buffer, HarfShapeOptions::new().features(features).point_size(Some(point_size)))
++    };
++    let (with, without) = (shape(&with), shape(&without));
++    let (positions, base) = (with.glyph_positions(), without.glyph_positions());
++    if positions.len() != base.len() {
++        return None;
++    }
++    Some(
++        positions
++            .iter()
++            .zip(base)
++            .map(|(p, b)| {
++                let mut out = *p;
++                out.x_advance = -p.y_advance;
++                out.y_advance = 0;
++                out.x_offset = -(p.y_offset - b.y_offset);
++                out.y_offset = 0;
++                out
++            })
++            .collect(),
++    )
++}
++
 +/// Up to harfrust's context length (5 characters) of `text`'s end.
 +fn context_before(text: &str) -> &str {
 +    let start = text.char_indices().rev().nth(4).map_or(0, |(i, _)| i);
@@ -1474,7 +1780,7 @@
      synthesis: &'a fontique::Synthesis,
 --- a/src/break_overrides.rs
 +++ b/src/break_overrides.rs
-@@ -90,6 +90,30 @@
+@@ -90,9 +90,33 @@
      CHROMIUM_LINE_BREAK_TABLE.lookup(before, after)
  }
  
@@ -1504,7 +1810,11 @@
 +
  /// A static table mirroring Chromium's preferred line breaking behavior for `before` / `after`
  /// printable ASCII code points.
- static CHROMIUM_LINE_BREAK_TABLE: AsciiLineBreakTable<5> =
+-static CHROMIUM_LINE_BREAK_TABLE: AsciiLineBreakTable<5> =
++pub(crate) static CHROMIUM_LINE_BREAK_TABLE: AsciiLineBreakTable<5> =
+     AsciiLineBreakTableBuilder::chromium().build::<5>();
+ 
+ /// A line break override table for ASCII character pairs.
 @@ -323,6 +347,7 @@
      use super::CHROMIUM_LINE_BREAK_TABLE;
      use super::LineBreakContext;
@@ -1513,13 +1823,10 @@
  
      fn cx(before_before: Option<char>, before: char, after: char) -> LineBreakContext {
          LineBreakContext {
-@@ -344,6 +369,22 @@
-         // No preceding character (start of text) behaves like a non-alphanumeric
-         // context, matching Chromium's `last_last_ch == 0`.
-         assert_eq!(chromium_override(cx(None, '-', '1')), Some(false));
-+    }
-+
-+    #[test]
+@@ -347,6 +372,22 @@
+     }
+ 
+     #[test]
 +    fn hyphen_digit_override_only_breaks_after_an_alphanumeric() {
 +        assert_eq!(hyphen_digit_override(cx(Some('b'), '-', '9')), Some(true));
 +        assert_eq!(hyphen_digit_override(cx(Some('0'), '-', '2')), Some(true));
@@ -1533,12 +1840,15 @@
 +        assert_eq!(hyphen_digit_override(cx(Some('a'), '\u{2011}', '1')), None);
 +        assert_eq!(hyphen_digit_override(cx(Some('a'), '-', '\u{0661}')), None);
 +        assert_eq!(hyphen_digit_override(cx(Some('\u{e9}'), '-', '1')), None);
-     }
- 
-     #[test]
++    }
++
++    #[test]
+     fn chromium_ignores_uax_14_lb13() {
+         // Blink allows a break after a space run unconditionally.
+         // See comment in non-test code for more details.
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -52,9 +52,16 @@
+@@ -52,9 +52,17 @@
  //!         char_end: char_count.try_into().unwrap(),
  //!         options: ShapeOptions {
  //!             font_size: 16.0,
@@ -1552,19 +1862,58 @@
 +//!             spacing_trim: Default::default(),
 +//!             isolated_before: false,
 +//!             isolated_after: false,
++//!             preserved_breaks: false,
  //!         },
  //!      }],
  //!      select_font, // Selects fonts covering each cluster.
-@@ -122,5 +129,5 @@
+@@ -118,9 +126,42 @@
+ pub use linebender_resource_handle::FontData;
+ pub use parlance::{BaseDirection, NormalizedCoord};
+ 
+-pub use analysis::{Analysis, AnalysisDataSources, CharInfo};
++pub use analysis::{Analysis, AnalysisDataSources, CharInfo, hangs_at_edge, removes_segment_break};
  pub use analyzer::{AnalysisOptions, Analyzer, LineBreakConfig};
  pub use glyph::Glyph;
  pub use shape::atom::{Atom, Atoms, Grapheme, Graphemes, ShapedClusterGlyphs, ShapedSlice};
 -pub use shape::shaped_text::{FontMetrics, ShapedRun, ShapedText};
 +pub use shape::shaped_text::{ClusterGlyphs, FontMetrics, IdeographicBaselines, ShapedRun, ShapedText};
  pub use shape::shaper::{FontInstance, FontInstanceRef, FontSelector, ShapeOptions, Shaper};
++
++/// pyro: whether the font at `index` in `data` draws colour glyphs (a `COLR`, `CBDT`, `sbix` or
++/// `SVG ` table): an emoji font for emoji presentation.
++pub fn is_color_font(data: &[u8], index: u32) -> bool {
++    let Ok(font_ref) = skrifa::FontRef::from_index(data, index) else { return false };
++    [*b"COLR", *b"CBDT", *b"sbix", *b"SVG "]
++        .iter()
++        .any(|tag| font_ref.table_data(skrifa::raw::types::Tag::new(tag)).is_some())
++}
++
++/// pyro: whether `ch` is an emoji (Unicode `Emoji`) other than an ASCII character (digits, `#`
++/// and `*` are `Emoji` too, but have no presentation to choose by themselves).
++pub fn is_emoji_char(ch: char) -> bool {
++    !ch.is_ascii() && icu_properties::CodePointSetData::new::<icu_properties::props::Emoji>().contains(ch)
++}
++
++/// pyro: whether `ch` has emoji presentation by default (Unicode `Emoji_Presentation`).
++pub fn is_emoji_presentation_char(ch: char) -> bool {
++    icu_properties::CodePointSetData::new::<icu_properties::props::EmojiPresentation>().contains(ch)
++}
++
++/// pyro: whether the font at `index` in `data` maps the variation sequence `base` + `selector`
++/// (its `cmap` format 14 subtable lists it, with a glyph of its own or the default one).
++pub fn maps_variation_sequence(data: &[u8], index: u32, base: char, selector: char) -> bool {
++    use skrifa::MetadataProvider;
++    let Ok(font_ref) = skrifa::FontRef::from_index(data, index) else { return false };
++    font_ref.charmap().map_variant(base, selector).is_some()
++}
++
++/// pyro: whether `ch` is a variation selector (VS1-VS16, VS17-VS256).
++pub fn is_variation_selector(ch: char) -> bool {
++    matches!(ch as u32, 0xFE00..=0xFE0F | 0xE0100..=0xE01EF)
++}
 --- a/src/shape/atom.rs
 +++ b/src/shape/atom.rs
-@@ -917,9 +917,16 @@
+@@ -917,9 +917,18 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -1576,8 +1925,10 @@
 +                auto_opsz: false,
 +                language_override: None,
 +                spacing_trim: Default::default(),
++                vertical_upright: false,
 +                isolated_before: false,
 +                isolated_after: false,
++                preserved_breaks: false,
              },
          }];
          shaper.shape_text(
@@ -1636,7 +1987,23 @@
      /// The per-character info in source order.
      #[inline(always)]
      pub fn char_info(&self) -> &[CharInfo] {
-@@ -126,6 +153,9 @@
+@@ -77,6 +104,15 @@
+         &self.levels
+     }
+ 
++    /// Inherit the embedding direction when shaping an inserted string within a resolved run.
++    pub fn set_run_direction(&mut self, rtl: bool) {
++        self.paragraph_level = BidiLevel::new(u8::from(rtl));
++        self.levels.clear();
++        if rtl {
++            self.levels.resize(self.info.len(), self.paragraph_level);
++        }
++    }
++
+     /// The base bidi level of the paragraph of text.
+     #[inline(always)]
+     pub fn paragraph_level(&self) -> BidiLevel {
+@@ -126,6 +162,9 @@
          opt.word_option = Some(key.word_option);
          opt.strictness = Some(key.strictness);
          opt.content_locale = key.ja_zh.then_some(&JA);
@@ -1646,7 +2013,7 @@
          line_segmenter_impl(opt)
      }
  
-@@ -174,6 +204,8 @@
+@@ -174,6 +213,8 @@
      /// [`LineBreak::Normal`] and [`LineBreak::Loose`], so we only track whether one of them
      /// applies.
      ja_zh: bool,
@@ -1655,7 +2022,7 @@
  }
  
  impl SegmenterKey {
-@@ -181,6 +213,7 @@
+@@ -181,6 +222,7 @@
          word_option: LineBreakWordOption::Normal,
          strictness: LineBreakStrictness::Strict,
          ja_zh: false,
@@ -1663,7 +2030,7 @@
      };
  
      fn new(config: &LineBreakConfig) -> Self {
-@@ -189,7 +222,12 @@
+@@ -189,7 +231,12 @@
              LineBreak::Normal => LineBreakStrictness::Normal,
              LineBreak::Loose => LineBreakStrictness::Loose,
              // We add opportunities per grapheme ourselves.
@@ -1677,7 +2044,23 @@
          };
          let word_option = match config.word_break {
              WordBreak::Normal => LineBreakWordOption::Normal,
-@@ -206,6 +244,7 @@
+@@ -199,13 +246,22 @@
+         let ja_zh = match strictness {
+             LineBreakStrictness::Normal | LineBreakStrictness::Loose => config
+                 .language
+-                .is_some_and(|language| matches!(language.language(), "ja" | "zh")),
++                // pyro: in a Chinese or Japanese writing system: the script subtag decides where
++                // there is one (`ja-Hang` is not, `en-Hrkt` is: WPT css-text
++                // `writing-system-line-break-001/002`), else the language.
++                .is_some_and(|language| match language.script() {
++                    Some(script) => {
++                        matches!(script, "Jpan" | "Hira" | "Kana" | "Hrkt" | "Hani" | "Hans" | "Hant" | "Bopo")
++                    }
++                    None => matches!(language.language(), "ja" | "zh"),
++                }),
+             _ => false,
+         };
+         Self {
              word_option,
              strictness,
              ja_zh,
@@ -1685,7 +2068,31 @@
          }
      }
  }
-@@ -232,6 +271,7 @@
+@@ -219,6 +275,23 @@
+ }
+ 
+ impl CharInfo {
++    /// pyro: whether the character is a letter of a cursive script (CSS Text 3 § 8.2, the
++    /// scripts its appendix lists as cursive), to which letter-spacing does not apply. `None` for
++    /// a character of no particular script.
++    pub fn cursive_script(&self) -> Option<bool> {
++        match self.script {
++            Script::Common | Script::Inherited | Script::Unknown => None,
++            Script::Arabic
++            | Script::HanifiRohingya
++            | Script::Mandaic
++            | Script::Mongolian
++            | Script::Nko
++            | Script::PhagsPa
++            | Script::Syriac => Some(true),
++            _ => Some(false),
++        }
++    }
++
+     const VARIATION_SELECTOR_SHIFT: u16 = 0;
+     const REGION_INDICATOR_SHIFT: u16 = 1;
+     const CONTROL_SHIFT: u16 = 2;
+@@ -232,6 +305,7 @@
      const EMOJI_PRESENTATION_SHIFT: u16 = 10;
      const EMOJI_MODIFIER_SHIFT: u16 = 11;
      const EMOJI_MODIFIER_BASE_SHIFT: u16 = 12;
@@ -1693,7 +2100,7 @@
  
      const VARIATION_SELECTOR_MASK: u16 = 1 << Self::VARIATION_SELECTOR_SHIFT;
      const REGION_INDICATOR_MASK: u16 = 1 << Self::REGION_INDICATOR_SHIFT;
-@@ -246,6 +286,7 @@
+@@ -246,6 +320,7 @@
      const EMOJI_PRESENTATION_MASK: u16 = 1 << Self::EMOJI_PRESENTATION_SHIFT;
      const EMOJI_MODIFIER_MASK: u16 = 1 << Self::EMOJI_MODIFIER_SHIFT;
      const EMOJI_MODIFIER_BASE_MASK: u16 = 1 << Self::EMOJI_MODIFIER_BASE_SHIFT;
@@ -1701,7 +2108,7 @@
  
      fn new(
          script: Script,
-@@ -279,6 +320,27 @@
+@@ -279,6 +354,27 @@
                  | (is_emoji_modifier as u16) << Self::EMOJI_MODIFIER_SHIFT
                  | (is_emoji_modifier_base as u16) << Self::EMOJI_MODIFIER_BASE_SHIFT,
          }
@@ -1729,16 +2136,72 @@
      }
  
      /// Whether this character is a variation selector.
-@@ -807,22 +869,247 @@
-             properties.is_emoji_modifier_base(),
+@@ -636,6 +732,13 @@
+         .filter(|(_, config)| config.line_break == LineBreak::Anywhere)
+         .map(|(range, _)| range)
+         .peekable();
++    // pyro: the `word-break: break-all` ranges.
++    let mut break_all_iter = options
++        .line_break
++        .iter()
++        .filter(|(_, config)| config.word_break == WordBreak::BreakAll && config.line_break != LineBreak::Anywhere)
++        .map(|(range, _)| range)
++        .peekable();
+     let boundary_iter = text.char_indices().map(|(byte_pos, ch)| {
+         // advance any stale word boundary positions
+         while let Some(&w) = wb_iter.peek() {
+@@ -717,6 +820,10 @@
+         {
+             _ = break_anywhere_iter.next();
+         }
++        while break_all_iter.peek().is_some_and(|range| range.end <= byte_pos) {
++            _ = break_all_iter.next();
++        }
++        let is_break_all = break_all_iter.peek().is_some_and(|range| range.contains(&byte_pos));
+         let is_break_anywhere = break_anywhere_iter
+             .peek()
+             .is_some_and(|range| range.contains(&byte_pos));
+@@ -733,7 +840,30 @@
+                 // `line-break: anywhere`: an opportunity around every grapheme.
+                 prev_char.is_some() && is_grapheme_start
+             } else {
+-                is_icu_line || after_break_space
++                // pyro: no break after an exclamation mark before an ASCII letter or digit
++                // (`!seven`), as in Chromium's line break table (`kAsciiLineBreakTable`), where
++                // UAX #14 has one (`EX ÷ AL`); and always one after a space, as in Chromium
++                // (`LazyLineBreakIterator::NextBreakablePosition`), where UAX #14 LB13 has none
++                // before an exclamation mark (`six, !seven`); not before a closing bracket, which
++                // LB13 keeps on the line (`Yes )`).
++                // pyro: `word-break: break-all` breaks next to letters; between two ASCII
++                // punctuation characters Chromium keeps its usual pairs (`\\\` stays whole,
++                // WPT css-text `word-break-break-all-023`), where UAX #14 breaks `PR ÷ PR`.
++                let punctuation_pair = is_break_all
++                    && ch.is_ascii_punctuation()
++                    && prev_char.is_some_and(|prev: char| prev.is_ascii_punctuation());
++                let is_icu_line = match punctuation_pair {
++                    true => is_icu_line
++                        && crate::break_overrides::CHROMIUM_LINE_BREAK_TABLE
++                            .lookup(prev_char.unwrap_or(' '), ch)
++                            .unwrap_or(true),
++                    false => is_icu_line,
++                };
++                (is_icu_line && !(prev_char == Some('!') && ch.is_ascii_alphanumeric()))
++                    // (Nor before a word joiner or zero width space, which UAX #14 LB7 and LB11
++                    // keep: `a &#x2060;b`.)
++                    || (prev_char == Some(' ') && !matches!(ch, ' ' | ')' | ']' | '}' | '\u{2060}' | '\u{FEFF}' | '\u{200B}'))
++                    || after_break_space
+             };
+             // Consumers can override soft wrap opportunities, except around a mandatory
+             // break.
+@@ -808,21 +938,288 @@
          ));
      }
-+
+ 
 +    quotation_mark_breaks(text, options, &mut analysis.info);
 +    keep_all_hyphen_breaks(text, options, &mut analysis.info);
 +    phrase_breaks(text, options, &data_sources, &mut analysis.info);
 +    no_soft_hyphen_breaks(text, options, &mut analysis.info);
- 
++
      if needs_bidi_resolution || options.base_direction == BaseDirection::Rtl {
 -        analyzer.bidi.resolve(
 -            text.chars().map(|ch| {
@@ -1926,6 +2389,48 @@
 +///   anything but punctuation that does not open and white space, as if they were opening and
 +///   closing brackets (Chromium breaks `国国国国“` before the quotation mark in `zh`, not in `ja`).
 +/// Not where breaking is anywhere already or `keep-all` keeps East Asian text together.
++/// pyro: whether a segment break between `before` and `after` is removed (CSS Text 3 § 4.1.3):
++/// both are East Asian Width F, W or H and not Hangul, or either is such punctuation, as in Gecko
++/// (WPT css-text `segment-break-transformation-punctuation-001`, Mozilla bug 1935148).
++pub fn removes_segment_break(before: char, after: char) -> bool {
++    use icu_properties::props::EastAsianWidth;
++    let east_asian = |ch: char| {
++        let width = icu_properties::CodePointMapData::<EastAsianWidth>::new().get(ch);
++        matches!(width, EastAsianWidth::Fullwidth | EastAsianWidth::Wide | EastAsianWidth::Halfwidth)
++            && icu_properties::CodePointMapData::<Script>::new().get(ch) != Script::Hangul
++    };
++    let punctuation = |ch: char| {
++        east_asian(ch)
++            && matches!(
++                icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch),
++                GeneralCategory::ConnectorPunctuation
++                    | GeneralCategory::DashPunctuation
++                    | GeneralCategory::OpenPunctuation
++                    | GeneralCategory::ClosePunctuation
++                    | GeneralCategory::InitialPunctuation
++                    | GeneralCategory::FinalPunctuation
++                    | GeneralCategory::OtherPunctuation
++            )
++    };
++    (east_asian(before) && east_asian(after)) || punctuation(before) || punctuation(after)
++}
++
++/// pyro: punctuation that `hanging-punctuation: first` hangs at the start of a first line
++/// (`opening`: Ps, Pi, Pf, U+0027, U+0022) or `last` at the end of a last line (Pe, Pi, Pf,
++/// U+0027, U+0022) (CSS Text 3 § 8.2).
++pub fn hangs_at_edge(ch: char, opening: bool) -> bool {
++    if matches!(ch, '\'' | '"') {
++        return true;
++    }
++    let category = icu_properties::CodePointMapData::<GeneralCategory>::new().get(ch);
++    match category {
++        GeneralCategory::InitialPunctuation | GeneralCategory::FinalPunctuation => true,
++        GeneralCategory::OpenPunctuation => opening,
++        GeneralCategory::ClosePunctuation => !opening,
++        _ => false,
++    }
++}
++
 +fn quotation_mark_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
 +    if !text.chars().any(|ch| matches!(ch, '\u{2018}'..='\u{201F}')) {
 +        return;
@@ -2022,7 +2527,18 @@
  impl core::fmt::Debug for AnalysisOptions<'_> {
 --- a/src/shape/data.rs
 +++ b/src/shape/data.rs
-@@ -57,7 +57,26 @@
+@@ -51,13 +51,37 @@
+     /// [`Whitespace`] class of the cluster's first character (3 bits).
+     const WHITESPACE_SHIFT: u16 = 12;
+     const WHITESPACE_MASK: u16 = 0b111 << Self::WHITESPACE_SHIFT;
++    const DISCRETIONARY_CONTINUATION: u16 = 1 << 15;
+ 
++    pub(crate) fn discretionary_continuation(self) -> Self {
++        Self(self.0 | Self::DISCRETIONARY_CONTINUATION)
++    }
++
+     #[inline(always)]
+     pub(crate) const fn new(glyph_len: u8) -> Self {
          Self(glyph_len as u16)
      }
  
@@ -2049,7 +2565,19 @@
      pub(crate) const fn with_inline_glyph(mut self, set: bool) -> Self {
          self.0 = self.0 & !Self::INLINE_GLYPH | if set { Self::INLINE_GLYPH } else { 0 };
          self
-@@ -253,19 +272,38 @@
+@@ -172,6 +196,11 @@
+ }
+ 
+ impl ShapedCluster {
++    /// Whether this part follows a discretionary break inside the original shaping cluster.
++    pub fn is_discretionary_continuation(self) -> bool {
++        self.flags.0 & ShapedClusterFlags::DISCRETIONARY_CONTINUATION != 0
++    }
++
+     /// The characters of this cluster, as a range into [`ShapedText::characters`](crate::ShapedText::characters).
+     ///
+     /// This is also the range of character positions in the source text (in the Unicode scalar
+@@ -253,19 +282,41 @@
  
  /// Properties of a [`Character`].
  #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -2090,10 +2618,13 @@
 +    const PHRASE_FALLBACK: u16 = 1 << 12;
 +    /// pyro: the source character is U+2061, the strut parley commits for an empty inline box.
 +    const EMPTY_BOX_STRUT: u16 = 1 << 13;
++    /// pyro: the character is a virama that links consonants into a conjunct (`Indic_Conjunct_Break
++    /// = Linker`).
++    const LINKER: u16 = 1 << 14;
  
      #[inline(always)]
      pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
-@@ -275,7 +313,7 @@
+@@ -275,7 +326,7 @@
              clippy::cast_possible_truncation,
              reason = "`len_utf8` is between 1 and 4 inclusive"
          )]
@@ -2102,7 +2633,7 @@
          Self(
              (len_utf8 - 1)
                  | if is_emoji { Self::EMOJI } else { 0 }
-@@ -288,10 +326,108 @@
+@@ -288,10 +339,120 @@
                      Self::SOFT_WRAP_OPPORTUNITY
                  } else {
                      0
@@ -2116,8 +2647,20 @@
 +                    Self::EMPTY_BOX_STRUT
 +                } else {
 +                    0
++                }
++                | if matches!(source_char, '\u{94d}' | '\u{9cd}' | '\u{acd}' | '\u{b4d}' | '\u{c4d}' | '\u{d4d}') {
++                    Self::LINKER
++                } else {
++                    0
                  },
-+        )
+         )
+     }
+ 
++    /// pyro: whether the character is a virama that links consonants into a conjunct (Devanagari,
++    /// Bengali, Gujarati, Oriya, Telugu, Malayalam: `Indic_Conjunct_Break = Linker`).
++    #[inline(always)]
++    pub fn is_linker(self) -> bool {
++        self.0 & Self::LINKER != 0
 +    }
 +
 +    /// pyro: these flags with [`Self::is_phrase_fallback`] set to `value`.
@@ -2155,9 +2698,9 @@
 +                | if trim & TRIM_OPEN != 0 { Self::TRIM_OPEN } else { 0 }
 +                | if trim & TRIM_CLOSE != 0 { Self::TRIM_CLOSE } else { 0 }
 +                | if trim & TRIMMED != 0 { Self::TRIMMED } else { 0 },
-         )
-     }
- 
++        )
++    }
++
 +    /// pyro: whether the character is fullwidth opening punctuation that its font can set
 +    /// half-width (CSS `text-spacing-trim`): the line breaker may trim it at the start of a line.
 +    #[inline(always)]
@@ -2234,7 +2777,35 @@
  
              if !real_script(script) {
                  // This is a very simple heuristic, where if a character does not have a "real
-@@ -232,6 +235,11 @@
+@@ -183,6 +186,27 @@
+                 // both be marked as being `Latin`). At that point, `Itemizer` would probably like
+                 // to have reusable scratch for the bracket stack.
+                 script = self.current_script;
++                // pyro: a segment (a new bidi level) that starts with characters of no script
++                // of their own takes the script their `Script_Extensions` name when they cannot
++                // be of the inherited one: a no-break space with Arabic marks after Latin text
++                // shapes as Arabic, as in ICU-based browsers, so the font's Arabic mark
++                // positioning places them (WPT css-text `shaping-arabic-diacritics-002`).
++                if item_char_len == 0 {
++                    let extensions = icu_properties::script::ScriptWithExtensions::new();
++                    let ahead = self.char_indices.clone().map(|(_, ch)| ch).zip(self.char_info.iter());
++                    for (ch, info) in ahead {
++                        if real_script(kana(info.script)) {
++                            break;
++                        }
++                        if extensions.has_script(ch, self.current_script) {
++                            break;
++                        }
++                        if let Some(named) = extensions.get_script_extensions_val(ch).iter().find(|&s| real_script(s)) {
++                            script = kana(named);
++                            break;
++                        }
++                    }
++                }
+             }
+ 
+             // First iteration of the loop, initialize item properties.
+@@ -232,6 +256,11 @@
      }
  }
  
@@ -2673,3 +3244,43 @@
 +pub use han_kerning::SpacingTrim;
  
  pub(crate) use data::ShapedClusterFlags;
+--- a/src/shape/cluster.rs
++++ b/src/shape/cluster.rs
+@@ -132,8 +132,11 @@
+                 Self::OtherSpaceSeparator
+             }
+             '\t' => Self::Tab,
+-            // Newline, carriage return, line separator, paragraph separator.
+-            '\n' | '\r' | '\u{2028}' | '\u{2029}' => Self::Newline,
++            // Newline, carriage return.
++            '\n' | '\r' => Self::Newline,
++            // pyro: the line and paragraph separators are displayed as a space, without a forced
++            // break, as in Chromium (WPT css-fonts `separators`).
++            '\u{2028}' | '\u{2029}' => Self::Space,
+             // Vertical tab, form feed, next line. These are `White_Space` that CSS says to render
+             // as control characters.
+             '\u{000b}' | '\u{000c}' | '\u{0085}' => Self::ControlWhitespace,
+@@ -434,8 +437,12 @@
+ 
+             // Variation selectors don't impact font coverage, and are default ignorable.
+             // TODO: Is there a default ignorable flag we should be using instead?
+-            let contributes_to_shaping =
+-                info.contributes_to_shaping() && !is_emoji_presentation_selector;
++            // pyro: a tab is shaped as a space (`shaper.rs`), so a font is chosen for it as for
++            // a space: one without a space would draw its missing glyph (WPT css-text
++            // `tab-size-integer-005`).
++            // pyro: and the line and paragraph separators, shaped as a space (`shaper.rs`).
++            let contributes_to_shaping = (info.contributes_to_shaping() || matches!(ch, '\t' | '\u{2028}' | '\u{2029}'))
++                && !is_emoji_presentation_selector;
+             if contributes_to_shaping {
+                 map_len = map_len.saturating_add(1);
+             }
+@@ -535,7 +542,7 @@
+     fn coverage(&self, covers: &impl Fn(char) -> bool) -> Coverage {
+         let mut mapped: u8 = 0;
+         for c in self.chars.iter() {
+-            if c.contributes_to_shaping && covers(c.ch) {
++            if c.contributes_to_shaping && covers(if matches!(c.ch, '\t' | '\u{2028}' | '\u{2029}') { ' ' } else { c.ch }) {
+                 mapped = mapped.saturating_add(1);
+             }
+         }

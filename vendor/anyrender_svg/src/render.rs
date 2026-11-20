@@ -21,10 +21,22 @@ pub(crate) struct Ctx {
 pub(crate) const BOX_REFERENCE: &str = "__pyro_box_reference";
 
 std::thread_local! {
+    static TEXT_THRESHOLD: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
     /// pyro: whether the render is inside a CSS box's reference content ([`BOX_REFERENCE`]),
     /// outside the offscreen rasters drawn for it ([`rasterize`]). Not a field of [`Ctx`], so
     /// that code building a `Ctx` from its `cull` alone stays as it is.
     static IN_BOX_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn with_text_threshold<R>(threshold: Option<u8>, draw: impl FnOnce() -> R) -> R {
+    struct Restore(Option<u8>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEXT_THRESHOLD.set(self.0);
+        }
+    }
+    let _restore = Restore(TEXT_THRESHOLD.replace(threshold));
+    draw()
 }
 
 /// pyro: runs `f` with [`IN_BOX_REFERENCE`] set to `value`, restoring it after (on unwind too).
@@ -56,6 +68,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     ctx: &Ctx,
 ) {
     let base = transform;
+    if !pyro_raster::capture::charge(group.children().len()) { return; }
     for node in group.children() {
         let transform = base * util::to_affine(&node.abs_transform());
         match node {
@@ -74,6 +87,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                 if !path.is_visible() {
                     continue;
                 }
+                if !pyro_raster::capture::charge(path.data().len()) { return; }
                 let local_path = util::to_bez_path(path);
 
                 let transform = global_transform * transform;
@@ -148,7 +162,6 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                         {
                             let Ok(decoded_image) = util::decode_raw_raster_image(img.kind())
                             else {
-                                error_handler(scene, node);
                                 continue;
                             };
                             let image = util::into_image(decoded_image, img.rendering_mode());
@@ -175,6 +188,8 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                 }
             }
             usvg::Node::Text(text) => {
+                scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, Affine::IDENTITY,
+                    &ctx.cull, Some(anyrender_vello_cpu::TEXT_OUTLINE_GROUP.clone()), None);
                 // The children of the flattened text group already carry the
                 // text node's absolute transform (in this subtree's space), so
                 // recurse with this subtree's base transform, as for a group.
@@ -186,6 +201,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                     error_handler,
                     ctx,
                 );
+                scene.pop_layer();
             }
         }
     }
@@ -257,6 +273,13 @@ fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     let mix = util::to_mix(g.blend_mode());
     // The group's user space (its own `transform` included) in the scene.
     let ts = global_transform * transform;
+    if !g.filters().is_empty() {
+        if !pyro_raster::capture::charge(g.filters().len()) { return; }
+        for filter in g.filters() {
+            let bounds = ts.transform_rect_bbox(to_rect(filter.rect()));
+            if !pyro_raster::capture::surface(bounds.width().ceil() as u64, bounds.height().ceil() as u64, filter.primitives().len().max(1)) { return; }
+        }
+    }
     let filters = filter_layers(g, ts);
 
     let clip_shapes = g.clip_path().and_then(|clip| clip_shapes(clip, ts));
@@ -381,13 +404,16 @@ fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
 /// source of the next); none when one has a primitive anyrender_vello_cpu does not do (the group
 /// is then drawn unfiltered, as before; see `crate::filter`).
 fn filter_layers(g: &usvg::Group, ts: Affine) -> Vec<crate::filter::FilterGraph> {
-    let mut tainted = false;
+    // pyro: the source graphic is what the group's content draws, tainted when that is
+    // (`filter::group_tainted`: a nested group's filter, an `feImage`, a mask, a pattern).
+    let mut tainted = g.mask().is_some_and(|mask| crate::filter::group_tainted(mask.root()))
+        || g.children().iter().any(crate::filter::node_tainted);
     g.filters()
         .iter()
         .zip(filter_regions(g, ts))
         .map(|(filter, (region, bounded))| {
             let notes = |index| crate::filter::notes(filter.id(), index);
-            let mut graph = crate::filter::FilterGraph::new(filter, &notes, tainted)?;
+            let mut graph = crate::filter::FilterGraph::new(filter, &notes, tainted, Some(g.bounding_box()))?;
             tainted = graph.tainted;
             graph.region = region;
             graph.bounded = bounded;
@@ -536,6 +562,12 @@ fn children_bounds(g: &usvg::Group) -> Option<Rect> {
 /// function in it reaches as far as its effect does (usvg gives it the bounding box widened by
 /// half: a `drop-shadow(50px 0)` on a 50 px wide shape was cut off at 25 px).
 fn layer_bounds(g: &usvg::Group) -> Option<Rect> {
+    // pyro: a `<foreignObject>`'s HTML content reaches past its stand-in image when its
+    // `overflow` is visible (blitz-paint cuts it at the box otherwise): a layer of the group
+    // (its mask's, its clip path's) does not cut it at the image (WPT css-masking `mask-clip-6`).
+    if holds_foreign_object(g) {
+        return Some(Rect::new(-1e9, -1e9, 1e9, 1e9));
+    }
     if !has_function_filter(g) {
         return Some(to_rect(g.layer_bounding_box()));
     }
@@ -547,6 +579,15 @@ fn layer_bounds(g: &usvg::Group) -> Option<Rect> {
         };
     }
     bounds
+}
+
+/// pyro: whether `g` holds a `<foreignObject>`'s stand-in image (blitz-dom `svg_css`).
+fn holds_foreign_object(g: &usvg::Group) -> bool {
+    g.children().iter().any(|node| match node {
+        usvg::Node::Image(image) => crate::foreign_object_id(image.kind()).is_some(),
+        usvg::Node::Group(group) => holds_foreign_object(group),
+        _ => false,
+    })
 }
 
 /// pyro: `g`'s children in its filters' layers (`ts` maps the group's user space to the scene),
@@ -1088,11 +1129,11 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
     // A mask of up to a megapixel is rendered at twice that and averaged down:
     // vello flattens curves to a quarter pixel, which an image of the mask keeps
     // (two descriptions of one circle came out up to 39 levels apart at its edge).
-    let ss: u32 = if width as u64 * height as u64 <= 1 << 20 {
-        2
-    } else {
-        1
-    };
+    // pyro: at the scene's resolution: with curves flattened finely (anyrender_vello_cpu
+    // `device_path`) a mask's shapes cover each pixel as the same shapes drawn directly do (WPT
+    // css-masking `mask-image-3i`: a circle in a mask against a `<circle>`, 52 levels apart
+    // averaged at twice the resolution).
+    let ss: u32 = 1;
     // Scene space to the raster's pixels.
     let to_raster = Affine::scale(scale * ss as f64) * Affine::translate((-rect.x0, -rect.y0));
     let mask_rect = mask.rect();
@@ -1103,10 +1144,11 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
         mask_rect.bottom() as f64,
     );
     let (rw, rh) = (width * ss, height * ss);
+    if !pyro_raster::capture::surface(rw.into(), rh.into(), 3) { return None; }
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, rw as f64, rh as f64),
     };
-    let pixels = rasterize(rw, rh, |painter| {
+    let pixels = rasterize(rw, rh, TEXT_THRESHOLD.get(), |painter| {
         painter.push_clip_layer(Fill::NonZero, to_raster * ts, &mask_rect);
         let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};
         render_group(
@@ -1167,12 +1209,13 @@ fn raster_size(width: f64, height: f64) -> Option<(u32, u32, f64)> {
 /// RGBA8 raster, with the same rasterizer as the page. The commands are
 /// recorded and replayed (`append_scene`), as the page's are: the replay is
 /// what applies filter layers.
-fn rasterize(width: u32, height: u32, draw: impl FnOnce(&mut Scene)) -> Vec<u8> {
+fn rasterize(width: u32, height: u32, text_threshold: Option<u8>, draw: impl FnOnce(&mut Scene)) -> Vec<u8> {
     use anyrender::ImageRenderer;
     let mut scene = Scene::new();
     // pyro: an offscreen raster is drawn as SVG content draws it, in a box's reference too.
     with_box_reference(false, || draw(&mut scene));
     let mut renderer = VelloCpuImageRenderer::with_threads(width, height, 0);
+    renderer.set_text_aliasing_threshold(text_threshold);
     let mut pixels = Vec::new();
     renderer.render_to_vec(|painter| painter.append_scene(scene, Affine::IDENTITY), &mut pixels);
     pixels
@@ -1217,10 +1260,11 @@ fn pattern_brush(
     )?;
     // The tile's content space to its pixels: whole pixels across the tile.
     let content_ts = Affine::scale_non_uniform(width as f64 / tile_w, height as f64 / tile_h);
+    if !pyro_raster::capture::surface(width.into(), height.into(), 2) { return None; }
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, width as f64, height as f64),
     };
-    let pixels = rasterize(width, height, |painter| {
+    let pixels = rasterize(width, height, TEXT_THRESHOLD.get(), |painter| {
         let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};
         render_group(
             painter,

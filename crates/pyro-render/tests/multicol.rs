@@ -40,6 +40,65 @@ const GREEN: [u8; 3] = [0, 128, 0];
 const BLUE: [u8; 3] = [0, 0, 255];
 const BLACK: [u8; 3] = [0, 0, 0];
 
+#[test]
+fn post_spanner_overflow_paints_in_its_own_column_run() {
+    let image = render(include_str!("fixtures/owned-column-overflow.html"), 1.0);
+    check(&image, 1.0, &[(5.0, 10.0, GREEN), (95.0, 40.0, GREEN), (95.0, 84.0, GREEN),
+        (5.0, 85.0, WHITE), (60.0, 120.0, GREEN), (60.0, 187.0, GREEN)], "post-spanner fragments");
+}
+
+#[test]
+fn fractional_column_translation_uses_device_pixels() {
+    let image = render(include_str!("fixtures/fractional-column-offset.html"), 3.0);
+    assert_eq!(pixel(&image, 3.0, 30.0, 7.0 / 3.0), GREEN);
+    assert_eq!(pixel(&image, 3.0, 30.0, 8.0 / 3.0), BLUE);
+}
+
+#[test]
+fn fractional_lines_repeat_at_the_same_height_in_each_column() {
+    let rows = "<div>Ag</div>".repeat(11);
+    let image = render(&format!("<main style='columns:2;column-gap:0;font:16px/1.6 serif'>{rows}{rows}</main>"), 1.0);
+    for y in 0..280 {
+        for x in 0..24 {
+            assert_eq!(pixel(&image, 1.0, x as f64, y as f64), pixel(&image, 1.0, (250 + x) as f64, y as f64), "at {x},{y}");
+        }
+    }
+}
+
+#[test]
+fn parallel_overflow_uses_inflow_end_and_parent_used_size() {
+    let image = render(include_str!("fixtures/parallel-overflow-used-size.html"), 1.0);
+    check(&image, 1.0, &[(151.0, 39.0, BLACK), (151.0, 41.0, WHITE), (201.0, 5.0, WHITE), (105.0, 28.0, BLUE)], "four parent fragments");
+}
+
+#[test]
+fn break_after_in_parallel_overflow_advances_both_continuations() {
+    let image = render(include_str!("fixtures/parallel-break-after.html"), 1.0);
+    check(&image, 1.0, &[(5.0, 45.0, GREEN), (45.0, 19.0, GREEN), (15.0, 55.0, WHITE),
+        (65.0, 5.0, BLACK), (55.0, 85.0, BLUE), (75.0, 49.0, BLUE), (75.0, 51.0, WHITE)], "parallel and main-flow continuations");
+}
+
+#[test]
+fn anonymous_content_fills_to_host_content_box() {
+    let image = render(include_str!("fixtures/anonymous-content-column-fill.html"), 1.0);
+    check(&image, 1.0, &[(11.0, 11.0, GREEN), (11.0, 51.0, BLUE), (51.0, 11.0, BLUE), (51.0, 31.0, WHITE),
+        (11.0, 91.0, WHITE), (11.0, 101.0, GREEN), (11.0, 121.0, BLUE), (51.0, 105.0, WHITE)], "sequential fill and short content centering");
+}
+
+#[test]
+fn nested_columns_use_balanced_outer_tail_slots() {
+    let image = render(include_str!("fixtures/nested-final-wrapped-row.html"), 1.0);
+    check(&image, 1.0, &[(65.0, 15.0, BLUE), (65.0, 16.0, GREEN), (155.0, 43.0, GREEN), (155.0, 44.0, WHITE),
+        (65.0, 71.0, BLUE), (65.0, 72.0, GREEN), (155.0, 95.0, GREEN), (155.0, 96.0, WHITE)], "auto and definite nested heights");
+}
+
+#[test]
+fn nested_monolith_uses_inline_space_beside_float() {
+    let image = render(include_str!("fixtures/nested-float-inline-room.html"), 1.0);
+    check(&image, 1.0, &[(1.0, 41.0, WHITE), (81.0, 99.0, GREEN), (97.0, 1.0, BLUE), (97.0, 79.0, BLUE),
+        (97.0, 81.0, WHITE), (121.0, 5.0, WHITE)], "float and monolith share inline space");
+}
+
 fn check(img: &RgbaImage, scale: f64, points: &[(f64, f64, [u8; 3])], what: &str) {
     let wrong: Vec<String> = points
         .iter()
@@ -330,4 +389,82 @@ fn ordinary_page_cost_probe() {
     }
     times.sort_by(f64::total_cmp);
     println!("ordinary page: min {:.2} ms, median {:.2} ms", times[0], times[times.len() / 2]);
+}
+
+/// pyro: a column out of sight is not painted and leaves its pass's state behind it: a nested
+/// container whose second column is off to the right, in the first column of the outer one, and
+/// after it the outer container's spanner and its second column, painted as ever (review: the
+/// culled column skipped restoring the column and spanner selectors).
+#[test]
+fn a_culled_column_leaves_later_boxes_painted() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:400px'>\
+             <div style='columns:2;column-gap:0;width:2000px'><div style='height:40px;background:green'></div></div>\
+             <div style='height:40px;background:green'></div>\
+             <div style='column-span:all;height:20px;background:blue'></div>\
+             <div style='height:40px;background:green'></div><div style='height:40px;background:green'></div></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[(10.0, 10.0, GREEN), (210.0, 10.0, GREEN), (10.0, 40.0, BLUE), (390.0, 40.0, BLUE), (10.0, 60.0, GREEN), (210.0, 60.0, GREEN), (10.0, 95.0, WHITE)],
+            "the boxes after the nested container",
+        );
+    }
+}
+
+/// pyro: a stacking context hoisted out of a multi-column container that is none (a `z-index`
+/// box) is painted in each column it is in, from its place in the strip: one that starts in the
+/// second column is painted there (it was moved into that column twice and clipped away), one a
+/// break goes through in both.
+#[test]
+fn a_hoisted_box_is_painted_in_its_columns() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:200px'><div style='height:100px'></div>\
+             <div style='position:relative;z-index:1;height:50px;background:green'></div></div>\
+             <div style='columns:2;column-gap:0;width:200px;margin-top:100px'><div style='height:50px'></div>\
+             <div style='position:relative;z-index:1;height:100px;background:blue'></div></div>",
+            scale,
+        );
+        check(
+            &img,
+            scale,
+            &[(150.0, 50.0, GREEN), (50.0, 50.0, WHITE), (150.0, 15.0, WHITE), (50.0, 240.0, BLUE), (150.0, 190.0, BLUE), (50.0, 190.0, WHITE)],
+            "the boxes in their columns",
+        );
+    }
+}
+
+/// pyro: a stacking context hoisted out of the columns is painted in each column inside the clips
+/// of the boxes between it and the container (an `overflow: clip` box broken across the columns),
+/// as Chromium paints it and hit testing finds it; it was painted unclipped in the column copies.
+#[test]
+fn a_hoisted_box_in_columns_keeps_the_clips_around_it() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:200px'><div style='height:50px'></div>\
+             <div style='overflow:clip;height:100px'><div style='position:relative;z-index:1;height:100px;width:150px;background:green'></div></div></div>",
+            scale,
+        );
+        check(&img, scale, &[(50.0, 60.0, GREEN), (190.0, 30.0, GREEN), (220.0, 30.0, WHITE), (240.0, 60.0, WHITE)], "clipped in its columns");
+    }
+}
+
+/// pyro: an out-of-flow box the columns fragment (its containing block, of no height, in them) is
+/// painted in the overflow columns that show it, past the container's box: its container's
+/// overflow reaches them (a box carrying no spanner counts with what it holds; WPT css-break
+/// `out-of-flow-in-multicolumn-003`).
+#[test]
+fn a_fragmented_out_of_flow_box_is_painted_in_its_overflow_columns() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='column-count:2;column-fill:auto;column-gap:0;height:100px;width:100px;position:relative;left:-150px'>\
+             <div style='position:relative'><div style='position:absolute;top:300px;width:50px;height:200px;background:green'></div></div></div>",
+            scale,
+        );
+        check(&img, scale, &[(25.0, 50.0, GREEN), (75.0, 50.0, GREEN)], "the box in columns 4 and 5");
+    }
 }

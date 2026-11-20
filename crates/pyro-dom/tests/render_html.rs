@@ -51,11 +51,12 @@ fn form_state_is_written_into_markup() {
         dom.set_option_selected(o2, true).unwrap();
     }
     let html = render(&dom.borrow(), d);
-    assert!(html.contains(r#"<input id="t" value="typed &quot;in&quot;">"#), "{html}");
+    // (The engine's attributes, the form state among them, come first: snapshot::ENGINE_ATTRIBUTES.)
+    assert!(html.contains(r#"<input value="typed &quot;in&quot;" id="t">"#), "{html}");
     assert!(html.contains(r#"<input id="c" type="checkbox">"#), "{html}");
-    assert!(html.contains(r#"<input id="r" type="radio" checked>"#), "{html}");
+    assert!(html.contains(r#"<input checked id="r" type="radio">"#), "{html}");
     assert!(html.contains("<textarea id=\"a\">\nline 1\n&lt;b&gt;</textarea>"), "{html}");
-    assert!(html.contains(r#"<option id="o1">a</option><option id="o2" selected>b</option>"#), "{html}");
+    assert!(html.contains(r#"<option id="o1">a</option><option selected id="o2">b</option>"#), "{html}");
     assert!(html.contains(r#"<input id="f" type="file">"#), "{html}");
 }
 
@@ -92,7 +93,11 @@ fn sheets_come_from_the_caller() {
     );
     assert!(html.contains(r#"<style id="s">p { color: blue }</style>"#), "{html}");
     assert!(html.contains(r#"<style id="e">em { color: red }</style>"#), "{html}");
-    assert!(html.contains(r#"<link id="l" rel="stylesheet" href="http://test/a.css">"#), "{html}");
+    // (The engine's `href` comes first, then its sheet key, under the document's nonce name: the
+    // renderer serves the sheet by it.)
+    let n = dom.frame_table(d).nonce;
+    assert!(html.contains(&format!(r#"<link href="http://test/a.css" data-pyro-{n}-sheet=""#)), "{html}");
+    assert!(html.contains(r#"" id="l" rel="stylesheet">"#), "{html}");
     assert!(!html.contains("missing.css"), "{html}");
 }
 
@@ -102,6 +107,7 @@ fn clip_target_is_marked() {
     let dom = dom.borrow();
     let b = find(&dom, d, "#b");
     let html = render_with(&dom, d, &|_| None, &|_| None, Some((b, "data-clip")));
+    // (A mark outside the engine's family is written as named.)
     assert!(html.contains(r#"<div id="a"></div><div id="b" data-clip></div>"#), "{html}");
 }
 
@@ -298,11 +304,14 @@ fn scrolled_render_copy_preserves_offsets_without_mutating_document() {
             &[(pyro_dom::snapshot::render_key(outer), (24.0, 80.0)), (pyro_dom::snapshot::render_key(inner), (0.0, 16.0))],
         )
         .unwrap();
-    assert!(html.contains(r#"data-pyro-scroll-left="24" data-pyro-scroll-top="80""#), "{html}");
-    assert!(html.contains(r#"data-pyro-scroll-left="0" data-pyro-scroll-top="16""#), "{html}");
-    assert!(!html.contains("999"));
+    // (The engine's offsets under the document's nonce names; the page's own attribute of that
+    // name is its own, written as it is: security review cycle 8, 2.)
+    let n = dom.frame_table(document).nonce;
+    assert!(html.contains(&format!(r#"data-pyro-{n}-scroll-left="24" data-pyro-{n}-scroll-top="80""#)), "{html}");
+    assert!(html.contains(&format!(r#"data-pyro-{n}-scroll-left="0" data-pyro-{n}-scroll-top="16""#)), "{html}");
+    assert!(html.contains(r#"data-pyro-scroll-top="999""#), "{html}");
     assert_eq!(dom.get_attribute(outer, "data-pyro-scroll-top").unwrap(), Some("999"));
-    assert!(!dom.render_html(document, &opts).unwrap().contains("data-pyro-scroll"));
+    assert!(!dom.render_html(document, &opts).unwrap().contains(&format!("data-pyro-{n}-scroll")));
 }
 
 #[test]
@@ -317,7 +326,7 @@ fn password_render_copies_mask_current_values_without_mutating_inputs() {
     assert!(!html.contains("attribute-secret"));
     assert!(!html.contains("typed-secret"));
     assert!(html.contains(&format!("value=\"{}\"", "•".repeat(12))));
-    assert!(html.contains(r#"<input id="plain" value="visible">"#));
+    assert!(html.contains(r#"<input value="visible" id="plain">"#), "{html}");
     assert!(html.contains(r#"<input id="empty" type="password">"#));
     let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     let tree = dom.borrow().render_tree(document, &opts).unwrap();
@@ -335,16 +344,19 @@ fn password_render_copies_mask_current_values_without_mutating_inputs() {
 
 #[test]
 fn render_tree_marks_the_top_layer_by_rank() {
-    use pyro_dom::snapshot::{render_key, RenderNodeKind, STATE_NS};
+    use pyro_dom::snapshot::{render_key, state_ns, RenderNodeKind, STATE_NS};
     let (dom, d) = doc("<dialog id=a></dialog><div id=p popover></div><dialog id=b open></dialog>");
     let (a, p, b) = (find(&dom.borrow(), d, "#a"), find(&dom.borrow(), d, "#p"), find(&dom.borrow(), d, "#b"));
-    let state = |dom: &Dom, el: NodeId| -> Option<String> {
+    // (The engine's state, in the document's nonce namespace: security review cycle 9, 2.)
+    let engine_ns = state_ns(&dom.borrow().frame_table(d).nonce);
+    let attr_in = |dom: &Dom, el: NodeId, ns: &str| -> Option<String> {
         let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
         let tree = dom.render_tree(d, &opts).unwrap();
         let node = tree.nodes.iter().find(|n| n.key == render_key(el)).unwrap();
         let RenderNodeKind::Element { attrs, .. } = &node.kind else { panic!("not an element") };
-        attrs.iter().find(|(n, _)| &*n.ns == STATE_NS && &*n.local == "state").map(|(_, v)| v.clone())
+        attrs.iter().find(|(n, _)| &*n.ns == ns && &*n.local == "state").map(|(_, v)| v.clone())
     };
+    let state = |dom: &Dom, el: NodeId| attr_in(dom, el, &engine_ns);
     let has = |s: Option<String>, token: &str| s.unwrap_or_default().split(' ').any(|t| t == token);
     assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
     assert!(!state(&dom.borrow(), b).unwrap_or_default().contains("top-layer"));
@@ -360,11 +372,13 @@ fn render_tree_marks_the_top_layer_by_rank() {
     dom.borrow_mut().set_modal(a, false).unwrap();
     assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
     assert!(has(state(&dom.borrow(), p), "top-layer=0"));
-    // A page cannot write the state attribute itself.
+    // A page cannot write the engine's state: its attribute in `urn:x-pyro:state` is its own,
+    // written as such, never in the engine's namespace.
     dom.borrow_mut().set_attribute_ns(b, Some(STATE_NS), "state", "modal top-layer=9").unwrap();
     dom.borrow_mut().set_attribute_ns(a, Some(STATE_NS), "x:state", "top-layer=9").unwrap();
     assert!(!state(&dom.borrow(), b).unwrap_or_default().contains("top-layer"));
     assert!(!state(&dom.borrow(), a).unwrap_or_default().contains("top-layer"));
+    assert_eq!(attr_in(&dom.borrow(), b, STATE_NS).as_deref(), Some("modal top-layer=9"));
 }
 
 #[test]
@@ -426,4 +440,320 @@ fn render_tree_keeps_event_handler_attributes_markup_drops() {
         k => panic!("{k:?}"),
     }
     assert!(render(&dom.borrow(), d).contains("<p id=\"p\" title=\"t\">x</p>"));
+}
+
+fn frame(html: &str, client: &str) -> FrameDocument {
+    FrameDocument { html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Default::default(), sheets: Default::default() }
+}
+
+/// Every attribute the renderer reads from the engine is the engine's: a page attribute whose
+/// serialised name is one (`srcdoc`, `data-pyro-frame`, the `data-pyro-` family), in any case or
+/// namespace (`setAttributeNS`), is not written, in markup or in a keyed tree, and the engine's
+/// come first. A frame carries only the index of its frame table entry: its document and client
+/// are never in the markup. A page's namespaced `srcdoc` on an iframe of its own, written first
+/// with its namespace dropped, made the renderer show page content under a genuine child frame's
+/// client (security review cycles 1-3, HIGH 1).
+#[test]
+fn page_attributes_never_stand_in_for_the_engines() {
+    let (dom, d) = doc(
+        "<iframe id=f data-pyro-frame-client='OTHER#doc' data-pyro-frame-url='http://evil.test/' data-pyro-frame='9:0'></iframe>\
+         <iframe id=g data-pyro-frame-client='OTHER#doc'></iframe><div id=x data-pyro-key=1 DATA-PYRO-RENDER-CLIP></div>",
+    );
+    let (f, g) = (find(&dom.borrow(), d, "#f"), find(&dom.borrow(), d, "#g"));
+    {
+        let mut dom = dom.borrow_mut();
+        for el in [f, g] {
+            dom.set_attribute_ns(el, Some("http://evil.test/ns"), "srcdoc", "<p>EVILNS</p>").unwrap();
+            dom.set_attribute_ns(el, Some("http://evil.test/ns"), "e:srcdoc", "<p>EVILPREFIX</p>").unwrap();
+            dom.set_attribute_ns(el, None, "SRCDOC", "<p>EVILCASE</p>").unwrap();
+            dom.set_attribute_ns(el, Some("http://evil.test/ns"), "DATA-PYRO-FRAME", "1:0").unwrap();
+        }
+        dom.set_frame_document(f, Some(frame("<p>GENUINE</p>", "F#L")));
+    }
+    let key = |id: NodeId| pyro_dom::snapshot::render_key(id).to_string();
+    let html = render(&dom.borrow(), d);
+    // (The page's own `data-pyro-*` attributes are its own, written as they are: they cannot be
+    // the engine's, whose names carry the document's nonce: security review cycle 8, 2.)
+    for leaked in ["EVIL", "GENUINE", "F#L", "srcdoc"] {
+        assert!(!html.contains(leaked), "{leaked}: {html}");
+    }
+    assert!(html.contains("data-pyro-frame-client=\"OTHER#doc\"") && html.contains("data-pyro-key=\"1\""), "{html}");
+    let table = dom.borrow().frame_table(d);
+    let version = table.entries[0].1.version();
+    let n = table.nonce.clone();
+    assert_eq!(n.len(), 32, "128 bits");
+    assert!(html.contains(&format!("data-pyro-{n}-frame=\"{n}:{}:{version:016x}\"", key(f))), "{html}");
+    assert_eq!(html.matches(&format!("data-pyro-{n}-")).count(), 1, "only the engine's, on the frame with a document: {html}");
+    // The keyed tree: the same attributes, the engine's first.
+    let tree = dom
+        .borrow()
+        .render_tree(d, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
+    for node in &tree.nodes {
+        if let pyro_dom::snapshot::RenderNodeKind::Element { attrs, .. } = &node.kind {
+            for (name, value) in attrs {
+                let local = name.local.to_string().to_ascii_lowercase();
+                assert!(local != "srcdoc" && !value.contains("EVIL"), "{name:?}={value}");
+                if local.starts_with(&format!("data-pyro-{n}-")) {
+                    assert!(name.ns == markup5ever::ns!() && node.key == pyro_dom::snapshot::render_key(f), "{name:?}");
+                }
+            }
+        }
+    }
+    // The table holds the document under that index.
+    let table = dom.borrow().frame_table(d);
+    assert_eq!(table.entries.len(), 1);
+    let entry = &table.entries[0];
+    assert_eq!((entry.0.as_str(), entry.1.client.as_str(), entry.1.html.as_str()), (key(f).as_str(), "F#L", "<p>GENUINE</p>"));
+}
+
+/// The frame documents a page sets cover its own documents only: a store shared by pages (a popup
+/// shares its opener's) keeps another page's iframe entries when one page, with no frames of its
+/// own, refreshes its (empty) set.
+#[test]
+fn frame_documents_are_replaced_per_page() {
+    let (dom, opener) = doc("<iframe id=f></iframe>");
+    let popup = parse_document(&dom, "http://test/popup", "<p>popup</p>");
+    let f = find(&dom.borrow(), opener, "#f");
+    let document = frame("<p>inner</p>", "F#L");
+    let has = |dom: &Dom| dom.frame_table(opener).entries.iter().any(|(_, d)| d.html.contains("inner"));
+    dom.borrow_mut().set_frame_documents(&[opener], vec![(f, document)]);
+    assert!(has(&dom.borrow()));
+    // The popup refreshes its own frames (it has none).
+    dom.borrow_mut().set_frame_documents(&[popup], Vec::new());
+    dom.borrow_mut().set_frame_content_heights(&[popup], &[]);
+    assert!(has(&dom.borrow()), "the opener's iframe keeps its document");
+    // The opener refreshing its own set without the frame does drop it.
+    dom.borrow_mut().set_frame_documents(&[opener], Vec::new());
+    assert!(!has(&dom.borrow()));
+}
+
+
+/// Raw text cannot change the tree when the markup is parsed again: a `<style>`'s text (set by
+/// script, CSSOM, or a text node) holding its own end tag in any form is written so that the
+/// reparse gives the same elements, never an element the attribute filter did not see (a frame
+/// marker forged in style text: security review cycle 4, 1a).
+#[test]
+fn raw_text_survives_a_reparse_unchanged() {
+    let hostile = [
+        "</style><iframe data-pyro-frame=\"x:1:0\"></iframe>",
+        "</STYLE ><iframe></iframe>",
+        "</style\t><p>x</p>",
+        "</style/><p>x</p>",
+        "a { content: \"</style><b>\" } /* </style><i> */",
+        "<!-- </style> --><iframe></iframe>",
+        "</styles><p>y</p>",
+    ];
+    for text in hostile {
+        let (dom, d) = doc("<style id=s></style><p id=after>after</p>");
+        let s = find(&dom.borrow(), d, "#s");
+        {
+            let mut dom = dom.borrow_mut();
+            let t = dom.create_text(d, text).unwrap();
+            dom.append_child(s, t).unwrap();
+        }
+        let elements = |dom: &Dom, doc: NodeId| -> Vec<String> {
+            dom.query_selector_all(doc, &parse_selectors("*").unwrap())
+                .unwrap()
+                .into_iter()
+                .map(|e| dom.tag_name(e).unwrap())
+                .collect()
+        };
+        let before = elements(&dom.borrow(), d);
+        let html = render(&dom.borrow(), d);
+        let (again, d2) = doc(&html);
+        assert_eq!(elements(&again.borrow(), d2), before, "{text:?} -> {html}");
+    }
+}
+
+/// A frame marker is accepted only with this document's nonce: the nonce is 128 random bits per
+/// document, absent from everything page content can reach, so a marker the page made up (even
+/// one naming a real index and version) names nothing (cycle 4, 1a).
+#[test]
+fn frame_markers_carry_a_per_document_nonce() {
+    let (dom, d) = doc("<iframe id=f></iframe>");
+    let (other, d2) = doc("<iframe id=g></iframe>");
+    let f = find(&dom.borrow(), d, "#f");
+    dom.borrow_mut().set_frame_document(f, Some(frame("<p>x</p>", "F#L")));
+    let html = render(&dom.borrow(), d);
+    let nonce = dom.borrow().frame_table(d).nonce;
+    assert_eq!(nonce.len(), 32);
+    assert!(nonce.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(render(&dom.borrow(), d), html, "the nonce stays for the document's life");
+    assert_ne!(other.borrow().frame_table(d2).nonce, nonce, "each document its own");
+}
+
+/// A page attribute keeps its namespace and name in the snapshot (`xml:lang`, `xlink:href`, an
+/// author namespace), in the keyed tree exactly; only one the renderer could read as an engine
+/// attribute is left out, whatever its namespace or prefix (`e:srcdoc`, a namespaced `srcdoc`).
+/// Namespaced attributes were all dropped on HTML elements (cycle 4 run: `:lang()` via
+/// `xml:lang`, `[ns|attr]` selectors).
+#[test]
+fn namespaced_page_attributes_are_kept() {
+    let (dom, d) = doc("<p id=p>x</p>");
+    let p = find(&dom.borrow(), d, "#p");
+    {
+        let mut dom = dom.borrow_mut();
+        dom.set_attribute_ns(p, Some("http://www.w3.org/XML/1998/namespace"), "xml:lang", "fr").unwrap();
+        dom.set_attribute_ns(p, Some("http://author.test/ns"), "a:lang", "de").unwrap();
+        dom.set_attribute_ns(p, Some("http://author.test/ns"), "e:srcdoc", "<p>EVIL</p>").unwrap();
+        dom.set_attribute_ns(p, Some("http://author.test/other"), "srcdoc", "<p>EVIL</p>").unwrap();
+    }
+    let tree = dom
+        .borrow()
+        .render_tree(d, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
+    let attrs: Vec<(String, String, String)> = tree
+        .nodes
+        .iter()
+        .filter(|n| n.key == pyro_dom::snapshot::render_key(p))
+        .flat_map(|n| match &n.kind {
+            pyro_dom::snapshot::RenderNodeKind::Element { attrs, .. } => attrs.clone(),
+            _ => Vec::new(),
+        })
+        .map(|(name, value)| (name.ns.to_string(), name.local.to_string(), value))
+        .collect();
+    assert!(attrs.contains(&("http://www.w3.org/XML/1998/namespace".into(), "lang".into(), "fr".into())), "{attrs:?}");
+    assert!(attrs.contains(&("http://author.test/ns".into(), "lang".into(), "de".into())), "{attrs:?}");
+    assert!(!attrs.iter().any(|(_, local, _)| local == "srcdoc"), "{attrs:?}");
+}
+
+/// A frame element's source attributes from another namespace are never written: markup would
+/// make a namespaced `src` an ordinary one (security review cycle 5, 1).
+#[test]
+fn a_frames_namespaced_source_attributes_are_left_out() {
+    let (dom, d) = doc("<iframe id=f></iframe><object id=o></object>");
+    let (f, o) = (find(&dom.borrow(), d, "#f"), find(&dom.borrow(), d, "#o"));
+    {
+        let mut dom = dom.borrow_mut();
+        dom.set_attribute_ns(f, Some("http://evil.test/ns"), "src", "http://evil.test/a.html").unwrap();
+        dom.set_attribute_ns(f, Some("http://evil.test/ns"), "e:SRC", "http://evil.test/b.html").unwrap();
+        dom.set_attribute_ns(o, Some("http://evil.test/ns"), "data", "http://evil.test/c.html").unwrap();
+    }
+    let html = render(&dom.borrow(), d);
+    assert!(!html.contains("evil.test"), "{html}");
+}
+
+/// Every element's content survives a reparse as the DOM has it: a `<plaintext>` (which a
+/// reparse would make the rest of the markup's text) or an `<xmp>` holding its own end tag
+/// cannot hide a later frame or engine element; `<noembed>`/`<noframes>` text comes back as
+/// written; a carriage return (CR, CR LF) in text or an attribute is kept (security review
+/// cycle 5, 7). The renderer gives a `<pre>` its own name back from the engine's `tag` attribute
+/// (`data-pyro-<nonce>-tag`, blitz-html).
+#[test]
+fn every_element_closes_in_a_reparse_where_the_dom_does() {
+    let (dom, d) = doc("<body><p id=p title=t>p</p></body>");
+    {
+        let mut dom = dom.borrow_mut();
+        let body = find(&dom, d, "body");
+        let el = |dom: &mut Dom, tag: &str, text: &str| {
+            let e = dom.create_element(d, tag).unwrap();
+            let t = dom.create_text(d, text).unwrap();
+            dom.append_child(e, t).unwrap();
+            dom.append_child(body, e).unwrap();
+            e
+        };
+        el(&mut dom, "plaintext", "a<b>&c\r\nd</plaintext><iframe data-pyro-frame=\"x:1:0\">");
+        el(&mut dom, "xmp", "</xmp><iframe data-pyro-frame=\"x:1:0\"></iframe>\n<i>");
+        el(&mut dom, "noembed", "</noembed><b>n</b> &amp; <i>");
+        el(&mut dom, "noframes", "f<b>f</b>");
+        let p = find(&dom, d, "#p");
+        dom.set_attribute(p, "title", "a\rb\r\nc").unwrap();
+        let t = dom.create_text(d, "x\ry").unwrap();
+        dom.append_child(p, t).unwrap();
+        let f = dom.create_element(d, "iframe").unwrap();
+        dom.append_child(body, f).unwrap();
+        let after = dom.create_element(d, "div").unwrap();
+        dom.set_attribute(after, "id", "after").unwrap();
+        dom.append_child(body, after).unwrap();
+    }
+    // (Tag, attributes but the engine's, text) of every element, a `<pre>` by the name it carries.
+    let shape = |dom: &Dom, doc: NodeId| -> Vec<(String, Vec<(String, String)>, String)> {
+        dom.query_selector_all(doc, &parse_selectors("*").unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|e| {
+                let attrs = dom.attributes(e).unwrap();
+                let tag = attrs.iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
+                let kept = attrs
+                    .iter()
+                    .filter(|a| !a.name.local.starts_with("data-pyro-"))
+                    .map(|a| (a.name.local.to_string(), a.value.to_string()))
+                    .collect();
+                (tag.unwrap_or_else(|| dom.tag_name(e).unwrap()), kept, dom.child_text_content(e).into_owned())
+            })
+            .collect()
+    };
+    let mut before = shape(&dom.borrow(), d);
+    // (A `<noembed>`'s text holding its own end tag is the one change: it is written `<\/noembed`,
+    // the element never displayed.)
+    for (tag, _, text) in &mut before {
+        if tag == "NOEMBED" {
+            *text = text.replace("</noembed", "<\\/noembed");
+        }
+    }
+    let html = render(&dom.borrow(), d);
+    let (again, d2) = doc(&html);
+    assert_eq!(shape(&again.borrow(), d2), before, "{html}");
+}
+
+/// A raw-text element's text nodes are one stream to a parser: an end tag split across adjacent
+/// text nodes (`</sty` + `le>`) cannot end the element in a reparse and make the rest elements
+/// (an image request, an engine marker), for every element whose text a reparse reads raw or
+/// as RCDATA (security review cycle 6, 1).
+#[test]
+fn an_end_tag_split_across_text_nodes_stays_text() {
+    for tag in ["style", "noembed", "noframes", "xmp", "plaintext", "textarea", "title"] {
+        let (dom, d) = doc("<body><p>p</p></body>");
+        {
+            let mut dom = dom.borrow_mut();
+            let body = find(&dom, d, "body");
+            let parent = if tag == "title" { find(&dom, d, "head") } else { body };
+            let e = dom.create_element(d, tag).unwrap();
+            let (a, b) = tag.split_at(3);
+            for text in [format!("x</{a}"), format!("{b}><img src=\"http://evil.test/x.png\">"), format!("<div data-pyro-scroll-top=40></{tag}>")] {
+                let t = dom.create_text(d, &text).unwrap();
+                dom.append_child(e, t).unwrap();
+            }
+            dom.append_child(parent, e).unwrap();
+            let after = dom.create_element(d, "span").unwrap();
+            dom.append_child(body, after).unwrap();
+        }
+        let tags = |dom: &Dom, doc: NodeId| -> Vec<String> {
+            dom.query_selector_all(doc, &parse_selectors("*").unwrap())
+                .unwrap()
+                .into_iter()
+                .map(|e| {
+                    let own = dom.attributes(e).unwrap().iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
+                    own.unwrap_or_else(|| dom.tag_name(e).unwrap())
+                })
+                .collect()
+        };
+        let before = tags(&dom.borrow(), d);
+        let html = render(&dom.borrow(), d);
+        let (again, d2) = doc(&html);
+        assert_eq!(tags(&again.borrow(), d2), before, "{tag}: {html}");
+    }
+}
+
+/// The engine's attributes carry the document's nonce in their NAMES (`data-pyro-<nonce>-<field>`),
+/// which page content cannot know, so the page's own `data-pyro-*` attributes are written as they
+/// are and never stand in for them; no `data-pyro-n` is written (security review cycles 6 and 8).
+#[test]
+fn engine_attributes_carry_the_documents_nonce_in_their_names() {
+    let (dom, d) = doc(
+        "<head><link id=l rel=stylesheet href=a.css></head><body><xmp>x</xmp><p id=p data-pyro-theme=dark data-pyro-n=forged data-pyro-sheet=forged>p</p></body>",
+    );
+    let l = find(&dom.borrow(), d, "#l");
+    let p = find(&dom.borrow(), d, "#p");
+    let html = render_with(&dom.borrow(), d, &|_| None, &|n| (n == l).then(|| "http://test/a.css".to_owned()), Some((p, "data-pyro-render-clip")));
+    let n = dom.borrow().frame_table(d).nonce;
+    assert_eq!(n.len(), 32);
+    for engine in ["sheet", "tag", "render-clip"] {
+        assert_eq!(html.matches(&format!("data-pyro-{n}-{engine}")).count(), 1, "{engine}: {html}");
+    }
+    for page in [r#"data-pyro-theme="dark""#, r#"data-pyro-n="forged""#, r#"data-pyro-sheet="forged""#] {
+        assert!(html.contains(page), "{page}: {html}");
+    }
+    assert_eq!(html.matches("data-pyro-n=").count(), 1, "only the page's own: {html}");
 }

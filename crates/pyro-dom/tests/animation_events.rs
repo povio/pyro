@@ -124,6 +124,25 @@ fn animation_and_transition_declarations_cascade_from_rules_and_the_style_attrib
     assert_eq!(candidates, expected);
 }
 
+/// Property names and at-keywords are ASCII case-insensitive: a sheet or style attribute that spells
+/// them in capitals is read (a rule declaring only `TIMELINE-TRIGGER` too).
+#[test]
+fn timing_declarations_are_read_in_any_ascii_case() {
+    let (dom, d) = doc("<div id=a class=spin></div><div id=b style='TRANSITION: color 30ms'></div><div id=t class=t></div>");
+    let sheet = "@KEYFRAMES spin {} .spin { ANIMATION: spin 2s }";
+    let rules = TimingRules::parse([sheet].into_iter(), &Viewport::default());
+    assert!(rules.has_keyframes("spin"));
+    let dm = dom.borrow();
+    let el = |id: &str| dm.get_element_by_id(d, id).unwrap().unwrap();
+    let a = rules.element(&dm, el("a"), &|_| None);
+    assert_eq!(a.animations.len(), 1);
+    assert_eq!(rules.element(&dm, el("b"), &|_| None).transitions.len(), 1);
+
+    let trigger = TimingRules::parse([".t { TIMELINE-TRIGGER: --go view() }"].into_iter(), &Viewport::default());
+    let found = trigger.timeline_trigger(&dm, d, el("a"), "--go", &|_| None);
+    assert_eq!(found.map(|(id, _)| id), Some(el("t")));
+}
+
 #[test]
 fn transition_listeners_are_noted_apart_from_animation_ones() {
     let (dom, d) = doc("<div id=a></div>");

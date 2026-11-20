@@ -691,6 +691,11 @@ impl Parse for ViewTimelineInset {
 pub struct ViewTransitionNameKeyword(AtomIdent);
 
 impl ViewTransitionNameKeyword {
+    /// The computed identifier without serializing or copying its text.
+    pub fn as_atom(&self) -> &Atom {
+        &self.0.0
+    }
+
     /// Returns the `none` value.
     pub fn none() -> Self {
         Self(AtomIdent::new(atom!("none")))

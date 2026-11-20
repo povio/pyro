@@ -170,8 +170,12 @@ impl ResolveContext {
             StyleProperty::TextWrapMode(value) => TextWrapMode(*value),
             StyleProperty::WhiteSpaceCollapse(value) => WhiteSpaceCollapse(*value),
             StyleProperty::TabSize(value) => TabSize(scale_tab_size(*value, scale)),
-            StyleProperty::SoftHyphen(value) => SoftHyphen(*value),
+            StyleProperty::SoftHyphen(value) => SoftHyphen(value.clone()),
             StyleProperty::DictionaryBreaks(value) => DictionaryBreaks(*value),
+            StyleProperty::WrapAvoidDepth(value) => WrapAvoidDepth(*value),
+            StyleProperty::HangingPunctuation(value) => HangingPunctuation(*value),
+            StyleProperty::FullWidthSpace(value) => FullWidthSpace(*value),
+            StyleProperty::Isolates(value) => Isolates(*value),
             StyleProperty::PhraseBreaks(value) => PhraseBreaks(*value),
             StyleProperty::FontSizeAdjusted(value) => FontSizeAdjusted(*value),
             StyleProperty::AutoOpticalSize(value) => AutoOpticalSize(*value),
@@ -179,6 +183,8 @@ impl ResolveContext {
             StyleProperty::TextSpacingTrim(value) => TextSpacingTrim(*value),
             StyleProperty::TextAutospace(value) => TextAutospace(*value),
             StyleProperty::Upright(value) => Upright(*value),
+            StyleProperty::Vertical(value) => Vertical(*value),
+            StyleProperty::FontVariantEmoji(value) => FontVariantEmoji(*value),
             StyleProperty::TextJustify(value) => TextJustify(*value),
             StyleProperty::SpacingScales(value) => SpacingScales(*value),
         }
@@ -223,8 +229,12 @@ impl ResolveContext {
             text_wrap_mode: raw_style.text_wrap_mode,
             white_space_collapse: raw_style.white_space_collapse,
             tab_size: scale_tab_size(raw_style.tab_size, scale),
-            soft_hyphen: raw_style.soft_hyphen,
+            soft_hyphen: raw_style.soft_hyphen.clone(),
             dictionary_breaks: raw_style.dictionary_breaks,
+            wrap_avoid_depth: raw_style.wrap_avoid_depth,
+            hanging_punctuation: raw_style.hanging_punctuation,
+            full_width_space: raw_style.full_width_space,
+            isolates: raw_style.isolates,
             phrase_breaks: raw_style.phrase_breaks,
             font_size_adjusted: raw_style.font_size_adjusted,
             auto_optical_size: raw_style.auto_optical_size,
@@ -232,6 +242,8 @@ impl ResolveContext {
             text_spacing_trim: raw_style.text_spacing_trim,
             text_autospace: raw_style.text_autospace,
             upright: raw_style.upright,
+            vertical: raw_style.vertical,
+            font_variant_emoji: raw_style.font_variant_emoji,
             text_justify: raw_style.text_justify,
             spacing_scales: raw_style.spacing_scales,
             annotation_space: raw_style.annotation_space.scale(scale),
@@ -432,6 +444,10 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     SoftHyphen(crate::style::SoftHyphen),
     /// pyro: whether lines may break where dictionaries find word boundaries.
     DictionaryBreaks(bool),
+    WrapAvoidDepth(u8),
+    HangingPunctuation(u8),
+    FullWidthSpace(bool),
+    Isolates(bool),
     /// pyro: whether lines break between phrases (CSS `word-break: auto-phrase`).
     PhraseBreaks(bool),
     /// pyro: whether the font size is set by `font-size-adjust`.
@@ -446,6 +462,10 @@ pub(crate) enum ResolvedProperty<B: Brush> {
     TextAutospace(crate::style::TextAutospace),
     /// pyro: upright glyphs in a vertical line.
     Upright(bool),
+    /// pyro: text in a vertical line.
+    Vertical(bool),
+    /// pyro: emoji or text presentation.
+    FontVariantEmoji(crate::style::FontVariantEmoji),
     /// pyro: where justification adds space.
     TextJustify(crate::style::TextJustify),
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -512,6 +532,14 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) soft_hyphen: crate::style::SoftHyphen,
     /// pyro: whether lines may break where dictionaries find word boundaries.
     pub(crate) dictionary_breaks: bool,
+    /// pyro: see [`crate::TextStyle::wrap_avoid_depth`].
+    pub(crate) wrap_avoid_depth: u8,
+    /// pyro: see [`crate::TextStyle::hanging_punctuation`].
+    pub(crate) hanging_punctuation: u8,
+    /// pyro: see [`crate::TextStyle::full_width_space`].
+    pub(crate) full_width_space: bool,
+    /// pyro: the span is a bidi isolate (see [`crate::TextStyle::isolates`]).
+    pub(crate) isolates: bool,
     /// pyro: whether lines break between phrases ([`TextStyle::phrase_breaks`]).
     pub(crate) phrase_breaks: bool,
     /// pyro: whether the font size is set by `font-size-adjust` ([`TextStyle::font_size_adjusted`]).
@@ -527,6 +555,10 @@ pub(crate) struct ResolvedStyle<B: Brush> {
     pub(crate) text_autospace: crate::style::TextAutospace,
     /// pyro: upright glyphs in a vertical line.
     pub(crate) upright: bool,
+    /// pyro: text in a vertical line (`TextStyle::vertical`).
+    pub(crate) vertical: bool,
+    /// pyro: `TextStyle::font_variant_emoji`.
+    pub(crate) font_variant_emoji: crate::style::FontVariantEmoji,
     /// pyro: where justification adds space.
     pub(crate) text_justify: crate::style::TextJustify,
     /// pyro: which of the letter and word spacing scale with the font size.
@@ -571,6 +603,10 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size = value,
             SoftHyphen(value) => self.soft_hyphen = value,
             DictionaryBreaks(value) => self.dictionary_breaks = value,
+            WrapAvoidDepth(value) => self.wrap_avoid_depth = value,
+            HangingPunctuation(value) => self.hanging_punctuation = value,
+            FullWidthSpace(value) => self.full_width_space = value,
+            Isolates(value) => self.isolates = value,
             PhraseBreaks(value) => self.phrase_breaks = value,
             FontSizeAdjusted(value) => self.font_size_adjusted = value,
             AutoOpticalSize(value) => self.auto_optical_size = value,
@@ -578,6 +614,8 @@ impl<B: Brush> ResolvedStyle<B> {
             TextSpacingTrim(value) => self.text_spacing_trim = value,
             TextAutospace(value) => self.text_autospace = value,
             Upright(value) => self.upright = value,
+            Vertical(value) => self.vertical = value,
+            FontVariantEmoji(value) => self.font_variant_emoji = value,
             TextJustify(value) => self.text_justify = value,
             SpacingScales(value) => self.spacing_scales = value,
         }
@@ -615,6 +653,10 @@ impl<B: Brush> ResolvedStyle<B> {
             TabSize(value) => self.tab_size == *value,
             SoftHyphen(value) => self.soft_hyphen == *value,
             DictionaryBreaks(value) => self.dictionary_breaks == *value,
+            WrapAvoidDepth(value) => self.wrap_avoid_depth == *value,
+            HangingPunctuation(value) => self.hanging_punctuation == *value,
+            FullWidthSpace(value) => self.full_width_space == *value,
+            Isolates(value) => self.isolates == *value,
             PhraseBreaks(value) => self.phrase_breaks == *value,
             FontSizeAdjusted(value) => self.font_size_adjusted == *value,
             AutoOpticalSize(value) => self.auto_optical_size == *value,
@@ -622,6 +664,8 @@ impl<B: Brush> ResolvedStyle<B> {
             TextSpacingTrim(value) => self.text_spacing_trim == *value,
             TextAutospace(value) => self.text_autospace == *value,
             Upright(value) => self.upright == *value,
+            Vertical(value) => self.vertical == *value,
+            FontVariantEmoji(value) => self.font_variant_emoji == *value,
             TextJustify(value) => self.text_justify == *value,
             SpacingScales(value) => self.spacing_scales == *value,
         }
@@ -639,8 +683,11 @@ impl<B: Brush> ResolvedStyle<B> {
             text_wrap_mode: self.text_wrap_mode,
             white_space_collapse: self.white_space_collapse,
             tab_size: self.tab_size,
-            soft_hyphen: self.soft_hyphen,
+            wrap_avoid_depth: self.wrap_avoid_depth,
+            hanging_punctuation: self.hanging_punctuation,
+            soft_hyphen: self.soft_hyphen.clone(),
             text_spacing_trim: self.text_spacing_trim,
+            upright: self.upright,
             locale: self.locale,
         }
     }

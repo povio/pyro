@@ -267,6 +267,9 @@ pub(crate) struct State {
     image_smoothing: bool,
     image_smoothing_quality: &'static str,
     filter: String,
+    /// pyro: `filter` resolved for drawing (`None` for `none`): its value and the markup of the
+    /// document's elements it references (`canvas_filter`).
+    filter_spec: Option<pyro_canvas::CanvasFilter>,
     letter_spacing: String,
     word_spacing: String,
     font_kerning: &'static str,
@@ -303,6 +306,7 @@ impl State {
             image_smoothing: true,
             image_smoothing_quality: "low",
             filter: "none".into(),
+            filter_spec: None,
             letter_spacing: "0px".into(),
             word_spacing: "0px".into(),
             font_kerning: "auto",
@@ -327,6 +331,7 @@ impl State {
                 offset: kurbo::Vec2::new(self.shadow_offset_x, self.shadow_offset_y),
             }),
             smoothing: self.image_smoothing,
+            filter: self.filter_spec.as_ref(),
         }
     }
 
@@ -398,11 +403,42 @@ fn default_font() -> FontSpec {
     text_metrics::parse_font("10px sans-serif", 10.0).expect("default canvas font")
 }
 
+/// pyro: a canvas `filter` value for drawing: `None` for `none` (or nothing); else the value
+/// and the markup of the `<filter>` elements of the document its `url(#id)`s name (an `id` the
+/// document lacks is left out: the filter then names nothing, and draws nothing filtered).
+fn canvas_filter(page: &PageDom, value: &str) -> Option<pyro_canvas::CanvasFilter> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let dom = page.dom.borrow();
+    let doc = page.document();
+    let mut defs = String::new();
+    let mut rest = trimmed;
+    while let Some(at) = rest.find("url(") {
+        let after = &rest[at + 4..];
+        let Some(end) = after.find(')') else { break };
+        let reference = after[..end].trim().trim_matches(|c| c == '"' || c == '\'');
+        if let Some(id) = reference.strip_prefix('#') {
+            if let Some(markup) = dom
+                .get_element_by_id(doc, id)
+                .ok()
+                .flatten()
+                .and_then(|el| dom.xml_serialize(el).ok())
+            {
+                defs.push_str(&markup);
+            }
+        }
+        rest = &after[end + 1..];
+    }
+    Some(pyro_canvas::CanvasFilter { page: dom.document_data(doc).ok()?.raster_budget.clone(), value: trimmed.to_string(), defs })
+}
+
 /// A canvas element's bitmap size: its `width`/`height` attributes.
 fn canvas_size(page: &PageDom, canvas: NodeId) -> (u32, u32) {
     let dom = page.dom.borrow();
     let attr = |name: &str, default: u32| {
-        dom.get_attribute(canvas, name).ok().flatten().and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(default)
+        crate::html::canvas_dimension(dom.get_attribute(canvas, name).ok().flatten().as_deref(), default)
     };
     (attr("width", 300), attr("height", 150))
 }
@@ -622,9 +658,22 @@ fn image_source(
                         "The HTMLImageElement provided is in the 'broken' state.",
                     ));
                 }
-                Ok(source_page.image_pixmap(n.id).map(|(pixmap, clean)| ImageHandle {
-                    width: u32::from(pixmap.width()),
-                    height: u32::from(pixmap.height()),
+                // pyro: drawn as the image element's `image-orientation` shows it (Blink; the
+                // source of the preference is not specified, w3c/csswg-drafts#4666).
+                let from_image = {
+                    let dom = source_page.dom.borrow();
+                    source_page.layout.borrow().computed_style_value(&dom, n.id, "image-orientation") != "none"
+                };
+                // pyro: an SVG image's size is its natural size, whatever its bitmap's (rasterized
+                // no larger than a fixed number of pixels): the source rectangle maps onto it.
+                let natural = source_page
+                    .image_is_svg(n.id)
+                    .then(|| source_page.dom.borrow().natural_size(n.id))
+                    .flatten()
+                    .filter(|(w, h)| *w >= 1.0 && *h >= 1.0);
+                Ok(source_page.image_pixmap(n.id, from_image).map(|(pixmap, clean)| ImageHandle {
+                    width: natural.map_or(u32::from(pixmap.width()), |(w, _)| w.round() as u32),
+                    height: natural.map_or(u32::from(pixmap.height()), |(_, h)| h.round() as u32),
                     pixmap: Some(pixmap),
                     clean,
                 }))
@@ -665,8 +714,38 @@ fn image_source(
                 let pixmap = pyro_canvas::pixmap_from_straight((*frame.rgba).clone(), frame.width, frame.height)?;
                 Some(ImageHandle { pixmap: Bitmap::new(pixmap), width: frame.width, height: frame.height, clean })
             })),
-            // No SVG images.
-            "image" => Ok(None),
+            // pyro: an SVG `<image>`: the image of its `href` from the list of available images
+            // (nothing while it is not loaded), shown as the element's `image-orientation` says
+            // (an opaque image as its EXIF orientation says).
+            "image" => {
+                let (url, cors, from_image) = {
+                    let dom = source_page.dom.borrow();
+                    let href = dom
+                        .get_attribute(n.id, "href")
+                        .ok()
+                        .flatten()
+                        .or_else(|| dom.get_attribute_ns(n.id, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
+                        .map(str::to_owned);
+                    let Some(href) = href.filter(|h| !h.trim().is_empty()) else { return Ok(None) };
+                    let cors = match dom.get_attribute(n.id, "crossorigin").ok().flatten() {
+                        None => 0,
+                        Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+                        Some(_) => 1,
+                    };
+                    let from_image =
+                        source_page.layout.borrow().computed_style_value(&dom, n.id, "image-orientation") != "none";
+                    (crate::html::resolve_url(&dom, n.id, href.trim()), cors, from_image)
+                };
+                let Some(image) = source_page.available_image(&url, cors) else { return Ok(None) };
+                let Some((bytes, clean)) = image.bytes else { return Ok(None) };
+                let oriented = from_image || !clean;
+                let Some(budget) = source_page.raster_budget() else { return Ok(None) };
+                let Some(pixmap) = pyro_canvas::codec::decode_bitmap(bytes.bytes(), oriented, &budget) else {
+                    return Ok(None);
+                };
+                let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+                Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean }))
+            }
             _ => Err(not_source()),
         };
     }
@@ -702,14 +781,47 @@ fn image_source(
         }
         3 => {
             let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
-            let pixmap = pyro_canvas::codec::decode(&blob.bytes)
-                .and_then(Bitmap::new)
+            let budget = page.raster_budget().ok_or_else(|| JsError::dom("InvalidStateError", "No active document."))?;
+            let pixmap = pyro_canvas::codec::decode_bitmap(&blob.bytes, false, &budget)
                 .ok_or_else(|| JsError::dom("InvalidStateError", "The source image could not be decoded."))?;
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
             Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean: true }))
         }
+        // pyro: a CSSImageValue: the image of its `url()` from the list of available images
+        // (nothing while it is not loaded), shown as its EXIF orientation says.
+        4 => {
+            let text = desc.get_index(1)?.to_string()?;
+            let Some(url) = css_url_of(&text) else { return Ok(None) };
+            let Some(image) = page.available_image(&url, 0) else { return Ok(None) };
+            let Some((bytes, clean)) = image.bytes else { return Ok(None) };
+            let Some(budget) = page.raster_budget() else { return Ok(None) };
+            let Some(pixmap) = pyro_canvas::codec::decode_bitmap(bytes.bytes(), true, &budget) else {
+                return Ok(None);
+            };
+            let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+            Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean }))
+        }
         _ => Err(not_source()),
     }
+}
+
+/// pyro: the URL of a computed `url("...")` (a CSSImageValue's text), unescaped.
+fn css_url_of(text: &str) -> Option<String> {
+    let inner = text.trim().strip_prefix("url(")?.strip_suffix(')')?.trim();
+    let unquoted = match inner.chars().next()? {
+        q @ ('"' | '\'') => inner.strip_prefix(q)?.strip_suffix(q)?,
+        _ => inner,
+    };
+    let mut out = String::with_capacity(unquoted.len());
+    let mut chars = unquoted.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            out.extend(chars.next());
+        } else {
+            out.push(c);
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// `createImageBitmap` (canvas2d.js): `[handle, width, height]` of the
@@ -1387,7 +1499,18 @@ impl JsClass for CanvasRenderingContext2D {
         number_state!(def, "shadowBlur", shadow_blur, |n| n >= 0.0);
         number_state!(def, "shadowOffsetX", shadow_offset_x, |_| true);
         number_state!(def, "shadowOffsetY", shadow_offset_y, |_| true);
-        string_state!(def, "filter", filter);
+        def.accessor(
+            "filter",
+            |s, c| Ok(s.string(&c.state.borrow().filter)),
+            |_s, c, v| {
+                let value = dom_string(v)?;
+                let spec = canvas_filter(&c.page, &value);
+                let mut state = c.state.borrow_mut();
+                state.filter = value;
+                state.filter_spec = spec;
+                Ok(())
+            },
+        );
         string_state!(def, "letterSpacing", letter_spacing);
         string_state!(def, "wordSpacing", word_spacing);
         def.accessor(

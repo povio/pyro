@@ -32,6 +32,10 @@ pub(in super::super) struct GridTrack {
     /// `blocks/align-content-table-cell-*`). See `collapse_sized_tracks`.
     pub collapse_after_sizing: bool,
 
+    /// pyro: the size a `collapse_after_sizing` track had before it collapsed: a table's rows are
+    /// sized with the cells of a collapsed column at it (CSS 2.1 § 17.5.5: laid out as if visible).
+    pub collapsed_size: f32,
+
     /// The minimum track sizing function of the track
     pub min_track_sizing_function: MinTrackSizingFunction,
 
@@ -78,6 +82,7 @@ impl GridTrack {
             kind,
             is_collapsed: false,
             collapse_after_sizing: false,
+            collapsed_size: 0.0,
             min_track_sizing_function,
             max_track_sizing_function,
             offset: 0.0,
@@ -118,10 +123,20 @@ impl GridTrack {
         self.fit_content_limit = f32::INFINITY;
     }
 
+    /// pyro: the size the track's items are measured at in the other axis: a collapsed column's size
+    /// before it collapsed (`collapsed_size`), else its size.
+    #[inline(always)]
+    pub fn measured_size(&self) -> f32 {
+        if self.is_collapsed && self.collapse_after_sizing { self.collapsed_size } else { self.base_size }
+    }
+
     /// pyro: collapse a track marked `collapse_after_sizing` once it has been sized: it keeps its
     /// sizing functions (sizing it again sizes it as before), but has no size.
     pub fn collapse_sized(&mut self) {
         if self.collapse_after_sizing {
+            if !self.is_collapsed {
+                self.collapsed_size = self.base_size;
+            }
             self.is_collapsed = true;
             self.base_size = 0.0;
             self.growth_limit = 0.0;

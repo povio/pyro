@@ -74,8 +74,8 @@ struct FlexItem {
     overflow: Point<Overflow>,
     /// The contain style of the item
     contain: Contain,
-    /// The width of the scrollbars (if it has any)
-    scrollbar_width: f32,
+    /// pyro: the space the item's scrollbar gutters take in each axis (`CoreStyle::scrollbar_gutter_size`)
+    scrollbar_size: Size<f32>,
     /// The flex shrink style of the item
     flex_shrink: f32,
     /// The flex grow style of the item
@@ -345,6 +345,40 @@ pub fn compute_flexbox_layout(
     // The size of the container should be floored by the padding and border
     let styled_based_known_dimensions =
         known_dimensions.or(min_max_definite_size.or(clamped_style_size).maybe_max(padding_border_sum));
+
+    // pyro: a container whose width is not known yet (it shrinks to fit) resolves its items'
+    // percentage padding and margins against zero while it finds its width, then lays them out
+    // against that width (cyclic percentages, css-sizing-3 § 5.2.1; WPT css-flexbox
+    // `percentage-padding-002`): it is laid out again at its width.
+    if run_mode == RunMode::PerformLayout
+        && styled_based_known_dimensions.width.is_none()
+        && tree.child_ids(node).any(|child| {
+            let style = tree.get_flexbox_child_style(child);
+            let padding = style.padding();
+            let margin = style.margin();
+            !style.position().is_out_of_flow()
+                && ([padding.left, padding.right, padding.top, padding.bottom]
+                    .iter()
+                    .any(|p| p.into_raw().uses_percentage())
+                    || [margin.left, margin.right, margin.top, margin.bottom]
+                        .iter()
+                        .any(|m| m.into_raw().uses_percentage()))
+        })
+    {
+        drop(style);
+        let width = compute_flexbox_layout(
+            tree,
+            node,
+            LayoutInput { run_mode: RunMode::ComputeSize, axis: RequestedAxis::Horizontal, ..inputs },
+        )
+        .size
+        .width;
+        return compute_flexbox_layout(
+            tree,
+            node,
+            LayoutInput { known_dimensions: Size { width: Some(width), ..known_dimensions }, ..inputs },
+        );
+    }
 
     // Short-circuit layout if the container's size is fully determined by the container's size and the run mode
     // is ComputeSize (and thus the container's size is all that we're interested in)
@@ -867,39 +901,29 @@ fn compute_constants(
     // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
     // However, the axis are switched (transposed) because a node that scrolls vertically needs
     // *horizontal* space to be reserved for a scrollbar
-    let scrollbar_gutter = style.overflow().transpose().map(|overflow| match overflow {
-        Overflow::Scroll => style.scrollbar_width(),
-        _ => 0.0,
-    });
+    let scrollbar_gutter = {
+        // pyro: `CoreStyle::scrollbar_gutter_size` (classic scrollbars' `overflow: auto` and `scrollbar-gutter`)
+        let size = style.scrollbar_gutter_size();
+        Point { x: size.width, y: size.height }
+    };
     #[cfg(feature = "content_size")]
     let is_scroll_container = {
         let overflow = style.overflow();
         overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
     };
-    let mut content_box_inset = padding + border;
-    content_box_inset.bottom += scrollbar_gutter.y;
-
-    match layout_direction {
-        Direction::Ltr => content_box_inset.right += scrollbar_gutter.x,
-        Direction::Rtl => content_box_inset.left += scrollbar_gutter.x,
+    // pyro: the gutters at their edges (`CoreStyle::scrollbar_gutter`: both inline edges for
+    // `scrollbar-gutter: stable both-edges`, the start edge for `direction: rtl`).
+    let gutter_edges = {
+        let g = style.scrollbar_gutter();
+        match (layout_direction, style.direction()) {
+            (Direction::Ltr, Direction::Rtl) | (Direction::Rtl, Direction::Ltr) => Rect { left: g.right, right: g.left, ..g },
+            _ => g,
+        }
     };
-
-    let padding_box_inset = border
-        + Rect {
-            left: if layout_direction.is_rtl() { scrollbar_gutter.x } else { 0.0 },
-            right: if layout_direction.is_rtl() { 0.0 } else { scrollbar_gutter.x },
-            top: 0.0,
-            bottom: scrollbar_gutter.y,
-        };
+    let content_box_inset = padding + border + gutter_edges;
+    let padding_box_inset = border + gutter_edges;
     #[cfg(feature = "content_size")]
-    let padding = Rect {
-        left: content_box_inset.left - border.left - if layout_direction.is_rtl() { scrollbar_gutter.x } else { 0.0 },
-        right: content_box_inset.right
-            - border.right
-            - if layout_direction.is_rtl() { 0.0 } else { scrollbar_gutter.x },
-        top: content_box_inset.top - border.top,
-        bottom: content_box_inset.bottom - border.bottom - scrollbar_gutter.y,
-    };
+    let padding = padding;
 
     let node_outer_size = known_dimensions;
     let node_inner_size = node_outer_size.maybe_sub(content_box_inset.sum_axes());
@@ -1105,7 +1129,7 @@ fn generate_anonymous_flex_items(
                     .resolve_self_relative(child_style.direction(), constants.layout_direction, constants.is_column),
                 overflow: child_style.overflow(),
                 contain: child_style.contain(),
-                scrollbar_width: child_style.scrollbar_width(),
+                scrollbar_size: child_style.scrollbar_gutter_size(),
                 flex_grow: child_style.flex_grow(),
                 flex_shrink: child_style.flex_shrink(),
                 flex_basis_is_definite: false,
@@ -1721,7 +1745,12 @@ fn collect_flex_lines<'a>(
         lines.push(FlexLine { items: flex_items.as_mut_slice(), cross_size: 0.0, offset_cross: 0.0 });
         lines
     } else {
-        let main_axis_available_space = match constants.max_size.main(constants.dir) {
+        // pyro: the max main size is the border box's: the lines wrap in its content box (less its
+        // padding, border and scrollbar gutters; WPT css-flexbox `content-height-with-scrollbars`
+        // with classic scrollbars).
+        let max_inner_main =
+            constants.max_size.main(constants.dir).map(|max| (max - constants.content_box_inset.main_axis_sum(constants.dir)).max(0.0));
+        let main_axis_available_space = match max_inner_main {
             Some(max_size) => AvailableSpace::Definite({
                 let available = available_space.main(constants.dir).into_option().unwrap_or(max_size);
                 // If the container's main size is not definite then it is at most the max main size,
@@ -2079,7 +2108,14 @@ fn determine_container_main_size(
                         // Issue: https://github.com/w3c/csswg-drafts/issues/1435
                         // Gentest: padding_border_overrides_size_flex_basis_0.html
                         // Gentest: blockflex_min_content_ignores_own_height_as_percentage_basis.html
-                        let clamping_basis = if constants.is_row {
+                        // pyro: a row item with a definite flex basis has a contribution its flex basis does not
+                        // clamp: Blink's rule for an inflexible item applies to the sum below instead. One with an
+                        // indefinite basis (its content size) keeps the clamp, which holds its contribution to that
+                        // content size (a vertical flex container's image: WPT css-flexbox
+                        // `flexbox-vert-lr-with-img`).
+                        let clamping_basis = if constants.is_row && item.flex_basis_is_definite {
+                            None
+                        } else if constants.is_row {
                             Some(item.flex_basis).maybe_max(style_preferred)
                         } else {
                             Some(item.flex_basis)
@@ -2269,10 +2305,19 @@ fn determine_container_main_size(
                                 0.0
                             };
                             let mut size = item.flex_basis + flex_contribution;
-                            // pyro: a row item's share is its hypothetical size: clamped by its max main size and
-                            // floored by its resolved minimum, as in Blink (an inflexible `flex-basis: 200px` with
-                            // `max-width: 100px` counts 100px; WPT css-flexbox `intrinsic-size/row-007`)
+                            // pyro: a row item's share is its contribution, unless it cannot flex towards it (it is
+                            // larger than its flex base size and the item does not grow, or smaller and it does not
+                            // shrink) and its flex basis is definite: then its hypothetical main size (Blink's
+                            // `ComputeMinMaxSizeOfRowContainer`, "cant_move"; WPT css-flexbox
+                            // `flex-container-max-content-001`). Either is clamped by its max main size and floored
+                            // by its resolved minimum, as in Blink (an inflexible `flex-basis: 200px` with
+                            // `max-width: 100px` counts 100px; WPT css-flexbox `intrinsic-size/row-007`).
                             if constants.is_row {
+                                let cant_move = (size > item.flex_basis && item.flex_grow == 0.0)
+                                    || (size < item.flex_basis && item.flex_shrink == 0.0);
+                                if cant_move && item.flex_basis_is_definite {
+                                    size = item.flex_basis;
+                                }
                                 let padding_border = (item.padding + item.border).main_axis_sum(constants.dir);
                                 size = size
                                     .maybe_min(item.max_size.main(constants.dir))
@@ -3354,8 +3399,8 @@ fn calculate_flex_item(
         Point { x: offset_cross, y: offset_main }
     };
     let scrollbar_size = Size {
-        width: if item.overflow.y == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
-        height: if item.overflow.x == Overflow::Scroll { item.scrollbar_width } else { 0.0 },
+        width: item.scrollbar_size.width,
+        height: item.scrollbar_size.height,
     };
 
     tree.set_unrounded_layout(
@@ -3534,20 +3579,10 @@ fn final_layout_pass(
             (constants.container_size.width - constants.border.horizontal_axis_sum() - constants.scrollbar_gutter.x)
                 .max(0.0);
         overflow_rect = overflow_rect.union(Rect {
-            left: if constants.layout_direction.is_rtl() {
-                (client_width
-                    - (constants.content_box_inset.left - constants.border.left - constants.scrollbar_gutter.x))
-                    .min(0.0)
-            } else {
-                0.0
-            },
-            right: if constants.layout_direction.is_rtl() {
-                client_width
-            } else {
-                constants.content_box_inset.right - constants.border.right - constants.scrollbar_gutter.x
-            },
+            left: if constants.layout_direction.is_rtl() { (client_width - constants.padding.left).min(0.0) } else { 0.0 },
+            right: if constants.layout_direction.is_rtl() { client_width } else { constants.padding.right },
             top: 0.0,
-            bottom: constants.content_box_inset.bottom - constants.border.bottom - constants.scrollbar_gutter.y,
+            bottom: constants.padding.bottom,
         });
     }
     overflow_rect

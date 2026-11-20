@@ -52,6 +52,20 @@ fn boxes(html: &str, ids: &[&str]) -> Vec<LayoutBox> {
 }
 
 #[test]
+fn visible_overflow_reaches_the_far_edge_of_an_extra_column() {
+    let html = "<!doctype html><div id=outer style='width:160px'><div id=columns style='columns:2;column-gap:0;width:160px;height:20px;column-fill:auto'><div style='height:60px;width:20px'></div></div></div>";
+    for node in boxes(html, &["outer", "columns"]) {
+        assert_eq!(node.scroll_width, 240.0);
+    }
+}
+
+#[test]
+fn post_spanner_overflow_uses_its_own_column_run() {
+    let result = boxes(include_str!("fixtures/owned-column-overflow.html"), &["wrapped", "direct"]);
+    assert_eq!([result[0].scroll_width, result[1].scroll_width], [170.0, 120.0]);
+}
+
+#[test]
 fn fitting_fractional_inline_boxes_have_equal_client_and_scroll_extents() {
     let html = r#"<!doctype html><style>
       body{margin:0}.group{position:relative;left:100.140625px;display:flex;gap:4px}

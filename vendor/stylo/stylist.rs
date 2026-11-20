@@ -1881,6 +1881,8 @@ impl Stylist {
         let mut cur = element;
         let mut pseudos = SmallVec::<[_; 2]>::new();
         if let Some(pseudo) = pseudo_element {
+            #[cfg(feature = "servo")]
+            let pseudo = if pseudo.scrollbar_orientation().is_some() { &PseudoElement::WebkitScrollbar } else { pseudo };
             pseudos.push(pseudo.clone());
         }
         while let Some(p) = cur.implemented_pseudo_element() {
@@ -1981,7 +1983,36 @@ impl Stylist {
         self.lookup_element_dependent_at_rule(element, |data| data.animations.get(name))
     }
 
-    /// Returns the last @view-transition rule
+    /// pyro: the `@keyframes` rule `name` as seen from the tree scope of the declaration that
+    /// named it (`scope`, its cascade level), not from `element`'s: the rules of the declaration's
+    /// own tree first, then those of each host's tree out to the document (CSS Scoping 1
+    /// § 3.5.1, tree-scoped names; a `::part()` rule of the document names the document's
+    /// keyframes).
+    pub fn lookup_keyframes_scoped<'a, E>(
+        &'a self,
+        name: &Atom,
+        scope: CascadeLevel,
+        element: E,
+    ) -> Option<&'a KeyframesAnimation>
+    where
+        E: TElement + 'a,
+    {
+        let mut shadow_root = scope.get_shadow_root_for_scoped(element);
+        while let Some(r) = shadow_root {
+            if let Some(animation) = r.style_data().and_then(|data| data.animations.get(name)) {
+                return Some(animation);
+            }
+            shadow_root = r.host().containing_shadow();
+        }
+        self.cascade_data
+            .author
+            .animations
+            .get(name)
+            .or_else(|| self.cascade_data.user.animations.get(name))
+            .or_else(|| self.cascade_data.user_agent.cascade_data.animations.get(name))
+    }
+
+        /// Returns the last @view-transition rule
     /// <https://drafts.csswg.org/css-view-transitions-2/#resolve-view-transition-rule>
     #[inline]
     pub fn last_view_transition_rule(&self) -> Option<&Arc<ViewTransitionRule>> {
@@ -1994,7 +2025,7 @@ impl Stylist {
 
     /// Returns the registered `@position-try-rule` animation for the specified name.
     #[inline]
-    fn lookup_position_try<'a, E>(
+    pub fn lookup_position_try<'a, E>(
         &'a self,
         name: &Atom,
         scope: CascadeLevel,
@@ -4726,6 +4757,13 @@ impl CascadeData {
                                 | ImplicitScopeRoot::DocumentElement => {
                                     StylistImplicitScopeRoot::Normal(root)
                                 },
+                                // pyro: (servo) a sheet with an implicit scope root is its
+                                // owner's alone (Blitz parses it for that element: its cascade
+                                // data is not shared between shadow trees).
+                                #[cfg(feature = "servo")]
+                                ImplicitScopeRoot::ShadowHost(_)
+                                | ImplicitScopeRoot::InShadowTree(_) => StylistImplicitScopeRoot::Normal(root),
+                                #[cfg(not(feature = "servo"))]
                                 ImplicitScopeRoot::ShadowHost(_)
                                 | ImplicitScopeRoot::InShadowTree(_) => {
                                     // Style data can be shared between shadow trees, so we must

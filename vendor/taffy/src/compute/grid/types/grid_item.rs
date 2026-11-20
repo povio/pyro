@@ -71,6 +71,9 @@ pub(in super::super) struct GridItem {
     pub baseline: Option<f32>,
     /// pyro: the item's last baseline, from its final layout
     pub last_baseline: Option<f32>,
+    /// pyro: the item's first baseline in its dominant baseline (`Baselines::dominant_first`; a
+    /// central one in a vertical writing mode), from its final layout
+    pub dominant_baseline: Option<f32>,
     /// pyro: for an item baseline-aligned in the axis last resolved, the distance from its track's edge (its
     /// group's side) to its group's baseline, without `extra_margin` (`subgrid::record_subgrid_baselines`)
     pub baseline_distance: Option<f32>,
@@ -133,6 +136,9 @@ pub(in super::super) struct GridItem {
     pub y_position: f32,
     /// Final height. Used to compute baseline alignment for the container.
     pub height: f32,
+    /// pyro: the final bottom of its content box from the top of its border box (a table's synthesized row
+    /// baseline, css-tables-3 § 3.10).
+    pub content_bottom: f32,
 
     /// Out-of-flow candidates bubbled out of this item's subtree (anchors relative to the
     /// container's border box)
@@ -191,6 +197,7 @@ impl GridItem {
             justify_self: style.justify_self().unwrap_or(parent_justify_items),
             baseline: None,
             last_baseline: None,
+            dominant_baseline: None,
             baseline_distance: None,
             baseline_shim: 0.0,
             baseline_shim_block_end: 0.0,
@@ -217,6 +224,7 @@ impl GridItem {
             inline_contribution_consumed: false,
             y_position: 0.0,
             height: 0.0,
+            content_bottom: 0.0,
             oof_candidates: OofCandidates::NONE,
             subgrid: Size { width: false, height: false },
             excluded: Size { width: false, height: false },
@@ -873,9 +881,14 @@ impl GridItem {
         let padding_border_size = (padding + border).sum_axes();
         let box_sizing_adjustment =
             if self.box_sizing == BoxSizing::ContentBox { padding_border_size } else { Size::ZERO };
-        self.size
-            .maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis))
-            .maybe_apply_aspect_ratio(self.aspect_ratio)
+        // pyro: the item's own preferred size: one its aspect ratio transfers from the other axis is not
+        // (its computed preferred size behaves as `auto`: css-grid-1 §6.6 "minimum contribution"), so a
+        // scroll container's is its automatic minimum, zero (WPT css-sizing
+        // `aspect-ratio/grid-aspect-ratio-027`).
+        let own_size = self.size.maybe_resolve(grid_area_size, |val, basis| tree.calc(val, basis));
+        let transferred = own_size.get(axis).is_none() && self.overflow.get(axis).is_scroll_container();
+        own_size
+            .maybe_apply_aspect_ratio(self.aspect_ratio.filter(|_| !transferred))
             .maybe_add(box_sizing_adjustment)
             .get(axis)
             .map(|size| {
@@ -914,6 +927,9 @@ impl GridItem {
                     .maybe_apply_aspect_ratio(self.aspect_ratio)
                     .maybe_add(box_sizing_adjustment)
                     .get(axis)
+                    // pyro: a border-box minimum is no smaller than the item's padding and border (as Blink
+                    // resolves it), which a grid sized under a min-content constraint shows (`min-width: 0` buttons)
+                    .map(|size| size.max(padding_border_size.get(axis)))
             })
             .or_else(|| self.overflow.get(axis).maybe_into_automatic_min_size())
             .unwrap_or_else(|| {

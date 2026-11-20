@@ -79,3 +79,35 @@ fn a_javascript_link_runs_its_script_in_the_document() {
     assert_eq!(eval(&t, page, "ran.join() + ' ' + location.href"), "inner http://site.test/page?q=1");
     assert!(loader.log.borrow().is_empty());
 }
+
+const LONG: &str = "<style>body{margin:0} div{height:2000px} p{height:10px;margin:0}</style>\
+    <div></div><p id=a>a</p><div></div><p id=b style='scroll-margin-top:50px'>b</p><div></div>\
+    <a name=named></a><div></div><p id='%41'>pct</p><div></div><p id=A>A</p><div></div>\
+    <style>p { background: rgb(255, 0, 0) } :target { background: rgb(0, 128, 0) }</style>";
+
+/// HTML "scroll to the fragment" (with the indicated element's `scroll-margin`), the order of
+/// "find a potential indicated element" (the fragment as it is, then decoded), `:target`, and
+/// a same-document traversal restoring the scroll position it persisted.
+#[test]
+fn a_fragment_navigation_scrolls_to_the_indicated_element_and_back() {
+    let (mut t, page, _loader) = load(LONG);
+    let step = |t: &mut BrowserThread, script: &str| {
+        eval(t, page, script);
+        settle(t);
+    };
+    step(&mut t, "location.hash = 'a'");
+    assert_eq!(eval(&t, page, "scrollY + ' ' + a.offsetTop"), "2000 2000");
+    assert_eq!(eval(&t, page, "getComputedStyle(a).backgroundColor"), "rgb(0, 128, 0)");
+    // `scroll-margin-top: 50px` stops the scroll 50px short.
+    step(&mut t, "location.hash = 'b'");
+    assert_eq!(eval(&t, page, "scrollY + ' ' + b.offsetTop"), "3960 4010");
+    assert_eq!(eval(&t, page, "getComputedStyle(a).backgroundColor"), "rgb(255, 0, 0)");
+    // Back to `#a`: its persisted scroll position (scrollRestoration `auto`).
+    step(&mut t, "history.back()");
+    assert_eq!(eval(&t, page, "location.hash + ' ' + scrollY"), "#a 2000");
+    // An `a` element's name; the fragment as it is before decoded.
+    step(&mut t, "location.hash = 'named'");
+    assert_eq!(eval(&t, page, "scrollY == document.querySelector('[name=named]').offsetTop"), "true");
+    step(&mut t, "location.hash = '%41'");
+    assert_eq!(eval(&t, page, "scrollY == document.getElementById('%41').offsetTop"), "true");
+}

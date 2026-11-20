@@ -11,3 +11,10 @@ carries these commits.
 - Round 5, `src/html_sink.rs` (`create_comment`): the data of a comment that started with `<?` carries the mark of the
   vendored html5ever (`pi::MARK`, vendor/html5ever/README.pyro.md); it is stripped. The render document keeps such
   markup as a comment.
+
+- Round 6, `src/html_sink.rs` (`create_element`, `elem_name`): a render snapshot writes an HTML `<xmp>` or
+  `<plaintext>` as `<pre data-pyro-tag="xmp|plaintext">` (pyro-dom `snapshot::TAG_ATTRIBUTE`), so the reparse ends it
+  where the DOM does (a `<plaintext>` would make the rest of the markup its text). The sink creates the element under
+  its own name, without the attribute, and answers the tree builder with `pre` for it (its end tag, scope checks).
+  Only the engine's attribute, named with the document's snapshot nonce (`data-pyro-<nonce>-tag`, blitz-dom
+  `engine_field`; `data-pyro-tag` in a document without a nonce): a `<pre>` with any other attribute keeps its name.

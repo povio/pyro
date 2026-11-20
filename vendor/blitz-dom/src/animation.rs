@@ -142,7 +142,10 @@ pub struct TimelineDriven {
 impl TimelineDriven {
     /// The iteration progress at `p` through the attachment range, and the before flag; `None`
     /// outside the range without a fill that covers it.
-    fn iteration_progress(&self, p: f64) -> Option<(f64, bool)> {
+    /// pyro: `at_end`: the timeline is at the end of its range, where the active end is inclusive;
+    /// elsewhere progress at the active end is past it, in the after phase (Web Animations 2; WPT
+    /// scroll-animations `view-timelines/range-boundary.tentative`).
+    fn iteration_progress(&self, p: f64, at_end: bool) -> Option<(f64, bool)> {
         let n = if self.iterations.is_finite() { self.iterations.max(0.0) } else { 1.0 };
         let backwards = self.fill & 2 != 0;
         let forwards = self.fill & 1 != 0;
@@ -162,7 +165,11 @@ impl TimelineDriven {
                 return None;
             }
             0.0
-        } else if local > active || (active == 0.0 && local >= 0.0) || (active == 0.0 && p >= 0.0) {
+        } else if local > active
+            || (!at_end && active > 0.0 && (local - active).abs() < 1e-9)
+            || (active == 0.0 && local >= 0.0)
+            || (active == 0.0 && p >= 0.0)
+        {
             if !forwards {
                 return None;
             }
@@ -202,6 +209,9 @@ pub struct ElementEffects {
     /// pyro: animations in effect on the element's `::marker` (a list item's): their values go
     /// into the marker's style (`ElementData::sampled_marker`, `layout::list`), not the element's.
     pub marker: Vec<Effect>,
+    /// pyro: animations in effect on a top-layer element's `::backdrop`: their values go into
+    /// the backdrop's style (`ElementData::sampled_backdrop`, paint).
+    pub backdrop: Vec<Effect>,
     /// pyro: the effects on the element's `::before` (`[0]`) and `::after` (`[1]`): resolved
     /// against the pseudo-element's own style and cascaded into it.
     pub pseudos: [PseudoEffects; 2],
@@ -234,12 +244,13 @@ impl ElementEffects {
             && self.animations.is_empty()
             && self.current.is_empty()
             && self.marker.is_empty()
+            && self.backdrop.is_empty()
             && self.pseudos.iter().all(PseudoEffects::is_empty)
     }
 
     /// pyro: every effect, in effect or only current.
     fn all(&self) -> impl Iterator<Item = &Effect> {
-        self.own().chain(&self.marker)
+        self.own().chain(&self.marker).chain(&self.backdrop)
     }
 
     /// pyro: the effects on the element itself.
@@ -299,6 +310,8 @@ struct Sampled {
     transitions: Option<AnimationValueMap>,
     /// pyro: the values of the effects on the element's `::marker`.
     marker: Option<AnimationValueMap>,
+    /// pyro: the values of the effects on the element's `::backdrop`.
+    backdrop: Option<AnimationValueMap>,
     /// pyro: the values of the effects on `::before` and `::after` (animations, transitions).
     pseudos: [(Option<AnimationValueMap>, Option<AnimationValueMap>); 2],
     /// pyro: an effect animates a property that makes a stacking context
@@ -337,9 +350,89 @@ struct ResolvedFrame {
 }
 
 impl BaseDocument {
+    pub(crate) fn sample_transition_style(&self, origin: NodeId, parent: NodeId, pseudo: style::selector_parser::PseudoElement, style: ServoArc<ComputedValues>, samples: &[(usize,f64)], generated: Option<&(Atom,String)>, budget: &mut usize) -> Option<ServoArc<ComputedValues>> {
+        if samples.is_empty() { return Some(style); }
+        use style_traits::ToCss;
+        let node = self.nodes.get(origin)?;
+        let primary = self.nodes[parent].primary_styles()?.clone();
+        let _thread = crate::stylo::LayoutThreadScope::enter();
+        let guard = self.guard.read();
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(), stylist: &self.stylist, options: GLOBAL_STYLE_DATA.options.clone(),
+            guards: StylesheetGuards::same(&guard), visited_styles_enabled: true, animations: self.animations.clone(), current_time_for_animations: 0.0,
+            snapshot_map: &self.snapshots, registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
+        };
+        let mut thread = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
+        let base = BaseKey { rules: style.rules().clone(), parent: 0, base_style: style.clone(), pseudo: Some((pseudo.clone(), primary.clone())) };
+        let ui = style.get_ui();
+        let mut state = ElementState::default();
+        let mut easings = FxHashMap::default();
+        for &(index,progress) in samples {
+            let item = ui.animation_name_mod(index);
+            let Some(name) = item.as_atom() else { continue; };
+            let easing = ui.animation_timing_function_mod(index).to_css_string();
+            let animation = match animation_name_scope(self, node) {
+                Some(scope) => self.stylist.lookup_keyframes_scoped(name, scope, node),
+                None => self.stylist.lookup_keyframes(name, node),
+            };
+            let keyframes = if let Some(animation) = animation {
+                *budget = budget.checked_sub(animation.steps.len())?;
+                let mut declarations = 0usize;
+                for step in &animation.steps {
+                    if let KeyframesStepValue::Declarations { block } = &step.value {
+                        declarations = declarations.checked_add(block.read_with(&guard).len())?;
+                    }
+                }
+                *budget = budget.checked_sub(declarations.checked_mul(declarations.max(animation.steps.len()))?)?;
+                Keyframes::Css { name:name.clone(),easing:Some(easing.into()),composite:Composite::Replace }
+            } else if let Some((_,css)) = generated.filter(|(id,_)| id == name) {
+                *budget = budget.checked_sub(2)?;
+                Keyframes::Text(Arc::new(TextKeyframes { frames:vec![TextKeyframe { offset:0.0,easing:Some(easing),composite:None,declarations:css.clone() },TextKeyframe {offset:1.0,easing:None,composite:None,declarations:String::new()}] }))
+            } else { continue; };
+            state.resolved.push((keyframes.clone(),resolve(self,node,&base,&keyframes,&mut context,&mut easings)));
+            state.effects.animations.push(Effect {keyframes,progress,before:false,easing:None,composite:Composite::Replace,timeline:None});
+        }
+        if let Some(values) = sample(&state,&mut easings).animations {
+            let block = ServoArc::new(self.guard.wrap(PropertyDeclarationBlock::from_animation_value_map(&values)));
+            if let Some(rules) = self.stylist.rule_tree().update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations),LayerOrder::root(),Some(block.borrow_arc()),style.rules(),&shared.guards,&mut false) {
+                return Some(cascade_pseudo(node,&mut context,rules,&style,&pseudo,&primary));
+            }
+        }
+        Some(style)
+    }
     /// Replaces the document's sampled animations: the effects of each element
     /// in effect now (an element left out has none). Elements whose sampled
     /// values change are marked for restyle; the next `resolve` cascades them.
+    /// pyro: the animations of the frame documents (by frame client; see
+    /// `BaseDocument::frame_animations`).
+    pub fn set_frame_animations(&mut self, frames: std::collections::HashMap<String, std::sync::Arc<Vec<(u64, ElementEffects)>>>) {
+        if frames.is_empty() && self.frame_animations.is_empty() {
+            return;
+        }
+        self.frame_animations = std::sync::Arc::new(frames);
+    }
+
+    /// pyro: samples this frame document's animations (`frame`: by render key) into its elements
+    /// that carry their key (`data-pyro-key`).
+    pub(crate) fn sample_frame_animations(&mut self, frame: Option<&[(u64, ElementEffects)]>) {
+        let Some(frame) = frame else {
+            if self.has_sampled_animations() {
+                self.set_sampled_animations(Vec::new());
+            }
+            return;
+        };
+        let attr = markup5ever::LocalName::from("data-pyro-key");
+        let keyed: std::collections::HashMap<u64, NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.element_data().is_some_and(|e| crate::engine_marked(&self.frames.nonce, e)))
+            .filter_map(|(id, node)| Some((node.reserved_attr(&attr)?.parse::<u64>().ok()?, id)))
+            .collect();
+        let effects: Vec<_> = frame.iter().filter_map(|(key, e)| Some((*keyed.get(key)?, e.clone()))).collect();
+        self.set_sampled_animations(effects);
+    }
+
     pub fn set_sampled_animations(&mut self, effects: Vec<(NodeId, ElementEffects)>) {
         let mut state = std::mem::take(&mut self.sampled_animations);
         let mut next: FxHashMap<NodeId, ElementState> = FxHashMap::default();
@@ -353,7 +446,13 @@ impl BaseDocument {
                 continue;
             }
             let mut element = state.elements.remove(&id).unwrap_or_default();
-            element.effects = self.drive(id, &effects);
+            // pyro: in skipped `content-visibility` contents its scroll-driven animations hold
+            // where they were (Chromium does not update them; WPT css-contain
+            // `content-visibility-animation-with-scroll-timeline-in-auto-subtree`).
+            let frozen = element.given == effects && self.in_skipped_contents(id);
+            if !frozen {
+                element.effects = self.drive(id, &effects);
+            }
             element.given = effects;
             element.resolved.retain(|(k, _)| element.effects.all().any(|e| e.keyframes == *k));
             for (state, effects) in element.pseudos.iter_mut().zip(&element.effects.pseudos) {
@@ -618,8 +717,18 @@ impl BaseDocument {
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
         let marker = block(sampled.marker);
+        let backdrop = block(sampled.backdrop);
         let [(before_a, before_t), (after_a, after_t)] = sampled.pseudos;
         let pseudos = [(block(before_a), block(before_t)), (block(after_a), block(after_t))];
+        let Some(data) = node.element_data_mut() else {
+            return;
+        };
+        // pyro: the backdrop's values: paint cascades them into its style.
+        if data.sampled_backdrop.is_some() || backdrop.is_some() {
+            data.sampled_backdrop = backdrop;
+            node.insert_damage(crate::layout::damage::ALL_DAMAGE);
+            node.mark_damaged();
+        }
         let Some(data) = node.element_data_mut() else {
             return;
         };
@@ -708,8 +817,16 @@ impl BaseDocument {
                     None => Some(e.clone()),
                     Some(t) => {
                         let style = style_of(t.pseudo)?;
-                        let p = crate::scroll_timeline::progress(self, id, &style, t.index)?;
-                        let (progress, before) = t.iteration_progress(p)?;
+                        // (A pseudo-element's timeline from its own box: its nearest scroll
+                        // container may be its originating element, and it is a `view()`'s
+                        // subject; WPT scroll-animations `responsive/repaint-after-finished`.)
+                        let at = match t.pseudo {
+                            0 => id,
+                            1 => node.and_then(|n| n.before()).unwrap_or(id),
+                            _ => node.and_then(|n| n.after()).unwrap_or(id),
+                        };
+                        let (p, at_end) = crate::scroll_timeline::progress(self, at, &style, t.index)?;
+                        let (progress, before) = t.iteration_progress(p, at_end)?;
                         Some(Effect { progress, before, ..e.clone() })
                     }
                 })
@@ -735,6 +852,19 @@ impl BaseDocument {
         })
     }
 
+    /// pyro: whether `id` is in contents `content-visibility: auto` skips (an ancestor's).
+    fn in_skipped_contents(&self, id: NodeId) -> bool {
+        let mut at = self.get_node(id).and_then(|n| n.parent);
+        while let Some(n) = at {
+            let Some(node) = self.get_node(n) else { return false };
+            if node.flags.contains(crate::node::NodeFlags::CV_SKIPPED) {
+                return true;
+            }
+            at = node.parent;
+        }
+        false
+    }
+
     /// `true`: an element's values changed (marked for restyle).
     pub(crate) fn resample_scroll_driven(&mut self) -> bool {
         if self.sampled_animations.is_empty() {
@@ -752,6 +882,10 @@ impl BaseDocument {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
+            // (Held in skipped contents: see `set_sampled_animations`.)
+            if self.in_skipped_contents(id) {
+                continue;
+            }
             let element = state.elements.get_mut(&id).unwrap();
             let effects = self.drive(id, &element.given);
             if effects == element.effects {
@@ -855,8 +989,11 @@ fn parse_declarations_at(
     )
 }
 
-/// One keyframe's declarations: animatable longhands (not `display`), physical
-/// for the base style's writing mode.
+/// One keyframe's declarations: animatable longhands, physical for the base style's writing
+/// mode. pyro: `display` too (css-display-4 § 2.1: it animates discretely, a `none` end only at
+/// that end; Stylo's `Animate for Display`): a transition of `display` to `none` with
+/// `allow-discrete` keeps the box shown until it ends (WPT css-position
+/// `overlay/overlay-transition-dialog`).
 fn keyframe_block(
     block: &PropertyDeclarationBlock,
     base: &ComputedValues,
@@ -864,7 +1001,7 @@ fn keyframe_block(
     let mut out = PropertyDeclarationBlock::new();
     for declaration in block.normal_declaration_iter() {
         if let PropertyDeclarationId::Longhand(id) = declaration.id() {
-            if id == LonghandId::Display || !id.is_animatable() {
+            if id != LonghandId::Display && !id.is_animatable() {
                 continue;
             }
         }
@@ -905,9 +1042,16 @@ fn resolve<'a>(
                 None => Some(TimingFunction::ease()),
             };
             implicit_easing = default_easing.clone();
-            let Some(animation) = shared.stylist.lookup_keyframes(name, node) else {
-                return Resolved::default();
+            // pyro: from the tree scope of the declaration that named it (`animation_name_scope`).
+            let animation = match animation_name_scope(doc, node) {
+                Some(scope) => shared.stylist.lookup_keyframes_scoped(name, scope, node),
+                None => shared.stylist.lookup_keyframes(name, node),
             };
+            if animation.is_none() && let Some(css) = doc.transition_group_from(node.id, name) {
+                let block = keyframe_block(&parse_declarations_at(css, &doc.url.url_extra_data()), &base.base_style);
+                frames.push((0.0, default_easing.clone(), Some(*composite), block));
+                frames.push((1.0, default_easing, Some(*composite), PropertyDeclarationBlock::new()));
+            } else if let Some(animation) = animation {
             let guard = &shared.guards.author;
             for step in &animation.steps {
                 let offset = step.start_offset.percentage.0 as f64;
@@ -942,6 +1086,7 @@ fn resolve<'a>(
                     )),
                 }
             }
+            } else { return Resolved::default(); }
         }
         Keyframes::Text(text) => {
             implicit_easing = None;
@@ -1103,6 +1248,7 @@ fn sample(
         animations: level(&element.effects.animations, easings),
         transitions: level(&element.effects.transitions, easings),
         marker: level(&element.effects.marker, easings),
+        backdrop: level(&element.effects.backdrop, easings),
         pseudos: [pseudo(0, easings), pseudo(1, easings)],
         stacking_context,
     }
@@ -1315,18 +1461,48 @@ fn cascade_pseudo<'a>(
     pseudo: &style::selector_parser::PseudoElement,
     primary: &ServoArc<ComputedValues>,
 ) -> ServoArc<ComputedValues> {
-    context.thread_local.current_dom_depth = TNode::depth(&node);
-    let mut resolver =
-        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
     let inputs = CascadeInputs {
         rules: Some(rules),
         visited_rules: None,
         flags: style.flags.for_cascade_inputs(),
         included_cascade_flags: RuleCascadeFlags::empty(),
     };
+    if !pseudo.is_eager() {
+        return context.shared.stylist.compute_pseudo_element_style_with_inputs(
+            inputs, pseudo, &context.shared.guards, Some(primary), Some(node),
+        );
+    }
+    context.thread_local.current_dom_depth = TNode::depth(&node);
+    let mut resolver =
+        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
     let primary = style::style_resolver::PrimaryStyle {
         style: style::style_resolver::ResolvedStyle(primary.clone()),
         reused_via_rule_node: false,
     };
     resolver.cascade_style_and_visited_for_pseudo_with_default_parents(inputs, pseudo, &primary).0
+}
+
+/// pyro: the cascade level of the declaration of `animation-name` that won `node`'s cascade (the
+/// highest priority one, of its rule node's importance tier), whose tree scope a `@keyframes` name is looked up in; `None` without one
+/// (inherited or initial) or for a user agent rule.
+fn animation_name_scope(doc: &BaseDocument, node: &Node) -> Option<style::rule_tree::CascadeLevel> {
+    use style::properties::{LonghandId, PropertyDeclarationId};
+    use style::stylesheets::Origin;
+    let style = node.primary_styles()?;
+    let guard = doc.guard.read();
+    for rule in style.rules().self_and_ancestors() {
+        let level = rule.cascade_level();
+        if level.origin().origin() == Origin::UserAgent {
+            continue;
+        }
+        let Some(source) = rule.style_source() else { continue };
+        // (Only a declaration of the rule node's own tier: a rule with some `!important`
+        // declaration has a node in the important tier too, where its normal `animation-name`
+        // does not take part.)
+        let declared = source.read(&guard).get(PropertyDeclarationId::Longhand(LonghandId::AnimationName));
+        if declared.is_some_and(|(_, importance)| importance.important() == level.is_important()) {
+            return Some(level);
+        }
+    }
+    None
 }

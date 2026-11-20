@@ -104,6 +104,11 @@ pub(crate) fn range_rect<'s>(
         }
     };
     if let Some(t) = text {
+        if t == start && start == end {
+            if let Some(rect) = page.layout().text_range_rect(&page.dom.borrow(), t, start_offset, end_offset) {
+                return rect_value(s, rect.layout_units());
+            }
+        }
         if let Some(r) = page.layout().text_rect(&page.dom.borrow(), t) {
             return rect_value(s, r.layout_units());
         }
@@ -231,6 +236,11 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    // pyro: a mandatory snap container starts at a snap position (CSS Scroll Snap 1 § 6.3), from
+    // the first rendering update that lays it out (checked once per DOM version).
+    if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        layout.snap_initial_positions(&dom);
+    }
     let (checked, queued) = page.scroll_clamp.get();
     if queued {
         // The delayed task that was to do it finds nothing owed.
@@ -241,6 +251,14 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
 }
 
 /// Runs queued scroll steps before animation-frame callbacks in a rendering update.
+/// pyro: a rendering frame of `page` starts: `content-visibility: auto` relevance is determined
+/// anew (what queries forced to render since the last frame no longer is).
+pub fn content_visibility_frame(page: &Rc<PageDom>) {
+    if let Some(layout) = page.try_layout() {
+        layout.content_visibility_frame();
+    }
+}
+
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {
@@ -248,6 +266,21 @@ pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
         if end {
             dispatch_scroll(page, doc, target, "scrollend");
         }
+    }
+}
+
+/// pyro: queues `scroll` and `scrollend` at the originating element of each scroll marker group
+/// that scrolled to keep its active marker in view, after the scroll that moved the marker
+/// (Chromium scrolls the group smoothly; WPT css-overflow
+/// `scroll-marker-group-keeps-active-in-view`).
+fn deliver_scroll_group_moves(page: &Rc<PageDom>) {
+    let moves = match (page.dom.try_borrow(), page.try_layout()) {
+        (Ok(dom), Some(layout)) => layout.style().take_scroll_group_moves(&dom),
+        _ => Vec::new(),
+    };
+    for owner in moves {
+        let p = page.clone();
+        page.post_delayed_task(std::time::Duration::from_millis(20), Box::new(move || queue_scroll(&p, Some(owner), true)));
     }
 }
 
@@ -263,6 +296,14 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
             };
             if connected {
                 crate::input::fire_simple(p, el, kind, false, false);
+                // (A scroll can move the active scroll marker: the layout engine follows it.)
+                if kind == "scrollend" {
+                    if let Some(layout) = p.try_layout() {
+                        layout.push_scroll();
+                    }
+                    crate::animation_events::layout_flush(p, el);
+                    deliver_scroll_group_moves(p);
+                }
             }
         }
         None => {
@@ -275,6 +316,14 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
 /// fires their `scroll` events: `now` (a rendering update) dispatches them
 /// at once, otherwise (a script read) at the next frame like other scrolls.
 pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
+    // pyro: a scroll marker group that scrolled to keep its active marker in view: its scroll
+    // events go to its originating element, after the scroll that moved the marker (Chromium
+    // scrolls the group smoothly; WPT css-overflow `scroll-marker-group-keeps-active-in-view`).
+    deliver_scroll_group_moves(page);
+    // pyro: a mandatory snap container starts at a snap position (CSS Scroll Snap 1 § 6.3).
+    if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        layout.snap_initial_positions(&dom);
+    }
     if !page.layout.borrow().has_scroll_offsets() {
         return;
     }
@@ -376,6 +425,67 @@ pub(crate) fn scroll_into_view_if_needed<'s>(s: &Scope<'s>, n: &NodeData, a: Arg
     Ok(s.undefined())
 }
 
+/// The viewport's scroll position (CSS px), for a history entry to persist.
+pub fn viewport_scroll(page: &Rc<PageDom>) -> (i32, i32) {
+    let layout = page.layout.borrow();
+    (layout.scroll_x() as i32, layout.scroll_y() as i32)
+}
+
+/// Scrolls the viewport back to a history entry's persisted position.
+pub fn restore_viewport_scroll(page: &Rc<PageDom>, (x, y): (i32, i32)) {
+    crate::animation_events::layout_flush(page, page.document());
+    let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), Some(x), Some(y));
+    if moved {
+        fire_scroll(page, None);
+    }
+}
+
+/// HTML "scroll to the fragment", after a same-document navigation to `fragment` (the URL's
+/// fragment, percent-encoded): the indicated part of the document is scrolled into view (block
+/// start, inline nearest), or the top of the document for an empty fragment or `top`. Nothing
+/// moves when no element is indicated.
+pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
+    use pyro_dom::layout::ScrollAlign;
+    let doc = page.document();
+    let decoded = percent_encoding::percent_decode_str(fragment).decode_utf8_lossy().into_owned();
+    crate::animation_events::layout_flush(page, doc);
+    let target = {
+        let dom = page.dom.borrow();
+        // HTML "find a potential indicated element": an element with the id, else the first `a`
+        // with the name, for the fragment as it is, then percent-decoded.
+        let find = |name: &str| {
+            if name.is_empty() {
+                return None;
+            }
+            dom.get_element_by_id(doc, name).ok().flatten().or_else(|| {
+                dom.descendants(doc).ok().into_iter().flatten().find(|&n| {
+                    dom.element(n).is_ok_and(|e| &*e.local_name() == "a")
+                        && dom.get_attribute(n, "name").ok().flatten().is_some_and(|value| value == name)
+                })
+            })
+        };
+        find(fragment).or_else(|| find(&decoded))
+    };
+    match target {
+        Some(el) => {
+            let moved = page.layout.borrow_mut().scroll_into_view_aligned_script_targets(
+                &page.dom.borrow(),
+                el,
+                ScrollAlign::Start,
+                ScrollAlign::Nearest,
+            );
+            fire_scroll_targets(page, moved);
+        }
+        None if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
+            let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), Some(0), Some(0));
+            if moved {
+                fire_scroll(page, None);
+            }
+        }
+        None => {}
+    }
+}
+
 fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<pyro_dom::layout::ScrollTarget>) {
     for target in moved {
         fire_scroll(
@@ -412,19 +522,32 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
     Ok(s.boolean(v))
 }
 
-fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
+fn scroll_args(a: &Args<'_>) -> JsResult<(Option<f64>, Option<f64>)> {
     if let Some(o) = a.get(0).as_object() {
         let l = o.get_atom("left")?;
         let t = o.get_atom("top")?;
         Ok((
-            (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
-            (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
+            (!l.is_undefined()).then(|| to_scroll_number(l)).transpose()?,
+            (!t.is_undefined()).then(|| to_scroll_number(t)).transpose()?,
         ))
     } else if a.len() >= 2 {
-        Ok((Some(to_scroll_offset(a.get(0))?), Some(to_scroll_offset(a.get(1))?)))
+        Ok((Some(to_scroll_number(a.get(0))?), Some(to_scroll_number(a.get(1))?)))
     } else {
         Ok((None, None))
     }
+}
+
+/// pyro: the effective `zoom` of the element `el` (1 without a style): its scroll offsets are
+/// laid out in its zoomed px, and script reads and writes them in its own CSS px, as Chromium
+/// does (WPT cssom-view `scrollTo-zoom`).
+fn element_zoom(page: &PageDom, el: NodeId) -> f64 {
+    let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return 1.0 };
+    layout
+        .style()
+        .stylo_style(&dom, el)
+        .map(|style| style.effective_zoom.value() as f64)
+        .filter(|zoom| zoom.is_finite() && *zoom > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// CSSOM View: whether `el`'s scroll offsets are the viewport's, so that its
@@ -446,15 +569,23 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
     let (l, t) = scroll_args(&a)?;
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
+    let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
+    let (css_l, css_t) = (l, t);
+    let (l, t) = (l.map(|v| round_scroll_offset(v * zoom)), t.map(|v| round_scroll_offset(v * zoom)));
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        match (viewport, by) {
+        let moved = match (viewport, by) {
             (true, true) => layout.window_scroll_by(&dom, l, t),
             (true, false) => layout.window_scroll_to(&dom, l, t),
             (false, true) => layout.element_scroll_by(&dom, n.id, l, t),
             (false, false) => layout.element_scroll_to(&dom, n.id, l, t),
+        };
+        // pyro: what script asked for reads back (a zoomed element's fractional offset).
+        if !viewport && !by {
+            layout.note_css_scroll(n.id, css_l, css_t, zoom);
         }
+        moved
     };
     if moved {
         fire_scroll(page, (!viewport).then_some(n.id));
@@ -472,24 +603,32 @@ pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult
         (true, true) => layout.scroll_y() as f64,
         (true, false) => layout.scroll_x() as f64,
         // Negative on an axis that scrolls from its end (right-to-left, reversed flex).
-        (false, true) => layout.scroll_top(n.id) as f64,
-        (false, false) => layout.scroll_left(n.id) as f64,
+        (false, true) => layout.css_scroll(n.id, true, element_zoom(n.page(), n.id)),
+        (false, false) => layout.css_scroll(n.id, false, element_zoom(n.page(), n.id)),
     }))
 }
 
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {
-    let value = to_scroll_offset(v)?;
+    let value = to_scroll_number(v)?;
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
+    let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
+    let css = value;
+    let value = round_scroll_offset(value * zoom);
     let moved = {
         let dom = page.dom.borrow();
         let mut layout = page.layout.borrow_mut();
-        match (viewport, top) {
+        let moved = match (viewport, top) {
             (true, true) => layout.window_scroll_to(&dom, None, Some(value)),
             (true, false) => layout.window_scroll_to(&dom, Some(value), None),
             (false, true) => layout.set_scroll_top(&dom, n.id, value),
             (false, false) => layout.set_scroll_left(&dom, n.id, value),
+        };
+        if !viewport {
+            let (x, y) = if top { (None, Some(css)) } else { (Some(css), None) };
+            layout.note_css_scroll(n.id, x, y, zoom);
         }
+        moved
     };
     if moved {
         fire_scroll(page, (!viewport).then_some(n.id));

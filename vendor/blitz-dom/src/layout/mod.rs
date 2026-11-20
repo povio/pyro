@@ -23,6 +23,9 @@ use taffy::{
     compute_oof_layout, prelude::*,
 };
 
+mod anchor;
+pub(crate) mod anchor_index;
+pub(crate) mod combined_text;
 pub(crate) mod construct;
 pub(crate) mod counters;
 mod quotes_table;
@@ -90,6 +93,29 @@ fn tag_intrinsic_sizes(
     (IntrinsicSizes::default(), DEFAULT_OBJECT_SIZE)
 }
 
+/// pyro: HTML's rules for parsing non-negative integers: leading ASCII white space, an
+/// optional sign, then the digits up to the first other character; out of the reflected range
+/// (over 2^31 - 1) is an error too (pyro-webapi `canvas_dimension`: the same rule).
+fn parse_non_negative_integer(value: &str) -> Option<u32> {
+    let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let (negative, value) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value.strip_prefix('+').unwrap_or(value)),
+    };
+    let end = value.find(|c: char| !c.is_ascii_digit()).unwrap_or(value.len());
+    let digits = &value[..end];
+    if digits.is_empty() {
+        return None;
+    }
+    // (`-0` is 0; any other negative number is an error.)
+    if negative {
+        return digits.bytes().all(|d| d == b'0').then_some(0);
+    }
+    // A value over 2^31 - 1 is out of the reflected `unsigned long`'s range: the default applies,
+    // as to `canvas.width` and the bitmap.
+    digits.parse::<u32>().ok().filter(|&v| v <= i32::MAX as u32)
+}
+
 /// pyro: whether `width` or `height` is `calc-size()` (`LayoutPassState::calc_size_inputs`).
 #[inline]
 fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
@@ -131,6 +157,9 @@ pub(crate) struct LayoutPassState<'doc> {
     /// size, against which its percentage padding resolves (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
+    /// pyro: the floats the running inline layout placed, with the top of each margin box
+    /// (content-box relative, CSS px): `text-box-trim` moves them with its lines.
+    pub(crate) inline_placed_floats: Vec<(crate::NodeId, f32)>,
     /// This rounding pass's nodes reached and subtrees skipped (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) round_counts: (u64, u64),
@@ -140,9 +169,27 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
     /// height, size): a parent that hands one back as a known size hands back the result.
     calc_size_results: Vec<(NodeId, u8, f32)>,
+    try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
+    try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
+    /// pyro: multi-column containers nested in another's columns and the outer column height and
+    /// their offset down their outer column (`layout::multicol`).
+    pub(crate) nested_fragmentation: std::collections::HashMap<crate::NodeId, (f32, f32, usize, f32)>,
+    /// pyro: column spanners pushed below the content that overflows the boxes before them, and
+    /// the least top of each in its parent (`layout::multicol`, `block_child_min_top`).
+    pub(crate) spanner_floors: std::collections::HashMap<crate::NodeId, f32>,
+    spanner_border_heights: std::collections::HashMap<NodeId, (f32, f32)>,
+    column_space_used: std::collections::HashMap<crate::NodeId, f32>,
+    /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
+    pub(crate) multicol_strip_depth: u32,
+    /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
+    pub(crate) column_fragment_budget: usize,
+    /// pyro: see `multicol::MEASURE_FRAGMENT_BUDGET`.
+    pub(crate) column_measure_budget: usize,
+    /// pyro: see `multicol::NESTED_PASS_BUDGET`.
+    pub(crate) nested_pass_budget: usize,
     /// pyro: a table cell being laid out and the border-box height its children's percentage
     /// heights resolve against: its own length `height` (`table::TableTreeWrapper::definite_height`).
     pub(crate) cell_percent_height: Option<(crate::NodeId, f32)>,
@@ -155,6 +202,23 @@ pub(crate) struct LayoutPassState<'doc> {
 }
 
 impl<'doc> LayoutPassState<'doc> {
+    /// pyro: whether `node_id`'s writing mode differs from that of the algorithm laying it out
+    /// (its `writing-mode` value, which `text-orientation` does not change; css-writing-modes-3 §3.2).
+    fn establishes_writing_mode_root(&self, node_id: NodeId) -> bool {
+        #[cfg(feature = "writing-mode")]
+        {
+            use stylo_taffy::WritingMode as Wm;
+            let axes = Wm::VERTICAL | Wm::VERTICAL_LR | Wm::LINE_INVERTED | Wm::VERTICAL_SIDEWAYS;
+            let own = self.layout_wm_of(dom_node_id(node_id));
+            (own & axes) != (self.layout_wm & axes)
+        }
+        #[cfg(not(feature = "writing-mode"))]
+        {
+            let _ = node_id;
+            false
+        }
+    }
+
     /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
     /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
     #[inline]
@@ -189,11 +253,22 @@ impl<'doc> LayoutPassState<'doc> {
             current_align_axis_is_inline: false,
             #[cfg(feature = "writing-mode")]
             orthogonal_percent_basis: None,
+            inline_placed_floats: Vec::new(),
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
             calc_size_results: Vec::new(),
+            try_styles: Default::default(),
+            try_options: Default::default(),
             multicol_percent_height: None,
+            nested_fragmentation: std::collections::HashMap::new(),
+            spanner_floors: std::collections::HashMap::new(),
+            spanner_border_heights: std::collections::HashMap::new(),
+            column_space_used: std::collections::HashMap::new(),
+            multicol_strip_depth: 0,
+            column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
+            column_measure_budget: multicol::MEASURE_FRAGMENT_BUDGET,
+            nested_pass_budget: multicol::NESTED_PASS_BUDGET,
             cell_percent_height: None,
             restricted_cell: None,
             stale_lines: Vec::new(),
@@ -267,7 +342,7 @@ impl LayoutPassState<'_> {
         // pyro: size containment (`Self::size_contained_size`) and inline-size containment
         // (`Self::inline_size_contained_width`)
         let (contain, calc_size) = match self.nodes[dom_node_id(node_id)].primary_styles() {
-            Some(styles) => (Some(effective_size_containment(&styles)), has_calc_size(&styles)),
+            Some(styles) => (Some(node_size_containment(&self.nodes[dom_node_id(node_id)], &styles)), has_calc_size(&styles)),
             None => (None, false),
         };
         if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
@@ -294,15 +369,37 @@ impl LayoutPassState<'_> {
         // content names (`layout::line_clamp`): a measuring run lays it out too, and what
         // that leaves on its content is not the layout a cached final run stands for.
         let line_clamp = self.line_clamp_of(dom_node_id(node_id));
+        let mut block_ctx = block_ctx;
         let mut output = match line_clamp {
             Some(_) if inputs.run_mode == RunMode::ComputeSize => {
                 let performed = taffy::tree::LayoutInput { run_mode: RunMode::PerformLayout, ..inputs };
-                let output = self.dispatch_child_layout(node_id, performed, block_ctx);
+                let output = self.dispatch_child_layout(node_id, performed, block_ctx.as_deref_mut());
                 self.nodes[dom_node_id(node_id)].clear_layout_cache();
                 output
             }
-            _ => self.dispatch_child_layout(node_id, inputs, block_ctx),
+            _ => self.dispatch_child_layout(node_id, inputs, block_ctx.as_deref_mut()),
         };
+        // pyro: a box of a known height with column spanners in it is that much taller in its
+        // multi-column container's strip: the spanners are rows of their own, which take none of
+        // its height (`layout::multicol`, Chromium; WPT css-multicol
+        // `multicol-span-all-children-height-004a`).
+        if line_clamp.is_none()
+            && let Some((flow_height, border_height)) = self.spanner_extent_in(dom_node_id(node_id), inputs.known_dimensions.height)
+        {
+            let mut taller = inputs;
+            taller.known_dimensions.height = Some(flow_height);
+            output = self.dispatch_child_layout(node_id, taller, block_ctx.as_deref_mut());
+            if inputs.run_mode == RunMode::PerformLayout {
+                if flow_height > border_height {
+                    self.spanner_border_heights.insert(node_id, (flow_height, border_height));
+                } else {
+                    self.spanner_border_heights.remove(&node_id);
+                }
+            }
+        }
+        if self.multicol_strip_depth > 0 && let Some(used) = self.column_space_used.get(&dom_node_id(node_id)) {
+            output.size.height = (output.size.height - used).max(0.0);
+        }
         match line_clamp {
             Some(max_lines) => self.clamp_lines(dom_node_id(node_id), max_lines, inputs, &mut output),
             None if self.nodes[dom_node_id(node_id)].flags.contains(NodeFlags::CLAMPS_LINES) => {
@@ -351,6 +448,14 @@ impl LayoutPassState<'_> {
             return inputs;
         }
         let content_box = styles.get_position().box_sizing == style::computed_values::box_sizing::T::ContentBox;
+        // pyro: a column flex container breaks its lines against an indefinite main size: its
+        // `calc-size()` height is not resolved then (css-flexbox-1 § 9.2 step 2; WPT css-values
+        // `calc-size/calc-size-flex-008`).
+        let column_flex = styles.clone_display().inside() == style::values::specified::box_::DisplayInside::Flex
+            && matches!(
+                styles.get_position().flex_direction,
+                style::computed_values::flex_direction::T::Column | style::computed_values::flex_direction::T::ColumnReverse
+            );
         drop(styles);
         let style = node.layout_style();
         let parent_width = inputs.parent_size.width;
@@ -419,6 +524,9 @@ impl LayoutPassState<'_> {
             let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
             if inputs.known_dimensions.height.is_none() {
                 self.calc_size_results.push((node_id, 1, height.max(padding_border.height)));
+                if column_flex {
+                    inputs.known_dimensions_are_definite.height = false;
+                }
             }
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
         }
@@ -438,28 +546,57 @@ impl LayoutPassState<'_> {
         let node = &self.nodes[dom_node_id(node_id)];
         let content = {
             let styles = node.primary_styles()?;
-            if !effective_size_containment(&styles).contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
+            if !node_size_containment(node, &styles).contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
                 return None;
             }
             let display = styles.clone_display();
             // An inline replaced element is an atomic inline: it is contained (WPT css-sizing
             // `contain-intrinsic-size-012`, an `<img>`).
-            let replaced = node.data.downcast_element().is_some_and(replaced::is_replaced);
+            // (And an `<object>` showing an image or a document: an atomic inline too.)
+            let replaced = node
+                .data
+                .downcast_element()
+                .is_some_and(|el| replaced::is_replaced(el) || replaced::is_inline_box(el));
+            // pyro: a drop-down select is sized as an empty one, by its own leaf layout (its
+            // line and arrow stay: `leaf_layout_or_algorithm`).
+            let dropdown = node.data.downcast_element().is_some_and(|el| {
+                el.name.local == local_name!("select")
+                    && el.attr(local_name!("multiple")).is_none()
+                    && el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_none_or(|s| s <= 1)
+            });
+            if dropdown {
+                return None;
+            }
+            // pyro: a table caption is a block container (WPT css-contain `contain-paint-size-001`).
             let contained = match display.outside() {
                 DisplayOutside::Inline => display.inside() != DisplayInside::Flow || replaced,
-                DisplayOutside::Block => true,
+                DisplayOutside::Block | DisplayOutside::TableCaption => true,
                 _ => false,
             } && display.inside() != DisplayInside::Table;
             if !contained {
                 return None;
             }
-            let length = |size: &style::values::computed::ContainIntrinsicSize| match size {
+            // pyro: `auto` takes the last remembered size when there is one (CSS Sizing 4 § 5.1);
+            // `content-visibility: auto` adds `auto` to `contain-intrinsic-size` (CSS Contain 2
+            // § 4.1, csswg-drafts#8407).
+            let remembered = node.layout_data().remembered_size;
+            let cv_auto = styles.get_box().slow_clone_content_visibility()
+                == style::values::specified::box_::ContentVisibility::Auto;
+            let length = |size: &style::values::computed::ContainIntrinsicSize, axis: usize| match size {
+                ContainIntrinsicSize::None | ContainIntrinsicSize::Length(_) if cv_auto && remembered.is_some() => {
+                    let (w, h) = remembered.unwrap();
+                    if axis == 0 { w } else { h }
+                }
+                ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_) if remembered.is_some() => {
+                    let (w, h) = remembered.unwrap();
+                    if axis == 0 { w } else { h }
+                }
                 ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
                 ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
             };
             let position = styles.get_position();
             let (mut width, mut height) =
-                (length(&position.contain_intrinsic_width), length(&position.contain_intrinsic_height));
+                (length(&position.contain_intrinsic_width, 0), length(&position.contain_intrinsic_height, 1));
             #[cfg(feature = "writing-mode")]
             let vertical = self.layout_wm.is_vertical();
             #[cfg(not(feature = "writing-mode"))]
@@ -472,7 +609,10 @@ impl LayoutPassState<'_> {
                 let none = |size: &style::values::computed::ContainIntrinsicSize| {
                     matches!(size, ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone)
                 };
-                let empty = empty_container_size(&styles);
+                // (Measured for its min-content contribution, a multi-column container has its
+                // min-content width: WPT css-contain `contain-size-multicol-003`.)
+                let min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent;
+                let empty = empty_container_size(&styles, min_content);
                 if none(&position.contain_intrinsic_width) {
                     width = empty.width;
                 }
@@ -505,6 +645,27 @@ impl LayoutPassState<'_> {
                 },
             },
         );
+        // pyro: the measure saw no width (a `width` the leaf resolves after measuring): with a
+        // ratio, measured again at the width it resolved, the other axis follows from it (WPT
+        // css-contain `contain-size-replaced-007`: `width: 100px; height: auto` and `width`/`height`
+        // attributes).
+        if let Some(ratio) = natural_ratio
+            && inputs.known_dimensions.height.is_none()
+            && output.size.width > 0.0
+            && output.size.height == 0.0
+        {
+            let known = taffy::Size { width: Some(output.size.width), height: None };
+            let again = taffy::compute_leaf_layout(
+                taffy::tree::LayoutInput { run_mode: RunMode::ComputeSize, known_dimensions: known, ..inputs },
+                &style,
+                resolve_calc_value,
+                |known_dimensions, _available_space| match known_dimensions.width {
+                    Some(width) => taffy::Size { width, height: width / ratio },
+                    None => taffy::Size { width: content.width, height: content.height },
+                },
+            );
+            return Some(again.size);
+        }
         Some(output.size)
     }
 
@@ -515,23 +676,28 @@ impl LayoutPassState<'_> {
     /// and its height follows from it. A truncating `display: block` line with `contain:
     /// inline-size` in a column flex container (Tailwind's `[contain:inline-size]`, Danex's list
     /// cells) gives the container none of its width, as in Chrome. `None`: no inline-size
-    /// containment applies (as for `size_contained_size`), and replaced elements and vertical
-    /// writing modes are left as they were.
+    /// containment applies (as for `size_contained_size`), replaced elements are left as they
+    /// were, and so is a box laid out in another writing mode than its own. (In a vertical writing
+    /// mode the logical width is its inline size, `contain-intrinsic-height`.)
     #[inline(never)]
     fn inline_size_contained_width(&self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> Option<f32> {
         use style::values::generics::box_::ContainIntrinsicSize;
         use style::values::specified::box_::{DisplayInside, DisplayOutside};
-        #[cfg(feature = "writing-mode")]
-        if self.layout_wm.is_vertical() {
-            return None;
-        }
         let node = &self.nodes[dom_node_id(node_id)];
         if node.data.downcast_element().is_some_and(replaced::is_replaced) {
             return None;
         }
         let content_width = {
             let styles = node.primary_styles()?;
-            if styles.writing_mode.is_vertical() {
+            // pyro: a vertical box laid out in its own writing mode too, whose inline size (this
+            // logical width) is its physical height (WPT css-contain `contain-inline-size-intrinsic`).
+            let vertical = styles.writing_mode.is_vertical();
+            #[cfg(feature = "writing-mode")]
+            if self.layout_wm.is_vertical() != vertical {
+                return None;
+            }
+            #[cfg(not(feature = "writing-mode"))]
+            if vertical {
                 return None;
             }
             let display = styles.clone_display();
@@ -543,7 +709,9 @@ impl LayoutPassState<'_> {
             if !contained {
                 return None;
             }
-            match &styles.get_position().contain_intrinsic_width {
+            let position = styles.get_position();
+            let inline = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
+            match inline {
                 ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
                 ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
             }
@@ -682,9 +850,13 @@ impl LayoutPassState<'_> {
                 + st.border().resolve_or_zero(parent_width, resolve_calc_value);
             pb.vertical_axis_sum()
         };
-        // The first option that is displayed, in an optgroup too.
+        // The first option that is displayed, in an optgroup too (pyro: none in a size-contained
+        // select, sized as if it had no options: css-contain-2 § 3.1).
         let mut first = None;
-        let mut stack: Vec<blitz_traits::NodeId> = node.children.iter().rev().copied().collect();
+        let contained = effective_size_containment(&style)
+            .contains(style::values::computed::Contain::INLINE_SIZE | style::values::computed::Contain::BLOCK_SIZE);
+        let mut stack: Vec<blitz_traits::NodeId> =
+            if contained { Vec::new() } else { node.children.iter().rev().copied().collect() };
         while let Some(c) = stack.pop() {
             let n = &self.nodes[c];
             let Some(e) = n.data.downcast_element() else { continue };
@@ -788,7 +960,12 @@ impl LayoutPassState<'_> {
         layout: impl Fn(&mut Self, taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput,
     ) -> taffy::tree::LayoutOutput {
         let fill = if inputs.sizing_mode == taffy::SizingMode::InherentSize && inputs.known_dimensions.height.is_none() {
-            self.quirky_fill_height(dom_node_id(node_id), inputs.parent_size)
+            let quirky = self.quirky_fill_height(dom_node_id(node_id), inputs.parent_size);
+            let line = self.editable_empty_line_height(dom_node_id(node_id), inputs.parent_size.width);
+            match (quirky, line) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            }
         } else {
             None
         };
@@ -805,6 +982,61 @@ impl LayoutPassState<'_> {
         }
     }
 
+    /// pyro: an editable flex or grid container without in-flow children "has a line if empty"
+    /// (as Blink): its border box is at least one line (its `line-height`) tall in its block axis,
+    /// which is the height of its own algorithm (WPT css-flexbox
+    /// `flex-container-line-if-empty-vertical-writing-mode`).
+    fn editable_empty_line_height(&self, dom_id: crate::NodeId, parent_width: Option<f32>) -> Option<f32> {
+        use style::values::computed::font::LineHeight;
+        let node = &self.nodes[dom_id];
+        let editable = node
+            .element_data()?
+            .attr(local_name!("contenteditable"))
+            .is_some_and(|value| !value.eq_ignore_ascii_case("false"));
+        if !editable {
+            return None;
+        }
+        let in_flow = |id: &crate::NodeId| {
+            let child = &self.nodes[*id];
+            if child.is_text_node() {
+                return !child.is_whitespace_node();
+            }
+            child.primary_styles().is_some_and(|style| {
+                style.clone_display() != style::values::specified::box_::Display::None
+                    && !style.get_box().position.is_absolutely_positioned()
+            })
+        };
+        if node.children.iter().any(in_flow) {
+            return None;
+        }
+        let style = node.primary_styles()?;
+        let font_size = style.slow_clone_font_size().used_size().px();
+        let line = match style.clone_line_height() {
+            LineHeight::Normal => font_size * 1.2,
+            LineHeight::Number(num) => font_size * num.0,
+            LineHeight::Length(value) => value.0.px(),
+        };
+        drop(style);
+        let layout_style = node.layout_style();
+        // Only an `auto` height grows to the line (its `height` is the box's otherwise), and no
+        // higher than its `max-height`.
+        if !taffy::CoreStyle::size(&layout_style).height.is_auto() {
+            return None;
+        }
+        let edges = layout_style.padding().resolve_or_zero(parent_width, resolve_calc_value).vertical_axis_sum()
+            + layout_style.border().resolve_or_zero(parent_width, resolve_calc_value).vertical_axis_sum();
+        let max = {
+            use taffy::MaybeResolve as _;
+            taffy::CoreStyle::max_size(&layout_style).height.maybe_resolve(None, resolve_calc_value).map(|max| {
+                match taffy::CoreStyle::box_sizing(&layout_style) {
+                    taffy::BoxSizing::ContentBox => max + edges,
+                    taffy::BoxSizing::BorderBox => max.max(edges),
+                }
+            })
+        };
+        Some(max.map_or(line + edges, |max| (line + edges).min(max)))
+    }
+
     /// The layout of a leaf box (text, form controls, replaced elements, hidden boxes), or the
     /// algorithm that lays out the container (see [`Self::dispatch_child_layout`]).
     #[inline(never)]
@@ -818,6 +1050,14 @@ impl LayoutPassState<'_> {
             n.data.downcast_element().filter(|el| el.name.local == local_name!("select")).map(|el| {
                 let listbox = el.attr(local_name!("multiple")).is_some()
                     || el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1);
+                // pyro: a size-contained select is sized as if it had no options (css-contain-2
+                // § 3.1; `size_contained_size` leaves a drop-down to this).
+                if n.primary_styles().is_some_and(|styles| {
+                    effective_size_containment(&styles)
+                        .contains(style::values::computed::Contain::INLINE_SIZE | style::values::computed::Contain::BLOCK_SIZE)
+                }) {
+                    return (listbox, 0);
+                }
                 let longest = n
                     .children
                     .iter()
@@ -846,6 +1086,11 @@ impl LayoutPassState<'_> {
         } else {
             None
         };
+        // pyro: an editing host with no content keeps one line (Chromium's `HasLineIfEmpty`):
+        // the caret's.
+        let empty_editing_host = empty_editing_host(&self.nodes, dom_node_id(node_id));
+        // pyro: the nonce engine attributes are checked against (`crate::engine_marked`).
+        let frames = self.frames.clone();
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -940,9 +1185,15 @@ impl LayoutPassState<'_> {
                         .and_then(|val| val.parse::<f32>().ok())
                         .unwrap_or(2.0);
 
-                    let cols = element_data
-                        .attr(local_name!("cols"))
-                        .and_then(|val| val.parse::<f32>().ok());
+                    // pyro: 20 when absent or not a valid positive integer (HTML § 4.10.11 "the
+                    // textarea element": the default character width), not a fixed 300px.
+                    let cols = Some(
+                        element_data
+                            .attr(local_name!("cols"))
+                            .and_then(|val| val.trim().parse::<u32>().ok())
+                            .filter(|&cols| cols > 0)
+                            .map_or(20.0, |cols| cols as f32),
+                    );
 
                     // `field-sizing: content` measures the editor's shaped text (or its
                     // placeholder), not the HTML rows/cols hints. Use a private layout for
@@ -956,6 +1207,19 @@ impl LayoutPassState<'_> {
                             })
                         })
                         .flatten();
+                    // pyro: classic scrollbars: a textarea's natural width has room for its
+                    // vertical scrollbar whether or not it shows (Blink's
+                    // `TextAreaIntrinsicInlineSize`), less a gutter its layout reserves already.
+                    let scrollbar_room = {
+                        let style = node.layout_style();
+                        let thickness = taffy::CoreStyle::scrollbar_width(&style);
+                        let scrolls = node.primary_styles().is_some_and(|s| {
+                            use style::values::computed::Overflow;
+                            let o = if s.writing_mode.is_vertical() { s.clone_overflow_x() } else { s.clone_overflow_y() };
+                            matches!(o, Overflow::Auto | Overflow::Scroll)
+                        });
+                        if scrolls { (thickness - taffy::CoreStyle::scrollbar_gutter_size(&style).width).max(0.0) } else { 0.0 }
+                    };
                     let output = compute_leaf_layout(
                         inputs,
                         &node.layout_style(),
@@ -982,6 +1246,7 @@ impl LayoutPassState<'_> {
                                     0.0
                                 } else {
                                     cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
+                                        + scrollbar_room
                                 },
                                 height: resolved_line_height.unwrap_or(16.0) * rows,
                             }
@@ -997,20 +1262,28 @@ impl LayoutPassState<'_> {
                                     .border()
                                     .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                         };
-                        let content_width = (output.size.width - pb.horizontal_axis_sum()).max(0.0);
+                        // pyro: less its inline-axis scrollbar gutters (classic scrollbars).
+                        let gutter = taffy::CoreStyle::scrollbar_gutter_size(&node.layout_style()).width;
+                        let content_width = (output.size.width - pb.horizontal_axis_sum() - gutter).max(0.0);
                         let doc = &mut *self.doc;
                         let scale = doc.viewport.scale();
                         let node = &mut doc.nodes[dom_node_id(node_id)];
+                        let style = node.primary_styles().map(|style| style::servo_arc::Arc::clone(&*style));
                         if let Some(input) = node
                             .data
                             .downcast_element_mut()
                             .and_then(|el| el.text_input_data_mut())
                         {
                             input.editor.set_width(Some(content_width * scale));
-                            input.editor.refresh_layout(
-                                &mut doc.font_ctx.lock().unwrap(),
-                                &mut doc.layout_ctx,
-                            );
+                            let mut font_ctx = doc.font_ctx.lock().unwrap();
+                            input.editor.refresh_layout(&mut font_ctx, &mut doc.layout_ctx);
+                            // pyro: its value shown in its `text-transform` (WPT css-text
+                            // `text-transform-upperlower-108`).
+                            let display = style.as_deref().and_then(|style| {
+                                crate::layout::text_transform::display_text(input.editor.raw_text(), style)
+                            });
+                            input.editor.set_display_text(display, &mut font_ctx, &mut doc.layout_ctx);
+                            drop(font_ctx);
                             // pyro: the placeholder wraps at the same width.
                             if let Some(placeholder) = input.placeholder.as_deref_mut() {
                                 placeholder.break_lines(Some(content_width * scale));
@@ -1018,11 +1291,16 @@ impl LayoutPassState<'_> {
                             // pyro: lines that do not wrap (`white-space: nowrap`, `wrap=off`)
                             // are the control's scrollable overflow: it scrolls to them.
                             let text_width = input.editor.try_layout().map_or(0.0, |layout| layout.width() / scale);
-                            if text_width > content_width {
+                            // pyro: and lines below its content box (Chrome scrolls a textarea
+                            // to them: a classic `overflow: auto` scrollbar shows).
+                            let text_height = input.editor.try_layout().map_or(0.0, |layout| layout.height() / scale);
+                            let content_height = (output.size.height - pb.vertical_axis_sum()).max(0.0);
+                            if text_width > content_width || text_height > content_height + 0.5 {
                                 let mut output = output;
                                 let overflow = output.scrollable_overflow_rect;
                                 let mut rect = overflow.rect();
                                 rect.right = rect.right.max(pb.left + text_width + pb.right);
+                                rect.bottom = rect.bottom.max(pb.top + text_height + pb.bottom);
                                 output.scrollable_overflow_rect =
                                     taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
                                 return ChildLayout::Done(output);
@@ -1058,20 +1336,40 @@ impl LayoutPassState<'_> {
                     } else {
                         2.0
                     };
-                    let mut output = compute_leaf_layout(
-                        inputs,
-                        &style,
-                        resolve_calc_value,
-                        |_known_size, _available_space| taffy::Size {
-                            width: if compressible_min_content {
-                                0.0
-                            } else {
-                                (chars as f32 * 0.5 * font_size + 21.0).ceil()
-                            },
-                            height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
+                    let content = taffy::Size {
+                        width: if compressible_min_content {
+                            0.0
+                        } else {
+                            (chars as f32 * 0.5 * font_size + 21.0).ceil()
                         },
-                    );
-                    if let Some(line) = select_line {
+                        height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
+                    };
+                    let mut output =
+                        compute_leaf_layout(inputs, &style, resolve_calc_value, |_known_size, _available_space| content);
+                    // pyro: a width the preferred aspect ratio gives is no narrower than the
+                    // content's while `min-width` is `auto` (the automatic minimum size,
+                    // css-sizing-4 § 5.1; WPT css-sizing `aspect-ratio/select-element-001`).
+                    if inputs.known_dimensions.width.is_none()
+                        && taffy::CoreStyle::aspect_ratio(&style).is_some()
+                        && taffy::CoreStyle::size(&style).width.is_auto()
+                        && taffy::CoreStyle::min_size(&style).width.is_auto()
+                    {
+                        let parent = inputs.parent_size.width;
+                        let inset = style.padding().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum()
+                            + style.border().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum();
+                        let width = content.width + inset;
+                        if width > output.size.width {
+                            let wider = taffy::tree::LayoutInput {
+                                // (Its height stays the one its own `height` or the ratio gave.)
+                                known_dimensions: taffy::Size { width: Some(width), height: Some(output.size.height) },
+                                ..inputs
+                            };
+                            output = compute_leaf_layout(wider, &style, resolve_calc_value, |_known_size, _available_space| content);
+                        }
+                    }
+                    // pyro: layout containment leaves it no baseline (css-contain-2 § 3.2; WPT
+                    // css-contain `contain-layout-suppress-baseline-002`).
+                    if let Some(line) = select_line.filter(|_| !style.contain().suppresses_baseline()) {
                         let parent = inputs.parent_size.width;
                         let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                         let border = style.border().resolve_or_zero(parent, resolve_calc_value);
@@ -1105,26 +1403,57 @@ impl LayoutPassState<'_> {
                             let none = node.primary_styles().is_some_and(|s| {
                                 *s.get_box().get_appearance() == style::computed_values::appearance::T::None
                             });
-                            let (w, h) = match kind {
+                            let (w, h): (f32, f32) = match kind {
                                 Some("range") => (129.0, 16.0),
                                 _ if none => (0.0, 0.0),
                                 _ => (13.0, 13.0),
+                            };
+                            // pyro: a range whose `width` is a percentage has no
+                            // min-content width (Blink, as its text controls; CSS Sizing 3
+                            // § 5.2.1 compressible; WPT css-sizing `range-percent-intrinsic-size-1`):
+                            // measured with no basis for the percentage in a definite space (a
+                            // shrink-to-fit inline formatting context), it fits that space.
+                            let percent_width = kind == Some("range")
+                                && inputs.known_dimensions.width.is_none()
+                                && style.size().width.into_raw().uses_percentage();
+                            let w = match inputs.available_space.width {
+                                AvailableSpace::MinContent if percent_width => 0.0,
+                                AvailableSpace::Definite(space) if percent_width && inputs.parent_size.width.is_none() => {
+                                    w.min(space.max(padding.horizontal_axis_sum() + border.horizontal_axis_sum()))
+                                }
+                                _ => w,
+                            };
+                            // pyro: `min-width: min-content` / `max-content` floor it at that width, whatever its
+                            // `max-width` (the minimum wins; the keyword is no `min_size`): its natural width, none
+                            // for the min-content width of a percentage `width` (WPT css-sizing
+                            // `range-percent-intrinsic-size-1`)
+                            let keyword_min_width = match taffy::BlockItemStyle::min_size_keyword(&style).width.tag() {
+                                CompactLength::MIN_CONTENT_TAG if kind == Some("range") && !style.size().width.into_raw().uses_percentage() => Some(w),
+                                CompactLength::MAX_CONTENT_TAG if kind == Some("range") => Some(w),
+                                _ => None,
                             };
                             let natural = taffy::Size {
                                 width: (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
                                 height: (h - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
                             };
-                            return ChildLayout::Done(compute_leaf_layout(
+                            let mut out = compute_leaf_layout(
                                 inputs,
                                 &style,
                                 resolve_calc_value,
                                 |_known_size, _available_space| natural,
-                            ));
+                            );
+                            if let Some(min) = keyword_min_width.filter(|_| inputs.known_dimensions.width.is_none()) {
+                                out.size.width = out.size.width.max(min);
+                            }
+                            return ChildLayout::Done(out);
                         }
                         // pyro: a number field too (it was laid out as an empty box; WPT css-pseudo
                         // `placeholder-input-number`); `size` does not apply to it.
                         kind @ (None
-                        | Some("text" | "password" | "email" | "tel" | "url" | "search" | "time" | "number")) => {
+                        | Some(
+                            "text" | "password" | "email" | "tel" | "url" | "search" | "time" | "number" | "date"
+                                | "month" | "week" | "datetime-local",
+                        )) => {
                             // Chromium's intrinsic width: `size` (default 20) average
                             // characters plus a max-char allowance, about
                             // (size / 2 + 0.4)em (166px for 16px Arial). It does not
@@ -1132,7 +1461,7 @@ impl LayoutPassState<'_> {
                             // unless given `min-width: 0`.
                             let size = element_data
                                 .attr(local_name!("size"))
-                                .filter(|_| kind != Some("number"))
+                                .filter(|_| !matches!(kind, Some("number" | "date" | "month" | "week" | "time" | "datetime-local")))
                                 .and_then(|val| val.trim().parse::<u32>().ok())
                                 .filter(|&size| size > 0)
                                 .unwrap_or(20) as f32;
@@ -1171,7 +1500,8 @@ impl LayoutPassState<'_> {
                             );
                             // Its baseline is its text's, the line centred in the content
                             // box (Chromium), not its bottom edge.
-                            if let Some(line) = line {
+                            // (None with layout containment.)
+                            if let Some(line) = line.filter(|_| !style.contain().suppresses_baseline()) {
                                 let parent = inputs.parent_size.width;
                                 let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
                                 let border = style.border().resolve_or_zero(parent, resolve_calc_value);
@@ -1195,13 +1525,15 @@ impl LayoutPassState<'_> {
                     // are already part of the style. They are only read here for the
                     // elements whose attributes determine their *intrinsic* size
                     // (canvas, and custom widgets on canvas tags).
+                    // pyro: a canvas's are unsigned integers (HTML's rules for parsing
+                    // non-negative integers: `40px` is 40); other elements' keep their numbers.
+                    let is_canvas = element_data.name.local == local_name!("canvas");
+                    let parse_attr = |val: &str| {
+                        if is_canvas { parse_non_negative_integer(val).map(|v| v as f32) } else { val.parse::<f32>().ok() }
+                    };
                     let attr_size = taffy::Size {
-                        width: element_data
-                            .attr(local_name!("width"))
-                            .and_then(|val| val.parse::<f32>().ok()),
-                        height: element_data
-                            .attr(local_name!("height"))
-                            .and_then(|val| val.parse::<f32>().ok()),
+                        width: element_data.attr(local_name!("width")).and_then(parse_attr),
+                        height: element_data.attr(local_name!("height")).and_then(parse_attr),
                     };
 
                     // Get the element's intrinsic dimensions and default object size
@@ -1230,12 +1562,27 @@ impl LayoutPassState<'_> {
                                 let mut width = svg.intrinsic_width();
                                 let mut height = svg.intrinsic_height();
                                 let ratio = if is_root_element {
-                                    if width.is_none() && height.is_none() && svg.viewbox_aspect_ratio().is_none() {
-                                        let size = svg.tree.size();
-                                        width = Some(size.width());
-                                        height = Some(size.height());
+                                    // pyro: a root `<svg>` with neither an absolute `width` nor an
+                                    // absolute `height` (100% by default) fills the viewport, the
+                                    // initial containing block, as in browsers (Chrome: 800x600, not
+                                    // usvg's size stretched to the width by its ratio, 800x800; WPT
+                                    // css-masking clip-path-svg-content/*, mask-svg-content/*, whose
+                                    // overflow showed with classic scrollbars).
+                                    if width.is_none()
+                                        && height.is_none()
+                                        && let (Some(w), Some(h)) = (inputs.parent_size.width, inputs.parent_size.height)
+                                    {
+                                        width = Some(w);
+                                        height = Some(h);
+                                        None
+                                    } else {
+                                        if width.is_none() && height.is_none() && svg.viewbox_aspect_ratio().is_none() {
+                                            let size = svg.tree.size();
+                                            width = Some(size.width());
+                                            height = Some(size.height());
+                                        }
+                                        Some(svg.aspect_ratio())
                                     }
-                                    Some(svg.aspect_ratio())
                                 } else {
                                     match (width, height) {
                                         (Some(width), Some(height)) if width > 0.0 && height > 0.0 => {
@@ -1326,7 +1673,8 @@ impl LayoutPassState<'_> {
                     // document is as tall as its content (css-sizing-4; the height comes from pyro through the
                     // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
                     let (intrinsic_sizes, default_object_size) = match element_data
-                        .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
+                        .reserved_attr("data-pyro-frame-content-height")
+                        .filter(|_| crate::engine_marked(&frames.nonce, element_data))
                         .and_then(|value| value.parse::<f32>().ok())
                     {
                         Some(height)
@@ -1458,6 +1806,15 @@ impl LayoutPassState<'_> {
                     Display::Block | Display::FlowRoot if multicol::is_multicol_node(node) => {
                         ChildLayout::Multicol { inline_root: false }
                     }
+                    Display::Block | Display::FlowRoot if empty_editing_host => {
+                        let line_height = resolved_line_height.unwrap_or(16.0);
+                        ChildLayout::Done(compute_leaf_layout(
+                            inputs,
+                            &node.layout_style(),
+                            resolve_calc_value,
+                            |_, _| taffy::Size { width: 0.0, height: line_height },
+                        ))
+                    }
                     Display::Block => ChildLayout::Block,
                     Display::FlowRoot => ChildLayout::FlowRoot,
                     Display::Flex => {
@@ -1527,6 +1884,7 @@ impl LayoutPassState<'_> {
             style: None,
             definite_height,
             restricted,
+            grid_width: None,
         };
         table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
         // pyro: a table's content size (a flex item's flex base size) is the width its columns give
@@ -1541,7 +1899,7 @@ impl LayoutPassState<'_> {
             table_wrapper.style = Some(style);
             inputs.sizing_mode = taffy::SizingMode::InherentSize;
         }
-        let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
+        let mut output = table_wrapper.layout_grid(node_id, inputs);
         if let Some(min) = caption_min.filter(|min| *min > output.size.width) {
             if inputs.known_dimensions.width.is_none() {
                 let wider = taffy::tree::LayoutInput {
@@ -1549,7 +1907,7 @@ impl LayoutPassState<'_> {
                     ..inputs
                 };
                 table_wrapper.style = table_wrapper.auto_column_widths(&wider);
-                output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+                output = table_wrapper.layout_grid(node_id, wider);
             }
         }
         // pyro: nor does its `max-width` make it narrower than its min-content width (CSS 2.1
@@ -1571,7 +1929,7 @@ impl LayoutPassState<'_> {
                     },
                     ..inputs
                 };
-                let min = compute_grid_layout(&mut table_wrapper, node_id, measuring).size.width;
+                let min = table_wrapper.layout_grid(node_id, measuring).size.width;
                 table_wrapper.style = saved;
                 if min > output.size.width + 0.01 {
                     let wider = taffy::tree::LayoutInput {
@@ -1582,7 +1940,7 @@ impl LayoutPassState<'_> {
                     let mut style = table_wrapper.style.clone().unwrap_or_else(|| table_wrapper.ctx.style.clone());
                     style.max_size.width = taffy::style_helpers::auto();
                     table_wrapper.style = Some(style);
-                    output = compute_grid_layout(&mut table_wrapper, node_id, wider);
+                    output = table_wrapper.layout_grid(node_id, wider);
                 }
             }
         }
@@ -1638,7 +1996,7 @@ impl LayoutPassState<'_> {
                         ..inputs
                     };
                     table_wrapper.style = table_wrapper.auto_column_widths(&inner);
-                    output = compute_grid_layout(&mut table_wrapper, node_id, inner);
+                    output = table_wrapper.layout_grid(node_id, inner);
                 }
             }
         }
@@ -1823,11 +2181,39 @@ impl LayoutPassState<'_> {
                 .margin()
                 .resolve_or_zero(Some(width), resolve_calc_value);
             let inner = (width - margin.left - margin.right).max(0.0);
+            // pyro: a caption with a `width` of its own is that wide, not stretched across the
+            // table (as Chromium; WPT CSS2 `floats/floats-wrap-bfc-006`).
+            // (Not an orthogonal caption's: its layout style is in its own axes, its `width`
+            // there its inline size, its physical `height`; WPT css-writing-modes
+            // `line-box-direction-vlr-018`, `block-flow-direction-vrl-019`.)
+            let orthogonal = {
+                let node = &self.nodes[caption];
+                let parent_vertical = node
+                    .layout_parent
+                    .get()
+                    .or(node.parent)
+                    .is_some_and(|parent| self.nodes[parent].writing_mode().is_vertical());
+                node.writing_mode().is_vertical() != parent_vertical
+            };
+            let own_width = (!orthogonal).then(|| {
+                use taffy::{MaybeMath as _, MaybeResolve as _};
+                let style = self.nodes[caption].layout_style();
+                let parent = Some(width);
+                let pb = style.padding().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum()
+                    + style.border().resolve_or_zero(parent, resolve_calc_value).horizontal_axis_sum();
+                let adjust = if style.box_sizing() == taffy::BoxSizing::ContentBox { pb } else { 0.0 };
+                style.size().width.maybe_resolve(parent, resolve_calc_value).map(|w| {
+                    let min = style.min_size().width.maybe_resolve(parent, resolve_calc_value).maybe_add(adjust);
+                    let max = style.max_size().width.maybe_resolve(parent, resolve_calc_value).maybe_add(adjust);
+                    (w + adjust).maybe_min(max).maybe_max(min).max(pb)
+                })
+            })
+            .flatten();
             let caption_inputs = taffy::tree::LayoutInput {
                 run_mode: inputs.run_mode,
                 sizing_mode: taffy::SizingMode::InherentSize,
                 axis: taffy::RequestedAxis::Both,
-                known_dimensions: taffy::Size { width: Some(inner), height: None },
+                known_dimensions: taffy::Size { width: Some(own_width.unwrap_or(inner)), height: None },
                 known_dimensions_are_definite: taffy::Size { width: true, height: true },
                 parent_size: taffy::Size { width: Some(width), height: None },
                 available_space: taffy::Size {
@@ -1990,11 +2376,16 @@ impl LayoutPartialTree for LayoutPassState<'_> {
     }
 
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
+        let border_height = self.column_spanners.and_then(|_| self.spanner_border_heights.get(&node_id))
+            .filter(|(flow, _)| layout.size.height == *flow).map(|(_, border)| *border);
         // A parent's resize can relayout an otherwise style-clean child: this marks the existing
         // damage traversal flags (no restyle/reconstruction damage), so unchanged layouts continue to
         // reuse their cached overflow and rounding.
         self.node_from_id_mut(node_id)
-            .update_unrounded_layout(|unrounded| *unrounded = *layout);
+            .update_unrounded_layout(|unrounded| {
+                *unrounded = *layout;
+                if let Some(height) = border_height { unrounded.size.height = height; }
+            });
     }
 
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
@@ -2002,11 +2393,32 @@ impl LayoutPartialTree for LayoutPassState<'_> {
     }
 
     #[inline(always)]
+    fn block_item_intrinsic_width_override(&self, node_id: NodeId) -> Option<f32> {
+        // pyro: a column spanner while its container measures its columns without spanners
+        // (`layout::multicol`, a negative width in `column_spanners`).
+        // pyro: and a fieldset's rendered legend, a row of its own above the columns (WPT
+        // css-overflow `scroll-markers/column-scroll-marker-004`).
+        self.column_spanners
+            .filter(|&(_, width)| width < 0.0)
+            .filter(|&(container, _)| {
+                let id = dom_node_id(node_id);
+                self.is_current_column_spanner(id) || self.is_measured_rendered_legend(container, id)
+            })
+            .map(|_| 0.0)
+    }
+
     fn compute_child_layout(
         &mut self,
         node_id: NodeId,
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
+        // pyro: the item of a subgrid measured by a grid whose block axis is not its layout parent's (the
+        // items of an orthogonal subgrid size that grid's tracks: Taffy's virtual items) is measured in that
+        // grid's axes, which the node's cache (kept in its parent's) does not tell apart.
+        #[cfg(feature = "writing-mode")]
+        if inputs.run_mode != taffy::RunMode::PerformLayout && self.measured_across_orthogonal_parent(node_id) {
+            return self.compute_child_layout_internal(node_id, inputs, None);
+        }
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             tree.compute_child_layout_internal(node_id, inputs, None)
         })
@@ -2020,11 +2432,307 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         Self: 'a;
 
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
-        self.child_layout_style(self.node_from_id(node_id))
+        let mut style = self.child_layout_style(self.node_from_id(node_id));
+        if !self.try_styles.is_empty() {
+            if let Some(value) = self.try_styles.get(&node_id) { style.style.use_fallback(value); }
+        }
+        style
+    }
+
+    fn position_try_options(&self, id: NodeId) -> ([usize; 5], usize, Option<bool>) {
+        use style::values::specified::position::PositionTryOrder::*;
+        let node = self.node_from_id(id);
+        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) { return ([0;5],0,None); }
+        let Some(style) = node.primary_styles() else { return ([0;5],0,None) };
+        let pos = style.get_position();
+        let list = &pos.position_try_fallbacks;
+        let key = (list.scope.get_shadow_root_for_scoped(node).map(|root| root.id), list.value.0.as_ptr() as usize);
+        let (indices,count) = *self.try_options.borrow_mut().entry(key).or_insert_with(|| {
+            let mut indices = [0;5];
+            let mut count = 0;
+            for (index,item) in list.value.0.iter().enumerate() {
+                self.anchor_list_visits.set(self.anchor_list_visits.get().saturating_add(1));
+                if let style::values::specified::position::PositionTryFallbacksItem::IdentAndOrTactic(item) = item
+                    && !item.ident.is_empty() && self.stylist.lookup_position_try(&item.ident.0,list.scope,node).is_none() { continue; }
+                indices[count] = index;
+                count += 1;
+                if count == indices.len() { break; }
+            }
+            (indices,count)
+        });
+        (indices,count, match pos.position_try_order {
+            Normal => None,
+            MostWidth => Some(!self.layout_wm.is_vertical()), MostHeight => Some(self.layout_wm.is_vertical()),
+            MostInlineSize => Some(true), MostBlockSize => Some(false),
+        })
+    }
+
+    fn uses_anchor_queries(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::ANCHOR_QUERIES) }
+    fn preferred_scroll_option(&self, id: NodeId, container: NodeId) -> Option<usize> {
+        if let Some(index) = self.anchor_rendered_options.get(&dom_node_id(id)) { return Some(*index); }
+        if !self.anchor_scroll_dirty.contains(&dom_node_id(container)) { return None; }
+        let (index, previous) = self.anchor_last_option.get(&dom_node_id(id))?;
+        let current = self.node_from_id(id).primary_styles()?;
+        style::servo_arc::Arc::ptr_eq(previous, &*current).then_some(*index)
+    }
+
+    fn selected_option_this_flush(&self, id: NodeId) -> Option<Option<usize>> {
+        let selected = self.anchor_flush_choices.get(&dom_node_id(id))?;
+        let index = selected.and_then(|index| {
+            let (_, previous) = self.anchor_last_option.get(&dom_node_id(id))?;
+            let current = self.node_from_id(id).primary_styles()?;
+            let old = &previous.get_position().position_try_fallbacks;
+            let new = &current.get_position().position_try_fallbacks;
+            (old.scope == new.scope && old.value.0.get(index)? == new.value.0.get(index)?).then_some(index)
+        });
+        Some(index)
+    }
+
+    fn record_fitting_option(&mut self, id: NodeId, option: Option<usize>) {
+        let id = dom_node_id(id);
+        self.doc.anchor_flush_choices.insert(id, option);
+        if option != self.doc.anchor_rendered_options.get(&id).copied() { self.doc.anchor_pending_options.insert(id); }
+        if let Some(index) = option {
+            let style = self.nodes[id].primary_styles().map(|style| (*style).clone());
+            if let Some(style) = style { self.doc.anchor_last_option.insert(id,(index,style)); }
+        } else { self.doc.anchor_last_option.remove(&id); }
+    }
+    fn checks_position_overflow(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) }
+
+    fn position_try_scroll_offset(&self, candidate: NodeId, container: NodeId) -> taffy::Point<f32> {
+        let node = self.node_from_id(container);
+        let offset = self.timeline_scroll.as_ref().map_or_else(|| {
+            let point = node.scroll_offset();
+            (point.x, point.y)
+        }, |(map, _)| map.get(&node.id).copied().unwrap_or_default());
+        let shift = self.node_from_id(candidate).anchor_scroll_offset_in(Some(node.id), |id| {
+            if let Some((map, viewport)) = self.timeline_scroll.as_ref() {
+                let (x,y) = id.map_or(*viewport, |id| map.get(&id).copied().unwrap_or_default());
+                crate::Point { x,y }
+            } else { id.map_or_else(||node.tree().viewport_scroll(), |id|*self.nodes[id].scroll_offset()) }
+        });
+        taffy::Point { x: (offset.0-shift.x) as f32, y: (offset.1-shift.y) as f32 }
+    }
+
+    fn oof_anchor_center(&self, id: NodeId, container: NodeId) -> taffy::Point<Option<f32>> {
+        use style::values::specified::{align::AlignFlags,position::PositionAreaTrack};
+        let none = taffy::Point { x:None,y:None };
+        if !self.has_anchor_sources() { return none; }
+        let item = self.get_oof_item_style(id);
+        let pos = item.style.get_position();
+        let container = self.node_from_id(container);
+        let Some(cb) = container.primary_styles() else { return none };
+        let area = pos.position_area.to_physical(cb.writing_mode,item.style.writing_mode);
+        let (inline,block) = (pos.justify_self.0.value(),pos.align_self.0.value());
+        let (x,y) = if cb.writing_mode.is_vertical() {(block,inline)} else {(inline,block)};
+        let center = |value,track| value == AlignFlags::ANCHOR_CENTER || ((value == AlignFlags::NORMAL || value == AlignFlags::AUTO) && track == Some(PositionAreaTrack::SpanAll));
+        let (x,y)=(center(x,area.first.track()),center(y,area.second.track()));
+        if !x && !y {return none;}
+        let node = self.node_from_id(id);
+        let Some((anchor,point,extent)) = self.default_anchor_rect(node,container,&item.style) else {return none};
+        let old = node.anchor_scroll_axes.get();
+        node.anchor_scroll_axes.set((if x {Some(anchor)} else {old.0}, if y {Some(anchor)} else {old.1}));
+        use stylo_taffy::WritingModeExt;
+        let wm = cb.writing_mode;
+        let center_x = point.x + extent.width * 0.5;
+        let center_x = if wm.swaps_axes() && !wm.is_vertical_lr() { self.anchor_physical_size(container).width - center_x } else { center_x };
+        wm.logical_point(taffy::Point { x:x.then_some(center_x), y:y.then_some(point.y+extent.height*0.5) })
+    }
+
+    fn set_position_overflow(&mut self, id: NodeId, overflow: bool) {
+        let node = self.node_from_id(id);
+        if node.flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) {node.anchor_hidden.set(overflow);}
+    }
+
+    fn set_position_try_option(&mut self, id: NodeId, index: Option<usize>) -> bool {
+        let Some(index) = index else { self.try_styles.remove(&id); return true };
+        let computed = {
+            let node = self.node_from_id(id);
+            let Some(style) = node.primary_styles() else { return false };
+            let list = &style.get_position().position_try_fallbacks;
+            let guard = self.guard.read();
+            self.anchor_try_visits.set(self.anchor_try_visits.get().saturating_add(1));
+            let Some(item) = list.value.0.get(index) else { return false };
+            self.stylist.resolve_position_try(&style, &style::shared_lock::StylesheetGuards::same(&guard), list.scope, node, item)
+        };
+        if let Some(value) = computed { self.try_styles.insert(id,value); true } else { false }
+    }
+
+    fn oof_anchor_sizes(&self, node: NodeId, container: NodeId, basis: taffy::Size<f32>) -> Option<([taffy::Size<Option<f32>>;3],taffy::Rect<Option<f32>>)> {
+        use stylo_taffy::WritingModeExt;
+        use style::values::computed::length::{Size,MaxSize,Margin};
+        let node = self.node_from_id(node);
+        let container = self.node_from_id(container);
+        let item = self.get_oof_item_style(taffy_node_id(node.id));
+        let pos = item.style.get_position();
+        let margins = item.style.get_margin();
+        let wm = container.primary_styles()?.writing_mode;
+        let inline_basis = basis.width;
+        let basis = wm.logical_size(basis);
+        let calc = |lp:&style::values::computed::LengthPercentage,h,b| self.anchor_calc_size(lp,node,container,h,&item.style).map(|v|v.resolve(CSSPixelLength::new(b)).px());
+        let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
+        let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
+        let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,inline_basis), _ => None };
+        Some(([
+            taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
+            taffy::Size { width:size(&pos.min_width,true),height:size(&pos.min_height,false) },
+            taffy::Size { width:max(&pos.max_width,true),height:max(&pos.max_height,false) }
+        ].map(|size| wm.logical_size(size)),wm.logical_rect(taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) })))
+    }
+
+    fn oof_anchor_insets(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> taffy::Rect<Option<f32>> {
+        use stylo_taffy::WritingModeExt;
+        use style::logical_geometry::{PhysicalSide, WritingMode};
+        use style::values::computed::position::Inset;
+        use style::values::generics::position::{GenericAnchorSide, AnchorSideKeyword as Side};
+        let node = self.node_from_id(node);
+        let container = self.node_from_id(container);
+        let item = self.get_oof_item_style(taffy_node_id(node.id));
+        let style = &item.style;
+        let pos = style.get_position();
+        let default_anchor = std::cell::OnceCell::new();
+        let wm = container.primary_styles().map_or(WritingMode::empty(), |style| style.writing_mode);
+        let size = wm.logical_size(size);
+        let mut offset = wm.logical_point(offset);
+        if wm.swaps_axes() && !wm.is_vertical_lr() { offset.x = self.anchor_physical_size(container).width - offset.x - size.width; }
+        let coordinate = |target: &style::values::generics::position::TreeScoped<style::values::DashedIdent>, anchor_side: &style::values::computed::position::AnchorSide, side: PhysicalSide| {
+            if !anchor_side.valid_for(side) { return None; }
+            let (anchor,point, extent) = if target.value.0.is_empty() {
+                self.default_anchor_rect(node,container,style)
+            } else { self.anchor_rect(node,container,&target.value,target.scope) }?;
+            let horizontal = side.parallel_to(PhysicalSide::Left);
+            let adjustment_anchor = if target.value.0.is_empty() {
+                Some(anchor)
+            } else {
+                let default = *default_anchor.get_or_init(|| self.default_anchor_rect(node, container, style).map(|(id, _, _)| id));
+                default.filter(|&id| id == anchor || self.nodes[id].nearest_anchor_scrollport(horizontal) == self.nodes[anchor].nearest_anchor_scrollport(horizontal))
+            };
+            if let Some(anchor) = adjustment_anchor {
+                let (old_x,old_y) = node.anchor_scroll_axes.get();
+                node.anchor_scroll_axes.set(if horizontal {(Some(anchor),old_y)} else {(old_x,Some(anchor))});
+            }
+            let (start, length, available) = if horizontal { (point.x-offset.x,extent.width,size.width) } else { (point.y-offset.y,extent.height,size.height) };
+            let reversed = matches!(side, PhysicalSide::Right | PhysicalSide::Bottom);
+            let axis_reversed = |wm: WritingMode| {
+                let start = if wm.is_vertical() == horizontal { wm.block_start_physical_side() } else { wm.inline_start_physical_side() };
+                matches!(start, PhysicalSide::Right | PhysicalSide::Bottom)
+            };
+            let cb_wm = container.primary_styles()?.writing_mode;
+            let fraction = match *anchor_side {
+                GenericAnchorSide::Percentage(pct) => if axis_reversed(cb_wm) {1.0-pct.0} else {pct.0},
+                GenericAnchorSide::Keyword(keyword) => match keyword {
+                    Side::Center => 0.5, Side::Left | Side::Top => 0.0, Side::Right | Side::Bottom => 1.0,
+                    Side::Inside => reversed as u8 as f32, Side::Outside => !reversed as u8 as f32,
+                    Side::Start => axis_reversed(cb_wm) as u8 as f32, Side::End => !axis_reversed(cb_wm) as u8 as f32,
+                    Side::SelfStart => axis_reversed(style.writing_mode) as u8 as f32, Side::SelfEnd => !axis_reversed(style.writing_mode) as u8 as f32,
+                },
+            };
+            let coord = start + length*fraction;
+            Some(if reversed {available-coord} else {coord})
+        };
+        let resolve = |mut value: &Inset, side: PhysicalSide| {
+            use style::values::computed::length_percentage::{CalcNode,Unpacked};
+            let horizontal = side.parallel_to(PhysicalSide::Left);
+            let basis = CSSPixelLength::new(if horizontal {size.width} else {size.height});
+            for depth in 0..64 {
+                match value {
+                    Inset::AnchorFunction(func) => { if let Some(v) = coordinate(&func.target_element,&func.side,side) {return Some(v)} value = func.fallback.as_ref()?; }
+                    Inset::AnchorSizeFunction(func) => { if let Some(v) = self.anchor_dimension(func,node,container,horizontal,style) {return Some(v)} value = func.fallback.as_ref()?; }
+                    Inset::AnchorContainingCalcFunction(lp) => {
+                        let Unpacked::Calc(calc) = lp.unpack() else { return None };
+                        return calc.substitute_anchors(|term| match term {
+                            CalcNode::Anchor(func) => coordinate(&func.target_element,&(&func.side).into(),side),
+                            CalcNode::AnchorSize(func) => self.anchor_dimension(func,node,container,horizontal,style),
+                            _ => None,
+                        }).map(|v|v.resolve(basis).px());
+                    }
+                    Inset::LengthPercentage(lp) if depth != 0 => return Some(lp.resolve(basis).px()),
+                    _ => return None,
+                }
+            }
+            None
+        };
+        wm.logical_rect(taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) })
+    }
+
+    fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>, trial: bool) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
+        use style::values::specified::position::PositionAreaTrack;
+        let node = self.node_from_id(node);
+        if node.anchor_scroll_axes.get() != (None,None) { node.anchor_scroll_axes.set((None,None)); }
+        node.anchor_visibility_target.set(None);
+        node.anchor_invalid.set(false);
+        let container = self.node_from_id(container);
+        let item = self.get_oof_item_style(taffy_node_id(node.id));
+        let style = &item.style;
+        let pos = style.get_position();
+        let valid = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VALID);
+        let visible = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VISIBLE);
+        if pos.position_area.is_none() && !valid && !visible {return None;}
+        let default = self.default_anchor_rect(node,container,style);
+        if visible { node.anchor_visibility_target.set(default.map(|(id,_,_)|id)); }
+        if valid && default.is_none() {
+            use style::values::computed::{position::Inset,length::{Size,MaxSize,Margin}};
+            use style::values::specified::align::AlignFlags;
+            let margin = style.get_margin();
+            let referenced = !pos.position_area.is_none() || [pos.justify_self.0,pos.align_self.0].iter().any(|v|v.value()==AlignFlags::ANCHOR_CENTER)
+                || [&pos.left,&pos.right,&pos.top,&pos.bottom].iter().any(|v|match v {Inset::AnchorFunction(f)=>f.target_element.value.0.is_empty(),Inset::AnchorSizeFunction(f)=>f.target_element.value.0.is_empty(),_=>false})
+                || [&pos.width,&pos.height,&pos.min_width,&pos.min_height].iter().any(|v|matches!(v,Size::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()))
+                || [&pos.max_width,&pos.max_height].iter().any(|v|matches!(v,MaxSize::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()))
+                || [&margin.margin_left,&margin.margin_top,&margin.margin_bottom,&margin.margin_right].iter().any(|v|matches!(v,Margin::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()));
+            node.anchor_invalid.set(referenced);
+        }
+        if pos.position_area.is_none() || default.is_none() {
+            if !trial { self.anchor_area_snapshots.borrow_mut().remove(&node.id); }
+            return None;
+        }
+        let (anchor,mut point, extent) = default?;
+        use stylo_taffy::WritingModeExt;
+        let wm = container.primary_styles()?.writing_mode;
+        let area = pos.position_area.to_physical(wm, style.writing_mode);
+        let tracks = (area.first.track()?, area.second.track()?);
+        let axes = (tracks.0 != PositionAreaTrack::SpanAll, tracks.1 != PositionAreaTrack::SpanAll);
+        node.anchor_scroll_axes.set((axes.0.then_some(anchor), axes.1.then_some(anchor)));
+        let live = || self.position_try_scroll_offset(taffy_node_id(node.id), taffy_node_id(container.id));
+        let shift = if trial { live() } else {
+            let key = (anchor, container.id, area, self.anchor_flush_choices.get(&node.id).copied().flatten());
+            let mut snapshots = self.anchor_area_snapshots.borrow_mut();
+            let entry = snapshots.entry(node.id).or_insert_with(|| (key, live()));
+            if entry.0 != key { *entry = (key, live()); }
+            entry.1
+        };
+        point.x -= shift.x;
+        point.y -= shift.y;
+        let reverse = wm.swaps_axes() && !wm.is_vertical_lr();
+        let size = wm.logical_size(size);
+        let mut offset = wm.logical_point(offset);
+        let mirror = if reverse { self.anchor_physical_size(container).width } else { 0.0 };
+        if reverse { offset.x = mirror - offset.x - size.width; }
+        fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
+            use taffy::AlignSelf as Align;
+            match track {
+                PositionAreaTrack::Start => (low.min(start), start, Align::END),
+                PositionAreaTrack::End => (end, high.max(end), Align::START),
+                PositionAreaTrack::Center => (start, end, Align::CENTER),
+                PositionAreaTrack::SpanStart => (low.min(end), end, Align::END),
+                PositionAreaTrack::SpanEnd => (start, high.max(start), Align::START),
+                PositionAreaTrack::SpanAll => (low, high, Align::CENTER),
+            }
+        }
+        let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
+        let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
+        let horizontal = if reverse { match horizontal { taffy::AlignSelf::START => taffy::AlignSelf::END, taffy::AlignSelf::END => taffy::AlignSelf::START, other => other } } else { horizontal };
+        let dx = if !trial && axes.0 { shift.x } else { 0.0 };
+        let dy = if !trial && axes.1 { shift.y } else { 0.0 };
+        Some((wm.logical_size(taffy::Size { width: right-left, height: bottom-top }), wm.logical_point(taffy::Point { x:if reverse {mirror-right-dx} else {left+dx}, y:top+dy }), wm.logical_point(taffy::Point { x:horizontal, y:vertical })))
+    }
+
+    fn clear_anchor_geometry_dependencies(&mut self, node_id: NodeId) {
+        self.doc.clear_anchor_transform_sources(dom_node_id(node_id));
     }
 
     fn clear_hoisted_children(&mut self, node_id: NodeId) {
         let containing_block = dom_node_id(node_id);
+        self.doc.clear_anchor_try_sources(containing_block);
         let hoisted = std::mem::take(&mut *self.node_from_id(node_id).hoisted_children.borrow_mut());
         for &hoisted_id in hoisted.iter() {
             // A box which has since been claimed by another containing block
@@ -2043,6 +2751,34 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 
     /// pyro: an element in the top layer (a modal dialog, a showing popover) has the initial
     /// containing block as its static-position rectangle.
+    fn containing_block_passes_over(&self, container: NodeId, candidate: NodeId) -> bool {
+        // pyro: a positioned box between a column spanner and its multi-column container is no
+        // containing block of the spanner's out-of-flow descendants (`layout::multicol`).
+        let container = dom_node_id(container);
+        let mut at = self.nodes[dom_node_id(candidate)].parent;
+        while let Some(node) = at {
+            if node == container {
+                return false;
+            }
+            if self.nodes[node].primary_styles().is_some_and(|s| s.get_column().column_span == style::values::computed::ColumnSpan::All) {
+                // The multi-column container it spans, and whether `container` is between them.
+                let mut up = self.nodes[node].layout_parent.get();
+                let mut between = false;
+                while let Some(m) = up {
+                    if m == container {
+                        between = true;
+                    } else if self.doc.is_column_spanner_of(m, node) && multicol::is_multicol_node(&self.nodes[m]) {
+                        return between;
+                    }
+                    up = self.nodes[m].layout_parent.get();
+                }
+                return false;
+            }
+            at = self.nodes[node].parent;
+        }
+        false
+    }
+
     fn static_position_is_containing_block(&self, node_id: NodeId) -> bool {
         self.doc.is_in_top_layer(dom_node_id(node_id))
     }
@@ -2054,6 +2790,20 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             .borrow_mut()
             .extend(hoisted.iter().copied().map(dom_node_id));
         for &hoisted_id in hoisted {
+            if self.node_from_id(hoisted_id).flags.contains(NodeFlags::POSITION_TRY_OPTIONS) {
+                let mut sources = vec![Some(containing_block)];
+                self.node_from_id(hoisted_id).anchor_scroll_offset_in(Some(containing_block), |source| {
+                    if source.is_none_or(|id| {
+                        let overflow = taffy::CoreStyle::overflow(&self.nodes[id].layout_style());
+                        overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
+                    }) { sources.push(source); }
+                    crate::Point::ZERO
+                });
+                for source in sources {
+                    self.doc.anchor_try_scrollports.entry(source).or_default().insert(containing_block);
+                    self.doc.anchor_try_sources.entry(containing_block).or_default().insert(source);
+                }
+            }
             self.node_from_id(hoisted_id)
                 .oof_containing_block
                 .set(Some(containing_block));
@@ -2118,7 +2868,33 @@ impl LayoutPassState<'_> {
             let border = html.border().resolve_or_zero(width, resolve_calc_value);
             height -= margin.top + margin.bottom + padding.top + padding.bottom + border.top + border.bottom;
         }
-        let margin = self.child_layout_style(node).margin().resolve_or_zero(width, resolve_calc_value);
+        let style = self.child_layout_style(node);
+        let mut margin = style.margin().resolve_or_zero(width, resolve_calc_value);
+        // pyro: the body's top margin as it collapsed with its first child's (Chrome: a `<p>`'s
+        // 16px margin through the body's 8px leaves 576px of a 600px viewport, not 584: WPT
+        // css-overflow `line-clamp/block-ellipsis-quirk-001` under classic scrollbars).
+        if is_body {
+            let pb = style.padding().resolve_or_zero(width, resolve_calc_value).top
+                + style.border().resolve_or_zero(width, resolve_calc_value).top;
+            drop(style);
+            if pb == 0.0 {
+                let first = node.layout_children.borrow().as_ref().and_then(|children| {
+                    children.iter().copied().find(|&c| {
+                        let child = &self.nodes[c];
+                        !child.is_out_of_flow()
+                            && child.primary_styles().is_some_and(|s| {
+                                s.get_box().display.outside() == DisplayOutside::Block
+                                    && s.get_box().float == style::computed_values::float::T::None
+                            })
+                    })
+                });
+                if let Some(first) = first {
+                    let child_top = self.child_layout_style(&self.nodes[first]).margin().resolve_or_zero(width, resolve_calc_value).top;
+                    let (a, b) = (margin.top, child_top);
+                    margin.top = a.max(b).max(0.0) + a.min(b).min(0.0);
+                }
+            }
+        }
         Some((height - margin.top - margin.bottom).max(0.0))
     }
 
@@ -2244,9 +3020,12 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         child_node_id: NodeId,
         margin_box: taffy::Size<f32>,
         margin: taffy::Rect<f32>,
+        containing_block_width: f32,
     ) -> Option<Vec<shape_outside::Band>> {
-        let style = self.node_from_id(child_node_id).primary_styles()?;
-        shape_outside::float_bands_for(&style, margin_box, margin)
+        let node = self.node_from_id(child_node_id);
+        let style = node.primary_styles()?;
+        let image = node.element_data().and_then(|e| e.shape_images.first()).and_then(Option::as_ref).map(|d| &d.image);
+        shape_outside::float_bands_for(&style, margin_box, margin, self.layout_wm, containing_block_width, image)
     }
 
     fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
@@ -2264,7 +3043,70 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
     fn block_child_establishes_formatting_context(&self, child_node_id: NodeId) -> bool {
         // pyro: a multi-column container is a block formatting context root (Multi-column
         // Layout 1 §2), which its parent keeps clear of floats.
+        // pyro: so is a block container whose writing mode is not its parent's (css-writing-modes-3
+        // §3.2: it establishes an independent formatting context): an orthogonal flow beside
+        // floats is placed clear of them.
         multicol::is_multicol_node(self.node_from_id(child_node_id))
+            || self.establishes_writing_mode_root(child_node_id)
+            // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
+            // container, not its column (its lines are not broken at the column's width).
+            || self.is_current_column_spanner(dom_node_id(child_node_id))
+    }
+
+    fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
+        if self.spanner_floors.is_empty() {
+            return None;
+        }
+        self.spanner_floors.get(&dom_node_id(child_node_id)).copied()
+    }
+
+    fn block_child_clears_floats(&self, child_node_id: NodeId) -> bool {
+        // pyro: a column spanner comes after the floats before it: they are in the row of columns
+        // it ends (Chromium; WPT css-multicol `spanner-in-child-after-parallel-flow-*`).
+        self.is_current_column_spanner(dom_node_id(child_node_id))
+    }
+
+    fn block_child_container_query_width(&self, child_node_id: NodeId) -> Option<Option<f32>> {
+        use style::values::specified::ContainerType;
+        let id = dom_node_id(child_node_id);
+        let node = &self.nodes[id];
+        let style = node.primary_styles()?;
+        if !style.get_box().slow_clone_container_type().intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
+            || !style.writing_mode.is_horizontal()
+        {
+            return None;
+        }
+        drop(style);
+        // (A container no query reads is placed as any box: it has no size recorded, ever.)
+        let content = self.nodes.container_query_sizes.lock().unwrap().get(&id)?.size.width;
+        let Some(content) = content else { return Some(None) };
+        use taffy::{CoreStyle as _, ResolveOrZero as _};
+        let layout_style = node.layout_style();
+        let inset = layout_style.padding().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+            + layout_style.border().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+            // (the recorded size is less the gutters: `Node::container_query_gutters`)
+            + node.container_query_gutters().width;
+        Some(Some(content.to_f32_px() + inset))
+    }
+
+    fn block_child_float_floor(&self, child_node_id: NodeId) -> Option<f32> {
+        self.container_float_floors.get(&dom_node_id(child_node_id)).copied()
+    }
+
+    fn set_block_child_float_floor(&mut self, child_node_id: NodeId, y: f32) {
+        self.container_float_floors.insert(dom_node_id(child_node_id), y);
+    }
+
+    fn block_child_is_orthogonal(&self, child_node_id: NodeId) -> bool {
+        #[cfg(feature = "writing-mode")]
+        {
+            self.layout_wm_of(dom_node_id(child_node_id)).is_vertical() != self.layout_wm.is_vertical()
+        }
+        #[cfg(not(feature = "writing-mode"))]
+        {
+            let _ = child_node_id;
+            false
+        }
     }
 
     fn block_container_passes_percentage_height(&self, node_id: NodeId) -> bool {
@@ -2280,6 +3122,51 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
 
     fn block_container_fill_height(&self, node_id: NodeId, parent_size: Size<Option<f32>>) -> Option<f32> {
         self.quirky_fill_height(dom_node_id(node_id), parent_size)
+    }
+
+    fn block_child_is_rendered_legend(&self, child_node_id: NodeId) -> bool {
+        // pyro: the first layout child of a fieldset that is a `legend` (`place_rendered_legend`)
+        let id = dom_node_id(child_node_id);
+        let node = &self.nodes[id];
+        if !node.data.downcast_element().is_some_and(|el| el.name.local == local_name!("legend")) {
+            return false;
+        }
+        node.layout_parent.get().is_some_and(|parent| {
+            let parent = &self.nodes[parent];
+            parent.is_fieldset()
+                && parent.layout_children.borrow().as_ref().and_then(|children| children.first().copied()) == Some(id)
+        })
+    }
+
+    fn block_container_is_fragmented(&self, node_id: NodeId) -> bool {
+        // pyro: in a multi-column strip, through block containers only: a scroll container, or a
+        // flex, grid or table box between the box and the multi-column container (or the box
+        // itself a scroll container), is monolithic and fragments nothing in it (`layout::multicol`).
+        if self.multicol_strip_depth == 0 {
+            return false;
+        }
+        let mut at = Some(dom_node_id(node_id));
+        while let Some(id) = at {
+            let node = &self.nodes[id];
+            let Some(style) = node.primary_styles() else {
+                at = node.layout_parent.get().or(node.parent);
+                continue;
+            };
+            if id != dom_node_id(node_id) && super::layout::multicol::is_multicol_style(&style) {
+                return true;
+            }
+            let box_ = style.get_box();
+            if box_.overflow_x.is_scrollable() || box_.overflow_y.is_scrollable() {
+                return false;
+            }
+            use style::values::specified::box_::DisplayInside;
+            if !matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot) {
+                return false;
+            }
+            drop(style);
+            at = node.layout_parent.get().or(node.parent);
+        }
+        false
     }
 
     fn block_container_percentage_height(&self, node_id: NodeId) -> Option<f32> {
@@ -2308,6 +3195,18 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         // content's order to itself.
         let child = self.node_from_id(child_node_id);
         let flags = child.flags;
+        // pyro: a flex or grid container whose items paint with the inline content
+        // (`Node::items_paint_in_ancestor_phases`): its items that reach past its box overflow it.
+        if child.items_paint_in_ancestor_phases() {
+            let height = child.unrounded_layout().size.height;
+            let children = child.layout_children.borrow();
+            let overflows = children.as_deref().unwrap_or(&[]).iter().any(|&id| {
+                let item = &self.nodes[id];
+                let layout = item.unrounded_layout();
+                !item.is_out_of_flow() && (layout.location.y < -0.01 || layout.location.y + layout.size.height > height + 0.01)
+            });
+            return (false, overflows);
+        }
         if !flags.intersects(NodeFlags::FLOW_BOXES_OVERLAP | NodeFlags::FLOW_CONTENT_OVERFLOWS)
             || !child.paints_in_ancestor_phases()
         {
@@ -2590,9 +3489,8 @@ impl Iterator for RefCellChildIter<'_> {
 /// pyro: the `natural=W,H` token of the element's
 /// `urn:x-pyro:state` attribute.
 fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
-    let attr =
-        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-pyro:state" && &*a.name.local == "state")?;
-    let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
+    let attr = element.attrs.state("state")?;
+    let token = attr.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
     Some((w.parse().ok()?, h.parse().ok()?))
 }
@@ -2629,8 +3527,9 @@ impl BaseDocument {
 /// pyro: the content size of a container with size containment and no `contain-intrinsic-size`:
 /// what it lays out without any content. A grid's explicit tracks of a fixed size and the gaps
 /// between its explicit tracks; a multi-column container's `column-count` columns of
-/// `column-width` and the gaps between them. Zero for every other box.
-fn empty_container_size(styles: &style::properties::ComputedValues) -> taffy::Size<f32> {
+/// `column-width` and the gaps between them (its min-content width: see below). Zero for every
+/// other box.
+fn empty_container_size(styles: &style::properties::ComputedValues, min_content: bool) -> taffy::Size<f32> {
     use style::values::specified::box_::DisplayInside;
     use taffy::{CompactLength, GridTemplateComponent};
     match styles.clone_display().inside() {
@@ -2687,9 +3586,29 @@ fn empty_container_size(styles: &style::properties::ComputedValues) -> taffy::Si
                 Gap::Normal => styles.slow_clone_font_size().used_size().px(),
                 Gap::LengthPercentage(gap) => gap.0.to_length().map_or(0.0, |length| length.px()),
             };
-            taffy::Size { width: count * width + (count - 1.0) * gap, height: 0.0 }
+            // (Its min-content width, as Blink's `ColumnLayoutAlgorithm::ComputeMinMaxSizes`: with
+            // a `column-width`, no wider than its content's, none; else the gaps between its
+            // columns.)
+            let width = match (min_content, &column.column_width) {
+                (true, LengthPercentageOrAuto::LengthPercentage(_)) => 0.0,
+                (true, LengthPercentageOrAuto::Auto) => (count - 1.0) * gap,
+                (false, _) => count * width + (count - 1.0) * gap,
+            };
+            taffy::Size { width, height: 0.0 }
         }
         _ => taffy::Size::ZERO,
+    }
+}
+
+/// pyro: [`effective_size_containment`] of `node`, with size containment while its contents are
+/// skipped by `content-visibility: auto` (`NodeFlags::CV_SKIPPED`).
+pub(crate) fn node_size_containment(node: &crate::Node, styles: &style::properties::ComputedValues) -> style::values::computed::Contain {
+    use style::values::computed::Contain;
+    let contain = effective_size_containment(styles);
+    if node.flags.contains(crate::node::NodeFlags::CV_SKIPPED) {
+        contain | Contain::INLINE_SIZE | Contain::BLOCK_SIZE
+    } else {
+        contain
     }
 }
 
@@ -2742,4 +3661,36 @@ impl LayoutPassState<'_> {
         }
         None
     }
+}
+
+/// pyro: whether `node_id` is an editing host (an element whose `contenteditable` makes it
+/// editable, in an element that is not) with no content: no children but comments and white
+/// space.
+fn empty_editing_host(nodes: &crate::NodeTree, node_id: blitz_traits::node_id::NodeId) -> bool {
+    let editable = |id: blitz_traits::node_id::NodeId| -> Option<bool> {
+        let value = nodes[id].data.downcast_element()?.attr(local_name!("contenteditable"))?;
+        match value.to_ascii_lowercase().as_str() {
+            "" | "true" | "plaintext-only" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
+    };
+    if editable(node_id) != Some(true) {
+        return false;
+    }
+    let mut parent = nodes[node_id].parent;
+    while let Some(id) = parent {
+        if let Some(value) = editable(id) {
+            if value {
+                return false;
+            }
+            break;
+        }
+        parent = nodes[id].parent;
+    }
+    nodes[node_id].children.iter().all(|&child| match &nodes[child].data {
+        crate::NodeData::Comment { .. } => true,
+        crate::NodeData::Text(text) => text.content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')),
+        _ => false,
+    })
 }

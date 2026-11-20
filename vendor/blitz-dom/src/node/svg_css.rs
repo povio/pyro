@@ -249,7 +249,7 @@ thread_local! {
     static VIEWPORT_DEPENDENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// pyro: the selected text nodes to write in their `::selection` paint, with the UTF-16 range
     /// selected and the attributes (`BaseDocument::inline_svg_with_selection`).
-    pub(crate) static SELECTED_SVG_TEXT: std::cell::RefCell<std::collections::HashMap<NodeId, (usize, Option<usize>, String)>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    pub(crate) static SELECTED_SVG_TEXT: std::cell::RefCell<std::collections::HashMap<NodeId, SelectedSvgText>> = std::cell::RefCell::new(std::collections::HashMap::new());
     /// pyro: the root's laid-out content box size to serialize with ([`svg_source_for_viewport`]).
     static ROOT_VIEWPORT: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
 }
@@ -291,7 +291,7 @@ pub(crate) fn svg_source(root: &Node) -> String {
     }
     // The boxes come from usvg's own parse of the first document.
     let first = writer.finish();
-    if let Ok(svg) = crate::util::parse_svg_image(first.as_bytes()) {
+    if let Ok(svg) = crate::util::parse_svg_image_for_page(first.as_bytes(), &root.tree().raster_budget) {
         writer.boxes = collect_boxes(&svg.tree, &writer.box_ids);
     }
     writer.out.clear();
@@ -449,31 +449,58 @@ fn local_urls(value: &str) -> String {
     out
 }
 
-/// An SVG `<text>`'s `text-shadow`, which is written as a copy of the text before it, moved by
-/// the offset and painted in the shadow's colour (blurred by half the blur radius), as Chromium
-/// draws text shadows: what the text paints, its fill and stroke with their opacities and dashes.
-/// `None` without one, or with several.
-fn text_shadow(style: &ComputedValues, root: NodeId) -> Option<TextShadow> {
-    use crate::util::ToColorColor as _;
-    let text = style.get_inherited_text();
-    let [shadow] = &text.text_shadow.0[..] else {
-        return None;
-    };
-    let c = shadow.color.resolve_to_absolute(&text.color).as_color_color().to_rgba8();
-    // In CSS px without the `zoom` Stylo's computed lengths have (see [`filter_value`]).
-    let zoom = f64::from(style.effective_zoom.value());
-    Some(TextShadow {
-        dx: f64::from(shadow.horizontal.px()) / zoom,
-        dy: f64::from(shadow.vertical.px()) / zoom,
-        deviation: f64::from(shadow.blur.px()) / zoom / 2.0,
-        color: [c.r, c.g, c.b, c.a],
-        root,
-    })
+/// The byte offset in `content` of the UTF-16 offset `utf16` (the end past its end).
+fn utf16_to_byte(content: &str, utf16: usize) -> usize {
+    let mut units = 0;
+    for (index, c) in content.char_indices() {
+        if units >= utf16 {
+            return index;
+        }
+        units += c.len_utf16();
+    }
+    content.len()
 }
 
-/// A `<text>`'s `text-shadow` (see [`text_shadow`]).
+/// pyro: a selected SVG text node written in its `::selection` paint (`inline_svg_with_selection`):
+/// the UTF-16 range selected, the paint attributes, and the highlight's `text-shadow`s.
+#[derive(Clone, Default)]
+pub(crate) struct SelectedSvgText {
+    pub from: usize,
+    pub to: Option<usize>,
+    pub attrs: String,
+    pub shadows: Vec<TextShadow>,
+}
+
+/// An SVG `<text>`'s `text-shadow`s, each written as a copy of the text before it, the last at
+/// the bottom, moved by the offset and painted in the shadow's colour (blurred by half the blur
+/// radius), as Chromium draws text shadows: what the text paints, its fill and stroke with their
+/// opacities and dashes. `root` is the `<text>` (for a highlight's style, any node).
+pub(crate) fn text_shadows(style: &ComputedValues, root: NodeId) -> Vec<TextShadow> {
+    use crate::util::ToColorColor as _;
+    let text = style.get_inherited_text();
+    // In CSS px without the `zoom` Stylo's computed lengths have (see [`filter_value`]).
+    let zoom = f64::from(style.effective_zoom.value());
+    text.text_shadow
+        .0
+        .iter()
+        .map(|shadow| {
+            let c = shadow.color.resolve_to_absolute(&text.color).as_color_color().to_rgba8();
+            TextShadow {
+                dx: f64::from(shadow.horizontal.px()) / zoom,
+                dy: f64::from(shadow.vertical.px()) / zoom,
+                deviation: f64::from(shadow.blur.px()) / zoom / 2.0,
+                color: [c.r, c.g, c.b, c.a],
+                root,
+                selected_only: false,
+            }
+        })
+        .filter(|shadow| shadow.color[3] > 0)
+        .collect()
+}
+
+/// A `<text>`'s `text-shadow` (see [`text_shadows`]).
 #[derive(Clone, Copy)]
-struct TextShadow {
+pub(crate) struct TextShadow {
     dx: f64,
     dy: f64,
     /// Half the blur radius: the standard deviation Chromium blurs text shadows by.
@@ -481,6 +508,9 @@ struct TextShadow {
     color: [u8; 4],
     /// The `<text>`.
     root: NodeId,
+    /// pyro: a `::selection` shadow: cast by the selected text alone (the rest is written
+    /// without paint, where it is).
+    selected_only: bool,
 }
 
 /// Whether a `<g>` written around `node` (or next to it) is drawn as `node` would be: its parent
@@ -562,6 +592,35 @@ fn drop_shadow_function(
 /// their colours resolved ([`drop_shadow_function`]), the other functions as CSS writes them.
 /// Lengths in CSS px without the element's `zoom` (Stylo's computed lengths have it; the
 /// resolved value does not): the `<svg>`'s box scales its user units by it.
+/// pyro: the id of the identity filter whose result is tainted (anyrender_svg `TAINT_MARK`), which
+/// [`filter_value`] puts after a `drop-shadow()` coloured from `currentcolor` (Filter Effects:
+/// such a shadow taints the filters after it): usvg resolves the colour, and the filter it makes
+/// of the function says nothing of where its colour came from.
+const TAINT_MARK: &str = "__pyro_taint";
+
+/// pyro: whether a computed colour is `currentcolor` or made from it.
+fn uses_current_color(color: &style::values::computed::Color) -> bool {
+    use style::values::generics::color::GenericColor;
+    match color {
+        GenericColor::Absolute(_) => false,
+        GenericColor::CurrentColor => true,
+        GenericColor::ColorMix(mix) => mix.items.iter().any(|item| uses_current_color(&item.color)),
+        GenericColor::ContrastColor(color) => uses_current_color(color),
+        GenericColor::ColorFunction(function) => function.origin_color().is_some_and(uses_current_color),
+    }
+}
+
+/// pyro: whether `style`'s `filter` has a `drop-shadow()` coloured from `currentcolor`.
+fn taints_filters(style: &ComputedValues) -> bool {
+    use style::computed_values::filter::single_value::T as Filter;
+    style
+        .get_effects()
+        .filter
+        .0
+        .iter()
+        .any(|filter| matches!(filter, Filter::DropShadow(shadow) if uses_current_color(&shadow.color)))
+}
+
 fn filter_value(style: &ComputedValues) -> String {
     use style::computed_values::filter::single_value::T as Filter;
     let current_color = style.clone_color();
@@ -574,13 +633,21 @@ fn filter_value(style: &ComputedValues) -> String {
     filters
         .iter()
         .map(|filter| match filter {
-            Filter::DropShadow(shadow) => drop_shadow_function(
-                unzoom(shadow.horizontal.px()),
-                unzoom(shadow.vertical.px()),
-                unzoom(shadow.blur.px()),
-                &shadow.color,
-                &current_color,
-            ),
+            Filter::DropShadow(shadow) => {
+                let function = drop_shadow_function(
+                    unzoom(shadow.horizontal.px()),
+                    unzoom(shadow.vertical.px()),
+                    unzoom(shadow.blur.px()),
+                    &shadow.color,
+                    &current_color,
+                );
+                // pyro: its result tainted (`TAINT_MARK`).
+                if uses_current_color(&shadow.color) {
+                    format!("{function} url(#{TAINT_MARK})")
+                } else {
+                    function
+                }
+            }
             Filter::Blur(length) => format!("blur({}px)", num(unzoom(length.0.px()))),
             Filter::Url(_) => local_urls(&filter.to_css_string()),
             filter => filter.to_css_string(),
@@ -614,6 +681,28 @@ fn url_fragment(value: &str) -> Option<String> {
     let inner = inner.trim().trim_matches(|c| c == '"' || c == '\'');
     let (_, fragment) = inner.rsplit_once('#')?;
     (!fragment.is_empty()).then(|| fragment.to_string())
+}
+
+/// pyro: whether the first element with the id `id` (in tree order, as `getElementById` finds it)
+/// of the node tree `node` is in (the document's, or a shadow tree: ids are scoped to their tree)
+/// is an SVG `<mask>`.
+fn is_document_svg_mask(node: &Node, id: &str) -> bool {
+    let tree = node.tree();
+    let scope = node.containing_shadow_host_id();
+    let mut top = node;
+    while let Some(parent) = top.parent {
+        top = &tree[parent];
+    }
+    let mut stack = vec![top];
+    while let Some(node) = stack.pop() {
+        if let Some(data) = node.element_data() {
+            if data.attr(local_name!("id")) == Some(id) && node.containing_shadow_host_id() == scope {
+                return data.name.ns == ns!(svg) && &*data.name.local == "mask";
+            }
+        }
+        stack.extend(node.children.iter().rev().map(|&child| &tree[child]));
+    }
+    false
 }
 
 /// Whether `value` is a transform list as SVG's grammar has it (and Chromium's parser): what
@@ -749,19 +838,35 @@ impl Writer<'_> {
             NodeData::Text(data) => {
                 // pyro: selected text in its `::selection` paint (`inline_svg_with_selection`).
                 let selected = SELECTED_SVG_TEXT.with(|cell| cell.borrow().get(&node.id).cloned());
+                // pyro: a `::selection` shadow's copy: the text outside the selection unpainted.
+                if self.shadow_copy.is_some_and(|shadow| shadow.selected_only) {
+                    let content = data.content.as_str();
+                    let (from, to) = match &selected {
+                        Some(selected) => {
+                            let byte = |utf16: usize| utf16_to_byte(content, utf16);
+                            let from = byte(selected.from);
+                            (from, selected.to.map_or(content.len(), byte).max(from))
+                        }
+                        None => (content.len(), content.len()),
+                    };
+                    for (part, painted) in [(&content[..from], false), (&content[from..to], true), (&content[to..], false)] {
+                        if part.is_empty() {
+                            continue;
+                        }
+                        if painted {
+                            encode_text_to_string(part, &mut self.out);
+                        } else {
+                            self.out.push_str("<tspan fill=\"none\" stroke=\"none\">");
+                            encode_text_to_string(part, &mut self.out);
+                            self.out.push_str("</tspan>");
+                        }
+                    }
+                    return;
+                }
                 match selected.filter(|_| in_text(node) && self.shadow_copy.is_none()) {
-                    Some((from, to, attrs)) => {
+                    Some(SelectedSvgText { from, to, attrs, .. }) => {
                         let content = data.content.as_str();
-                        let byte = |utf16: usize| {
-                            let mut units = 0;
-                            for (index, c) in content.char_indices() {
-                                if units >= utf16 {
-                                    return index;
-                                }
-                                units += c.len_utf16();
-                            }
-                            content.len()
-                        };
+                        let byte = |utf16: usize| utf16_to_byte(content, utf16);
                         let (from, to) = (byte(from), to.map_or(content.len(), byte));
                         encode_text_to_string(&content[..from], &mut self.out);
                         let _ = write!(self.out, "<tspan{attrs}>");
@@ -840,8 +945,25 @@ impl Writer<'_> {
             && &*data.name.local == "text"
             && in_group_container(node)
         {
-            let shadow = node.primary_styles().and_then(|style| text_shadow(&style, node.id));
-            if let Some(shadow) = shadow.filter(|shadow| shadow.color[3] > 0) {
+            let mut shadows = node.primary_styles().map(|style| text_shadows(&style, node.id)).unwrap_or_default();
+            // pyro: the shadows of its selected text's `::selection` style, under its own (as
+            // Chromium paints them; WPT css-pseudo `svg-text-selection-shadow`).
+            let selection_shadows = SELECTED_SVG_TEXT.with(|cell| {
+                let selected = cell.borrow();
+                if selected.is_empty() {
+                    return Vec::new();
+                }
+                let mut stack = vec![node.id];
+                while let Some(id) = stack.pop() {
+                    if let Some(found) = selected.get(&id).filter(|found| !found.shadows.is_empty()) {
+                        return found.shadows.clone();
+                    }
+                    stack.extend(node.tree()[id].children.iter().copied());
+                }
+                Vec::new()
+            });
+            shadows.extend(selection_shadows.into_iter().map(|shadow| TextShadow { root: node.id, selected_only: true, ..shadow }));
+            for shadow in shadows.into_iter().rev() {
                 let _ = write!(self.out, "<g transform=\"translate({} {})\"", num(shadow.dx), num(shadow.dy));
                 if shadow.deviation > 0.0 {
                     let _ = write!(self.out, " filter=\"blur({}px)\"", num(shadow.deviation));
@@ -925,6 +1047,14 @@ impl Writer<'_> {
             // ([`nested_parentheses`]).
             if !is_root && author.contains(&LonghandId::Filter) {
                 let value = filter_value(style);
+                if taints_filters(style) && !self.defs.contains(TAINT_MARK) {
+                    // The identity filter, over all the element can paint.
+                    let _ = write!(
+                        self.defs,
+                        "<filter id=\"{TAINT_MARK}\" filterUnits=\"userSpaceOnUse\" x=\"-1000000\" y=\"-1000000\" \
+                         width=\"2000000\" height=\"2000000\"><feOffset dx=\"0\" dy=\"0\" /></filter>"
+                    );
+                }
                 let value = match current_color.as_deref().and_then(|c| replace_current_color(&value, c)) {
                     Some(replaced) => replaced,
                     None => value,
@@ -945,6 +1075,13 @@ impl Writer<'_> {
                     let value = computed_value(style, id);
                     let _ = write!(declarations, "{name}:{value};");
                 }
+            }
+            // pyro: `vector-effect: non-scaling-stroke` (SVG 2 § 13.3), which usvg does not read:
+            // the stroke is as wide in the `<svg>`'s coordinates as `stroke-width` says, so in the
+            // element's own it is that over the scale of its transforms (when they scale alike in
+            // every direction).
+            if !is_root && let Some(width) = self.non_scaling_stroke_width(node, tag, style) {
+                let _ = write!(declarations, "stroke-width:{};", num(width));
             }
             if let (Some(shadow), false) = (self.shadow_copy, is_root) {
                 let own = [own_paint(data, style, &author, true), own_paint(data, style, &author, false)];
@@ -1048,6 +1185,10 @@ impl Writer<'_> {
         let mut style_attr = None;
         for attr in data.attrs() {
             let local: &str = attr.name.local.as_ref();
+            if is_svg && matches!(tag, "image" | "feImage") && local == "href" && !attr.value.starts_with('#') && !attr.value.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:")) && styles.as_ref().is_some_and(|style| crate::util::image_unoriented(style)) {
+                self.write_attr(&attr.name, &format!("pyro-unoriented:{}", attr.value), None);
+                continue;
+            }
             if attr.name.ns == ns!() && local == "style" && is_svg {
                 style_attr = Some(attr.value.as_str());
                 continue;
@@ -1123,8 +1264,36 @@ impl Writer<'_> {
             self.out.push_str(" />");
         } else {
             self.out.push('>');
+            // pyro: a `<filter>` whose primitive subregions are fractions of the bounding box
+            // (`primitiveUnits="objectBoundingBox"`) starts with a marker primitive (it passes the
+            // source graphic on, as the first primitive's input is): usvg resolves those subregions
+            // against the filter region, and anyrender_svg puts them back on the bounding box
+            // (`filter::OBB_MARK`; WPT filter-effects `filter-subregion-01`).
+            if tag == "filter"
+                && data.name.ns == ns!(svg)
+                && data
+                    .attr(markup5ever::LocalName::from("primitiveUnits"))
+                    .is_some_and(|units| units.trim() == "objectBoundingBox")
+            {
+                self.out.push_str("<feOffset result=\"__pyro_obb\"/>");
+            }
+            // pyro: the root's pan and zoom by script (`currentTranslate`, `currentScale`; pyro-dom
+            // `SVG_PAN_ATTR`), applied to its content outside its own viewBox transform.
+            let pan = is_root
+                .then(|| data.attrs.state("svg-pan"))
+                .flatten()
+                .map(str::to_owned);
+            if let Some(pan) = &pan {
+                let parts: Vec<f64> = pan.split_ascii_whitespace().filter_map(|v| v.parse().ok()).collect();
+                if let [tx, ty, scale] = parts[..] {
+                    let _ = write!(self.out, "<g transform=\"translate({} {}) scale({})\">", num(tx), num(ty), num(scale));
+                }
+            }
             for &child_id in &node.children {
                 self.write_node(&node.tree()[child_id], nesting + 1);
+            }
+            if pan.is_some() {
+                self.out.push_str("</g>");
             }
             self.out.push_str("</");
             self.out.push_str(tag);
@@ -1164,6 +1333,80 @@ impl Writer<'_> {
             VIEWPORT_DEPENDENT.with(|d| d.set(true));
         }
         self.viewports.last().copied().unwrap_or((300.0, 150.0))
+    }
+
+    /// pyro: the `stroke-width` in its own user space of a shape with `vector-effect:
+    /// non-scaling-stroke`: its width over the scale its transforms and its ancestors' (up to
+    /// this `<svg>`) apply. `None` for any other element, a width that is no length, or
+    /// transforms that do not scale uniformly (a skew, a nested `<svg>`'s `viewBox` or this
+    /// one's), which keep the width as it is.
+    fn non_scaling_stroke_width(&self, node: &Node, tag: &str, style: &ComputedValues) -> Option<f64> {
+        use style::values::generics::svg::SVGLength;
+        use style::values::specified::svg::VectorEffect;
+        if !matches!(tag, "path" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon") {
+            return None;
+        }
+        let svg = style.get_svg();
+        if !svg.vector_effect.contains(VectorEffect::NON_SCALING_STROKE) {
+            return None;
+        }
+        let SVGLength::LengthPercentage(width) = &style.get_inherited_svg().stroke_width else {
+            return None;
+        };
+        let width = width.0.to_length()?.px() as f64;
+        // The linear part of an element's transform: its CSS transform, else its attribute.
+        let linear = |node: &Node, style: &ComputedValues| -> Option<Affine> {
+            let data = node.element_data()?;
+            let css = !style.get_box().transform.0.is_empty()
+                || !matches!(style.get_box().rotate, style::values::generics::transform::Rotate::None)
+                || !matches!(style.get_box().scale, style::values::generics::transform::Scale::None);
+            let transform = if css {
+                let zero = euclid::default::Rect::new(
+                    euclid::default::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
+                    euclid::default::Size2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
+                );
+                match crate::stylo_to_kurbo::resolve_transform(style.get_box(), zero) {
+                    crate::stylo_to_kurbo::ResolvedTransform::Flat(transform) => transform.unwrap_or(Affine::IDENTITY),
+                    crate::stylo_to_kurbo::ResolvedTransform::Spatial(_) => return None,
+                }
+            } else {
+                data.attr(local_name!("transform"))
+                    .filter(|v| is_transform_list(v))
+                    .and_then(|v| v.parse::<svgtypes::Transform>().ok())
+                    .map_or(Affine::IDENTITY, |t| Affine::new([t.a, t.b, t.c, t.d, t.e, t.f]))
+            };
+            let [a, b, c, d, _, _] = transform.as_coeffs();
+            Some(Affine::new([a, b, c, d, 0.0, 0.0]))
+        };
+        let mut matrix = linear(node, style)?;
+        let tree = node.tree();
+        let mut parent = node.parent;
+        while let Some(id) = parent {
+            let ancestor = &tree[id];
+            let data = ancestor.element_data()?;
+            if data.name.ns != ns!(svg) {
+                return None;
+            }
+            if &*data.name.local == "svg" && data.attr(local_name!("viewBox")).is_some() {
+                return None;
+            }
+            if id == self.root.id {
+                break;
+            }
+            let ancestor_style = ancestor.primary_styles()?;
+            matrix = linear(ancestor, &ancestor_style)? * matrix;
+            parent = ancestor.parent;
+        }
+        let [a, b, c, d, _, _] = matrix.as_coeffs();
+        // A rotation and one scale: the columns orthogonal and of one length.
+        let (sx, sy) = ((a * a + b * b).sqrt(), (c * c + d * d).sqrt());
+        if !(sx > 1e-9) || (sx - sy).abs() > 1e-6 * sx || (a * c + b * d).abs() > 1e-6 * sx * sy {
+            return None;
+        }
+        if (sx - 1.0).abs() < 1e-12 {
+            return None;
+        }
+        Some(width / sx)
     }
 
     /// The size, and whether it is the root's CSS box guessed before layout (see `viewport_guessed`).
@@ -1351,6 +1594,17 @@ impl Writer<'_> {
                 Rect::new(0.0, 0.0, w, h)
             }
             TransformBox::FillBox | TransformBox::ContentBox => self.boxes(node, data, temp_id).fill,
+            // pyro: a non-scaling stroke's width is the `<svg>`'s, which the transform this box
+            // places would change: as in Chromium, its stroke box is its fill box (WPT
+            // css-transforms `svgbox-stroke-box-003`, `-004`).
+            TransformBox::StrokeBox | TransformBox::BorderBox
+                if style
+                    .get_svg()
+                    .vector_effect
+                    .contains(style::values::specified::svg::VectorEffect::NON_SCALING_STROKE) =>
+            {
+                self.boxes(node, data, temp_id).fill
+            }
             TransformBox::StrokeBox | TransformBox::BorderBox => self.boxes(node, data, temp_id).stroke,
         };
 
@@ -1850,7 +2104,23 @@ impl Writer<'_> {
         for (i, image) in images.iter().enumerate() {
             let source = match image {
                 GenericImage::None => LayerSource::None,
-                GenericImage::Url(_) => match local_mask(self, image) {
+                GenericImage::Url(_) => match local_mask(self, image).or_else(|| {
+                    // pyro: a `<mask>` of another `<svg>` of the page (no document of its own was
+                    // loaded for it), which `BaseDocument::with_cross_svg_references` copies into
+                    // this one's source.
+                    let loaded = data.mask_images.get(i).and_then(Option::as_ref).is_some_and(|resource| {
+                        resource.status == Status::Ok && matches!(resource.image, ImageData::Svg(_))
+                    });
+                    // Only a `url()` of this document (`url(#m)`): another document's that failed to
+                    // load (`missing.svg#m`) does not take a local `<mask>` of that id.
+                    let css = image.to_css_string();
+                    let url = css.trim().strip_prefix("url(").and_then(|u| u.strip_suffix(')')).unwrap_or("");
+                    let url = url.trim().trim_matches(|c| c == '"' || c == '\'');
+                    let this_document = !self.root.tree().base_url.is_empty()
+                        && crate::document::without_fragment(url) == self.root.tree().base_url;
+                    url_fragment(&css)
+                        .filter(|fragment| !loaded && this_document && is_document_svg_mask(self.root, fragment))
+                }) {
                     Some(fragment) => LayerSource::Mask(fragment),
                     None => match data.mask_images.get(i).and_then(Option::as_ref) {
                         Some(resource) if resource.status == Status::Ok => match &resource.image {
@@ -2123,7 +2393,7 @@ enum LayerSource {
     Mask(String),
     /// An SVG image: its document, natural size and ratio.
     Svg {
-        source: std::sync::Arc<[u8]>,
+        source: std::sync::Arc<crate::util::SvgSource<[u8]>>,
         width: Option<f64>,
         height: Option<f64>,
         ratio: Option<f64>,

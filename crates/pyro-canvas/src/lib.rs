@@ -197,6 +197,29 @@ pub struct DrawState<'a> {
     pub shadow: Option<Shadow>,
     /// `imageSmoothingEnabled` (bilinear) or nearest neighbour.
     pub smoothing: bool,
+    /// pyro: `filter` (none: `None`).
+    pub filter: Option<&'a CanvasFilter>,
+}
+
+/// pyro: a canvas `filter` other than `none`: the value as given (CSS filter functions and
+/// `url(#id)` references) and the markup of the document's elements it references by id (SVG
+/// `<filter>`s), which the registered [`FilterRenderer`] applies to each draw's output.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasFilter {
+    pub page: pyro_raster::PageRasters,
+    pub value: String,
+    pub defs: String,
+}
+
+/// Applies a canvas filter to a draw's output (premultiplied, the canvas's size), or `None`
+/// when it cannot (the output is then drawn unfiltered).
+pub type FilterRenderer = fn(&Pixmap, &CanvasFilter) -> Option<Pixmap>;
+
+static FILTER_RENDERER: std::sync::OnceLock<FilterRenderer> = std::sync::OnceLock::new();
+
+/// Registers the renderer of canvas filters (`pyro-render` registers one).
+pub fn set_filter_renderer(renderer: FilterRenderer) {
+    let _ = FILTER_RENDERER.set(renderer);
 }
 
 impl DrawState<'_> {
@@ -272,6 +295,7 @@ impl Drop for Charge {
 /// surface, snapshot or image made it.
 #[derive(Clone)]
 pub struct Bitmap {
+    page_charge: Option<Arc<pyro_raster::Reservation>>,
     pixmap: Arc<Pixmap>,
     _charge: Arc<Charge>,
 }
@@ -280,7 +304,7 @@ impl Bitmap {
     /// `pixmap`, counted; `None` when the process's budget has no room.
     pub fn new(pixmap: Pixmap) -> Option<Bitmap> {
         let charge = Charge::new(pixmap.data_as_u8_slice().len())?;
-        Some(Bitmap { pixmap: Arc::new(pixmap), _charge: Arc::new(charge) })
+        Some(Bitmap { pixmap: Arc::new(pixmap), _charge: Arc::new(charge), page_charge: None })
     }
 
     /// The pixels as the rasterizer takes them.
@@ -686,7 +710,8 @@ impl Surface {
         }
         let Some((w, h)) = self.reserve() else { return };
         let shadow = state.visible_shadow();
-        if state.composite == Composite::SourceOver && shadow.is_none() {
+        let filter = state.filter.filter(|_| FILTER_RENDERER.get().is_some());
+        if state.composite == Composite::SourceOver && shadow.is_none() && filter.is_none() {
             let full = self.batch.as_ref().is_some_and(|b| b.ops >= MAX_BATCH);
             if full {
                 self.flush();
@@ -706,6 +731,13 @@ impl Surface {
         let mut source = Pixmap::new(w, h);
         ctx.flush();
         ctx.render(&mut source, &mut resources);
+        // pyro: the filter applies to the draw's output before its shadow and compositing (HTML
+        // canvas drawing model).
+        if let (Some(filter), Some(render)) = (filter, FILTER_RENDERER.get()) {
+            if let Some(filtered) = render(&source, filter).filter(|p| p.width() == w && p.height() == h) {
+                source = filtered;
+            }
+        }
         let mask = self.clip_mask(state.clip);
         let op = state.composite;
         let alpha = state.alpha.clamp(0.0, 1.0);
@@ -947,6 +979,19 @@ pub fn unpremultiply(data: &mut [u8]) {
             }
         }
     }
+}
+
+/// A pixmap from premultiplied RGBA rows (a rasterized SVG image).
+pub fn pixmap_from_premultiplied(data: Vec<u8>, width: u32, height: u32) -> Option<Pixmap> {
+    if !valid_size(width, height) || data.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+    Some(Pixmap::from_parts(
+        data,
+        width as u16,
+        height as u16,
+        vello_cpu::PixelMetadata::new(peniko::ImageAlphaType::AlphaPremultiplied, true),
+    ))
 }
 
 /// A pixmap from straight RGBA rows (`ImageData`, decoded images).

@@ -2255,7 +2255,13 @@ pub mod outline {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(expanded! {
-            outline_color: unwrap_or_initial!(outline_color, color),
+            // pyro: (`auto` in the shorthand is the style.)
+            outline_color: unwrap_or_initial!(
+                outline_color,
+                color.map(|color| crate::values::generics::color::OutlineColor(
+                    crate::values::generics::color::ColorOrAuto::Color(color)
+                ))
+            ),
             outline_style: unwrap_or_initial!(outline_style, style),
             outline_width: unwrap_or_initial!(outline_width, width),
         })
@@ -2266,15 +2272,17 @@ pub mod outline {
         where
             W: fmt::Write,
         {
+            // pyro: in the border shorthands' canonical order, width, style, colour (CSSOM;
+            // WPT css-ui `parsing/outline-valid`).
             let mut writer = SequenceWriter::new(dest, " ");
-            if *self.outline_color != outline_color::get_initial_specified_value() {
-                writer.item(self.outline_color)?;
+            if *self.outline_width != outline_width::get_initial_specified_value() {
+                writer.item(self.outline_width)?;
             }
             if *self.outline_style != outline_style::get_initial_specified_value() {
                 writer.item(self.outline_style)?;
             }
-            if *self.outline_width != outline_width::get_initial_specified_value() {
-                writer.item(self.outline_width)?;
+            if *self.outline_color != outline_color::get_initial_specified_value() {
+                writer.item(self.outline_color)?;
             }
             if !writer.has_written() {
                 self.outline_style.to_css(dest)?;

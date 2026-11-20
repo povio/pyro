@@ -241,9 +241,21 @@ pub struct Dom {
     /// The content height of the responsively embedded document each iframe shows (by slot), for the
     /// renderer (`set_frame_content_height`, snapshot `data-pyro-frame-content-height`).
     pub(crate) frame_content_heights: rustc_hash::FxHashMap<u32, f32>,
+    /// pyro: the user agent's pan and zoom of an `<svg>` (`SVGSVGElement.currentTranslate` and
+    /// `currentScale`): its translation and scale, when not the identity.
+    pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
+    /// pyro: each sheet link's response `Referrer-Policy` (`Dom::set_sheet_policy`), by its slot.
+    pub(crate) sheet_policies: rustc_hash::FxHashMap<u32, String>,
+    /// pyro: the sheet links whose response's tainting is opaque (`Dom::set_sheet_policy`).
+    pub(crate) sheet_tainted: rustc_hash::FxHashSet<u32>,
+    /// pyro: each document's snapshot nonce (`Dom::snapshot_nonce`), by its slot.
+    snapshot_nonces: std::cell::RefCell<rustc_hash::FxHashMap<u32, String>>,
+    /// pyro: each frame document's animations now, by its client (`FrameDocument::client`): the
+    /// renderer samples them into the frame's document (`data-pyro-key` elements).
+    pub frame_animations: rustc_hash::FxHashMap<String, std::sync::Arc<crate::animation::AnimationFrame>>,
     /// Versions at or below this have no complete journal.
     journal_floor: u64,
     /// Old values of attributes selectors read, from their first change
@@ -335,7 +347,12 @@ impl Dom {
             removal_log: VecDeque::new(),
             journal: Vec::new(),
             frame_content_heights: Default::default(),
+            svg_pans: Default::default(),
             frame_documents: Default::default(),
+            snapshot_nonces: Default::default(),
+            sheet_policies: Default::default(),
+            sheet_tainted: Default::default(),
+            frame_animations: Default::default(),
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_disabled: Vec::new(),
@@ -895,6 +912,7 @@ impl Dom {
             DocumentKind::Xml => "application/xml",
         };
         let data = DocumentData {
+            raster_budget: Default::default(),
             kind,
             quirks: QuirksMode::NoQuirks,
             content_type: content_type.into(),
@@ -922,6 +940,8 @@ impl Dom {
             body: NIL,
             viewport_meta: None,
             meta_referrer_policy: None,
+            header_referrer_policy: None,
+            layout_client: None,
             responsive_embedded: false,
             content_language: None,
         };
@@ -948,6 +968,16 @@ impl Dom {
         Ok(())
     }
 
+    pub fn inherit_raster_budget(&mut self, doc: NodeId, parent: NodeId) -> DomResult<()> {
+        let budget = self.document_data(parent)?.raster_budget.clone();
+        let index = self.check(doc)?;
+        match &mut self.n_mut(index).kind {
+            NodeKind::Document(data) => data.raster_budget = budget,
+            _ => return Err(DomError::Type("not a document")),
+        }
+        Ok(())
+    }
+
     /// Marks a document as displayed by a browsing context; active documents
     /// and everything reachable from them are never collected.
     pub fn set_document_active(&mut self, doc: NodeId, active: bool) -> DomResult<()> {
@@ -968,7 +998,14 @@ impl Dom {
         Ok(())
     }
 
-    pub fn document_data(&self, doc: NodeId) -> DomResult<&DocumentData> {
+    /// The element `:target` matches in document `doc` (`DocumentData::url_target`): the first
+    /// in tree order whose id is the URL's fragment, in the document tree.
+    pub fn url_target_element(&self, doc: NodeId) -> Option<NodeId> {
+        let id = self.document_data(doc).ok()?.url_target.clone()?;
+        self.get_element_by_id(doc, &id).ok().flatten()
+    }
+
+        pub fn document_data(&self, doc: NodeId) -> DomResult<&DocumentData> {
         match &self.node(doc)?.kind {
             NodeKind::Document(d) => Ok(d),
             _ => Err(DomError::Type("not a document")),
@@ -983,15 +1020,23 @@ impl Dom {
     }
     pub fn set_document_url(&mut self, doc: NodeId, url: &str) -> DomResult<()> {
         let i = self.check(doc)?;
-        match &mut self.n_mut(i).kind {
+        let retargeted = match &mut self.n_mut(i).kind {
             NodeKind::Document(d) => {
                 d.url = url.into();
                 d.parsed_url.take();
-                d.url_target = url_target(url);
+                let target = url_target(url);
+                let retargeted = d.url_target != target;
+                d.url_target = target;
+                retargeted
             }
             _ => return Err(DomError::Type("not a document")),
-        }
+        };
         self.html_base_changed(i);
+        // `:target` matches another element: styles start over.
+        self.publish_image_defaults(doc);
+        if retargeted {
+            self.bump();
+        }
         Ok(())
     }
     /// What `doc`'s `<base>` resolves to may have changed: a `<base>` came
@@ -1072,6 +1117,34 @@ impl Dom {
         let Some(policy) = e.attr_local(&local_name!("content")).and_then(meta_referrer_policy) else { return };
         let doc = n.owner_doc;
         self.doc_data_mut(doc).meta_referrer_policy = Some(policy);
+        self.publish_image_defaults(self.id_of(doc));
+    }
+
+    pub fn effective_referrer_policy(&self, doc: NodeId) -> &'static str {
+        self.document_data(doc).ok().and_then(|d| d.meta_referrer_policy.or(d.header_referrer_policy)).unwrap_or("strict-origin-when-cross-origin")
+    }
+
+    pub fn set_header_referrer_policy(&mut self, doc: NodeId, policy: Option<&'static str>) {
+        if let Ok(index) = self.check(doc) {
+            self.doc_data_mut(index).header_referrer_policy = policy;
+            self.publish_image_defaults(doc);
+        }
+    }
+
+    pub fn set_layout_client(&mut self, doc: NodeId, client: String, bodies: &std::sync::Arc<crate::geometry::SubresourceBodies>) {
+        if let Ok(index) = self.check(doc) {
+            bodies.bind_raster_budget(&client, self.doc_data_mut(index).raster_budget.clone());
+            self.doc_data_mut(index).layout_client = Some((client, std::sync::Arc::downgrade(bodies)));
+            self.publish_image_defaults(doc);
+        }
+    }
+
+    fn publish_image_defaults(&self, doc: NodeId) {
+        let Ok(data) = self.document_data(doc) else { return };
+        let Some((client, weak)) = &data.layout_client else { return };
+        if let Some(bodies) = weak.upgrade() {
+            bodies.set_image_defaults(client, data.base_url.as_deref().unwrap_or(&data.url), self.effective_referrer_policy(doc));
+        }
     }
 
     /// The referrer policy `doc`'s `<meta name=referrer>` elements gave it
@@ -1115,11 +1188,37 @@ impl Dom {
         self.note(Change::State(i));
     }
 
+    /// pyro: the pan and zoom (`currentTranslate` x and y, `currentScale`) of the `<svg>` `svg`.
+    pub fn svg_pan(&self, svg: NodeId) -> (f64, f64, f64) {
+        self.check(svg).ok().and_then(|i| self.svg_pans.get(&i).copied()).unwrap_or((0.0, 0.0, 1.0))
+    }
+
+    /// pyro: sets the pan and zoom of the `<svg>` `svg`, which its render tree carries.
+    pub fn set_svg_pan(&mut self, svg: NodeId, pan: (f64, f64, f64)) {
+        let Ok(i) = self.check(svg) else { return };
+        if self.svg_pans.get(&i).copied().unwrap_or((0.0, 0.0, 1.0)) == pan {
+            return;
+        }
+        if pan == (0.0, 0.0, 1.0) {
+            self.svg_pans.remove(&i);
+        } else {
+            self.svg_pans.insert(i, pan);
+        }
+        self.bump();
+        self.note(Change::State(i));
+    }
+
     /// The documents the iframes show, for the renderer to paint as their content (see
     /// [`FrameDocument`]); iframes not in `documents` paint none.
-    pub fn set_frame_documents(&mut self, documents: Vec<(NodeId, FrameDocument)>) {
+    ///
+    /// `scope`: the documents of the page whose frames these are. The store may be shared by pages (a
+    /// popup shares its opener's): only entries of iframes in those documents (or of freed nodes) are
+    /// dropped when missing from `documents`, never another page's.
+    pub fn set_frame_documents(&mut self, scope: &[NodeId], documents: Vec<(NodeId, FrameDocument)>) {
         let keep: Vec<u32> = documents.iter().filter_map(|(iframe, _)| self.check(*iframe).ok()).collect();
-        let stale: Vec<u32> = self.frame_documents.keys().copied().filter(|i| !keep.contains(i)).collect();
+        let in_scope = self.scope_indices(scope);
+        let stale: Vec<u32> =
+            self.frame_documents.keys().copied().filter(|i| !keep.contains(i) && self.in_frame_scope(*i, &in_scope)).collect();
         for i in stale {
             self.frame_documents.remove(&i);
             if self.slot_live(i) {
@@ -1130,6 +1229,82 @@ impl Dom {
         for (iframe, document) in documents {
             self.set_frame_document(iframe, Some(document));
         }
+    }
+
+    fn scope_indices(&self, scope: &[NodeId]) -> Vec<u32> {
+        scope.iter().filter_map(|d| self.check(*d).ok()).collect()
+    }
+
+    /// Whether iframe slot `i` belongs to one of the documents `scope` (by slot index), or is freed.
+    fn in_frame_scope(&self, i: u32, scope: &[u32]) -> bool {
+        if !self.slot_live(i) {
+            return true;
+        }
+        scope.contains(&self.n(i).owner_doc)
+    }
+
+    /// pyro: the frame table of the render snapshot: each frame element's document by the index
+    /// its [`crate::snapshot::FRAME_ATTRIBUTE`] names (the renderer looks the document up here;
+    /// markup holds no frame content or client).
+    pub fn frame_table(&self, doc: NodeId) -> FrameTable {
+        let nonce = self.check(doc).map(|d| self.snapshot_nonce(d)).unwrap_or_default();
+        let entries = self
+            .frame_documents
+            .iter()
+            .filter(|(i, _)| self.slot_live(**i) && self.check(doc).is_ok_and(|d| self.n(**i).owner_doc == d))
+            .map(|(i, d)| (crate::snapshot::render_key(self.id_of(*i)).to_string(), d.clone()))
+            .collect();
+        FrameTable { nonce, entries }
+    }
+
+    /// pyro: the `Referrer-Policy` of the response a sheet link's sheet is of: the render snapshot
+    /// writes it on the link ([`crate::snapshot::SHEET_POLICY_ATTRIBUTE`]), which is how the
+    /// renderer gets it for the sheet's own requests (by the sheet, never by its URL).
+    pub fn set_sheet_policy(&mut self, link: NodeId, policy: Option<&str>) {
+        let Ok(i) = self.check(link) else { return };
+        let changed = match policy {
+            Some(policy) => self.sheet_policies.insert(i, policy.to_owned()).as_deref() != Some(policy),
+            None => self.sheet_policies.remove(&i).is_some(),
+        };
+        if changed {
+            self.bump();
+            self.note(Change::State(i));
+        }
+    }
+
+    /// pyro: the response tainting of the sheet of `link` (opaque or not), which the renderer
+    /// takes with its text (`Dom::sheet_key`).
+    pub fn set_sheet_tainting(&mut self, link: NodeId, opaque: bool) {
+        let Ok(i) = self.check(link) else { return };
+        let changed = if opaque { self.sheet_tainted.insert(i) } else { self.sheet_tainted.remove(&i) };
+        if changed {
+            self.bump();
+            self.note(Change::State(i));
+        }
+    }
+
+    /// pyro: the key of the sheet of `link` in a render snapshot's sheets (its render key, `:o`
+    /// when its response's tainting is opaque): the link's engine attribute names it, and the
+    /// renderer serves the sheet by it, never by URL.
+    pub fn sheet_key(&self, link: NodeId) -> String {
+        let opaque = self.check(link).is_ok_and(|i| self.sheet_tainted.contains(&i));
+        format!("{}{}", crate::snapshot::render_key(link), if opaque { ":o" } else { "" })
+    }
+
+    /// pyro: the nonce the frame markers of document slot `doc`'s render snapshots carry
+    /// (`snapshot::FRAME_ATTRIBUTE`): 128 bits from the OS CSPRNG, drawn when the document is
+    /// first serialised and kept for its life (a delta's markers match the table too). Held here
+    /// only: page script never sees a snapshot, and the text it wrote existed before the nonce.
+    pub(crate) fn snapshot_nonce(&self, doc: u32) -> String {
+        self.snapshot_nonces
+            .borrow_mut()
+            .entry(doc)
+            .or_insert_with(|| {
+                let mut bits = [0u8; 16];
+                getrandom::fill(&mut bits).expect("the OS CSPRNG");
+                bits.iter().map(|b| format!("{b:02x}")).collect()
+            })
+            .clone()
     }
 
     /// [`Dom::set_frame_documents`] for one iframe (`None`: it paints none).
@@ -1147,9 +1322,16 @@ impl Dom {
     }
 
     /// [`Dom::set_frame_content_height`] for all iframes at once: those not in `heights` have none.
-    pub fn set_frame_content_heights(&mut self, heights: &[(NodeId, f32)]) {
+    /// `scope`: as for [`Dom::set_frame_documents`].
+    pub fn set_frame_content_heights(&mut self, scope: &[NodeId], heights: &[(NodeId, f32)]) {
         let keep: Vec<u32> = heights.iter().filter_map(|&(iframe, _)| self.check(iframe).ok()).collect();
-        let stale: Vec<u32> = self.frame_content_heights.keys().copied().filter(|i| !keep.contains(i)).collect();
+        let in_scope = self.scope_indices(scope);
+        let stale: Vec<u32> = self
+            .frame_content_heights
+            .keys()
+            .copied()
+            .filter(|i| !keep.contains(i) && self.in_frame_scope(*i, &in_scope))
+            .collect();
         for i in stale {
             self.frame_content_heights.remove(&i);
             if self.slot_live(i) {
@@ -1180,6 +1362,7 @@ impl Dom {
             _ => return Err(DomError::Type("not a document")),
         }
         self.html_base_changed(i);
+        self.publish_image_defaults(doc);
         Ok(())
     }
     /// The document base URL: its first `<base href>`, else the fallback.
@@ -1671,10 +1854,41 @@ impl Dom {
         None
     }
 
+    /// Those of `kids` (children of the shadow host `host`) no slot of its shadow tree takes, as
+    /// [`Self::find_slot`] finds them, with one walk of the shadow tree for all of them.
+    pub(crate) fn unassigned_children(&self, host: u32, kids: Vec<u32>) -> Vec<u32> {
+        let sr = self.n(host).element().map_or(NIL, |e| e.shadow_root);
+        let NodeKind::Fragment(f) = (if sr == NIL { return kids } else { &self.n(sr).kind }) else { return kids };
+        if f.flags & shadow_flags::MANUAL_SLOTS != 0 {
+            return kids.into_iter().filter(|&k| self.find_slot(k, false).is_none()).collect();
+        }
+        let mut names: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
+        let mut cur = self.n(sr).first_child;
+        while cur != NIL {
+            if self.is_slot(cur) {
+                names.insert(self.n(cur).element().and_then(|e| e.attr_local(&local_name!("name"))).unwrap_or(""));
+            }
+            cur = self.following_in(cur, sr);
+        }
+        kids.into_iter()
+            .filter(|&k| {
+                !matches!(self.n(k).kind, NodeKind::Element(_) | NodeKind::Text(_))
+                    || !names.contains(self.n(k).element().and_then(|e| e.attr_local(&local_name!("slot"))).unwrap_or(""))
+            })
+            .collect()
+    }
+
     /// `Slottable.assignedSlot`.
     pub fn assigned_slot(&self, node: NodeId) -> DomResult<Option<NodeId>> {
         let i = self.check(node)?;
         Ok(self.find_slot(i, true).map(|s| self.id_of(s)))
+    }
+
+    /// The slot `node` is assigned to, in an open or a closed shadow root: its parent in the flat
+    /// tree (DOM "find a slot" with open false), for engine walks that script does not see.
+    pub(crate) fn flat_tree_slot(&self, node: NodeId) -> Option<NodeId> {
+        let i = self.check(node).ok()?;
+        self.find_slot(i, false).map(|s| self.id_of(s))
     }
 
     pub(crate) fn slot_assigned(&self, slot: u32) -> Vec<u32> {
@@ -4033,6 +4247,9 @@ impl Dom {
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
         let owner = self.n(i).owner_doc;
+        if owner == i {
+            self.snapshot_nonces.get_mut().remove(&i);
+        }
         let inert = match &self.n(i).kind {
             NodeKind::Document(d) if d.inert_doc != NIL && d.inert_doc != i => d.inert_doc,
             _ => NIL,
@@ -4409,6 +4626,40 @@ pub struct FrameDocument {
     pub html: String,
     pub url: String,
     pub scroll: (f64, f64),
+    /// pyro: the frame's id (CDP frame id): the client the renderer's requests for the document
+    /// name, so they go out as that frame's, with its origin (opaque in a sandboxed frame).
+    pub client: String,
+    /// pyro: the frame table of this document's own frames ([`Dom::frame_table`] of its DOM), by
+    /// the index its markup names them with.
+    pub frames: FrameTable,
+    /// pyro: the texts of this document's own linked sheets, by URL: served to it alone (never
+    /// merged with another document's sheets at the same URL).
+    pub sheets: std::collections::BTreeMap<String, String>,
+}
+
+/// pyro: a document's frame table: its frame elements' documents by index, and the nonce its
+/// markers carry ([`Dom::frame_table`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameTable {
+    pub nonce: String,
+    pub entries: Vec<(String, FrameDocument)>,
+}
+
+impl FrameDocument {
+    /// pyro: changes when what the renderer loads for the frame does (not its scroll position).
+    pub fn version(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        self.html.hash(&mut h);
+        self.url.hash(&mut h);
+        self.client.hash(&mut h);
+        self.sheets.hash(&mut h);
+        for (index, frame) in &self.frames.entries {
+            index.hash(&mut h);
+            frame.version().hash(&mut h);
+        }
+        h.finish()
+    }
 }
 
 /// The policy token a `<meta name=referrer content>` value names: a

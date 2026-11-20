@@ -642,6 +642,18 @@ impl Ramp {
                 // Equal ends are not a constant colour: a full turn of hue ends where it began.
                 self.subdivide(segment, (p, start), (q, end), depth, 4, &at, out);
             }
+            // pyro: the renderer looks a colour up in a table of as many entries as its shortest
+            // stop interval needs, the entry below: a curve sampled into intervals of a 512th
+            // lagged up to a level behind. A last sample a 4096th before the segment's end (the
+            // table's largest size) makes the table fine enough.
+            if self.curved(segment) {
+                let span = at(q) - at(p);
+                let fine = 1.0 / 4096.0;
+                if span > 2.0 * fine {
+                    let t = q - (q - p) * fine / span;
+                    out.push((at(t), self.color_in(segment, t)));
+                }
+            }
             out.push((at(q), end));
         }
     }

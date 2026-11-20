@@ -378,7 +378,11 @@
   // still gets the rest of this module.
   const setTimeoutC = globalThis.setTimeout;
   const structuredCloneC = globalThis.structuredClone;
-  const queueTask = (f) => setTimeoutC(f, 0);
+  // A task of a window whose document is gone (a closed popup's Notification) is never run; queueing it
+  // is not an error (the realm's setTimeout throws there).
+  const queueTask = (f) => {
+    try { setTimeoutC(f, 0); } catch (e) { /* the document is no longer fully active */ }
+  };
   const stringMember = (options, key) => (options[key] === undefined ? '' : String(options[key]));
   const urlMember = (options, key) => {
     if (options[key] === undefined) return '';

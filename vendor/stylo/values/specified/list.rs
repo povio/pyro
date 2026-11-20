@@ -149,6 +149,9 @@ pub enum Quotes {
     QuoteList(QuoteList),
     /// auto (use lang-dependent quote marks)
     Auto,
+    /// pyro: `match-parent` (CSS Content 3): the quote marks of the parent element's language
+    /// choice, as `auto` resolved there.
+    MatchParent,
 }
 
 impl Parse for Quotes {
@@ -158,6 +161,12 @@ impl Parse for Quotes {
             .is_ok()
         {
             return Ok(Quotes::Auto);
+        }
+        if input
+            .try_parse(|input| input.expect_ident_matching("match-parent"))
+            .is_ok()
+        {
+            return Ok(Quotes::MatchParent);
         }
 
         if input

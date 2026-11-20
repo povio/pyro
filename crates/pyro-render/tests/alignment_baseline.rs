@@ -27,6 +27,22 @@ fn render(body: &str) -> Vec<u8> {
 }
 
 #[test]
+fn top_aligned_atomic_baseline_does_not_move_plain_text() {
+    let line = |atom: &str| render(&format!("<div style='font:16px/19px serif'><span style='display:inline-block;height:18.5px'></span>Text{atom}</div>"));
+    let plain = line("");
+    for align in ["top", "bottom"] {
+        assert!(plain == line(&format!("<span style='display:inline-block;vertical-align:{align};color:transparent;font:8px/9px serif'>x</span>")));
+    }
+}
+
+#[test]
+fn bottom_aligned_atom_reaches_fractional_line_end() {
+    let data = render("<div style='margin-top:0.4px;font:16px/19.2px serif;background:red'>\
+        <span style='display:inline-block;vertical-align:bottom;width:100%;height:19.2px;background:green'></span></div>");
+    assert_eq!(&data[(19 * 300 + 10) * 4..][..3], &[0, 128, 0]);
+}
+
+#[test]
 fn the_longhand_aligns_baselines_of_its_name() {
     let plain = render("<div>X<span>X</span></div>");
     for value in ["middle", "text-top", "text-bottom"] {
@@ -57,4 +73,13 @@ fn a_negative_half_pixel_shift_rounds_up() {
     ));
     assert!(top(&plain).is_some());
     assert_eq!(top(&shifted), top(&plain));
+}
+
+#[test]
+fn zero_used_shifts_share_the_decorated_atomic_baseline() {
+    let line = |text_align: &str, atom_align: &str| render(&format!("<div style='font:16px/19px serif;text-decoration:underline'><i style='display:inline-block;height:18.5px'></i>A<span style='vertical-align:{text_align}'>Ag</span><b style='display:inline-block;color:blue;vertical-align:{atom_align}'>x</b></div>"));
+    let expected = line("baseline", "baseline");
+    for (text, atom) in [("0%", "baseline"), ("0px", "0%"), ("0%", "0px")] {
+        assert!(line(text, atom) == expected, "text {text}, atomic {atom}");
+    }
 }

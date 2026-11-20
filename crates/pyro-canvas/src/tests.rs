@@ -7,7 +7,7 @@ fn state(clip: &[ClipPath]) -> DrawState<'_> {
         composite: Composite::SourceOver,
         clip,
         shadow: None,
-        smoothing: true,
+        smoothing: true, filter: None,
     }
 }
 

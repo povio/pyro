@@ -17,6 +17,9 @@ name: WPT
 # and torn down, and passes when the browser neither crashed, panicked nor hung; crashtest-baseline.json and
 # crashtest-flaky.json, and a refreshed baseline is the `wpt-crashtest-baseline` artifact.
 #
+# Reftests and crashtests are served by WPT's own server (wptserve, Python, with its venv from fetch-wpt.sh --venv)
+# with testdriver, so none is left out for needing either; the testharness pages are still served by serve.mjs.
+#
 # The browser is the fork build (patched JavaScriptCore, as the npm package ships for arm64): with the system
 # framework, window named properties and import maps are missing and ~3,200 subtests on ~150 pages fail for that
 # reason alone. It is cached by its inputs, so a pull request that changes none of them skips both macOS builds.
@@ -815,9 +818,13 @@ jobs:
         with:
           path: wpt
           key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
-      - name: Fetch WPT
-        if: runner.environment == 'github-hosted' && steps.wpt-cache.outputs.cache-hit != 'true'
-        run: bench/wpt/fetch-wpt.sh wpt
+      # Every run on a GitHub-hosted runner, cached or not: the reftests are served by wptserve (README "wptserve"),
+      # which needs the Python venv in the checkout. With the checkout cached this only checks the venv (made again if
+      # it was made from other requirements or does not run here). A self-hosted runner's checkout has it already
+      # (prepare-ci-wpt.sh).
+      - name: Fetch WPT and wptserve's venv
+        if: runner.environment == 'github-hosted'
+        run: bench/wpt/fetch-wpt.sh --venv wpt
       - uses: actions/download-artifact@v4
         if: needs.build.result == 'success'
         with:
@@ -985,8 +992,13 @@ jobs:
           key: ${{ needs.prepare.outputs.browser-key }}
           fail-on-cache-miss: true
       - run: tar -xzf browser.tgz
-      - name: Discovery tests
-        run: bun test bench/wpt/crashtest.test.mjs
+      # Discovery, and the runner's guarantees against a broken server (wptserve.test.mjs: pages served as HTTP errors
+      # are errors, a run whose wptserve dies fails, a port another server holds is not taken), with this run's
+      # checkout, venv and browser.
+      - name: Discovery and runner tests
+        env:
+          PYRO_BIN: ${{ github.workspace }}/browser/pyro
+        run: bun test bench/wpt/crashtest.test.mjs bench/wpt/server.test.mjs bench/wpt/wptserve.test.mjs
       - name: Machine diagnostics (before)
         run: bench/wpt/ci-diag.sh start
       - name: Run the crashtests

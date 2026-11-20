@@ -19,7 +19,8 @@ fn render(antialiased: bool, scale: f64) -> RgbaImage {
     let snapshot = Snapshot {
         html: "<!doctype html><body style='margin:0;background:#fff;width:300px;height:200px'>\
                <div style='position:absolute;left:10.3px;top:10.6px;font:30px/40px sans-serif;color:#000'>Hgw</div>\
-               <div style='position:absolute;left:150px;top:100px;width:60px;height:60px;border-radius:50%;background:#000'></div>"
+               <div style='position:absolute;left:150px;top:100px;width:60px;height:60px;border-radius:50%;background:#000'></div>\
+               <svg style='position:absolute;top:70px' width='110' height='60'><text x='8.3' y='36' font-size='28' stroke='black'>Abc</text></svg>"
             .into(),
         base_url: "http://test/".into(),
         width: 300,
@@ -64,6 +65,9 @@ fn text_is_aliased_with_antialiasing_off_and_nothing_else_is() {
         assert!(edge > 0, "scale {scale}: the circle's edge stays antialiased");
 
         let antialiased = render(true, scale);
+        let svg = |img: &RgbaImage| census(img, px(0.0)..px(110.0), px(70.0)..px(130.0));
+        assert!(svg(&aliased).0 > 100 && svg(&aliased).1 == 0);
+        assert!(svg(&antialiased).1 > 0);
         let (_, blended) = text(&antialiased);
         assert!(blended > 0, "scale {scale}: antialiased text has blended edges");
         assert_eq!(circle(&antialiased), circle(&aliased), "scale {scale}: the circle does not change");
@@ -97,6 +101,25 @@ fn text_turned_by_a_whole_turn_draws_as_untransformed_text() {
         let plain = render("none", antialiased);
         for turn in ["rotate(360deg)", "rotate(-720deg)", "rotate(180deg) rotate(180deg)"] {
             assert!(render(turn, antialiased) == plain, "{turn}, antialiased {antialiased}");
+        }
+    }
+}
+
+#[test]
+fn offscreen_pattern_and_mask_inherit_text_coverage() {
+    let snapshot = Snapshot {
+        html: "<!doctype html><body style='margin:0;background:white'><svg width='80' height='40'><defs><pattern id='tile' width='8' height='8' patternUnits='userSpaceOnUse'><text y='7' font-size='8'>X</text></pattern><mask id='mask' maskUnits='userSpaceOnUse' x='40' y='0' width='40' height='40'><text x='43' y='29' fill='white' font-size='28'>X</text></mask></defs><rect width='40' height='40' fill='url(#tile)'/><rect x='40' width='40' height='40' mask='url(#mask)'/></svg>".into(),
+        base_url: "http://test/".into(), width: 80, height: 40, device_scale_factor: 1., ..Default::default()
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    for enabled in [false, true] {
+        let mut renderer = Renderer::new();
+        renderer.text_antialiasing = enabled;
+        let image = renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+        for range in [0..40, 40..80] {
+            let (black, blended) = census(&image, range.clone(), 0..40);
+            assert!(black + blended > 0, "empty stage {range:?}, AA {enabled}");
+            assert_eq!(blended > 0, enabled, "stage {range:?}, AA {enabled}");
         }
     }
 }

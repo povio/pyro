@@ -39,14 +39,14 @@ pub use self::background::{
 pub use self::basic_shape::FillRule;
 pub use self::border::{
     BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
-    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, BorderSpacing, BorderStyle,
+    BorderImageWidth, BorderRadius, BorderSideOffset, BorderSideWidth, OutlineOffset, BorderSpacing, BorderStyle,
     BoxDecorationBreak, FloatEdge, LineWidth,
 };
 pub use self::box_::{
     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
+    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
     PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
@@ -121,7 +121,7 @@ pub use self::text::{
 pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextAlign, TextIndent};
 pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
 pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
-pub use self::text::{TextAlignLast, TextAutospace, TextFit, TextSpacingTrim, TextUnderlinePosition};
+pub use self::text::{TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextFit, TextSpacingTrim, TextUnderlinePosition};
 pub use self::text::{TextBoxEdge, TextBoxTrim};
 pub use self::text::{
     TextDecorationInset, TextDecorationLength, TextDecorationSkipInk, TextJustify, TextTransform,
@@ -133,7 +133,7 @@ pub use self::tree_counting::TreeCountingFunction;
 #[cfg(feature = "gecko")]
 pub use self::ui::CursorImage;
 pub use self::ui::{
-    BoolInteger, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
+    BoolInteger, CaretShape, Cursor, FieldSizing, ImeMode, Inert, Interactivity, MozTheme, PointerEvents,
     ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
 };
 pub use super::generics::grid::GridTemplateComponent as GenericGridTemplateComponent;
