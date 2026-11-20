@@ -1749,6 +1749,30 @@ impl Dom {
         None
     }
 
+    /// Those of `kids` (children of the shadow host `host`) no slot of its shadow tree takes, as
+    /// [`Self::find_slot`] finds them, with one walk of the shadow tree for all of them.
+    pub(crate) fn unassigned_children(&self, host: u32, kids: Vec<u32>) -> Vec<u32> {
+        let sr = self.n(host).element().map_or(NIL, |e| e.shadow_root);
+        let NodeKind::Fragment(f) = (if sr == NIL { return kids } else { &self.n(sr).kind }) else { return kids };
+        if f.flags & shadow_flags::MANUAL_SLOTS != 0 {
+            return kids.into_iter().filter(|&k| self.find_slot(k, false).is_none()).collect();
+        }
+        let mut names: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
+        let mut cur = self.n(sr).first_child;
+        while cur != NIL {
+            if self.is_slot(cur) {
+                names.insert(self.n(cur).element().and_then(|e| e.attr_local(&local_name!("name"))).unwrap_or(""));
+            }
+            cur = self.following_in(cur, sr);
+        }
+        kids.into_iter()
+            .filter(|&k| {
+                !matches!(self.n(k).kind, NodeKind::Element(_) | NodeKind::Text(_))
+                    || !names.contains(self.n(k).element().and_then(|e| e.attr_local(&local_name!("slot"))).unwrap_or(""))
+            })
+            .collect()
+    }
+
     /// `Slottable.assignedSlot`.
     pub fn assigned_slot(&self, node: NodeId) -> DomResult<Option<NodeId>> {
         let i = self.check(node)?;

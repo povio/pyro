@@ -738,13 +738,12 @@ impl Dom {
                         // pyro: its light `<style>` children no slot takes still style its tree scope:
                         // rendered after its shadow tree in a slot marked assigned (`<style>` boxes are
                         // `display: none`).
-                        let unassigned: Vec<u32> = self
+                        let styles: Vec<u32> = self
                             .child_idx_iter(n)
-                            .filter(|&k| {
-                                self.n(k).element().is_some_and(|c| c.is_html() && &*c.name.local == "style")
-                                    && self.find_slot(k, false).is_none()
-                            })
+                            .filter(|&k| self.n(k).element().is_some_and(|c| c.is_html() && &*c.name.local == "style"))
                             .collect();
+                        // (the shadow tree's slots looked up once for all of them)
+                        let unassigned = if styles.is_empty() { styles } else { self.unassigned_children(n, styles) };
                         if !unassigned.is_empty() {
                             stack.push(Step::DetailsSlot(render_key(id) | UNASSIGNED_STYLE_SLOT_KEY, false, unassigned, scope));
                         }
