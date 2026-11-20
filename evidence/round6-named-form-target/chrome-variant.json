@@ -1,0 +1,154 @@
+{
+  "pages": [
+    {
+      "src": "about:blank?foo",
+      "trace": [
+        {
+          "kind": "load",
+          "url": "about:blank?foo",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-append",
+          "url": "about:blank?foo",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank?foo",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundarywRuJmQP2BVmpEMLL\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundarywRuJmQP2BVmpEMLL--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundarywRuJmQP2BVmpEMLL\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundarywRuJmQP2BVmpEMLL--\n"
+        }
+      ]
+    },
+    {
+      "src": "about:blank#note",
+      "trace": [
+        {
+          "kind": "after-append",
+          "url": "about:blank#note",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank#note",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundary3wiEihNmoGheYdyq\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundary3wiEihNmoGheYdyq--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundary3wiEihNmoGheYdyq\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundary3wiEihNmoGheYdyq--\n"
+        }
+      ]
+    },
+    {
+      "src": "  ",
+      "trace": [
+        {
+          "kind": "load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundarytstgPxNWQI6Zeow1\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundarytstgPxNWQI6Zeow1--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundarytstgPxNWQI6Zeow1\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundarytstgPxNWQI6Zeow1--\n"
+        }
+      ]
+    },
+    {
+      "src": "http://[",
+      "trace": [
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundarySu9GqlfVdrTduS5l\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundarySu9GqlfVdrTduS5l--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:63203/echo",
+          "state": "complete",
+          "body": "------WebKitFormBoundarySu9GqlfVdrTduS5l\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------WebKitFormBoundarySu9GqlfVdrTduS5l--\n"
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----WebKitFormBoundarywRuJmQP2BVmpEMLL",
+      "text": "------WebKitFormBoundarywRuJmQP2BVmpEMLL\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------WebKitFormBoundarywRuJmQP2BVmpEMLL--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----WebKitFormBoundary3wiEihNmoGheYdyq",
+      "text": "------WebKitFormBoundary3wiEihNmoGheYdyq\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------WebKitFormBoundary3wiEihNmoGheYdyq--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----WebKitFormBoundarytstgPxNWQI6Zeow1",
+      "text": "------WebKitFormBoundarytstgPxNWQI6Zeow1\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------WebKitFormBoundarytstgPxNWQI6Zeow1--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----WebKitFormBoundarySu9GqlfVdrTduS5l",
+      "text": "------WebKitFormBoundarySu9GqlfVdrTduS5l\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------WebKitFormBoundarySu9GqlfVdrTduS5l--\r\n"
+    }
+  ]
+}

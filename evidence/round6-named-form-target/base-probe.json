@@ -1,0 +1,178 @@
+{
+  "pages": [
+    {
+      "src": null,
+      "trace": [
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "late-load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary5f0128c0775b05a6\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary5f0128c0775b05a6--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary5f0128c0775b05a6\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary5f0128c0775b05a6--\n"
+        }
+      ]
+    },
+    {
+      "src": "",
+      "trace": [
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "late-load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary307b59f146de7e05\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary307b59f146de7e05--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary307b59f146de7e05\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary307b59f146de7e05--\n"
+        }
+      ]
+    },
+    {
+      "src": "about:blank",
+      "trace": [
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "late-load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary46194b154393657f\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary46194b154393657f--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary46194b154393657f\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary46194b154393657f--\n"
+        }
+      ]
+    },
+    {
+      "src": "/frame",
+      "trace": [
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "loading",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary89de08395e1d7779\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary89de08395e1d7779--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:62490/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary89de08395e1d7779\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary89de08395e1d7779--\n"
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundary5f0128c0775b05a6",
+      "text": "------pyroFormBoundary5f0128c0775b05a6\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundary5f0128c0775b05a6--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundary307b59f146de7e05",
+      "text": "------pyroFormBoundary307b59f146de7e05\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundary307b59f146de7e05--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundary46194b154393657f",
+      "text": "------pyroFormBoundary46194b154393657f\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundary46194b154393657f--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundary89de08395e1d7779",
+      "text": "------pyroFormBoundary89de08395e1d7779\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundary89de08395e1d7779--\r\n"
+    }
+  ]
+}

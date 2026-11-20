@@ -1,0 +1,160 @@
+{
+  "pages": [
+    {
+      "src": null,
+      "trace": [
+        {
+          "kind": "load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary9756eaab3df72dbf\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary9756eaab3df72dbf--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundary9756eaab3df72dbf\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundary9756eaab3df72dbf--\n"
+        }
+      ]
+    },
+    {
+      "src": "",
+      "trace": [
+        {
+          "kind": "load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundaryeaef208a8d0c8025\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundaryeaef208a8d0c8025--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundaryeaef208a8d0c8025\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundaryeaef208a8d0c8025--\n"
+        }
+      ]
+    },
+    {
+      "src": "about:blank",
+      "trace": [
+        {
+          "kind": "load",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundaryf593982e6b9f010c\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundaryf593982e6b9f010c--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundaryf593982e6b9f010c\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundaryf593982e6b9f010c--\n"
+        }
+      ]
+    },
+    {
+      "src": "/frame",
+      "trace": [
+        {
+          "kind": "after-append",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "after-submit",
+          "url": "about:blank",
+          "state": "complete",
+          "body": ""
+        },
+        {
+          "kind": "load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundarye793e551de4a91d7\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundarye793e551de4a91d7--\n"
+        },
+        {
+          "kind": "late-load",
+          "url": "http://127.0.0.1:52226/echo",
+          "state": "complete",
+          "body": "------pyroFormBoundarye793e551de4a91d7\nContent-Disposition: form-data; name=\"sample\"\n\nhello\n------pyroFormBoundarye793e551de4a91d7--\n"
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundary9756eaab3df72dbf",
+      "text": "------pyroFormBoundary9756eaab3df72dbf\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundary9756eaab3df72dbf--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundaryeaef208a8d0c8025",
+      "text": "------pyroFormBoundaryeaef208a8d0c8025\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundaryeaef208a8d0c8025--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundaryf593982e6b9f010c",
+      "text": "------pyroFormBoundaryf593982e6b9f010c\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundaryf593982e6b9f010c--\r\n"
+    },
+    {
+      "method": "POST",
+      "type": "multipart/form-data; boundary=----pyroFormBoundarye793e551de4a91d7",
+      "text": "------pyroFormBoundarye793e551de4a91d7\r\nContent-Disposition: form-data; name=\"sample\"\r\n\r\nhello\r\n------pyroFormBoundarye793e551de4a91d7--\r\n"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "pages": [
+    [
+      [
+        "child",
+        "about:blank"
+      ],
+      [
+        "child",
+        "frame"
+      ],
+      [
+        "parent",
+        "frame"
+      ]
+    ],
+    [
+      [
+        "child",
+        "about:blank"
+      ],
+      [
+        "child",
+        "frame"
+      ],
+      [
+        "parent",
+        "frame"
+      ]
+    ],
+    [
+      [
+        "child",
+        "about:blank"
+      ],
+      [
+        "child",
+        "frame"
+      ],
+      [
+        "parent",
+        "frame"
+      ]
+    ]
+  ],
+  "requests": []
+}

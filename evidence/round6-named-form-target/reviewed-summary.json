@@ -1,0 +1,31 @@
+{
+  "urls": 85,
+  "counts": {
+    "full-0": 60,
+    "full-1": 74,
+    "full-2": 80,
+    "named-0": 314,
+    "named-1": 575,
+    "named-2": 584,
+    "gained": 261,
+    "registered": 0,
+    "missing": 0
+  },
+  "gains": {
+    "FileAPI/file/send-file-form-controls.html": 12,
+    "FileAPI/file/send-file-form-iso-2022-jp.html": 6,
+    "FileAPI/file/send-file-form-punctuation.html": 27,
+    "FileAPI/file/send-file-form-utf-8.html": 6,
+    "FileAPI/file/send-file-form-windows-1252.html": 6,
+    "FileAPI/file/send-file-form-x-user-defined.html": 6,
+    "FileAPI/file/send-file-form.html": 1,
+    "FileAPI/file/send-file-formdata-controls.any.html": 3,
+    "FileAPI/file/send-file-formdata-controls.any.worker.html": 3,
+    "html/semantics/embedded-content/the-iframe-element/iframe-nosrc.html": 1,
+    "html/semantics/forms/form-submission-0/constructing-form-data-set.html": 1,
+    "html/semantics/forms/form-submission-0/form-data-set-empty-file.window.html": 3,
+    "html/semantics/forms/form-submission-0/multipart-formdata.window.html": 62,
+    "html/semantics/forms/form-submission-0/text-plain.window.html": 62,
+    "html/semantics/forms/form-submission-0/urlencoded2.window.html": 62
+  }
+}
