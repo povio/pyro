@@ -829,6 +829,7 @@ impl BlitzGeometry {
                             width: w.width,
                             height: w.height,
                             fixed: w.fixed,
+                            vertical_edges: w.vertical_edges,
                             edges: w.edges,
                         },
                     )

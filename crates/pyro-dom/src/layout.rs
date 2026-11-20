@@ -1362,7 +1362,11 @@ impl Layout {
                 } else {
                     continue;
                 };
-                let rect = Rect { x: left, width: right - left, ..run.rect };
+                let rect = if run.vertical_edges {
+                    Rect { y: left, height: right - left, ..run.rect }
+                } else {
+                    Rect { x: left, width: right - left, ..run.rect }
+                };
                 if start == end {
                     return Some(self.text_client_rect(dom, text, rect, run.fixed));
                 }
@@ -1431,13 +1435,15 @@ impl Layout {
                     0.0
                 }
             };
-            let key = (gap(y, top, run.rect.height), gap(x, left, run.rect.width));
+            let inline_gap = gap(x, left, run.rect.width);
+            let block_gap = gap(y, top, run.rect.height);
+            let key = if run.vertical_edges { (inline_gap, block_gap) } else { (block_gap, inline_gap) };
             if best.is_none_or(|b| key < b.0) {
-                best = Some((key, i as u32, run.node, left));
+                best = Some((key, i as u32, run.node, if run.vertical_edges { y - top } else { x - left }));
             }
         }
         // The flag: the point is on the word itself.
-        best.map(|(key, i, node, left)| (node, result.text_runs[i as usize].offset_at(x - left), key == (0.0, 0.0)))
+        best.map(|(key, i, node, distance)| (node, result.text_runs[i as usize].offset_at(distance), key == (0.0, 0.0)))
     }
 
     /// Whether a text box (viewport coordinates) lies entirely outside the
