@@ -94,6 +94,7 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
     let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
     drop(old);
     if changed {
+        page.typing_values.take();
         queue_selectionchange(page);
     }
 }
@@ -112,12 +113,14 @@ pub(crate) fn set_selection_range(
         origin: None,
         cross_tree: None,
     };
+    page.typing_values.take();
     let old = page.selection.replace(Some(selection));
     drop(old);
     queue_selectionchange(page);
 }
 
 pub fn clear_selection(page: &Rc<PageDom>) {
+    page.typing_values.take();
     let old = page.selection.take();
     if old.is_some() {
         drop(old);
@@ -587,7 +590,9 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, false) } else { start };
-            insert_at(&mut dom, caret, text)
+            let inserted_end = insert_at(&mut dom, caret, text);
+            crate::edit_commands::inline_value::format_typed(page, &mut dom, (start, end), inserted_end, text)
+                .unwrap_or(inserted_end)
         };
         set_selection(page, caret, caret);
     });

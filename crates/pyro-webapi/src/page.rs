@@ -319,6 +319,8 @@ pub struct PageDom {
     pub(crate) target_text: RefCell<Vec<Rc<crate::range::RangeOwner>>>,
     /// Undo/redo steps of user edits (`crate::edit_commands`).
     pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
+    /// Values set by a formatting command on a collapsed selection.
+    pub(crate) typing_values: RefCell<Option<crate::edit_commands::inline_value::TypingValues>>,
     /// The native drag-and-drop session in progress, if any.
     pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
     /// `document.open()`'s script-created parser (`crate::html` document
@@ -934,6 +936,7 @@ impl PageDom {
             highlights: RefCell::new(Vec::new()),
             target_text: RefCell::new(Vec::new()),
             undo: RefCell::new(Default::default()),
+            typing_values: Default::default(),
             script_parser: RefCell::new(None),
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
@@ -1193,6 +1196,7 @@ impl PageDom {
         drop(self.drag.take());
         // The selection owns Persistents to its Range wrappers.
         drop(self.selection.take());
+        self.typing_values.take();
         // Highlights hold their ranges' nodes.
         drop(self.highlights.take());
         drop(self.target_text.take());
