@@ -1178,7 +1178,7 @@ impl Layout {
     }
 
     /// `offsetTop`/`offsetLeft`: border-box offset from the offset parent's
-    /// border box (document coordinates for the body/none).
+    /// padding edge (document coordinates for the body/none).
     fn box_offset(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
         let Some(b) = self.layout_box(dom, el) else { return (0.0, 0.0) };
         let parent = self.offset_parent(dom, el).filter(|&p| !self.is_root_container(dom, p));
@@ -1192,7 +1192,7 @@ impl Layout {
             Some((parent, p)) => {
                 let (px, py) = self.sticky_shift_in(dom, &sticky, parent);
                 let (ox, oy) = origin(&p);
-                (bx + kx - ox - px, by + ky - oy - py)
+                (bx + kx - ox - px - p.border[LEFT], by + ky - oy - py - p.border[TOP])
             }
             None => (bx + kx, by + ky),
         }

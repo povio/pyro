@@ -3821,6 +3821,17 @@ fn text_range_and_hit_test_share_fractional_cluster_edges() {
 }
 
 #[test]
+fn offset_parent_origin_excludes_borders_before_transforms() {
+    let page = page("<body><div id=parent style='position:relative;border:solid;border-width:9px 3px 12px 6px;padding:20px;transform:scale(2)'><div id=flow>flow</div><div id=abs style='position:absolute;left:25px;top:-4px'>abs</div></div>");
+    for (id, left, top) in [("abs", 25.0, -4.0), ("flow", 20.0, 20.0)] {
+        let node = page.id(id);
+        assert_eq!(page.layout.offset_parent(&page.dom, node), Some(page.id("parent")));
+        assert_eq!(page.layout.offset_left(&page.dom, node), left);
+        assert_eq!(page.layout.offset_top(&page.dom, node), top);
+    }
+}
+
+#[test]
 fn vertical_ranges_and_carets_follow_the_inline_axis() {
     for mode in ["vertical-rl", "vertical-lr", "sideways-lr"] {
         let html = format!("<body><div id=p style='writing-mode:{mode};font:20px monospace'>ABC</div>");
