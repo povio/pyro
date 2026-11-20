@@ -117,6 +117,17 @@ pub(crate) struct TypingValues {
     values: Vec<Format>,
 }
 
+/// Structural commands keep the formatting values attached to the selection
+/// while its live endpoints move with the edited paragraphs.
+pub(super) fn reselect(page: &Rc<PageDom>, original: (Point, Point), points: [Point; 2]) {
+    let pending = page.typing_values.take().filter(|v| v.range == original);
+    editing::retarget_selection(page, points[0], points[1]);
+    if let (Some(mut pending), Some(range)) = (pending, editing::selection_range(page)) {
+        pending.range = range;
+        page.typing_values.replace(Some(pending));
+    }
+}
+
 fn effective(page: &PageDom, dom: &Dom, kind: Kind, node: NodeId) -> String {
     let mut el = if dom.node_type(node).ok() == Some(NodeType::Element) {
         Some(node)

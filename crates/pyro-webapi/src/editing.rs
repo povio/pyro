@@ -101,6 +101,25 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
     }
 }
 
+/// Retarget the selection after an edit while maintaining its associated
+/// live Range and any Range objects already held by script.
+pub(crate) fn retarget_selection(page:&Rc<PageDom>, anchor:Point, focus:Point) {
+    let previous=selection(page);
+    let backward=compare(page,anchor,focus)>0;
+    let (start,end)=if backward{(focus,anchor)}else{(anchor,focus)};
+    let mut slot=page.selection.borrow_mut();
+    let Some(current)=slot.as_mut() else{return};
+    if page.dom.borrow_mut().set_live_range(&current.range.live,start,end).is_err(){return;}
+    current.backward=backward;
+    current.cross_tree=None;
+    if current.origin.is_some() {
+        current.origin=crate::collections::NodeHold::new(page,anchor.0).ok()
+            .zip(crate::collections::NodeHold::new(page,focus.0).ok());
+    }
+    drop(slot);
+    if previous!=Some((anchor,focus)){queue_selectionchange(page);}
+}
+
 /// `addRange()`: `range` becomes the selection's range, `wrapper` being the
 /// Range object script passed in its realm.
 pub(crate) fn set_selection_range(

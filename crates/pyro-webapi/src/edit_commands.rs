@@ -15,6 +15,7 @@
 //! by edits the user (or execCommand) makes.
 
 mod alignment;
+mod indentation;
 pub(crate) mod inline_value;
 
 use std::rc::Rc;
@@ -1014,6 +1015,8 @@ const SUPPORTED: &[&str] = &[
     "hilitecolor",
     "fontname",
     "fontsize",
+    "indent",
+    "outdent",
     "justifycenter",
     "justifyfull",
     "justifyleft",
@@ -1153,6 +1156,11 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
     let Some(Target::Host(host)) = target else { return false };
     if let Some(kind) = inline_value::Kind::command(&cmd) {
         return rich_selection(page, host) && inline_value::apply(page, host, kind, value);
+    }
+    if matches!(cmd.as_str(), "indent" | "outdent") {
+        if !rich_selection(page, host) { return false; }
+        indentation::apply(page, host, cmd == "indent");
+        return true;
     }
     if let Some(target) = alignment::value_for(&cmd) {
         if !rich_selection(page, host) { return false; }
@@ -1732,7 +1740,7 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
     };
     match cmd.as_str() {
         "selectall" | "stylewithcss" | "usecss" | "defaultparagraphseparator" => true,
-        "insertimage" | "inserthorizontalrule" | "justifycenter" | "justifyfull" | "justifyleft" | "justifyright" => {
+        "insertimage" | "inserthorizontalrule" | "indent" | "outdent" | "justifycenter" | "justifyfull" | "justifyleft" | "justifyright" => {
             matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h))
         }
         "copy" => has_range(),

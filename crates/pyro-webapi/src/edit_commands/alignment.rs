@@ -20,13 +20,13 @@ pub(super) fn value_for(command: &str) -> Option<&'static str> {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Paragraph {
+pub(super) enum Paragraph {
     Block(NodeId),
     Line { host: NodeId, block: NodeId, first: NodeId, last: NodeId, trailing_break: Option<NodeId> },
     Anonymous { host: NodeId, first: Option<NodeId>, last: Option<NodeId> },
 }
 
-fn is_inline(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
+pub(super) fn is_inline(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     dom.node_type(node).ok() != Some(NodeType::Element)
         || matches!(
             page.layout().computed_style_value(dom, node, "display").as_str(),
@@ -136,7 +136,7 @@ pub(super) fn visible(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     true
 }
 
-fn selected_paragraphs(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<Paragraph> {
+pub(super) fn selected_paragraphs(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<Paragraph> {
     let mut paragraphs = Vec::new();
     if start != end {
         for n in dom.descendants(host).into_iter().flatten() {
@@ -268,7 +268,7 @@ pub(super) fn split_edge(dom: &mut Dom, block: NodeId, mut edge: NodeId, after: 
     None
 }
 
-fn align_line(
+pub(super) fn align_line(
     dom: &mut Dom,
     host: NodeId,
     block: NodeId,
